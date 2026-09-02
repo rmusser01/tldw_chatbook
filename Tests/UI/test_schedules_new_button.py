@@ -1,8 +1,10 @@
 """Visible New button in the Schedule Queue pane (UX F-07).
 
 The only create affordance used to be the `c` key in the footer. This adds
-a primary button beside the "Schedule Queue" pane title, wired to the
-existing `action_create_reminder`.
+a primary button beside the "Schedule Queue" pane title. Task 5 upgrades
+its behavior from a direct reminder-form push to a two-item chooser
+(Reminder / Recurring question) -- the `c` key binding is unchanged and
+still opens the reminder form directly.
 """
 
 from __future__ import annotations
@@ -11,6 +13,9 @@ import pytest
 from textual.widgets import Button
 
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from tldw_chatbook.UI.Screens.scheduling.forms.new_task_choice_modal import (
+    NewTaskChoiceModal,
+)
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
     ReminderForm,
     SchedulesWorkbench,
@@ -34,7 +39,8 @@ class LocalOnlyBundledCSSTestApp(LocalOnlyTestApp):
 
 
 @pytest.mark.asyncio
-async def test_new_button_exists_and_opens_create_form():
+async def test_new_button_exists_and_opens_choice_chooser():
+    """task-5: the button now offers Reminder / Recurring question."""
     app = LocalOnlyTestApp()
     async with app.run_test() as pilot:
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
@@ -49,7 +55,26 @@ async def test_new_button_exists_and_opens_create_form():
         button.press()
         await pilot.pause()
 
-        assert pushed and isinstance(pushed[0], ReminderForm)
+        assert pushed and isinstance(pushed[0], NewTaskChoiceModal)
+
+
+@pytest.mark.asyncio
+async def test_new_button_chooser_reminder_choice_opens_reminder_form():
+    """Picking "Reminder…" in the chooser opens the reminder form directly."""
+    app = LocalOnlyTestApp()
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+
+        workbench.query_one("#scheduling-new-task", Button).press()
+        await pilot.pause()
+        assert isinstance(pilot.app.screen, NewTaskChoiceModal)
+
+        await pilot.click("#new-task-choice-reminder")
+        await pilot.pause()
+
+        assert isinstance(pilot.app.screen, ReminderForm)
 
 
 @pytest.mark.asyncio

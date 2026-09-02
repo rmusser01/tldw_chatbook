@@ -46,9 +46,28 @@ off"), and the **Clear** button only appears once a sync error exists.
 
 ## Creating a scheduled task
 
-Press **c** to open the create form. The form scrolls when the terminal
-is short; the live "Runs: …" preview, validation, and Save/Cancel stay
-pinned at the bottom while you edit.
+Press **c**, or click **+ New** in the Queue tab's pane header, to open
+the create form. Clicking **+ New** first asks which kind of task you
+want — **Reminder…** or **Recurring question…** — since a recurring
+question is a different kind of definition, not just another schedule
+shape; **c** always opens the reminder form directly. The form scrolls
+when the terminal is short; the live "Runs: …" preview, validation, and
+Save/Cancel stay pinned at the bottom while you edit.
+
+Every create/edit form also has a **Runs on** selector — **This device**
+or **Server (\<id\>)** when a scheduling server is connected — defaulting
+to whatever owner the Schedules screen is currently showing. Choosing the
+server writes the task there directly when the server is reachable, or
+authors it locally and queues it to sync up on the next successful sync
+when it is not (the sync bar and the task's own state say which
+happened -- a recurring question in that state is listed on the
+Automations tab as *\[\<server id\> · pending sync\]*, and Run now/run
+history say so rather than asking the server about a task it has never
+seen). If the server refuses the save outright rather than being
+unreachable, the form says so and nothing is queued -- retrying it later
+would only hit the same refusal. An existing reminder's owner is fixed
+once created — the selector shows it but is not editable — moving a task
+between owners is a separate action, not part of editing.
 
 - **One-time**: type a plain local time like `2026-08-28 09:00` — no
   offset needed. It is interpreted in your machine's timezone and the
@@ -181,36 +200,73 @@ double execution — one owner, one executor). Pressing **r** on one refuses
 with a toast saying so. This is the single-owner execution rule the
 server-offload design is built on; local-owner reminders are unaffected.
 
-## Automations tab — server-scheduled automations
+## Creating a recurring question
 
-The **Automations** tab lists the automation definitions that live on a
-connected server (name, family, lifecycle, health) — the server owns
-their execution, which is why they do not appear in the local Queue. With
-no server connected the tab says so instead of showing an empty list.
+A recurring question runs a scoped search on a schedule and reports what
+it finds — a different kind of task than a reminder. Open its create
+form from the Queue tab's **+ New** chooser ("Recurring question…") or
+the Automations tab's own **+ New** button. Its v1 fields: a name, the
+question itself, which sources to search (all readable library sources,
+or a specific choice of Media / Notes / Chats — collections, tags, and
+saved searches are not offered yet), the schedule (the same one-time/
+recurring controls as a reminder), when to generate a draft answer
+(always, only when something new is found, or never), a finding-policy
+preset, whether to be notified, and an optional provider/model pin.
 
-Press **r** on a highlighted definition to dispatch one immediate run
-**on the server** through the same pipeline its schedule uses — a real
-dispatch, not a preview. The toast reports the run slot (and whether the
-server collapsed it into an already-queued run); the result comes back
-through the server's notification feed, not into the local queue. A
-paused or archived definition refuses with the server's own reason.
+**Preview** runs the same validation the save itself will run and shows
+the next few scheduled occurrences without saving anything; a rejected
+preview highlights the specific field that needs fixing. **Save** always
+previews first — an invalid definition is never written. Only the
+`recurring_question` family can be authored here; agent-task automations
+are not yet supported from this form.
+
+## Automations tab — local and server automations
+
+The **Automations** tab lists automation definitions from **both**
+owners: this device's own local `recurring_question` automations and
+whatever a connected server reports — the server ones execute there,
+which is why they do not appear in the local Queue. Each row's Name cell
+is prefixed with its owner (`[This device] …` or `[<server id>] …`) so
+the two are never ambiguous side by side; saving a new "Runs on: This
+device" automation shows up here immediately (the tab refreshes after
+every save). With no server connected the tab shows local automations
+alone instead of an empty list.
+
+Press **r** on a highlighted definition to run it immediately — a real
+dispatch, not a preview, routed by that row's own owner. A local
+automation runs through the same claim/spawn machinery the scheduler's
+own tick uses (no risk of it double-firing against a scheduled run) and
+refuses honestly when it is missing, paused/archived, mid-transfer, or
+its read-time health is not ready — the toast says which. A server
+automation dispatches **on the server** through its own control-plane
+pipeline; the toast reports the run slot (and whether the server
+collapsed it into an already-queued run), and the result arrives through
+the server's notification feed, not the local queue. A paused or
+archived server definition refuses with the server's own reason.
+
+Press **e** on a highlighted `recurring_question` definition (either
+owner) to edit it — the same form Save opens, pre-filled from the row.
+Editing a server automation that has never synced to this device mirrors
+it locally first (automatic, no extra step); agent-task automations are
+not yet editable here.
 
 The **Model** column shows each automation's pinned execution target —
 `provider/model` when the definition carries its own selection (the
-server executor honors it per run), or `auto` when it pins nothing and
-the server resolves the target itself (its automation-config executor
-defaults, then the server default — both live in server config, not the
-definition). Per-task selection rides the definition payload, so one
-automation can run on a different model than the server-wide default
-without touching server config.
+executor honors it per run), or `auto` when it pins nothing and the
+executor resolves the target itself (config defaults, then the
+provider default). Per-task selection rides the definition payload, so
+one automation can run on a different model than the default without
+touching config.
 
-The right half of the tab is that definition's **Run history** — the
-server's durable audit trail, newest first (time, event, summary). It
-loads when you highlight a definition and refreshes right after a
-Run-now dispatch, so the run you just triggered appears without
-re-selecting the row. Every execution leaves its trail here: queued,
-succeeded, failed, timed out, skipped — the same events the server
-records for reconciliation.
+The right half of the tab is that definition's **Run history**. For a
+server automation this is the server's durable audit trail, newest first
+(time, event, summary) — it loads when you highlight the row and
+refreshes right after a Run-now dispatch, so the run you just triggered
+appears without re-selecting it. **Local automations do not have a
+durable run history yet** — the pane says so honestly rather than
+showing an empty server-shaped trail; every execution still leaves its
+trail here for server automations: queued, succeeded, failed, timed out,
+skipped, the same events the server records for reconciliation.
 
 ## Execution timeouts
 
@@ -227,3 +283,10 @@ The default bound is `handler_timeout_seconds` under `[scheduling]` in
 `config.toml` (**300** seconds). Set it to `0` (or negative) to disable the
 bound entirely — every handler may then run as long as it likes, and a
 wedged handler will wedge the scheduler, which is why the default is on.
+
+*Verified against working tree — 2026-09-01 (schedules-handoff PR-4 task 5
++ final fix round: recurring-question create/edit form, the Queue tab's
+New/Reminder/Recurring-question chooser, the Automations tab's own New
+button, the "Runs on" selector on both forms, the merged local+server
+Automations listing including not-yet-synced server-owned rows, and its
+local run-now/edit routing).*

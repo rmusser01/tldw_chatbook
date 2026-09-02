@@ -461,3 +461,119 @@ class SchedulingServerClient:
             review_state,
             review_note=review_note,
         )
+
+    async def preview_automation_definition(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Create a server-side authoring preview, retried on failure.
+
+        Retryable: the server derives the preview's idempotency from a hash
+        of the normalized payload (spec §5.1) -- replaying an identical
+        preview request after a transient failure returns the same preview
+        rather than creating a second one, so this keeps the default retry
+        behavior like ``review_automation_result``.
+
+        Args:
+            request: The preview request payload (``ScheduledTaskPreview
+                CreateRequest`` fields -- see
+                ``tldw_chatbook.tldw_api.scheduled_tasks_automation_schemas``).
+
+        Returns:
+            The preview response (``status``/``validation_errors``/
+            ``normalized_config``/etc).
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientValidationError: If the request is rejected by
+                policy or the server (e.g. an invalid family/mode).
+            ServerClientServerError: If the server returns a server error
+                after retries are exhausted.
+            ServerClientTimeoutError: If the request times out after
+                retries.
+        """
+        return await self._call_with_retry(
+            "preview_scheduled_automation_definition", request
+        )
+
+    async def create_automation_definition(
+        self,
+        preview_id: str,
+        *,
+        initial_lifecycle: str = "configured",
+    ) -> dict[str, Any]:
+        """Create a server-side automation definition, retried on failure.
+
+        Retryable: creating a definition from a preview inherits the same
+        payload-hash idempotency the preview itself is built from (spec
+        §5.1) -- replaying the same ``preview_id`` after a transient
+        failure resolves to the same definition rather than a duplicate,
+        so this is safe to retry like ``preview_automation_definition``.
+
+        Args:
+            preview_id: The valid create-mode preview to consume.
+            initial_lifecycle: Starting lifecycle -- ``"configured"``
+                (default) or ``"paused"``.
+
+        Returns:
+            The created definition row.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientValidationError: If the preview is invalid,
+                expired, or already consumed, or policy denies the action.
+            ServerClientServerError: If the server returns a server error
+                after retries are exhausted.
+            ServerClientTimeoutError: If the request times out after
+                retries.
+        """
+        return await self._call_with_retry(
+            "create_scheduled_automation_definition",
+            preview_id,
+            initial_lifecycle=initial_lifecycle,
+        )
+
+    async def update_automation_definition(
+        self,
+        definition_id: str,
+        preview_id: str,
+    ) -> dict[str, Any]:
+        """Apply a consumed update-mode preview to an existing definition.
+
+        NOT retryable at this level (``retry=False``, same precedent as
+        ``create_reminder``). The PATCH consumes the preview, so a retry
+        after an unobserved success does not double-apply -- but it does
+        get the server's preview-already-consumed 409, which maps to
+        ``ServerClientValidationError``: the caller then reports "the
+        server refused your edit" for an edit the server actually applied,
+        and the offline queue never gets the chance to sort it out.
+
+        Failing on the first ambiguous transport error instead routes the
+        save into ``SchedulingService.save_definition``'s existing
+        offline-queue fallback, whose replay runs a FRESH update-mode
+        preview before patching (``SyncEngine._push_definition_update``).
+        That is the only safe retry of this call: a new preview against
+        the definition's current version either succeeds or reports a real
+        conflict, and if the first PATCH did land the replay's preview
+        carries the already-applied fields, so it converges rather than
+        lying.
+
+        Args:
+            definition_id: The definition to update.
+            preview_id: The valid update-mode preview to consume.
+
+        Returns:
+            The updated definition row.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientNotFoundError: If the definition does not exist
+                server-side.
+            ServerClientValidationError: If the preview is invalid,
+                expired, or already consumed, or policy denies the action.
+            ServerClientServerError: If the server returns a server error.
+            ServerClientTimeoutError: If the request times out.
+        """
+        return await self._call_with_retry(
+            "update_scheduled_automation_definition",
+            definition_id,
+            preview_id,
+            retry=False,
+        )

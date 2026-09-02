@@ -1040,6 +1040,42 @@ def test_upsert_definitions_inserts_new_row(tmp_path):
     assert rows[0]["schedule"] == {"kind": "cron", "expression": "0 9 * * 1-5"}
 
 
+def test_upsert_definitions_strips_resolved_sources_from_scope(tmp_path):
+    """Task 6 fix-round finding: a server item's `config.scope` may echo
+    back `resolved_sources` (the client's own local preview does, for the
+    `"all_searchable_library"` default scope -- plausibly the server's
+    parity port does too). That key is an OUTPUT-only projection
+    `normalize_recurring_question_scope` computes fresh on every call, not
+    an accepted input field; persisting it verbatim would make any later
+    re-normalization of this row's scope (a scheduled dispatch, the
+    sources-readable health check) report a spurious "unsupported field"
+    error and degrade every run. Must round-trip through the mirror path
+    without it."""
+    from tldw_chatbook.Scheduling.recurring_question_scope import (
+        normalize_recurring_question_scope,
+    )
+
+    db = _mk_db(tmp_path)
+    item = _definition_item(
+        config={
+            "scope": {
+                "mode": "all_searchable_library",
+                "resolved_sources": ["media_db", "notes", "chats"],
+            },
+            "generation_mode": "optional",
+        }
+    )
+
+    db.upsert_automation_definitions_from_server("server:42", [item])
+
+    row = db.list_automation_definitions(owner_id="server:42")[0]
+    stored_scope = row["config"]["scope"]
+    assert "resolved_sources" not in stored_scope
+    assert stored_scope["mode"] == "all_searchable_library"
+    _normalized, errors, _warnings = normalize_recurring_question_scope(stored_scope)
+    assert errors == []
+
+
 def test_upsert_definitions_server_wins_on_update(tmp_path):
     db = _mk_db(tmp_path)
     db.upsert_automation_definitions_from_server("server:42", [_definition_item()])
@@ -1100,6 +1136,228 @@ def test_upsert_definitions_skips_item_missing_id(tmp_path):
     counts = db.upsert_automation_definitions_from_server("server:42", [item])
     assert counts == {"inserted": 0, "updated": 0}
     assert db.list_automation_definitions(owner_id="server:42") == []
+
+
+# ----------------------------------------------------------------------
+# adopt_server_definition_identity (schedules-handoff PR-4, task 3)
+# ----------------------------------------------------------------------
+
+
+def test_adopt_server_definition_identity_sets_server_id_and_fields(tmp_path):
+    db = _mk_db(tmp_path)
+    local_id = db.create_automation_definition(
+        "server:42", "recurring_question", "Draft name"
+    )
+
+    adopted = db.adopt_server_definition_identity(
+        local_id,
+        {
+            "id": "srv-def-9",
+            "name": "Server-confirmed name",
+            "lifecycle": "configured",
+            "schedule": {"kind": "cron", "expression": "0 9 * * 1-5"},
+        },
+    )
+
+    assert adopted is True
+    row = db.get_automation_definition(local_id)
+    assert row["server_id"] == "srv-def-9"
+    assert row["name"] == "Server-confirmed name"
+    assert row["schedule"] == {"kind": "cron", "expression": "0 9 * * 1-5"}
+
+
+def test_adopt_server_definition_identity_never_clears_local_transfer_state(tmp_path):
+    """Same §6 parked-finding rule as the pull-mirror upsert."""
+    db = _mk_db(tmp_path)
+    local_id = db.create_automation_definition(
+        "server:42", "recurring_question", "Draft"
+    )
+    db.update_automation_definition(local_id, transfer_state="pending_pull")
+
+    db.adopt_server_definition_identity(
+        local_id, {"id": "srv-def-1", "transfer_state": "server_side_value"}
+    )
+
+    row = db.get_automation_definition(local_id)
+    assert row["transfer_state"] == "pending_pull"
+
+
+def test_adopt_server_definition_identity_strips_resolved_sources_from_scope(tmp_path):
+    """Same fix-round finding as the pull-mirror upsert's, on the push-echo
+    mirror path (`SyncEngine._push_definition_create`'s
+    `create`/`update_automation_definition` server response)."""
+    from tldw_chatbook.Scheduling.recurring_question_scope import (
+        normalize_recurring_question_scope,
+    )
+
+    db = _mk_db(tmp_path)
+    local_id = db.create_automation_definition(
+        "server:42", "recurring_question", "Draft"
+    )
+
+    db.adopt_server_definition_identity(
+        local_id,
+        {
+            "id": "srv-def-9",
+            "config": {
+                "scope": {
+                    "mode": "all_searchable_library",
+                    "resolved_sources": ["media_db", "notes", "chats"],
+                },
+            },
+        },
+    )
+
+    row = db.get_automation_definition(local_id)
+    stored_scope = row["config"]["scope"]
+    assert "resolved_sources" not in stored_scope
+    assert stored_scope["mode"] == "all_searchable_library"
+    _normalized, errors, _warnings = normalize_recurring_question_scope(stored_scope)
+    assert errors == []
+
+
+def test_adopt_server_definition_identity_missing_server_id_returns_false(tmp_path):
+    db = _mk_db(tmp_path)
+    local_id = db.create_automation_definition(
+        "server:42", "recurring_question", "Draft"
+    )
+    assert db.adopt_server_definition_identity(local_id, {"name": "No id"}) is False
+    row = db.get_automation_definition(local_id)
+    assert row["server_id"] is None
+
+
+def test_adopt_server_definition_identity_unknown_local_id_returns_false(tmp_path):
+    db = _mk_db(tmp_path)
+    assert (
+        db.adopt_server_definition_identity("does-not-exist", {"id": "srv-def-1"})
+        is False
+    )
+
+
+# ----------------------------------------------------------------------
+# create/update_automation_definition pending_mutation +
+# get_automation_definition_by_server_id (schedules-handoff PR-4, task 4)
+# ----------------------------------------------------------------------
+
+
+def test_create_automation_definition_pending_mutation_recorded_in_same_transaction(
+    tmp_path,
+):
+    """The authoring facade's offline server-owned create: the INSERT and
+    its outbox mutation must land as one write, keyed by the id this call
+    generates (the caller cannot know it ahead of time)."""
+    db = _mk_db(tmp_path)
+
+    def_id = db.create_automation_definition(
+        "server:1",
+        "recurring_question",
+        "Draft name",
+        pending_mutation={
+            "primitive": "automation_definition",
+            "owner_id": "server:1",
+            "payload": {
+                "action": "create",
+                "definition_payload": {"family": "recurring_question"},
+                "server_definition_id": None,
+            },
+        },
+    )
+
+    row = db.get_automation_definition(def_id)
+    assert row is not None
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1
+    assert pending[0]["local_id"] == def_id
+    assert pending[0]["payload"]["action"] == "create"
+    assert pending[0]["payload"]["idempotency_key"]  # generated
+
+
+def test_create_automation_definition_pending_mutation_atomic_rollback_on_insert_failure(
+    tmp_path,
+):
+    """Fault-inject a genuine DB failure in the mutation INSERT (a NULL
+    owner_id violates pending_mutations' NOT NULL constraint) and confirm
+    the definition INSERT in the SAME transaction rolls back with it."""
+    db = _mk_db(tmp_path)
+
+    with pytest.raises(Exception):
+        db.create_automation_definition(
+            "server:1",
+            "recurring_question",
+            "Draft name",
+            pending_mutation={
+                "primitive": "automation_definition",
+                "owner_id": None,  # NOT NULL violation -> INSERT raises
+                "payload": {"action": "create"},
+            },
+        )
+
+    assert db.list_automation_definitions(owner_id="server:1") == []
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+
+
+def test_update_automation_definition_pending_mutation_recorded_in_same_transaction(
+    tmp_path,
+):
+    db = _mk_db(tmp_path)
+    def_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Original", server_id="srv-def-1"
+    )
+
+    updated = db.update_automation_definition(
+        def_id,
+        name="Updated",
+        pending_mutation={
+            "primitive": "automation_definition",
+            "owner_id": "server:1",
+            "payload": {
+                "action": "update",
+                "definition_payload": {"name": "Updated", "definition_version": 1},
+                "server_definition_id": "srv-def-1",
+            },
+        },
+    )
+
+    assert updated is True
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1
+    assert pending[0]["local_id"] == def_id
+    assert pending[0]["payload"]["server_definition_id"] == "srv-def-1"
+
+
+def test_update_automation_definition_pending_mutation_not_recorded_when_row_unknown(
+    tmp_path,
+):
+    """No row changed -> nothing to push; the mutation must not be queued
+    for a definition that was never actually written."""
+    db = _mk_db(tmp_path)
+
+    updated = db.update_automation_definition(
+        "does-not-exist",
+        name="Updated",
+        pending_mutation={
+            "primitive": "automation_definition",
+            "owner_id": "server:1",
+            "payload": {"action": "update"},
+        },
+    )
+
+    assert updated is False
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+
+
+def test_get_automation_definition_by_server_id_found_and_missing(tmp_path):
+    db = _mk_db(tmp_path)
+    def_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Mirrored", server_id="srv-def-7"
+    )
+
+    row = db.get_automation_definition_by_server_id("server:1", "srv-def-7")
+    assert row is not None
+    assert row["id"] == def_id
+
+    assert db.get_automation_definition_by_server_id("server:1", "no-such-id") is None
+    assert db.get_automation_definition_by_server_id("server:2", "srv-def-7") is None
 
 
 def _result_item(**overrides):

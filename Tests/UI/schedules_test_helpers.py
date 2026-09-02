@@ -24,9 +24,18 @@ class MockServerClient:
 class MockSchedulingDB:
     """Stub scheduled-tasks DB for test scheduling services."""
 
-    def __init__(self, sync_state: dict | None = None, conflicts: list | None = None) -> None:
+    def __init__(
+        self,
+        sync_state: dict | None = None,
+        conflicts: list | None = None,
+        automation_definitions: list[dict] | None = None,
+    ) -> None:
         self._sync_state = sync_state or {}
         self._conflicts = conflicts or []
+        #: task-5 fix round: local automation-definition rows this DB
+        #: "contains" -- mirrors the real ScheduledTasksDB surface the
+        #: Automations tab now reads (list_automation_definitions et al).
+        self._automation_definitions = list(automation_definitions or [])
 
     def get_sync_state(self, owner_id: str):
         return dict(self._sync_state)
@@ -36,6 +45,54 @@ class MockSchedulingDB:
 
     def get_conflicts(self, owner_id: str, primitive=None):
         return self._conflicts
+
+    def list_automation_definitions(self, owner_id=None, lifecycle=None, family=None):
+        return [
+            dict(row)
+            for row in self._automation_definitions
+            if (owner_id is None or row.get("owner_id") == owner_id)
+            and (lifecycle is None or row.get("lifecycle") == lifecycle)
+            and (family is None or row.get("family") == family)
+        ]
+
+    def get_automation_definition(self, definition_id: str):
+        for row in self._automation_definitions:
+            if row.get("id") == definition_id:
+                return dict(row)
+        return None
+
+    def get_automation_definition_by_server_id(self, owner_id: str, server_id: str):
+        for row in self._automation_definitions:
+            if row.get("owner_id") == owner_id and row.get("server_id") == server_id:
+                return dict(row)
+        return None
+
+    def upsert_automation_definitions_from_server(self, owner_id: str, items: list[dict]):
+        inserted = 0
+        updated = 0
+        for item in items:
+            server_id = item.get("id")
+            if not server_id:
+                continue
+            existing = next(
+                (
+                    row
+                    for row in self._automation_definitions
+                    if row.get("owner_id") == owner_id and row.get("server_id") == server_id
+                ),
+                None,
+            )
+            if existing is not None:
+                existing.update(item)
+                updated += 1
+                continue
+            local_row = dict(item)
+            local_row["id"] = f"local-mirror-{server_id}"
+            local_row["server_id"] = server_id
+            local_row["owner_id"] = owner_id
+            self._automation_definitions.append(local_row)
+            inserted += 1
+        return {"inserted": inserted, "updated": updated}
 
 
 class MockSchedulingServiceMixin:

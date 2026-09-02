@@ -14,16 +14,18 @@ from tldw_chatbook.Scheduling.services.server_client import (
     ServerClientError,
     ServerClientNotFoundError,
     ServerClientPolicyError,
+    ServerClientValidationError,
 )
 
 
 _REMINDER_PRIMITIVE = "reminder_task"
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
-#: Reserved for the PR-5 definition-push primitive (create/update/lifecycle
-#: mutation replay) -- unused here since PR-3 ships only the definitions
-#: pull mirror, not a push path (schedules-handoff plan, task 4 deviation
-#: 1). Named now so the pending-mutation primitive namespace is settled.
+#: Pending mutations recorded when a local automation definition is
+#: created or updated (schedules-handoff PR-4, task 3 -- the authoring
+#: facade landing in task 4 records these) are replayed to the server by
+#: `SyncEngine._replay_definition_mutations`, mirroring
+#: `_RESULT_REVIEW_PRIMITIVE`'s review-pushback shape.
 _DEFINITION_PRIMITIVE = "automation_definition"
 
 #: Matches ScheduledTasksDB._RESULT_REVIEW_PRIMITIVE -- pending mutations
@@ -213,6 +215,24 @@ class SyncEngine:
         # server payload that still echoes the pre-review state (write/
         # read-path lag) from reverting the review that was just pushed.
         skip_review_server_ids = frozenset(pushed_review_ids or ())
+
+        # Definition create/update push replay (Task 3), also before the
+        # pulls: a successful create's server_id lands on the local row
+        # inside this phase's own transaction, so the definitions pull
+        # right after matches it by (owner_id, server_id) instead of
+        # inserting a duplicate mirror row (Task 3 pull-ordering note).
+        error, definition_push_counts = await self._run_phase(
+            target_owner,
+            "Automation definition push",
+            self._replay_definition_mutations,
+        )
+        if error:
+            phase_errors.append(error)
+        if definition_push_counts:
+            logger.info(
+                f"Automation definition push for {target_owner}: "
+                f"{definition_push_counts}"
+            )
 
         error, counts = await self._run_phase(
             target_owner, "Automation definitions pull", self._pull_definitions
@@ -444,6 +464,232 @@ class SyncEngine:
             self.db.delete_pending_mutation(mutation["id"])
             pushed_server_ids.add(server_result_id)
         return frozenset(pushed_server_ids)
+
+    async def _replay_definition_mutations(self, owner_id: str) -> dict[str, int]:
+        """Replay pending `automation_definition` mutations to the server.
+
+        `create` -> preview(mode="create") -> a `"valid"` preview is
+        consumed via `create_automation_definition`, and the response's
+        server identity plus every server-wins field is adopted onto the
+        local row in one transaction (`ScheduledTasksDB.
+        adopt_server_definition_identity`). An `"invalid"` preview can
+        never succeed by retrying the same payload, so the mutation is
+        cleared and the validation errors are recorded
+        (`_reject_definition_mutation`).
+
+        `update` -> preview(mode="update", definition_id=the server id)
+        -> PATCH via `update_automation_definition`. A missing
+        `server_definition_id` (authored offline, never synced) or a
+        `ServerClientNotFoundError` from either call (the server
+        definition was deleted) converts the mutation into a create,
+        mirroring `_push_mutation`'s reminder precedent.
+
+        A retryable `ServerClientError` (timeout/5xx/unavailable)
+        propagates so `_run_phase` records one sync error for the phase
+        and leaves this and any later mutation queued for the next cycle
+        -- same "abort the whole push phase" discipline as
+        `_push_mutation`. A non-retryable 4xx does NOT abort: it settles
+        that one mutation and the loop continues with the rest (see
+        `_push_definition_mutation`).
+
+        Returns:
+            Counts of what happened this cycle (``created``/``updated``/
+            ``invalid``/``orphaned``), for the caller's info log.
+        """
+        assert self.server_client is not None
+        mutations = self.db.get_pending_mutations(
+            owner_id, primitive=_DEFINITION_PRIMITIVE
+        )
+        counts: dict[str, int] = {}
+        for mutation in mutations:
+            outcome = await self._push_definition_mutation(mutation, owner_id)
+            counts[outcome] = counts.get(outcome, 0) + 1
+        return counts
+
+    async def _push_definition_mutation(self, mutation: dict, owner_id: str) -> str:
+        """Replay one pending `automation_definition` mutation. Returns what happened.
+
+        A server-side 4xx (`ServerClientValidationError`, e.g. a 409
+        `definition_version_conflict` or a 422 `schedule_invalid`) is
+        non-retryable by construction -- `_call_with_retry` raises it
+        immediately without retrying -- so it is settled here exactly like
+        an invalid preview: the mutation is cleared and the reason
+        recorded as a sync error (`_reject_definition_mutation`). Letting
+        it raise instead aborted the whole push phase, so ONE poisoned
+        mutation blocked every other definition mutation for that owner
+        forever (final review I3). Only genuinely retryable errors
+        (timeout/5xx/unavailable) still abort the phase, and a
+        `ServerClientPolicyError` still propagates untouched -- that one is
+        an account-level refusal that may be granted later, so the user's
+        queued work must survive it rather than be discarded.
+        """
+        local_id = mutation["local_id"]
+        mutation_id = mutation["id"]
+        payload = mutation.get("payload") or {}
+        action = payload.get("action")
+        definition_payload = payload.get("definition_payload") or {}
+        server_definition_id = payload.get("server_definition_id")
+
+        try:
+            if action == "update" and server_definition_id:
+                return await self._push_definition_update(
+                    local_id,
+                    mutation_id,
+                    owner_id,
+                    server_definition_id,
+                    definition_payload,
+                )
+            if action in ("create", "update"):
+                # A `create` action, or an `update` authored offline and never
+                # synced (no server_definition_id): both are pushed as a create.
+                return await self._push_definition_create(
+                    local_id, mutation_id, owner_id, definition_payload
+                )
+        except ServerClientPolicyError:
+            raise
+        except ServerClientValidationError as exc:
+            self._reject_definition_mutation(
+                local_id,
+                mutation_id,
+                owner_id,
+                # The server's own error code IS the useful text here, and
+                # `_reject_definition_mutation` records `field:code` pairs
+                # (not messages) -- so put it where the user will see it.
+                {
+                    "validation_errors": [
+                        {"field": "_server", "code": str(exc), "message": str(exc)}
+                    ]
+                },
+            )
+            return "invalid"
+
+        logger.warning(
+            f"Unknown pending automation_definition mutation action {action!r} "
+            f"for local {local_id}; dropping"
+        )
+        self.db.delete_pending_mutation(mutation_id)
+        return "unknown"
+
+    async def _push_definition_create(
+        self,
+        local_id: str,
+        mutation_id: int,
+        owner_id: str,
+        definition_payload: dict[str, Any],
+    ) -> str:
+        """Preview(mode=create) then create; shared by `create` mutations and
+        `update` mutations converted to create (offline-authored or 404'd).
+
+        If the local row is gone by the time the server echoes back (deleted
+        between queueing and replay), the adopt finds nothing to write and the
+        new server definition has no local home. The mutation is still cleared
+        -- replaying it would create a SECOND server definition, not recover
+        the first -- and a sync error naming both ids is recorded so the
+        orphan is discoverable. Deleting it server-side is not this method's
+        call; definition lifecycle actions are a later phase.
+        """
+        request = dict(definition_payload)
+        request["mode"] = "create"
+        # The server's create-mode validator (mirrored locally by
+        # automation_preview.py) rejects definition_id/definition_version
+        # as "not_allowed_for_create" -- strip any left over from an
+        # update-shaped payload before this offline/404 conversion.
+        request.pop("definition_id", None)
+        request.pop("definition_version", None)
+
+        assert self.server_client is not None
+        preview = await self.server_client.preview_automation_definition(request)
+        preview = preview if isinstance(preview, dict) else {}
+        if preview.get("status") != "valid":
+            self._reject_definition_mutation(local_id, mutation_id, owner_id, preview)
+            return "invalid"
+
+        initial_lifecycle = definition_payload.get("initial_lifecycle") or "configured"
+        created = await self.server_client.create_automation_definition(
+            preview.get("id"), initial_lifecycle=initial_lifecycle
+        )
+        created = created if isinstance(created, dict) else {}
+        adopted = self.db.adopt_server_definition_identity(local_id, created)
+        self.db.delete_pending_mutation(mutation_id)
+        if not adopted:
+            server_definition_id = created.get("id") or "unknown"
+            logger.warning(
+                f"Automation definition {local_id} vanished locally before its "
+                f"create push landed; server definition {server_definition_id} "
+                f"has no local row"
+            )
+            self._record_sync_error(
+                f"Automation definition {local_id} was removed while it was "
+                f"being created on the server; the server copy "
+                f"({server_definition_id}) is still there and is not linked "
+                f"to any local automation",
+                owner_id,
+            )
+            return "orphaned"
+        return "created"
+
+    async def _push_definition_update(
+        self,
+        local_id: str,
+        mutation_id: int,
+        owner_id: str,
+        server_definition_id: str,
+        definition_payload: dict[str, Any],
+    ) -> str:
+        """Preview(mode=update) then PATCH; converts to create on a 404."""
+        request = dict(definition_payload)
+        request["mode"] = "update"
+        request["definition_id"] = server_definition_id
+
+        assert self.server_client is not None
+        try:
+            preview = await self.server_client.preview_automation_definition(request)
+            preview = preview if isinstance(preview, dict) else {}
+            if preview.get("status") != "valid":
+                self._reject_definition_mutation(
+                    local_id, mutation_id, owner_id, preview
+                )
+                return "invalid"
+            updated = await self.server_client.update_automation_definition(
+                server_definition_id, preview.get("id")
+            )
+        except ServerClientNotFoundError:
+            return await self._push_definition_create(
+                local_id, mutation_id, owner_id, definition_payload
+            )
+        updated = updated if isinstance(updated, dict) else {}
+        self.db.adopt_server_definition_identity(local_id, updated)
+        self.db.delete_pending_mutation(mutation_id)
+        return "updated"
+
+    def _reject_definition_mutation(
+        self,
+        local_id: str,
+        mutation_id: int,
+        owner_id: str,
+        preview: dict[str, Any],
+    ) -> None:
+        """Clear an invalid-preview definition mutation and record why.
+
+        A payload the server has already rejected will never succeed by
+        retrying, so the mutation is dropped rather than left queued.
+        """
+        errors = preview.get("validation_errors") or []
+        codes = ", ".join(
+            f"{error.get('field')}:{error.get('code')}"
+            for error in errors
+            if isinstance(error, dict)
+        )
+        logger.warning(
+            f"Automation definition mutation for local {local_id} rejected by "
+            f"server preview: {codes or 'no field codes reported'}"
+        )
+        self._record_sync_error(
+            f"Automation definition {local_id} rejected by server: "
+            f"{codes or 'invalid preview'}",
+            owner_id,
+        )
+        self.db.delete_pending_mutation(mutation_id)
 
     async def _pull_definitions(self, owner_id: str) -> dict[str, int]:
         """Page up to `_SYNC_MAX_PAGES` of the server's automation definitions.

@@ -1,4 +1,4 @@
-from .scheduling_service import SchedulingService
+from .scheduling_service import SaveDefinitionOutcome, SchedulingService
 from .server_client import (
     SchedulingServerClient,
     ServerClientConfig,
@@ -14,6 +14,7 @@ __all__ = [
     "SchedulingServerClient",
     "ServerUnavailableError",
     "SchedulingService",
+    "SaveDefinitionOutcome",
     "ServerClientConfig",
     "ServerClientError",
     "ServerClientNotFoundError",

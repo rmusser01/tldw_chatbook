@@ -981,9 +981,14 @@ from .server_notifications_schemas import (
     ServerNotificationStreamEvent,
 )
 from .scheduled_tasks_automation_schemas import (
+    ScheduledTaskAutomationDefinition,
     ScheduledTaskAutomationDefinitionList,
     ScheduledTaskAutomationRunNowResponse,
     ScheduledTaskAuditList,
+    ScheduledTaskDefinitionCreateRequest,
+    ScheduledTaskDefinitionUpdateRequest,
+    ScheduledTaskPreview,
+    ScheduledTaskPreviewCreateRequest,
     ScheduledTaskResult,
     ScheduledTaskResultList,
 )
@@ -8183,6 +8188,75 @@ class TLDWAPIClient:
             json_data={"review_state": review_state, "review_note": review_note},
         )
         return ScheduledTaskResult.model_validate(response)
+
+    async def preview_scheduled_task_definition(
+        self, request: ScheduledTaskPreviewCreateRequest
+    ) -> ScheduledTaskPreview:
+        """Create a server-side authoring preview (spec §5.1).
+
+        Args:
+            request: The preview request (mode/family/config/schedule/etc).
+
+        Returns:
+            The created preview, including ``status``, ``validation_errors``,
+            ``warnings``, and the ``normalized_config`` the server would
+            persist if the preview were consumed.
+        """
+        response = await self._request(
+            "POST",
+            "/api/v1/scheduled-tasks/previews",
+            json_data=request.model_dump(exclude_none=True, mode="json"),
+        )
+        return ScheduledTaskPreview.model_validate(response)
+
+    async def create_scheduled_task_definition(
+        self,
+        preview_id: str,
+        *,
+        initial_lifecycle: str = "configured",
+    ) -> ScheduledTaskAutomationDefinition:
+        """Create a server-side automation definition from a consumed preview.
+
+        Args:
+            preview_id: The valid create-mode preview to consume
+                (``ScheduledTaskPreview.id``).
+            initial_lifecycle: Starting lifecycle -- ``"configured"``
+                (default) or ``"paused"``.
+
+        Returns:
+            The created definition row.
+        """
+        request = ScheduledTaskDefinitionCreateRequest(
+            preview_id=preview_id, initial_lifecycle=initial_lifecycle
+        )
+        response = await self._request(
+            "POST",
+            "/api/v1/scheduled-tasks/definitions",
+            json_data=request.model_dump(mode="json"),
+        )
+        return ScheduledTaskAutomationDefinition.model_validate(response)
+
+    async def update_scheduled_task_definition(
+        self,
+        definition_id: str,
+        preview_id: str,
+    ) -> ScheduledTaskAutomationDefinition:
+        """Apply a consumed update-mode preview to an existing definition.
+
+        Args:
+            definition_id: The definition to update.
+            preview_id: The valid update-mode preview to consume.
+
+        Returns:
+            The updated definition row.
+        """
+        request = ScheduledTaskDefinitionUpdateRequest(preview_id=preview_id)
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/scheduled-tasks/definitions/{definition_id}",
+            json_data=request.model_dump(mode="json"),
+        )
+        return ScheduledTaskAutomationDefinition.model_validate(response)
 
     async def list_output_templates(
         self,

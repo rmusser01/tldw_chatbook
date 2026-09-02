@@ -11,7 +11,11 @@ from tldw_chatbook.Scheduling.models import ReminderTask, ScheduledTask, TaskSta
 from tldw_chatbook.Scheduling.scheduler.queue import PriorityQueue
 from tldw_chatbook.Scheduling.services import SchedulingServerClient, SchedulingService
 from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
-from tldw_chatbook.Scheduling.services.server_client import ServerUnavailableError
+from tldw_chatbook.Scheduling.services.server_client import (
+    ServerClientPolicyError,
+    ServerClientValidationError,
+    ServerUnavailableError,
+)
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
 
@@ -864,3 +868,854 @@ async def test_review_automation_result_server_mirrored_makes_a_single_db_call(d
 
     pending = db.get_pending_mutations("server:1", primitive="automation_result_review")
     assert len(pending) == 1
+
+
+# ----------------------------------------------------------------------
+# preview_definition / save_definition (schedules-handoff PR-4, task 4)
+# ----------------------------------------------------------------------
+
+
+def _definition_payload(**overrides):
+    """Build a valid recurring_question authoring payload for tests."""
+    payload = {
+        "family": "recurring_question",
+        "name": "Daily standup question",
+        "description": "Asks a daily question",
+        "config": {},
+        "input": {"question": "What did you work on today?"},
+        "schedule": {"kind": "interval", "every_seconds": 3600},
+        "visibility_policy": "findings_only",
+        "notification_policy": {},
+        "approval_policy": {},
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _server_definition_echo(**overrides):
+    """A `ScheduledTaskDefinitionResponse`-shaped create/update echo."""
+    item = {
+        "id": "srv-def-1",
+        "owner_id": "server:1",
+        "family": "recurring_question",
+        "name": "Daily standup question",
+        "lifecycle": "configured",
+        "health": "execution_unavailable",
+        "schedule": {"kind": "interval", "every_seconds": 3600},
+        "input": {"question": "What did you work on today?"},
+        "config": {},
+        "visibility_policy": {"mode": "findings_only"},
+        "notification_policy": {},
+        "approval_policy": {},
+        "version": 1,
+        "created_at": "2026-09-01T09:00:00+00:00",
+        "updated_at": "2026-09-01T09:00:00+00:00",
+    }
+    item.update(overrides)
+    return item
+
+
+@pytest.mark.asyncio
+async def test_preview_definition_local_owner_valid(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    preview = await svc.preview_definition(_definition_payload(), "local")
+
+    assert preview.status == "valid"
+    assert preview.normalized_config["name"] == "Daily standup question"
+
+
+@pytest.mark.asyncio
+async def test_preview_definition_local_owner_invalid(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    preview = await svc.preview_definition(_definition_payload(name=""), "local")
+
+    assert preview.status == "invalid"
+    assert any(error["field"] == "name" for error in preview.validation_errors)
+
+
+@pytest.mark.asyncio
+async def test_preview_definition_rejects_unsupported_family(db):
+    """v1 scope guard: `agent_task` is rejected before Task 1's pure preview
+    runs, so its fabricated `family: unsupported` scope-cut error (a
+    documented gap, not real server parity) never reaches a caller through
+    this facade."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    preview = await svc.preview_definition(
+        _definition_payload(family="agent_task"), "local"
+    )
+
+    assert preview.status == "invalid"
+    assert preview.validation_errors == [
+        {
+            "field": "family",
+            "code": "unsupported",
+            "message": (
+                "Only recurring_question automations can be authored here "
+                "(agent_task authoring is not yet available)."
+            ),
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_preview_definition_server_owner_online(db):
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "mode": "create",
+        "family": "recurring_question",
+        "status": "valid",
+        "normalized_config": {"name": "Daily standup question"},
+        "validation_errors": [],
+        "warnings": [],
+        "visibility_policy": {"mode": "findings_only"},
+        "schedule_preview": {"kind": "interval", "every_seconds": 3600},
+    }
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    preview = await svc.preview_definition(_definition_payload(), "server:1")
+
+    assert preview.status == "valid"
+    assert preview.id == "prev-1"
+    server_client.preview_automation_definition.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_preview_definition_server_owner_falls_back_local_on_unreachable(db):
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    preview = await svc.preview_definition(_definition_payload(), "server:1")
+
+    assert preview.status == "valid"  # local validation still runs offline
+    assert any(
+        warning["field"] == "_owner" and warning["code"] == "server_unreachable"
+        for warning in preview.warnings
+    )
+
+
+@pytest.mark.asyncio
+async def test_save_definition_local_create(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    outcome = await svc.save_definition(_definition_payload(), "local")
+
+    assert outcome.status == "saved"
+    assert outcome.errors == []
+    assert outcome.definition_id
+    row = db.get_automation_definition(outcome.definition_id)
+    assert row["name"] == "Daily standup question"
+    assert row["family"] == "recurring_question"
+    assert row["owner_id"] == "local"
+    assert row["schedule"] == {"kind": "interval", "every_seconds": 3600}
+    # visibility_policy on the DB row comes from the preview's wrapped
+    # top-level field, not normalized_config's flat mode string.
+    assert row["visibility_policy"] == {"mode": "findings_only"}
+    assert row["next_run_at"]  # an interval schedule always computes one
+
+
+@pytest.mark.asyncio
+async def test_save_definition_local_create_strips_derived_resolved_sources(db):
+    """Task 6 E2E finding: a default (`all_searchable_library`) scope's
+    preview-normalized form injects a `resolved_sources` projection that
+    `normalize_recurring_question_scope` itself does not accept as input
+    (`SUPPORTED_SCOPE_FIELDS` has no such field). Persisting it verbatim
+    made every later re-normalization of this row's stored scope --
+    `automation_execution.py`'s dispatch, `automation_health.py`'s
+    sources-readable check -- report a spurious "unsupported field" error
+    and degrade every scheduled run. The stored row must not carry it."""
+    from tldw_chatbook.Scheduling.recurring_question_scope import (
+        normalize_recurring_question_scope,
+    )
+
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    outcome = await svc.save_definition(_definition_payload(), "local")
+
+    row = db.get_automation_definition(outcome.definition_id)
+    stored_scope = row["config"]["scope"]
+    assert "resolved_sources" not in stored_scope
+    assert stored_scope["mode"] == "all_searchable_library"
+    # And the stored value must be safe to re-normalize, the way a real
+    # scheduled dispatch or health check does.
+    _normalized, errors, _warnings = normalize_recurring_question_scope(stored_scope)
+    assert errors == []
+
+
+@pytest.mark.asyncio
+async def test_save_definition_local_edit(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    created = await svc.save_definition(_definition_payload(), "local")
+
+    outcome = await svc.save_definition(
+        _definition_payload(name="Updated standup question"),
+        "local",
+        definition_id=created.definition_id,
+    )
+
+    assert outcome.status == "saved"
+    assert outcome.definition_id == created.definition_id
+    row = db.get_automation_definition(created.definition_id)
+    assert row["name"] == "Updated standup question"
+    assert row["version"] == 2
+
+
+@pytest.mark.asyncio
+async def test_save_definition_local_invalid_writes_nothing(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    outcome = await svc.save_definition(_definition_payload(name=""), "local")
+
+    assert outcome.status == "invalid"
+    assert any(error["field"] == "name" for error in outcome.errors)
+    assert db.list_automation_definitions(owner_id="local") == []
+
+
+@pytest.mark.asyncio
+async def test_save_definition_family_guard_writes_nothing(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    outcome = await svc.save_definition(
+        _definition_payload(family="agent_task"), "local"
+    )
+
+    assert outcome.status == "invalid"
+    assert outcome.errors[0]["field"] == "family"
+    assert db.list_automation_definitions(owner_id="local") == []
+
+
+@pytest.mark.asyncio
+async def test_save_definition_unknown_definition_id_returns_error(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    outcome = await svc.save_definition(
+        _definition_payload(), "local", definition_id="no-such-id"
+    )
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["code"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_online_create_mirrors_new_row(db):
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.create_automation_definition.return_value = _server_definition_echo()
+
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+    outcome = await svc.save_definition(_definition_payload(), "server:1")
+
+    assert outcome.status == "saved"
+    assert outcome.definition_id
+    row = db.get_automation_definition(outcome.definition_id)
+    assert row["server_id"] == "srv-def-1"
+    assert row["owner_id"] == "server:1"
+    server_client.create_automation_definition.assert_awaited_once_with("prev-1")
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_online_edit_adopts_existing_row(db):
+    """An edit of an already-synced row must adopt onto the SAME local
+    row, never insert a second mirror for the same definition."""
+    def_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Original", server_id="srv-def-1"
+    )
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-2",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.update_automation_definition.return_value = _server_definition_echo(
+        name="Updated standup question"
+    )
+
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+    outcome = await svc.save_definition(
+        _definition_payload(name="Updated standup question"),
+        "server:1",
+        definition_id=def_id,
+    )
+
+    assert outcome.status == "saved"
+    assert outcome.definition_id == def_id
+    assert len(db.list_automation_definitions(owner_id="server:1")) == 1
+    row = db.get_automation_definition(def_id)
+    assert row["name"] == "Updated standup question"
+    server_client.update_automation_definition.assert_awaited_once_with(
+        "srv-def-1", "prev-2"
+    )
+
+    # The outgoing preview request carried the local row's version, per
+    # the server's required_for_update check (Task 3's handoff note).
+    request = server_client.preview_automation_definition.await_args.args[0]
+    assert request["definition_version"] == 1
+    assert request["definition_id"] == "srv-def-1"
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_online_preview_rejected_writes_nothing(db):
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.return_value = {
+        "status": "invalid",
+        "validation_errors": [
+            {"field": "name", "code": "required", "message": "Name is required."}
+        ],
+    }
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(_definition_payload(), "server:1")
+
+    assert outcome.status == "invalid"
+    assert outcome.errors[0]["field"] == "name"
+    assert db.list_automation_definitions(owner_id="server:1") == []
+    server_client.create_automation_definition.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_offline_create_queues_one_mutation(db):
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(_definition_payload(), "server:1")
+
+    assert outcome.status == "queued"
+    assert outcome.definition_id
+    row = db.get_automation_definition(outcome.definition_id)
+    assert row["owner_id"] == "server:1"
+    assert row["server_id"] is None
+    assert row["lifecycle"] == "configured"
+
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1
+    assert pending[0]["local_id"] == outcome.definition_id
+    assert pending[0]["payload"]["action"] == "create"
+    assert pending[0]["payload"]["server_definition_id"] is None
+    assert (
+        pending[0]["payload"]["definition_payload"]["family"] == "recurring_question"
+    )
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_offline_create_is_a_single_atomic_db_call(
+    db,
+):
+    """Same atomicity pin as `review_automation_result`'s: the row write
+    and its outbox mutation must be ONE DB call -- not a separate
+    ``record_pending_mutation`` call after -- so the two can never land in
+    different transactions."""
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    real_create = db.create_automation_definition
+    calls: list[dict] = []
+
+    def _spy_create(*args, **kwargs):
+        calls.append(kwargs)
+        return real_create(*args, **kwargs)
+
+    db.create_automation_definition = _spy_create  # type: ignore[method-assign]
+    db.record_pending_mutation = MagicMock(  # type: ignore[method-assign]
+        side_effect=AssertionError(
+            "record_pending_mutation must not be called separately from "
+            "save_definition -- it must go through "
+            "create_automation_definition(pending_mutation=...)"
+        )
+    )
+
+    outcome = await svc.save_definition(_definition_payload(), "server:1")
+
+    assert outcome.status == "queued"
+    assert len(calls) == 1
+    assert calls[0]["pending_mutation"]["owner_id"] == "server:1"
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_offline_edit_queues_update_mutation(db):
+    """Final review C1: the queued `definition_version` must stay equal to
+    the version the SERVER holds (the local column is a mirror of it), and
+    an offline edit must not move that mirror -- the server checks it for
+    exact equality and a drifted value is rejected (409) forever."""
+    server_version = 7
+    db.upsert_automation_definitions_from_server(
+        "server:1",
+        [
+            _server_definition_echo(
+                id="srv-def-9", name="Original", version=server_version
+            )
+        ],
+    )
+    def_id = db.get_automation_definition_by_server_id("server:1", "srv-def-9")["id"]
+
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(
+        _definition_payload(name="Updated standup question"),
+        "server:1",
+        definition_id=def_id,
+    )
+
+    assert outcome.status == "queued"
+    assert outcome.definition_id == def_id
+    assert len(db.list_automation_definitions(owner_id="server:1")) == 1
+    row = db.get_automation_definition(def_id)
+    assert row["name"] == "Updated standup question"
+    assert row["version"] == server_version  # the mirror did not drift
+
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1
+    assert pending[0]["payload"]["action"] == "update"
+    assert pending[0]["payload"]["server_definition_id"] == "srv-def-9"
+    assert (
+        pending[0]["payload"]["definition_payload"]["definition_version"]
+        == server_version
+    )
+
+    # A SECOND offline edit REPLACES that mutation (pending_mutations is
+    # UNIQUE(local_id, primitive, owner_id)) -- the replacement must still
+    # carry the server's version, not a locally-bumped one.
+    outcome = await svc.save_definition(
+        _definition_payload(name="Updated again"), "server:1", definition_id=def_id
+    )
+
+    assert outcome.status == "queued"
+    assert db.get_automation_definition(def_id)["version"] == server_version
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1
+    assert (
+        pending[0]["payload"]["definition_payload"]["definition_version"]
+        == server_version
+    )
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_server_rejection_is_error_not_queued(db):
+    """Final review C2: a server-side 4xx (here a 409 version conflict,
+    mapped to `ServerClientValidationError`) is deterministic -- replaying
+    it hits the identical refusal, so the save must report `error` and
+    write/queue nothing, exactly like the policy refusal it sits beside."""
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = (
+        ServerClientValidationError("scheduled_task_definition_version_conflict")
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(_definition_payload(), "server:1")
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["code"] == "server_rejected"
+    assert "version_conflict" in outcome.errors[0]["message"]
+    assert db.list_automation_definitions(owner_id="server:1") == []
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_commit_rejection_is_error_not_queued(db):
+    """Same as above for the COMMIT call (the preview was accepted) -- the
+    PATCH is where the real 409s live."""
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.create_automation_definition.side_effect = ServerClientValidationError(
+        "scheduled_task_schedule_invalid"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(_definition_payload(), "server:1")
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["code"] == "server_rejected"
+    assert db.list_automation_definitions(owner_id="server:1") == []
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+
+
+@pytest.mark.asyncio
+async def test_save_definition_edit_preserves_fields_the_payload_does_not_carry(db):
+    """Final review I4: the v1 modal exposes neither `description` nor the
+    visibility/approval/retention policies (nor `input.max_tokens`), so a
+    rename must not wipe them -- in the DB row OR in the update payload
+    that goes to the server."""
+    db.upsert_automation_definitions_from_server(
+        "server:1",
+        [
+            _server_definition_echo(
+                id="srv-def-5",
+                version=3,
+                description="Digest of everything that changed",
+                visibility_policy={"mode": "metadata_only"},
+                approval_policy={"mode": "manual"},
+                config={
+                    "scope": {"mode": "all_searchable_library"},
+                    "retention_policy": {"mode": "custom", "keep_days": 30},
+                },
+                input={"question": "What changed?", "max_tokens": 4096},
+                notification_policy={"on_success": True, "channels": ["email"]},
+            )
+        ],
+    )
+    def_id = db.get_automation_definition_by_server_id("server:1", "srv-def-5")["id"]
+
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    # The v1 form's payload shape: no description, no policies, no max_tokens.
+    outcome = await svc.save_definition(
+        {
+            "family": "recurring_question",
+            "mode": "update",
+            "name": "Renamed",
+            "input": {"question": "What changed?", "provider": None, "model": None},
+            "schedule": {"kind": "interval", "every_seconds": 3600},
+            "config": {
+                "scope": {"mode": "all_searchable_library"},
+                "generation_mode": "optional",
+                "finding_policy": {"preset": "balanced_findings"},
+            },
+            "notification_policy": {"on_success": False, "on_failure": False},
+        },
+        "server:1",
+        definition_id=def_id,
+    )
+
+    assert outcome.status == "queued"
+    row = db.get_automation_definition(def_id)
+    assert row["name"] == "Renamed"
+    assert row["description"] == "Digest of everything that changed"
+    assert row["visibility_policy"] == {"mode": "metadata_only"}
+    assert row["approval_policy"] == {"mode": "manual"}
+    assert row["config"]["retention_policy"] == {"mode": "custom", "keep_days": 30}
+    assert row["input"]["max_tokens"] == 4096
+    assert row["notification_policy"]["channels"] == ["email"]
+    # The form's own fields still win over the stored ones.
+    assert row["notification_policy"]["on_success"] is False
+    assert row["input"].get("provider") is None
+
+    outgoing = db.get_pending_mutations(
+        "server:1", primitive="automation_definition"
+    )[0]["payload"]["definition_payload"]
+    assert outgoing["description"] == "Digest of everything that changed"
+    assert outgoing["visibility_policy"] == {"mode": "metadata_only"}
+    assert outgoing["approval_policy"] == {"mode": "manual"}
+    assert outgoing["config"]["retention_policy"] == {"mode": "custom", "keep_days": 30}
+    assert outgoing["input"]["max_tokens"] == 4096
+
+
+@pytest.mark.asyncio
+async def test_save_definition_edit_still_clears_a_field_the_payload_carries(db):
+    """The merge fills OMITTED keys only -- a payload that does carry a
+    field (here `input.provider`, which the form exposes and emits as
+    `None` when blank) still clears the stored value."""
+    def_id = db.create_automation_definition(
+        "local",
+        "recurring_question",
+        "Pinned",
+        input={"question": "What changed?", "provider": "openai", "model": "gpt-5"},
+        schedule={"kind": "interval", "every_seconds": 3600},
+    )
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    outcome = await svc.save_definition(
+        _definition_payload(
+            name="Pinned",
+            input={"question": "What changed?", "provider": None, "model": None},
+        ),
+        "local",
+        definition_id=def_id,
+    )
+
+    assert outcome.status == "saved"
+    row = db.get_automation_definition(def_id)
+    assert row["input"]["provider"] is None
+    assert row["input"]["model"] is None
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_offline_invalid_writes_nothing(db):
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(_definition_payload(name=""), "server:1")
+
+    assert outcome.status == "invalid"
+    assert db.list_automation_definitions(owner_id="server:1") == []
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_commit_failure_falls_back_offline(db):
+    """The seam can fail AFTER a valid preview too (the commit call
+    itself) -- that must fall back to the same offline path as a preview
+    failure, not raise or silently drop the save."""
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.create_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(_definition_payload(), "server:1")
+
+    assert outcome.status == "queued"
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1
+
+
+@pytest.mark.asyncio
+async def test_save_definition_missing_family_rejected_not_crashed(db):
+    """`AutomationFamily(None)` raises `ValueError` internally -- the guard
+    must catch it and reject cleanly, not propagate."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    payload = _definition_payload()
+    del payload["family"]
+
+    outcome = await svc.save_definition(payload, "local")
+
+    assert outcome.status == "invalid"
+    assert outcome.errors[0]["field"] == "family"
+    assert db.list_automation_definitions(owner_id="local") == []
+
+
+# ----------------------------------------------------------------------
+# preview_definition / save_definition fix round 1: ServerClientPolicyError
+# handling + stale-mutation clearing on a successful online save
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_preview_definition_server_owner_policy_denied_uses_policy_wording(db):
+    """review finding 3: a deterministic policy refusal must not be
+    reported with connectivity wording ("could not reach the server")
+    since retrying will never change the outcome."""
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerClientPolicyError(
+        "automation authoring is disabled for this account"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    preview = await svc.preview_definition(_definition_payload(), "server:1")
+
+    assert preview.status == "valid"  # local validation still runs offline
+    warning = next(w for w in preview.warnings if w["field"] == "_owner")
+    assert warning["code"] == "policy_denied"
+    assert "could not reach" not in warning["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_preview_policy_denied_returns_error(db):
+    """review finding 1: a policy refusal on the preview call must report
+    status="error" and write nothing -- NOT fall back to the offline
+    queue, since a replay would hit the identical refusal and SyncEngine
+    swallows it silently (the save would be "queued" forever)."""
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerClientPolicyError(
+        "automation authoring is disabled for this account"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(_definition_payload(), "server:1")
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["code"] == "policy_denied"
+    assert db.list_automation_definitions(owner_id="server:1") == []
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_commit_policy_denied_returns_error(db):
+    """Same as above, but the refusal happens on the commit call (preview
+    was valid) rather than the preview call itself."""
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.create_automation_definition.side_effect = ServerClientPolicyError(
+        "automation authoring is disabled for this account"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(_definition_payload(), "server:1")
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["code"] == "policy_denied"
+    assert db.list_automation_definitions(owner_id="server:1") == []
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+
+
+@pytest.mark.asyncio
+async def test_save_definition_online_success_clears_stale_offline_mutation(db):
+    """review finding 2: a successful ONLINE save must clear any pending
+    `automation_definition` mutation left queued by an earlier offline
+    save on the same row -- otherwise the next sync replays the stale
+    mutation, creating a duplicate server-side definition (never-synced
+    row) or silently reverting this save's newer edit (already-synced
+    row)."""
+    offline_client = AsyncMock()
+    offline_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=offline_client, runtime_source="server:1"
+    )
+
+    queued = await svc.save_definition(_definition_payload(), "server:1")
+    assert queued.status == "queued"
+    assert (
+        len(db.get_pending_mutations("server:1", primitive="automation_definition"))
+        == 1
+    )
+
+    online_client = AsyncMock()
+    online_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    online_client.create_automation_definition.return_value = _server_definition_echo()
+    svc.server_client = online_client
+
+    outcome = await svc.save_definition(
+        _definition_payload(name="Updated standup question"),
+        "server:1",
+        definition_id=queued.definition_id,
+    )
+
+    assert outcome.status == "saved"
+    assert outcome.definition_id == queued.definition_id
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    # No duplicate row: the online save adopted the SAME local row.
+    rows = db.list_automation_definitions(owner_id="server:1")
+    assert len(rows) == 1
+    assert rows[0]["server_id"] == "srv-def-1"
+
+
+@pytest.mark.asyncio
+async def test_create_reminder_targets_another_owner_without_flipping_owner_id(db):
+    """Qodo HIGH: a cross-owner save threads its owner through the call
+    instead of flipping the service's shared `owner_id` around the awaited
+    network round-trip -- concurrent workers (sync, refresh, run-now) read
+    that attribute and must never observe the temporary owner."""
+    observed: list[str] = []
+
+    class _ObservingClient:
+        notifications_service = object()
+
+        async def create_reminder(self, **payload):
+            # Stands in for any concurrent worker reading the shared owner
+            # while this call is in flight.
+            observed.append(svc.owner_id)
+            raise ServerUnavailableError("offline")
+
+    svc = SchedulingService(
+        db=db, server_client=_ObservingClient(), runtime_source="local"
+    )
+
+    task = await svc.create_reminder(
+        _reminder_payload("Server reminder"), owner_id="server:1"
+    )
+
+    assert observed == ["local"], "the active owner must stay untouched"
+    assert svc.owner_id == "local"
+    assert svc.sync_engine.owner_id == "local"
+    # The row and its queued push both land under the TARGET owner.
+    rows = db.list_reminder_tasks(owner_id="server:1")
+    assert [row["id"] for row in rows] == [task.id]
+    assert db.list_reminder_tasks(owner_id="local") == []
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 1
+    assert pending[0]["payload"]["action"] == "create"
+
+
+@pytest.mark.asyncio
+async def test_update_reminder_targets_another_owner_without_flipping_owner_id(db):
+    """Same threading rule on the update path."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    created = await svc.create_reminder(_reminder_payload("Server reminder"))
+    # Already known to the server, so the update takes the PATCH branch.
+    db.update_reminder_task(created.id, server_id="srv-1")
+
+    offline_client = AsyncMock()
+    offline_client.notifications_service = object()
+    offline_client.update_reminder.side_effect = ServerUnavailableError("offline")
+    svc.server_client = offline_client
+
+    await svc.update_reminder(created.id, {"title": "Renamed"}, owner_id="server:1")
+
+    assert svc.owner_id == "local"
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 1
+    assert pending[0]["payload"]["action"] == "update"
+    assert db.get_reminder_task(created.id)["title"] == "Renamed"
+
+
+@pytest.mark.asyncio
+async def test_reminder_owner_defaults_to_the_active_owner(db):
+    """The new parameter is optional: every pre-existing caller is unchanged."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    task = await svc.create_reminder(_reminder_payload("Default owner"))
+    assert db.get_reminder_task(task.id)["owner_id"] == "local"

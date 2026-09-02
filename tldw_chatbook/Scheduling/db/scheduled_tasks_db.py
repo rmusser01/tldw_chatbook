@@ -1012,13 +1012,30 @@ class ScheduledTasksDB(BaseDB):
     # ------------------------------------------------------------------
 
     def create_automation_definition(
-        self, owner_id: str, family: str, name: str, **kwargs: Any
+        self,
+        owner_id: str,
+        family: str,
+        name: str,
+        *,
+        pending_mutation: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> str:
         """Create an automation definition and return its generated local UUID.
 
         Defaults ``lifecycle`` to ``configured`` and ``health`` to
         ``execution_unavailable`` when not provided. JSON fields are serialized
         and datetime fields are converted to UTC ISO-8601 strings.
+
+        When ``pending_mutation`` is given (``{"primitive", "owner_id",
+        "payload"}``), an ``automation_definition`` mutation is recorded in
+        ``pending_mutations`` in the SAME transaction as the INSERT --
+        mirrors ``update_result_review``'s ``pending_mutation`` precedent,
+        so a crash between the two writes can never leave a local row
+        without the outbox row that pushes it. Unlike that precedent,
+        the dict carries no ``local_id``: this call generates the
+        definition's id itself, so the mutation is always keyed by the id
+        this call returns, not one the caller could have supplied ahead
+        of time.
         """
         self._validate_kwargs(
             kwargs, self._AUTOMATION_DEFINITION_COLUMNS, "automation definition"
@@ -1026,6 +1043,7 @@ class ScheduledTasksDB(BaseDB):
 
         definition_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
+        now_iso = self._to_utc_iso(now)
 
         fields: dict[str, Any] = {
             "id": definition_id,
@@ -1035,8 +1053,8 @@ class ScheduledTasksDB(BaseDB):
             "lifecycle": "configured",
             "health": "execution_unavailable",
             "version": 1,
-            "created_at": self._to_utc_iso(now),
-            "updated_at": self._to_utc_iso(now),
+            "created_at": now_iso,
+            "updated_at": now_iso,
         }
 
         for key, value in kwargs.items():
@@ -1058,6 +1076,15 @@ class ScheduledTasksDB(BaseDB):
                 f"INSERT INTO automation_definitions ({columns}) VALUES ({placeholders})",
                 list(fields.values()),
             )
+            if pending_mutation is not None:
+                self._insert_pending_mutation_conn(
+                    conn,
+                    local_id=definition_id,
+                    primitive=pending_mutation["primitive"],
+                    owner_id=pending_mutation["owner_id"],
+                    payload=pending_mutation["payload"],
+                    now_iso=now_iso,
+                )
 
         logger.debug(
             f"Created automation definition {definition_id} for owner {owner_id}"
@@ -1069,6 +1096,25 @@ class ScheduledTasksDB(BaseDB):
         with closing(self._get_connection()) as conn:
             cursor = conn.execute(
                 "SELECT * FROM automation_definitions WHERE id = ?", (definition_id,)
+            )
+            return self._row_to_dict(
+                cursor.fetchone(), json_fields=self._AUTOMATION_JSON_FIELDS
+            )
+
+    def get_automation_definition_by_server_id(
+        self, owner_id: str, server_id: str
+    ) -> Optional[dict[str, Any]]:
+        """Fetch an automation definition by owner and server-side identifier.
+
+        Mirrors ``get_reminder_task_by_server_id``. Used by the authoring
+        facade (Task 4) to recover the local row an online create just
+        mirrored via ``upsert_automation_definitions_from_server`` -- that
+        upsert reports only insert/update counts, not the generated id.
+        """
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                "SELECT * FROM automation_definitions WHERE owner_id = ? AND server_id = ?",
+                (owner_id, server_id),
             )
             return self._row_to_dict(
                 cursor.fetchone(), json_fields=self._AUTOMATION_JSON_FIELDS
@@ -1158,7 +1204,12 @@ class ScheduledTasksDB(BaseDB):
             return self._rows_to_dicts(rows, json_fields=self._AUTOMATION_JSON_FIELDS)
 
     def update_automation_definition(
-        self, definition_id: str, *, bump_version: bool = True, **kwargs: Any
+        self,
+        definition_id: str,
+        *,
+        bump_version: bool = True,
+        pending_mutation: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> bool:
         """Update automation-definition fields. Returns True if a row changed.
 
@@ -1167,6 +1218,14 @@ class ScheduledTasksDB(BaseDB):
         ``bump_version=False`` for a non-edit update (e.g. the scheduler's
         `next_run_at` advance) so version churn doesn't pollute conflict
         detection -- PR-2 final-review parking note.
+
+        When ``pending_mutation`` is given (``{"primitive", "owner_id",
+        "payload"}``), an ``automation_definition`` mutation is recorded in
+        ``pending_mutations`` -- keyed by ``definition_id`` -- in the SAME
+        transaction as the UPDATE, same atomicity precedent as
+        ``create_automation_definition``'s. Never recorded when the row
+        didn't change (unknown ``definition_id``): there is nothing to
+        push.
         """
         if not kwargs:
             return False
@@ -1199,7 +1258,8 @@ class ScheduledTasksDB(BaseDB):
         if bump_version:
             updates.append("version = version + 1")
         updates.append("updated_at = ?")
-        params.append(self._to_utc_iso(datetime.now(timezone.utc)))
+        now_iso = self._to_utc_iso(datetime.now(timezone.utc))
+        params.append(now_iso)
         params.append(definition_id)
 
         with self.transaction() as conn:
@@ -1207,7 +1267,17 @@ class ScheduledTasksDB(BaseDB):
                 f"UPDATE automation_definitions SET {', '.join(updates)} WHERE id = ?",
                 params,
             )
-            return cursor.rowcount > 0
+            changed = cursor.rowcount > 0
+            if changed and pending_mutation is not None:
+                self._insert_pending_mutation_conn(
+                    conn,
+                    local_id=definition_id,
+                    primitive=pending_mutation["primitive"],
+                    owner_id=pending_mutation["owner_id"],
+                    payload=pending_mutation["payload"],
+                    now_iso=now_iso,
+                )
+            return changed
 
     def delete_automation_definition(self, definition_id: str) -> bool:
         """Delete an automation definition by local id."""
@@ -1719,7 +1789,36 @@ class ScheduledTasksDB(BaseDB):
         return {"inserted": inserted, "updated": updated}
 
     def _serialize_definition_fields(self, fields: dict[str, Any]) -> dict[str, Any]:
-        """Apply the same JSON/datetime conversion `update_automation_definition` uses."""
+        """Apply the same JSON/datetime conversion `update_automation_definition` uses.
+
+        Also strips a `config.scope.resolved_sources` key when present
+        (task 6 fix-round finding): both server-mirror write paths --
+        `adopt_server_definition_identity` and
+        `upsert_automation_definitions_from_server` -- route every
+        definition write through here, so this is the single choke point
+        that covers both. `normalize_recurring_question_scope`'s
+        `"all_searchable_library"` branch (`recurring_question_scope.py`)
+        computes `resolved_sources` fresh on every call as an OUTPUT
+        projection, never an accepted input field -- persisting a
+        server-echoed copy of it would make any later re-normalization of
+        this row's scope (a scheduled dispatch, the sources-readable
+        health check) report a spurious "unsupported field" error and
+        degrade every run. Same bug, same fix shape as the local-authoring
+        path's (`SchedulingService._definition_db_fields_from_preview`),
+        which is a separate write path (`create_automation_definition`/
+        `update_automation_definition` serialize inline, never through
+        this method) and still needs its own strip.
+        """
+        config = fields.get("config")
+        if isinstance(config, dict):
+            scope = config.get("scope")
+            if isinstance(scope, dict) and "resolved_sources" in scope:
+                fields = dict(fields)
+                fields["config"] = {
+                    **config,
+                    "scope": {k: v for k, v in scope.items() if k != "resolved_sources"},
+                }
+
         serialized: dict[str, Any] = {}
         for key, value in fields.items():
             if key in self._AUTOMATION_JSON_FIELDS:
@@ -1729,6 +1828,54 @@ class ScheduledTasksDB(BaseDB):
             else:
                 serialized[key] = value
         return serialized
+
+    def adopt_server_definition_identity(
+        self, local_id: str, server_item: dict[str, Any]
+    ) -> bool:
+        """Adopt a server identity onto a local row after a create/update push.
+
+        Called by `SyncEngine`'s definition push replay (Task 3) right
+        after a `create`/`update` mutation succeeds: sets `server_id` and
+        applies every server-wins field from `server_item` (the create/
+        update response echo) in ONE transaction, same field set and
+        `transfer_state` exclusion as `upsert_automation_definitions_from_
+        server`'s existing-row branch -- but keyed by the local row
+        directly (``id = local_id``) since the caller already knows which
+        local row this mutation came from, rather than matching by
+        ``(owner_id, server_id)``.
+
+        Args:
+            local_id: The local definition row that pushed the mutation.
+            server_item: The definition row echoed back by the server's
+                create/update response.
+
+        Returns:
+            ``True`` if a local row was found and updated, ``False``
+            otherwise (e.g. the row was deleted locally in the meantime).
+        """
+        server_id = server_item.get("id")
+        if not server_id:
+            return False
+
+        fields: dict[str, Any] = {
+            key: server_item[key]
+            for key in self._AUTOMATION_DEFINITION_COLUMNS
+            if key in server_item and key not in {"id", "server_id", "owner_id"}
+        }
+        # §6 parked finding, same as the pull-mirror upsert: transfer_state
+        # is a local-only marker a server echo must never overwrite.
+        fields.pop("transfer_state", None)
+        fields["server_id"] = server_id
+
+        serialized = self._serialize_definition_fields(fields)
+        self._validate_sql_identifiers(list(serialized.keys()))
+        updates = ", ".join(f"{key} = ?" for key in serialized)
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                f"UPDATE automation_definitions SET {updates} WHERE id = ?",
+                [*serialized.values(), local_id],
+            )
+            return cursor.rowcount > 0
 
     def upsert_automation_results_from_server(
         self,
@@ -1989,6 +2136,37 @@ class ScheduledTasksDB(BaseDB):
     # ------------------------------------------------------------------
     # Pending mutations
     # ------------------------------------------------------------------
+
+    def _insert_pending_mutation_conn(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        local_id: str,
+        primitive: str,
+        owner_id: str,
+        payload: dict[str, Any],
+        now_iso: str,
+    ) -> None:
+        """Insert one pending-mutation row on an already-open transaction.
+
+        Shared by callers that record a mutation atomically alongside
+        another write -- same ``INSERT OR REPLACE`` + auto-filled
+        ``idempotency_key`` behavior as the standalone
+        ``record_pending_mutation``, factored out of ``update_result_
+        review``'s inline precedent so ``create_automation_definition``/
+        ``update_automation_definition`` can reuse it (Task 4).
+        """
+        stored_payload = dict(payload)
+        if not stored_payload.get("idempotency_key"):
+            stored_payload["idempotency_key"] = str(uuid.uuid4())
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO pending_mutations
+            (local_id, primitive, owner_id, payload, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (local_id, primitive, owner_id, self._to_json(stored_payload), now_iso),
+        )
 
     def record_pending_mutation(
         self,
