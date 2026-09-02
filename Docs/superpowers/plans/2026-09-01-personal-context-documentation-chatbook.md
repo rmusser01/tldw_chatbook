@@ -45,6 +45,21 @@ Completed before Chatbook execution. The server documentation landed through PR 
 
 The Chatbook approved specification and publication history are already on `dev`: PR #2292 published the design under authoritative TASK-27016, and PR #2294 corrected its final evidence. The stale younger TASK-26836 publication record from this branch was dropped during rebase; the older TASK-26836 Console tray record and authoritative TASK-27016 remain unchanged.
 
+## Corrected shipped-behavior claim inventory (PR #2310)
+
+This inventory supersedes the older continuous-sync assumptions in the first documentation pass and is the fail-closed source for Tasks 2-5:
+
+- Reviewed first linking is the only shipped Personal Context publication path. It publishes the eligible canonical snapshot resulting from the user's approved content-free reconciliation plan. Later syncable Chatbook changes create encrypted Personal Context outbox entries, but no shipped ongoing Personal Context caller drains them. **Manual Sync** covers Notes and Chat only. Ordinary server REST changes are not published to Chatbook.
+- The fixed interview is local. The adaptive interview uses the default Console provider and model with tools disabled. Each request includes the audience, coverage topics, attempt number, and eligible records from the selected scope; after the first answer, it also includes every prior answered turn and raw answer text. The actual provider/model is shown only after the first provider response completes, before answer input.
+- Interview draft and transcript objects are not Sync payloads. Approved answer text may become an ordinary canonical record, after which the record's controls determine first-link eligibility.
+- Chatbook accepts HTTP and HTTPS home-server URLs. Runtime calls honor the saved default verification, custom CA bundle, or verification-off setting. **Test Connection** uses the HTTP client's default certificate verification rather than the saved custom/off setting.
+- Before approval, first-link bootstrap exchanges metadata and downloads sync-eligible server records and proposals into transient memory. The review UI and durable review state are content-free, and no local profile content uploads before approval.
+- **Remove local profile** removes the canonical profile repository and canonical profile outbox. Separate Sync state, staged encrypted envelopes, and staging keys can remain; the action neither deletes the server copy nor unregisters the device. If key cleanup fails, use **Finish secure removal**. Recovery export has no shipped import/restore path.
+- Chatbook does not expose **Delete everywhere**. Authenticated server purge leaves a server-local fence in `purge_pending`; Sync distribution and acknowledgement completion are not wired end to end.
+- First-link semantic collisions are reviewed before publication. Later transport conflicts can retain generic metadata, but no shipped ongoing Personal Context cycle, status surface, or dedicated Personal Context resolver is available.
+
+**Ordered-merge dependency:** the stable server guide URLs temporarily retain the older continuous-sync wording. Final cross-repository parity and link-content checks remain blocked until the already-approved server correction branch is merged; the Chatbook guide must use the corrected PR #2310 specification in the meantime.
+
 ### Task 1: Rebase and establish the shipped-behavior claim inventory
 
 **Files:**
@@ -567,18 +582,20 @@ git commit -m "docs: plan Chatbook Personal Context guides"
 **Files:**
 
 - Modify: `Docs/User_Guide/settings/personal-context-profile.md`
+- Modify: `Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md`
+- Modify: `backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md`
 
-- [x] **Step 1: Add `In five minutes` after `Getting there`**
+- [x] **Step 1: Correct the quick start after `Getting there`**
 
 Wrap the section in `<!-- personal-context-quick-start:start -->` and `<!-- personal-context-quick-start:end -->`. It must contain exactly five numbered steps covering:
 
 1. Open **F9 > Data & Privacy > My Profile**.
-2. Choose manual entry or optional **Get to know you**; skipping is supported and stores no answers.
+2. Choose manual entry or optional **Get to know you**; fixed questions stay local, adaptive questions use the default Console provider, and skipping stores no answer.
 3. Review every proposed value and its visibility/syncability controls.
-4. Save, optionally enable agent use, and inspect **Context > Next Send**.
+4. Choose **Save only** or **Save and use with agents**, and inspect **Context > Next Send** before sending.
 5. Link a supported home server only when sharing is desired.
 
-- [x] **Step 2: Add `Common workflows`**
+- [x] **Step 2: Correct `Common workflows` and current controls**
 
 Under `### Common workflows`, use these exact subheadings so each workflow is independently verifiable:
 
@@ -589,38 +606,47 @@ Under `### Common workflows`, use these exact subheadings so each workflow is in
 - `#### Remove the local copy`
 - `#### Link a home server`
 
-Cover global preferences and workspace goals/conventions across those workflows. Use current control names. State that new inferred facts remain proposals; direct write only updates an existing eligible record for an explicit correction evidenced by the current persisted user message.
+Cover global preferences and workspace goals/conventions across those workflows. Use current control names. The manual editor chooses a workspace scope inside **Add record**, while the interview first chooses a linked scope and mode. State that new inferred facts remain proposals; direct write only updates an existing eligible record for an explicit correction evidenced by the current persisted user message.
 
-- [x] **Step 3: Add `What currently synchronizes`**
+- [x] **Step 3: Add `What first linking publishes, and what does not sync afterward`**
 
 Include this deliberately identical shared-contract block, with the markers retained so cross-repository parity can be checked automatically:
 
 ```markdown
 <!-- shared-personal-context-contract:start -->
 - `tldw_profile_core` defines the versioned canonical profile object models, exact canonical bytes, interview/tool contracts, serialization, and validation used by both peers. Sync-v2 transport envelopes are a separate contract.
-- After a successful reviewed link, Chatbook and tldw_server converge on the same canonical manifest, scope, record, proposal, and version identities and bytes for eligible shared objects.
-- Sync V2 defines the `personal_context.manifest`, `personal_context.scope`, `personal_context.record`, `personal_context.proposal`, and content-free `personal_context.purge` domains. The current linked flow publishes eligible Chatbook-originated manifest, scope, record, and proposal changes; purge production and distribution are not wired end to end.
+- After successful reviewed first linking, Chatbook and tldw_server converge on the same canonical manifest, scope, record, proposal, and version identities and bytes for the eligible snapshot resulting from the user-approved content-free reconciliation plan.
+- Sync V2 defines the `personal_context.manifest`, `personal_context.scope`, `personal_context.record`, `personal_context.proposal`, and content-free `personal_context.purge` domains. Reviewed first linking publishes the eligible snapshot resulting from the user-approved content-free reconciliation plan. Later syncable Chatbook mutations create encrypted local outbox entries, but the current shipped app does not run an ongoing Personal Context sync cycle, so those post-link changes remain queued locally. Purge production and distribution are not wired end to end.
 - Each peer retains its own at-rest ciphertext and keys, local database rows, runtime permissions, conflict-review metadata, acknowledgement tracking, and other operational state.
 <!-- shared-personal-context-contract:end -->
 ```
 
 Follow it with this full matrix, wrapped in `<!-- personal-context-boundary-matrix:start -->` and `<!-- personal-context-boundary-matrix:end -->`:
 
-| Shared through the current linked flow when eligible | Remains peer-local or is not currently published |
+| Published during successful reviewed first linking when eligible | Not published by the shipped ongoing application lifecycle |
 | --- | --- |
-| Canonical manifest after successful reviewed linking | Peer-local at-rest encryption and recovery keys |
-| Required global and linked-workspace scope objects | Raw interview answers and unfinished drafts |
-| Records and tombstones whose controls permit synchronization | Runtime agent authority grants and tool availability |
-| Eligible proposals and their canonical review state | Device-only records or records marked non-syncable |
-| Exact canonical object identities, versions, and bytes for eligible shared objects | Local undo history, caches, ciphertext, database row identities, and other operational metadata |
-| — | Conflict-review objects and acknowledgement tracking |
+| Canonical manifest in the snapshot resulting from the user-approved content-free reconciliation plan | Later syncable Chatbook mutations: encrypted outbox entries are created but no shipped ongoing Personal Context caller sends them |
+| Required global and linked-workspace scopes in that snapshot | Ordinary server REST mutations: the server copy changes but no Personal Context Sync entry publishes them to Chatbook |
+| Eligible record heads, tombstones, and proposal review state selected by reconciliation, including approved interview answer content after it becomes a canonical record payload | Device-only or non-syncable records |
+| Exact canonical object identities, versions, and bytes for those eligible objects | Runtime agent authority grants, tool availability, local workspace mappings, and enablement |
+| — | Peer-local at-rest encryption/recovery keys, local undo data, caches, ciphertext, database row identities, conflict-review metadata, acknowledgement tracking, and other operational state |
+| — | Encrypted interview draft and transcript objects are not Sync payloads as such; adaptive interview requests still send prior raw answers to the configured provider, while approved answer content may become a syncable canonical record as described at left |
 
 Required notes:
 
-- Ordinary server REST edits are not currently published to linked Chatbook clients.
+- **Manual Sync** sends Notes and Chat changes only; it does not drain the Personal Context outbox.
+- Ordinary server REST edits are not published to linked Chatbook clients.
 - `personal_context.purge` exists at the protocol boundary, but Chatbook has no producer and the server endpoint does not distribute it through Sync V2.
 
-- [x] **Step 4: Correct deletion wording**
+- [x] **Step 4: Correct interview, linking, TLS, export, and removal detail**
+
+Document these shipped boundaries in user language:
+
+- Fixed interviews stay local. Adaptive interviews use the default Console provider/model with tools off and send the audience, topics, attempt, eligible selected-scope records, and, after the first answer, all prior answered turns including raw answer text. The UI shows the actual provider/model only after the first response and before answer input.
+- Link from **Settings > Overview > Advanced / Diagnostics > Switch Source / Server**, then return to **Data & Privacy > My Profile > Link to home server**. HTTP and HTTPS are accepted. Runtime calls honor default verification, custom CA, or verification off; **Test Connection** always uses default certificate verification.
+- Before approval, bootstrap exchanges metadata and downloads eligible server records/proposals into memory. The durable review and screen remain content-free, and no local profile content uploads before approval.
+- Plaintext export and recovery export are separate. Recovery export includes canonical local heads, including device-only records, but Chatbook has no shipped recovery import/restore flow.
+- **Remove local profile** removes canonical profile rows and the canonical profile outbox. It can leave separate Sync state, staged encrypted envelopes, and staging keys; it does not delete the server copy or unregister the device. If key cleanup fails, use **Finish secure removal**.
 
 Keep **Remove local profile** as the available Chatbook action. State plainly:
 
@@ -628,42 +654,58 @@ Keep **Remove local profile** as the available Chatbook action. State plainly:
 
 Do not tell users that reconnecting devices clears `purge_pending`.
 
-- [x] **Step 5: Add troubleshooting**
+- [x] **Step 5: Replace troubleshooting with the corrected shipped states**
 
-Under `### Troubleshooting`, add a table wrapped in `<!-- personal-context-troubleshooting:start -->` and `<!-- personal-context-troubleshooting:end -->`. Use the exact header `| State | Cause | Safe next action | Current limit |`. Each of these exact seven bold state labels must have non-empty cells for cause, safe next action, and current product limit:
+Under `### Troubleshooting`, add a table wrapped in `<!-- personal-context-troubleshooting:start -->` and `<!-- personal-context-troubleshooting:end -->`. Use the exact header `| State | Cause | Safe next action | Current limit |`. Each of these exact eleven bold state labels must have non-empty cells for cause, safe next action, and current product limit:
 
 1. **Profile locked**
-2. **Offline or queued**
-3. **Capability not negotiated**
-4. **Version conflict**
-5. **First-link semantic collision**
-6. **Post-link semantic collision**
-7. **Purge pending**
+2. **Adaptive interview privacy or provider failure**
+3. **HTTP or altered TLS verification**
+4. **Post-link change queued**
+5. **Capability not negotiated**
+6. **First-link publication interrupted**
+7. **Version conflict**
+8. **First-link semantic collision**
+9. **Post-link semantic collision**
+10. **Local removal incomplete or residual state**
+11. **Purge pending**
 
-Also explain why an ordinary server REST edit may not appear in Chatbook. State that post-link conflicts retain generic Sync metadata but have no dedicated Personal Context resolution screen.
+Do not recommend **Manual Sync** or a Personal Context status screen. Explain that later local edits and ordinary server REST edits are not published by the shipped ongoing lifecycle. Post-link conflicts retain generic Sync metadata but have no dedicated Personal Context resolution screen.
 
-- [x] **Step 6: Add stable server links**
+- [x] **Step 6: Keep stable server links and concise operator guidance**
 
 Link to:
 
 - `https://github.com/rmusser01/tldw_server/blob/dev/Docs/User_Guides/Server/Personal_Context_Profile.md`
 - `https://github.com/rmusser01/tldw_server/blob/dev/Docs/API-related/Personal_Context_API.md`
 
-- [x] **Step 7: Run claim and diff guards**
+- [x] **Step 7: Run corrected claim, control, and diff guards**
 
 Run:
 
 ```bash
 set -e -o pipefail
-rg -n "does not currently expose|not currently published|not wired end to end|no dedicated Personal Context" \
-  Docs/User_Guide/settings/personal-context-profile.md
+profile_user_guide=Docs/User_Guide/settings/personal-context-profile.md
+rg -n "does not currently expose|no shipped ongoing Personal Context|Manual Sync.*Notes and Chat|not published|not wired end to end|no dedicated Personal Context" \
+  "$profile_user_guide"
+rg -n "Fixed local questions|default Console provider|Test Connection|custom CA|Finish secure removal|no recovery import|content-free" \
+  "$profile_user_guide"
+if rg -n -i \
+  -e 'retry (manual )?sync' \
+  -e '(open|inspect|use).{0,30}personal context status' \
+  -e 'delete everywhere.{0,40}(available|choose|select)' \
+  -e 'ordinary server REST edits are (published|synced|synchronized)' \
+  "$profile_user_guide"; then
+  echo "Unsupported Personal Context guidance remains"
+  exit 1
+fi
 git diff --check -- Docs/User_Guide/settings/personal-context-profile.md
 git diff -- Docs/User_Guide/settings/personal-context-profile.md
 ```
 
 Expected: current limitations are explicit and the existing reference is refined rather than duplicated.
 
-- [x] **Step 8: Record Task 2 execution and commit the user guide**
+- [x] **Step 8: Record Task 2 remediation and commit the user guide**
 
 After Steps 1-7 have run successfully, mark every Task 2 step through this commit step `[x]`. Commit that execution record with the guide.
 
@@ -673,7 +715,8 @@ Run:
 set -e -o pipefail
 git add \
   Docs/User_Guide/settings/personal-context-profile.md \
-  Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md
+  Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md \
+  "backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md"
 git diff --check --cached
 git commit -m "docs: clarify Chatbook Personal Context workflows"
 ```
