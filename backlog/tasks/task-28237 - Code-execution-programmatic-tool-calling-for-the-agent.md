@@ -1,5 +1,5 @@
 ---
-id: TASK-28227
+id: TASK-28237
 title: Code execution / programmatic tool calling for the agent
 status: To Do
 assignee: []
@@ -24,3 +24,11 @@ Hermes-parity deferred row C6, promoted by TASK-26041's review: still the highes
 - [ ] #3 A gated tool inside a script raises the same approval card as a direct call; denial fails the script honestly
 - [ ] #4 Resource bounds (wall time, output size) match or tighten the existing per-call bounds
 <!-- AC:END -->
+
+## Renumbering provenance
+
+This task previously held id TASK-28227, colliding with the
+"Agent-loop-active-turn-redirect-keeping-completed-tool-results" task that arrived on origin/dev first (dev minted 28226-28228
+within the hour after this batch's sweep; re-verified at the wave-2 dev merge,
+2026-09-02). Per the TASK-19601 owner rule the younger task renumbers with
+provenance; it is now TASK-28237.

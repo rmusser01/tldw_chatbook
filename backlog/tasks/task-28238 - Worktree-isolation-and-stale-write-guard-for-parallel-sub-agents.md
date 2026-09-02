@@ -1,5 +1,5 @@
 ---
-id: TASK-28228
+id: TASK-28238
 title: Worktree isolation and stale-write guard for parallel sub-agents
 status: To Do
 assignee: []
@@ -24,3 +24,11 @@ Deferred rows C3+C7 combined, promoted by TASK-26041: their shared precondition 
 - [ ] #3 Single-agent behavior is unchanged by default
 - [ ] #4 The refusal path is exercised by a test that races two writers
 <!-- AC:END -->
+
+## Renumbering provenance
+
+This task previously held id TASK-28228, colliding with the
+"MCP-wire-server-initiated-sampling-elicitation-to-the-live-chat-provider-and-approval-surface" task that arrived on origin/dev first (dev minted 28226-28228
+within the hour after this batch's sweep; re-verified at the wave-2 dev merge,
+2026-09-02). Per the TASK-19601 owner rule the younger task renumbers with
+provenance; it is now TASK-28238.
