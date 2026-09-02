@@ -202,6 +202,11 @@ from ...Chat.console_session_settings import (
     build_console_settings_readiness,
     default_console_session_settings,
 )
+from ...Chat.console_switcher_state import (
+    ConsoleSwitcherEntry,
+    SwitcherTargetKind,
+    UnavailableSessionNotice,
+)
 from ...Chat.thinking_blocks import normalize_thinking_history_policy
 from ...Chat.console_scratch_space import ConsoleScratchSnapshot
 from ...Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
@@ -243,6 +248,10 @@ from ...Widgets.Console.console_reaction_picker_modal import (
     ReactionOption,
 )
 from ...Widgets.Console.console_session_switcher_modal import ConsoleSwitcherChoice
+from ...Widgets.Console.console_activity_outcome_notice import (
+    ConsoleActivityOutcomeNotice,
+    ConsoleActivityOutcomePresentation,
+)
 from ...Workspaces import ConsoleConversationBrowserRow, DEFAULT_WORKSPACE_ID
 from ...Workspaces.display_state import (
     ConsoleWorkspaceContextState,
@@ -667,6 +676,9 @@ class ConsoleSessionController:
         invalidate_persisted_rows_cache: Callable[[], None],
         mark_conversation_row_broken: Callable[[str], None],
         refresh_effective_scope_and_sync: Callable[[Any], Any],
+        session_surface_accessor: Callable[[], Any | None],
+        switcher_authority_accessor: Callable[[], tuple[str, str]],
+        console_runtime_accessor: Callable[[], Any],
         set_active_workspace_for_session: Callable[[str], None],
         resume_workspace_conversation: Callable[..., Any],
         workspace_initial_session_title: Callable[[str | None], str],
@@ -848,6 +860,9 @@ class ConsoleSessionController:
         self._invalidate_persisted_rows_cache_fn = invalidate_persisted_rows_cache
         self._mark_conversation_row_broken_fn = mark_conversation_row_broken
         self._refresh_effective_scope_and_sync_fn = refresh_effective_scope_and_sync
+        self._session_surface_accessor = session_surface_accessor
+        self._switcher_authority_accessor = switcher_authority_accessor
+        self._console_runtime_accessor = console_runtime_accessor
         self._set_active_workspace_for_session_fn = set_active_workspace_for_session
         self._resume_workspace_conversation_fn = resume_workspace_conversation
         self._workspace_initial_session_title_fn = workspace_initial_session_title
@@ -2430,6 +2445,7 @@ class ConsoleSessionController:
         """
         controller = self._ensure_console_chat_controller()
         if controller.store.active_session_id != session_id:
+            self._hide_console_activity_notice()
             self._capture_console_draft_switch_snapshot()
             self._note_console_follow_intent()
             self._set_active_workspace_for_session(session_id)
@@ -2669,12 +2685,7 @@ class ConsoleSessionController:
     async def _apply_console_switcher_choice(
         self, choice: ConsoleSwitcherChoice | None
     ) -> None:
-        """Apply a switcher selection through the shared native-session activation helper.
-
-        Mirrors the session-tab click handler and Alt+1..9 tab-jump: all three
-        call ``_activate_native_console_session`` so there is one activation
-        sequence (set workspace, switch, sync UI, focus composer) shared
-        across Console session-selection entry points.
+        """Apply one authority-bound switcher selection without target inference.
 
         Args:
             choice: Switcher result, or ``None`` if the switcher was cancelled.
@@ -2682,30 +2693,311 @@ class ConsoleSessionController:
         if choice is None:
             return
         entry = choice.entry
-        if choice.kind == "rename" and entry.native_session_id:
-            self._open_console_session_rename_modal(entry.native_session_id)
+        if choice.kind == "mark_seen" and isinstance(entry, UnavailableSessionNotice):
+            await self._mark_unavailable_switcher_notice_seen(entry)
+            return
+        if not isinstance(entry, ConsoleSwitcherEntry) or entry.target is None:
+            self._notify_stale_switcher_target()
+            return
+        target = entry.target
+        if not self._switcher_target_authority_is_current(target):
+            self._notify_stale_switcher_target()
+            return
+
+        if choice.kind == "rename":
+            if (
+                target.kind is SwitcherTargetKind.NATIVE_SESSION
+                and target.session_id == entry.native_session_id
+                and self._native_switcher_destination_exists(target.session_id)
+            ):
+                self._open_console_session_rename_modal(target.session_id)
+            else:
+                self._notify_stale_switcher_target()
             return
         if choice.kind != "activate":
             return
-        if entry.native_session_id:
-            await self._activate_native_console_session(entry.native_session_id)
-            return
-        if entry.conversation_id:
+
+        activated = False
+        if target.kind is SwitcherTargetKind.NATIVE_SESSION:
+            if (
+                target.session_id != entry.native_session_id
+                or not self._native_switcher_destination_exists(target.session_id)
+            ):
+                self._notify_stale_switcher_target()
+                return
+            await self._activate_native_console_session(target.session_id)
+            activated = self._native_switcher_destination_is_current(target.session_id)
+        elif target.kind is SwitcherTargetKind.PERSISTED_CONVERSATION:
+            if (
+                target.conversation_id != entry.conversation_id
+                or not target.conversation_id
+            ):
+                self._notify_stale_switcher_target()
+                return
+            self._hide_console_activity_notice()
             resumed = await self._resume_workspace_conversation(
-                entry.conversation_id,
-                target_scope_type=entry.scope_type or None,
-                target_workspace_id=entry.workspace_id,
+                target.conversation_id,
+                target_scope_type=target.scope_type or None,
+                target_workspace_id=target.workspace_id,
             )
             if resumed is False:
                 # TASK-717: record missing - same honest feedback and broken
                 # marking as the rail row path (resume no longer self-toasts
                 # for this failure class).
-                self._mark_console_conversation_row_broken(entry.conversation_id)
+                self._mark_console_conversation_row_broken(target.conversation_id)
                 self.app_instance.notify(
                     "This saved conversation could not be loaded - "
                     "its record is missing.",
                     severity="warning",
                 )
+                return
+            activated = resumed is True and (
+                self._current_console_conversation_id() == target.conversation_id
+            )
+        if not activated:
+            self._notify_stale_switcher_target()
+            return
+        self._show_console_activity_notice(entry)
+
+    def _switcher_target_authority_is_current(self, target: Any) -> bool:
+        """Return whether an immutable target still belongs to this runtime."""
+        try:
+            profile, token = self._switcher_authority_accessor()
+        except Exception:  # noqa: BLE001 - stale selection must fail closed
+            return False
+        return bool(
+            target.profile_authority == profile and target.authority_token == token
+        )
+
+    def _native_switcher_destination_exists(self, session_id: str | None) -> bool:
+        """Return whether the exact native destination still exists."""
+        if not session_id:
+            return False
+        store = self._console_chat_store
+        return bool(
+            store is not None
+            and any(session.id == session_id for session in store.sessions())
+        )
+
+    def _native_switcher_destination_is_current(self, session_id: str) -> bool:
+        """Return whether the exact native destination owns the visible surface."""
+        store = self._console_chat_store
+        return bool(store is not None and store.active_session_id == session_id)
+
+    def _notify_stale_switcher_target(self) -> None:
+        """Explain a failed-closed stale selection without guessing a fallback."""
+        self.app_instance.notify(
+            "This switcher result is no longer available. Reopen Ctrl+K to refresh.",
+            severity="warning",
+        )
+
+    def _console_activity_notice(self) -> ConsoleActivityOutcomeNotice | None:
+        """Return the mounted destination notice through the named DOM seam."""
+        try:
+            surface = self._session_surface_accessor()
+            if surface is None or not surface.is_mounted:
+                return None
+            return surface.query_one(
+                "#console-activity-outcome-notice",
+                ConsoleActivityOutcomeNotice,
+            )
+        except (AttributeError, QueryError):
+            return None
+
+    def _hide_console_activity_notice(self) -> None:
+        """Invalidate any destination evidence owned by the previous tab."""
+        notice = self._console_activity_notice()
+        if notice is not None and notice.presentation is not None:
+            notice.hide()
+
+    def _show_console_activity_notice(self, entry: ConsoleSwitcherEntry) -> None:
+        """Show frozen result evidence and schedule exact success acknowledgement."""
+        target = entry.target
+        if target is None or not target.receipts:
+            return
+        store = self._console_chat_store
+        active_session_id = store.active_session_id if store is not None else None
+        if not active_session_id:
+            return
+        notice = self._console_activity_notice()
+        if notice is None:
+            return
+        presentation = ConsoleActivityOutcomePresentation(
+            title=entry.title,
+            profile_authority=target.profile_authority,
+            authority_token=target.authority_token,
+            session_id=active_session_id,
+            conversation_id=target.conversation_id,
+            receipts=target.receipts,
+        )
+        notice.set_mark_seen_handler(self._mark_console_activity_seen)
+        generation = notice.show(presentation)
+        notice.call_after_refresh(
+            self._acknowledge_painted_console_activity,
+            presentation,
+            generation,
+        )
+
+    def _console_activity_presentation_is_current(
+        self,
+        notice: ConsoleActivityOutcomeNotice,
+        presentation: ConsoleActivityOutcomePresentation,
+        generation: int,
+    ) -> bool:
+        """Revalidate authority, destination, mount, visibility, and generation."""
+        if not notice.is_mounted or not notice.is_current(generation, presentation):
+            return False
+        try:
+            profile, token = self._switcher_authority_accessor()
+        except Exception:  # noqa: BLE001 - acknowledgement must fail closed
+            return False
+        if (
+            presentation.profile_authority != profile
+            or presentation.authority_token != token
+            or not presentation.session_id
+            or not self._native_switcher_destination_is_current(presentation.session_id)
+        ):
+            return False
+        return bool(
+            presentation.conversation_id is None
+            or self._current_console_conversation_id() == presentation.conversation_id
+        )
+
+    def _acknowledge_painted_console_activity(
+        self,
+        presentation: ConsoleActivityOutcomePresentation,
+        generation: int,
+    ) -> None:
+        """Acknowledge captured successes only after their exact notice paints."""
+        notice = self._console_activity_notice()
+        if notice is None or not self._console_activity_presentation_is_current(
+            notice, presentation, generation
+        ):
+            return
+        activity_ids = tuple(
+            receipt.activity_id
+            for receipt in presentation.receipts
+            if receipt.status == "done"
+        )
+        if not activity_ids:
+            return
+        service = getattr(self._console_runtime_accessor(), "activity_receipts", None)
+
+        async def acknowledge_after_paint() -> None:
+            try:
+                updated = (
+                    await asyncio.to_thread(service.acknowledge, activity_ids)
+                    if service is not None
+                    else 0
+                )
+            except Exception:  # noqa: BLE001 - leave unseen and expose exact retry
+                logger.opt(exception=True).warning(
+                    "Failed to acknowledge painted Console activity"
+                )
+                updated = 0
+            current_notice = self._console_activity_notice()
+            if (
+                current_notice is not notice
+                or not self._console_activity_presentation_is_current(
+                    notice, presentation, generation
+                )
+            ):
+                return
+            if (
+                service is None
+                or bool(getattr(service, "degraded", False))
+                or updated < len(activity_ids)
+            ):
+                notice.require_mark_seen(generation)
+
+        self.run_worker(
+            acknowledge_after_paint(),
+            exclusive=False,
+            group=f"console-activity-ack:{generation}",
+            exit_on_error=False,
+        )
+
+    async def _mark_console_activity_seen(
+        self,
+        presentation: ConsoleActivityOutcomePresentation,
+        generation: int,
+    ) -> bool:
+        """Acknowledge only the explicit notice's frozen receipt identities."""
+        notice = self._console_activity_notice()
+        if notice is None or not self._console_activity_presentation_is_current(
+            notice, presentation, generation
+        ):
+            return False
+        service = getattr(self._console_runtime_accessor(), "activity_receipts", None)
+        if service is None:
+            return False
+        activity_ids = tuple(
+            receipt.activity_id
+            for receipt in presentation.receipts
+            if notice.should_retry_all(generation) or receipt.status != "done"
+        )
+        if not activity_ids:
+            return False
+        try:
+            updated = await asyncio.to_thread(service.acknowledge, activity_ids)
+        except Exception:  # noqa: BLE001 - explicit retry stays visible
+            logger.opt(exception=True).warning("Failed to mark Console activity seen")
+            return False
+        current_notice = self._console_activity_notice()
+        if (
+            current_notice is not notice
+            or not self._console_activity_presentation_is_current(
+                notice, presentation, generation
+            )
+        ):
+            return False
+        return bool(
+            updated >= len(activity_ids)
+            and not bool(getattr(service, "degraded", False))
+        )
+
+    async def _mark_unavailable_switcher_notice_seen(
+        self, notice: UnavailableSessionNotice
+    ) -> None:
+        """Acknowledge one unavailable destination's receipts without navigation."""
+        try:
+            profile, token = self._switcher_authority_accessor()
+        except Exception:  # noqa: BLE001 - stale action must fail closed
+            self._notify_stale_switcher_target()
+            return
+        if notice.profile_authority != profile or notice.authority_token != token:
+            self._notify_stale_switcher_target()
+            return
+        service = getattr(self._console_runtime_accessor(), "activity_receipts", None)
+        if service is None:
+            self._notify_stale_switcher_target()
+            return
+        activity_ids = tuple(receipt.activity_id for receipt in notice.receipts)
+        try:
+            updated = await asyncio.to_thread(service.acknowledge, activity_ids)
+        except Exception:  # noqa: BLE001 - receipt remains safely unseen
+            logger.opt(exception=True).warning(
+                "Failed to mark unavailable Console activity seen"
+            )
+            self.app_instance.notify(
+                "Activity could not be marked seen. Reopen Ctrl+K and retry.",
+                severity="warning",
+            )
+            return
+        try:
+            current_profile, current_token = self._switcher_authority_accessor()
+        except Exception:  # noqa: BLE001 - no stale post-write UI
+            return
+        if (
+            current_profile != notice.profile_authority
+            or current_token != notice.authority_token
+        ):
+            return
+        if updated < len(activity_ids) or bool(getattr(service, "degraded", False)):
+            self.app_instance.notify(
+                "Activity could not be marked seen. Reopen Ctrl+K and retry.",
+                severity="warning",
+            )
 
     def _refresh_console_library_policy_defaults(self) -> None:
         """Load the defaults captured by the next locally created session."""

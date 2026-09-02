@@ -101,6 +101,85 @@ async def test_runtime_injects_its_scratch_manager_into_chat_controller():
 
 
 @pytest.mark.asyncio
+async def test_runtime_owns_one_receipt_service_and_coalesces_hydration(
+    tmp_path, monkeypatch
+):
+    app = SimpleNamespace(
+        chachanotes_db=SimpleNamespace(db_path=tmp_path / "chat.db"),
+        conversation_local_marks_service=None,
+    )
+    runtime = ConsoleRuntime(app)
+    bridge = runtime.ensure_agent_bridge(
+        store_factory=ConsoleChatStore,
+        provider_gateway_factory=object,
+    )
+
+    assert bridge is not None
+    assert runtime.activity_receipts is not None
+    assert bridge.runs_db is runtime._agent_runs_db
+    assert runtime.profile_authority == str((tmp_path / "chat.db").resolve())
+    assert runtime.authority_token
+
+    entered = threading.Event()
+    release = threading.Event()
+    calls = {"count": 0}
+
+    def blocked_hydration():
+        calls["count"] += 1
+        entered.set()
+        assert release.wait(5)
+        return 0
+
+    monkeypatch.setattr(
+        runtime.activity_receipts, "hydrate_from_storage", blocked_hydration
+    )
+    first = runtime.ensure_activity_hydration()
+    second = runtime.ensure_activity_hydration()
+
+    assert first is second
+    assert await asyncio.to_thread(entered.wait, 5)
+    release.set()
+    assert await first == 0
+    assert calls["count"] == 1
+    await runtime.dispose()
+
+
+@pytest.mark.asyncio
+async def test_runtime_disposal_invalidates_inflight_receipt_hydration(
+    tmp_path, monkeypatch
+):
+    app = SimpleNamespace(
+        chachanotes_db=SimpleNamespace(db_path=tmp_path / "chat.db"),
+        conversation_local_marks_service=None,
+    )
+    runtime = ConsoleRuntime(app)
+    runtime.ensure_agent_bridge(
+        store_factory=ConsoleChatStore,
+        provider_gateway_factory=object,
+    )
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocked_hydration():
+        entered.set()
+        assert release.wait(5)
+        return 4
+
+    monkeypatch.setattr(
+        runtime.activity_receipts, "hydrate_from_storage", blocked_hydration
+    )
+    task = runtime.ensure_activity_hydration()
+    assert await asyncio.to_thread(entered.wait, 5)
+
+    dispose = asyncio.create_task(runtime.dispose())
+    release.set()
+    await dispose
+
+    assert task.cancelled() or await task == 0
+    assert runtime.ensure_activity_hydration() is None
+
+
+@pytest.mark.asyncio
 async def test_leaving_console_preserves_live_session_scratch(tmp_path):
     runtime = ConsoleRuntime(type("App", (), {})())
     runtime._scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)

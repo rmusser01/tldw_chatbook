@@ -3923,15 +3923,79 @@ class ChatScreen(BaseAppScreen):
         self.clear_footer_shortcuts(source="console")
 
     async def action_open_console_session_switcher(self) -> None:
-        """Open the Ctrl+K fuzzy session switcher."""
+        """Open Ctrl+K immediately from memory and warm receipts off-loop."""
         if self._console_setup_modal_blocking() or self._console_decision_blocking():
             return
-        self.app.push_screen(
-            ConsoleSessionSwitcherModal(
-                rows=await self._workspace.console_session_switcher_rows()
+        store = self._console_chat_store
+        runtime = self._console_runtime()
+        receipt_service = runtime.activity_receipts
+        profile_authority, authority_token = (
+            self._workspace._console_switcher_authority()
+        )
+        projection_generation = (
+            receipt_service.projection_generation
+            if receipt_service is not None
+            else 0
+        )
+
+        def authority_snapshot() -> tuple[str, str, int]:
+            profile, token = self._workspace._console_switcher_authority()
+            service = self._console_runtime().activity_receipts
+            return (
+                profile,
+                token,
+                service.projection_generation if service is not None else 0,
+            )
+
+        def active_projection_snapshot() -> tuple[Any, str, str, int, str]:
+            profile, token = self._workspace._console_switcher_authority()
+            service = self._console_runtime().activity_receipts
+            return (
+                self._workspace.console_session_switcher_active_entries(),
+                profile,
+                token,
+                service.projection_generation if service is not None else 0,
+                service.hydration_state() if service is not None else "degraded",
+            )
+
+        initial_results, _, _, _, receipt_state = active_projection_snapshot()
+
+        modal = ConsoleSessionSwitcherModal(
+            active_results=initial_results,
+            history_loader=self._workspace.load_console_session_switcher_history,
+            preferred_native_session_id=(
+                store.most_recent_other_session_id() if store is not None else None
             ),
+            profile_authority=profile_authority,
+            authority_token=authority_token,
+            active_projection_generation=projection_generation,
+            authority_snapshot=authority_snapshot,
+            activity_receipt_state=receipt_state,
+            active_projection_loader=active_projection_snapshot,
+        )
+        self.app.push_screen(
+            modal,
             callback=self._session._apply_console_switcher_choice,
         )
+        hydration = runtime.ensure_activity_hydration()
+        if hydration is not None:
+
+            def reconcile_after_hydration(_task: Any) -> None:
+                if not modal.is_mounted:
+                    return
+                results, profile, token, generation, state = (
+                    active_projection_snapshot()
+                )
+                modal.call_after_refresh(
+                    modal.reconcile_active_results,
+                    results,
+                    profile_authority=profile,
+                    authority_token=token,
+                    projection_generation=generation,
+                    activity_receipt_state=state,
+                )
+
+            hydration.add_done_callback(reconcile_after_hydration)
 
     def action_open_trajectory_view(self) -> None:
         """Open Trace for the active Console conversation (``y``)."""

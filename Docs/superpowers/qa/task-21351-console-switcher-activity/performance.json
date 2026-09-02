@@ -1,0 +1,142 @@
+{
+  "platform": "macOS-26.5.2-arm64-arm-64bit",
+  "python": "3.12.11",
+  "method": "perf_counter_ns; nearest-rank p95; warm in-process Textual CSS; no claim of improvement",
+  "sizes": {
+    "small": {
+      "input_subjects": 5,
+      "modal_open": {
+        "samples": 7,
+        "median_ms": 84.583,
+        "p95_ms": 142.439
+      },
+      "active_filter_pure": {
+        "samples": 200,
+        "median_ms": 0.006,
+        "p95_ms": 0.006
+      },
+      "modal_operations": {
+        "active_filter": {
+          "samples": 20,
+          "median_ms": 239.528,
+          "p95_ms": 243.731
+        },
+        "zero_match_widening": {
+          "samples": 20,
+          "median_ms": 237.723,
+          "p95_ms": 241.069
+        },
+        "f3_toggle": {
+          "samples": 20,
+          "median_ms": 97.059,
+          "p95_ms": 97.838
+        },
+        "mounted_selectable_widgets": 5,
+        "modal_rows": 35
+      },
+      "history_page": {
+        "samples": 30,
+        "median_ms": 0.073,
+        "p95_ms": 0.136,
+        "database_rows_materialized": 5,
+        "reported_total": 5
+      },
+      "receipt_cache_refresh": {
+        "samples": 30,
+        "median_ms": 0.004,
+        "p95_ms": 0.006,
+        "database_rows_materialized": 5
+      }
+    },
+    "representative": {
+      "input_subjects": 50,
+      "modal_open": {
+        "samples": 7,
+        "median_ms": 110.495,
+        "p95_ms": 176.592
+      },
+      "active_filter_pure": {
+        "samples": 200,
+        "median_ms": 0.055,
+        "p95_ms": 0.059
+      },
+      "modal_operations": {
+        "active_filter": {
+          "samples": 20,
+          "median_ms": 236.568,
+          "p95_ms": 248.677
+        },
+        "zero_match_widening": {
+          "samples": 20,
+          "median_ms": 250.308,
+          "p95_ms": 342.331
+        },
+        "f3_toggle": {
+          "samples": 20,
+          "median_ms": 100.817,
+          "p95_ms": 133.126
+        },
+        "mounted_selectable_widgets": 50,
+        "modal_rows": 35
+      },
+      "history_page": {
+        "samples": 30,
+        "median_ms": 0.286,
+        "p95_ms": 0.336,
+        "database_rows_materialized": 50,
+        "reported_total": 50
+      },
+      "receipt_cache_refresh": {
+        "samples": 30,
+        "median_ms": 0.034,
+        "p95_ms": 0.035,
+        "database_rows_materialized": 50
+      }
+    },
+    "stress": {
+      "input_subjects": 500,
+      "modal_open": {
+        "samples": 7,
+        "median_ms": 112.273,
+        "p95_ms": 194.676
+      },
+      "active_filter_pure": {
+        "samples": 200,
+        "median_ms": 0.544,
+        "p95_ms": 0.597
+      },
+      "modal_operations": {
+        "active_filter": {
+          "samples": 20,
+          "median_ms": 252.72,
+          "p95_ms": 377.779
+        },
+        "zero_match_widening": {
+          "samples": 20,
+          "median_ms": 253.216,
+          "p95_ms": 348.043
+        },
+        "f3_toggle": {
+          "samples": 20,
+          "median_ms": 102.135,
+          "p95_ms": 123.622
+        },
+        "mounted_selectable_widgets": 50,
+        "modal_rows": 35
+      },
+      "history_page": {
+        "samples": 30,
+        "median_ms": 0.296,
+        "p95_ms": 0.361,
+        "database_rows_materialized": 50,
+        "reported_total": 500
+      },
+      "receipt_cache_refresh": {
+        "samples": 30,
+        "median_ms": 0.334,
+        "p95_ms": 0.369,
+        "database_rows_materialized": 500
+      }
+    }
+  }
+}

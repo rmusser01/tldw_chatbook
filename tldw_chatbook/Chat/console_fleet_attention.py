@@ -46,6 +46,11 @@ from loguru import logger
 FLEET_UNSEEN_REVISION_ATTR = "_console_fleet_unseen_revision"
 
 
+def _activity_receipt_service(app: Any) -> Any | None:
+    runtime = getattr(app, "console_runtime", None)
+    return getattr(runtime, "activity_receipts", None)
+
+
 def bump_fleet_unseen_revision(app: Any) -> None:
     """Invalidate screen-side caches of the unseen-completion set.
 
@@ -103,9 +108,22 @@ def clear_fleet_unseen_completion(app: Any, conversation_id: str) -> bool:
         True when a mark existed and was cleared; False when there was
         nothing to clear or the service is unavailable.
     """
+    receipt_service = _activity_receipt_service(app)
     service = getattr(app, "conversation_local_marks_service", None)
     if service is None or not str(conversation_id or "").strip():
         return False
+    if receipt_service is not None:
+        try:
+            cleared = receipt_service.clear_fleet_mark_if_seen(conversation_id)
+        except Exception as exc:  # noqa: BLE001 - preserve a stale mark on uncertainty
+            logger.warning(
+                "fleet receipt reconciliation failed (exception_type={})",
+                type(exc).__name__,
+            )
+            return False
+        if cleared:
+            bump_fleet_unseen_revision(app)
+        return cleared
     try:
         if not service.has_mark(conversation_id, service.FLEET_UNSEEN):
             return False
@@ -140,9 +158,22 @@ def set_fleet_unseen_completion(app: Any, conversation_id: str) -> bool:
         unavailable or the write failed (a lost mark is a missing badge,
         never a broken delivery).
     """
+    receipt_service = _activity_receipt_service(app)
     service = getattr(app, "conversation_local_marks_service", None)
     if service is None or not str(conversation_id or "").strip():
         return False
+    if receipt_service is not None:
+        try:
+            written = receipt_service.ensure_fleet_mark(conversation_id)
+        except Exception as exc:  # noqa: BLE001 - never break delivery
+            logger.warning(
+                "fleet receipt reconciliation failed (exception_type={})",
+                type(exc).__name__,
+            )
+            return False
+        if written:
+            bump_fleet_unseen_revision(app)
+        return written
     try:
         service.set_mark(conversation_id, service.FLEET_UNSEEN)
     except Exception as exc:  # noqa: BLE001 -- a lost mark is a missing badge, not a crash
@@ -229,7 +260,13 @@ class ConsoleFleetAttentionConsumer:
     #: The fan-out registration name (also the replace key).
     NAME = "fleet-attention"
 
-    def __init__(self, app: Any, *, loop: asyncio.AbstractEventLoop | None = None):
+    def __init__(
+        self,
+        app: Any,
+        *,
+        loop: asyncio.AbstractEventLoop | None = None,
+        receipt_service: Any | None = None,
+    ):
         """Capture the app object and the loop to hop the UI half onto.
 
         Args:
@@ -241,6 +278,7 @@ class ConsoleFleetAttentionConsumer:
                 happens during bridge construction on the UI thread.
         """
         self._app = app
+        self._receipt_service = receipt_service
         if loop is None:
             try:
                 loop = asyncio.get_running_loop()
@@ -264,8 +302,29 @@ class ConsoleFleetAttentionConsumer:
         conversation_id = str(getattr(event, "conversation_id", "") or "")
         if not conversation_id:
             return
-        self._write_mark(conversation_id)
-        statuses = [str(getattr(child, "status", "") or "done") for child in survivors]
+        supported_statuses = {"done", "error", "stuck", "cancelled"}
+        statuses = [
+            str(getattr(child, "status", "") or "")
+            for child in survivors
+            if str(getattr(child, "status", "") or "") in supported_statuses
+        ]
+        if not statuses:
+            return
+        if self._receipt_service is not None:
+            publication = self._receipt_service.publish_fleet_drain(event)
+            if not getattr(publication, "complete", False):
+                try:
+                    written = self._receipt_service.ensure_fleet_mark(conversation_id)
+                except Exception as exc:  # noqa: BLE001 - retain the fallback path
+                    logger.warning(
+                        "fleet receipt fallback failed (exception_type={})",
+                        type(exc).__name__,
+                    )
+                    written = False
+                if not written:
+                    self._write_mark(conversation_id)
+        else:
+            self._write_mark(conversation_id)
         session_id = str(getattr(survivors[-1], "session_id", "") or "")
         loop = self._loop
         if loop is not None and not loop.is_closed():
@@ -389,7 +448,9 @@ class ConsoleFleetAttentionConsumer:
         )
 
 
-def register_fleet_attention(bridge: Any, app: Any) -> None:
+def register_fleet_attention(
+    bridge: Any, app: Any, *, receipt_service: Any | None = None
+) -> None:
     """Register the attention consumer on a bridge, next to its construction.
 
     Tolerates a bridge without the fan-out seam (older fakes) and no bridge
@@ -403,5 +464,6 @@ def register_fleet_attention(bridge: Any, app: Any) -> None:
     register = getattr(bridge, "on_fleet_drained", None) if bridge is not None else None
     if callable(register):
         register(
-            ConsoleFleetAttentionConsumer.NAME, ConsoleFleetAttentionConsumer(app)
+            ConsoleFleetAttentionConsumer.NAME,
+            ConsoleFleetAttentionConsumer(app, receipt_service=receipt_service),
         )

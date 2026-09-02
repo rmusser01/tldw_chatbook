@@ -61,7 +61,11 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
-from tldw_chatbook.Chat.console_switcher_state import ConsoleSwitcherEntry
+from tldw_chatbook.Chat.console_switcher_state import (
+    ConsoleSwitcherEntry,
+    ConsoleSwitcherTarget,
+    SwitcherTargetKind,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_rename_session_modal import (
@@ -769,6 +773,7 @@ def _switcher_entry(
     scope_type: str = "workspace",
     workspace_id: str | None = None,
     is_active: bool = False,
+    target: ConsoleSwitcherTarget | None = None,
 ) -> ConsoleSwitcherEntry:
     return ConsoleSwitcherEntry(
         row_key=row_key,
@@ -779,6 +784,7 @@ def _switcher_entry(
         scope_type=scope_type,
         workspace_id=workspace_id,
         is_active=is_active,
+        target=target,
     )
 
 
@@ -926,10 +932,23 @@ async def test_apply_console_switcher_choice_activate_uses_shared_activation_pat
         await console._session._activate_native_console_session(home.id)
         await pilot.pause()
         assert store.active_session_id == home.id
+        profile, token = console._workspace._console_switcher_authority()
 
         choice = ConsoleSwitcherChoice(
             kind="activate",
-            entry=_switcher_entry(native_session_id=target.id, title=target.title),
+            entry=_switcher_entry(
+                native_session_id=target.id,
+                title=target.title,
+                target=ConsoleSwitcherTarget(
+                    kind=SwitcherTargetKind.NATIVE_SESSION,
+                    profile_authority=profile,
+                    authority_token=token,
+                    session_id=target.id,
+                    conversation_id=None,
+                    scope_type="workspace",
+                    workspace_id="ws-switcher",
+                ),
+            ),
         )
         await console._session._apply_console_switcher_choice(choice)
         await pilot.pause()
@@ -951,10 +970,23 @@ async def test_apply_console_switcher_choice_rename_opens_rename_modal():
 
         store = console._ensure_console_chat_store()
         session = store.create_session(title="Rename me")
+        profile, token = console._workspace._console_switcher_authority()
 
         choice = ConsoleSwitcherChoice(
             kind="rename",
-            entry=_switcher_entry(native_session_id=session.id, title=session.title),
+            entry=_switcher_entry(
+                native_session_id=session.id,
+                title=session.title,
+                target=ConsoleSwitcherTarget(
+                    kind=SwitcherTargetKind.NATIVE_SESSION,
+                    profile_authority=profile,
+                    authority_token=token,
+                    session_id=session.id,
+                    conversation_id=None,
+                    scope_type="global",
+                    workspace_id=None,
+                ),
+            ),
         )
         await console._session._apply_console_switcher_choice(choice)
         await pilot.pause()

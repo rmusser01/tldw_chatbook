@@ -79,10 +79,48 @@ half-typed message is still in the composer when you come back.
 
 ### "Switch Session" (Ctrl+K)
 
-A fuzzy finder over your conversations. Type into "Search conversations…" to
-filter, press Enter to activate the top result, or move through results with
-↑/↓ and press Enter (or click) on the one you want. F2 renames the
-highlighted result when it is an open tab. Esc cancels.
+Ctrl+K is an operational switchboard for open Console agents and saved local
+conversations. It opens immediately in **Active**, ordered as **Waiting for
+you**, **Working**, **New results**, **Current**, then **Other open**. Each
+result names both its state and destination; multiple signals for the same
+conversation collapse into one row with a `+N` count rather than producing
+duplicates.
+
+Start typing to filter the safe session metadata shown in the switcher. Search
+understands literal title text, `workspace:<name>`, and state filters including
+`is:waiting`, `is:working`, `is:new`, `is:current`, `is:open`, `is:saved`,
+`is:running`, `is:approval`, `is:queued`, `is:failed`, `is:finished`, and
+`is:unavailable`. The phrases "needs attention", "waiting on me", and "new
+results" are friendly aliases. Search never reads transcript bodies, creates
+embeddings, or sends a network request.
+
+Operational filters intentionally overlap: `running` and `queued` both route
+to the complete **Working** group, while a resumed persisted conversation can
+match both `saved` and `open`. This keeps a lifecycle detail from hiding an
+otherwise relevant agent or destination.
+
+When a nonblank Active search has no match, the switcher automatically widens
+that search to local **History**. Press **F3** (or choose the Active/History
+buttons) to change modes directly; the query stays in place until you close the
+switcher. History searches every persisted local conversation, groups results
+by local calendar recency, and loads at most 50 rows per page. Previous/Next and
+the internal result scroll keep the complete switcher within 35 terminal rows.
+
+With a blank query, **Enter** opens the most recently used *other* tab, making
+Ctrl+K then Enter a fast two-tab toggle. Once you type a query or use ↑/↓,
+Enter opens the highlighted committed result; pointer activation follows the
+same target. **F2** renames only a focused open-agent result—focus the row with
+↓ first—and never falls back to an unrelated tab. **Esc** or the always-visible
+**Cancel** button closes without switching or marking anything seen.
+
+Unseen successful results show a compact outcome notice at the exact
+destination and are marked seen only after that notice visibly loads. Failed,
+stuck, stopped, and cancelled results remain unseen until you choose **Mark
+seen** in the destination notice. If a temporary session disappeared, Active
+shows **Session unavailable** with its own receipt-keyed **Mark seen** action;
+it never guesses another destination. If local activity receipts are
+temporarily unavailable, the status is reported honestly while open agents and
+History remain usable.
 
 ### Conversations (Default and unassigned)
 
@@ -245,8 +283,9 @@ conversation.
 
 **Find an old conversation**
 
-1. Press Ctrl+K, type a few characters of the title, and press Enter to open
-   the top match — or,
+1. Press Ctrl+K, press F3 for **History** (or type a title and let a zero-match
+   Active search widen automatically), then press Enter to open the highlighted
+   match — or,
 2. For a named-workspace conversation, search in **Workspaces**, disclose its
    parent if needed, and select the conversation leaf.
 3. For a Default or unassigned conversation, search in **Conversations** and
@@ -305,7 +344,10 @@ for authority, privacy, limits, key routing, cleanup, and platform support.
 | Key | Action |
 |---|---|
 | Ctrl+T | New Console tab |
-| Ctrl+K | "Switch Session" fuzzy finder |
+| Ctrl+K | Open the Active/History operational switchboard |
+| Ctrl+K, Enter | Toggle to the most recently used other open tab when the query is blank |
+| F3 (in switcher) | Toggle Active/History while retaining the query |
+| F2 (focused open-agent result) | Rename that exact open tab |
 | Alt+1 … Alt+9 | Jump to tab 1–9 |
 | Alt+W | "Change Workspace" switcher |
 | Alt+I | Open the Inspect rail and move focus into it; press again to close it. Works at every terminal width, including below 84 columns where the rail's handle is hidden |

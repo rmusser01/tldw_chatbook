@@ -432,6 +432,36 @@ def test_run_id_none_children_still_count(tmp_path):
         chacha.close()
 
 
+def test_incomplete_receipt_publication_falls_back_to_coarse_mark(tmp_path):
+    """A partial durable publish cannot erase the compatibility signal."""
+    chacha = CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="t")
+    try:
+        app = _AppStub(chacha)
+
+        class _IncompleteReceipts:
+            def publish_fleet_drain(self, _event):
+                return type(
+                    "Publication", (), {"activity_ids": (), "complete": False}
+                )()
+
+            def ensure_fleet_mark(self, conversation_id):
+                app.conversation_local_marks_service.set_mark(
+                    conversation_id,
+                    ConversationLocalMarksService.FLEET_UNSEEN,
+                )
+                return True
+
+        consumer = ConsoleFleetAttentionConsumer(
+            app, loop=None, receipt_service=_IncompleteReceipts()
+        )
+        consumer(_drain(children=[_child("error")]))
+
+        assert fleet_unseen_conversation_ids(app) == frozenset({"conv-att"})
+        assert getattr(app, FLEET_UNSEEN_REVISION_ATTR) == 1
+    finally:
+        chacha.close()
+
+
 def test_deep_link_is_staged_only_while_console_is_not_the_active_screen(
     tmp_path,
 ):

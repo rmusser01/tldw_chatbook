@@ -35,8 +35,11 @@ One app-lifetime activity-receipt service coordinates receipt publication,
 acknowledgement, and the existing `FLEET_UNSEEN` compatibility mark under one
 process-wide re-entrant lock. Receipts are authoritative for switcher
 membership. The mark remains a derived coarse badge for incumbent Console/wake
-surfaces and is cleared only when no unseen FLEET survivor receipt remains.
-Starred marks remain unrelated.
+surfaces and is cleared only when no unseen FLEET survivor receipt remains. If
+receipt publication fails after settlement, a separate local-only
+`FLEET_RECEIPT_FALLBACK` companion mark makes that coarse evidence durable
+until the user visits the conversation or a complete event replay creates the
+receipt. Starred marks remain unrelated.
 
 Direct-run, queue-chain, and live `FleetDrained` publication is non-throwing
 presentation bookkeeping: failure preserves execution settlement and exposes a
@@ -84,6 +87,22 @@ switcher modes without inserting text into the focused search input, matches
 the incumbent F2 modal action vocabulary, and is advertised only while it is
 implemented and active. ADR-031's reserved globals, terminal-convention keys,
 truthful hints, and safe modal dismissal remain unchanged.
+
+Blank-query activation is a deliberate last-tab command: when another open
+native tab exists, the explicit candidate is the process-local MRU other tab;
+after restore with no navigation history, the most recently updated other open
+tab is the deterministic fallback. Explicit row navigation overrides that
+candidate, and nonblank search activates only the committed top result for the
+exact query generation. The current tab remains visibly labeled rather than
+silently receiving a no-op Enter.
+
+Switcher search is domain-semantic over safe normalized presentation metadata.
+Plain operational aliases and explicit `is:`/`workspace:` filters resolve to
+deterministic state, destination, and workspace predicates. It does not read
+transcript content, invoke an embedding model, add a vector index, or perform a
+network request. Onboarding is inline through mode copy, placeholder, empty and
+zero-match recovery states, and truthful key hints; no tutorial modal,
+persistent onboarding flag, or telemetry owner is introduced.
 
 Correlated server workflow activity, authority/version caches, exact Workflows
 handoff, and standalone workflow browsing are not owned by this ADR. They need
@@ -142,6 +161,8 @@ run.
 - The modal opens from cached local Active state and loads History lazily;
   History may shift between pages under concurrent mutation, but immutable
   activation identity prevents wrong-target activation.
+- TASK-28125's exact-query, strict-F2, scroll ownership, textual state, and
+  MRU-other trust repairs remain required behavior inside the replacement modal.
 - The destination surface gains a compact receipt-keyed outcome notice with a
   visible `Mark seen` action for non-success.
 - Production verification must load the real stylesheet hierarchy, inspect the

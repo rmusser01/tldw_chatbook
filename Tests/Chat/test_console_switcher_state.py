@@ -1,8 +1,20 @@
 """Pure Console session-switcher result contracts."""
 
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from zoneinfo import ZoneInfo
+
 from tldw_chatbook.Chat.console_switcher_state import (
+    ActivityGroup,
+    ConsoleSwitcherActivitySignal,
+    ConsoleSwitcherEntry,
+    SwitcherTargetKind,
+    UnavailableSessionNotice,
     _matches,
+    build_console_active_results,
     build_console_switcher_entries,
+    console_history_section,
+    filter_console_active_results,
 )
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserInputRow,
@@ -24,6 +36,268 @@ def _row(**overrides) -> ConsoleConversationBrowserInputRow:
     )
     defaults.update(overrides)
     return ConsoleConversationBrowserInputRow(**defaults)
+
+
+def _receipt(**overrides):
+    defaults = dict(
+        activity_id="activity-1",
+        status="done",
+        session_id=None,
+        conversation_id="conv-1",
+        created_at="2026-07-04T12:00:00+00:00",
+    )
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+def _active(rows, *, receipts=(), signals=()):
+    return build_console_active_results(
+        rows,
+        receipts=receipts,
+        controller_signals=signals,
+        profile_authority="profile-a",
+        authority_token="runtime-a",
+        now=datetime(2026, 7, 4, 13, tzinfo=timezone.utc),
+    )
+
+
+def test_active_merges_duplicate_conversation_tabs_and_prefers_actionable_target():
+    rows = (
+        _row(
+            row_key="conv-1",
+            native_session_id="session-current",
+            selected=True,
+            title="Shared work",
+        ),
+        _row(
+            row_key="conv-1",
+            native_session_id="session-running",
+            selected=False,
+            title="Shared work duplicate",
+            run_marker="[*]",
+            updated_sort="2026-07-04T12:30:00+00:00",
+        ),
+    )
+
+    results = _active(rows)
+
+    assert len(results) == 1
+    entry = results[0]
+    assert isinstance(entry, ConsoleSwitcherEntry)
+    assert entry.stable_result_key == "conversation:profile-a:conv-1"
+    assert entry.group is ActivityGroup.WORKING
+    assert entry.target is not None
+    assert entry.target.kind is SwitcherTargetKind.NATIVE_SESSION
+    assert entry.target.session_id == "session-running"
+    assert entry.multiplicity == 2
+
+
+def test_active_reduces_same_target_receipts_and_shell_without_losing_evidence():
+    row = _row(native_session_id="session-1", selected=False, run_marker="")
+    receipts = (
+        _receipt(activity_id="done-1", session_id="session-1", status="done"),
+        _receipt(
+            activity_id="failed-2",
+            session_id="session-1",
+            status="failed",
+            created_at="2026-07-04T12:05:00+00:00",
+        ),
+    )
+
+    entry = _active((row,), receipts=receipts)[0]
+
+    assert isinstance(entry, ConsoleSwitcherEntry)
+    assert entry.group is ActivityGroup.WAITING_FOR_YOU
+    assert entry.activity_state == "failed"
+    assert entry.target is not None
+    assert [receipt.activity_id for receipt in entry.target.receipts] == [
+        "done-1",
+        "failed-2",
+    ]
+    assert entry.multiplicity == 2
+
+
+def test_active_orders_group_then_existing_star_then_time():
+    rows = (
+        _row(
+            row_key="running-unstarred",
+            conversation_id="running-unstarred",
+            native_session_id="run-u",
+            title="Zulu",
+            run_marker="[*]",
+            starred=False,
+        ),
+        _row(
+            row_key="running-starred",
+            conversation_id="running-starred",
+            native_session_id="run-s",
+            title="Alpha",
+            run_marker="[*]",
+            starred=True,
+            updated_sort="2026-07-01T00:00:00+00:00",
+        ),
+        _row(
+            row_key="approval",
+            conversation_id="approval",
+            native_session_id="approval-s",
+            title="Needs me",
+            run_marker="[!]",
+        ),
+    )
+
+    results = _active(rows)
+
+    assert [result.group for result in results] == [
+        ActivityGroup.WAITING_FOR_YOU,
+        ActivityGroup.WORKING,
+        ActivityGroup.WORKING,
+    ]
+    assert results[1].title == "Alpha"
+
+
+def test_session_only_receipts_aggregate_into_explicit_unavailable_notice():
+    receipts = (
+        _receipt(
+            activity_id="gone-done",
+            conversation_id=None,
+            session_id="gone-session",
+            status="done",
+        ),
+        _receipt(
+            activity_id="gone-stuck",
+            conversation_id=None,
+            session_id="gone-session",
+            status="stuck",
+            created_at="2026-07-04T12:30:00+00:00",
+        ),
+    )
+
+    result = _active((), receipts=receipts)[0]
+
+    assert isinstance(result, UnavailableSessionNotice)
+    assert result.group is ActivityGroup.WAITING_FOR_YOU
+    assert result.primary_status == "stuck"
+    assert result.stable_result_key.endswith(":gone-session")
+    assert "+1" in result.subtitle
+
+
+def test_missing_persisted_receipt_destination_becomes_mark_seen_notice():
+    result = _active(
+        (),
+        receipts=(
+            _receipt(
+                activity_id="missing-conversation",
+                conversation_id="deleted-conversation",
+                session_id=None,
+                status="failed",
+            ),
+        ),
+    )[0]
+
+    assert isinstance(result, UnavailableSessionNotice)
+    assert result.conversation_id == "deleted-conversation"
+    assert result.session_id is None
+    assert result.title == "Conversation unavailable"
+    assert result.openable is False
+
+
+def test_malformed_receipt_identity_is_excluded_from_open_result_evidence():
+    result = _active(
+        (_row(native_session_id="session-1"),),
+        receipts=(
+            _receipt(
+                activity_id=None,
+                session_id="session-1",
+                conversation_id="conv-1",
+            ),
+        ),
+    )[0]
+
+    assert result.target is not None
+    assert result.target.receipts == ()
+
+
+def test_domain_semantic_search_uses_safe_metadata_and_filters():
+    rows = (
+        _row(
+            row_key="approval",
+            conversation_id="approval",
+            native_session_id="approval-s",
+            title="Release review",
+            workspace_label="Platform",
+            run_marker="[!]",
+        ),
+        _row(
+            row_key="running",
+            conversation_id="running",
+            native_session_id="running-s",
+            title="Indexer",
+            workspace_label="Research",
+            run_marker="[*]",
+        ),
+    )
+    results = _active(rows)
+
+    assert [
+        item.title for item in filter_console_active_results(results, "waiting on me")
+    ] == ["Release review"]
+    assert [
+        item.title
+        for item in filter_console_active_results(
+            results, "is:working workspace:research"
+        )
+    ] == ["Indexer"]
+    assert filter_console_active_results(results, "is:invented") == ()
+
+
+def test_controller_signal_is_content_free_and_can_raise_open_shell_priority():
+    rows = (_row(native_session_id="session-1", selected=True),)
+    signals = (
+        ConsoleSwitcherActivitySignal(
+            source_key="controller:native:session-1:paused",
+            state="paused",
+            session_id="session-1",
+            occurred_at="2026-07-04T12:30:00+00:00",
+        ),
+    )
+
+    result = _active(rows, signals=signals)[0]
+
+    assert result.group is ActivityGroup.WAITING_FOR_YOU
+    assert result.activity_state == "paused"
+
+
+def test_history_calendar_sections_obey_local_dates_dst_and_invalid_values():
+    zone = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 3, 9, 0, 30, tzinfo=zone)
+
+    assert (
+        console_history_section(
+            "2026-03-09T06:45:00+00:00", now=now, local_timezone=zone
+        )
+        == "Yesterday"
+    )
+    assert (
+        console_history_section(
+            "2026-03-09T08:45:00+00:00", now=now, local_timezone=zone
+        )
+        == "Today"
+    )
+    assert (
+        console_history_section(
+            "2026-03-12T08:45:00+00:00", now=now, local_timezone=zone
+        )
+        == "Today"
+    )
+    assert (
+        console_history_section(
+            "2026-03-03T12:00:00+00:00", now=now, local_timezone=zone
+        )
+        == "Previous 7 days"
+    )
+    assert (
+        console_history_section("not-a-time", now=now, local_timezone=zone) == "Older"
+    )
 
 
 def test_entries_are_recent_first_with_active_pinned():
@@ -96,11 +370,19 @@ def test_limit_zero_returns_no_entries():
 def test_subtitle_joins_available_parts():
     entry = build_console_switcher_entries([_row()])[0]
     # TASK-356: the switcher shows the shared friendly vocabulary, not raw status.
-    assert entry.subtitle == "Workspace 1 - saved chat - 2m"
+    assert entry.subtitle == "Workspace 1 · saved chat · 2m"
     bare = build_console_switcher_entries(
-        [_row(row_key="x", workspace_label="", status="", updated_label="", updated_sort="")]
+        [
+            _row(
+                row_key="x",
+                workspace_label="",
+                status="",
+                updated_label="",
+                updated_sort="",
+            )
+        ]
     )[0]
-    assert bare.subtitle == ""
+    assert bare.subtitle == "saved chat"
 
 
 def test_matcher_tolerates_none_fields_without_raising():
@@ -126,7 +408,7 @@ def test_switcher_status_uses_saved_chat_vocabulary_not_in_progress():
     )
     subtitle = entries[0].subtitle
     assert "in-progress" not in subtitle
-    assert "saved chat" in subtitle
+    assert "saved chat" in subtitle.lower()
 
 
 def test_switcher_status_maps_membership_and_session_states():
@@ -136,8 +418,8 @@ def test_switcher_status_maps_membership_and_session_states():
     active = build_console_switcher_entries(
         [_row(row_key="b", status="active", updated_label="")]
     )[0].subtitle
-    assert "saved chat" in saved
-    assert "active session" in active
+    assert "saved chat" in saved.lower()
+    assert "saved chat" in active.lower()
 
 
 def test_switcher_shows_recency_when_updated_label_absent():
@@ -168,3 +450,104 @@ def test_search_matches_the_friendly_status_label_now_shown():
     assert [
         e.row_key for e in build_console_switcher_entries(rows, query="in-progress")
     ] == ["a"]
+
+
+def test_open_agent_entry_projects_fleet_queue_and_current_state():
+    """Removing any source fleet field must make the switcher lose its state."""
+    entry = build_console_switcher_entries(
+        [
+            _row(
+                native_session_id="session-1",
+                conversation_id="conv-1",
+                source_kind="native",
+                status="active session",
+                selected=True,
+                run_marker="●",
+                queued_count=2,
+            )
+        ]
+    )[0]
+
+    assert entry.section == "open"
+    assert entry.state_label == "CURRENT · RUNNING · 2 QUEUED"
+    assert entry.openable is True
+
+
+def test_saved_unavailable_entry_is_not_presented_as_an_open_agent():
+    entry = build_console_switcher_entries(
+        [
+            _row(
+                native_session_id=None,
+                source_kind="persisted",
+                openable=False,
+            )
+        ]
+    )[0]
+
+    assert entry.section == "saved"
+    assert entry.state_label == "UNAVAILABLE · saved chat"
+    assert entry.openable is False
+
+
+def test_open_and_saved_sections_remain_contiguous_when_saved_row_is_selected():
+    entries = build_console_switcher_entries(
+        [
+            _row(
+                row_key="open",
+                native_session_id="session-open",
+                source_kind="native",
+                selected=False,
+            ),
+            _row(row_key="saved-current", selected=True),
+            _row(row_key="saved-other", selected=False),
+        ]
+    )
+
+    assert [entry.section for entry in entries] == ["open", "saved", "saved"]
+
+
+def test_semantic_filters_match_operational_state_without_title_keywords():
+    rows = [
+        _row(
+            row_key="running",
+            conversation_id="running",
+            native_session_id="session-running",
+            source_kind="native",
+            title="Release planning",
+            run_marker="●",
+            queued_count=2,
+        ),
+        _row(
+            row_key="approval",
+            conversation_id="approval",
+            native_session_id="session-approval",
+            source_kind="native",
+            title="Budget review",
+            run_marker="◆",
+        ),
+        _row(
+            row_key="saved",
+            conversation_id="saved",
+            native_session_id=None,
+            source_kind="persisted",
+            title="Migration notes",
+            workspace_label="Research Lab",
+        ),
+    ]
+
+    assert [
+        e.row_key for e in build_console_switcher_entries(rows, query="running")
+    ] == ["running"]
+    assert [
+        e.row_key for e in build_console_switcher_entries(rows, query="approval")
+    ] == ["approval"]
+    assert [
+        e.row_key for e in build_console_switcher_entries(rows, query="queued")
+    ] == ["running"]
+    assert [
+        e.row_key for e in build_console_switcher_entries(rows, query="is:saved")
+    ] == ["saved"]
+    assert [
+        e.row_key
+        for e in build_console_switcher_entries(rows, query="workspace:research")
+    ] == ["saved"]

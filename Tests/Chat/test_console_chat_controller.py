@@ -25,6 +25,9 @@ from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
     build_mcp_review_hook,
 )
+from tldw_chatbook.Chat.console_activity_receipts import (
+    ConsoleActivityReceiptService,
+)
 from tldw_chatbook.Chat.console_prepared_request import build_console_request
 from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
 from tldw_chatbook.Chat.console_trace_provenance import (
@@ -49,6 +52,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleNextSendHistoryProjection,
     ConsoleMessageRole,
     ConsoleProviderSelection,
+    ConsoleRunMarker,
     ConsoleRunState,
     ConsoleRunStatus,
     ConsoleStagedSource,
@@ -2407,6 +2411,68 @@ async def test_active_session_failure_toast_not_refired_on_terminal_restamp():
         session_id=store.active_session_id,
     )
     assert len(toasts) == 1
+
+
+def test_inactive_direct_terminal_outcome_publishes_and_corrects_receipt(tmp_path):
+    store = ConsoleChatStore()
+    active = store.ensure_session(title="Active")
+    background = store.create_session(title="Background", ephemeral=True)
+    store.switch_session(active.id)
+    service = ConsoleActivityReceiptService(
+        AgentRunsDB(tmp_path / "activity-runs.db"), None
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=StreamingGateway(),
+        activity_receipts=service,
+    )
+    controller._ordinary_outcome_ids[background.id] = "turn:durable-preparation"
+    controller._ordinary_outcome_assistant_ids[background.id] = "assistant-1"
+
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.FAILED, "failed"),
+        session_id=background.id,
+    )
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.COMPLETED, "corrected"),
+        session_id=background.id,
+    )
+
+    receipts = service.unseen_snapshot()
+    assert len(receipts) == 1
+    assert receipts[0].logical_outcome_id == "turn:durable-preparation"
+    assert receipts[0].transition_revision == 2
+    assert receipts[0].status == "done"
+    assert receipts[0].session_id == background.id
+    assert receipts[0].assistant_message_id == "assistant-1"
+    assert controller.run_marker_for(background.id) is ConsoleRunMarker.FINISHED_OK
+
+
+def test_inactive_receipt_failure_preserves_compatibility_marker(tmp_path, monkeypatch):
+    store = ConsoleChatStore()
+    active = store.ensure_session(title="Active")
+    background = store.create_session(title="Background", ephemeral=True)
+    store.switch_session(active.id)
+    database = AgentRunsDB(tmp_path / "activity-runs.db")
+    service = ConsoleActivityReceiptService(database, None)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=StreamingGateway(),
+        activity_receipts=service,
+    )
+    controller._ordinary_outcome_ids[background.id] = "turn:write-failure"
+
+    def fail_publish(**_kwargs):
+        raise RuntimeError("receipt write failed")
+
+    monkeypatch.setattr(database, "publish_console_activity", fail_publish)
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.FAILED, "failed"),
+        session_id=background.id,
+    )
+
+    assert service.degraded is True
+    assert controller.run_marker_for(background.id) is ConsoleRunMarker.FINISHED_FAILED
 
 
 @pytest.mark.asyncio

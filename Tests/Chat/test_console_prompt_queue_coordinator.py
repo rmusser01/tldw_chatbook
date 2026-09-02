@@ -9,6 +9,9 @@ from types import SimpleNamespace
 import pytest
 
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+from tldw_chatbook.Chat.console_activity_receipts import (
+    ConsoleActivityReceiptService,
+)
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleRunMarker,
@@ -35,6 +38,7 @@ from tldw_chatbook.Chat.console_prompt_queue_coordinator import (
     QueueGenerationAuthorization,
 )
 from Tests.console_provider_doubles import provider_resolution
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 class ConsoleChatStore(_ConsoleChatStore):
@@ -939,3 +943,37 @@ async def test_rider_added_after_admission_returns_claim_without_consuming_it():
 def test_queue_generation_authorization_cannot_be_constructed_externally():
     with pytest.raises(PermissionError):
         QueueGenerationAuthorization(object(), "session", _key=object())
+
+
+@pytest.mark.asyncio
+async def test_multi_entry_queue_chain_publishes_one_final_durable_outcome(tmp_path):
+    gateway = SequencedGateway()
+    store = ConsoleChatStore()
+    queued_session = store.ensure_session(title="Queued")
+    active_session = store.create_session(title="Active", ephemeral=True)
+    store.switch_session(queued_session.id)
+    service = ConsoleActivityReceiptService(
+        AgentRunsDB(tmp_path / "queue-activity.db"), None
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        activity_receipts=service,
+    )
+
+    task = asyncio.create_task(
+        controller.run_prompt_chain("one", session_id=queued_session.id)
+    )
+    await gateway.started[0].wait()
+    _queue(controller, queued_session.id, "two")
+    store.switch_session(active_session.id)
+    gateway.release[0].set()
+    await gateway.started[1].wait()
+    gateway.release[1].set()
+    await task
+
+    receipts = service.unseen_snapshot()
+    assert len(receipts) == 1
+    assert receipts[0].logical_outcome_id.startswith("queue-chain:")
+    assert receipts[0].status == "done"
+    assert receipts[0].session_id == queued_session.id

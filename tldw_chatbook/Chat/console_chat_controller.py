@@ -2943,12 +2943,14 @@ class ConsoleChatController:
         | None = None,
         buddy_sink: "PersonaBuddyConsoleAdapter | None" = None,
         scratch_spaces: ConsoleScratchSpaceManager | None = None,
+        activity_receipts: Any | None = None,
         staged_evidence_provider: Callable[[str], bool] | None = None,
         cancel_raw_cli_session: Callable[[str], object] | None = None,
         library_preparation_timeout: float = 5.0,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
+        self._activity_receipts = activity_receipts
         self.provider = provider
         self.model = model
         self.configured_model = configured_model
@@ -3120,6 +3122,8 @@ class ConsoleChatController:
         #     deliberately never stamped here.
         self._pending_approvals: dict[str, set[str]] = {}
         self._unvisited_outcomes: dict[str, ConsoleRunMarker] = {}
+        self._ordinary_outcome_ids: dict[str, str] = {}
+        self._ordinary_outcome_assistant_ids: dict[str, str | None] = {}
         #: F2b fix (Qodo wave): guards every mutation of `_pending_
         #: approvals`, `_parked_approval_payloads`, and `_pending_
         #: approval_rounds` -- the three approval-marker collections a
@@ -8084,9 +8088,7 @@ class ConsoleChatController:
                     preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
                 ),
                 frozen_pii_redaction_enabled=preparation.pii_redaction_enabled,
-                frozen_pii_ruleset_revision_id=(
-                    preparation.pii_ruleset_revision_id
-                ),
+                frozen_pii_ruleset_revision_id=preparation.pii_ruleset_revision_id,
                 frozen_next_trace_privacy_revision=(
                     preparation.next_trace_privacy_revision
                 ),
@@ -8099,6 +8101,10 @@ class ConsoleChatController:
                 origin=origin,
                 entry_id=queue_entry_id,
                 context_epoch=committed_context_epoch,
+                preparation_id=(
+                    preparation.preparation_id if preparation is not None else None
+                ),
+                assistant_message_id=assistant.id,
                 defer_queued_settlement=(
                     resumed_preparation is not None
                     and origin is ConsoleSubmissionOrigin.QUEUED
@@ -8984,6 +8990,10 @@ class ConsoleChatController:
                 live_session.draft = ""
 
         def queue_acknowledgement() -> None:
+            self._ordinary_outcome_ids[session_id] = f"turn:{preparation_id}"
+            self._ordinary_outcome_assistant_ids[session_id] = (
+                commit.assistant_message_id
+            )
             if continuation.origin is ConsoleSubmissionOrigin.QUEUED:
                 entry_id = continuation.queue_entry_id
                 if entry_id is None or not (
@@ -9003,6 +9013,7 @@ class ConsoleChatController:
                 origin=continuation.origin,
                 context_epoch=continuation.committed_context_epoch,
                 entry_id=None,
+                preparation_id=preparation_id,
             )
 
         def project_workspace() -> None:
@@ -17649,6 +17660,8 @@ class ConsoleChatController:
         origin: ConsoleSubmissionOrigin,
         entry_id: str | None,
         context_epoch: int,
+        preparation_id: str | None = None,
+        assistant_message_id: str | None = None,
         defer_queued_settlement: bool = False,
     ) -> None:
         """Commit queue ownership, then invoke the origin-appropriate UI hook."""
@@ -17658,8 +17671,12 @@ class ConsoleChatController:
             origin=origin,
             context_epoch=context_epoch,
             entry_id=entry_id,
+            preparation_id=preparation_id,
             defer_queued_settlement=defer_queued_settlement,
         )
+        if preparation_id:
+            self._ordinary_outcome_ids[session_id] = f"turn:{preparation_id}"
+            self._ordinary_outcome_assistant_ids[session_id] = assistant_message_id
         if origin is not ConsoleSubmissionOrigin.MANUAL:
             return
         callback = self.on_submission_accepted
@@ -23254,6 +23271,24 @@ class ConsoleChatController:
         terminal_notification_eligible = self.activity_for(
             target
         ).terminal_notification_eligible
+        logical_outcome_id = self._ordinary_outcome_ids.get(target)
+        if (
+            logical_outcome_id
+            and target != (self.store.active_session_id or "")
+            and terminal_notification_eligible
+            and run_state.status
+            in {
+                ConsoleRunStatus.COMPLETED,
+                ConsoleRunStatus.FAILED,
+                ConsoleRunStatus.STOPPED,
+            }
+        ):
+            self._publish_inactive_outcome(
+                session_id=target,
+                status=run_state.status,
+                logical_outcome_id=logical_outcome_id,
+                assistant_message_id=self._ordinary_outcome_assistant_ids.get(target),
+            )
         # Task 9 finding #2 (deferred from Task 7 review): a terminal run
         # has no live approval left to decide, so the pending-approval flag
         # must be discarded for ANY terminal transition -- including the
@@ -23354,8 +23389,45 @@ class ConsoleChatController:
         ):
             self.notify_run_failure(run_state.visible_copy)
 
+    def _publish_inactive_outcome(
+        self,
+        *,
+        session_id: str,
+        status: ConsoleRunStatus,
+        logical_outcome_id: str,
+        assistant_message_id: str | None = None,
+    ) -> None:
+        """Publish one inactive terminal outcome without affecting settlement."""
+        service = self._activity_receipts
+        if service is None or not logical_outcome_id:
+            return
+        mapped_status = {
+            ConsoleRunStatus.COMPLETED: "done",
+            ConsoleRunStatus.FAILED: "failed",
+            ConsoleRunStatus.STOPPED: "stopped",
+        }.get(status)
+        if mapped_status is None:
+            return
+        session = next(
+            (candidate for candidate in self.store.sessions() if candidate.id == session_id),
+            None,
+        )
+        conversation_id = (
+            session.persisted_conversation_id if session is not None else None
+        )
+        service.publish_ordinary(
+            logical_outcome_id=logical_outcome_id,
+            status=mapped_status,
+            session_id=session_id,
+            conversation_id=conversation_id,
+            assistant_message_id=assistant_message_id,
+        )
+
     def _publish_queue_chain_terminal(
-        self, session_id: str, status: ConsoleRunStatus
+        self,
+        session_id: str,
+        status: ConsoleRunStatus,
+        logical_outcome_id: str | None,
     ) -> None:
         """Publish the one terminal marker/toast deferred across a queue chain."""
 
@@ -23371,6 +23443,15 @@ class ConsoleChatController:
         if not self.activity_for(session_id).terminal_notification_eligible:
             return
         active_id = self.store.active_session_id or ""
+        if session_id != active_id and logical_outcome_id:
+            self._publish_inactive_outcome(
+                session_id=session_id,
+                status=status,
+                logical_outcome_id=logical_outcome_id,
+                assistant_message_id=self._ordinary_outcome_assistant_ids.get(
+                    session_id
+                ),
+            )
         if session_id != active_id:
             marker = (
                 ConsoleRunMarker.FINISHED_OK

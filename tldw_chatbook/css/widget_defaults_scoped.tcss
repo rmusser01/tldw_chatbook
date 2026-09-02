@@ -2105,6 +2105,29 @@
 
 
 
+/* ===== WIDGET: ConsoleActivityOutcomeNotice (Widgets/Console/console_activity_outcome_notice.py) ===== */
+
+
+    ConsoleActivityOutcomeNotice #console-activity-outcome-copy {
+        width: 1fr;
+        height: 1;
+    }
+    ConsoleActivityOutcomeNotice #console-activity-outcome-mark-seen {
+        width: 11;
+        min-width: 11;
+        height: 1;
+        min-height: 1;
+        border: none;
+    }
+    ConsoleActivityOutcomeNotice #console-activity-outcome-dismiss {
+        width: 3;
+        min-width: 3;
+        height: 1;
+        min-height: 1;
+        border: none;
+    }
+
+
 /* ===== WIDGET: AutoSpeakConsentModal (Widgets/Console/console_auto_speak_consent.py) ===== */
 
 

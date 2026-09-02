@@ -149,6 +149,10 @@ ABSENT_AT_READY_MODULES = (
     "tldw_chatbook.Terminal.session_manager",
     # ADR-090: the external-summary LLM graph is approval-time work.
     "tldw_chatbook.Chat.permission_summary_service",
+    # TASK-21351: durable receipt coordination is first switcher/settlement
+    # work. The bridge keeps a lazy proxy so the implementation module does
+    # not spend the first-interactive-frame budget.
+    "tldw_chatbook.Chat.console_activity_receipts",
     "tldw_chatbook.Agents.profile_tool_provider",
     "tldw_chatbook.Sync_Interop.personal_context_adapter",
     # TASK-23113.7: normalization is idle maintenance. Its adapter and worker

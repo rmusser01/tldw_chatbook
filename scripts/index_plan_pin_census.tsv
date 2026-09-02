@@ -48,6 +48,7 @@ idx_collection_capture_note_links_by_item	plan-pinned	Tests/DB/test_library_coll
 idx_collection_capture_offline_by_item	plan-pinned	Tests/DB/test_library_collections_capture_migration.py
 idx_collection_capture_offline_by_state	plan-pinned	Tests/DB/test_library_collections_capture_migration.py
 idx_console_aux_attempts_conversation_started	pre-convention	plan never captured without stats
+idx_console_activity_receipts_unseen	plan-pinned	Tests/DB/test_agent_runs_db.py
 idx_console_dispatch_checkpoint_conversation	pre-convention	plan never captured without stats
 idx_console_memories_boundary	pre-convention	plan never captured without stats
 idx_console_memories_conversation_active	pre-convention	plan never captured without stats

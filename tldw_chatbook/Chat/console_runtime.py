@@ -123,8 +123,10 @@ import asyncio
 from datetime import datetime, timezone
 import inspect
 from dataclasses import dataclass
+from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Callable, Mapping
+from uuid import uuid4
 
 from loguru import logger
 
@@ -190,6 +192,37 @@ class _LazyTraceCompatibilityMetrics:
         """Return the current immutable compatibility counts."""
 
         return self._get_delegate().snapshot()
+
+
+class _LazyConsoleActivityReceiptService:
+    """Load receipt coordination on first switcher or settlement use."""
+
+    def __init__(self, runs_db: Any, marks: Any | None) -> None:
+        self._runs_db = runs_db
+        self._marks = marks
+        self._delegate: Any | None = None
+        self._lock = Lock()
+
+    def _get_delegate(self) -> Any:
+        delegate = self._delegate
+        if delegate is not None:
+            return delegate
+        with self._lock:
+            delegate = self._delegate
+            if delegate is None:
+                from tldw_chatbook.Chat.console_activity_receipts import (
+                    ConsoleActivityReceiptService,
+                )
+
+                delegate = ConsoleActivityReceiptService(
+                    self._runs_db,
+                    self._marks,
+                )
+                self._delegate = delegate
+        return delegate
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._get_delegate(), name)
 
 
 class _LazyTraceBoundaryFactory:
@@ -648,6 +681,8 @@ class ConsoleRuntime:
         self._provider_gateway: Any | None = None
         self._agent_bridge: Any | None = None
         self._agent_runs_db: Any | None = None
+        self._activity_receipts: Any | None = None
+        self._activity_hydration_task: asyncio.Task[int] | None = None
         self._change_review_coordinator: Any | None = None
         self._chat_controller: Any | None = None
         self._legacy_trace_maintenance_task: asyncio.Task[None] | None = None
@@ -673,6 +708,14 @@ class ConsoleRuntime:
         #: it already holds afterwards and builds nothing new -- see
         #: `dispose` for why a rebuild during quit is the hazard.
         self._disposed: bool = False
+        self.authority_token = str(uuid4())
+        database = getattr(app, "chachanotes_db", None)
+        database_path = getattr(database, "db_path", None)
+        self.profile_authority = (
+            str(Path(database_path).expanduser().resolve(strict=False))
+            if database_path and str(database_path) != ":memory:"
+            else ""
+        )
         #: Bumped by every `dispose()` -- i.e. once per app run, not once
         #: per navigation. `Tests/UI/test_console_runtime_ownership.py`
         #: reads it to prove the runtime survived a visit.
@@ -705,6 +748,11 @@ class ConsoleRuntime:
     def chat_controller(self) -> "ConsoleChatController | None":
         """The built chat controller, or `None`."""
         return self._chat_controller
+
+    @property
+    def activity_receipts(self) -> Any | None:
+        """The built app-lifetime receipt coordinator, if available."""
+        return self._activity_receipts
 
     @property
     def scratch_spaces(self) -> ConsoleScratchSpaceManager:
@@ -1068,13 +1116,15 @@ class ConsoleRuntime:
         if not db_path or str(db_path) == ":memory:":
             self._agent_bridge = None
             return None
-        from pathlib import Path
-
         from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
         from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
         runs_db = AgentRunsDB(Path(db_path).parent / "agent_runs.db")
         self._agent_runs_db = runs_db
+        self._activity_receipts = _LazyConsoleActivityReceiptService(
+            runs_db,
+            getattr(self._app, "conversation_local_marks_service", None),
+        )
         # TASK-1971 (Agent Change Review): the tracker is None when git is
         # absent -- the bridge then skips tracking entirely, and runs behave
         # exactly as before the feature existed (spec gating decision).
@@ -1124,8 +1174,38 @@ class ConsoleRuntime:
             register_fleet_attention,
         )
 
-        register_fleet_attention(self._agent_bridge, self._app)
+        register_fleet_attention(
+            self._agent_bridge,
+            self._app,
+            receipt_service=self._activity_receipts,
+        )
         return self._agent_bridge
+
+    def ensure_activity_hydration(self) -> asyncio.Task[int] | None:
+        """Start or reuse the one off-loop receipt hydration for this runtime."""
+        service = self._activity_receipts
+        if service is None or self._disposed:
+            return None
+        if service.hydration_state() == "ready":
+            return self._activity_hydration_task
+        task = self._activity_hydration_task
+        if task is not None and not task.done():
+            return task
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return None
+        token = self.authority_token
+
+        async def hydrate() -> int:
+            result = await asyncio.to_thread(service.hydrate_from_storage)
+            if self._disposed or self.authority_token != token:
+                return 0
+            return result
+
+        task = loop.create_task(hydrate())
+        self._activity_hydration_task = task
+        return task
 
     def ensure_chat_controller(self, **kwargs: Any) -> "ConsoleChatController":
         """Return the Console chat controller, creating it lazily.
@@ -1147,6 +1227,7 @@ class ConsoleRuntime:
 
         kwargs.setdefault("buddy_sink", self.persona_buddy_sink)
         kwargs.setdefault("scratch_spaces", self._scratch_spaces)
+        kwargs.setdefault("activity_receipts", self._activity_receipts)
         raw_cli_runtime = getattr(self._app, "raw_cli_runtime", None)
         kwargs.setdefault(
             "cancel_raw_cli_session",
@@ -1430,6 +1511,10 @@ class ConsoleRuntime:
             self._agent_runs_db,
         )
         self.generation += 1
+        hydration_task = self._activity_hydration_task
+        self._activity_hydration_task = None
+        if hydration_task is not None and not hydration_task.done():
+            hydration_task.cancel()
         if controller is not None:
             try:
                 await controller.shutdown()
