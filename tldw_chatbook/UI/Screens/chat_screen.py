@@ -3926,9 +3926,13 @@ class ChatScreen(BaseAppScreen):
         """Open the Ctrl+K fuzzy session switcher."""
         if self._console_setup_modal_blocking() or self._console_decision_blocking():
             return
+        store = self._console_chat_store
         self.app.push_screen(
             ConsoleSessionSwitcherModal(
-                rows=await self._workspace.console_session_switcher_rows()
+                rows=await self._workspace.console_session_switcher_rows(),
+                preferred_native_session_id=(
+                    store.most_recent_other_session_id() if store is not None else None
+                ),
             ),
             callback=self._session._apply_console_switcher_choice,
         )

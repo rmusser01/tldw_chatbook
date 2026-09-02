@@ -28,6 +28,63 @@ class ConsoleSwitcherEntry:
     scope_type: str
     workspace_id: str | None
     is_active: bool
+    section: str = "open"
+    state_label: str = ""
+    openable: bool = True
+
+
+_RUN_MARKER_LABELS = {
+    "◆": "APPROVAL",
+    "●": "RUNNING",
+    "✗": "FAILED · UNSEEN",
+    "✓": "FINISHED · UNSEEN",
+    "◈": "SUB-AGENT · UNSEEN",
+    "[!]": "APPROVAL",
+    "[*]": "RUNNING",
+    "[X]": "FAILED · UNSEEN",
+    "[x]": "FINISHED · UNSEEN",
+    "[s]": "SUB-AGENT · UNSEEN",
+}
+
+
+def _state_label(row: ConsoleConversationBrowserInputRow) -> str:
+    parts: list[str] = []
+    if not row.openable:
+        parts.append("UNAVAILABLE")
+    if row.selected:
+        parts.append("CURRENT")
+    marker_label = _RUN_MARKER_LABELS.get(str(row.run_marker or "").strip())
+    if marker_label:
+        parts.append(marker_label)
+    if row.native_session_id and not marker_label:
+        parts.append("OPEN AGENT")
+    if row.queued_count > 0:
+        parts.append(f"{row.queued_count} QUEUED")
+    if not row.native_session_id:
+        parts.append("saved chat")
+    return " · ".join(parts)
+
+
+def _matches_filter(row: ConsoleConversationBrowserInputRow, token: str) -> bool:
+    if token.startswith("workspace:"):
+        value = token.partition(":")[2]
+        return bool(value) and value in str(row.workspace_label or "").lower()
+    if not token.startswith("is:"):
+        return False
+    value = token.partition(":")[2]
+    state = _state_label(row).lower()
+    predicates = {
+        "open": bool(row.native_session_id),
+        "saved": not row.native_session_id,
+        "current": bool(row.selected),
+        "running": "running" in state,
+        "approval": "approval" in state,
+        "queued": row.queued_count > 0,
+        "failed": "failed" in state,
+        "finished": "finished" in state,
+        "unavailable": not row.openable,
+    }
+    return predicates.get(value, False)
 
 
 def _matches(row: ConsoleConversationBrowserInputRow, tokens: list[str]) -> bool:
@@ -58,9 +115,15 @@ def _matches(row: ConsoleConversationBrowserInputRow, tokens: list[str]) -> bool
             row.workspace_label,
             row.status,
             console_conversation_status_detail(row.status),
+            _state_label(row),
         )
     ).lower()
-    return all(token in haystack for token in tokens)
+    return all(
+        _matches_filter(row, token)
+        if token.startswith(("is:", "workspace:"))
+        else token in haystack
+        for token in tokens
+    )
 
 
 def build_console_switcher_entries(
@@ -98,6 +161,7 @@ def build_console_switcher_entries(
 
     deduped.sort(
         key=lambda row: (
+            not bool(row.native_session_id),
             not row.selected,
             ReverseKey(str(row.updated_sort or "")),
             row.title.casefold(),
@@ -115,9 +179,10 @@ def build_console_switcher_entries(
         recency = str(row.updated_label or "").strip() or format_console_relative_age(
             str(row.updated_sort or ""), now=reference_now
         )
-        subtitle = " - ".join(
+        state_label = _state_label(row)
+        subtitle = " · ".join(
             part
-            for part in (row.workspace_label, status_detail, recency)
+            for part in (row.workspace_label, state_label or status_detail, recency)
             if str(part or "").strip()
         )
         entries.append(
@@ -130,6 +195,9 @@ def build_console_switcher_entries(
                 scope_type=str(row.scope_type or ""),
                 workspace_id=row.workspace_id,
                 is_active=bool(row.selected),
+                section="open" if row.native_session_id else "saved",
+                state_label=state_label,
+                openable=bool(row.openable),
             )
         )
     return tuple(entries)

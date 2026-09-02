@@ -1571,6 +1571,9 @@ class ConsoleChatStore:
                 repository
             )
         self.active_session_id: str | None = None
+        # Most-recent activation first. This is process-local navigation
+        # history, not conversation activity or durable user data.
+        self._session_mru: deque[str] = deque()
         self._active_session_epoch = 0
         self._speech_preference_epoch_sequence = 0
         self._sessions: dict[str, ConsoleChatSession] = {}
@@ -2021,8 +2024,51 @@ class ConsoleChatStore:
 
     def _activate_session(self, session_id: str | None) -> None:
         """Publish one activation transition behind a monotonic process fence."""
+        live_ids = set(self._sessions)
+        self._session_mru = deque(
+            candidate
+            for candidate in self._session_mru
+            if candidate in live_ids and candidate != session_id
+        )
+        if session_id is not None:
+            self._session_mru.appendleft(session_id)
         self.active_session_id = session_id
         self._active_session_epoch += 1
+
+    def session_mru_ids(self) -> tuple[str, ...]:
+        """Return live native session IDs in most-recent activation order."""
+        live_ids = set(self._sessions)
+        return tuple(
+            session_id for session_id in self._session_mru if session_id in live_ids
+        )
+
+    def most_recent_other_session_id(self) -> str | None:
+        """Return the best live-tab target other than the current one.
+
+        Activation order is authoritative. A restored or never-activated peer
+        has no process-local navigation history, so its conversation recency is
+        the deterministic fallback instead of making blank Enter a no-op.
+        """
+        activated = next(
+            (
+                session_id
+                for session_id in self.session_mru_ids()
+                if session_id != self.active_session_id
+            ),
+            None,
+        )
+        if activated is not None:
+            return activated
+        fallback = max(
+            (
+                session
+                for session_id, session in self._sessions.items()
+                if session_id != self.active_session_id
+            ),
+            key=lambda session: (str(session.updated_at or ""), session.id),
+            default=None,
+        )
+        return fallback.id if fallback is not None else None
 
     def active_session_epoch(self) -> int:
         """Return the monotonic generation of the current activation state."""

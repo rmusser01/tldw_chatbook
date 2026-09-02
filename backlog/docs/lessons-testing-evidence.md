@@ -48,6 +48,24 @@ an ephemeral detector to recreate it.
 
 ---
 
+## Sectioned projections must sort by section before row priority
+
+**TASK-28125, 2026-09-02.** The Ctrl+K switcher initially pinned every selected
+row ahead of every other row, then inserted `OPEN AGENT TABS` and `SAVED CHATS`
+headings while walking that order. A selected persisted conversation therefore
+produced `saved → open → saved`, mounted the Saved heading twice with the same
+widget ID, and could fail even though ordinary all-open and all-saved fixtures
+passed. A cross-section selected-row regression forced the sort to make section
+the primary key and selection the priority only inside each section.
+
+**What to do.** For a projection rendered as keyed sections, assert that each
+section key forms one contiguous run before mounting headings. Include a
+high-priority or selected row from a later section in the fixture; row-level
+priority must not split a section unless repeated section identities are an
+explicit part of the rendering contract.
+
+---
+
 ## Current-version repair hooks must gate on the schema that introduced their columns
 
 **TASK-23113.8, 2026-08-31.** The trace-GC migration matrix reopened a genuine

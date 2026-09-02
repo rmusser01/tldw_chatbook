@@ -76,6 +76,35 @@ def _pristine_defaults(*, model: str = "default-model") -> ConsoleSessionSetting
     return ConsoleSessionSettings(provider="openai", model=model)
 
 
+def test_session_mru_order_tracks_activation_and_excludes_closed_sessions():
+    """Removing activation bookkeeping must lose Ctrl+K's last-tab target."""
+    store = ConsoleChatStore()
+    first = store.create_session(settings=_pristine_defaults())
+    second = store.create_session(settings=_pristine_defaults())
+    third = store.create_session(settings=_pristine_defaults())
+
+    store.switch_session(first.id)
+    store.switch_session(second.id)
+
+    assert store.session_mru_ids() == (second.id, first.id, third.id)
+    assert store.most_recent_other_session_id() == first.id
+
+    store.close_session(first.id)
+
+    assert store.session_mru_ids() == (second.id, third.id)
+    assert store.most_recent_other_session_id() == third.id
+
+
+def test_most_recent_other_session_falls_back_when_no_activation_history_exists():
+    store = ConsoleChatStore()
+    current = store.create_session(title="Current")
+    fallback = store.create_session(title="Restored peer", activate=False)
+
+    assert store.active_session_id == current.id
+    assert store.session_mru_ids() == (current.id,)
+    assert store.most_recent_other_session_id() == fallback.id
+
+
 def _library_authority(
     attempt_id: str,
     *,

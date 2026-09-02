@@ -96,11 +96,19 @@ def test_limit_zero_returns_no_entries():
 def test_subtitle_joins_available_parts():
     entry = build_console_switcher_entries([_row()])[0]
     # TASK-356: the switcher shows the shared friendly vocabulary, not raw status.
-    assert entry.subtitle == "Workspace 1 - saved chat - 2m"
+    assert entry.subtitle == "Workspace 1 · saved chat · 2m"
     bare = build_console_switcher_entries(
-        [_row(row_key="x", workspace_label="", status="", updated_label="", updated_sort="")]
+        [
+            _row(
+                row_key="x",
+                workspace_label="",
+                status="",
+                updated_label="",
+                updated_sort="",
+            )
+        ]
     )[0]
-    assert bare.subtitle == ""
+    assert bare.subtitle == "saved chat"
 
 
 def test_matcher_tolerates_none_fields_without_raising():
@@ -126,7 +134,7 @@ def test_switcher_status_uses_saved_chat_vocabulary_not_in_progress():
     )
     subtitle = entries[0].subtitle
     assert "in-progress" not in subtitle
-    assert "saved chat" in subtitle
+    assert "saved chat" in subtitle.lower()
 
 
 def test_switcher_status_maps_membership_and_session_states():
@@ -136,8 +144,8 @@ def test_switcher_status_maps_membership_and_session_states():
     active = build_console_switcher_entries(
         [_row(row_key="b", status="active", updated_label="")]
     )[0].subtitle
-    assert "saved chat" in saved
-    assert "active session" in active
+    assert "saved chat" in saved.lower()
+    assert "saved chat" in active.lower()
 
 
 def test_switcher_shows_recency_when_updated_label_absent():
@@ -168,3 +176,104 @@ def test_search_matches_the_friendly_status_label_now_shown():
     assert [
         e.row_key for e in build_console_switcher_entries(rows, query="in-progress")
     ] == ["a"]
+
+
+def test_open_agent_entry_projects_fleet_queue_and_current_state():
+    """Removing any source fleet field must make the switcher lose its state."""
+    entry = build_console_switcher_entries(
+        [
+            _row(
+                native_session_id="session-1",
+                conversation_id="conv-1",
+                source_kind="native",
+                status="active session",
+                selected=True,
+                run_marker="●",
+                queued_count=2,
+            )
+        ]
+    )[0]
+
+    assert entry.section == "open"
+    assert entry.state_label == "CURRENT · RUNNING · 2 QUEUED"
+    assert entry.openable is True
+
+
+def test_saved_unavailable_entry_is_not_presented_as_an_open_agent():
+    entry = build_console_switcher_entries(
+        [
+            _row(
+                native_session_id=None,
+                source_kind="persisted",
+                openable=False,
+            )
+        ]
+    )[0]
+
+    assert entry.section == "saved"
+    assert entry.state_label == "UNAVAILABLE · saved chat"
+    assert entry.openable is False
+
+
+def test_open_and_saved_sections_remain_contiguous_when_saved_row_is_selected():
+    entries = build_console_switcher_entries(
+        [
+            _row(
+                row_key="open",
+                native_session_id="session-open",
+                source_kind="native",
+                selected=False,
+            ),
+            _row(row_key="saved-current", selected=True),
+            _row(row_key="saved-other", selected=False),
+        ]
+    )
+
+    assert [entry.section for entry in entries] == ["open", "saved", "saved"]
+
+
+def test_semantic_filters_match_operational_state_without_title_keywords():
+    rows = [
+        _row(
+            row_key="running",
+            conversation_id="running",
+            native_session_id="session-running",
+            source_kind="native",
+            title="Release planning",
+            run_marker="●",
+            queued_count=2,
+        ),
+        _row(
+            row_key="approval",
+            conversation_id="approval",
+            native_session_id="session-approval",
+            source_kind="native",
+            title="Budget review",
+            run_marker="◆",
+        ),
+        _row(
+            row_key="saved",
+            conversation_id="saved",
+            native_session_id=None,
+            source_kind="persisted",
+            title="Migration notes",
+            workspace_label="Research Lab",
+        ),
+    ]
+
+    assert [
+        e.row_key for e in build_console_switcher_entries(rows, query="running")
+    ] == ["running"]
+    assert [
+        e.row_key for e in build_console_switcher_entries(rows, query="approval")
+    ] == ["approval"]
+    assert [
+        e.row_key for e in build_console_switcher_entries(rows, query="queued")
+    ] == ["running"]
+    assert [
+        e.row_key for e in build_console_switcher_entries(rows, query="is:saved")
+    ] == ["saved"]
+    assert [
+        e.row_key
+        for e in build_console_switcher_entries(rows, query="workspace:research")
+    ] == ["saved"]

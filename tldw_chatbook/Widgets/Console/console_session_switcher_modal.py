@@ -9,8 +9,10 @@ from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.binding import Binding
+from textual.containers import Vertical, VerticalScroll
 from textual.css.query import NoMatches
+from textual.events import DescendantFocus
 from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widgets import Button, Input, Static
@@ -26,8 +28,8 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 
 
-_SWITCHER_TITLE_MAX_CHARACTERS = 500
-_SWITCHER_SUBTITLE_MAX_CHARACTERS = 500
+_SWITCHER_TITLE_MAX_CHARACTERS = 64
+_SWITCHER_SUBTITLE_MAX_CHARACTERS = 120
 
 
 #: Debounce for the search `Input` -- mirrors the console picker family's
@@ -57,18 +59,30 @@ class ConsoleSessionSwitcherModal(
     }
 
     #console-switcher-modal {
-        width: 72;
-        height: auto;
-        max-height: 30;
+        width: 76;
+        max-width: 100%;
+        height: 100%;
+        max-height: 35;
         border: tall gray;
         background: black;
         padding: 1 2;
     }
 
     #console-switcher-results {
-        height: auto;
-        max-height: 20;
+        height: 1fr;
+        min-height: 3;
         margin: 1 0 0 0;
+    }
+
+    .console-switcher-section {
+        height: 1;
+        color: gray;
+        text-style: bold;
+    }
+
+    #console-switcher-feedback {
+        height: 1;
+        color: yellow;
     }
 
     #console-switcher-hints {
@@ -90,20 +104,39 @@ class ConsoleSessionSwitcherModal(
         min-height: 2;
         margin: 0;
     }
+
+    .console-switcher-result-candidate {
+        text-style: bold;
+    }
+
+    .console-switcher-result-active {
+        text-style: underline;
+    }
     """
 
     SAFE_MODAL_CONTENT = "#console-switcher-modal"
     BINDINGS = [
         ("escape", "request_safe_cancel", "Cancel"),
         ("f2", "rename_entry", "Rename"),
-        ("down", "switcher_cursor_down", "Next result"),
-        ("up", "switcher_cursor_up", "Previous result"),
+        Binding(
+            "down",
+            "switcher_cursor_down",
+            "Next result",
+            priority=True,
+        ),
+        Binding(
+            "up",
+            "switcher_cursor_up",
+            "Previous result",
+            priority=True,
+        ),
     ]
 
     def __init__(
         self,
         *,
         rows: tuple[ConsoleConversationBrowserInputRow, ...],
+        preferred_native_session_id: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the switcher with the browser rows to search over.
@@ -115,7 +148,12 @@ class ConsoleSessionSwitcherModal(
         """
         super().__init__(**kwargs)
         self._rows = rows
+        self._preferred_native_session_id = str(
+            preferred_native_session_id or ""
+        ).strip()
         self._entries: tuple[ConsoleSwitcherEntry, ...] = ()
+        self._candidate_index = 0
+        self._rendered_query = ""
         self._query_debounce_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
@@ -123,10 +161,11 @@ class ConsoleSessionSwitcherModal(
         with Vertical(id="console-switcher-modal"):
             yield Static("Switch Session", classes="console-modal-header")
             yield Input(
-                placeholder="Search conversations…",
+                placeholder="Search title, workspace, or state…",
                 id="console-switcher-query",
             )
-            yield Vertical(id="console-switcher-results")
+            yield VerticalScroll(id="console-switcher-results")
+            yield Static("", id="console-switcher-feedback", markup=False)
             # DS-08 (TASK-2154.15): in-modal key hints -- these bindings were
             # documented only in F1 before. Only keys that actually work are
             # listed (no Ctrl+Enter: that spec'd binding was never implemented).
@@ -151,41 +190,101 @@ class ConsoleSessionSwitcherModal(
         """
         # Update entries synchronously first: Enter-activates-first-result
         # reads self._entries[0] and must never observe a stale value.
+        previous_key = (
+            self._entries[self._candidate_index].row_key
+            if 0 <= self._candidate_index < len(self._entries)
+            else ""
+        )
         self._entries = build_console_switcher_entries(self._rows, query=query)
-        results = self.query_one("#console-switcher-results", Vertical)
+        self._rendered_query = query
+        results = self.query_one("#console-switcher-results", VerticalScroll)
 
         await results.remove_children()
 
         if not self._entries:
-            await results.mount(
-                Static("No matches.", id="console-switcher-empty", markup=False)
+            copy = (
+                "No agent tabs yet. Ctrl+T creates an agent tab; saved chats "
+                "appear after your first message."
+                if not self._rows and not query.strip()
+                else "No matches. Try a title, workspace, or state such as "
+                "running, approval, queued, failed, or is:saved."
             )
+            await results.mount(Static(copy, id="console-switcher-empty", markup=False))
+            self._candidate_index = 0
         else:
-            buttons = []
+            if query.strip():
+                self._candidate_index = 0
+            else:
+                preferred_index = next(
+                    (
+                        index
+                        for index, entry in enumerate(self._entries)
+                        if entry.native_session_id == self._preferred_native_session_id
+                    ),
+                    None,
+                )
+                retained_index = next(
+                    (
+                        index
+                        for index, entry in enumerate(self._entries)
+                        if entry.row_key == previous_key
+                    ),
+                    None,
+                )
+                self._candidate_index = (
+                    preferred_index
+                    if preferred_index is not None
+                    else retained_index
+                    if retained_index is not None
+                    else 0
+                )
+            widgets = []
+            previous_section = ""
             for index, entry in enumerate(self._entries):
-                display_title = sanitize_character_display_label(
-                    entry.title,
-                    max_characters=_SWITCHER_TITLE_MAX_CHARACTERS,
-                ) or "Untitled conversation"
-                display_subtitle = sanitize_character_display_label(
-                    entry.subtitle,
-                    max_characters=_SWITCHER_SUBTITLE_MAX_CHARACTERS,
-                )
-                label = (
-                    display_title
-                    if not display_subtitle
-                    else f"{display_title}\n  {display_subtitle}"
-                )
+                if entry.section != previous_section:
+                    widgets.append(
+                        Static(
+                            "OPEN AGENT TABS"
+                            if entry.section == "open"
+                            else "SAVED CHATS",
+                            id=f"console-switcher-section-{entry.section}",
+                            classes="console-switcher-section",
+                            markup=False,
+                        )
+                    )
+                    previous_section = entry.section
                 button = Button(
-                    Text(label),
+                    self._entry_label(index, entry),
                     id=f"console-switcher-result-{index}",
                     classes="console-switcher-result",
                     compact=True,
                 )
                 button.set_class(entry.is_active, "console-switcher-result-active")
-                button.tooltip = escape_markup(f"Switch to {display_title}")
-                buttons.append(button)
-            await results.mount_all(buttons)
+                button.set_class(
+                    index == self._candidate_index,
+                    "console-switcher-result-candidate",
+                )
+                button.tooltip = escape_markup(f"Switch to {entry.title}")
+                widgets.append(button)
+            await results.mount_all(widgets)
+
+    def _entry_label(self, index: int, entry: ConsoleSwitcherEntry) -> Text:
+        display_title = (
+            sanitize_character_display_label(
+                entry.title,
+                max_characters=_SWITCHER_TITLE_MAX_CHARACTERS,
+            )
+            or "Untitled conversation"
+        )
+        display_subtitle = sanitize_character_display_label(
+            entry.subtitle,
+            max_characters=_SWITCHER_SUBTITLE_MAX_CHARACTERS,
+        )
+        marker = "▸" if index == self._candidate_index else " "
+        label = f"{marker} {display_title}"
+        if display_subtitle:
+            label = f"{label}\n  {display_subtitle}"
+        return Text(label)
 
     @on(Input.Changed, "#console-switcher-query")
     def _query_changed(self, event: Input.Changed) -> None:
@@ -219,14 +318,37 @@ class ConsoleSessionSwitcherModal(
             event: The search input's submit event.
         """
         event.stop()
-        if self._entries:
-            self._cancel_query_debounce()
-            self.dismiss(ConsoleSwitcherChoice("activate", self._entries[0]))
+        self._cancel_query_debounce()
+        entries = (
+            self._entries
+            if event.value == self._rendered_query
+            else build_console_switcher_entries(self._rows, query=event.value)
+        )
+        if not entries:
+            return
+        index = self._candidate_index if entries is self._entries else 0
+        if not event.value.strip() and self._preferred_native_session_id:
+            index = next(
+                (
+                    candidate_index
+                    for candidate_index, entry in enumerate(entries)
+                    if entry.native_session_id == self._preferred_native_session_id
+                ),
+                index,
+            )
+        if 0 <= index < len(entries):
+            entry = entries[index]
+            if entry.openable:
+                self.dismiss(ConsoleSwitcherChoice("activate", entry))
+            else:
+                self._set_feedback(
+                    "This saved chat is unavailable and cannot be opened."
+                )
 
     def _result_buttons(self) -> list[Button]:
         """Return mounted result buttons in display order."""
         try:
-            results = self.query_one("#console-switcher-results", Vertical)
+            results = self.query_one("#console-switcher-results", VerticalScroll)
         except NoMatches:
             return []
         return [
@@ -250,10 +372,11 @@ class ConsoleSessionSwitcherModal(
             return
         index = self._focused_result_index()
         if index is None:
-            buttons[0].focus()
+            self._focus_candidate(buttons)
             return
         if index + 1 < len(buttons):
-            buttons[index + 1].focus()
+            self._candidate_index = index + 1
+            self._focus_candidate(buttons)
 
     def action_switcher_cursor_up(self) -> None:
         """ArrowUp: previous result; from the first, back to the search field."""
@@ -265,7 +388,42 @@ class ConsoleSessionSwitcherModal(
             except NoMatches:
                 pass
             return
-        buttons[index - 1].focus()
+        self._candidate_index = index - 1
+        self._focus_candidate(buttons)
+
+    def _focus_candidate(self, buttons: list[Button]) -> None:
+        if not 0 <= self._candidate_index < len(buttons):
+            return
+        button = buttons[self._candidate_index]
+        button.focus()
+        self._sync_candidate_labels(buttons)
+        button.scroll_visible(animate=False, immediate=True)
+
+    def _sync_candidate_labels(self, buttons: list[Button] | None = None) -> None:
+        mounted = buttons if buttons is not None else self._result_buttons()
+        for index, button in enumerate(mounted):
+            if not 0 <= index < len(self._entries):
+                continue
+            button.set_class(
+                index == self._candidate_index,
+                "console-switcher-result-candidate",
+            )
+            button.label = self._entry_label(index, self._entries[index])
+
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        widget = event.widget
+        if not isinstance(widget, Button) or not widget.has_class(
+            "console-switcher-result"
+        ):
+            return
+        if widget is not self.app.focused:
+            return
+        index = self._result_index_from_widget_id(widget.id or "")
+        if index is None or not 0 <= index < len(self._entries):
+            return
+        self._candidate_index = index
+        self._sync_candidate_labels()
+        widget.scroll_visible(animate=False, immediate=True)
 
     @on(Button.Pressed, ".console-switcher-result")
     def _result_pressed(self, event: Button.Pressed) -> None:
@@ -277,6 +435,11 @@ class ConsoleSessionSwitcherModal(
         event.stop()
         index = self._result_index_from_widget_id(event.button.id or "")
         if index is not None and 0 <= index < len(self._entries):
+            if not self._entries[index].openable:
+                self._set_feedback(
+                    "This saved chat is unavailable and cannot be opened."
+                )
+                return
             self._cancel_query_debounce()
             self.dismiss(ConsoleSwitcherChoice("activate", self._entries[index]))
 
@@ -291,28 +454,27 @@ class ConsoleSessionSwitcherModal(
         await self.request_safe_cancel(source="button")
 
     def action_rename_entry(self) -> None:
-        """Request a rename for the focused result, or the first native entry (F2).
-
-        Prefers the entry backing the currently focused result button, so
-        that F2 renames whatever the user is looking at rather than always
-        the first result. Falls back to the first entry with a
-        ``native_session_id`` when focus isn't on a result button, or that
-        button's entry isn't a native (renameable) session.
-        """
+        """Request a rename only for the explicit focused/highlighted entry."""
         focused_index = self._result_index_from_widget_id(
             getattr(self.focused, "id", None) or ""
         )
-        if focused_index is not None and 0 <= focused_index < len(self._entries):
-            focused_entry = self._entries[focused_index]
-            if focused_entry.native_session_id:
-                self._cancel_query_debounce()
-                self.dismiss(ConsoleSwitcherChoice("rename", focused_entry))
-                return
-        for entry in self._entries:
-            if entry.native_session_id:
-                self._cancel_query_debounce()
-                self.dismiss(ConsoleSwitcherChoice("rename", entry))
-                return
+        index = focused_index if focused_index is not None else self._candidate_index
+        if not 0 <= index < len(self._entries):
+            self._set_feedback("Choose an open agent tab to rename.")
+            return
+        entry = self._entries[index]
+        if not entry.native_session_id:
+            self._set_feedback("Saved chats cannot be renamed here; open one first.")
+            return
+        self._cancel_query_debounce()
+        self.dismiss(ConsoleSwitcherChoice("rename", entry))
+
+    def _set_feedback(self, message: str) -> None:
+        try:
+            feedback = self.query_one("#console-switcher-feedback", Static)
+        except NoMatches:
+            return
+        feedback.update(message)
 
     @staticmethod
     def _result_index_from_widget_id(widget_id: str) -> int | None:
