@@ -738,7 +738,7 @@ async def test_live_local_capture_commit_failure_retry_modes_archive_delete_and_
     """Walk one capture through Local lifecycle and complete legacy recovery."""
     app = _build_test_app()
     _seed_legacy_records(app.local_library_collections_db, count=45)
-    authority = app.local_collections_capture_authority
+    authority = app.collections_capture_scope_service.active_authority
     assert authority is not None
     extraction_started = threading.Event()
     extraction_release = threading.Event()

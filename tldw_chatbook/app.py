@@ -233,28 +233,6 @@ from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
 from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Library import LocalLibraryCollectionsService
-from tldw_chatbook.Library.collections_capture_models import (
-    ExternalMediaReference,
-    ExternalNoteReference,
-    ExternalReferenceAvailability,
-)
-from tldw_chatbook.Library.collections_capture_repository import (
-    CollectionsCaptureRepository,
-)
-from tldw_chatbook.Library.collections_capture_service import (
-    CollectionsCaptureScopeService,
-    LocalCollectionsCaptureService,
-    build_local_capture_authority,
-    build_server_capture_authority,
-)
-from tldw_chatbook.Library.collections_legacy_recovery import (
-    LegacyCollectionsRecovery,
-    LegacyCollectionsRecoveryError,
-)
-from tldw_chatbook.Library.collections_offline_store import CollectionsOfflineStore
-from tldw_chatbook.Library.server_collections_capture_service import (
-    ServerCollectionsCaptureService,
-)
 from tldw_chatbook.Library.ingest_analysis import resolve_ingest_analysis_provider
 from tldw_chatbook.Library.ingest_capabilities import (
     field_gate_open,
@@ -795,6 +773,11 @@ from tldw_chatbook.Audio_Services_Interop import (  # noqa: E402
 from .Evals.eval_orchestrator import EvaluationOrchestrator  # noqa: E402
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Library.collections_capture_models import (
+        ExternalMediaReference,
+        ExternalNoteReference,
+        ExternalReferenceAvailability,
+    )
     from tldw_chatbook.Terminal.backend import TerminalBackend
     from tldw_chatbook.Model_Artifacts.service import ArtifactRef
     from tldw_chatbook.LLM_Provider_Catalog.model_discovery_disk_cache import (
@@ -809,6 +792,10 @@ _PERSONAL_CONTEXT_SERVICE_BOOTSTRAP_LOCK = threading.Lock()
 API_IMPORTS_SUCCESSFUL = True
 
 DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
+#: Collections capture persistence and remote adapters are first-use work.
+#: Compose them after the first interactive frame, or synchronously when a
+#: caller enters Collections before this timer fires.
+DEFERRED_COLLECTIONS_CAPTURE_WIRING_DELAY_SECONDS = 0.1
 #: Notes organization composition is not needed for the first interactive
 #: frame. Keep its repository, validator, and agent-lesson seed imports beyond
 #: the ADR-097 UI-ready module census.
@@ -7085,9 +7072,13 @@ def _collections_reference_authority_kind(app: Any, authority_key: str) -> str |
 
 async def _resolve_collections_media_reference(
     app: Any,
-    reference: ExternalMediaReference,
-) -> ExternalReferenceAvailability:
+    reference: "ExternalMediaReference",
+) -> "ExternalReferenceAvailability":
     """Resolve a capture's stored backing-Media identity through its owner."""
+    from tldw_chatbook.Library.collections_capture_models import (
+        ExternalReferenceAvailability,
+    )
+
     kind = _collections_reference_authority_kind(app, reference.authority_key)
     if kind is None:
         return ExternalReferenceAvailability(
@@ -7121,9 +7112,13 @@ async def _resolve_collections_media_reference(
 
 async def _resolve_collections_note_reference(
     app: Any,
-    reference: ExternalNoteReference,
-) -> ExternalReferenceAvailability:
+    reference: "ExternalNoteReference",
+) -> "ExternalReferenceAvailability":
     """Resolve a capture's note link through Local or Server Notes only."""
+    from tldw_chatbook.Library.collections_capture_models import (
+        ExternalReferenceAvailability,
+    )
+
     kind = _collections_reference_authority_kind(app, reference.authority_key)
     if kind is None:
         return ExternalReferenceAvailability(
@@ -7148,6 +7143,29 @@ async def _resolve_collections_note_reference(
             "unavailable", "note_reference_identity_mismatch"
         )
     return ExternalReferenceAvailability("available")
+
+
+class _DeferredCollectionsCaptureScope:
+    """Stable app seam that composes the real capture scope on first use."""
+
+    def __init__(self, owner: Any) -> None:
+        object.__setattr__(self, "_owner", owner)
+
+    def _resolve(self) -> Any:
+        owner = object.__getattribute__(self, "_owner")
+        scope = TldwCli.ensure_collections_capture_services(owner)
+        if scope is None or scope is self:
+            raise RuntimeError("collections_capture_scope_unavailable")
+        return scope
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._resolve(), name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        setattr(self._resolve(), name, value)
+
+    def __delattr__(self, name: str) -> None:
+        delattr(self._resolve(), name)
 
 
 class TldwCli(
@@ -7806,7 +7824,7 @@ class TldwCli(
             policy_enforcer=self.service_policy_enforcer,
             sync_scope_service=getattr(self, "sync_scope_service", None),
         )
-        self._wire_collections_capture_services()
+        TldwCli._reset_collections_capture_services(self)
         # TASK-21108: the lasting-sync runtime is built on FIRST ACCESS, not
         # here. Its construction is what drags `Notes/notes_sync_runtime` and
         # (through the TASK-21112 start gate) `Notes/notes_sync_legacy` --
@@ -9254,13 +9272,23 @@ class TldwCli(
 
     def _wire_collections_capture_services(self) -> None:
         """Compose the profile-owned Local capture authority and scope seam."""
-        self.collections_capture_repository = None
-        self.collections_offline_store = None
-        self.collections_legacy_recovery_service = None
-        self.local_collections_capture_authority = None
-        self.local_collections_capture_service = None
-        self.server_collections_capture_authority = None
-        self.server_collections_capture_service = None
+        from tldw_chatbook.Library.collections_capture_repository import (
+            CollectionsCaptureRepository,
+        )
+        from tldw_chatbook.Library.collections_capture_service import (
+            CollectionsCaptureScopeService,
+            LocalCollectionsCaptureService,
+            build_local_capture_authority,
+        )
+        from tldw_chatbook.Library.collections_legacy_recovery import (
+            LegacyCollectionsRecovery,
+            LegacyCollectionsRecoveryError,
+        )
+        from tldw_chatbook.Library.collections_offline_store import (
+            CollectionsOfflineStore,
+        )
+
+        TldwCli._reset_collections_capture_services(self)
         self.collections_capture_scope_service = CollectionsCaptureScopeService(
             resolve_media_reference=functools.partial(
                 _resolve_collections_media_reference, self
@@ -9314,6 +9342,34 @@ class TldwCli(
         self.local_collections_capture_service = service
         TldwCli._activate_collections_capture_authority(self)
 
+    def _reset_collections_capture_services(self) -> None:
+        """Install inert capture seams without importing their implementations."""
+        self.collections_capture_repository = None
+        self.collections_offline_store = None
+        self.collections_legacy_recovery_service = None
+        self.local_collections_capture_authority = None
+        self.local_collections_capture_service = None
+        self.server_collections_capture_authority = None
+        self.server_collections_capture_service = None
+        self.collections_capture_scope_service = _DeferredCollectionsCaptureScope(self)
+
+    def ensure_collections_capture_services(self) -> Any | None:
+        """Compose capture services once, after readiness or on first use."""
+        scope = getattr(self, "collections_capture_scope_service", None)
+        if scope is None or isinstance(scope, _DeferredCollectionsCaptureScope):
+            TldwCli._wire_collections_capture_services(self)
+            scope = getattr(self, "collections_capture_scope_service", None)
+        return scope
+
+    def _deferred_wire_collections_capture_services(self) -> None:
+        """Compose and reconcile capture services after the first frame."""
+        self.ensure_collections_capture_services()
+        if getattr(self, "collections_capture_repository", None) is not None:
+            self._create_deferred_startup_task(
+                self._reconcile_collections_capture_startup(),
+                name="deferred_collections_capture_reconciliation",
+            )
+
     def _activate_collections_capture_authority(self) -> None:
         """Activate the capture owner selected by the committed runtime source."""
         scope = getattr(self, "collections_capture_scope_service", None)
@@ -9332,6 +9388,13 @@ class TldwCli(
                 if callable(deactivate):
                     deactivate()
             return
+
+        from tldw_chatbook.Library.collections_capture_service import (
+            build_server_capture_authority,
+        )
+        from tldw_chatbook.Library.server_collections_capture_service import (
+            ServerCollectionsCaptureService,
+        )
 
         provider = getattr(self, "server_context_provider", None)
         try:
@@ -9394,7 +9457,10 @@ class TldwCli(
     async def _shutdown_collections_capture_runtime(self) -> None:
         """Fence capture authority before cancelling app-owned extraction work."""
         scope = getattr(self, "collections_capture_scope_service", None)
-        if scope is not None:
+        if scope is not None and not isinstance(
+            scope,
+            _DeferredCollectionsCaptureScope,
+        ):
             deactivate = getattr(scope, "deactivate", None)
             if callable(deactivate):
                 deactivate()
@@ -10892,6 +10958,7 @@ class TldwCli(
                 updated_state.active_server_id,
             )
         _wire_notes_sync_services(self)
+        self.ensure_collections_capture_services()
         self._activate_collections_capture_authority()
 
         resolved_backend = (
@@ -15143,6 +15210,10 @@ class TldwCli(
             self._start_deferred_audio_service_initialization,
         )
         self.set_timer(
+            DEFERRED_COLLECTIONS_CAPTURE_WIRING_DELAY_SECONDS,
+            self._deferred_wire_collections_capture_services,
+        )
+        self.set_timer(
             DEFERRED_NOTES_ORGANIZATION_WIRING_DELAY_SECONDS,
             self._deferred_wire_notes_sync_services,
         )
@@ -15162,11 +15233,6 @@ class TldwCli(
             self._reconcile_interrupted_subscription_work(),
             name="deferred_subscription_interrupt_reconcile",
         )
-        if getattr(self, "collections_capture_repository", None) is not None:
-            self._create_deferred_startup_task(
-                self._reconcile_collections_capture_startup(),
-                name="deferred_collections_capture_reconciliation",
-            )
         coordinator = getattr(
             self,
             "citation_artifact_ownership_coordinator",

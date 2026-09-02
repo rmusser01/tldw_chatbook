@@ -24961,6 +24961,14 @@ class LibraryScreen(BaseAppScreen):
             "skills": "skills_scope_service",
             "collections": "collections_capture_scope_service",
         }
+        if owner == "collections":
+            ensure = getattr(
+                self.app_instance,
+                "ensure_collections_capture_services",
+                None,
+            )
+            if callable(ensure):
+                ensure()
         service = getattr(self.app_instance, service_attributes[owner], None)
         evidence_call = getattr(service, "get_library_user_content_evidence", None)
         if not callable(evidence_call):
@@ -43351,12 +43359,13 @@ class LibraryScreen(BaseAppScreen):
 
     async def _load_library_collections_capture_entry(self) -> None:
         """Adopt app authority, load bounded rail data, page, and first detail."""
-        controller = self._library_collections_capture_controller
+        controller = self._ensure_library_collections_capture_controller()
         if controller is None:
             self._refresh_library_collections_capture_reader()
             return
         controller.adopt_active_authority()
         self._refresh_library_collections_capture_reader()
+
         if controller.state.authority_key is None:
             return
         scope = controller.scope_service
@@ -43402,6 +43411,31 @@ class LibraryScreen(BaseAppScreen):
         if controller.state.selected_identity is not None:
             await controller.load_selected_now()
         self._refresh_library_collections_capture_reader()
+
+    def _ensure_library_collections_capture_controller(
+        self,
+    ) -> LibraryCollectionsCaptureController | None:
+        """Bind the reader controller to the lazily composed app scope."""
+        controller = self._library_collections_capture_controller
+        if controller is not None:
+            return controller
+        ensure = getattr(
+            self.app_instance,
+            "ensure_collections_capture_services",
+            None,
+        )
+        if callable(ensure):
+            ensure()
+        scope = getattr(
+            self.app_instance,
+            "collections_capture_scope_service",
+            None,
+        )
+        if scope is None:
+            return None
+        controller = LibraryCollectionsCaptureController(scope)
+        self._library_collections_capture_controller = controller
+        return controller
 
     async def _run_library_collections_capture_transition(
         self,

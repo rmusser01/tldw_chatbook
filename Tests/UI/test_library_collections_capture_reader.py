@@ -643,7 +643,7 @@ async def test_unknown_quick_capture_preserves_draft_and_does_not_auto_retry(
 async def test_real_local_capture_actions_persist_reader_results() -> None:
     app = _build_test_app()
     scope = app.collections_capture_scope_service
-    authority = app.local_collections_capture_authority
+    authority = scope.active_authority
     assert authority is not None
     service = LocalCollectionsCaptureService(
         authority,

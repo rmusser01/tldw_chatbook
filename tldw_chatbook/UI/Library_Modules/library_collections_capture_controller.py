@@ -8,7 +8,7 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, fields, replace
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from tldw_chatbook.Library.collections_capture_models import (
     CAPTURE_PAGE_SIZE,
@@ -23,10 +23,11 @@ from tldw_chatbook.Library.collections_capture_models import (
     CollectionsCaptureError,
     ResolvedCaptureDetail,
 )
-from tldw_chatbook.Library.collections_capture_service import (
-    CollectionsCaptureBackend,
-    CollectionsCaptureScopeService,
-)
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.Library.collections_capture_service import (
+        CollectionsCaptureBackend,
+        CollectionsCaptureScopeService,
+    )
 
 
 @dataclass(frozen=True)

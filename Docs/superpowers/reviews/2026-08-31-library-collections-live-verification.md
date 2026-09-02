@@ -105,9 +105,24 @@ The run verified:
 - Production-shaped cross-reader closeout after the final save-recovery hardening: **490 passed**.
 - Final Local/Server service, configuration, mounted-reader, and enabled live gate: **61 passed**.
 - Post-prerequisite-merge focused client gate after the remount-wait hardening: **58 passed**.
+- Post-review import-closure and lazy-wiring regressions: **17 passed**.
+- Post-review focused controller, mounted-reader, and Local live gate: **44 passed, 1 enabled-Server
+  walkthrough skipped because no isolated endpoint was configured**.
+- Complete GitHub UI-latency and boot-budget workflow after deferring the capture runtime past first
+  paint: **23 passed**.
 - tldw_server snapshot, docs-info, and schema-memo regression gate: **51 passed**.
 - Static validation covers the edited Python modules, CSS regeneration, bytecode compilation, and
   whitespace/error checks.
+
+## PR performance-gate correction
+
+The first PR run measured 976 project modules resident at `_ui_ready` against ADR-097's pinned
+maximum of 972. The six newly resident modules were the capture models, repository, service, legacy
+recovery, offline store, and Server adapter. The implementation now preserves the same package and
+app-level service API through lazy exports and a first-use scope proxy, and schedules normal capture
+runtime composition just after first paint. The ratchet itself was not raised. A subprocess import
+closure test prevents the implementation graph from returning to the plain app or headless
+controller import path, and the exact failing census plus the complete performance workflow now pass.
 
 ## Integration closure
 

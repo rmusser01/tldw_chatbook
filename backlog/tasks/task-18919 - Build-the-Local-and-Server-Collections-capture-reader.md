@@ -105,5 +105,10 @@ legacy-data boundaries.
 The cross-repository prerequisite landed in tldw_server PR #2851 at merge commit
 `8140c679f3ea0334cea2dc1be32feb5b80e22ebe`. Final verification also hardened the
 mounted action test to wait for the Notes mode to remount after highlight-save recomposition;
-the focused client gate then passed 58 tests. TASK-18919 is complete.
+the focused client gate then passed 58 tests. PR verification subsequently exposed an ADR-097
+first-paint census breach caused by eagerly importing six capture-runtime modules. Capture package
+exports, controller annotations, and app wiring now load that runtime lazily after first paint or on
+first use while preserving the public service seam. Import-closure regressions passed 17 tests, the
+focused reader gate passed 44 tests with one enabled-Server skip, and the complete 23-test UI latency
+and boot-budget workflow passed locally. TASK-18919 is complete.
 <!-- SECTION:NOTES:END -->

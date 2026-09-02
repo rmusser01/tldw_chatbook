@@ -218,6 +218,46 @@ def test_local_capture_wiring_reuses_configured_collections_database(
     assert app.collections_legacy_recovery_service is not None
 
 
+def test_capture_service_ensure_composes_only_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    scope = object()
+    app = SimpleNamespace(collections_capture_scope_service=None)
+
+    def wire(owner: object) -> None:
+        calls.append("wire")
+        owner.collections_capture_scope_service = scope
+
+    monkeypatch.setattr(TldwCli, "_wire_collections_capture_services", wire)
+
+    assert TldwCli.ensure_collections_capture_services(app) is scope
+    assert TldwCli.ensure_collections_capture_services(app) is scope
+    assert calls == ["wire"]
+
+
+def test_deferred_capture_scope_preserves_pre_mount_attribute_access(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    scope = SimpleNamespace(active_authority="local-authority")
+    app = SimpleNamespace()
+    TldwCli._reset_collections_capture_services(app)
+    deferred = app.collections_capture_scope_service
+
+    def wire(owner: object) -> None:
+        calls.append("wire")
+        owner.collections_capture_scope_service = scope
+
+    monkeypatch.setattr(TldwCli, "_wire_collections_capture_services", wire)
+
+    assert deferred.active_authority == "local-authority"
+    deferred.test_override = "forwarded"
+    assert scope.test_override == "forwarded"
+    assert app.collections_capture_scope_service is scope
+    assert calls == ["wire"]
+
+
 def test_server_capture_authority_ignores_workspace_changes() -> None:
     context = SimpleNamespace(
         active_server_id="profile-a",
