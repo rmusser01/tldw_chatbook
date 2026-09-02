@@ -18,6 +18,58 @@ Open **Settings** with **F9**, then choose **Data & Privacy > My Profile**. You
 can also press **/** in Settings and search for `profile`, `personal context`,
 or `interview`.
 
+<!-- personal-context-quick-start:start -->
+## In five minutes
+
+1. Open **F9 > Data & Privacy > My Profile**.
+2. Choose **Create profile**, then **Add** for manual entry, or use the optional **Get to know you** interview. **Skip** is supported and stores no answers.
+3. Review every proposed value and its visibility and syncability controls.
+4. Choose **Save only** or **Save and use with agents**, then inspect **Context > Next Send** in Console.
+5. Choose **Server sync > Link to home server** only if you want to share with a supported home server.
+<!-- personal-context-quick-start:end -->
+
+## Everyday tasks
+
+### Common workflows
+
+#### Edit manually
+
+Under **Profile records**, set **Show** to Global, choose **Add** or **Edit**,
+enter the preference, review **Syncability** and **Visibility**, then choose
+**Save**. For project context, set **Show** to a linked workspace and add its
+goals or conventions there instead.
+
+#### Run or rerun an interview
+
+Use the optional **Get to know you** interview during setup, or set **Show** to
+Global or a linked workspace, choose a **Question style**, and select **Run
+interview again**. Review each proposed row before choosing **Save only** or
+**Save and use with agents**.
+
+#### Review agent proposals
+
+Open a row under **Proposed changes**, then choose **Accept**, **Accept
+edited**, or **Reject**. New inferred facts remain proposals. **Direct write**
+only updates an existing eligible record for an explicit correction evidenced
+by the current persisted user message.
+
+#### Export plaintext and recovery material
+
+Set **Show** to the scope you want, then use **Export plaintext: _scope_** for a
+readable copy or **Export recovery copy** for an encrypted whole-profile copy.
+Protect the plaintext file and keep the recovery passphrase separately.
+
+#### Remove the local copy
+
+Choose **Remove local profile** only when you intend to destroy this device's
+readable copy and local keys. Export or synchronize wanted changes first.
+
+#### Link a home server
+
+Under **Server sync**, choose **Link to home server**. Review every identity,
+record, proposal, collision, and workspace outcome, then choose **Approve and
+link**. Nothing is uploaded before this reviewed first-link step succeeds.
+
 ## Create or interview
 
 On a new installation, ordinary application setup finishes first. The setup
@@ -133,6 +185,34 @@ both peers; each peer encrypts the canonical bytes with its own at-rest keys.
 This is also the contract for converging multiple Chatbook devices through one
 home server.
 
+### What currently synchronizes
+
+<!-- shared-personal-context-contract:start -->
+- `tldw_profile_core` defines the versioned canonical profile object models, exact canonical bytes, interview/tool contracts, serialization, and validation used by both peers. Sync-v2 transport envelopes are a separate contract.
+- After a successful reviewed link, Chatbook and tldw_server converge on the same canonical manifest, scope, record, proposal, and version identities and bytes for eligible shared objects.
+- Sync V2 defines the `personal_context.manifest`, `personal_context.scope`, `personal_context.record`, `personal_context.proposal`, and content-free `personal_context.purge` domains. The current linked flow publishes eligible Chatbook-originated manifest, scope, record, and proposal changes; purge production and distribution are not wired end to end.
+- Each peer retains its own at-rest ciphertext and keys, local database rows, runtime permissions, conflict-review metadata, acknowledgement tracking, and other operational state.
+<!-- shared-personal-context-contract:end -->
+
+<!-- personal-context-boundary-matrix:start -->
+| Shared through the current linked flow when eligible | Remains peer-local or is not currently published |
+| --- | --- |
+| Canonical manifest after successful reviewed linking | Peer-local at-rest encryption and recovery keys |
+| Required global and linked-workspace scope objects | Raw interview answers and unfinished drafts |
+| Records and tombstones whose controls permit synchronization | Runtime agent authority grants and tool availability |
+| Eligible proposals and their canonical review state | Device-only records or records marked non-syncable |
+| Exact canonical object identities, versions, and bytes for eligible shared objects | Local undo history, caches, ciphertext, database row identities, and other operational metadata |
+| — | Conflict-review objects and acknowledgement tracking |
+<!-- personal-context-boundary-matrix:end -->
+
+Ordinary server REST edits are not currently published to linked Chatbook clients.
+`personal_context.purge` exists at the protocol boundary, but Chatbook has no producer and the server endpoint does not distribute it through Sync V2.
+
+Sharing uses `server_trusted_v1`: the authenticated home server can read
+syncable canonical content over TLS, then encrypt it with its own at-rest keys.
+For server key custody and TLS guidance, see the [server operator
+guide](https://github.com/rmusser01/tldw_server/blob/dev/Docs/User_Guides/Server/Personal_Context_Profile.md).
+
 Chatbook remains usable without a server. Before a home server advertises and
 negotiates Personal Context sync, syncable records remain local and queued
 rather than being sent through the older server-personalization UI. Device-only
@@ -156,13 +236,32 @@ the same as deleting the shared profile from the home server. When a linked
 profile has unsynchronized changes, export or synchronize them before local
 removal unless you intentionally choose to discard them.
 
-When negotiated home-server support exposes whole-profile **Delete
-everywhere**, it is a separate authenticated shared-profile operation; the
-current local-only page must not present **Remove local profile** as a global
-purge. Delete everywhere advances the purge generation, destroys canonical
-content and derived copies on the server, and causes linked devices to destroy
-stale local generations before they may rejoin. A later profile is a new
-identity, not a resurrection of the deleted one.
+Chatbook does not currently expose **Delete everywhere**. The authenticated
+server purge endpoint creates a server-local purge fence and remains
+`purge_pending`; distribution and acknowledgement completion are not wired end
+to end. Reconnecting devices does not clear that state. See the [Personal
+Context API reference](https://github.com/rmusser01/tldw_server/blob/dev/Docs/API-related/Personal_Context_API.md)
+before considering this currently incomplete server operation.
+
+### Troubleshooting
+
+<!-- personal-context-troubleshooting:start -->
+| State | Cause | Safe next action | Current limit |
+| --- | --- | --- | --- |
+| **Profile locked** | Chatbook cannot decrypt the profile because protected key material is unavailable or locked. | Preserve the encrypted profile, unlock or restore the configured key, then retry. | There is no bypass or automatic key-recreation path for existing ciphertext. |
+| **Offline or queued** | Local changes remain in Chatbook's outbox because the home server is unreachable or authentication failed. | Continue locally, restore connectivity and credentials, then retry Sync and inspect its outbox/status. | The server cannot inspect a device-local queue until Chatbook delivers it. |
+| **Capability not negotiated** | The peers do not share the required Personal Context domains, schema support, or quotas. | Upgrade or correctly configure the incompatible peer, then negotiate again. | There is no supported bypass; linking and upload remain blocked. |
+| **Version conflict** | Both peers changed the same canonical object from different base versions. | Preserve the conflict and inspect generic Sync status and metadata before editing again. | No dedicated Personal Context post-link resolver is currently shipped. |
+| **First-link semantic collision** | Different local and server record identities describe the same scope, kind, namespace, and subject during linking. | Compare the presented records and choose the outcome in the first-link reconciliation review. | This resolver is available only during reviewed first linking. |
+| **Post-link semantic collision** | Different record identities describe the same semantic key after linking. | Preserve both sides and inspect generic Sync status and metadata. | Post-link conflicts retain generic Sync metadata; there is no dedicated Personal Context resolution screen. |
+| **Purge pending** | The server purge fence advanced and ordinary profile mutations are blocked. | Preserve operational evidence and treat the server profile as non-writable; consult the server guides before acting. | Distribution and acknowledgement completion are not wired end to end, and reconnecting devices does not clear `purge_pending`. |
+<!-- personal-context-troubleshooting:end -->
+
+If an ordinary server REST edit does not appear in Chatbook, preserve the server
+state and avoid creating a duplicate blindly. The current server does not
+publish ordinary REST edits into the linked Chatbook Sync path, so retrying Sync
+cannot deliver that edit. Use Chatbook for future edits that must travel through
+the linked Sync path.
 
 ## Privacy notes
 

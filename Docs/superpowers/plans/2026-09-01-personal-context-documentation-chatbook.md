@@ -568,7 +568,7 @@ git commit -m "docs: plan Chatbook Personal Context guides"
 
 - Modify: `Docs/User_Guide/settings/personal-context-profile.md`
 
-- [ ] **Step 1: Add `In five minutes` after `Getting there`**
+- [x] **Step 1: Add `In five minutes` after `Getting there`**
 
 Wrap the section in `<!-- personal-context-quick-start:start -->` and `<!-- personal-context-quick-start:end -->`. It must contain exactly five numbered steps covering:
 
@@ -578,7 +578,7 @@ Wrap the section in `<!-- personal-context-quick-start:start -->` and `<!-- pers
 4. Save, optionally enable agent use, and inspect **Context > Next Send**.
 5. Link a supported home server only when sharing is desired.
 
-- [ ] **Step 2: Add `Common workflows`**
+- [x] **Step 2: Add `Common workflows`**
 
 Under `### Common workflows`, use these exact subheadings so each workflow is independently verifiable:
 
@@ -591,7 +591,7 @@ Under `### Common workflows`, use these exact subheadings so each workflow is in
 
 Cover global preferences and workspace goals/conventions across those workflows. Use current control names. State that new inferred facts remain proposals; direct write only updates an existing eligible record for an explicit correction evidenced by the current persisted user message.
 
-- [ ] **Step 3: Add `What currently synchronizes`**
+- [x] **Step 3: Add `What currently synchronizes`**
 
 Include this deliberately identical shared-contract block, with the markers retained so cross-repository parity can be checked automatically:
 
@@ -620,7 +620,7 @@ Required notes:
 - Ordinary server REST edits are not currently published to linked Chatbook clients.
 - `personal_context.purge` exists at the protocol boundary, but Chatbook has no producer and the server endpoint does not distribute it through Sync V2.
 
-- [ ] **Step 4: Correct deletion wording**
+- [x] **Step 4: Correct deletion wording**
 
 Keep **Remove local profile** as the available Chatbook action. State plainly:
 
@@ -628,7 +628,7 @@ Keep **Remove local profile** as the available Chatbook action. State plainly:
 
 Do not tell users that reconnecting devices clears `purge_pending`.
 
-- [ ] **Step 5: Add troubleshooting**
+- [x] **Step 5: Add troubleshooting**
 
 Under `### Troubleshooting`, add a table wrapped in `<!-- personal-context-troubleshooting:start -->` and `<!-- personal-context-troubleshooting:end -->`. Use the exact header `| State | Cause | Safe next action | Current limit |`. Each of these exact seven bold state labels must have non-empty cells for cause, safe next action, and current product limit:
 
@@ -642,14 +642,14 @@ Under `### Troubleshooting`, add a table wrapped in `<!-- personal-context-troub
 
 Also explain why an ordinary server REST edit may not appear in Chatbook. State that post-link conflicts retain generic Sync metadata but have no dedicated Personal Context resolution screen.
 
-- [ ] **Step 6: Add stable server links**
+- [x] **Step 6: Add stable server links**
 
 Link to:
 
 - `https://github.com/rmusser01/tldw_server/blob/dev/Docs/User_Guides/Server/Personal_Context_Profile.md`
 - `https://github.com/rmusser01/tldw_server/blob/dev/Docs/API-related/Personal_Context_API.md`
 
-- [ ] **Step 7: Run claim and diff guards**
+- [x] **Step 7: Run claim and diff guards**
 
 Run:
 
@@ -663,7 +663,7 @@ git diff -- Docs/User_Guide/settings/personal-context-profile.md
 
 Expected: current limitations are explicit and the existing reference is refined rather than duplicated.
 
-- [ ] **Step 8: Record Task 2 execution and commit the user guide**
+- [x] **Step 8: Record Task 2 execution and commit the user guide**
 
 After Steps 1-7 have run successfully, mark every Task 2 step through this commit step `[x]`. Commit that execution record with the guide.
 
