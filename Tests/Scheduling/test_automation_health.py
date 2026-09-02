@@ -47,12 +47,16 @@ def _fake_search_service() -> SimpleNamespace:
 
 
 def _readable_app(**overrides: object) -> SimpleNamespace:
-    """A fake app with a capable RAG service and both scoped-source DBs
-    present -- the baseline every source-readable test starts from and
-    overrides pieces of."""
+    """A fake app with a capable RAG service and all three scoped-source
+    seams present -- the baseline every source-readable test starts from
+    and overrides pieces of. `media_reading_scope_service`/
+    `notes_scope_service`/`chachanotes_db` are the real attributes
+    `Library/library_local_rag_search_service.py`'s `_search_media`/
+    `_search_notes`/`_search_conversations` gate on."""
     attrs: dict[str, object] = {
         "library_rag_search_service": _fake_search_service(),
-        "media_db": object(),
+        "media_reading_scope_service": object(),
+        "notes_scope_service": object(),
         "chachanotes_db": object(),
     }
     attrs.update(overrides)
@@ -153,10 +157,9 @@ def test_ready_when_default_scope_sources_all_readable(monkeypatch):
 
 
 def test_capability_unavailable_when_a_scoped_source_db_is_missing(monkeypatch):
-    """`chachanotes_db` missing (no notes/chats DB) blocks health even
-    though the provider would otherwise resolve -- and the reason names the
-    unreadable source."""
-    app = _readable_app(chachanotes_db=None)
+    """`notes_scope_service` missing blocks health even though the provider
+    would otherwise resolve -- and the reason names the unreadable source."""
+    app = _readable_app(notes_scope_service=None)
 
     def _boom(row):
         raise AssertionError("resolve_execution_target must not be called")
@@ -167,14 +170,14 @@ def test_capability_unavailable_when_a_scoped_source_db_is_missing(monkeypatch):
 
     assert health == "capability_unavailable"
     # First unreadable Library source type in iteration order (media, notes,
-    # conversations) -- media_db is present, notes is the first miss.
+    # conversations) -- media is present, notes is the first miss.
     assert "notes" in reason
 
 
 def test_ready_ignores_a_missing_db_for_a_source_outside_the_scope(monkeypatch):
     """A scope that only asks for `chats` must not be blocked by a missing
-    `media_db` -- readability is scoped, not blanket."""
-    app = _readable_app(media_db=None)
+    `media_reading_scope_service` -- readability is scoped, not blanket."""
+    app = _readable_app(media_reading_scope_service=None)
     monkeypatch.setattr(
         automation_health,
         "resolve_execution_target",
@@ -208,7 +211,12 @@ def test_deps_missing_takes_precedence_over_unreadable_source(monkeypatch):
     """RAG-deps unavailability (no `library_rag_search_service`) must win
     over a scoped source being unreadable -- the source-specific reason
     must never leak when the seam itself is the actual blocker."""
-    app = SimpleNamespace(library_rag_search_service=None, media_db=None, chachanotes_db=None)
+    app = SimpleNamespace(
+        library_rag_search_service=None,
+        media_reading_scope_service=None,
+        notes_scope_service=None,
+        chachanotes_db=None,
+    )
 
     def _boom(row):
         raise AssertionError("resolve_execution_target must not be called")

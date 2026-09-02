@@ -1789,7 +1789,36 @@ class ScheduledTasksDB(BaseDB):
         return {"inserted": inserted, "updated": updated}
 
     def _serialize_definition_fields(self, fields: dict[str, Any]) -> dict[str, Any]:
-        """Apply the same JSON/datetime conversion `update_automation_definition` uses."""
+        """Apply the same JSON/datetime conversion `update_automation_definition` uses.
+
+        Also strips a `config.scope.resolved_sources` key when present
+        (task 6 fix-round finding): both server-mirror write paths --
+        `adopt_server_definition_identity` and
+        `upsert_automation_definitions_from_server` -- route every
+        definition write through here, so this is the single choke point
+        that covers both. `normalize_recurring_question_scope`'s
+        `"all_searchable_library"` branch (`recurring_question_scope.py`)
+        computes `resolved_sources` fresh on every call as an OUTPUT
+        projection, never an accepted input field -- persisting a
+        server-echoed copy of it would make any later re-normalization of
+        this row's scope (a scheduled dispatch, the sources-readable
+        health check) report a spurious "unsupported field" error and
+        degrade every run. Same bug, same fix shape as the local-authoring
+        path's (`SchedulingService._definition_db_fields_from_preview`),
+        which is a separate write path (`create_automation_definition`/
+        `update_automation_definition` serialize inline, never through
+        this method) and still needs its own strip.
+        """
+        config = fields.get("config")
+        if isinstance(config, dict):
+            scope = config.get("scope")
+            if isinstance(scope, dict) and "resolved_sources" in scope:
+                fields = dict(fields)
+                fields["config"] = {
+                    **config,
+                    "scope": {k: v for k, v in scope.items() if k != "resolved_sources"},
+                }
+
         serialized: dict[str, Any] = {}
         for key, value in fields.items():
             if key in self._AUTOMATION_JSON_FIELDS:

@@ -29,11 +29,15 @@ _PERMISSION_REQUIRED_REASON = (
 #: `library_source_types`'s Library-plural vocabulary (the same mapping
 #: `automation_execution.py` uses for retrieval, via
 #: `recurring_question_scope.py` -- imported above, not re-declared) mapped
-#: onto the `app` attribute that backs each source. `notes` and
-#: `conversations` both live in the same ChaChaNotes database.
+#: onto the `app` attribute the real keyword-search seam
+#: (`Library/library_local_rag_search_service.py`) gates each source on:
+#: `_search_media`/`_search_notes` read `media_reading_scope_service`/
+#: `notes_scope_service` (never `media_db`/`chachanotes_db` -- those DB
+#: handles can be set while the scope service itself is unavailable, or
+#: vice versa), `_search_conversations` reads `chachanotes_db` directly.
 _SOURCE_DB_ATTR: dict[str, str] = {
-    "media": "media_db",
-    "notes": "chachanotes_db",
+    "media": "media_reading_scope_service",
+    "notes": "notes_scope_service",
     "conversations": "chachanotes_db",
 }
 
@@ -80,8 +84,9 @@ def compute_local_health(app: Any, definition_row: dict) -> tuple[str, str]:
        present the attribute is).
     2. `capability_unavailable` -- a source in the definition's scope
        (`config.scope`) resolves to a Library source type whose backing
-       `app` DB attribute (`media_db`/`chachanotes_db`) is missing. The
-       reason names the unreadable source.
+       `app` attribute (`media_reading_scope_service`/`notes_scope_service`/
+       `chachanotes_db` -- see `_SOURCE_DB_ATTR`) is missing. The reason
+       names the unreadable source.
     3. `permission_required` -- `resolve_execution_target` resolves no
        `provider` at any of its layers (definition `input`, `[scheduling]`
        config, or the Library RAG answer-provider default).
@@ -89,8 +94,9 @@ def compute_local_health(app: Any, definition_row: dict) -> tuple[str, str]:
 
     Args:
         app: The running `TldwCli` app instance, checked for
-            `library_rag_search_service`/`media_db`/`chachanotes_db` and
-            passed through to `resolve_execution_target`.
+            `library_rag_search_service`/`media_reading_scope_service`/
+            `notes_scope_service`/`chachanotes_db` and passed through to
+            `resolve_execution_target`.
         definition_row: The automation-definition row (as a dict) to
             evaluate.
 

@@ -1040,6 +1040,42 @@ def test_upsert_definitions_inserts_new_row(tmp_path):
     assert rows[0]["schedule"] == {"kind": "cron", "expression": "0 9 * * 1-5"}
 
 
+def test_upsert_definitions_strips_resolved_sources_from_scope(tmp_path):
+    """Task 6 fix-round finding: a server item's `config.scope` may echo
+    back `resolved_sources` (the client's own local preview does, for the
+    `"all_searchable_library"` default scope -- plausibly the server's
+    parity port does too). That key is an OUTPUT-only projection
+    `normalize_recurring_question_scope` computes fresh on every call, not
+    an accepted input field; persisting it verbatim would make any later
+    re-normalization of this row's scope (a scheduled dispatch, the
+    sources-readable health check) report a spurious "unsupported field"
+    error and degrade every run. Must round-trip through the mirror path
+    without it."""
+    from tldw_chatbook.Scheduling.recurring_question_scope import (
+        normalize_recurring_question_scope,
+    )
+
+    db = _mk_db(tmp_path)
+    item = _definition_item(
+        config={
+            "scope": {
+                "mode": "all_searchable_library",
+                "resolved_sources": ["media_db", "notes", "chats"],
+            },
+            "generation_mode": "optional",
+        }
+    )
+
+    db.upsert_automation_definitions_from_server("server:42", [item])
+
+    row = db.list_automation_definitions(owner_id="server:42")[0]
+    stored_scope = row["config"]["scope"]
+    assert "resolved_sources" not in stored_scope
+    assert stored_scope["mode"] == "all_searchable_library"
+    _normalized, errors, _warnings = normalize_recurring_question_scope(stored_scope)
+    assert errors == []
+
+
 def test_upsert_definitions_server_wins_on_update(tmp_path):
     db = _mk_db(tmp_path)
     db.upsert_automation_definitions_from_server("server:42", [_definition_item()])
@@ -1144,6 +1180,40 @@ def test_adopt_server_definition_identity_never_clears_local_transfer_state(tmp_
 
     row = db.get_automation_definition(local_id)
     assert row["transfer_state"] == "pending_pull"
+
+
+def test_adopt_server_definition_identity_strips_resolved_sources_from_scope(tmp_path):
+    """Same fix-round finding as the pull-mirror upsert's, on the push-echo
+    mirror path (`SyncEngine._push_definition_create`'s
+    `create`/`update_automation_definition` server response)."""
+    from tldw_chatbook.Scheduling.recurring_question_scope import (
+        normalize_recurring_question_scope,
+    )
+
+    db = _mk_db(tmp_path)
+    local_id = db.create_automation_definition(
+        "server:42", "recurring_question", "Draft"
+    )
+
+    db.adopt_server_definition_identity(
+        local_id,
+        {
+            "id": "srv-def-9",
+            "config": {
+                "scope": {
+                    "mode": "all_searchable_library",
+                    "resolved_sources": ["media_db", "notes", "chats"],
+                },
+            },
+        },
+    )
+
+    row = db.get_automation_definition(local_id)
+    stored_scope = row["config"]["scope"]
+    assert "resolved_sources" not in stored_scope
+    assert stored_scope["mode"] == "all_searchable_library"
+    _normalized, errors, _warnings = normalize_recurring_question_scope(stored_scope)
+    assert errors == []
 
 
 def test_adopt_server_definition_identity_missing_server_id_returns_false(tmp_path):
