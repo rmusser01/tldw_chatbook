@@ -46,9 +46,23 @@ off"), and the **Clear** button only appears once a sync error exists.
 
 ## Creating a scheduled task
 
-Press **c** to open the create form. The form scrolls when the terminal
-is short; the live "Runs: …" preview, validation, and Save/Cancel stay
-pinned at the bottom while you edit.
+Press **c**, or click **+ New** in the Queue tab's pane header, to open
+the create form. Clicking **+ New** first asks which kind of task you
+want — **Reminder…** or **Recurring question…** — since a recurring
+question is a different kind of definition, not just another schedule
+shape; **c** always opens the reminder form directly. The form scrolls
+when the terminal is short; the live "Runs: …" preview, validation, and
+Save/Cancel stay pinned at the bottom while you edit.
+
+Every create/edit form also has a **Runs on** selector — **This device**
+or **Server (\<id\>)** when a scheduling server is connected — defaulting
+to whatever owner the Schedules screen is currently showing. Choosing the
+server writes the task there directly when the server is reachable, or
+authors it locally and queues it to sync up on the next successful sync
+when it is not (the sync bar and the task's own state say which
+happened). An existing reminder's owner is fixed once created — the
+selector shows it but is not editable — moving a task between owners is
+a separate action, not part of editing.
 
 - **One-time**: type a plain local time like `2026-08-28 09:00` — no
   offset needed. It is interpreted in your machine's timezone and the
@@ -181,12 +195,34 @@ double execution — one owner, one executor). Pressing **r** on one refuses
 with a toast saying so. This is the single-owner execution rule the
 server-offload design is built on; local-owner reminders are unaffected.
 
+## Creating a recurring question
+
+A recurring question runs a scoped search on a schedule and reports what
+it finds — a different kind of task than a reminder. Open its create
+form from the Queue tab's **+ New** chooser ("Recurring question…") or
+the Automations tab's own **+ New** button. Its v1 fields: a name, the
+question itself, which sources to search (all readable library sources,
+or a specific choice of Media / Notes / Chats — collections, tags, and
+saved searches are not offered yet), the schedule (the same one-time/
+recurring controls as a reminder), when to generate a draft answer
+(always, only when something new is found, or never), a finding-policy
+preset, whether to be notified, and an optional provider/model pin.
+
+**Preview** runs the same validation the save itself will run and shows
+the next few scheduled occurrences without saving anything; a rejected
+preview highlights the specific field that needs fixing. **Save** always
+previews first — an invalid definition is never written. Only the
+`recurring_question` family can be authored here; agent-task automations
+are not yet supported from this form.
+
 ## Automations tab — server-scheduled automations
 
 The **Automations** tab lists the automation definitions that live on a
 connected server (name, family, lifecycle, health) — the server owns
 their execution, which is why they do not appear in the local Queue. With
 no server connected the tab says so instead of showing an empty list.
+Automations you create with a **Runs on: This device** owner are not
+shown in this list yet — it currently reflects the connected server only.
 
 Press **r** on a highlighted definition to dispatch one immediate run
 **on the server** through the same pipeline its schedule uses — a real
@@ -227,3 +263,8 @@ The default bound is `handler_timeout_seconds` under `[scheduling]` in
 `config.toml` (**300** seconds). Set it to `0` (or negative) to disable the
 bound entirely — every handler may then run as long as it likes, and a
 wedged handler will wedge the scheduler, which is why the default is on.
+
+*Verified against working tree — 2026-09-01 (schedules-handoff PR-4 task 5:
+recurring-question create form, the Queue tab's New/Reminder/Recurring-
+question chooser, the Automations tab's own New button, and the "Runs on"
+selector on both forms).*

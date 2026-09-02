@@ -144,6 +144,21 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     min-width: 9;
 }
 
+/* Automations tab header (task-5): same title+button row shape as the
+ * Queue pane's #scheduling-list-header above. */
+#scheduling-automations-header {
+    height: auto;
+}
+
+#scheduling-automations-header #scheduling-automations-title {
+    width: 1fr;
+}
+
+#scheduling-new-automation {
+    width: auto;
+    min-width: 9;
+}
+
 /* Empty state */
 #scheduling-task-detail-empty-state {
     color: $text-muted;

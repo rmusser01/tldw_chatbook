@@ -41,6 +41,8 @@ from ....Scheduling.services.server_client import (
 )
 from ....UI.Screens.scheduling.conflicts_tab import ConflictsTab
 from ....UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
+from .forms.automation_definition_form import AutomationDefinitionForm
+from .forms.new_task_choice_modal import NewTaskChoiceModal
 from .forms.reminder_form import ReminderForm
 from .task_detail import (
     SCHEDULES_EMPTY_CONSOLE_RECOVERY,
@@ -263,11 +265,18 @@ class SchedulesWorkbench(BaseAppScreen):
                 with TabPane("Automations", id="scheduling-automations-tab"):
                     with Horizontal(id="scheduling-automations-split"):
                         with Vertical(id="scheduling-automations-pane"):
-                            yield Static(
-                                "Server Automations",
-                                id="scheduling-automations-title",
-                                classes="scheduling-column-title",
-                            )
+                            with Horizontal(id="scheduling-automations-header"):
+                                yield Static(
+                                    "Server Automations",
+                                    id="scheduling-automations-title",
+                                    classes="scheduling-column-title",
+                                )
+                                yield Button(
+                                    "+ New",
+                                    id="scheduling-new-automation",
+                                    variant="primary",
+                                    tooltip="Schedule a new recurring question.",
+                                )
                             yield DataTable(
                                 id="scheduling-automations-table", cursor_type="row"
                             )
@@ -686,7 +695,12 @@ class SchedulesWorkbench(BaseAppScreen):
     @on(Button.Pressed, "#scheduling-new-task")
     def _on_new_task_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        self.action_create_reminder()
+        self._open_new_task_chooser()
+
+    @on(Button.Pressed, "#scheduling-new-automation")
+    def _on_new_automation_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.action_create_automation()
 
     @on(Button.Pressed, "#schedules-follow-in-console")
     def follow_latest_schedule_run_in_console(self, event: Button.Pressed) -> None:
@@ -739,12 +753,82 @@ class SchedulesWorkbench(BaseAppScreen):
                 zones.append(zone)
         return zones
 
+    def _runs_on_options(self) -> tuple[list[tuple[str, str]], str]:
+        """Runs-on choices for the reminder/automation forms.
+
+        The current screen owner leads and is always the default (spec
+        sec 8); "Server (<id>)" is offered only when a server owner is
+        actually connected (mirrors `_server_available`'s own gate). The
+        owner might not literally be "local" or match the offered server
+        option (e.g. it drifted to a different server id) -- appended as
+        a labeled fallback so the Select never receives a value outside
+        its own options (same precedent as the reminder form's timezone
+        selector, review F4).
+        """
+        service = self._service()
+        owner_id = service.owner_id if service else "local"
+        options: list[tuple[str, str]] = [("This device", "local")]
+        active_server_id = self._active_server_id()
+        if self._server_available(service, active_server_id):
+            options.append((f"Server ({active_server_id})", f"server:{active_server_id}"))
+        if owner_id not in {value for _, value in options}:
+            options.append((owner_id, owner_id))
+        return options, owner_id
+
     def action_create_reminder(self) -> None:
         """Open the create-reminder form."""
+        options, default_owner = self._runs_on_options()
         self.app.push_screen(
-            ReminderForm(known_timezones=self._task_timezones()),
+            ReminderForm(
+                known_timezones=self._task_timezones(),
+                available_owners=options,
+                default_owner=default_owner,
+            ),
             callback=self._on_reminder_form_result,
         )
+
+    def action_create_automation(self) -> None:
+        """Open the create-recurring-question-automation form (task-5)."""
+        service = self._scheduling_service
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot create an automation.",
+                severity="warning",
+            )
+            return
+        options, default_owner = self._runs_on_options()
+        self.app.push_screen(
+            AutomationDefinitionForm(
+                service, available_owners=options, default_owner=default_owner
+            ),
+            callback=self._on_automation_form_result,
+        )
+
+    def _open_new_task_chooser(self) -> None:
+        """Ask which kind of scheduled task to create (task-5)."""
+        self.app.push_screen(NewTaskChoiceModal(), callback=self._on_new_task_choice)
+
+    def _on_new_task_choice(self, choice: str | None) -> None:
+        if choice == "reminder":
+            self.action_create_reminder()
+        elif choice == "recurring_question":
+            self.action_create_automation()
+
+    def _on_automation_form_result(self, outcome: Any | None) -> None:
+        """Notify and refresh the Automations list after a definition save."""
+        if outcome is None:
+            return
+        status = getattr(outcome, "status", None)
+        if status == "saved":
+            self.app_instance.notify(
+                "Automation created.", severity="information"
+            )
+        elif status == "queued":
+            self.app_instance.notify(
+                "Automation created locally — it will sync to the server.",
+                severity="information",
+            )
+        self._request_automations_refresh()
 
     def _on_reminder_form_result(
         self, form_data: dict[str, Any] | None, task_id: str | None = None
@@ -761,7 +845,30 @@ class SchedulesWorkbench(BaseAppScreen):
             )
             return
 
+        # Routing only (task-5): which owner the reminder is written under,
+        # not a ReminderTask field. Defaults to the service's current owner
+        # so a form built before this selector existed (or a caller that
+        # omits it) behaves exactly as before.
+        target_owner = form_data.pop("owner_id", None) or service.owner_id
+
         async def _save_and_refresh() -> None:
+            # ponytail: momentarily flipping the service's shared owner_id
+            # around the single create/update call (the EXISTING owner-
+            # switch path -- `set_owner`, also used by the Local/Server
+            # buttons) is the smallest way to let one save target a
+            # DIFFERENT owner than the screen's current one, reusing
+            # `create_reminder`/`update_reminder` completely unmodified.
+            # Ceiling: another worker reading `service.owner_id` during
+            # the awaited network call would transiently see the flipped
+            # owner. Upgrade path if that ever bites: thread an explicit
+            # `owner_id` parameter through `create_reminder`/
+            # `update_reminder`, mirroring `_owner_uses_server(owner_id)`
+            # (Task 4's precedent for `preview_definition`/
+            # `save_definition`).
+            original_owner = service.owner_id
+            switched = target_owner != original_owner
+            if switched:
+                service.set_owner(target_owner)
             try:
                 if task_id is None:
                     await service.create_reminder(form_data)
@@ -779,6 +886,9 @@ class SchedulesWorkbench(BaseAppScreen):
                     "Failed to save the scheduled task. Check the form values and try again.",
                     severity="error",
                 )
+            finally:
+                if switched:
+                    service.set_owner(original_owner)
             self._request_tasks_refresh()
 
         self.run_worker(
@@ -791,8 +901,14 @@ class SchedulesWorkbench(BaseAppScreen):
     def _on_edit_task_requested(self, event: EditTaskRequested) -> None:
         """Open the reminder form pre-filled for editing."""
         event.stop()
+        options, default_owner = self._runs_on_options()
         self.app.push_screen(
-            ReminderForm(event.task, known_timezones=self._task_timezones()),
+            ReminderForm(
+                event.task,
+                known_timezones=self._task_timezones(),
+                available_owners=options,
+                default_owner=default_owner,
+            ),
             callback=lambda result: self._on_reminder_form_result(
                 result, event.task.id
             ),
