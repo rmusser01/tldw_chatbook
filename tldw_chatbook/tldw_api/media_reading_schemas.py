@@ -950,6 +950,7 @@ class MediaDetailResponse(BaseModel):
 
 
 class ReadingUpdateRequest(BaseModel):
+    expected_revision: int | None = Field(default=None, gt=0)
     status: str | None = None
     favorite: bool | None = None
     tags: list[str] | None = None

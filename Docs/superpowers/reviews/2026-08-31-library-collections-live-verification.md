@@ -124,6 +124,23 @@ runtime composition just after first paint. The ratchet itself was not raised. A
 closure test prevents the implementation graph from returning to the plain app or headless
 controller import path, and the exact failing census plus the complete performance workflow now pass.
 
+## Final PR review closeout
+
+The final review pass moved the lease migration to a packaged SQL artifact, reused the database's
+write-transaction context, bounded Local highlight and linked-Note reads, and connected Quick
+Capture to the guarded article extractor without widening first-paint imports. Extraction workers
+are now fenced by processing state and lease owner, so a concurrent favorite/status edit cannot
+strand completed content. Archive Undo carries its capture identity and remains visible after the
+archived row leaves the current scope.
+
+Server update/archive actions now require exact `hasReadingOptimisticUpdatesV1=true` and send the
+expected revision in the mutation request; without that attestation they are visibly unavailable.
+Server hard-delete remains unavailable because the current API has no atomic delete precondition.
+Highlight deletion verifies the selected capture before mutation, and saved-search mutations map
+transport/response failures to bounded content-free reasons. The post-review evidence is 107 focused
+regressions passed, 19 import/Local-live checks passed with one isolated-Server skip, and all 23
+performance checks passed.
+
 ## Integration closure
 
 tldw_server PR #2851 merged at `8140c679f3ea0334cea2dc1be32feb5b80e22ebe` after its required

@@ -64,17 +64,13 @@ class LibraryCollectionsDB(BaseDB):
             "collection_capture_tags_search_au",
         }
     )
-    _CAPTURE_V3_COLUMNS = (
-        (
-            "extraction_owner_token",
-            "ALTER TABLE collection_capture_items "
-            "ADD COLUMN extraction_owner_token TEXT",
-        ),
-        (
-            "extraction_lease_expires_at",
-            "ALTER TABLE collection_capture_items "
-            "ADD COLUMN extraction_lease_expires_at TEXT",
-        ),
+    _CAPTURE_V3_MIGRATION_PATH = (
+        Path(__file__).with_name("migrations")
+        / "library_collections_v2_to_v3_extraction_leases.sql"
+    )
+    _CAPTURE_V3_COLUMN_NAMES = (
+        "extraction_owner_token",
+        "extraction_lease_expires_at",
     )
     _LEGACY_REQUIRED_COLUMNS = {
         "library_collections": frozenset(
@@ -559,7 +555,7 @@ class LibraryCollectionsDB(BaseDB):
         conn.execute("BEGIN DEFERRED")
         try:
             yield conn
-        except Exception:
+        except BaseException:
             conn.rollback()
             raise
         wrote = conn.total_changes != changes_before
@@ -589,14 +585,15 @@ class LibraryCollectionsDB(BaseDB):
         ``except``.
 
         Raises:
-            Exception: Re-raised after rolling back, on any error inside
-                the ``with`` block. On clean exit the transaction commits.
+            BaseException: Re-raised after rolling back, on any error or
+                interruption inside the ``with`` block. On clean exit the
+                transaction commits.
         """
         conn = self._held_connection()
         conn.execute("BEGIN IMMEDIATE")
         try:
             yield conn
-        except Exception:
+        except BaseException:
             conn.rollback()
             raise
         else:
@@ -614,52 +611,59 @@ class LibraryCollectionsDB(BaseDB):
 
     def _initialize_schema(self) -> None:
         """Atomically initialize or migrate the local Collections schema."""
-        with self.connection() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            try:
-                has_version_table = (
-                    conn.execute(
-                        "SELECT 1 FROM sqlite_schema "
-                        "WHERE type = 'table' AND name = 'schema_version'"
-                    ).fetchone()
-                    is not None
-                )
-                current_version = 0
-                if has_version_table:
-                    row = conn.execute(
-                        "SELECT MAX(version) FROM schema_version"
-                    ).fetchone()
-                    current_version = int(row[0] or 0) if row is not None else 0
-                if current_version > self._CURRENT_SCHEMA_VERSION:
-                    raise LibraryCollectionsSchemaError("schema_too_new")
-
-                if current_version == 0:
-                    for statement in self._LEGACY_SCHEMA_DDL:
-                        conn.execute(statement)
-                    conn.execute(
-                        "INSERT OR IGNORE INTO schema_version (version) VALUES (1)"
-                    )
-
-                for statement in self._CAPTURE_SCHEMA_DDL:
-                    conn.execute(statement)
-                if current_version == 2:
-                    columns = {
-                        str(row[1])
-                        for row in conn.execute(
-                            "PRAGMA table_info(collection_capture_items)"
-                        )
-                    }
-                    for column_name, statement in self._CAPTURE_V3_COLUMNS:
-                        if column_name not in columns:
-                            conn.execute(statement)
+        with self.transaction() as conn:
+            has_version_table = (
                 conn.execute(
-                    "INSERT OR IGNORE INTO schema_version (version) VALUES (?)",
-                    (self._CURRENT_SCHEMA_VERSION,),
+                    "SELECT 1 FROM sqlite_schema "
+                    "WHERE type = 'table' AND name = 'schema_version'"
+                ).fetchone()
+                is not None
+            )
+            current_version = 0
+            if has_version_table:
+                row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
+                current_version = int(row[0] or 0) if row is not None else 0
+            if current_version > self._CURRENT_SCHEMA_VERSION:
+                raise LibraryCollectionsSchemaError("schema_too_new")
+
+            if current_version == 0:
+                for statement in self._LEGACY_SCHEMA_DDL:
+                    conn.execute(statement)
+                conn.execute(
+                    "INSERT OR IGNORE INTO schema_version (version) VALUES (1)"
                 )
-                conn.commit()
-            except BaseException:
-                conn.rollback()
-                raise
+
+            for statement in self._CAPTURE_SCHEMA_DDL:
+                conn.execute(statement)
+            if current_version == 2:
+                columns = {
+                    str(row[1])
+                    for row in conn.execute(
+                        "PRAGMA table_info(collection_capture_items)"
+                    )
+                }
+                for column_name, statement in zip(
+                    self._CAPTURE_V3_COLUMN_NAMES,
+                    self._capture_v3_migration_statements(),
+                    strict=True,
+                ):
+                    if column_name not in columns:
+                        conn.execute(statement)
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_version (version) VALUES (?)",
+                (self._CURRENT_SCHEMA_VERSION,),
+            )
+
+    @classmethod
+    def _capture_v3_migration_statements(cls) -> tuple[str, ...]:
+        """Load the packaged v2-to-v3 extraction-lease migration."""
+        return tuple(
+            statement.strip()
+            for statement in cls._CAPTURE_V3_MIGRATION_PATH.read_text(
+                encoding="utf-8"
+            ).split(";")
+            if statement.strip()
+        )
 
     def get_schema_version(self) -> int:
         """Return the initialized schema version."""

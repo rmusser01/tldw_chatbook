@@ -44682,12 +44682,12 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         event.stop()
         controller = self._library_collections_capture_controller
-        if controller is None or not controller.state.visible_archive_receipts:
+        identity = getattr(event.button, "capture_identity", None)
+        if controller is None or not isinstance(identity, CaptureIdentity):
             return
-        receipt = controller.state.visible_archive_receipts[0]
         try:
             await self._run_library_collections_capture_transition(
-                controller.undo_archive(receipt.identity)
+                controller.undo_archive(identity)
             )
         except CollectionsCaptureError as exc:
             self._notify_library_collections_warning(exc.reason)

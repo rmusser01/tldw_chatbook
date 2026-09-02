@@ -110,5 +110,14 @@ first-paint census breach caused by eagerly importing six capture-runtime module
 exports, controller annotations, and app wiring now load that runtime lazily after first paint or on
 first use while preserving the public service seam. Import-closure regressions passed 17 tests, the
 focused reader gate passed 44 tests with one enabled-Server skip, and the complete 23-test UI latency
-and boot-budget workflow passed locally. TASK-18919 is complete.
+and boot-budget workflow passed locally. Final PR review moved the v2-to-v3 lease step into the
+packaged migration registry, bounded annotation reads, wired the guarded Local article extractor,
+made extraction completion depend on lease ownership rather than unrelated reader revisions, kept
+Archive Undo reachable after list removal, and bounded Server highlight and saved-search failures.
+Server update/archive now fail closed unless docs-info explicitly advertises atomic optimistic
+updates; Server hard-delete remains unavailable until an atomic delete contract exists. The review
+regression gate passed 107 tests, import/live verification passed 19 with the isolated Server test
+skipped when unconfigured, and the unchanged 23-test performance workflow passed. No new ADR was
+required because these changes enforce ADR-107's existing authority and fail-closed capability
+boundaries. TASK-18919 is complete.
 <!-- SECTION:NOTES:END -->

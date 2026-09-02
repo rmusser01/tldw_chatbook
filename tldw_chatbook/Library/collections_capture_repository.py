@@ -85,6 +85,7 @@ _EXTRACTION_FAILURE_REASONS = frozenset(
     }
 )
 _DEFAULT_EXTRACTION_LEASE_SECONDS = 300
+_MAX_ANNOTATION_PAGE_SIZE = 100
 _DEFAULT_OFFLINE_COPY_BYTES = 50 * 1024 * 1024
 _DEFAULT_OFFLINE_AUTHORITY_BYTES = 1024 * 1024 * 1024
 _OFFLINE_FAILURE_REASONS = frozenset(
@@ -556,12 +557,10 @@ class CollectionsCaptureRepository:
         self,
         identity: CaptureIdentity,
         *,
-        expected_revision: int,
         owner_token: str,
     ) -> CaptureDetail:
-        """Claim one queued capture for extraction."""
+        """Claim queued extraction independently of reading-state revisions."""
         self._require_identity(identity)
-        expected_revision = self._expected_revision(expected_revision)
         normalized_owner = self._extraction_owner(owner_token)
         now = self._clock()
         lease_expires_at = _timestamp_after(now, self._extraction_lease_seconds)
@@ -569,22 +568,20 @@ class CollectionsCaptureRepository:
             self._extraction_row(
                 connection,
                 identity,
-                expected_revision=expected_revision,
                 states={"queued"},
             )
             connection.execute(
                 "UPDATE collection_capture_items SET processing_state = 'processing', "
                 "last_fetch_error = NULL, extraction_owner_token = ?, "
                 "extraction_lease_expires_at = ?, updated_at = ?, revision = revision + 1 "
-                "WHERE authority_key = ? AND capture_id = ? AND revision = ? "
-                "AND processing_state = 'queued'",
+                "WHERE authority_key = ? AND capture_id = ? "
+                "AND processing_state = 'queued' AND purge_state IS NULL",
                 (
                     normalized_owner,
                     lease_expires_at,
                     now,
                     self.authority_key,
                     identity.capture_id,
-                    expected_revision,
                 ),
             )
             return self._written_detail(connection, identity)
@@ -593,13 +590,11 @@ class CollectionsCaptureRepository:
         self,
         identity: CaptureIdentity,
         *,
-        expected_revision: int,
         owner_token: str,
         result: Mapping[str, Any],
     ) -> CaptureDetail:
         """Store extracted content as inert text and finish the active claim."""
         self._require_identity(identity)
-        expected_revision = self._expected_revision(expected_revision)
         normalized_owner = self._extraction_owner(owner_token)
         if not isinstance(result, Mapping) or not isinstance(result.get("content"), str):
             raise CollectionsCaptureError("invalid_extraction_result")
@@ -611,7 +606,6 @@ class CollectionsCaptureRepository:
             row = self._extraction_row(
                 connection,
                 identity,
-                expected_revision=expected_revision,
                 states={"processing"},
                 owner_token=normalized_owner,
             )
@@ -629,8 +623,9 @@ class CollectionsCaptureRepository:
                 "processing_state = 'ready', last_fetch_error = NULL, updated_at = ?, "
                 "extraction_owner_token = NULL, extraction_lease_expires_at = NULL, "
                 "revision = revision + 1 "
-                "WHERE authority_key = ? AND capture_id = ? AND revision = ? "
-                "AND processing_state = 'processing'",
+                "WHERE authority_key = ? AND capture_id = ? "
+                "AND processing_state = 'processing' AND purge_state IS NULL "
+                "AND extraction_owner_token = ?",
                 (
                     text_content,
                     title or row["title"],
@@ -640,7 +635,7 @@ class CollectionsCaptureRepository:
                     now,
                     self.authority_key,
                     identity.capture_id,
-                    expected_revision,
+                    normalized_owner,
                 ),
             )
             return self._written_detail(connection, identity)
@@ -649,13 +644,11 @@ class CollectionsCaptureRepository:
         self,
         identity: CaptureIdentity,
         *,
-        expected_revision: int,
         owner_token: str,
         reason: str,
     ) -> CaptureDetail:
         """Finish an active extraction with a bounded, content-free reason."""
         self._require_identity(identity)
-        expected_revision = self._expected_revision(expected_revision)
         normalized_owner = self._extraction_owner(owner_token)
         if not isinstance(reason, str) or reason not in _EXTRACTION_FAILURE_REASONS:
             raise CollectionsCaptureError("invalid_extraction_failure_reason")
@@ -664,7 +657,6 @@ class CollectionsCaptureRepository:
             self._extraction_row(
                 connection,
                 identity,
-                expected_revision=expected_revision,
                 states={"processing"},
                 owner_token=normalized_owner,
             )
@@ -673,14 +665,15 @@ class CollectionsCaptureRepository:
                 "last_fetch_error = ?, extraction_owner_token = NULL, "
                 "extraction_lease_expires_at = NULL, updated_at = ?, "
                 "revision = revision + 1 "
-                "WHERE authority_key = ? AND capture_id = ? AND revision = ? "
-                "AND processing_state = 'processing'",
+                "WHERE authority_key = ? AND capture_id = ? "
+                "AND processing_state = 'processing' AND purge_state IS NULL "
+                "AND extraction_owner_token = ?",
                 (
                     reason,
                     now,
                     self.authority_key,
                     identity.capture_id,
-                    expected_revision,
+                    normalized_owner,
                 ),
             )
             return self._written_detail(connection, identity)
@@ -904,16 +897,27 @@ class CollectionsCaptureRepository:
         )
 
     def list_highlights(
-        self, identity: CaptureIdentity
+        self,
+        identity: CaptureIdentity,
+        *,
+        page: int = 1,
+        size: int = _MAX_ANNOTATION_PAGE_SIZE,
     ) -> tuple[CaptureHighlight, ...]:
+        """Return one bounded, deterministic page of capture highlights."""
         self._require_identity(identity)
+        page, size = self._annotation_page(page, size)
         with self.db.read_transaction() as connection:
             self._active_item_row(connection, identity)
             rows = connection.execute(
                 "SELECT * FROM collection_capture_highlights "
                 "WHERE authority_key = ? AND capture_id = ? "
-                "ORDER BY created_at, highlight_id",
-                (self.authority_key, identity.capture_id),
+                "ORDER BY created_at, highlight_id LIMIT ? OFFSET ?",
+                (
+                    self.authority_key,
+                    identity.capture_id,
+                    size,
+                    (page - 1) * size,
+                ),
             ).fetchall()
         return tuple(self._highlight_from_row(identity, row) for row in rows)
 
@@ -992,16 +996,27 @@ class CollectionsCaptureRepository:
         return CaptureActionResult(identity, True, revision=expected_revision)
 
     def list_note_links(
-        self, identity: CaptureIdentity
+        self,
+        identity: CaptureIdentity,
+        *,
+        page: int = 1,
+        size: int = _MAX_ANNOTATION_PAGE_SIZE,
     ) -> tuple[CaptureNoteLink, ...]:
+        """Return one bounded, deterministic page of linked Notes."""
         self._require_identity(identity)
+        page, size = self._annotation_page(page, size)
         with self.db.read_transaction() as connection:
             self._active_item_row(connection, identity)
             rows = connection.execute(
                 "SELECT * FROM collection_capture_note_links "
                 "WHERE authority_key = ? AND capture_id = ? "
-                "ORDER BY created_at, link_id",
-                (self.authority_key, identity.capture_id),
+                "ORDER BY created_at, link_id LIMIT ? OFFSET ?",
+                (
+                    self.authority_key,
+                    identity.capture_id,
+                    size,
+                    (page - 1) * size,
+                ),
             ).fetchall()
         return tuple(self._note_link_from_row(identity, row) for row in rows)
 
@@ -1398,6 +1413,14 @@ class CollectionsCaptureRepository:
             raise CollectionsCaptureError(reason)
         return value
 
+    @classmethod
+    def _annotation_page(cls, page: Any, size: Any) -> tuple[int, int]:
+        page = cls._positive_limit(page, "invalid_annotation_page")
+        size = cls._positive_limit(size, "invalid_annotation_page_size")
+        if size > _MAX_ANNOTATION_PAGE_SIZE:
+            raise CollectionsCaptureError("invalid_annotation_page_size")
+        return page, size
+
     @staticmethod
     def _media_type(value: Any) -> str:
         if not isinstance(value, str):
@@ -1422,12 +1445,12 @@ class CollectionsCaptureRepository:
         connection: sqlite3.Connection,
         identity: CaptureIdentity,
         *,
-        expected_revision: int,
+        expected_revision: int | None = None,
         states: set[str],
         owner_token: str | None = None,
     ) -> sqlite3.Row:
         row = self._active_item_row(connection, identity)
-        if int(row["revision"]) != expected_revision:
+        if expected_revision is not None and int(row["revision"]) != expected_revision:
             current = self._get_detail(connection, identity)
             if current is None:
                 raise CollectionsCaptureError("capture_not_found")

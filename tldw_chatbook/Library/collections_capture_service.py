@@ -279,7 +279,6 @@ class LocalCollectionsCaptureService:
         claimed = await self._call(
             self.repository.claim_extraction,
             queued.identity,
-            expected_revision=queued.revision,
             owner_token=owner,
         )
         stopped = asyncio.Event()
@@ -293,7 +292,6 @@ class LocalCollectionsCaptureService:
             await self._call(
                 self.repository.complete_extraction,
                 claimed.identity,
-                expected_revision=claimed.revision,
                 owner_token=owner,
                 result=result,
             )
@@ -305,7 +303,6 @@ class LocalCollectionsCaptureService:
                 await self._call(
                     self.repository.fail_extraction,
                     claimed.identity,
-                    expected_revision=claimed.revision,
                     owner_token=owner,
                     reason="interrupted",
                 )
@@ -320,7 +317,6 @@ class LocalCollectionsCaptureService:
                 await self._call(
                     self.repository.fail_extraction,
                     claimed.identity,
-                    expected_revision=claimed.revision,
                     owner_token=owner,
                     reason="unknown",
                 )

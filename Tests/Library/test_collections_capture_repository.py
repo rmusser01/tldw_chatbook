@@ -458,6 +458,35 @@ def test_highlights_note_links_and_hard_delete_tombstone(
     assert row is not None and row[0] == "pending"
 
 
+def test_highlight_and_note_link_reads_are_bounded_and_pageable(
+    repository: CollectionsCaptureRepository,
+) -> None:
+    capture = _save(repository, "bounded-relations").capture
+    assert capture is not None
+    highlights = tuple(
+        repository.save_highlight(
+            capture.identity,
+            CaptureHighlightDraft(f"Quote {index}"),
+        )
+        for index in range(3)
+    )
+    links = tuple(
+        repository.link_note(
+            capture.identity,
+            ExternalNoteReference("notes:profile-a", f"note-{index}"),
+        )
+        for index in range(3)
+    )
+
+    assert repository.list_highlights(capture.identity, page=1, size=2) == highlights[:2]
+    assert repository.list_highlights(capture.identity, page=2, size=2) == highlights[2:]
+    assert repository.list_note_links(capture.identity, page=1, size=2) == links[:2]
+    assert repository.list_note_links(capture.identity, page=2, size=2) == links[2:]
+    with pytest.raises(CollectionsCaptureError) as caught:
+        repository.list_highlights(capture.identity, page=1, size=101)
+    assert caught.value.reason == "invalid_annotation_page_size"
+
+
 def test_repository_refuses_cross_authority_inputs(
     repository: CollectionsCaptureRepository,
 ) -> None:

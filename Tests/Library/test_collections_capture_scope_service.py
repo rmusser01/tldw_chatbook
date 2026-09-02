@@ -380,6 +380,36 @@ async def test_local_extraction_heartbeat_prevents_same_authority_recovery(
 
 
 @pytest.mark.asyncio
+async def test_local_extraction_survives_reading_state_revision_changes(
+    tmp_path: Path,
+) -> None:
+    authority, database, repository, service = _local_service(
+        tmp_path,
+        extractor=lambda _url: {"content": "Extracted after metadata update"},
+    )
+
+    outcome = await service.save_capture(
+        CaptureSaveRequest(authority.key, "https://example.test/revision-race")
+    )
+    assert outcome.capture is not None
+    repository.update_capture(
+        outcome.capture.identity,
+        expected_revision=outcome.capture.revision,
+        changes={"favorite": True, "status": "reading"},
+    )
+
+    await service.drain_extractions()
+
+    detail = repository.get_detail(outcome.capture.identity)
+    assert detail is not None
+    assert detail.processing_state == "ready"
+    assert detail.favorite is True
+    assert detail.status == "reading"
+    assert detail.text_content == "Extracted after metadata update"
+    database.close()
+
+
+@pytest.mark.asyncio
 async def test_reference_failures_are_bounded_without_mutating_capture(
     tmp_path: Path,
 ) -> None:

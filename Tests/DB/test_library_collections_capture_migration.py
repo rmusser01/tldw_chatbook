@@ -300,19 +300,33 @@ def test_v2_processing_row_migrates_with_unowned_expired_lease(
     database.close()
 
 
+def test_v3_lease_migration_is_a_packaged_sql_artifact() -> None:
+    path = LibraryCollectionsDB._CAPTURE_V3_MIGRATION_PATH
+
+    assert path.name == "library_collections_v2_to_v3_extraction_leases.sql"
+    assert path.is_file()
+    statements = LibraryCollectionsDB._capture_v3_migration_statements()
+    assert len(statements) == 2
+    assert all(statement.startswith("ALTER TABLE") for statement in statements)
+
+
 def test_v2_lease_migration_failure_rolls_back_columns_and_version(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path = tmp_path / "collections.db"
     _create_v2_fixture(path)
+    broken_migration = tmp_path / "broken_v3.sql"
+    broken_migration.write_text(
+        "ALTER TABLE collection_capture_items "
+        "ADD COLUMN extraction_owner_token TEXT;\n"
+        "ALTER TABL deliberately_invalid;\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(
         LibraryCollectionsDB,
-        "_CAPTURE_V3_COLUMNS",
-        (
-            LibraryCollectionsDB._CAPTURE_V3_COLUMNS[0],
-            ("extraction_lease_expires_at", "ALTER TABL deliberately_invalid"),
-        ),
+        "_CAPTURE_V3_MIGRATION_PATH",
+        broken_migration,
     )
 
     with pytest.raises(sqlite3.OperationalError):

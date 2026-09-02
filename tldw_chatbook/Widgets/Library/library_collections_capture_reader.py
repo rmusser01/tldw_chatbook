@@ -85,6 +85,19 @@ class LibraryCollectionsItemButton(Button):
         self.capture_identity = capture_identity
 
 
+class LibraryCollectionsArchiveUndoButton(Button):
+    """Undo action carrying the archived capture's stable identity."""
+
+    def __init__(
+        self,
+        *args: Any,
+        capture_identity: CaptureIdentity,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.capture_identity = capture_identity
+
+
 class LibraryCollectionsHighlightButton(Button):
     """Highlight action carrying its source-owned identifier."""
 
@@ -563,6 +576,22 @@ class LibraryCollectionsWorkPane(VerticalScroll):
                 id="library-collections-action-content",
                 markup=False,
             )
+        if state.visible_archive_receipts:
+            receipt = state.visible_archive_receipts[0]
+            with Horizontal(
+                classes="ds-toolbar",
+                id="library-collections-archive-receipt",
+            ):
+                yield Static(
+                    f"Moved to Archive · was {receipt.previous_status.title()}.",
+                    markup=False,
+                )
+                yield LibraryCollectionsArchiveUndoButton(
+                    "Undo",
+                    capture_identity=receipt.identity,
+                    id="library-collections-archive-undo",
+                    compact=True,
+                )
 
         resolved = state.loaded_detail
         if resolved is None:
@@ -679,20 +708,6 @@ class LibraryCollectionsWorkPane(VerticalScroll):
             yield from self._compose_notes()
         else:
             yield from self._compose_info()
-
-        for receipt in state.visible_archive_receipts:
-            if receipt.identity == capture.identity:
-                with Horizontal(classes="ds-toolbar", id="library-collections-archive-receipt"):
-                    yield Static(
-                        f"Moved to Archive · was {receipt.previous_status.title()}.",
-                        markup=False,
-                    )
-                    yield Button(
-                        "Undo",
-                        id="library-collections-archive-undo",
-                        compact=True,
-                    )
-                break
 
     def _compose_more(self) -> ComposeResult:
         """Render lower-frequency actions without hiding capability reasons."""

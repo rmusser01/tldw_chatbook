@@ -71,7 +71,6 @@ def test_claim_and_complete_store_only_inert_reader_text(
     capture = _save(repository, "hostile").capture
     claimed = repository.claim_extraction(
         capture.identity,
-        expected_revision=capture.revision,
         owner_token="worker-a",
     )
     assert claimed.processing_state == "processing"
@@ -79,7 +78,6 @@ def test_claim_and_complete_store_only_inert_reader_text(
 
     completed = repository.complete_extraction(
         capture.identity,
-        expected_revision=claimed.revision,
         owner_token="worker-a",
         result={
             "content": (
@@ -125,14 +123,12 @@ def test_failed_extraction_is_bounded_and_retry_preserves_reading_state(
         status="reading",
         favorite=True,
     ).capture
-    claimed = repository.claim_extraction(
+    repository.claim_extraction(
         capture.identity,
-        expected_revision=capture.revision,
         owner_token="worker-a",
     )
     failed = repository.fail_extraction(
         capture.identity,
-        expected_revision=claimed.revision,
         owner_token="worker-a",
         reason="fetch_failed",
     )
@@ -158,7 +154,6 @@ def test_failed_extraction_is_bounded_and_retry_preserves_reading_state(
         with pytest.raises(CollectionsCaptureError) as caught:
             repository.fail_extraction(
                 capture.identity,
-                expected_revision=retried.revision,
                 owner_token="worker-a",
                 reason=malformed_reason,  # type: ignore[arg-type]
             )
@@ -201,12 +196,10 @@ def test_startup_interrupts_only_expired_claims_for_this_authority(
     queued_b = _save(repo_b, "b").capture
     processing_a = repo_a.claim_extraction(
         queued_a.identity,
-        expected_revision=queued_a.revision,
         owner_token="worker-a",
     )
     processing_b = repo_b.claim_extraction(
         queued_b.identity,
-        expected_revision=queued_b.revision,
         owner_token="worker-b",
     )
 
@@ -235,14 +228,13 @@ def test_startup_interrupts_only_expired_claims_for_this_authority(
     database_c.close()
 
 
-def test_extraction_transitions_require_current_revision_and_valid_state(
+def test_extraction_transitions_require_active_claim_and_valid_state(
     repository: CollectionsCaptureRepository,
 ) -> None:
     capture = _save(repository, "guards").capture
     with pytest.raises(CollectionsCaptureError) as caught:
         repository.complete_extraction(
             capture.identity,
-            expected_revision=capture.revision,
             owner_token="worker-a",
             result={"content": "Body"},
         )
@@ -250,13 +242,11 @@ def test_extraction_transitions_require_current_revision_and_valid_state(
 
     claimed = repository.claim_extraction(
         capture.identity,
-        expected_revision=capture.revision,
         owner_token="worker-a",
     )
     with pytest.raises(CollectionsCaptureError) as caught:
         repository.complete_extraction(
             capture.identity,
-            expected_revision=claimed.revision,
             owner_token="worker-b",
             result={"content": "Body"},
         )
@@ -266,17 +256,6 @@ def test_extraction_transitions_require_current_revision_and_valid_state(
     with pytest.raises(CollectionsCaptureError) as caught:
         repository.complete_extraction(
             capture.identity,
-            expected_revision=capture.revision,
-            owner_token="worker-a",
-            result={"content": "Body"},
-        )
-    assert caught.value.reason == "revision_conflict"
-    assert caught.value.conflict.current == claimed
-
-    with pytest.raises(CollectionsCaptureError) as caught:
-        repository.complete_extraction(
-            capture.identity,
-            expected_revision=claimed.revision,
             owner_token="worker-a",
             result={"content": "<script>only active content</script>"},
         )

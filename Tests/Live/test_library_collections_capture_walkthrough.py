@@ -288,6 +288,9 @@ async def test_live_server_45_capture_source_replacement_geometry_and_lifecycle(
         docs_info = await client.get_server_docs_info()
         docs = docs_info.model_dump(mode="json")
         assert docs["capabilities"]["hasReadingSnapshotPagesV1"] is True
+        atomic_updates = (
+            docs["capabilities"].get("hasReadingOptimisticUpdatesV1") is True
+        )
 
         await _seed_captures(app, count=3)
         local_page = await scope.list_page(CapturePageRequest(local_authority.key))
@@ -312,7 +315,12 @@ async def test_live_server_45_capture_source_replacement_geometry_and_lifecycle(
         capabilities = await server_service.capabilities()
         assert capabilities.for_action("browse").state is CapabilityState.SUPPORTED
         assert capabilities.for_action("capture").state is CapabilityState.SUPPORTED
-        assert capabilities.for_action("archive").state is CapabilityState.SUPPORTED
+        archive_capability = capabilities.for_action("archive")
+        assert archive_capability.state is (
+            CapabilityState.SUPPORTED
+            if atomic_updates
+            else CapabilityState.UNSUPPORTED
+        )
         assert capabilities.for_action("offline_copy").reason == (
             "server_offline_copy_unavailable"
         )
@@ -590,37 +598,42 @@ async def test_live_server_45_capture_source_replacement_geometry_and_lifecycle(
                 message="Confirmed Server UI save did not settle",
             )
 
-            (
-                await _wait_for_stable_button(
-                    screen,
-                    pilot,
-                    "#library-collections-archive",
-                )
-            ).press()
-            await _wait_for_condition(
+            archive_button = await _wait_for_stable_button(
+                screen,
                 pilot,
-                lambda: bool(
-                    controller.state.loaded_detail
-                    and controller.state.loaded_detail.capture.status == "archived"
-                    and controller.state.visible_archive_receipts
-                ),
-                message="Server archive did not settle",
+                "#library-collections-archive",
             )
-            (
-                await _wait_for_stable_button(
-                    screen,
+            if atomic_updates:
+                archive_button.press()
+                await _wait_for_condition(
                     pilot,
-                    "#library-collections-archive-undo",
+                    lambda: bool(
+                        controller.state.loaded_detail
+                        and controller.state.loaded_detail.capture.status == "archived"
+                        and controller.state.visible_archive_receipts
+                    ),
+                    message="Server archive did not settle",
                 )
-            ).press()
-            await _wait_for_condition(
-                pilot,
-                lambda: bool(
-                    controller.state.loaded_detail
-                    and controller.state.loaded_detail.capture.status == "saved"
-                ),
-                message="Server archive Undo did not restore the prior status",
-            )
+                (
+                    await _wait_for_stable_button(
+                        screen,
+                        pilot,
+                        "#library-collections-archive-undo",
+                    )
+                ).press()
+                await _wait_for_condition(
+                    pilot,
+                    lambda: bool(
+                        controller.state.loaded_detail
+                        and controller.state.loaded_detail.capture.status == "saved"
+                    ),
+                    message="Server archive Undo did not restore the prior status",
+                )
+            else:
+                assert archive_button.disabled
+                assert "server atomic mutation unavailable" in str(
+                    archive_button.tooltip
+                )
 
             real_save_capture = server_service.save_capture
             uncertain_calls = 0

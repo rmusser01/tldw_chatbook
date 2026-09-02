@@ -214,6 +214,7 @@ def test_local_capture_wiring_reuses_configured_collections_database(
 
     assert app.collections_capture_repository.db is database
     assert app.local_collections_capture_service.repository.db is database
+    assert app.local_collections_capture_service.extractor is app_module._extract_collections_article
     assert app.collections_capture_scope_service.active_authority.kind == "local"
     assert app.collections_legacy_recovery_service is not None
 

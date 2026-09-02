@@ -7145,6 +7145,15 @@ async def _resolve_collections_note_reference(
     return ExternalReferenceAvailability("available")
 
 
+def _extract_collections_article(url: str) -> Mapping[str, Any]:
+    """Fetch one capture through the existing guarded article extractor."""
+    from tldw_chatbook.Local_Ingestion.web_article_ingestion import (
+        extract_article_for_ingest,
+    )
+
+    return extract_article_for_ingest(url, {})
+
+
 class _DeferredCollectionsCaptureScope:
     """Stable app seam that composes the real capture scope on first use."""
 
@@ -9327,6 +9336,7 @@ class TldwCli(
                 authority,
                 repository,
                 offline_store=offline_store,
+                extractor=_extract_collections_article,
                 legacy_recovery_available=legacy_recovery_available,
             )
         except Exception:

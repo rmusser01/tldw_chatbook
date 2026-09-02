@@ -370,6 +370,30 @@ async def test_work_keeps_selected_loaded_truth_and_distinct_note_models() -> No
         )
 
 
+async def test_archive_undo_remains_visible_without_a_loaded_detail() -> None:
+    presentation = _presentation()
+    presentation = replace(
+        presentation,
+        state=replace(
+            presentation.state,
+            selected_identity=None,
+            loaded_detail=None,
+            detail_loading=False,
+        ),
+    )
+    app = _ReaderApp(presentation)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+
+        button = app.query_one("#library-collections-archive-undo", Button)
+        assert getattr(button, "capture_identity") == _identity("a")
+        receipt = app.query_one("#library-collections-archive-receipt")
+        assert "Moved to Archive" in str(
+            receipt.query_one(Static).renderable
+        )
+
+
 async def test_supported_annotation_and_overflow_actions_have_reachable_results() -> None:
     app = _ReaderApp(
         _presentation(

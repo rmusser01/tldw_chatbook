@@ -9,11 +9,13 @@ import pytest
 
 from tldw_chatbook.Library.collections_capture_models import (
     CapabilityState,
+    CaptureConflictError,
     CaptureIdentity,
     CapturePageRequest,
     CaptureSaveRequest,
     CollectionsCaptureError,
     ExternalNoteReference,
+    SavedCaptureSearch,
 )
 from tldw_chatbook.Library.collections_capture_service import (
     build_server_capture_authority,
@@ -56,6 +58,7 @@ class FakeReadingClient:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.failures: dict[str, BaseException] = {}
         self.note_links: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        self.highlights: dict[int, list[dict[str, Any]]] = defaultdict(list)
 
     def _fail(self, method: str) -> None:
         failure = self.failures.get(method)
@@ -95,8 +98,11 @@ class FakeReadingClient:
     ) -> dict[str, Any]:
         self._fail("update_reading_item")
         payload = request_data.model_dump(exclude_none=True, mode="json")
-        self.calls.append(("update_reading_item", payload))
+        self.calls.append(("update_reading_item", dict(payload)))
         item = next(item for item in self.items if item["id"] == item_id)
+        expected_revision = payload.pop("expected_revision")
+        if item["revision"] != expected_revision:
+            raise APIResponseError(409, "private stale response")
         item.update(payload)
         item["revision"] += 1
         return dict(item)
@@ -104,9 +110,46 @@ class FakeReadingClient:
     async def list_reading_saved_searches(self, **_params: Any) -> dict[str, Any]:
         return {"items": [], "total": 0, "limit": 20, "offset": 0}
 
-    async def list_reading_highlights(self, _item_id: int) -> list[Any]:
+    async def list_reading_highlights(self, item_id: int) -> list[Any]:
         self._fail("list_reading_highlights")
-        return []
+        return list(self.highlights[item_id])
+
+    async def delete_reading_highlight(self, highlight_id: int) -> dict[str, Any]:
+        self._fail("delete_reading_highlight")
+        self.calls.append(("delete_reading_highlight", {"highlight_id": highlight_id}))
+        for highlights in self.highlights.values():
+            highlights[:] = [item for item in highlights if item["id"] != highlight_id]
+        return {"success": True}
+
+    async def create_reading_saved_search(self, request_data: Any) -> dict[str, Any]:
+        self._fail("create_reading_saved_search")
+        payload = request_data.model_dump(exclude_none=True, mode="json")
+        return {
+            "id": 1,
+            **payload,
+            "created_at": "2026-09-01T12:00:00Z",
+            "updated_at": "2026-09-01T12:00:00Z",
+            "revision": 1,
+        }
+
+    async def update_reading_saved_search(
+        self,
+        search_id: int,
+        request_data: Any,
+    ) -> dict[str, Any]:
+        self._fail("update_reading_saved_search")
+        payload = request_data.model_dump(exclude_none=True, mode="json")
+        return {
+            "id": search_id,
+            **payload,
+            "created_at": "2026-09-01T12:00:00Z",
+            "updated_at": "2026-09-01T13:00:00Z",
+            "revision": 2,
+        }
+
+    async def delete_reading_saved_search(self, search_id: int) -> dict[str, Any]:
+        self._fail("delete_reading_saved_search")
+        return {"success": True, "id": search_id}
 
     async def list_reading_item_note_links(self, item_id: int) -> dict[str, Any]:
         return {"item_id": item_id, "links": list(self.note_links[item_id])}
@@ -291,7 +334,10 @@ async def test_server_update_and_note_links_preserve_authority() -> None:
         client,
         {
             "api_version": "1",
-            "capabilities": {"hasReadingSnapshotPagesV1": True},
+            "capabilities": {
+                "hasReadingSnapshotPagesV1": True,
+                "hasReadingOptimisticUpdatesV1": True,
+            },
         },
     )
     identity = CaptureIdentity(authority.key, "1")
@@ -310,6 +356,12 @@ async def test_server_update_and_note_links_preserve_authority() -> None:
     assert changed.favorite is True
     assert changed.status == "reading"
     assert changed.tags == ("AI",)
+    assert ("update_reading_item", {
+        "status": "reading",
+        "favorite": True,
+        "tags": ["AI"],
+        "expected_revision": detail.revision,
+    }) in client.calls
     assert link.note_reference.authority_key == authority.key
     other = build_server_capture_authority("server-b", "user-b")
     with pytest.raises(CollectionsCaptureError) as caught:
@@ -327,7 +379,10 @@ async def test_supported_update_does_not_depend_on_snapshot_browse_attestation()
     client = FakeReadingClient()
     authority, service = _service(
         client,
-        {"api_version": "1", "capabilities": {}},
+        {
+            "api_version": "1",
+            "capabilities": {"hasReadingOptimisticUpdatesV1": True},
+        },
     )
     identity = CaptureIdentity(authority.key, "1")
 
@@ -340,6 +395,53 @@ async def test_supported_update_does_not_depend_on_snapshot_browse_attestation()
     assert (await service.capabilities()).for_action(
         "update"
     ).state is CapabilityState.SUPPORTED
+    assert (await service.capabilities()).for_action(
+        "archive"
+    ).state is CapabilityState.SUPPORTED
+    hard_delete = (await service.capabilities()).for_action("hard_delete")
+    assert hard_delete.state is CapabilityState.UNSUPPORTED
+    assert hard_delete.reason == "server_atomic_mutation_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_server_mutations_fail_closed_without_atomic_update_attestation() -> None:
+    client = FakeReadingClient()
+    authority, service = _service(
+        client,
+        {"capabilities": {"hasReadingSnapshotPagesV1": True}},
+    )
+
+    capabilities = await service.capabilities()
+
+    for action in ("update", "archive", "hard_delete"):
+        capability = capabilities.for_action(action)
+        assert capability.state is CapabilityState.UNSUPPORTED
+        assert capability.reason == "server_atomic_mutation_unavailable"
+    with pytest.raises(CollectionsCaptureError) as caught:
+        await service.update_capture(
+            CaptureIdentity(authority.key, "1"),
+            2,
+            {"favorite": True},
+        )
+    assert caught.value.reason == "server_atomic_mutation_unavailable"
+    assert not any(name == "update_reading_item" for name, _payload in client.calls)
+
+
+@pytest.mark.asyncio
+async def test_server_update_translates_atomic_revision_conflict() -> None:
+    client = FakeReadingClient()
+    authority, service = _service(
+        client,
+        {"capabilities": {"hasReadingOptimisticUpdatesV1": True}},
+    )
+    identity = CaptureIdentity(authority.key, "1")
+
+    with pytest.raises(CaptureConflictError) as caught:
+        await service.update_capture(identity, 99, {"favorite": True})
+
+    assert caught.value.conflict.expected_revision == 99
+    assert caught.value.conflict.current.identity == identity
+    assert "private" not in str(caught.value)
 
 
 @pytest.mark.asyncio
@@ -377,6 +479,67 @@ async def test_server_saved_search_accepts_api_string_filters() -> None:
     assert page.items[0].request.statuses == ("saved",)
     assert page.items[0].request.tags == ("research",)
     assert page.items[0].request.sort == "saved_desc"
+
+
+@pytest.mark.asyncio
+async def test_saved_search_mutations_translate_transport_failures() -> None:
+    client = FakeReadingClient()
+    authority, service = _service(
+        client,
+        {"capabilities": {"hasReadingSnapshotPagesV1": True}},
+    )
+    search = SavedCaptureSearch(
+        authority.key,
+        "new",
+        "Research",
+        CapturePageRequest(authority.key, tags=("research",)),
+        "2026-09-01T12:00:00Z",
+        "2026-09-01T12:00:00Z",
+        1,
+    )
+    client.failures["create_reading_saved_search"] = APIConnectionError(
+        "private transport"
+    )
+
+    with pytest.raises(CollectionsCaptureError) as caught:
+        await service.save_saved_search(search)
+    assert caught.value.reason == "server_saved_search_outcome_unknown"
+    assert caught.value.retryable is False
+    assert "private" not in str(caught.value)
+
+    client.failures.clear()
+    client.failures["delete_reading_saved_search"] = APIResponseError(
+        422,
+        "private response",
+    )
+    with pytest.raises(CollectionsCaptureError) as caught:
+        await service.delete_saved_search("1")
+    assert caught.value.reason == "server_saved_search_rejected"
+    assert caught.value.retryable is False
+    assert "private" not in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_server_highlight_delete_verifies_parent_capture() -> None:
+    client = FakeReadingClient()
+    client.highlights[1].append(
+        {
+            "id": 7,
+            "item_id": 1,
+            "quote": "Belongs to capture one",
+            "created_at": "2026-09-01T12:00:00Z",
+        }
+    )
+    authority, service = _service(
+        client,
+        {"capabilities": {"hasReadingSnapshotPagesV1": True}},
+    )
+
+    with pytest.raises(CollectionsCaptureError) as caught:
+        await service.delete_highlight(CaptureIdentity(authority.key, "2"), "7")
+
+    assert caught.value.reason == "server_highlight_capture_mismatch"
+    assert not any(name == "delete_reading_highlight" for name, _ in client.calls)
 
 
 @pytest.mark.asyncio

@@ -158,15 +158,16 @@ class ServerCollectionsCaptureService:
             isinstance(capabilities, Mapping)
             and capabilities.get("hasReadingSnapshotPagesV1") is True
         )
+        atomic_updates = (
+            isinstance(capabilities, Mapping)
+            and capabilities.get("hasReadingOptimisticUpdatesV1") is True
+        )
         base_supported = {
             "browse",
             "capture",
-            "update",
             "highlights",
             "linked_notes",
             "summarize",
-            "archive",
-            "hard_delete",
         }
         values: dict[str, CaptureCapability] = {}
         for action in CAPTURE_CAPABILITY_NAMES:
@@ -180,6 +181,18 @@ class ServerCollectionsCaptureService:
                     CapabilityState.UNSUPPORTED,
                     "server_page_snapshot_unavailable",
                 )
+            elif action in {"update", "archive"} and not atomic_updates:
+                capability = CaptureCapability(
+                    CapabilityState.UNSUPPORTED,
+                    "server_atomic_mutation_unavailable",
+                )
+            elif action == "hard_delete":
+                capability = CaptureCapability(
+                    CapabilityState.UNSUPPORTED,
+                    "server_atomic_mutation_unavailable",
+                )
+            elif action in {"update", "archive"}:
+                capability = CaptureCapability(CapabilityState.SUPPORTED)
             elif action in base_supported:
                 capability = CaptureCapability(CapabilityState.SUPPORTED)
             else:
@@ -381,15 +394,11 @@ class ServerCollectionsCaptureService:
     ) -> CaptureDetail:
         await self._require("update")
         item_id = self._validate_identity(identity)
-        current = await self._get_detail(identity)
-        if current.revision != expected_revision:
-            raise CaptureConflictError(
-                CaptureConflict(identity, expected_revision, current)
-            )
         allowed = {"status", "favorite", "tags", "freeform_note", "title"}
         if set(changes) - allowed:
             raise CollectionsCaptureError("unsupported_capture_change")
         payload = ReadingUpdateRequest(
+            expected_revision=expected_revision,
             status=changes.get("status"),
             favorite=changes.get("favorite"),
             tags=(list(changes["tags"]) if "tags" in changes else None),
@@ -400,8 +409,23 @@ class ServerCollectionsCaptureService:
             return self._capture(
                 await self.client.update_reading_item(item_id, payload)
             )
+        except APIConnectionError as exc:
+            raise CollectionsCaptureError(
+                "server_update_outcome_unknown",
+                retryable=False,
+            ) from exc
         except APIResponseError as exc:
-            raise CollectionsCaptureError("server_update_rejected") from exc
+            if exc.status_code in {409, 412}:
+                current = await self._get_detail(identity)
+                raise CaptureConflictError(
+                    CaptureConflict(identity, expected_revision, current)
+                ) from exc
+            reason = (
+                "server_update_outcome_unknown"
+                if exc.status_code >= 500
+                else "server_update_rejected"
+            )
+            raise CollectionsCaptureError(reason, retryable=False) from exc
 
     @staticmethod
     def _server_query(request: CapturePageRequest) -> dict[str, Any]:
@@ -475,21 +499,40 @@ class ServerCollectionsCaptureService:
         if search.authority_key != self.authority.key:
             raise CollectionsCaptureError("authority_mismatch")
         query = self._server_query(search.request)
-        if search.search_id == "new":
-            payload: Any = ReadingSavedSearchCreateRequest(
-                name=search.name,
-                query=query,
-                sort=SERVER_SORT[search.request.sort],
+        try:
+            if search.search_id == "new":
+                payload: Any = ReadingSavedSearchCreateRequest(
+                    name=search.name,
+                    query=query,
+                    sort=SERVER_SORT[search.request.sort],
+                )
+                result = await self.client.create_reading_saved_search(payload)
+            else:
+                search_id = _positive_id(
+                    search.search_id,
+                    "invalid_server_search_id",
+                )
+                payload = ReadingSavedSearchUpdateRequest(
+                    name=search.name,
+                    query=query,
+                    sort=SERVER_SORT[search.request.sort],
+                )
+                result = await self.client.update_reading_saved_search(
+                    search_id,
+                    payload,
+                )
+        except APIConnectionError as exc:
+            raise CollectionsCaptureError(
+                "server_saved_search_outcome_unknown",
+                retryable=False,
+            ) from exc
+        except APIResponseError as exc:
+            reason = (
+                "server_saved_search_outcome_unknown"
+                if exc.status_code >= 500
+                else "server_saved_search_rejected"
             )
-            result = await self.client.create_reading_saved_search(payload)
-        else:
-            search_id = _positive_id(search.search_id, "invalid_server_search_id")
-            payload = ReadingSavedSearchUpdateRequest(
-                name=search.name,
-                query=query,
-                sort=SERVER_SORT[search.request.sort],
-            )
-            result = await self.client.update_reading_saved_search(search_id, payload)
+            raise CollectionsCaptureError(reason, retryable=False) from exc
         saved = self._saved_search(result)
         self._saved_search_revisions[saved.search_id] = saved.revision
         return saved
@@ -497,7 +540,20 @@ class ServerCollectionsCaptureService:
     async def delete_saved_search(self, search_id: str) -> CaptureActionResult:
         await self._require("browse")
         parsed = _positive_id(search_id, "invalid_server_search_id")
-        await self.client.delete_reading_saved_search(parsed)
+        try:
+            await self.client.delete_reading_saved_search(parsed)
+        except APIConnectionError as exc:
+            raise CollectionsCaptureError(
+                "server_saved_search_outcome_unknown",
+                retryable=False,
+            ) from exc
+        except APIResponseError as exc:
+            reason = (
+                "server_saved_search_outcome_unknown"
+                if exc.status_code >= 500
+                else "server_saved_search_rejected"
+            )
+            raise CollectionsCaptureError(reason, retryable=False) from exc
         self._saved_search_revisions.pop(search_id, None)
         return CaptureActionResult(CaptureIdentity(self.authority.key, search_id), True)
 
@@ -555,8 +611,15 @@ class ServerCollectionsCaptureService:
         highlight_id: str,
     ) -> CaptureActionResult:
         await self._require("highlights")
-        self._validate_identity(identity)
+        item_id = self._validate_identity(identity)
         parsed = _positive_id(highlight_id, "invalid_server_highlight_id")
+        highlights = await self.client.list_reading_highlights(item_id)
+        if not any(
+            _positive_id(_mapping(item).get("id"), "invalid_server_response")
+            == parsed
+            for item in highlights
+        ):
+            raise CollectionsCaptureError("server_highlight_capture_mismatch")
         await self.client.delete_reading_highlight(parsed)
         return CaptureActionResult(identity, True)
 
