@@ -13,6 +13,7 @@ import pytest
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import PermissionStoreSnapshot, definition_hash
 from tldw_chatbook.Tool_Packs import export as export_module
+from tldw_chatbook.Tool_Packs.binding import profile_policy_digest
 from tldw_chatbook.Tool_Packs.catalog_snapshot import (
     PermissionInventoryAdapter,
     PermissionInventoryRegistry,
@@ -443,7 +444,7 @@ def test_flattening_applies_config_high_risk_and_raw_shell_floors() -> None:
 
 
 def _imported_profile() -> dict[str, object]:
-    return {
+    profile: dict[str, object] = {
         "servers": {},
         "profile_kind": "tool_pack_imported",
         "tool_pack_lifecycle": {
@@ -459,6 +460,10 @@ def _imported_profile() -> dict[str, object]:
             "counts": {"matched": 1, "omitted": 2, "pending_deny": 3},
         },
     }
+    lifecycle = profile["tool_pack_lifecycle"]
+    assert isinstance(lifecycle, dict)
+    lifecycle["policy_digest"] = profile_policy_digest(profile)
+    return profile
 
 
 def _tombstone_profile() -> dict[str, object]:

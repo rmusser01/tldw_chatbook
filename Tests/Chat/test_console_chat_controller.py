@@ -655,6 +655,32 @@ class FakePersistence:
         )
         return True
 
+    def replace_assistant_generation_projection(
+        self,
+        *,
+        message_id,
+        content,
+        thinking_blocks_json,
+        provider_continuation_json,
+        assistant_generation_state,
+        usage_json,
+        expected_version=None,
+    ):
+        committed_version = (expected_version or 0) + 1
+        self.updated_messages.append(
+            {
+                "message_id": message_id,
+                "content": content,
+                "image_data": None,
+                "image_mime_type": None,
+                "thinking_blocks_json": thinking_blocks_json,
+                "provider_continuation_json": provider_continuation_json,
+                "assistant_generation_state": assistant_generation_state,
+                "usage_json": usage_json,
+            }
+        )
+        return committed_version
+
 
 def _roleplay_controller_fixture() -> tuple[
     ConsoleChatController, ConsoleChatStore, object
@@ -5101,6 +5127,7 @@ async def test_provider_switch_race_blocks_active_continuation_before_dispatch(
     )
     assert controller.run_state_for(session.id).status is ConsoleRunStatus.BLOCKED
     assert gateway.provider_calls == 0
+    assert store.dispatch_recovery_for_session(session.id) is None
     assert "ACTIVE-SWITCH-PRIVATE-CANARY" not in repr(result)
 
 

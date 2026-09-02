@@ -13874,7 +13874,10 @@ UPDATE db_schema_version
         Succeeds if `expected_version` matches the current database version.
         `version` is incremented, `last_modified` updated, and `client_id` set.
         Updatable fields from `update_data`: 'content', 'ranking', 'parent_message_id'.
-        Image data can also be updated: 'image_data' and 'image_mime_type'.
+        Image data can also be updated: 'image_data' and 'image_mime_type'. A
+        ``provider_continuation_json`` value of ``None`` explicitly clears an
+        assistant's private continuation; non-null continuation writes use the
+        dedicated continuation APIs.
         If 'image_data' is set to `None` in `update_data`, both 'image_data' and
         'image_mime_type' columns will be set to NULL in the database.
         Other fields in `update_data` are ignored. `update_data` must not be empty.
@@ -13909,10 +13912,17 @@ UPDATE db_schema_version
             raise InputError("Preserve descendants must be a boolean.")
         update_data = dict(update_data)
         thinking_update_requested = "thinking_blocks_json" in update_data
+        continuation_clear_requested = "provider_continuation_json" in update_data
         if update_data.get("thinking_blocks_json") is not None:
             update_data["thinking_blocks_json"] = _validated_thinking_blocks_json(
                 update_data["thinking_blocks_json"]
             )
+        if continuation_clear_requested:
+            if update_data["provider_continuation_json"] is not None:
+                raise InputError(
+                    "Provider continuation updates require the dedicated API."
+                )
+            update_data.pop("provider_continuation_json")
 
         now = self._get_current_utc_timestamp_iso()
         fields_to_update_sql = []
@@ -13929,6 +13939,9 @@ UPDATE db_schema_version
             "metadata_json",
             "thinking_blocks_json",
         ]
+
+        if continuation_clear_requested:
+            fields_to_update_sql.append("provider_continuation_json = NULL")
 
         # Special handling for clearing image
         if "image_data" in update_data and update_data["image_data"] is None:
@@ -14013,6 +14026,10 @@ UPDATE db_schema_version
                     )
                 if thinking_update_requested and current["role"] != "assistant":
                     raise InputError("Thinking data requires an assistant message.")
+                if continuation_clear_requested and current["role"] != "assistant":
+                    raise InputError(
+                        "Provider continuation data requires an assistant message."
+                    )
                 if thinking_update_requested:
                     _require_thinking_generation_actions(
                         current["thinking_blocks_json"]

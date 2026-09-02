@@ -2859,6 +2859,9 @@ def _lease_captured_tool_profile(method: Callable[..., Any]):
 class ConsoleChatController:
     """Coordinate native Console chat state between store and provider gateway."""
 
+    #: Shared guidance cap for summary and impersonation transcript inputs.
+    _SUMMARY_SPAN_TOKEN_BUDGET = 12000
+
     #: TASK-21145 (UAT H-3): "Validating provider." must always reach a
     #: terminal state — the UAT run sat on it 30s+ with no error, no retry,
     #: and no way forward. Generous enough for a slow first TLS handshake;
@@ -14519,8 +14522,9 @@ class ConsoleChatController:
 
         On stream FAILURE, the new sibling node itself becomes a ``failed``
         node and remains stored/retryable via ``retry_message``, while the
-        original anchor becomes the active leaf again. The anchor is a
-        completely separate node and was never touched.
+        original branch becomes active again with the transcript-only failure
+        row appended beneath its anchor. The anchor is a completely separate
+        node and was never touched.
 
         Args:
             message_id: Identifier of the assistant message to regenerate.
@@ -14636,7 +14640,25 @@ class ConsoleChatController:
         except KeyError:
             persisted_sibling = None
         if persisted_sibling is not None and persisted_sibling.status == "failed":
+            active_messages = self.store.messages_for_session(session_id)
+            failure_row = active_messages[-1] if active_messages else None
+            if (
+                failure_row is not None
+                and failure_row.role is ConsoleMessageRole.SYSTEM
+                and failure_row.content == result.visible_copy
+            ):
+                # Provider failure rows are transcript-only. Re-home the row
+                # from beneath the failed sibling onto the restored original
+                # branch so the failure remains visible without keeping the
+                # failed replacement in model history.
+                self.store.delete_message(failure_row.id)
             self.store.set_active_leaf(session_id, message_id)
+            if (
+                failure_row is not None
+                and failure_row.role is ConsoleMessageRole.SYSTEM
+                and failure_row.content == result.visible_copy
+            ):
+                self._append_failure_system_row(session_id, result.visible_copy)
         replacement_event_id = (
             f"message:{persisted_sibling.persisted_message_id}"
             if persisted_sibling is not None
@@ -19558,7 +19580,7 @@ class ConsoleChatController:
         resolution: Any,
         provider_messages: list[dict[str, str]],
         assistant_message_id: str,
-        route: ConsoleRequestRoute,
+        route: ConsoleRequestRoute = ConsoleRequestRoute.FRESH,
         prepare_retry: bool = False,
         variant_mode: bool = False,
         prefill: str | None = None,
@@ -20969,7 +20991,8 @@ class ConsoleChatController:
                 status="failed",
             )
             try:
-                settle_thinking("failed")
+                if not thinking_capture.snapshot().terminal:
+                    settle_thinking("failed")
                 if not prepare_retry or retry_prepared:
                     self.store.mark_message_failed(assistant_message_id)
                 else:
