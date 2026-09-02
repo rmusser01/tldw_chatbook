@@ -381,8 +381,15 @@ def _validate_strict_profile(profile: Mapping[str, Any], *, is_default: bool) ->
                 return False
             if tool_entry.get("state") not in STORE_STATES:
                 return False
-            if "definition_hash" in tool_entry and not _is_sha256(tool_entry["definition_hash"]):
-                return False
+            if "definition_hash" in tool_entry:
+                stored_hash = tool_entry["definition_hash"]
+                legacy_hash_free_null = (
+                    server_key in HASH_FREE_SERVER_KEYS
+                    and tool_entry["state"] == "allow"
+                    and stored_hash is None
+                )
+                if not legacy_hash_free_null and not _is_sha256(stored_hash):
+                    return False
             if "config_changed" in tool_entry and not isinstance(tool_entry["config_changed"], bool):
                 return False
             if (
@@ -417,6 +424,54 @@ def _validate_strict_payload(payload: Any) -> bool:
         and _validate_strict_profile(profile, is_default=profile_id == _DEFAULT_PROFILE_ID)
         for profile_id, profile in profiles.items()
     )
+
+
+def _validate_profile_inventory_payload(payload: Any) -> bool:
+    """Accept a strict store or one whose only invalidity is lifecycle data."""
+    if not isinstance(payload, Mapping) or set(payload) - {
+        "schema_version",
+        "kill_switch",
+        "profiles",
+        "updated_at",
+    }:
+        return False
+    if (
+        type(payload.get("schema_version")) is not int
+        or payload.get("schema_version") != SCHEMA_VERSION
+    ):
+        return False
+    if not isinstance(payload.get("kill_switch"), bool) or not isinstance(
+        payload.get("profiles"), Mapping
+    ):
+        return False
+    if "updated_at" in payload and not isinstance(payload["updated_at"], str):
+        return False
+
+    profiles = payload["profiles"]
+    default = profiles.get(_DEFAULT_PROFILE_ID)
+    if not isinstance(default, Mapping) or not _validate_strict_profile(
+        default, is_default=True
+    ):
+        return False
+    for profile_id, profile in profiles.items():
+        if (
+            not isinstance(profile_id, str)
+            or not profile_id
+            or not isinstance(profile, Mapping)
+        ):
+            return False
+        if profile_id == _DEFAULT_PROFILE_ID or _validate_strict_profile(
+            profile, is_default=False
+        ):
+            continue
+        if profile_lifecycle_disposition(profile) != "invalid":
+            return False
+        policy_only = dict(profile)
+        policy_only.pop("profile_kind", None)
+        policy_only.pop("tool_pack_lifecycle", None)
+        if not _validate_strict_profile(policy_only, is_default=False):
+            return False
+    return True
 
 
 def _validate_state(state: str) -> None:
@@ -648,6 +703,57 @@ class MCPPermissionStore:
         if not _validate_strict_payload(payload):
             raise PermissionStoreSnapshotError("invalid_shape")
 
+        return PermissionStoreSnapshot(
+            payload=_freeze_snapshot(payload),
+            generation=f"sha256:{hashlib.sha256(raw_bytes).hexdigest()}",
+            file_exists=True,
+        )
+
+    def read_profile_inventory_snapshot(self) -> PermissionStoreSnapshot:
+        """Read profile rows without recovering globally corrupt authority.
+
+        A named profile whose policy fields are valid but whose Tool Pack
+        lifecycle metadata is invalid remains visible to callers so it can be
+        rendered unavailable. Invalid JSON, duplicate keys, unknown schemas,
+        malformed default policy, and unrelated shape errors remain hard
+        failures and never synthesize an actionable default profile.
+
+        Returns:
+            An immutable snapshot suitable for profile-selector inventory.
+
+        Raises:
+            PermissionStoreSnapshotError: If corruption extends beyond one or
+                more named profiles' lifecycle metadata.
+        """
+        try:
+            return self.read_snapshot_strict()
+        except PermissionStoreSnapshotError as exc:
+            if exc.category != "invalid_shape":
+                raise
+
+        try:
+            raw_bytes = self.path.read_bytes()
+            payload = json.loads(
+                raw_bytes.decode("utf-8"),
+                object_pairs_hook=_reject_duplicate_keys,
+                parse_constant=_reject_json_constant,
+            )
+        except FileNotFoundError:
+            return self.read_snapshot_strict()
+        except PermissionStoreSnapshotError:
+            raise
+        except OSError as exc:
+            raise PermissionStoreSnapshotError("io_error") from exc
+        except (
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+            RecursionError,
+            ValueError,
+        ) as exc:
+            raise PermissionStoreSnapshotError("invalid_json") from exc
+
+        if not _validate_profile_inventory_payload(payload):
+            raise PermissionStoreSnapshotError("invalid_shape")
         return PermissionStoreSnapshot(
             payload=_freeze_snapshot(payload),
             generation=f"sha256:{hashlib.sha256(raw_bytes).hexdigest()}",
@@ -1267,25 +1373,28 @@ class MCPPermissionStore:
             definition_hash: Required when ``state`` is ``"allow"`` -- the
                 tool's current fingerprint (see ``definition_hash()``),
                 stored alongside the allow for the rug-pull guard to
-                compare against later. Not required for ``server_key``
-                values in ``HASH_FREE_SERVER_KEYS``.
+                compare against later. Must be a SHA-256 digest. Not
+                required or stored for ``server_key`` values in
+                ``HASH_FREE_SERVER_KEYS``.
             profile_id: Profile to write; defaults to the ``default``
                 profile (byte-identical to the pre-profiles behavior).
 
         Raises:
             ValueError: If ``state`` is not None and not one of
                 ``STORE_STATES``, or if ``state`` is ``"allow"`` without a
-                ``definition_hash`` and ``server_key`` is not in
+                SHA-256 ``definition_hash`` and ``server_key`` is not in
                 ``HASH_FREE_SERVER_KEYS``.
         """
         if state is not None:
             _validate_state(state)
             if (
                 state == "allow"
-                and not definition_hash
                 and server_key not in HASH_FREE_SERVER_KEYS
+                and not _is_sha256(definition_hash)
             ):
-                raise ValueError("definition_hash is required when state is 'allow'")
+                raise ValueError(
+                    "a SHA-256 definition_hash is required when state is 'allow'"
+                )
 
         def change(profile: dict[str, Any]) -> bool:
             servers = profile.setdefault("servers", {})
@@ -1306,7 +1415,11 @@ class MCPPermissionStore:
             entry = servers.setdefault(server_key, {})
             tools = entry.setdefault("tools", {})
             tool_entry: dict[str, Any] = {"state": state}
-            if state == "allow":
+            if (
+                state == "allow"
+                and server_key not in HASH_FREE_SERVER_KEYS
+                and definition_hash is not None
+            ):
                 tool_entry["definition_hash"] = definition_hash
             if tools.get(tool_name) == tool_entry:
                 return False

@@ -236,6 +236,8 @@ def test_facade_exposes_separate_review_and_commit_operations(tmp_path: Path) ->
             publications.append((snapshot, destination, kwargs)) or "publish"
         ),
     )
+
+    assert isinstance(service.lifecycle, ToolProfileLifecycleCoordinator)
     defaults = WorkspaceAssistantDefaults(
         assistant_id="p", tool_policy_profile_id="research"
     )

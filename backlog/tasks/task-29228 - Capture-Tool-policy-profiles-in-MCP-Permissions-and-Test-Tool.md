@@ -1,10 +1,11 @@
 ---
 id: TASK-29228
 title: Capture Tool policy profiles in MCP Permissions and Test Tool
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-02 15:13'
+updated_date: '2026-09-02 20:10'
 labels:
   - tool-packs
   - mcp
@@ -22,15 +23,14 @@ Make MCP Permissions and Test Tool operate on one explicitly selected local Tool
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
-- [ ] #1 MCP Permissions presents a clearly local Tool policy profile selector containing `default`, valid local, imported, and workspace-managed profiles; validated tombstones stay hidden and invalid lifecycle profiles remain visible but unavailable.
-- [ ] #2 Every matrix row, inspector/re-allow action, confirmation, approval, preview, and Test Tool request carries one immutable `PermissionProfileContext` with exact profile id, selector generation, current policy digest, and imported revision where applicable.
-- [ ] #3 Switching profiles or changing the selected profile's digest/revision makes older events stale; no stale event is retargeted to the current profile or mutates, approves, previews, or executes against either profile.
-- [ ] #4 Global/server/tool/builtin reads and mutations, definition re-allow, persistent and session approvals, and Test Tool gates use the exact captured profile; profile-specific operations cannot change `default` or another profile, while the global kill switch remains profile-neutral.
-- [ ] #5 Persistent and session mutation boundaries revalidate the captured digest/revision under the permission-store fence, and Test Tool holds an exact-profile lifecycle lease until every terminal outcome so removal cannot race an in-flight run.
-- [ ] #6 Invalid/tombstoned profiles are non-editable and non-testable, selection changes clear armed confirmation and child-panel state, and stable stale/unavailable feedback leaks no policy content or sensitive diagnostics.
-- [ ] #7 Focused MCP Permissions, Workbench, control-plane permission, and Test Tool suites plus scoped Ruff/format/diff checks pass; independent review has no unresolved Critical or Important findings.
+- [x] #1 MCP Permissions presents a clearly local Tool policy profile selector containing `default`, valid local, imported, and workspace-managed profiles; validated tombstones stay hidden and invalid lifecycle profiles remain visible but unavailable.
+- [x] #2 Every matrix row, inspector/re-allow action, confirmation, approval, preview, and Test Tool request carries one immutable `PermissionProfileContext` with exact profile id, selector generation, current policy digest, and imported revision where applicable.
+- [x] #3 Switching profiles or changing the selected profile's digest/revision makes older events stale; no stale event is retargeted to the current profile or mutates, approves, previews, or executes against either profile.
+- [x] #4 Global/server/tool/builtin reads and mutations, definition re-allow, persistent and session approvals, and Test Tool gates use the exact captured profile; profile-specific operations cannot change `default` or another profile, while the global kill switch remains profile-neutral.
+- [x] #5 Persistent and session mutation boundaries revalidate the captured digest/revision under the permission-store fence, and Test Tool holds an exact-profile lifecycle lease until every terminal outcome so removal cannot race an in-flight run.
+- [x] #6 Invalid/tombstoned profiles are non-editable and non-testable, selection changes clear armed confirmation and child-panel state, and stable stale/unavailable feedback leaks no policy content or sensitive diagnostics.
+- [x] #7 Focused MCP Permissions, Workbench, control-plane permission, and Test Tool suites plus scoped Ruff/format/diff checks pass; independent review has no unresolved Critical or Important findings.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -42,9 +42,24 @@ Make MCP Permissions and Test Tool operate on one explicitly selected local Tool
 4. Add under-fence digest/revision comparison to persistent/session control-plane mutations and thread the exact captured profile through reads, edits, re-allow, preview, approvals, and Test Tool gates.
 5. Hold the shared lifecycle lease for the exact captured profile through every Test Tool terminal outcome and reject stale context without substituting current selection.
 6. Run the prescribed four-suite matrix, scoped static/diff checks, self-review, and independent review; remediate findings before closeout.
-7. Scope correction from interface preflight: include `tldw_chatbook/UI/MCP_Modules/mcp_inspector.py` and `Tests/UI/test_mcp_inspector.py`, because `MCPInspector.ToolTestRequested` and `MCPInspector.ReallowRequested` are the concrete child-request types that must carry the captured profile context.
+7. Scope correction from interface preflight: include tldw_chatbook/UI/MCP_Modules/mcp_inspector.py and Tests/UI/test_mcp_inspector.py, because the inspector request types are the concrete child requests that must carry captured profile context.
+8. Review remediation: expose the application ToolPack lifecycle coordinator, render rows and profile context from one fenced identity, revalidate queued tests and persistent-approval successors exactly, fail closed on corrupt profile inventory, and preserve legacy hash-free Allow entries while keeping new writes canonical.
 
 ADR required: no new ADR
 ADR path: backlog/decisions/107-portable-tool-use-packs.md
 Reason: ADR-107 already fixes the selected-profile editing authority, immutable captured context, under-fence stale rejection, global kill-switch exception, and Test Tool lease boundary implemented by this task.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented explicit Tool policy profile selection and immutable PermissionProfileContext propagation across Permissions rows, inspector actions, approvals, previews, and Test Tool requests.
+
+Added exact-profile control-plane reads and fenced mutations, stale digest/revision rejection, coherent fenced render snapshots, production ToolPack lifecycle lease wiring, and exact pre-execution gate revalidation. Invalid and tombstoned profiles fail closed; corrupt authority no longer synthesizes a usable default. Legacy hash-free Allow entries with an explicit null hash remain readable, while new hash-free writes omit the field and other Allow hashes require SHA-256.
+
+Verification: 280 Workbench tests, 106 permission-store/control-plane permission tests, and 295 Permissions mode/Inspector/Test Tool/ToolPack service tests passed. Scoped Ruff lint, changed-range Ruff format, and full branch git diff checks passed. The independent review reported no unresolved Critical or Important findings and a ready verdict. The repository-wide suite was not run, per the targeted-test policy.
+
+ADR required: no new ADR. Existing ADR: backlog/decisions/107-portable-tool-use-packs.md.
+
+Primary files: MCP permission store and control-plane service; ToolPack service; MCP Permissions, Inspector, and Workbench UI modules; focused unit and integration tests.
+<!-- SECTION:NOTES:END -->

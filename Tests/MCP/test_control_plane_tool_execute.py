@@ -44,16 +44,20 @@ def test_by_key_test_gate_uses_exact_named_profile(tmp_path):
     service.set_tool_state(
         "builtin:tldw_chatbook", "calculator", "allow", profile_id="default"
     )
-    service.set_server_default(
-        "builtin:tldw_chatbook", "deny", profile_id="research"
-    )
+    service.set_server_default("builtin:tldw_chatbook", "deny", profile_id="research")
 
-    assert service.gate_tool_test_by_key(
-        "builtin:tldw_chatbook", "calculator", profile_id="default"
-    ).state == "allow"
-    assert service.gate_tool_test_by_key(
-        "builtin:tldw_chatbook", "calculator", profile_id="research"
-    ).state == "deny"
+    assert (
+        service.gate_tool_test_by_key(
+            "builtin:tldw_chatbook", "calculator", profile_id="default"
+        ).state
+        == "allow"
+    )
+    assert (
+        service.gate_tool_test_by_key(
+            "builtin:tldw_chatbook", "calculator", profile_id="research"
+        ).state
+        == "deny"
+    )
 
 
 class FakeToolClient:

@@ -90,9 +90,7 @@ def _imported_profile() -> dict:
             "revision": 1,
         },
     }
-    profile["tool_pack_lifecycle"]["policy_digest"] = profile_policy_digest(
-        profile
-    )
+    profile["tool_pack_lifecycle"]["policy_digest"] = profile_policy_digest(profile)
     return profile
 
 
@@ -222,9 +220,7 @@ def test_session_approval_revalidates_profile_digest_under_fence(tmp_path):
         profile_id="research",
         expected_profile_digest=digest,
     )
-    assert service.is_session_approved(
-        "local:docs", "search", profile_id="research"
-    )
+    assert service.is_session_approved("local:docs", "search", profile_id="research")
 
     store.set_global_default("deny", profile_id="research")
     with pytest.raises(ProfileMutationError, match="stale_profile"):
@@ -234,9 +230,7 @@ def test_session_approval_revalidates_profile_digest_under_fence(tmp_path):
             profile_id="research",
             expected_profile_digest=digest,
         )
-    assert not service.is_session_approved(
-        "local:docs", "write", profile_id="research"
-    )
+    assert not service.is_session_approved("local:docs", "write", profile_id="research")
 
 
 def test_profile_setters_forward_digest_cas_without_touching_default(tmp_path):
@@ -454,7 +448,7 @@ def test_effective_tool_states_downgrade_audit_survives_execution_log_failure(
     tool = _tool(name="search")
     permission_store = service.permission_store
     permission_store.set_tool_state(
-        "local:demo", "search", "allow", definition_hash="stale-hash"
+        "local:demo", "search", "allow", definition_hash="a" * 64
     )
 
     result = service.effective_tool_states([tool])
@@ -472,7 +466,7 @@ def test_set_tool_state_allow_computes_and_stores_definition_hash_and_clears_mar
     service, _store = _service(tmp_path)
     permission_store = service.permission_store
     permission_store.set_tool_state(
-        "local:demo", "search", "allow", definition_hash="stale-hash"
+        "local:demo", "search", "allow", definition_hash="a" * 64
     )
     permission_store.mark_config_changed("local:demo", "search")
     tool = _tool(name="search", description="Search docs")
@@ -637,7 +631,7 @@ def test_gate_tool_test_does_not_emit_audit_record_on_fresh_mismatch(tmp_path):
     service, store = _service(tmp_path)
     tool = _tool(name="search")
     service.permission_store.set_tool_state(
-        "local:demo", "search", "allow", definition_hash="stale-hash"
+        "local:demo", "search", "allow", definition_hash="a" * 64
     )
 
     result = service.gate_tool_test(tool)
@@ -724,7 +718,7 @@ def test_gate_tool_test_by_key_allow_downgrades_to_ask_without_live_tool(tmp_pat
 def test_gate_tool_test_by_key_does_not_emit_audit_record(tmp_path):
     service, store = _service(tmp_path)
     service.permission_store.set_tool_state(
-        "local:demo", "search", "allow", definition_hash="stale-hash"
+        "local:demo", "search", "allow", definition_hash="a" * 64
     )
 
     service.gate_tool_test_by_key("local:demo", "search")
@@ -953,7 +947,11 @@ def test_effective_tool_states_named_profile_rug_pull_marks_named_entry(tmp_path
     store = service.permission_store
     store.ensure_profile("ws-w-1")
     store.set_tool_state(
-        "local:demo", "search", "allow", profile_id="ws-w-1", definition_hash="stale"
+        "local:demo",
+        "search",
+        "allow",
+        profile_id="ws-w-1",
+        definition_hash="a" * 64,
     )
     changed_tool = _tool(name="search", description="Search docs AND delete them")
 

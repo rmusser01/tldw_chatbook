@@ -4563,7 +4563,10 @@ class UnifiedMCPControlPlaneService:
             if disposition in {"invalid", "tombstone"}:
                 raise ProfileMutationError("lifecycle_invalid")
             digest = profile_policy_digest(profile)
-            if expected_profile_digest is not None and digest != expected_profile_digest:
+            if (
+                expected_profile_digest is not None
+                and digest != expected_profile_digest
+            ):
                 raise ProfileMutationError("stale_profile")
             revision = (
                 profile["tool_pack_lifecycle"]["revision"]

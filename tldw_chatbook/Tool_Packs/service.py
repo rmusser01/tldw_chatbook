@@ -205,6 +205,11 @@ class ToolPackService:
         return self._binding_guard
 
     @property
+    def lifecycle(self) -> ToolProfileLifecycleCoordinator:
+        """Return the shared runtime-lease and mutation coordinator."""
+        return self._lifecycle
+
+    @property
     def receipt_root(self) -> Path:
         return self._receipt_store.root
 

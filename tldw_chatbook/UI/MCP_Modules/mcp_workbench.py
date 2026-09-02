@@ -67,6 +67,7 @@ from tldw_chatbook.MCP.permission_store import (
     STORE_STATES,
     EffectiveToolState,
     GatedToolRef,
+    PermissionStoreSnapshotError,
     profile_lifecycle_disposition,
     profile_policy_digest,
     resolve_builtin_state,
@@ -112,6 +113,9 @@ from tldw_chatbook.Utils.path_validation import is_safe_path, validate_path
 _UNSET: Any = object()
 _TOOL_TEST_ACTIVE_POLL_SECONDS = 0.3
 _TOOL_TEST_BLOCKED_UNKNOWN_TEXT = f"Blocked — {PERMISSION_STATE_UNRESOLVED_CLAUSE}."
+_TOOL_TEST_LIFECYCLE_UNAVAILABLE_TEXT = (
+    "Blocked — Tool policy profile lifecycle authority is unavailable."
+)
 _STALE_PROFILE_CATEGORIES = frozenset(
     {"stale_profile", "stale_revision", "lifecycle_invalid", "profile_tombstone"}
 )
@@ -1449,9 +1453,13 @@ class MCPWorkbench(Container):
             await self.query_one(MCPInspector).update_readiness(selected)
             tools = self._collect_hub_tools()
             self._last_hub_tools = tools
-            effective = self._resolve_effective_states(tools)
+            effective, policy_inventory = self._capture_permission_render_state(tools)
             await self._sync_tools_mode(tools, effective)
-            await self._sync_permissions_mode(effective, refresh_governance=True)
+            await self._sync_permissions_mode(
+                effective,
+                policy_inventory=policy_inventory,
+                refresh_governance=True,
+            )
             await self._sync_audit_mode()
 
     async def _sync_audit_mode(self) -> None:
@@ -1882,24 +1890,38 @@ class MCPWorkbench(Container):
         store = getattr(service, "permission_store", None)
         if store is None:
             payload: Mapping[str, Any] = {
-                "profiles": {"default": {"global_default": DEFAULT_GLOBAL, "servers": {}}}
+                "profiles": {
+                    "default": {"global_default": DEFAULT_GLOBAL, "servers": {}}
+                }
             }
         else:
             try:
-                payload = store.read_snapshot_strict().payload
-            except Exception:
-                # Invalid lifecycle entries still need a visible, unavailable
-                # selector row. This getter is non-mutating and is used only
-                # for that fail-closed presentation fallback.
-                getter = getattr(store, "_load_for_raw_getter", None)
-                payload = getter() if callable(getter) else {"profiles": {}}
+                reader = getattr(store, "read_profile_inventory_snapshot", None)
+                snapshot = (
+                    reader() if callable(reader) else store.read_snapshot_strict()
+                )
+                payload = snapshot.payload
+            except PermissionStoreSnapshotError as exc:
+                logger.warning(
+                    "MCP Tool policy profile inventory unavailable "
+                    f"(category={exc.category})."
+                )
+                payload = {"profiles": {}}
+            except Exception as exc:
+                logger.warning(
+                    "MCP Tool policy profile inventory unavailable "
+                    f"(error_type={type(exc).__name__})."
+                )
+                payload = {"profiles": {}}
 
         profiles = payload.get("profiles")
         if not isinstance(profiles, Mapping):
             profiles = {}
         options: list[ToolPolicyProfileOption] = []
         contexts: dict[str, PermissionProfileContext] = {}
-        for profile_id, raw_profile in sorted(profiles.items(), key=lambda item: str(item[0])):
+        for profile_id, raw_profile in sorted(
+            profiles.items(), key=lambda item: str(item[0])
+        ):
             if not isinstance(profile_id, str) or not isinstance(raw_profile, Mapping):
                 continue
             disposition = profile_lifecycle_disposition(raw_profile)
@@ -1934,13 +1956,72 @@ class MCPWorkbench(Container):
                 )
         return profiles, options, contexts.get(self._tool_policy_profile_id)
 
+    @staticmethod
+    def _fail_closed_tool_states(
+        tools: list[HubTool],
+    ) -> dict[tuple[str, str], EffectiveToolState]:
+        return {
+            (tool.server_key, tool.name): EffectiveToolState(
+                state="ask", origin="global_default"
+            )
+            for tool in tools
+        }
+
+    def _capture_permission_render_state(
+        self, tools: list[HubTool]
+    ) -> tuple[
+        dict[tuple[str, str], EffectiveToolState],
+        tuple[
+            Mapping[str, Any],
+            list[ToolPolicyProfileOption],
+            PermissionProfileContext | None,
+        ],
+    ]:
+        """Capture effective rows and profile context from one stable identity."""
+
+        def capture():
+            before = self._tool_policy_inventory()
+            if before[2] is None:
+                return self._fail_closed_tool_states(tools), before
+
+            effective = self._resolve_effective_states(tools)
+            after = self._tool_policy_inventory()
+            if before[2] == after[2]:
+                return effective, after
+            if after[2] is None:
+                return self._fail_closed_tool_states(tools), after
+
+            # The resolver may persist a first-seen definition-change marker.
+            # Resolve once more against that successor snapshot; any further
+            # drift is unavailable rather than a mixed actionable render.
+            effective = self._resolve_effective_states(tools)
+            final = self._tool_policy_inventory()
+            if after[2] != final[2]:
+                profiles, options, _context = final
+                return self._fail_closed_tool_states(tools), (
+                    profiles,
+                    options,
+                    None,
+                )
+            return effective, final
+
+        service = self._service()
+        store = getattr(service, "permission_store", None)
+        mutation_fence = getattr(store, "mutation_fence", None)
+        if callable(mutation_fence):
+            with mutation_fence():
+                return capture()
+        return capture()
+
     def _validate_profile_context(
         self, context: PermissionProfileContext | None
     ) -> PermissionProfileContext | None:
         """Reject a missing, unavailable, or stale captured context."""
         if context is None:
             self.app.notify(
-                _toast("Tool policy profile context is unavailable. Refresh and try again."),
+                _toast(
+                    "Tool policy profile context is unavailable. Refresh and try again."
+                ),
                 severity="warning",
             )
             return None
@@ -1968,7 +2049,10 @@ class MCPWorkbench(Container):
         return context
 
     def _successor_profile_context(
-        self, previous: PermissionProfileContext
+        self,
+        previous: PermissionProfileContext,
+        *,
+        expected: PermissionProfileContext | None = None,
     ) -> PermissionProfileContext | None:
         """Return the post-mutation context only if selection stayed put."""
         current = self._tool_policy_profile_context
@@ -1976,6 +2060,8 @@ class MCPWorkbench(Container):
             current.profile_id != previous.profile_id
             or current.selector_generation != previous.selector_generation
         ):
+            return None
+        if expected is not None and current != expected:
             return None
         return current
 
@@ -2010,7 +2096,9 @@ class MCPWorkbench(Container):
         _profiles, options, _context = self._tool_policy_inventory()
         availability = {item.profile_id: item.available for item in options}
         if not availability.get(profile_id, False):
-            self.app.notify(_toast("Tool policy profile is unavailable."), severity="warning")
+            self.app.notify(
+                _toast("Tool policy profile is unavailable."), severity="warning"
+            )
             async with self._sync_children_lock:
                 await self._sync_permissions_mode()
             return False
@@ -2303,6 +2391,12 @@ class MCPWorkbench(Container):
         self,
         effective: dict[tuple[str, str], EffectiveToolState] | None = None,
         *,
+        policy_inventory: tuple[
+            Mapping[str, Any],
+            list[ToolPolicyProfileOption],
+            PermissionProfileContext | None,
+        ]
+        | None = None,
         refresh_governance: bool = False,
         echo: str | None = None,
     ) -> None:
@@ -2377,9 +2471,35 @@ class MCPWorkbench(Container):
         service = self._service()
         tools = self._last_hub_tools
 
+        standalone_resync = effective is None
+        if effective is None:
+            effective, policy_inventory = self._capture_permission_render_state(tools)
+        elif policy_inventory is None:
+            policy_inventory = self._tool_policy_inventory()
+
+        profiles, profile_options, profile_context = policy_inventory
+        profile_fell_back = False
+        if self._tool_policy_profile_id not in {
+            option.profile_id for option in profile_options
+        }:
+            had_captured_context = self._tool_policy_profile_context is not None
+            selection_changed = self._tool_policy_profile_id != "default"
+            self._tool_policy_profile_id = "default"
+            if selection_changed or had_captured_context:
+                self._tool_policy_selector_generation += 1
+            self._tool_policy_profile_context = None
+            self._last_effective_states.clear()
+            self._last_cascade.clear()
+            self._last_builtin_effective.clear()
+            inspector = self.query_one(MCPInspector)
+            await inspector.show_tool(None)
+            effective, policy_inventory = self._capture_permission_render_state(tools)
+            profiles, profile_options, profile_context = policy_inventory
+            profile_fell_back = True
+
         kill_switch = False
         get_kill_switch = getattr(service, "get_kill_switch", None)
-        if callable(get_kill_switch):
+        if profile_options and callable(get_kill_switch):
             try:
                 kill_switch = bool(get_kill_switch())
             except Exception as exc:
@@ -2391,16 +2511,13 @@ class MCPWorkbench(Container):
                     "{}", _safe_diagnostic_message("kill switch read failed", exc)
                 )
 
-        standalone_resync = effective is None
-        if effective is None:
-            effective = self._resolve_effective_states(tools)
         # T7: cache this batch resolution for `_effective_for_display()` --
         # both Tools-mode's tool-detail permission block and Permissions-
         # mode's own matrix-row selection reuse it instead of a second,
         # redundant per-tool resolution.
         self._last_effective_states = effective
 
-        if standalone_resync:
+        if standalone_resync or profile_fell_back:
             # Defect 1 fix (MCP Hub Phase 4 live QA, 2026-07-16): a
             # STANDALONE caller (Space-cycle, kill-switch toggle, Re-allow)
             # just resolved this batch fresh for ITS OWN matrix resync,
@@ -2412,19 +2529,6 @@ class MCPWorkbench(Container):
             # widget's own narrow row re-render (`update_states()`).
             self.query_one(MCPToolsMode).update_states(effective)
 
-        profiles, profile_options, profile_context = self._tool_policy_inventory()
-        if self._tool_policy_profile_id not in {
-            option.profile_id for option in profile_options
-        }:
-            self._tool_policy_profile_id = "default"
-            self._tool_policy_selector_generation += 1
-            self._tool_policy_profile_context = None
-            self._last_effective_states.clear()
-            self._last_cascade.clear()
-            self._last_builtin_effective.clear()
-            inspector = self.query_one(MCPInspector)
-            await inspector.show_tool(None)
-            profiles, profile_options, profile_context = self._tool_policy_inventory()
         canvas = self.query_one(MCPPermissionsMode)
         canvas.update_tool_policy_profiles(
             profile_options, selected_id=self._tool_policy_profile_id
@@ -3715,9 +3819,7 @@ class MCPWorkbench(Container):
         if callable(gate_check):
             try:
                 try:
-                    return gate_check(
-                        tool, profile_id=self._tool_policy_profile_id
-                    )
+                    return gate_check(tool, profile_id=self._tool_policy_profile_id)
                 except TypeError as exc:
                     if (
                         self._tool_policy_profile_id != "default"
@@ -4229,6 +4331,35 @@ class MCPWorkbench(Container):
             return
         self.set_mode("tools")
 
+    def _tool_profile_lifecycle_authority(self) -> object | None:
+        """Resolve the shared lifecycle after deferred app composition."""
+        if self.tool_profile_lifecycle is not None:
+            return self.tool_profile_lifecycle
+        try:
+            service = getattr(self._app_instance, "tool_pack_service", None)
+            return getattr(service, "lifecycle", None)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _show_tool_test_lifecycle_unavailable(
+        inspector: MCPInspector,
+        server_key: str,
+        tool_name: str,
+        context: PermissionProfileContext,
+    ) -> None:
+        """Render a bounded refusal when imported-profile leasing is absent."""
+        inspector.show_tool_result(
+            server_key=server_key,
+            tool_name=tool_name,
+            ok=False,
+            text=_TOOL_TEST_LIFECYCLE_UNAVAILABLE_TEXT,
+            duration_ms=0,
+            blocked=True,
+            show_permission_jump=False,
+            profile_context=context,
+        )
+
     def on_mcp_inspector_tool_test_preview_requested(
         self, event: MCPInspector.ToolTestPreviewRequested
     ) -> None:
@@ -4422,32 +4553,6 @@ class MCPWorkbench(Container):
         except Exception as exc:
             logger.debug("MCP tool-test preview revoke failed: {}", type(exc).__name__)
 
-    def _is_test_session_approved(
-        self, server_key: str, tool_name: str, *, profile_id: str
-    ) -> bool:
-        """Read one exact-profile Test Tool session approval, fail closed."""
-        checker = getattr(self._service(), "is_session_approved", None)
-        if not callable(checker):
-            return False
-        try:
-            try:
-                return bool(
-                    checker(server_key, tool_name, profile_id=profile_id)
-                )
-            except TypeError as exc:
-                if (
-                    profile_id != "default"
-                    or "unexpected keyword argument" not in str(exc)
-                ):
-                    raise
-                return bool(checker(server_key, tool_name))
-        except Exception as exc:
-            logger.warning(
-                "MCP Test Tool session-approval read failed "
-                f"for {server_key}::{tool_name}: {type(exc).__name__}"
-            )
-            return False
-
     def on_mcp_inspector_tool_test_requested(
         self, event: MCPInspector.ToolTestRequested
     ) -> None:
@@ -4471,16 +4576,31 @@ class MCPWorkbench(Container):
             )
             return
         generation = self._tool_test_generation
-        lifecycle = self.tool_profile_lifecycle
+        lifecycle = self._tool_profile_lifecycle_authority()
         lease_factory = getattr(lifecycle, "lease", None)
-        lease_scope = (
-            lease_factory(context.profile_id)
-            if callable(lease_factory)
-            else None
-        )
+        if context.revision is not None and not callable(lease_factory):
+            self._show_tool_test_lifecycle_unavailable(
+                inspector, event.server_key, event.tool_name, context
+            )
+            return
+        try:
+            lease_scope = (
+                lease_factory(context.profile_id) if callable(lease_factory) else None
+            )
+        except Exception:
+            self._show_tool_test_lifecycle_unavailable(
+                inspector, event.server_key, event.tool_name, context
+            )
+            return
         lease_handoff = None
         if lease_scope is not None:
-            lease_scope.__enter__()
+            try:
+                lease_scope.__enter__()
+            except Exception:
+                self._show_tool_test_lifecycle_unavailable(
+                    inspector, event.server_key, event.tool_name, context
+                )
+                return
             lease_handoff = _ToolProfileLeaseHandoff(lease_scope)
         handed_off = False
         try:

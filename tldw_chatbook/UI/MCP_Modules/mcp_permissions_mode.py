@@ -531,7 +531,9 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         self._profile_select_sync = False
 
     def compose(self) -> ComposeResult:
-        yield Static("Tool policy profile", id="mcp-perm-tool-profile-label", markup=False)
+        yield Static(
+            "Tool policy profile", id="mcp-perm-tool-profile-label", markup=False
+        )
         yield Select(
             [("default · local", "default")],
             value="default",
@@ -692,11 +694,15 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
             )
             for item in profiles
         ]
+        if not options:
+            options = [(Text("Tool policy profiles unavailable"), "__unavailable__")]
+            selected_id = "__unavailable__"
         self._profile_select_sync = True
         try:
-            selector.set_options(options)
             with selector.prevent(Select.Changed):
+                selector.set_options(options)
                 selector.value = selected_id
+            selector.disabled = not profiles
         finally:
             self._profile_select_sync = False
 

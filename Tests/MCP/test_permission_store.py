@@ -67,6 +67,93 @@ def test_strict_snapshot_rejects_without_touching_bytes(tmp_path, raw):
     assert not path.with_suffix(".json.bak").exists()
 
 
+@pytest.mark.parametrize(
+    "raw, category",
+    [
+        (b"{", "invalid_json"),
+        (
+            b'{"schema_version":1,"schema_version":1,"kill_switch":false,'
+            b'"profiles":{"default":{"global_default":"ask","servers":{}}}}',
+            "duplicate_key",
+        ),
+        (
+            b'{"schema_version":99,"kill_switch":false,"profiles":{}}',
+            "invalid_shape",
+        ),
+    ],
+)
+def test_profile_inventory_snapshot_rejects_global_corruption_without_recovery(
+    tmp_path, raw, category
+):
+    """The UI inventory seam must never synthesize actionable defaults."""
+    path = tmp_path / "mcp_permissions.json"
+    path.write_bytes(raw)
+
+    with pytest.raises(PermissionStoreSnapshotError, match=category):
+        MCPPermissionStore(path).read_profile_inventory_snapshot()
+
+    assert path.read_bytes() == raw
+    assert not path.with_suffix(".json.bak").exists()
+
+
+def test_profile_inventory_snapshot_exposes_only_lifecycle_invalid_profiles(tmp_path):
+    """A policy-valid row with bad lifecycle metadata stays inspectable."""
+    path = tmp_path / "mcp_permissions.json"
+    payload = _fresh_payload_shape()
+    payload["profiles"]["broken"] = {
+        "servers": {},
+        "profile_kind": "tool_pack_imported",
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    snapshot = MCPPermissionStore(path).read_profile_inventory_snapshot()
+
+    assert snapshot.payload["profiles"]["broken"]["profile_kind"] == (
+        "tool_pack_imported"
+    )
+    assert path.read_text(encoding="utf-8") == json.dumps(payload)
+
+
+def test_profile_inventory_snapshot_accepts_legacy_hash_free_allow_null(tmp_path):
+    """A hash-free Allow written by older releases remains valid authority."""
+    path = tmp_path / "mcp_permissions.json"
+    payload = _fresh_payload_shape()
+    payload["profiles"]["default"]["servers"] = {
+        "agent:builtin": {
+            "tools": {
+                "calculator": {
+                    "state": "allow",
+                    "definition_hash": None,
+                }
+            }
+        }
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    strict = MCPPermissionStore(path).read_snapshot_strict()
+    inventory = MCPPermissionStore(path).read_profile_inventory_snapshot()
+
+    assert (
+        strict.payload["profiles"]["default"]["servers"]["agent:builtin"]["tools"][
+            "calculator"
+        ]["definition_hash"]
+        is None
+    )
+    assert inventory.payload == strict.payload
+
+
+def test_profile_inventory_snapshot_fails_closed_on_io_error(tmp_path, monkeypatch):
+    store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+
+    def fail_read(_path):
+        raise PermissionError("unavailable")
+
+    monkeypatch.setattr(type(store.path), "read_bytes", fail_read)
+
+    with pytest.raises(PermissionStoreSnapshotError, match="io_error"):
+        store.read_profile_inventory_snapshot()
+
+
 @pytest.mark.parametrize("raw", [b"{", b'{"schema_version":99}'])
 def test_raw_getters_do_not_recover_invalid_store(tmp_path, raw):
     """Inspection uses read-only recovery rather than legacy file backup."""
@@ -250,7 +337,7 @@ def test_set_tool_state_inherit_prunes_tool_but_keeps_server_default(tmp_path):
     server_key = "local:demo-server"
 
     store.set_server_default(server_key, "ask")
-    store.set_tool_state(server_key, "search", "allow", definition_hash="hash-1")
+    store.set_tool_state(server_key, "search", "allow", definition_hash="a" * 64)
 
     store.set_tool_state(server_key, "search", None)
 
@@ -266,6 +353,11 @@ def test_set_tool_state_allow_without_hash_raises_value_error(tmp_path):
     with pytest.raises(ValueError):
         store.set_tool_state("local:demo-server", "search", "allow")
 
+    with pytest.raises(ValueError):
+        store.set_tool_state(
+            "local:demo-server", "search", "allow", definition_hash="not-a-sha256"
+        )
+
 
 def test_set_tool_state_allow_stores_hash_and_clears_config_changed(tmp_path):
     store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
@@ -276,18 +368,18 @@ def test_set_tool_state_allow_stores_hash_and_clears_config_changed(tmp_path):
     tool_entry = store.get_tool_entry(server_key, "search")
     assert tool_entry.get("config_changed") is True
 
-    store.set_tool_state(server_key, "search", "allow", definition_hash="abc123")
+    store.set_tool_state(server_key, "search", "allow", definition_hash="a" * 64)
 
     tool_entry = store.get_tool_entry(server_key, "search")
     assert tool_entry["state"] == "allow"
-    assert tool_entry["definition_hash"] == "abc123"
+    assert tool_entry["definition_hash"] == "a" * 64
     assert "config_changed" not in tool_entry
 
 
 def test_mark_config_changed_returns_true_then_false(tmp_path):
     store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
     server_key = "local:demo-server"
-    store.set_tool_state(server_key, "search", "allow", definition_hash="abc123")
+    store.set_tool_state(server_key, "search", "allow", definition_hash="a" * 64)
 
     first = store.mark_config_changed(server_key, "search")
     second = store.mark_config_changed(server_key, "search")
@@ -304,7 +396,7 @@ def test_mark_config_changed_second_call_does_not_rewrite_file(tmp_path):
     path = tmp_path / "mcp_permissions.json"
     store = MCPPermissionStore(path)
     server_key = "local:demo-server"
-    store.set_tool_state(server_key, "search", "allow", definition_hash="abc123")
+    store.set_tool_state(server_key, "search", "allow", definition_hash="a" * 64)
 
     assert store.mark_config_changed(server_key, "search") is True
     before_bytes = path.read_bytes()
@@ -497,7 +589,8 @@ def test_builtin_allow_survives_schema_change(tmp_path):
     store.set_tool_state(server_key, tool_name, "allow")
     entry = store.get_tool_entry(server_key, tool_name)
     assert entry["state"] == "allow"
-    assert not entry.get("definition_hash")
+    assert "definition_hash" not in entry
+    store.read_snapshot_strict()
 
     def _tool(input_schema):
         return HubTool(
