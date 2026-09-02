@@ -19,6 +19,38 @@ from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
 )
 
 
+def test_fast_decision_control_copy_has_one_named_source():
+    """Both construction paths must share labels, classes, and tooltips."""
+    import ast
+    import inspect
+    import textwrap
+
+    from tldw_chatbook.Widgets.Chat_Widgets import chat_approval_card as mod
+
+    expected = {
+        "_APPROVE_ONCE_LABEL": "Approve once",
+        "_DENY_LABEL": "Deny",
+        "_RAW_APPROVE_ONCE_LABEL": "Run once",
+        "_FAST_APPROVE_CLASS": "approval-row-fast-approve",
+        "_FAST_DENY_CLASS": "approval-row-fast-deny",
+        "_FAST_APPROVE_TOOLTIP": (
+            "Approve once and resume immediately (skips Select + Submit)."
+        ),
+        "_FAST_DENY_TOOLTIP": "Deny and resume immediately (skips Select + Submit).",
+    }
+    method_literals = set()
+    for method in (mod.ChatApprovalCard.set_batch, mod.ChatApprovalCard._update_mounted_single_row):
+        tree = ast.parse(textwrap.dedent(inspect.getsource(method)))
+        method_literals.update(
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        )
+    for name, value in expected.items():
+        assert getattr(mod, name) == value
+        assert value not in method_literals
+
+
 def test_row_without_options_offers_all_four():
     assert _options_for_row({}) == _DECISION_OPTIONS
 
