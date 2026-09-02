@@ -36,6 +36,26 @@ import tldw_chatbook.Agents.local_tool_provider as local_tool_provider_module
 import tldw_chatbook.MCP.local_server_tools as local_server_tools_module
 
 
+def test_by_key_test_gate_uses_exact_named_profile(tmp_path):
+    """The by-key gate used by Test Tool never falls back to default."""
+    service, _fake, _client, _store = _service(tmp_path)
+    permission_store = service.permission_store
+    permission_store.ensure_profile("research")
+    service.set_tool_state(
+        "builtin:tldw_chatbook", "calculator", "allow", profile_id="default"
+    )
+    service.set_server_default(
+        "builtin:tldw_chatbook", "deny", profile_id="research"
+    )
+
+    assert service.gate_tool_test_by_key(
+        "builtin:tldw_chatbook", "calculator", profile_id="default"
+    ).state == "allow"
+    assert service.gate_tool_test_by_key(
+        "builtin:tldw_chatbook", "calculator", profile_id="research"
+    ).state == "deny"
+
+
 class FakeToolClient:
     """Stands in for MCPClient: session-gated call_tool + connect bookkeeping."""
 

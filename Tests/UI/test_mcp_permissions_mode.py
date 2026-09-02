@@ -4,18 +4,21 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from textual.app import App, ComposeResult
+from rich.text import Text
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Button, DataTable, Input, Static
+from textual.widgets import Button, DataTable, Input, Select, Static
 
 import tldw_chatbook
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     MCPPermissionsMode,
+    PermissionProfileContext,
     PermRow,
+    ToolPolicyProfileOption,
     format_tool_state_label,
     state_text,
     tool_state_kind,
@@ -24,6 +27,65 @@ from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
 _CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
 _AGENTIC_TERMINAL_TCSS = _CSS_ROOT / "components" / "_agentic_terminal.tcss"
 _BUNDLED_STYLESHEET = _CSS_ROOT / "tldw_cli_modular.tcss"
+
+
+@pytest.mark.asyncio
+async def test_matrix_events_capture_exact_profile_context():
+    app = PermissionsModeApp()
+    context = PermissionProfileContext("research", 4, "a" * 64, 2)
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix(
+            [_global_row()],
+            kill_switch=False,
+            preview="",
+            profile_context=context,
+        )
+        await pilot.pause()
+        messages: list[MCPPermissionsMode.StateCycleRequested] = []
+        original_post_message = canvas.post_message
+        canvas.post_message = messages.append
+        try:
+            canvas.action_cycle_state()
+        finally:
+            canvas.post_message = original_post_message
+        assert messages[0].profile_context == context
+
+
+@pytest.mark.asyncio
+async def test_tool_policy_selector_marks_unavailable_profile_and_hides_no_rows():
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        canvas.update_tool_policy_profiles(
+            [
+                ToolPolicyProfileOption("default", "local"),
+                ToolPolicyProfileOption("broken", "local", False),
+            ],
+            selected_id="default",
+        )
+        await pilot.pause()
+        selector = app.query_one("#mcp-perm-tool-profile", Select)
+        labels = [str(label) for label, _value in selector._options]
+        assert any("broken" in label and "unavailable" in label for label in labels)
+
+
+@pytest.mark.asyncio
+async def test_tool_policy_selector_renders_untrusted_profile_ids_as_plain_text():
+    app = PermissionsModeApp()
+    profile_id = "[bold]not markup[/bold]"
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        canvas.update_tool_policy_profiles(
+            [ToolPolicyProfileOption(profile_id, "local")],
+            selected_id=profile_id,
+        )
+        await pilot.pause()
+        selector = app.query_one("#mcp-perm-tool-profile", Select)
+        label, value = selector._options[0]
+        assert isinstance(label, Text)
+        assert label.plain == f"{profile_id} · local"
+        assert value == profile_id
 
 
 def _row(
@@ -1189,7 +1251,7 @@ async def _type_filter(pilot, text: str) -> None:
 @pytest.mark.asyncio
 async def test_filter_input_is_present_above_the_matrix_with_placeholder():
     app = PermissionsModeApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         filter_input = app.query_one("#mcp-perm-filter-text", Input)
         assert filter_input.placeholder == "Filter tool or server…"
 

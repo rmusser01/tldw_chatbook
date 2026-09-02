@@ -38,7 +38,9 @@ from tldw_chatbook.MCP.permission_store import (
     EffectiveToolState,
     MCPPermissionStore,
     definition_hash,
+    profile_policy_digest,
 )
+from tldw_chatbook.Tool_Packs.binding import ProfileMutationError
 from tldw_chatbook.MCP.unified_control_plane_service import (
     UnifiedMCPControlPlaneService,
 )
@@ -68,6 +70,30 @@ def _tool(
         stale=False,
         executable=True,
     )
+
+
+def _imported_profile() -> dict:
+    profile = {
+        "global_default": "ask",
+        "servers": {},
+        "profile_kind": "tool_pack_imported",
+        "tool_pack_lifecycle": {
+            "schema": "tldw.tool-pack-lifecycle/v1",
+            "origin": "imported",
+            "pack_digest": "b" * 64,
+            "imported_at": "2026-08-31T00:00:00Z",
+            "first_bind_confirmation_required": True,
+            "receipt_id": "tp-" + "c" * 32,
+            "receipt_digest": "d" * 64,
+            "counts": {"matched": 0, "omitted": 0, "pending_deny": 0},
+            "policy_digest": "0" * 64,
+            "revision": 1,
+        },
+    }
+    profile["tool_pack_lifecycle"]["policy_digest"] = profile_policy_digest(
+        profile
+    )
+    return profile
 
 
 def _service(tmp_path: Path) -> tuple[UnifiedMCPControlPlaneService, LocalMCPStore]:
@@ -178,6 +204,99 @@ def test_no_argument_session_clear_remains_clear_all(tmp_path):
     service.clear_session_approvals()
 
     assert not service.is_session_approved("local:docs", "search")
+    assert not service.is_session_approved(
+        "local:docs", "search", profile_id="research"
+    )
+
+
+def test_session_approval_revalidates_profile_digest_under_fence(tmp_path):
+    service, _store = _service(tmp_path)
+    store = service.permission_store
+    store.ensure_profile("research")
+    profile = store.read_snapshot_strict().payload["profiles"]["research"]
+    digest = profile_policy_digest(profile)
+
+    service.approve_for_session(
+        "local:docs",
+        "search",
+        profile_id="research",
+        expected_profile_digest=digest,
+    )
+    assert service.is_session_approved(
+        "local:docs", "search", profile_id="research"
+    )
+
+    store.set_global_default("deny", profile_id="research")
+    with pytest.raises(ProfileMutationError, match="stale_profile"):
+        service.approve_for_session(
+            "local:docs",
+            "write",
+            profile_id="research",
+            expected_profile_digest=digest,
+        )
+    assert not service.is_session_approved(
+        "local:docs", "write", profile_id="research"
+    )
+
+
+def test_profile_setters_forward_digest_cas_without_touching_default(tmp_path):
+    service, _store = _service(tmp_path)
+    store = service.permission_store
+    store.ensure_profile("research")
+    digest = profile_policy_digest(
+        store.read_snapshot_strict().payload["profiles"]["research"]
+    )
+
+    service.set_server_default(
+        "local:docs",
+        "deny",
+        profile_id="research",
+        expected_profile_digest=digest,
+    )
+
+    payload = store.load()
+    assert payload["profiles"]["research"]["servers"]["local:docs"]["default"] == "deny"
+    assert "local:docs" not in payload["profiles"]["default"]["servers"]
+
+
+def test_session_and_persistent_boundaries_reject_stale_imported_revision(tmp_path):
+    service, _store = _service(tmp_path)
+    store = service.permission_store
+    snapshot = store.read_snapshot_strict()
+    store.install_profile_if_absent(
+        "research",
+        _imported_profile(),
+        expected_generation=snapshot.generation,
+        max_profiles=128,
+        max_store_bytes=8 * 1024 * 1024,
+    )
+    initial = store.read_snapshot_strict().payload["profiles"]["research"]
+    store.set_global_default(
+        "deny",
+        profile_id="research",
+        expected_profile_digest=profile_policy_digest(initial),
+        expected_revision=1,
+    )
+    current = store.read_snapshot_strict().payload["profiles"]["research"]
+    current_digest = profile_policy_digest(current)
+    assert current["tool_pack_lifecycle"]["revision"] == 2
+
+    with pytest.raises(ProfileMutationError, match="stale_revision"):
+        service.approve_for_session(
+            "local:docs",
+            "search",
+            profile_id="research",
+            expected_profile_digest=current_digest,
+            expected_revision=1,
+        )
+    with pytest.raises(ProfileMutationError, match="stale_revision"):
+        service.set_server_default(
+            "local:docs",
+            "allow",
+            profile_id="research",
+            expected_profile_digest=current_digest,
+            expected_revision=1,
+        )
     assert not service.is_session_approved(
         "local:docs", "search", profile_id="research"
     )

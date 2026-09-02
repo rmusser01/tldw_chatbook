@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
 from collections.abc import Mapping, Sequence
@@ -23,8 +24,10 @@ from textual.widgets import ContentSwitcher
 from textual.worker import Worker
 
 from tldw_chatbook.Agents.builtin_tool_gate import (
+    BuiltinPermRow,
     LOCAL_TOOLS_DEFAULT_ENABLED,
     builtin_permission_rows,
+    tool_ref,
     tool_gate_breadcrumb,
 )
 
@@ -63,6 +66,10 @@ from tldw_chatbook.MCP.permission_store import (
     DEFAULT_GLOBAL,
     STORE_STATES,
     EffectiveToolState,
+    GatedToolRef,
+    profile_lifecycle_disposition,
+    profile_policy_digest,
+    resolve_builtin_state,
 )
 from tldw_chatbook.MCP.readiness import (
     HubAction,
@@ -88,7 +95,9 @@ from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     MCPPermissionsMode,
+    PermissionProfileContext,
     PermRow,
+    ToolPolicyProfileOption,
     format_tool_state_label,
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
@@ -103,6 +112,13 @@ from tldw_chatbook.Utils.path_validation import is_safe_path, validate_path
 _UNSET: Any = object()
 _TOOL_TEST_ACTIVE_POLL_SECONDS = 0.3
 _TOOL_TEST_BLOCKED_UNKNOWN_TEXT = f"Blocked — {PERMISSION_STATE_UNRESOLVED_CLAUSE}."
+_STALE_PROFILE_CATEGORIES = frozenset(
+    {"stale_profile", "stale_revision", "lifecycle_invalid", "profile_tombstone"}
+)
+
+
+def _is_stale_profile_error(exc: Exception) -> bool:
+    return getattr(exc, "category", str(exc)) in _STALE_PROFILE_CATEGORIES
 
 
 class _ToolProfileLeaseHandoff:
@@ -711,6 +727,8 @@ class MCPWorkbench(Container):
         # when Textual cancels the worker before its coroutine starts.
         self.tool_profile_lifecycle: object | None = None
         self._tool_policy_profile_id = "default"
+        self._tool_policy_selector_generation = 0
+        self._tool_policy_profile_context: PermissionProfileContext | None = None
         # T7: the batch `EffectiveToolState` resolution `_sync_permissions_
         # mode()` most recently computed (via `service.effective_tool_
         # states()`), keyed the same as that method's own return value --
@@ -1852,6 +1870,170 @@ class MCPWorkbench(Container):
 
     # -- T6: Permissions mode (matrix, kill switch, policy preview) -----------
 
+    def _tool_policy_inventory(
+        self,
+    ) -> tuple[
+        Mapping[str, Any],
+        list[ToolPolicyProfileOption],
+        PermissionProfileContext | None,
+    ]:
+        """Read local profiles and capture the selected profile authority."""
+        service = self._service()
+        store = getattr(service, "permission_store", None)
+        if store is None:
+            payload: Mapping[str, Any] = {
+                "profiles": {"default": {"global_default": DEFAULT_GLOBAL, "servers": {}}}
+            }
+        else:
+            try:
+                payload = store.read_snapshot_strict().payload
+            except Exception:
+                # Invalid lifecycle entries still need a visible, unavailable
+                # selector row. This getter is non-mutating and is used only
+                # for that fail-closed presentation fallback.
+                getter = getattr(store, "_load_for_raw_getter", None)
+                payload = getter() if callable(getter) else {"profiles": {}}
+
+        profiles = payload.get("profiles")
+        if not isinstance(profiles, Mapping):
+            profiles = {}
+        options: list[ToolPolicyProfileOption] = []
+        contexts: dict[str, PermissionProfileContext] = {}
+        for profile_id, raw_profile in sorted(profiles.items(), key=lambda item: str(item[0])):
+            if not isinstance(profile_id, str) or not isinstance(raw_profile, Mapping):
+                continue
+            disposition = profile_lifecycle_disposition(raw_profile)
+            if disposition == "tombstone":
+                continue
+            origin = (
+                "imported"
+                if disposition == "imported"
+                else "workspace-managed"
+                if profile_id.startswith("ws-")
+                else "local"
+            )
+            available = disposition != "invalid"
+            digest = ""
+            revision: int | None = None
+            if available:
+                try:
+                    digest = profile_policy_digest(raw_profile)
+                    if disposition == "imported":
+                        lifecycle = raw_profile["tool_pack_lifecycle"]
+                        revision = lifecycle["revision"]
+                        available = lifecycle.get("policy_digest") == digest
+                except (KeyError, TypeError, ValueError):
+                    available = False
+            options.append(ToolPolicyProfileOption(profile_id, origin, available))
+            if available:
+                contexts[profile_id] = PermissionProfileContext(
+                    profile_id=profile_id,
+                    selector_generation=self._tool_policy_selector_generation,
+                    policy_digest=digest,
+                    revision=revision,
+                )
+        return profiles, options, contexts.get(self._tool_policy_profile_id)
+
+    def _validate_profile_context(
+        self, context: PermissionProfileContext | None
+    ) -> PermissionProfileContext | None:
+        """Reject a missing, unavailable, or stale captured context."""
+        if context is None:
+            self.app.notify(
+                _toast("Tool policy profile context is unavailable. Refresh and try again."),
+                severity="warning",
+            )
+            return None
+        if (
+            context.profile_id != self._tool_policy_profile_id
+            or context.selector_generation != self._tool_policy_selector_generation
+        ):
+            self.app.notify(
+                _toast("Tool policy profile changed. Refresh and try again."),
+                severity="warning",
+            )
+            return None
+        _profiles, _options, current = self._tool_policy_inventory()
+        if current is None:
+            self.app.notify(
+                _toast("Tool policy profile is unavailable."), severity="warning"
+            )
+            return None
+        if current != context:
+            self.app.notify(
+                _toast("Tool policy profile changed. Refresh and try again."),
+                severity="warning",
+            )
+            return None
+        return context
+
+    def _successor_profile_context(
+        self, previous: PermissionProfileContext
+    ) -> PermissionProfileContext | None:
+        """Return the post-mutation context only if selection stayed put."""
+        current = self._tool_policy_profile_context
+        if current is None or (
+            current.profile_id != previous.profile_id
+            or current.selector_generation != previous.selector_generation
+        ):
+            return None
+        return current
+
+    @staticmethod
+    def _call_profile_scoped(
+        method: Any,
+        *args: Any,
+        context: PermissionProfileContext,
+        **kwargs: Any,
+    ) -> Any:
+        """Call a captured-profile seam, tolerating legacy default-only fakes."""
+        scoped = {
+            **kwargs,
+            "profile_id": context.profile_id,
+            "expected_profile_digest": context.policy_digest,
+            "expected_revision": context.revision,
+        }
+        try:
+            parameters = inspect.signature(method).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        accepts_scoped = any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        ) or all(name in parameters for name in scoped.keys() - kwargs.keys())
+        if context.profile_id == "default" and not accepts_scoped:
+            return method(*args, **kwargs)
+        return method(*args, **scoped)
+
+    async def select_tool_policy_profile(self, profile_id: str) -> bool:
+        """Select one available profile and invalidate all captured child state."""
+        _profiles, options, _context = self._tool_policy_inventory()
+        availability = {item.profile_id: item.available for item in options}
+        if not availability.get(profile_id, False):
+            self.app.notify(_toast("Tool policy profile is unavailable."), severity="warning")
+            async with self._sync_children_lock:
+                await self._sync_permissions_mode()
+            return False
+        if profile_id == self._tool_policy_profile_id:
+            return True
+        self._tool_policy_profile_id = profile_id
+        self._tool_policy_selector_generation += 1
+        self._tool_policy_profile_context = None
+        self._last_effective_states.clear()
+        self._last_cascade.clear()
+        self._last_builtin_effective.clear()
+        inspector = self.query_one(MCPInspector)
+        await inspector.show_tool(None)
+        async with self._sync_children_lock:
+            await self._sync_permissions_mode()
+        return True
+
+    async def on_mcp_permissions_mode_tool_policy_profile_selected(
+        self, event: MCPPermissionsMode.ToolPolicyProfileSelected
+    ) -> None:
+        event.stop()
+        await self.select_tool_policy_profile(event.profile_id)
+
     def _resolve_effective_states(
         self, tools: list[HubTool]
     ) -> dict[tuple[str, str], EffectiveToolState]:
@@ -1882,7 +2064,17 @@ class MCPWorkbench(Container):
         states: dict[tuple[str, str], EffectiveToolState] = {}
         if callable(loader):
             try:
-                states = dict(loader(tools))
+                try:
+                    states = dict(
+                        loader(tools, profile_id=self._tool_policy_profile_id)
+                    )
+                except TypeError as exc:
+                    if (
+                        self._tool_policy_profile_id != "default"
+                        or "unexpected keyword argument" not in str(exc)
+                    ):
+                        raise
+                    states = dict(loader(tools))
             except Exception as exc:
                 logger.warning(
                     "{}",
@@ -1939,7 +2131,65 @@ class MCPWorkbench(Container):
         raising into a render pass.
         """
         try:
-            return builtin_permission_rows(payload)
+            if self._tool_policy_profile_id == "default":
+                return builtin_permission_rows(payload)
+            from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+
+            provider = BuiltinToolProvider()
+            rows: list[BuiltinPermRow] = []
+            live: set[str] = set()
+            for entry in provider.list_catalog():
+                tool = provider.tool_for(entry.name)
+                if tool is None:
+                    continue
+                live.add(entry.name)
+                rows.append(
+                    BuiltinPermRow(
+                        name=entry.name,
+                        description=entry.one_line_description,
+                        effective=resolve_builtin_state(
+                            payload,
+                            tool_ref(tool),
+                            profile_id=self._tool_policy_profile_id,
+                        ),
+                    )
+                )
+            profiles = payload.get("profiles")
+            stored: set[str] = set()
+            if isinstance(profiles, Mapping):
+                for profile_id in {"default", self._tool_policy_profile_id}:
+                    profile = profiles.get(profile_id)
+                    if not isinstance(profile, Mapping):
+                        continue
+                    servers = profile.get("servers")
+                    server = (
+                        servers.get(BUILTIN_TOOL_SERVER_KEY)
+                        if isinstance(servers, Mapping)
+                        else None
+                    )
+                    tools = server.get("tools") if isinstance(server, Mapping) else None
+                    if isinstance(tools, Mapping):
+                        stored.update(str(name) for name in tools)
+            for name in stored - live:
+                rows.append(
+                    BuiltinPermRow(
+                        name=name,
+                        description="",
+                        effective=resolve_builtin_state(
+                            payload,
+                            GatedToolRef(
+                                server_key=BUILTIN_TOOL_SERVER_KEY,
+                                name=name,
+                                description="",
+                                input_schema=None,
+                                tags=(),
+                            ),
+                            profile_id=self._tool_policy_profile_id,
+                        ),
+                        orphaned=True,
+                    )
+                )
+            return sorted(rows, key=lambda row: row.name)
         except Exception as exc:
             logger.warning(
                 "{}",
@@ -2162,19 +2412,26 @@ class MCPWorkbench(Container):
             # widget's own narrow row re-render (`update_states()`).
             self.query_one(MCPToolsMode).update_states(effective)
 
-        payload: dict[str, Any] = {}
-        store = getattr(service, "permission_store", None)
-        if store is not None:
-            try:
-                payload = store.load()
-            except Exception as exc:
-                logger.warning(
-                    "{}",
-                    _safe_diagnostic_message("MCP permission store read failed", exc),
-                )
-                payload = {}
-
-        profile = (payload.get("profiles") or {}).get("default") or {}
+        profiles, profile_options, profile_context = self._tool_policy_inventory()
+        if self._tool_policy_profile_id not in {
+            option.profile_id for option in profile_options
+        }:
+            self._tool_policy_profile_id = "default"
+            self._tool_policy_selector_generation += 1
+            self._tool_policy_profile_context = None
+            self._last_effective_states.clear()
+            self._last_cascade.clear()
+            self._last_builtin_effective.clear()
+            inspector = self.query_one(MCPInspector)
+            await inspector.show_tool(None)
+            profiles, profile_options, profile_context = self._tool_policy_inventory()
+        canvas = self.query_one(MCPPermissionsMode)
+        canvas.update_tool_policy_profiles(
+            profile_options, selected_id=self._tool_policy_profile_id
+        )
+        self._tool_policy_profile_context = profile_context
+        profile = profiles.get(self._tool_policy_profile_id) or {}
+        payload: dict[str, Any] = {"profiles": dict(profiles)}
         global_state = profile.get("global_default")
         if global_state not in STORE_STATES:
             global_state = DEFAULT_GLOBAL
@@ -2206,12 +2463,13 @@ class MCPWorkbench(Container):
         # the same settings-time-enumeration cost `_builtin_permission_
         # matrix_rows()` above already pays every pass) so it can never
         # drift from the gates' actual current state.
-        await self.query_one(MCPPermissionsMode).update_matrix(
+        await canvas.update_matrix(
             rows,
             kill_switch=kill_switch,
             preview=preview,
             echo=echo,
             gate_breadcrumb=tool_gate_breadcrumb(),
+            profile_context=profile_context,
         )
         await self.query_one(MCPPermissionsMode).update_server_profiles(
             await self._server_governance_profiles(service, refresh=refresh_governance)
@@ -2578,6 +2836,9 @@ class MCPWorkbench(Container):
         require a tool to fingerprint for the rug-pull hash.
         """
         event.stop()
+        context = self._validate_profile_context(event.profile_context)
+        if context is None:
+            return
         service = self._service()
         if service is None:
             return
@@ -2595,9 +2856,16 @@ class MCPWorkbench(Container):
         try:
             if event.row_kind == "global":
                 if event.new_state is not None:
-                    service.set_global_default(event.new_state)
+                    self._call_profile_scoped(
+                        service.set_global_default, event.new_state, context=context
+                    )
             elif event.row_kind == "server":
-                service.set_server_default(event.server_key, event.new_state)
+                self._call_profile_scoped(
+                    service.set_server_default,
+                    event.server_key,
+                    event.new_state,
+                    context=context,
+                )
             elif event.row_kind == "tool":
                 if _is_raw_shell_tool(event.server_key, event.tool_name):
                     cycled_tool = self._tool_for(
@@ -2621,10 +2889,12 @@ class MCPWorkbench(Container):
                     # Inherit), neither of which is valid raw-shell policy.
                     next_state = "ask" if current == "deny" else "deny"
                     raw_cycled_state = next_state
-                    service.set_tool_state(
+                    self._call_profile_scoped(
+                        service.set_tool_state,
                         event.server_key,
                         event.tool_name or "",
                         next_state,
+                        context=context,
                         tool=cycled_tool,
                     )
                 elif event.server_key == BUILTIN_TOOL_SERVER_KEY:
@@ -2635,8 +2905,12 @@ class MCPWorkbench(Container):
                     # `agent:builtin` is in `HASH_FREE_SERVER_KEYS`
                     # (Task 1), so `set_tool_state()` doesn't need a
                     # `HubTool` to fingerprint an "allow".
-                    service.set_tool_state(
-                        event.server_key, event.tool_name or "", event.new_state
+                    self._call_profile_scoped(
+                        service.set_tool_state,
+                        event.server_key,
+                        event.tool_name or "",
+                        event.new_state,
+                        context=context,
                     )
                 else:
                     cycled_tool = self._tool_for(
@@ -2650,10 +2924,12 @@ class MCPWorkbench(Container):
                             severity="warning",
                         )
                         return
-                    service.set_tool_state(
+                    self._call_profile_scoped(
+                        service.set_tool_state,
                         event.server_key,
                         event.tool_name or "",
                         event.new_state,
+                        context=context,
                         tool=cycled_tool,
                     )
         except Exception as exc:
@@ -2661,9 +2937,13 @@ class MCPWorkbench(Container):
                 "{}",
                 _safe_diagnostic_message("MCP permission cycle failed", exc),
             )
-            self.app.notify(
-                _toast(f"Permission update failed: {exc}"), severity="error"
-            )
+            if _is_stale_profile_error(exc):
+                self.app.notify(
+                    _toast("Tool policy profile changed. Refresh and try again."),
+                    severity="warning",
+                )
+            else:
+                self.app.notify(_toast("Permission update failed."), severity="error")
             return
         # Task 3 (MCP Hub Phase 6): the transient mutation echo -- pinned
         # copy shape `"{tool_name} → {ui_label} · "`, TOOL-row cycles only
@@ -2688,6 +2968,10 @@ class MCPWorkbench(Container):
         # here too when it's explaining the tool that was just cycled.
         if event.row_kind == "tool" and cycled_tool is not None:
             inspector = self.query_one(MCPInspector)
+            successor = self._successor_profile_context(context)
+            if successor is None:
+                await inspector.show_tool(None)
+                return
             current_tool = inspector.current_permission_tool
             if (
                 current_tool is not None
@@ -2698,6 +2982,7 @@ class MCPWorkbench(Container):
                     cycled_tool,
                     self._effective_for_display(cycled_tool),
                     cascade=self._cascade_for_tool(cycled_tool),
+                    profile_context=successor,
                 )
 
     async def on_mcp_permissions_mode_kill_switch_toggled(
@@ -3391,9 +3676,18 @@ class MCPWorkbench(Container):
         via `show_tool()`'s `effective` keyword.
         """
         event.stop()
+        inspector = self.query_one(MCPInspector)
+        context = self._validate_profile_context(self._tool_policy_profile_context)
+        if context is None:
+            await inspector.show_tool(None)
+            return
         tool = self._tool_for_row_key(event.tool_id)
         effective = self._effective_for_display(tool) if tool is not None else None
-        await self.query_one(MCPInspector).show_tool(tool, effective=effective)
+        await inspector.show_tool(
+            tool,
+            effective=effective,
+            profile_context=context,
+        )
 
     def _effective_for_display(self, tool: HubTool) -> EffectiveToolState:
         """Resolve one tool's `EffectiveToolState` for the inspector's
@@ -3420,7 +3714,17 @@ class MCPWorkbench(Container):
         gate_check = getattr(service, "gate_tool_test", None)
         if callable(gate_check):
             try:
-                return gate_check(tool)
+                try:
+                    return gate_check(
+                        tool, profile_id=self._tool_policy_profile_id
+                    )
+                except TypeError as exc:
+                    if (
+                        self._tool_policy_profile_id != "default"
+                        or "unexpected keyword argument" not in str(exc)
+                    ):
+                        raise
+                    return gate_check(tool)
             except Exception as exc:
                 logger.warning(
                     "{}",
@@ -3471,6 +3775,9 @@ class MCPWorkbench(Container):
         inspector the same as a dropped MCP tool would.
         """
         event.stop()
+        context = self._validate_profile_context(event.profile_context)
+        if context is None:
+            return
         inspector = self.query_one(MCPInspector)
         if event.row_kind == "tool" and event.server_key == BUILTIN_TOOL_SERVER_KEY:
             effective = self._last_builtin_effective.get(
@@ -3490,7 +3797,12 @@ class MCPWorkbench(Container):
                 stale=False,
                 executable=False,
             )
-            await inspector.show_permission(builtin_tool, effective, cascade=None)
+            await inspector.show_permission(
+                builtin_tool,
+                effective,
+                cascade=None,
+                profile_context=context,
+            )
             return
         tool = (
             self._tool_for(event.server_key, event.tool_name or "")
@@ -3504,6 +3816,7 @@ class MCPWorkbench(Container):
             tool,
             self._effective_for_display(tool),
             cascade=self._cascade_for_tool(tool),
+            profile_context=context,
         )
 
     # -- T7 (MCP Hub Phase 5): Audit mode ------------------------------------
@@ -3525,7 +3838,12 @@ class MCPWorkbench(Container):
             if 0 <= event.index < len(self._last_audit_entries)
             else None
         )
-        await self.query_one(MCPInspector).show_audit_entry(entry)
+        context = self._validate_profile_context(self._tool_policy_profile_context)
+        if context is None:
+            entry = None
+        await self.query_one(MCPInspector).show_audit_entry(
+            entry, profile_context=context
+        )
 
     async def on_mcp_audit_mode_finding_selected(
         self, event: MCPAuditMode.FindingSelected
@@ -3631,6 +3949,9 @@ class MCPWorkbench(Container):
         detail otherwise).
         """
         event.stop()
+        context = self._validate_profile_context(event.profile_context)
+        if context is None:
+            return
         tool = self._tool_for(event.server_key, event.tool_name)
         if tool is None:
             self.app.notify(
@@ -3642,13 +3963,19 @@ class MCPWorkbench(Container):
             return
         self.set_mode("tools")
         self.run_worker(
-            partial(self._open_audit_tool, tool),
+            partial(self._open_audit_tool, tool, context),
             group="mcp-tool-clear",
             exclusive=True,
         )
 
-    async def _open_audit_tool(self, tool: HubTool) -> None:
+    async def _open_audit_tool(
+        self, tool: HubTool, context: PermissionProfileContext
+    ) -> None:
         inspector = self.query_one(MCPInspector)
+        context = self._validate_profile_context(context)
+        if context is None:
+            await inspector.show_tool(None)
+            return
         # Explicit clear -- see on_mcp_inspector_audit_open_tool_requested()'s
         # docstring: set_mode()'s _clear_tool_view() worker (which would
         # otherwise hide #mcp-inspector-audit via show_audit_entry(None))
@@ -3657,7 +3984,15 @@ class MCPWorkbench(Container):
         # relied upon here.
         await inspector.show_audit_entry(None)
         await self.query_one(MCPToolsMode).select_tool_row(tool.tool_id)
-        await inspector.show_tool(tool, effective=self._effective_for_display(tool))
+        context = self._validate_profile_context(context)
+        if context is None:
+            await inspector.show_tool(None)
+            return
+        await inspector.show_tool(
+            tool,
+            effective=self._effective_for_display(tool),
+            profile_context=context,
+        )
 
     async def on_mcp_inspector_audit_adjust_permission_requested(
         self, event: MCPInspector.AuditAdjustPermissionRequested
@@ -3667,7 +4002,9 @@ class MCPWorkbench(Container):
         Phase 6) -- one of three callers; see that method's own docstring.
         """
         event.stop()
-        await self._goto_permission_row(event.server_key, event.tool_name)
+        await self._goto_permission_row(
+            event.server_key, event.tool_name, event.profile_context
+        )
 
     async def on_mcp_inspector_change_in_permissions_requested(
         self, event: MCPInspector.ChangeInPermissionsRequested
@@ -3678,9 +4015,16 @@ class MCPWorkbench(Container):
         helper the audit drill uses -- see `_goto_permission_row()`.
         """
         event.stop()
-        await self._goto_permission_row(event.server_key, event.tool_name)
+        await self._goto_permission_row(
+            event.server_key, event.tool_name, event.profile_context
+        )
 
-    async def _goto_permission_row(self, server_key: str, tool_name: str) -> None:
+    async def _goto_permission_row(
+        self,
+        server_key: str,
+        tool_name: str,
+        context: PermissionProfileContext | None,
+    ) -> None:
         """Shared routing for every "jump to this tool's Permissions-mode
         row" entry point (Task 3, MCP Hub Phase 6): the audit drill's
         "Adjust permission" button, the Tools-mode permission block's
@@ -3705,6 +4049,9 @@ class MCPWorkbench(Container):
         `show_audit_entry(None)` rather than relying on that cancelled
         worker (see its own comment).
         """
+        context = self._validate_profile_context(context)
+        if context is None:
+            return
         tool = self._tool_for(server_key, tool_name)
         if tool is None:
             self.app.notify(
@@ -3714,13 +4061,19 @@ class MCPWorkbench(Container):
             return
         self.set_mode("permissions")
         self.run_worker(
-            partial(self._open_audit_permission, tool),
+            partial(self._open_audit_permission, tool, context),
             group="mcp-tool-clear",
             exclusive=True,
         )
 
-    async def _open_audit_permission(self, tool: HubTool) -> None:
+    async def _open_audit_permission(
+        self, tool: HubTool, context: PermissionProfileContext
+    ) -> None:
         inspector = self.query_one(MCPInspector)
+        context = self._validate_profile_context(context)
+        if context is None:
+            await inspector.show_tool(None)
+            return
         # Explicit clear -- same stale-audit-panel hazard as
         # _open_audit_tool() above; see its comment for the mechanism.
         # Harmless (a no-op re-hide) for the two non-audit
@@ -3743,10 +4096,14 @@ class MCPWorkbench(Container):
         # caller, where `#mcp-inspector-tool` is already hidden.
         await inspector.show_tool(None)
         self.query_one(MCPPermissionsMode).select_tool_row(tool.server_key, tool.name)
+        context = self._validate_profile_context(context)
+        if context is None:
+            return
         await inspector.show_permission(
             tool,
             self._effective_for_display(tool),
             cascade=self._cascade_for_tool(tool),
+            profile_context=context,
         )
 
     async def on_mcp_inspector_reallow_requested(
@@ -3764,6 +4121,9 @@ class MCPWorkbench(Container):
         `HubTool` to fingerprint (see that method's own `tool` docstring).
         """
         event.stop()
+        context = self._validate_profile_context(event.profile_context)
+        if context is None:
+            return
         tool = self._tool_for(event.server_key, event.tool_name)
         if tool is None:
             self.app.notify(
@@ -3778,20 +4138,44 @@ class MCPWorkbench(Container):
         if not callable(set_tool_state):
             return
         try:
-            set_tool_state(event.server_key, event.tool_name, "allow", tool=tool)
+            self._call_profile_scoped(
+                set_tool_state,
+                event.server_key,
+                event.tool_name,
+                "allow",
+                context=context,
+                tool=tool,
+            )
         except Exception as exc:
-            logger.warning("{}", _safe_diagnostic_message("MCP re-allow failed", exc))
-            self.app.notify(_toast(f"Re-allow failed: {exc}"), severity="error")
+            logger.warning(
+                "{}",
+                _safe_diagnostic_message(
+                    f"MCP re-allow failed for {event.server_key}::{event.tool_name}",
+                    exc,
+                ),
+            )
+            if _is_stale_profile_error(exc):
+                self.app.notify(
+                    _toast("Tool policy profile changed. Refresh and try again."),
+                    severity="warning",
+                )
+            else:
+                self.app.notify(_toast("Re-allow failed."), severity="error")
             return
         # Task 3: re-allow always sets "allow" -- reuses the tool-cycle
         # mutation-echo shape (`_cycled_ui_label("allow")` == "Allow").
         echo = f"{event.tool_name} → {_cycled_ui_label('allow')} · "
         async with self._sync_children_lock:
             await self._sync_permissions_mode(echo=echo)
+        successor = self._successor_profile_context(context)
+        if successor is None:
+            await self.query_one(MCPInspector).show_tool(None)
+            return
         await self.query_one(MCPInspector).show_permission(
             tool,
             self._effective_for_display(tool),
             cascade=self._cascade_for_tool(tool),
+            profile_context=successor,
         )
 
     async def open_test_for_selected_tool(self) -> None:
@@ -3850,22 +4234,33 @@ class MCPWorkbench(Container):
     ) -> None:
         """Prepare a service-owned preview off the UI loop."""
         event.stop()
-        tool = self._tool_for(event.server_key, event.tool_name)
         inspector = self.query_one(MCPInspector)
         inspector.show_test_preparing()
+        context = self._validate_profile_context(event.profile_context)
+        if context is None:
+            inspector.show_test_unavailable(
+                "Tool policy profile context is unavailable. Refresh and try again."
+            )
+            return
+        tool = self._tool_for(event.server_key, event.tool_name)
         self._tool_test_generation += 1
         generation = self._tool_test_generation
         if tool is None:
             inspector.show_test_unavailable("The selected tool is no longer available.")
             return
         self.run_worker(
-            self._prepare_tool_test_preview(tool, generation),
+            self._prepare_tool_test_preview(tool, generation, context),
             name="mcp-tool-test-preview",
             group="mcp-tool-test-preview",
             exclusive=True,
         )
 
-    async def _prepare_tool_test_preview(self, tool: HubTool, generation: int) -> None:
+    async def _prepare_tool_test_preview(
+        self,
+        tool: HubTool,
+        generation: int,
+        profile_context: PermissionProfileContext,
+    ) -> None:
         service = self._service()
         required = (
             "prepare_hub_test",
@@ -3894,7 +4289,14 @@ class MCPWorkbench(Container):
                 return
             if was_active:
                 self.query_one(MCPInspector).show_test_preparing()
-            preview = await self._mint_test_preview(service, tool)
+            if self._validate_profile_context(profile_context) is None:
+                self._render_test_unavailable_if_current(
+                    tool,
+                    generation,
+                    "Tool policy profile changed. Refresh and try again.",
+                )
+                return
+            preview = await self._mint_test_preview(service, tool, profile_context)
             if not isinstance(preview, ToolTestAdmissionPreview):
                 raise TypeError("The service returned an invalid test preview.")
         except asyncio.CancelledError:
@@ -3911,11 +4313,19 @@ class MCPWorkbench(Container):
         self.query_one(MCPInspector).show_test_preview(preview)
 
     async def _mint_test_preview(
-        self, service: Any, tool: HubTool
+        self,
+        service: Any,
+        tool: HubTool,
+        profile_context: PermissionProfileContext,
     ) -> ToolTestAdmissionPreview:
         """Mint off-loop and reclaim a nonce even if its owner is cancelled."""
         mint_task = asyncio.create_task(
-            asyncio.to_thread(service.prepare_hub_test, tool),
+            asyncio.to_thread(
+                self._call_profile_scoped,
+                service.prepare_hub_test,
+                tool,
+                context=profile_context,
+            ),
             name=f"mcp-tool-test-preview-mint:{tool.tool_id}",
         )
         try:
@@ -4012,6 +4422,32 @@ class MCPWorkbench(Container):
         except Exception as exc:
             logger.debug("MCP tool-test preview revoke failed: {}", type(exc).__name__)
 
+    def _is_test_session_approved(
+        self, server_key: str, tool_name: str, *, profile_id: str
+    ) -> bool:
+        """Read one exact-profile Test Tool session approval, fail closed."""
+        checker = getattr(self._service(), "is_session_approved", None)
+        if not callable(checker):
+            return False
+        try:
+            try:
+                return bool(
+                    checker(server_key, tool_name, profile_id=profile_id)
+                )
+            except TypeError as exc:
+                if (
+                    profile_id != "default"
+                    or "unexpected keyword argument" not in str(exc)
+                ):
+                    raise
+                return bool(checker(server_key, tool_name))
+        except Exception as exc:
+            logger.warning(
+                "MCP Test Tool session-approval read failed "
+                f"for {server_key}::{tool_name}: {type(exc).__name__}"
+            )
+            return False
+
     def on_mcp_inspector_tool_test_requested(
         self, event: MCPInspector.ToolTestRequested
     ) -> None:
@@ -4021,9 +4457,16 @@ class MCPWorkbench(Container):
         client may deliver concurrent clicks but never authorizes or falls back.
         """
         event.stop()
+        inspector = self.query_one(MCPInspector)
+        context = self._validate_profile_context(event.profile_context)
+        if context is None:
+            inspector.show_test_unavailable(
+                "Tool policy profile changed. Refresh and try again."
+            )
+            return
         tool = self._tool_for(event.server_key, event.tool_name)
         if tool is None:
-            self.query_one(MCPInspector).show_test_unavailable(
+            inspector.show_test_unavailable(
                 "The selected tool is no longer available."
             )
             return
@@ -4031,7 +4474,7 @@ class MCPWorkbench(Container):
         lifecycle = self.tool_profile_lifecycle
         lease_factory = getattr(lifecycle, "lease", None)
         lease_scope = (
-            lease_factory(self._tool_policy_profile_id)
+            lease_factory(context.profile_id)
             if callable(lease_factory)
             else None
         )
@@ -4049,6 +4492,7 @@ class MCPWorkbench(Container):
                     event.intent,
                     dict(event.arguments),
                     generation,
+                    context,
                     lease_handoff,
                 ),
                 name="mcp-tool-test-execute",
@@ -4077,6 +4521,7 @@ class MCPWorkbench(Container):
         intent: str,
         arguments: dict[str, Any],
         generation: int,
+        profile_context: PermissionProfileContext,
         lease_handoff: _ToolProfileLeaseHandoff | None,
     ) -> None:
         """Keep the captured Tool Profile live through final result handling."""
@@ -4087,6 +4532,7 @@ class MCPWorkbench(Container):
                 intent,
                 arguments,
                 generation,
+                profile_context,
             )
         finally:
             if lease_handoff is not None:
@@ -4099,6 +4545,7 @@ class MCPWorkbench(Container):
         intent: str,
         arguments: dict[str, Any],
         generation: int,
+        profile_context: PermissionProfileContext,
     ) -> None:
         """Execute one preview-bound click and render only to its live panel."""
         service = self._service()
@@ -4135,10 +4582,13 @@ class MCPWorkbench(Container):
                     duration_ms=0,
                     blocked=_is_permission_refusal(exc),
                     show_permission_jump=False,
+                    profile_context=profile_context,
                 )
                 inspector = self.query_one(MCPInspector)
                 inspector.show_test_preparing()
-                await self._prepare_tool_test_preview(tool, generation)
+                await self._prepare_tool_test_preview(
+                    tool, generation, profile_context
+                )
             await self._refresh_test_audit()
             return
         if not self._test_panel_is_current(tool, generation):
@@ -4158,13 +4608,16 @@ class MCPWorkbench(Container):
                 text=reason,
                 duration_ms=0,
                 admission_changed=True,
+                profile_context=profile_context,
             )
             if outcome.refreshed_preview is not None:
                 self._tool_test_preview_nonce = outcome.refreshed_preview.nonce
                 inspector.show_test_preview(outcome.refreshed_preview)
             else:
                 inspector.show_test_preparing()
-                await self._prepare_tool_test_preview(tool, generation)
+                await self._prepare_tool_test_preview(
+                    tool, generation, profile_context
+                )
             await self._refresh_test_audit()
             return
 
@@ -4177,13 +4630,16 @@ class MCPWorkbench(Container):
                 text=reason,
                 duration_ms=0,
                 blocked=True,
+                profile_context=profile_context,
             )
             if outcome.refreshed_preview is not None:
                 self._tool_test_preview_nonce = outcome.refreshed_preview.nonce
                 inspector.show_test_preview(outcome.refreshed_preview)
             else:
                 inspector.show_test_preparing()
-                await self._prepare_tool_test_preview(tool, generation)
+                await self._prepare_tool_test_preview(
+                    tool, generation, profile_context
+                )
             await self._refresh_test_audit()
             return
 
@@ -4205,6 +4661,7 @@ class MCPWorkbench(Container):
                 duration_ms=outcome.duration_ms,
                 blocked=outcome.status == "blocked",
                 decision_note=decision_note,
+                profile_context=profile_context,
             )
         elif isinstance(outcome, Mapping):
             try:
@@ -4217,6 +4674,7 @@ class MCPWorkbench(Container):
                     ok=False,
                     text=_safe_exception_text(exc),
                     duration_ms=0,
+                    profile_context=profile_context,
                 )
             else:
                 self._show_tool_test_result(
@@ -4227,6 +4685,7 @@ class MCPWorkbench(Container):
                     source=redacted.get("source"),
                     raw=raw,
                     duration_ms=0,
+                    profile_context=profile_context,
                 )
         else:
             self._show_tool_test_result(
@@ -4235,10 +4694,11 @@ class MCPWorkbench(Container):
                 ok=False,
                 text="The service returned an unsupported tool-test result.",
                 duration_ms=0,
+                profile_context=profile_context,
             )
         if self._test_panel_is_current(tool, generation):
             inspector.show_test_preparing()
-            await self._prepare_tool_test_preview(tool, generation)
+            await self._prepare_tool_test_preview(tool, generation, profile_context)
         await self._refresh_test_audit()
 
     async def _refresh_test_audit(self) -> None:
@@ -4281,6 +4741,7 @@ class MCPWorkbench(Container):
         decision_note: str | None = None,
         blocked: bool = False,
         show_permission_jump: bool = True,
+        profile_context: PermissionProfileContext | None = None,
     ) -> None:
         try:
             self.query_one(MCPInspector).show_tool_result(
@@ -4295,6 +4756,7 @@ class MCPWorkbench(Container):
                 decision_note=decision_note,
                 blocked=blocked,
                 show_permission_jump=show_permission_jump,
+                profile_context=profile_context,
             )
         except Exception as exc:
             # Task 3 (PR-T3): the run genuinely completed -- only the

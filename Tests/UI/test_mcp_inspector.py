@@ -34,6 +34,42 @@ from tldw_chatbook.MCP.readiness import (
     ReasonCode,
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
+from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import PermissionProfileContext
+
+
+def test_profile_scoped_inspector_requests_preserve_captured_context():
+    context = PermissionProfileContext("research", 7, "b" * 64, 3)
+
+    preview_request = MCPInspector.ToolTestPreviewRequested(
+        "local:docs", "search", context
+    )
+    test_request = MCPInspector.ToolTestRequested(
+        "local:docs",
+        "search",
+        {"query": "x"},
+        preview_nonce="preview-1",
+        intent="run",
+        profile_context=context,
+    )
+    reallow_request = MCPInspector.ReallowRequested(
+        "local:docs", "search", context
+    )
+    jump_request = MCPInspector.ChangeInPermissionsRequested(
+        "local:docs", "search", context
+    )
+    audit_open_request = MCPInspector.AuditOpenToolRequested(
+        "local:docs", "search", context
+    )
+    audit_adjust_request = MCPInspector.AuditAdjustPermissionRequested(
+        "local:docs", "search", context
+    )
+
+    assert preview_request.profile_context == context
+    assert test_request.profile_context == context
+    assert reallow_request.profile_context == context
+    assert jump_request.profile_context == context
+    assert audit_open_request.profile_context == context
+    assert audit_adjust_request.profile_context == context
 
 _BUNDLED_CSS_PATH = str(
     Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
@@ -152,6 +188,12 @@ class InspectorApp(ConsolidatedCSSApp):
         self.events.append(event)
 
     def on_mcp_inspector_change_in_permissions_requested(self, event) -> None:
+        self.events.append(event)
+
+    def on_mcp_inspector_audit_open_tool_requested(self, event) -> None:
+        self.events.append(event)
+
+    def on_mcp_inspector_audit_adjust_permission_requested(self, event) -> None:
         self.events.append(event)
 
 
@@ -2678,6 +2720,33 @@ async def test_show_tool_result_same_tool_is_not_dropped():
         assert "matching payload" in result
 
 
+@pytest.mark.asyncio
+async def test_show_tool_result_same_tool_under_different_profile_is_dropped():
+    app = InspectorApp()
+    old_context = PermissionProfileContext("research", 1, "a" * 64, None)
+    current_context = PermissionProfileContext("default", 2, "b" * 64, None)
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool(name="search", server_key="local:docs")
+        await inspector.show_tool(tool, profile_context=current_context)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+
+        inspector.show_tool_result(
+            server_key="local:docs",
+            tool_name="search",
+            ok=True,
+            text="old profile payload",
+            duration_ms=7,
+            profile_context=old_context,
+        )
+        await pilot.pause()
+
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result == ""
+
+
 # -- Task 3 (PR-T3): "a run that ran always says something" -- the two
 # stale-drop guards above keep dropping the RENDER (protected -- the tests
 # above pin that silence, unmodified), but now also toast, so a completed
@@ -4063,9 +4132,11 @@ async def test_tools_mode_permission_block_renders_change_in_permissions_button(
     app = InspectorApp()
     async with app.run_test(size=(100, 60)) as pilot:
         inspector = app.query_one(MCPInspector)
+        context = PermissionProfileContext("research", 7, "b" * 64, 3)
         await inspector.show_tool(
             _tool(server_key="local:docs", name="search"),
             effective=EffectiveToolState(state="ask", origin="global_default"),
+            profile_context=context,
         )
         await pilot.pause()
         button = app.query_one("#mcp-inspector-goto-permission", Button)
@@ -4081,6 +4152,7 @@ async def test_tools_mode_permission_block_renders_change_in_permissions_button(
         assert len(events) == 1
         assert events[0].server_key == "local:docs"
         assert events[0].tool_name == "search"
+        assert events[0].profile_context == context
 
 
 @pytest.mark.asyncio
@@ -4104,7 +4176,8 @@ async def test_show_tool_result_blocked_shows_test_panel_change_in_permissions_b
     async with app.run_test(size=(100, 60)) as pilot:
         inspector = app.query_one(MCPInspector)
         tool = _tool()
-        await inspector.show_tool(tool)
+        context = PermissionProfileContext("research", 7, "b" * 64, 3)
+        await inspector.show_tool(tool, profile_context=context)
         await pilot.pause()
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
@@ -4116,10 +4189,20 @@ async def test_show_tool_result_blocked_shows_test_panel_change_in_permissions_b
             text="Blocked — this tool is set to Off in Permissions.",
             duration_ms=0,
             blocked=True,
+            profile_context=context,
         )
         await pilot.pause()
         goto_button = app.query_one("#mcp-inspector-goto-permission-test", Button)
         assert goto_button.display is True
+        await pilot.click(goto_button)
+        await pilot.pause()
+        events = [
+            event
+            for event in app.events
+            if isinstance(event, MCPInspector.ChangeInPermissionsRequested)
+        ]
+        assert len(events) == 1
+        assert events[0].profile_context == context
 
 
 @pytest.mark.asyncio
@@ -4706,6 +4789,29 @@ async def test_update_readiness_does_not_resurrect_badge_over_displayed_tool():
 
 def _audit_entry() -> dict[str, Any]:
     return {"server_key": "local:docs", "tool_name": "search"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("button_id", "event_type"),
+    [
+        ("mcp-audit-open-tool", MCPInspector.AuditOpenToolRequested),
+        ("mcp-audit-adjust-permission", MCPInspector.AuditAdjustPermissionRequested),
+    ],
+)
+async def test_audit_actions_preserve_captured_profile_context(button_id, event_type):
+    app = InspectorApp()
+    context = PermissionProfileContext("research", 7, "b" * 64, 3)
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_audit_entry(_audit_entry(), profile_context=context)
+        await pilot.pause()
+        await pilot.click(f"#{button_id}")
+        await pilot.pause()
+
+        events = [event for event in app.events if isinstance(event, event_type)]
+        assert len(events) == 1
+        assert events[0].profile_context == context
 
 
 @pytest.mark.asyncio

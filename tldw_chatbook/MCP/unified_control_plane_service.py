@@ -43,7 +43,10 @@ from .permission_store import (
     arg_rule_allows,
     HASH_FREE_SERVER_KEYS,
     MCPPermissionStore,
+    ProfileMutationError,
     definition_hash,
+    profile_lifecycle_disposition,
+    profile_policy_digest,
     resolve_effective_state,
     resolve_effective_state_by_key,
 )
@@ -4521,6 +4524,8 @@ class UnifiedMCPControlPlaneService:
         tool_name: str,
         *,
         profile_id: str = "default",
+        expected_profile_digest: str | None = None,
+        expected_revision: int | None = None,
     ) -> None:
         """Grant a session-scoped approval for one profile/server/tool triple.
 
@@ -4533,8 +4538,41 @@ class UnifiedMCPControlPlaneService:
             server_key: Prefixed server key the tool belongs to.
             tool_name: Name of the tool being approved.
             profile_id: Exact permission profile receiving the approval.
+            expected_profile_digest: Captured policy digest to revalidate
+                under the permission-store fence.
+            expected_revision: Captured imported-profile revision, when
+                applicable.
         """
-        self._session_approvals.add((profile_id, server_key, tool_name))
+        if expected_profile_digest is None and expected_revision is None:
+            # Compatibility seam for non-UI callers. Captured UI approvals
+            # always supply the digest (and imported revision) below.
+            self._session_approvals.add((profile_id, server_key, tool_name))
+            return
+        store = self.permission_store
+        if store is None:
+            if expected_profile_digest is not None or expected_revision is not None:
+                raise ProfileMutationError("stale_profile")
+            self._session_approvals.add((profile_id, server_key, tool_name))
+            return
+        with store.mutation_fence():
+            snapshot = store.read_snapshot_strict()
+            profile = snapshot.payload["profiles"].get(profile_id)
+            if not isinstance(profile, Mapping):
+                raise ProfileMutationError("stale_profile")
+            disposition = profile_lifecycle_disposition(profile)
+            if disposition in {"invalid", "tombstone"}:
+                raise ProfileMutationError("lifecycle_invalid")
+            digest = profile_policy_digest(profile)
+            if expected_profile_digest is not None and digest != expected_profile_digest:
+                raise ProfileMutationError("stale_profile")
+            revision = (
+                profile["tool_pack_lifecycle"]["revision"]
+                if disposition == "imported"
+                else None
+            )
+            if expected_revision is not None and revision != expected_revision:
+                raise ProfileMutationError("stale_revision")
+            self._session_approvals.add((profile_id, server_key, tool_name))
 
     def is_session_approved(
         self,
@@ -4773,6 +4811,8 @@ class UnifiedMCPControlPlaneService:
         *,
         tool: HubTool | None = None,
         profile_id: str = "default",
+        expected_profile_digest: str | None = None,
+        expected_revision: int | None = None,
     ) -> None:
         """Set (or clear, when ``ui_state`` is None) a tool-level override.
 
@@ -4789,6 +4829,10 @@ class UnifiedMCPControlPlaneService:
             profile_id: Permission profile to write (workspace assistant
                 defaults, Task 6); defaults to the ``default`` profile --
                 byte-identical to the single-profile behavior.
+            expected_profile_digest: Captured policy digest for the store's
+                compare-and-set boundary.
+            expected_revision: Captured imported-profile revision, when
+                applicable.
 
         Raises:
             ValueError: ``ui_state`` is ``"allow"``, ``tool`` is None, and
@@ -4810,21 +4854,47 @@ class UnifiedMCPControlPlaneService:
             ui_state,
             definition_hash=hash_value,
             profile_id=profile_id,
+            expected_profile_digest=expected_profile_digest,
+            expected_revision=expected_revision,
         )
 
     def set_server_default(
-        self, server_key: str, state: str | None, *, profile_id: str = "default"
+        self,
+        server_key: str,
+        state: str | None,
+        *,
+        profile_id: str = "default",
+        expected_profile_digest: str | None = None,
+        expected_revision: int | None = None,
     ) -> None:
         store = self.permission_store
         if store is None:
             return
-        store.set_server_default(server_key, state, profile_id=profile_id)
+        store.set_server_default(
+            server_key,
+            state,
+            profile_id=profile_id,
+            expected_profile_digest=expected_profile_digest,
+            expected_revision=expected_revision,
+        )
 
-    def set_global_default(self, state: str, *, profile_id: str = "default") -> None:
+    def set_global_default(
+        self,
+        state: str,
+        *,
+        profile_id: str = "default",
+        expected_profile_digest: str | None = None,
+        expected_revision: int | None = None,
+    ) -> None:
         store = self.permission_store
         if store is None:
             return
-        store.set_global_default(state, profile_id=profile_id)
+        store.set_global_default(
+            state,
+            profile_id=profile_id,
+            expected_profile_digest=expected_profile_digest,
+            expected_revision=expected_revision,
+        )
 
     def get_kill_switch(self) -> bool:
         store = self.permission_store

@@ -54,7 +54,10 @@ from tldw_chatbook.MCP.readiness import (
 )
 from tldw_chatbook.MCP.redaction import redact_mapping
 from tldw_chatbook.MCP.unified_control_plane_service import MCPHubGateDeniedError
-from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import tool_state_kind
+from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
+    PermissionProfileContext,
+    tool_state_kind,
+)
 from tldw_chatbook.UI.MCP_Modules.mcp_schema_form import MCPSchemaForm, parse_schema
 
 _TOOL_TEST_TEXT_LIMIT = 480
@@ -1065,6 +1068,7 @@ class MCPInspector(Vertical):
             *,
             preview_nonce: str,
             intent: str,
+            profile_context: PermissionProfileContext | None = None,
         ) -> None:
             super().__init__()
             self.server_key = server_key
@@ -1072,14 +1076,21 @@ class MCPInspector(Vertical):
             self.arguments = arguments
             self.preview_nonce = preview_nonce
             self.intent = intent
+            self.profile_context = profile_context
 
     class ToolTestPreviewRequested(Message, namespace="mcp_inspector"):
         """Ask the Workbench to prepare one current service preview."""
 
-        def __init__(self, server_key: str, tool_name: str) -> None:
+        def __init__(
+            self,
+            server_key: str,
+            tool_name: str,
+            profile_context: PermissionProfileContext | None = None,
+        ) -> None:
             super().__init__()
             self.server_key = server_key
             self.tool_name = tool_name
+            self.profile_context = profile_context
 
     class ToolTestPreviewRevocationRequested(Message, namespace="mcp_inspector"):
         """Best-effort revocation request for a preview leaving the panel."""
@@ -1098,10 +1109,16 @@ class MCPInspector(Vertical):
         the rug-pull downgrade -- then resyncs the Permissions matrix (its
         ⚠ marker clears)."""
 
-        def __init__(self, server_key: str, tool_name: str) -> None:
+        def __init__(
+            self,
+            server_key: str,
+            tool_name: str,
+            profile_context: PermissionProfileContext | None = None,
+        ) -> None:
             super().__init__()
             self.server_key = server_key
             self.tool_name = tool_name
+            self.profile_context = profile_context
 
     class AuditOpenToolRequested(Message, namespace="mcp_inspector"):
         """Posted when the user presses "Open tool" (`#mcp-audit-open-tool`)
@@ -1111,10 +1128,16 @@ class MCPInspector(Vertical):
         catalog is a warning toast, never a crash; a resolved tool switches
         to Tools mode and selects its row."""
 
-        def __init__(self, server_key: str, tool_name: str) -> None:
+        def __init__(
+            self,
+            server_key: str,
+            tool_name: str,
+            profile_context: PermissionProfileContext | None = None,
+        ) -> None:
             super().__init__()
             self.server_key = server_key
             self.tool_name = tool_name
+            self.profile_context = profile_context
 
     class AuditAdjustPermissionRequested(Message, namespace="mcp_inspector"):
         """Posted when the user presses "Adjust permission"
@@ -1123,10 +1146,16 @@ class MCPInspector(Vertical):
         but switches to Permissions mode and moves the matrix cursor to the
         tool's row instead."""
 
-        def __init__(self, server_key: str, tool_name: str) -> None:
+        def __init__(
+            self,
+            server_key: str,
+            tool_name: str,
+            profile_context: PermissionProfileContext | None = None,
+        ) -> None:
             super().__init__()
             self.server_key = server_key
             self.tool_name = tool_name
+            self.profile_context = profile_context
 
     class ChangeInPermissionsRequested(Message, namespace="mcp_inspector"):
         """Posted by either "Change in Permissions" button (Task 3, MCP Hub
@@ -1143,10 +1172,16 @@ class MCPInspector(Vertical):
         already uses: one implementation, three callers, no duplicated
         mode-switch-plus-matrix-row-selection logic."""
 
-        def __init__(self, server_key: str, tool_name: str) -> None:
+        def __init__(
+            self,
+            server_key: str,
+            tool_name: str,
+            profile_context: PermissionProfileContext | None = None,
+        ) -> None:
             super().__init__()
             self.server_key = server_key
             self.tool_name = tool_name
+            self.profile_context = profile_context
 
     def __init__(self, **kwargs: Any) -> None:
         classes = kwargs.pop("classes", "")
@@ -1198,6 +1233,7 @@ class MCPInspector(Vertical):
         # know which tool a Run press is testing without re-querying the
         # workbench.
         self._current_tool: HubTool | None = None
+        self._current_tool_profile_context: PermissionProfileContext | None = None
         # Task 7: the `HubTool` `#mcp-inspector-permission` currently
         # describes, or `None` when hidden -- set by
         # `_render_permission_container()`, the single writer for that
@@ -1205,6 +1241,7 @@ class MCPInspector(Vertical):
         # know which tool's `(server_key, tool_name)` to post in
         # `ReallowRequested` without re-querying the workbench.
         self._current_permission_tool: HubTool | None = None
+        self._current_permission_profile_context: PermissionProfileContext | None = None
         # T7 (MCP Hub Phase 5): the raw execution-log entry dict
         # `#mcp-inspector-audit` currently describes, or `None` when
         # hidden -- set by `show_audit_entry()`, the single writer. Read by
@@ -1212,6 +1249,7 @@ class MCPInspector(Vertical):
         # to know which `(server_key, tool_name)` to post without
         # re-querying the workbench.
         self._current_audit_entry: dict[str, Any] | None = None
+        self._current_audit_profile_context: PermissionProfileContext | None = None
         # T8 (MCP Hub Phase 5): the raw finding dict `#mcp-inspector-
         # finding` currently describes, or `None` when hidden -- set by
         # `show_finding()`, the single writer. No action buttons read this
@@ -1755,7 +1793,11 @@ class MCPInspector(Vertical):
         ).display = not self._any_detail_displayed()
 
     async def show_tool(
-        self, tool: HubTool | None, *, effective: EffectiveToolState | None = None
+        self,
+        tool: HubTool | None,
+        *,
+        effective: EffectiveToolState | None = None,
+        profile_context: PermissionProfileContext | None = None,
     ) -> None:
         """Rebuild `#mcp-inspector-tool` for the given tool, or hide it.
 
@@ -1780,6 +1822,12 @@ class MCPInspector(Vertical):
         """
         async with self._refresh_lock:
             self._current_tool = tool
+            self._current_tool_profile_context = (
+                profile_context if tool is not None else None
+            )
+            self._current_permission_profile_context = (
+                profile_context if tool is not None else None
+            )
             old_nonce = self.clear_test_preview()
             if old_nonce:
                 self.post_message(self.ToolTestPreviewRevocationRequested(old_nonce))
@@ -2027,6 +2075,7 @@ class MCPInspector(Vertical):
         effective: EffectiveToolState,
         *,
         cascade: tuple[str | None, str | None, str] | None = None,
+        profile_context: PermissionProfileContext | None = None,
     ) -> None:
         """Render `#mcp-inspector-permission` standalone -- Permissions-mode's
         matrix tool-row selection entry point
@@ -2048,9 +2097,15 @@ class MCPInspector(Vertical):
         default) falls back to the pre-Task-3 single origin sentence.
         """
         async with self._refresh_lock:
+            self._current_permission_profile_context = profile_context
             await self._render_permission_container(tool, effective, cascade=cascade)
 
-    async def show_audit_entry(self, entry: dict[str, Any] | None) -> None:
+    async def show_audit_entry(
+        self,
+        entry: dict[str, Any] | None,
+        *,
+        profile_context: PermissionProfileContext | None = None,
+    ) -> None:
         """Render `#mcp-inspector-audit` for one execution-log entry, or hide it.
 
         Audit mode's own row-selection entry point
@@ -2073,12 +2128,14 @@ class MCPInspector(Vertical):
             if entry is None:
                 container.display = False
                 self._current_audit_entry = None
+                self._current_audit_profile_context = None
                 # task-2270: restore the badge unless another detail view
                 # still shows content (e.g. a finding alongside this entry).
                 self._sync_state_badge_display()
                 return
             container.display = True
             self._current_audit_entry = entry
+            self._current_audit_profile_context = profile_context
             self._sync_state_badge_display()  # task-2270: hide over detail
             server_key = str(entry.get("server_key") or "")
             tool_name = str(entry.get("tool_name") or "")
@@ -2299,7 +2356,13 @@ class MCPInspector(Vertical):
             id="mcp-inspector-test-panel",
         )
         await container.mount(panel)
-        self.post_message(self.ToolTestPreviewRequested(tool.server_key, tool.name))
+        self.post_message(
+            self.ToolTestPreviewRequested(
+                tool.server_key,
+                tool.name,
+                self._current_tool_profile_context,
+            )
+        )
         # F-056: opening the panel moves keyboard focus into it -- the
         # schema form's first control when there is one (a raw-JSON
         # TextArea, an enum Select, a Checkbox, or a scalar Input), the
@@ -2623,6 +2686,7 @@ class MCPInspector(Vertical):
                 arguments,
                 preview_nonce=preview.nonce,
                 intent=intent,
+                profile_context=self._current_tool_profile_context,
             )
         )
 
@@ -2654,6 +2718,7 @@ class MCPInspector(Vertical):
         admission_changed: bool = False,
         decision_note: str | None = None,
         show_permission_jump: bool = True,
+        profile_context: PermissionProfileContext | None = None,
     ) -> None:
         """Render one Test Tool run's outcome, and re-enable Run.
 
@@ -2730,6 +2795,10 @@ class MCPInspector(Vertical):
             current is None
             or current.server_key != server_key
             or current.name != tool_name
+            or (
+                profile_context is not None
+                and profile_context != self._current_tool_profile_context
+            )
         ):
             logger.debug(
                 f"MCPInspector: dropping stale tool result for "
@@ -3267,7 +3336,13 @@ class MCPInspector(Vertical):
             if nonce:
                 self.post_message(self.ToolTestPreviewRevocationRequested(nonce))
             self.show_test_preparing()
-            self.post_message(self.ToolTestPreviewRequested(tool.server_key, tool.name))
+            self.post_message(
+                self.ToolTestPreviewRequested(
+                    tool.server_key,
+                    tool.name,
+                    self._current_tool_profile_context,
+                )
+            )
             return
         if button_id == "mcp-inspector-test-close":
             event.stop()
@@ -3281,7 +3356,13 @@ class MCPInspector(Vertical):
             event.stop()
             tool = self._current_permission_tool
             if tool is not None:
-                self.post_message(self.ReallowRequested(tool.server_key, tool.name))
+                self.post_message(
+                    self.ReallowRequested(
+                        tool.server_key,
+                        tool.name,
+                        self._current_permission_profile_context,
+                    )
+                )
             return
         if button_id == "mcp-inspector-goto-permission":
             # Task 3: the Tools-mode permission block's own jump button --
@@ -3293,7 +3374,11 @@ class MCPInspector(Vertical):
             tool = self._current_permission_tool
             if tool is not None:
                 self.post_message(
-                    self.ChangeInPermissionsRequested(tool.server_key, tool.name)
+                    self.ChangeInPermissionsRequested(
+                        tool.server_key,
+                        tool.name,
+                        self._current_permission_profile_context,
+                    )
                 )
             return
         if button_id == "mcp-inspector-goto-permission-test":
@@ -3304,7 +3389,11 @@ class MCPInspector(Vertical):
             tool = self._current_tool
             if tool is not None:
                 self.post_message(
-                    self.ChangeInPermissionsRequested(tool.server_key, tool.name)
+                    self.ChangeInPermissionsRequested(
+                        tool.server_key,
+                        tool.name,
+                        self._current_tool_profile_context,
+                    )
                 )
             return
         if button_id == "mcp-audit-open-tool":
@@ -3315,6 +3404,7 @@ class MCPInspector(Vertical):
                     self.AuditOpenToolRequested(
                         str(entry.get("server_key") or ""),
                         str(entry.get("tool_name") or ""),
+                        self._current_audit_profile_context,
                     )
                 )
             return
@@ -3326,6 +3416,7 @@ class MCPInspector(Vertical):
                     self.AuditAdjustPermissionRequested(
                         str(entry.get("server_key") or ""),
                         str(entry.get("tool_name") or ""),
+                        self._current_audit_profile_context,
                     )
                 )
             return

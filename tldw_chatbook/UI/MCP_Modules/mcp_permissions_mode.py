@@ -24,7 +24,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.message import Message
-from textual.widgets import Button, DataTable, Input, Static
+from textual.widgets import Button, DataTable, Input, Select, Static
 
 from tldw_chatbook.MCP.permission_store import (
     DEFAULT_GLOBAL,
@@ -255,6 +255,25 @@ class PermRow:
     cycle_current: str | None
 
 
+@dataclass(frozen=True)
+class PermissionProfileContext:
+    """Immutable authority captured by one permissions render."""
+
+    profile_id: str
+    selector_generation: int
+    policy_digest: str
+    revision: int | None
+
+
+@dataclass(frozen=True)
+class ToolPolicyProfileOption:
+    """One local Tool-policy selector entry."""
+
+    profile_id: str
+    origin: str
+    available: bool = True
+
+
 # `PermRow.state_label` never carries the raw resolved state (`allow`/
 # `ask`/`deny`) itself -- only the already-formatted UI word
 # (`EffectiveToolState.ui_label`, "Allow"/"Ask"/"Off" -- or "Unknown" for
@@ -418,12 +437,21 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
             server_key: str,
             tool_name: str | None,
             new_state: str | None,
+            profile_context: PermissionProfileContext | None = None,
         ) -> None:
             super().__init__()
             self.row_kind = row_kind
             self.server_key = server_key
             self.tool_name = tool_name
             self.new_state = new_state
+            self.profile_context = profile_context
+
+    class ToolPolicyProfileSelected(Message, namespace="mcp_permissions_mode"):
+        """Requests selection of one local Tool policy profile."""
+
+        def __init__(self, profile_id: str) -> None:
+            super().__init__()
+            self.profile_id = profile_id
 
     class KillSwitchToggled(Message, namespace="mcp_permissions_mode"):
         """Posted once per press of `#mcp-perm-kill-switch` (a Library-style
@@ -451,12 +479,17 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         """
 
         def __init__(
-            self, row_kind: str, server_key: str, tool_name: str | None
+            self,
+            row_kind: str,
+            server_key: str,
+            tool_name: str | None,
+            profile_context: PermissionProfileContext | None = None,
         ) -> None:
             super().__init__()
             self.row_kind = row_kind
             self.server_key = server_key
             self.tool_name = tool_name
+            self.profile_context = profile_context
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -494,8 +527,17 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         # -- `update_matrix()` is the single writer; a press posts
         # `KillSwitchToggled(not self._kill_switch)`.
         self._kill_switch: bool = False
+        self._profile_context: PermissionProfileContext | None = None
+        self._profile_select_sync = False
 
     def compose(self) -> ComposeResult:
+        yield Static("Tool policy profile", id="mcp-perm-tool-profile-label", markup=False)
+        yield Select(
+            [("default · local", "default")],
+            value="default",
+            id="mcp-perm-tool-profile",
+            allow_blank=False,
+        )
         yield Button(
             _kill_switch_label(self._kill_switch),
             id="mcp-perm-kill-switch",
@@ -549,6 +591,7 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         preview: str,
         echo: str | None = None,
         gate_breadcrumb: str | None = None,
+        profile_context: PermissionProfileContext | None = None,
     ) -> None:
         """Rebuild the matrix from a fresh `PermRow` list.
 
@@ -608,6 +651,8 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
             deduped.append(row)
         rows = deduped
 
+        self._profile_context = profile_context
+
         self._all_rows = rows
         self._rows_by_key = {_row_key(row): row for row in rows}
         # UX batch item 11: computed ONCE from the full (unfiltered) batch
@@ -628,6 +673,32 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         self.query_one("#mcp-perm-preview", Static).update(f"{echo}{preview}" if echo else preview)
         legend_text = f"{_LEGEND_TEXT}\n{gate_breadcrumb}" if gate_breadcrumb else _LEGEND_TEXT
         self.query_one("#mcp-perm-legend", Static).update(legend_text)
+
+    def update_tool_policy_profiles(
+        self,
+        profiles: list[ToolPolicyProfileOption],
+        *,
+        selected_id: str,
+    ) -> None:
+        """Render local policy profiles without interpreting untrusted labels."""
+        selector = self.query_one("#mcp-perm-tool-profile", Select)
+        options = [
+            (
+                Text(
+                    f"{item.profile_id} · {item.origin}"
+                    + (" · unavailable" if not item.available else "")
+                ),
+                item.profile_id,
+            )
+            for item in profiles
+        ]
+        self._profile_select_sync = True
+        try:
+            selector.set_options(options)
+            with selector.prevent(Select.Changed):
+                selector.value = selected_id
+        finally:
+            self._profile_select_sync = False
 
     def _apply_filter(self) -> None:
         """Re-render the matrix table from `self._all_rows` under the
@@ -819,6 +890,14 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         self._filter_text = event.value
         self._apply_filter()
 
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id != "mcp-perm-tool-profile" or self._profile_select_sync:
+            return
+        event.stop()
+        if event.value is Select.BLANK:
+            return
+        self.post_message(self.ToolPolicyProfileSelected(str(event.value)))
+
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """T7: resolve the selected row back to the `PermRow` it renders
         (via the row-key map `update_matrix()` last built) and post
@@ -831,7 +910,11 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         row = self._rows_by_key.get(str(event.row_key.value))
         if row is None:
             return
-        self.post_message(self.RowSelected(row.kind, row.server_key, row.tool_name))
+        self.post_message(
+            self.RowSelected(
+                row.kind, row.server_key, row.tool_name, self._profile_context
+            )
+        )
 
     def select_tool_row(self, server_key: str, tool_name: str) -> bool:
         """Move the matrix cursor to the given tool's row for an external
@@ -913,5 +996,6 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
                 server_key=row.server_key,
                 tool_name=row.tool_name,
                 new_state=new_state,
+                profile_context=self._profile_context,
             )
         )
