@@ -16,7 +16,7 @@ restatement of it.
 
 ## 1. The per-subsystem PR series
 
-Each of the eleven subsystems below (see §7) ships as a small series of
+Each of the eleven subsystems below (see §8) ships as a small series of
 pure-move PRs, always in this order:
 
 1. **State PR** — a `Library<Subsystem>State` dataclass in
@@ -95,7 +95,8 @@ OTHER_SUBSYSTEM = ("_library_notes","_library_media","_library_prompt","_library
 for f in sorted(conv_fields):
     users = [m.name for m in methods if m.name != "__init__" and f in set(attrs(m))]
     non_conv = [u for u in users if "conversation" not in u]
-    print(f"{f}: non-conversation users={non_conv or 'NONE'}")
+    tagged = [f"{u} ({next((p.lstrip('_') for p in OTHER_SUBSYSTEM if p in u), 'shell/plumbing')})" for u in non_conv]
+    print(f"{f}: non-conversation users={tagged or 'NONE'}")
 PY
 ```
 
@@ -220,7 +221,59 @@ wave 3 landed red twice from stale-base numbers before this rule was
 adopted — see that file's own module docstring for the incident this
 mechanism exists to prevent.
 
-## 7. Subsystem order (spec, "Order of work")
+## 7. Sweep evidence — xdist + paired baseline, not the literal CI command
+
+The full regression net for a Library change is `Tests/UI -k "library"`
+(4,200+ tests). **The literal single-process command,
+`.venv/bin/python -m pytest Tests/UI -k "library" -p no:randomly -q`, is
+CI's job, not this recipe's per-task evidence requirement** — a
+single-process attempt of the full sweep runs for roughly an hour or more
+(observed: ~59 minutes before hitting a session's own time budget, still
+genuinely executing the whole way per stack-sample profiling, not hung).
+Waiting on that per task makes the recipe unusable for the fast, frequent
+PRs this plan calls for.
+
+**The accepted per-task evidence is an xdist sweep paired with a
+pristine-baseline comparison**, run at execution time:
+
+```bash
+.venv/bin/python -m pytest Tests/UI -k "library" -p no:randomly -q -n 8 --dist worksteal
+```
+
+(the exact invocation used for PR 0a's Task 1 evidence; `-n 8 --dist
+worksteal` is already available in the worktree venv). Procedure:
+
+1. Run that command on your branch; capture the pass/fail counts and the
+   set of failing test names.
+2. Run the **identical** command against the pristine merge base (e.g.
+   `git stash -u` back to a clean tree at the base commit, or check out
+   `origin/dev` in a scratch worktree) — same `-n`/`--dist` config, so any
+   parallelization-only flakiness is present in both runs equally.
+3. Diff the two failure-name sets. `pytest-xdist` itself introduces
+   real, non-deterministic ordering/parallelization flakiness in this
+   suite (CSS-geometry and terminal-size-sensitive Pilot tests are not
+   uniformly safe under heavy parallel load) — expect a handful of tests to
+   flip in *both* directions between any two xdist runs, baseline included.
+   **Only failures unique to your branch's run (absent from the baseline
+   run) count against the task.** A failure present in both runs, or only
+   in the baseline run, is pre-existing or run-to-run noise, not evidence
+   of a regression.
+4. For each failure unique to your branch, re-run it directly,
+   single-process, in isolation and combined with the other unique
+   failures, before concluding it is a real regression rather than
+   xdist-specific ordering/shared-state flakiness that happened to land on
+   your branch's run and not the baseline's.
+
+This is the same technique and the same command PR 0a's Task 1 used to
+surface and confirm a real, deterministic regression (7 tests, 100%
+reproducible in every combination) against a backdrop of ~330+ ordinary
+xdist-noise failures neither run's raw pass/fail count could have
+distinguished on its own. Report both counts and the diffed unique-failure
+list as the task's evidence; a CI run of the literal single-process command
+remains the authoritative confirmation once time permits, but is not
+required per-task.
+
+## 8. Subsystem order (spec, "Order of work")
 
 Sequenced cold-to-hot so the conversations exemplar never fights rebases,
 and hot subsystems migrate in short, fast series once the recipe above is
@@ -251,11 +304,11 @@ behaviour-changing series per subsystem, gated on that subsystem's phase-A
 series being fully landed including cleanup, dense mounted coverage, and a
 concrete motivating change. **First motivated candidates: media and
 notes**, motivated by the measured 139–380 ms rail-mode-switch main-thread
-freeze (§8's probe is that fix's before/after acceptance evidence). See the
+freeze (§9's probe is that fix's before/after acceptance evidence). See the
 spec's "Phase C — region ownership" section; out of scope for this recipe's
 pure-move PRs.
 
-## 8. Probe usage — before/after evidence
+## 9. Probe usage — before/after evidence
 
 `Helper_Scripts/library_click_probe.py` boots the real `LibraryScreen`
 headless, clicks through the rail modes, and reports per-click settle time,
@@ -277,7 +330,7 @@ A pure move changing *where* code lives must not change the click-latency
 numbers; a checkpoint that drifts is a signal the move was not pure and is
 grounds to stop and investigate before merging, not to update the recipe.
 
-## 9. `.git-blame-ignore-revs` — one-time setup and the per-PR rule
+## 10. `.git-blame-ignore-revs` — one-time setup and the per-PR rule
 
 Every pure-move commit's hash is appended to `.git-blame-ignore-revs`, in
 the **same PR** that makes the move, so `git blame` keeps resolving lines to
