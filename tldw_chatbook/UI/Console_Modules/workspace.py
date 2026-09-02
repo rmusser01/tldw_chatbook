@@ -2629,42 +2629,14 @@ class ConsoleWorkspaceController:
                 rows.append(self._apply_console_browser_star_state(row, starred_ids))
         return rows
 
-    async def _load_flat_conversation_history_rows(
-        self,
-        current_conversation_id: str | None = None,
-    ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
-        """Load complete Default/unassigned history for one Ctrl+K open."""
-
-        rows: tuple[ConsoleConversationBrowserInputRow, ...] = ()
-        for scope in (
-            ("global", None),
-            ("workspace", DEFAULT_WORKSPACE_ID),
-        ):
-            offset = 0
-            while True:
-                page, total, error = await self._persisted_console_browser_rows(
-                    current_conversation_id=current_conversation_id,
-                    scopes=(scope,),
-                    offset=offset,
-                )
-                if error:
-                    break
-                rows = self._merge_console_browser_rows(rows, page)
-                offset += CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT
-                if not page or total is None or offset >= total:
-                    break
-        return rows
-
     def _console_switcher_authority(self) -> tuple[str, str]:
         """Return stable production authority with a safe harness fallback."""
         runtime = getattr(self.app_instance, "console_runtime", None)
         profile = str(getattr(runtime, "profile_authority", "") or "").strip()
         token = str(getattr(runtime, "authority_token", "") or "").strip()
-        if profile and token:
-            return profile, token
         store = self._console_chat_store
         fallback = f"ephemeral:{id(store) if store is not None else id(self)}"
-        return fallback, fallback
+        return profile or fallback, token or fallback
 
     def console_session_switcher_active_entries(self) -> tuple[Any, ...]:
         """Return the immediate memory-only canonical Active projection."""
@@ -2875,46 +2847,6 @@ class ConsoleWorkspaceController:
             bounded_offset,
             bounded_limit,
             total,
-        )
-
-    async def console_session_switcher_rows(
-        self,
-    ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
-        """Return complete history plus live rows for the Ctrl+K switcher.
-
-        The complete membership scan happens only on this explicit action;
-        ordinary rail projection stays bounded to expanded/search/page state.
-        """
-
-        current_conversation_id = self._current_console_conversation_id()
-        native_rows = self._native_console_browser_rows(current_conversation_id)
-        membership_rows = self._membership_console_browser_rows(current_conversation_id)
-        persisted_rows = await self._load_flat_conversation_history_rows(
-            current_conversation_id
-        )
-        # Resolve ownership from weakest to strongest evidence. Persisted flat
-        # history supersedes stale session observations after a move out of a
-        # named workspace; complete registry membership remains authoritative
-        # when both services still expose the same conversation temporarily.
-        self._record_canonical_owner_rows(native_rows)
-        self._record_canonical_owner_rows(persisted_rows)
-        self._record_canonical_owner_rows(membership_rows)
-        named_rows = self._merge_console_browser_rows(
-            self._workspace_tree_search.rows,
-            self._workspace_tree_search.settled_rows,
-            *(attempt.rows for attempt in self._workspace_page_attempts.values()),
-            *self._workspace_membership_rows.values(),
-        )
-        rows = self._merge_console_browser_rows(
-            native_rows,
-            membership_rows,
-            named_rows,
-            persisted_rows,
-        )
-        rows = self._rows_with_latest_canonical_owner(rows)
-        return self._overlay_current_console_browser_markers(
-            rows,
-            current_conversation_id=current_conversation_id,
         )
 
     def _console_browser_unseen_marker(self, conversation_id: str | None) -> str:
