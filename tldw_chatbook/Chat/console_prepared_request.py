@@ -493,12 +493,25 @@ class ConsoleRequestTokenAccounting:
     mandatory_tokens: int
     compactable_tokens: int
     active_request_tokens: int
+    # TASK-26019 (appended, defaulted -- legacy constructions unchanged):
+    # finer partitions of the same cumulative wire counts, for the context
+    # breakdown surface. tool_schema_tokens moved OUT of mandatory_tokens
+    # (see _account_categories); rag_context_tokens is a subset of
+    # mandatory_tokens, attributed only when request provenance exists
+    # (rag_attributed False = capture off, the split is unknowable);
+    # attachment_tokens is the per-image share inside the conversation
+    # buckets (compactable + active).
+    tool_schema_tokens: int = 0
+    rag_context_tokens: int = 0
+    rag_attributed: bool = False
+    attachment_tokens: int = 0
 
     @property
     def non_compactable_tokens(self) -> int:
         return (
             self.system_tokens
             + self.memory_tokens
+            + self.tool_schema_tokens
             + self.mandatory_tokens
             + self.active_request_tokens
         )
@@ -1363,6 +1376,16 @@ def _account_categories(
                 memory=semantic.memory,
                 active_request=empty_active,
             )
+        if owner == "tools":
+            # TASK-26019: tools enter the cumulative order HERE, between
+            # memory and mandatory, so the schema spend is its own delta
+            # instead of masquerading inside mandatory_tokens.
+            return PreparedConsoleRequest(
+                system=semantic.system,
+                memory=semantic.memory,
+                active_request=empty_active,
+                tools=semantic.tools,
+            )
         if owner == "mandatory":
             return PreparedConsoleRequest(
                 system=semantic.system,
@@ -1392,7 +1415,14 @@ def _account_categories(
             per_image_tokens=per_image_tokens,
             count_fn=count_fn,
         )
-        for owner in ("system", "memory", "mandatory", "compactable", "active")
+        for owner in (
+            "system",
+            "memory",
+            "tools",
+            "mandatory",
+            "compactable",
+            "active",
+        )
     ]
     # Remove the empty active-row baseline from every cumulative projection.
     baseline = _count_wire(
@@ -1404,10 +1434,68 @@ def _account_categories(
     )
     system = max(0, counts[0] - baseline)
     memory = max(0, counts[1] - counts[0])
-    mandatory = max(0, counts[2] - counts[1])
-    compactable = max(0, counts[3] - counts[2])
-    total = counts[4]
-    active = max(0, total - system - memory - mandatory - compactable)
+    tool_schema = max(0, counts[2] - counts[1])
+    mandatory = max(0, counts[3] - counts[2])
+    compactable = max(0, counts[4] - counts[3])
+    total = counts[5]
+    active = max(
+        0, total - system - memory - tool_schema - mandatory - compactable
+    )
+    # TASK-26019: RAG attribution inside mandatory, by the SAME cumulative
+    # construction -- only when request provenance labels the rows (capture
+    # on); without it the split is unknowable and stays explicitly
+    # unattributed (rag_attributed False).
+    rag_tokens = 0
+    rag_attributed = False
+    provenance = semantic.provenance
+    if (
+        provenance is not None
+        and semantic.mandatory
+        and len(provenance.mandatory) == len(semantic.mandatory)
+    ):
+        rag_rows = tuple(
+            row
+            for row, descriptor in zip(semantic.mandatory, provenance.mandatory)
+            if getattr(descriptor, "source", None)
+            is TraceProvenanceSource.RAG_CONTEXT
+        )
+        rag_attributed = True
+        if rag_rows and len(rag_rows) < len(semantic.mandatory):
+            through_rag = _count_wire(
+                PreparedConsoleRequest(
+                    system=semantic.system,
+                    memory=semantic.memory,
+                    mandatory=rag_rows,
+                    active_request=({"role": "user", "content": ""},),
+                    tools=semantic.tools,
+                ),
+                wire_style=wire_style,
+                model=model,
+                per_image_tokens=per_image_tokens,
+                count_fn=count_fn,
+            )
+            rag_tokens = min(mandatory, max(0, through_rag - counts[2]))
+        elif rag_rows:
+            rag_tokens = mandatory
+    # TASK-26019: the per-image share of the conversation buckets --
+    # deterministic (same rows, same per_image constant the counter
+    # charges), bounded by the buckets it lives inside.
+    conversation_rows = [
+        row for unit in semantic.compactable for row in unit.messages
+    ]
+    conversation_rows.extend(semantic.active_request)
+    conversation_rows.extend(semantic.active_tool_loop)
+    image_parts = sum(
+        1
+        for row in conversation_rows
+        # frozen semantics turn content lists into tuples -- accept both
+        if isinstance(row.get("content"), (list, tuple))
+        for part in row["content"]
+        if isinstance(part, Mapping) and part.get("type") != "text"
+    )
+    attachment_tokens = min(
+        per_image_tokens * image_parts, compactable + active
+    )
     return ConsoleRequestTokenAccounting(
         total_input_tokens=total,
         system_tokens=system,
@@ -1415,6 +1503,10 @@ def _account_categories(
         mandatory_tokens=mandatory,
         compactable_tokens=compactable,
         active_request_tokens=active,
+        tool_schema_tokens=tool_schema,
+        rag_context_tokens=rag_tokens,
+        rag_attributed=rag_attributed,
+        attachment_tokens=attachment_tokens,
     )
 
 

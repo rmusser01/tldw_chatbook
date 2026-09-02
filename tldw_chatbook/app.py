@@ -400,6 +400,7 @@ from .config import (
     persist_cli_config_for_shutdown,
     set_encryption_password,
     get_config_load_failure,
+    get_config_schema_conflict,
 )
 from .Event_Handlers import worker_events
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
@@ -7615,6 +7616,11 @@ class TldwCli(
         # (including the resolved data directory silently becoming the
         # `default_user` profile) had no visible signal at all.
         self._config_load_failure = get_config_load_failure()
+        # TASK-26040 (lane-7 review Important #3): snapshot a newer-than-
+        # supported config schema version the loader detected. Served
+        # untouched (never mangled by a downgrade); surfaced once mounted,
+        # mirroring the parse-failure notification above.
+        self._config_schema_conflict = get_config_schema_conflict()
         # RAG-53 (task-7): advisory per-profile instance lock. The profile
         # (and thus its data dir) is final as soon as config is loaded --
         # earliest sound point for this. Detection only: never blocks,
@@ -10164,6 +10170,11 @@ class TldwCli(
                 chachanotes_db_getter=lambda: getattr(self, "chachanotes_db", None),
                 dispatch_service=self.notification_dispatch_service,
                 notification_app_getter=lambda: self,
+                # TASK-26027: group repeat brief failures into one incident
+                # (the ScheduledTasks DB owns the durable state machine).
+                incident_recorder=getattr(
+                    self.scheduling_service, "db", None
+                ),
             )
 
         # task-19561: shutdown has to be able to reach the generations this
@@ -14554,6 +14565,27 @@ class TldwCli(
             timeout=60,
         )
 
+    def _maybe_warn_config_schema_conflict(self) -> None:
+        """Warn (never block) when the config is from a newer app version.
+
+        TASK-26040 AC#5: a config carrying a schema version newer than this
+        build understands is served untouched rather than migrated (a
+        downgrade could silently drop keys). This surfaces the detected
+        conflict once the UI is up so the user knows why newer settings may
+        not take effect, mirroring `_maybe_warn_config_load_failure`.
+        """
+        conflict = getattr(self, "_config_schema_conflict", None)
+        if not conflict:
+            return
+        self.notify(
+            f"Your configuration was written by a newer version of this "
+            f"application and was left unchanged (not migrated). Some newer "
+            f"settings may not take effect until you upgrade. {conflict}",
+            title="Config is from a newer version",
+            severity="warning",
+            timeout=60,
+        )
+
     def _maybe_warn_second_instance(self) -> None:
         """Warn (never block) when another instance already holds this profile.
 
@@ -15097,6 +15129,7 @@ class TldwCli(
             self._maybe_offer_project_skills_import()
         try:
             self._maybe_warn_config_load_failure()
+            self._maybe_warn_config_schema_conflict()
         except Exception as e:
             logger.error(
                 "Config load failure warning failed (error_type=%s)",
@@ -17973,12 +18006,26 @@ if __name__ == "__main__":
             exc_info=True,
         )
 
+    # TASK-26040: persist any pending forward config migration once at boot.
+    # A no-op (no lock, no file read) until a real migration is registered.
+    try:
+        from tldw_chatbook.config import migrate_config_file_if_needed
+        migrate_config_file_if_needed()
+    except Exception as e_cfg_migrate:
+        logging.error(
+            f"Config schema migration failed; the original file was left "
+            f"untouched: {e_cfg_migrate}",
+            exc_info=True,
+        )
+
     # --- Initialize Metrics Systems ---
     # Initialize Prometheus metrics server
     try:
-        # Start Prometheus metrics server on port 8000 (or configure via env/config)
-        metrics_port = int(os.environ.get("METRICS_PORT", "8000"))
-        init_metrics_server(port=metrics_port)
+        # Opt-in only: init_metrics_server checks [metrics] enabled before it
+        # binds anything, and resolves port/bind address itself (TASK-25914).
+        # It previously read METRICS_PORT here with a "8000" fallback, which
+        # meant the env default silently overrode a configured port.
+        init_metrics_server()
     except Exception as exc:
         loguru_logger.warning(
             "Prometheus metrics initialization failed (exception_type={}).",

@@ -85,11 +85,11 @@ from tldw_chatbook.Chat.console_trace_redaction import (
     redact_pii_value,
 )
 from tldw_chatbook.Chat.console_trace_models import TraceCallState
-from tldw_chatbook.Chat.console_trace_service import TraceCallPersistenceError
-from tldw_chatbook.Chat.console_trace_settlement import (
-    MAX_TRACE_RESPONSE_BYTES,
-    TraceResponseOmission,
+from tldw_chatbook.Chat.console_trace_errors import (  # ADR-097 boot ratchet
+    TraceCallPersistenceError,
 )
+# ADR-097 boot ratchet: console_trace_settlement (which pulls the semantic-
+# revision stack) is deferred; its two symbols load at their use sites.
 from tldw_chatbook.Chat.console_thinking_history import (
     ProviderThinkingSidecar,
     ThinkingReplayTarget,
@@ -159,7 +159,11 @@ INVALID_LLAMACPP_BASE_URL_COPY = (
 UNSUPPORTED_PROVIDER_RESPONSE_COPY = "Provider returned an unsupported response shape."
 NO_PROVIDER_CONTENT_COPY = "Provider returned no assistant content."
 MAX_TRACE_RESPONSE_ITEMS = 1_024
-_MAX_TRACE_ACCUMULATED_BYTES = MAX_TRACE_RESPONSE_BYTES - 262_144
+def _max_trace_accumulated_bytes() -> int:
+    """ADR-097 boot ratchet: settlement's cap constant, read on first use."""
+    from tldw_chatbook.Chat.console_trace_settlement import MAX_TRACE_RESPONSE_BYTES
+
+    return MAX_TRACE_RESPONSE_BYTES - 262_144
 _UNSUPPORTED_RESPONSE = object()
 _EMPTY_RESPONSE = object()
 _CUSTOM_CREDENTIAL_DECISION_PROVIDERS = frozenset(
@@ -1625,7 +1629,7 @@ class _TraceResponseAccumulator:
         item_bytes = _trace_response_item_bytes(item)
         if (
             item_bytes is None
-            or self._retained_bytes + item_bytes > _MAX_TRACE_ACCUMULATED_BYTES
+            or self._retained_bytes + item_bytes > _max_trace_accumulated_bytes()
         ):
             self._omit("response_accumulation_limit")
             return first_semantic
@@ -1676,6 +1680,9 @@ async def _settle_trace_response(
     response_omission: str | None = None,
     signals: ConsoleProviderCallSignals | None = None,
 ) -> None:
+    # ADR-097 boot ratchet: settlement loads on first trace settlement.
+    from tldw_chatbook.Chat.console_trace_settlement import TraceResponseOmission
+
     envelope = (
         TraceResponseOmission(response_omission)
         if response_omission is not None

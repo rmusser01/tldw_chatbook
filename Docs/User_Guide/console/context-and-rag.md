@@ -59,6 +59,75 @@ Where this page's controls live:
 
 ## Features & controls
 
+### Per-turn micro-compaction
+
+With compaction mode **Automatic**, setting `[console]
+micro_compaction_every_turns = N` amortizes compaction instead of paying one
+big summarize stall at the trigger ratio: every N completed turns, a
+background pass folds the **single oldest exchange** into the existing
+conversation memory — after the turn settles, never during a send, and it
+never blocks the composer. It uses the same planner, memory record, and
+provenance as ordinary automatic compaction; an exchange too small to be
+worth a summary call simply waits for a later tick. **Ask** mode is never
+bypassed (micro-compaction only runs in Automatic), and `0` (the default)
+turns the feature off entirely. Each fold rewrites the memory row, which
+breaks the provider prompt cache from that row onward — the cadence bounds
+that to 1 in N turns.
+
+### Upstream model catalog (models.dev)
+
+`[model_catalog] use_models_dev` lets the app fill in unknown models'
+context windows, vision support, and pricing from the upstream models.dev
+catalog — but only *beneath* the hand-maintained entries, so a deliberate
+local override always wins, and only as a gap-fill (an unknown model still
+refuses to fabricate a price). It is off by default; when on, the lookup
+path never touches the network (the catalog is fetched in the background
+with a conditional ETag request and disk-cached), and any figure sourced
+from models.dev is labeled as such so it is traceable.
+
+### Auxiliary model for side tasks
+
+`[chat_defaults] auxiliary_provider` / `auxiliary_model` route the Console's
+side-task LLM call — conversation compaction/summarization — to a cheaper
+model instead of your main chat model, so an expensive reasoning model
+isn't billed to summarize old turns. Both keys empty is today's behavior;
+model-only keeps your main provider; a cross-provider auxiliary must resolve
+ready or the side task silently falls back to the main model. The auxiliary
+model never handles a user-visible chat turn, and its usage is attributed
+separately in the compaction attempt ledger. (This covers manual `/rewind`
+summarize, "compact now", and per-turn micro-compaction; the automatic
+on-send compaction stays on the main model. Titling is deterministic and
+uses no model.)
+
+### Provider-native compaction (opt-in seam)
+
+`[console] compaction_native_delegation = true` lets compaction delegate the
+summary call to a provider's server-side compaction where the gateway
+advertises the capability — **no bridged provider does yet**, so today this
+is a forward seam: with it on, behavior is identical until a provider gains
+the capability. When native compaction does run, only the completion step is
+delegated — validation, admission, and the memory record are the local
+path's — the record's provenance carries a `compaction_engine:
+provider_native` marker so you can tell which path produced a summary, and
+any native failure falls back to the local summarizer call instead of
+failing the send.
+
+### Context breakdown by category
+
+The model popover's context block (Request / Conversation / Compaction rows)
+gains a **"Last request by category"** breakdown once a send has been
+prepared: System prompt, Tool schemas, Memory summary, Retrieved context
+(when trace capture is on — with capture off those tokens appear as an
+explicitly *unattributed* "Instructions & context" bucket rather than being
+silently folded into another category), Attachments, and Conversation. The
+figures are the request's own token accounting — the same cumulative counts
+that built the payload, never a separate estimate — so they always sum to
+the request total. Categories big enough to act on name their lever (e.g.
+Conversation → summarize older turns via `/rewind`; Attachments →
+`[agents] retire_stale_images`). Viewing the breakdown never triggers a
+model call, and an unverified model window keeps its "estimated" label.
+
+
 ### Reading long Context and Inspector sections
 
 Each open Context section keeps a complete reading body until it reaches its

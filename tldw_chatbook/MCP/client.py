@@ -23,6 +23,8 @@ from urllib.parse import urlsplit
 
 from loguru import logger
 
+# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (spawn_guard imports at the spawn-time check.)
+
 _MCP_PROTOCOL_VERSION = "2025-03-26"
 _REQUEST_TIMEOUT_SECONDS = 10.0
 _TERMINATE_TIMEOUT_SECONDS = 2.0
@@ -327,6 +329,9 @@ class _StdioJSONRPCConnection:
         client_name: str,
         request_timeout_seconds: float = _REQUEST_TIMEOUT_SECONDS,
         on_transport_failure: Optional[Callable[[], Awaitable[None]]] = None,
+        server_request_dispatcher: Optional[
+            Callable[[str, Dict[str, Any]], Awaitable[Any]]
+        ] = None,
     ) -> None:
         self.process = process
         self.client_name = client_name
@@ -337,11 +342,17 @@ class _StdioJSONRPCConnection:
 
         self._request_ids = count(1)
         self._pending_requests: Dict[int, asyncio.Future[Dict[str, Any]]] = {}
+        # TASK-26029/lane-6 I2: in-flight server-request handler tasks, run
+        # off the read loop so a slow completion can't stall frame draining.
+        self._dispatch_tasks: set[asyncio.Task[None]] = set()
         self._write_lock = asyncio.Lock()
         self._close_lock = asyncio.Lock()
         self._reader_unavailable = False
         self._cleanup_complete = False
         self._on_transport_failure = on_transport_failure
+        # TASK-26029: optional handler for server-initiated sampling/elicitation
+        # requests. When None, such requests get method-not-found as before.
+        self._server_request_dispatcher = server_request_dispatcher
         self._transport_cleanup_task: Optional[asyncio.Task[None]] = None
         self._read_task = asyncio.create_task(self._read_loop())
         self._stderr_task = (
@@ -607,6 +618,13 @@ class _StdioJSONRPCConnection:
                             logger.warning("Failed to reap MCP subprocess after kill")
 
             current_task = asyncio.current_task()
+            # getattr: helper-constructed doubles bypass __init__ (like the
+            # _transport_cleanup_task access elsewhere).
+            for dispatch_task in list(getattr(self, "_dispatch_tasks", ()) or ()):
+                dispatch_task.cancel()
+            dispatch_set = getattr(self, "_dispatch_tasks", None)
+            if dispatch_set is not None:
+                dispatch_set.clear()
             for task in (self._read_task, self._stderr_task):
                 if task is None or task is current_task:
                     continue
@@ -751,6 +769,32 @@ class _StdioJSONRPCConnection:
             )
             return
 
+        # TASK-26029: sampling/elicitation via the injected dispatcher. A
+        # dispatcher returns either a result mapping or a JsonRpcError; any
+        # exception becomes an internal-error response so the server never
+        # hangs waiting on a reply.
+        dispatcher = self._server_request_dispatcher
+        if dispatcher is not None:
+            params = payload.get("params")
+            if not isinstance(params, dict):
+                params = {}
+            # lane-6 review I2: a sampling completion can take seconds; run the
+            # handler as a tracked task so `_read_loop` keeps draining other
+            # frames (incl. this client's own in-flight request responses)
+            # instead of head-of-line blocking on it.
+            task = asyncio.create_task(
+                self._run_server_request_dispatch(
+                    request_id, method, params, dispatcher
+                )
+            )
+            dispatch_tasks = getattr(self, "_dispatch_tasks", None)
+            if dispatch_tasks is None:
+                dispatch_tasks = set()
+                self._dispatch_tasks = dispatch_tasks
+            dispatch_tasks.add(task)
+            task.add_done_callback(dispatch_tasks.discard)
+            return
+
         await self._send_message(
             {
                 "jsonrpc": "2.0",
@@ -761,6 +805,51 @@ class _StdioJSONRPCConnection:
                 },
             }
         )
+
+    async def _run_server_request_dispatch(
+        self,
+        request_id: Any,
+        method: str,
+        params: Dict[str, Any],
+        dispatcher: "Callable[[str, Dict[str, Any]], Awaitable[Any]]",
+    ) -> None:
+        """Run one server-initiated request handler and reply (lane-6 I2).
+
+        Runs off the read loop as its own task. A dispatcher returns either a
+        result mapping or a JsonRpcError; any exception becomes an internal
+        -32603 reply so the server never hangs. Its own reply write is
+        serialized by ``_send_message``'s write lock.
+        """
+        try:
+            try:
+                outcome = await dispatcher(method, params)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - must always reply
+                logger.opt(exception=True).warning(
+                    "MCP server request handler failed for {}", method
+                )
+                await self._send_message(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "error": {"code": -32603, "message": f"Internal error: {exc}"},
+                    }
+                )
+                return
+            error_payload = getattr(outcome, "to_payload", None)
+            if error_payload is not None and hasattr(outcome, "code"):
+                await self._send_message(
+                    {"jsonrpc": "2.0", "id": request_id, "error": outcome.to_payload()}
+                )
+            else:
+                await self._send_message(
+                    {"jsonrpc": "2.0", "id": request_id, "result": outcome}
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - a dead transport must not raise here
+            logger.debug("MCP could not reply to server request {}", method)
 
     def _handle_response(self, payload: Dict[str, Any]) -> None:
         request_id = payload.get("id")
@@ -809,6 +898,11 @@ class MCPClient:
         self.servers: Dict[str, Dict[str, Any]] = {}
         self._pending_connections: Dict[str, _PendingConnection] = {}
         self._connect_reservations: Dict[str, object] = {}
+        # TASK-26029: set by the app to enable server-initiated sampling/
+        # elicitation; None keeps the method-not-found behavior.
+        self._server_request_dispatcher: Optional[
+            Callable[[str, Dict[str, Any]], Awaitable[Any]]
+        ] = None
 
         logger.info("MCP Client '{}' initialized", name)
 
@@ -830,6 +924,19 @@ class MCPClient:
         Returns:
             True if connection successful
         """
+        # TASK-26013: the guard runs at SPAWN time too, so a config edited on
+        # disk to a dangerous shape cannot bypass the save-time check.
+        from tldw_chatbook.MCP.spawn_guard import screen_spawn_command  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+
+        spawn_verdict = screen_spawn_command(command, args)
+        if spawn_verdict is not None:
+            logger.error(
+                "MCP spawn refused for '{}': {} (rule: {})",
+                server_id,
+                spawn_verdict.reason,
+                spawn_verdict.rule,
+            )
+            return False
         if server_id in self._connect_reservations:
             logger.warning("MCP connection attempt already in progress")
             return False
@@ -884,7 +991,11 @@ class MCPClient:
                         server_id, session=session, pending=pending
                     )
 
-            session = _StdioJSONRPCConnection(process, client_name=self.name)
+            session = _StdioJSONRPCConnection(
+                process,
+                client_name=self.name,
+                server_request_dispatcher=self._server_request_dispatcher,
+            )
             pending.session = session
             session._on_transport_failure = cleanup_failed_transport
             initialize_timeout = _remaining(

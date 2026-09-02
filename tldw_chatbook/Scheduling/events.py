@@ -34,6 +34,14 @@ class EditTaskRequested(Message):
         self.task = task
 
 
+class AcknowledgeIncidentRequested(Message):
+    """TASK-26027: posted when the user acknowledges a failure incident."""
+
+    def __init__(self, incident_id: int) -> None:
+        super().__init__()
+        self.incident_id = incident_id
+
+
 class EnableTaskRequested(Message):
     """Posted when the user asks to enable a reminder."""
 

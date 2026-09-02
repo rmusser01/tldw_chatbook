@@ -22,6 +22,10 @@ class AuxiliaryAttemptStatus(str, Enum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     STALE = "stale"
+    # TASK-26016: the auxiliary call hit its wall-clock bound. Distinct from
+    # FAILED (a provider/model error) and CANCELLED (a user stop/teardown) so
+    # provenance can say WHY the summary is missing.
+    TIMED_OUT = "timed_out"
 
 
 class MemoryCoverageKind(str, Enum):
@@ -45,6 +49,7 @@ TERMINAL_AUXILIARY_ATTEMPT_STATUSES = frozenset(
         AuxiliaryAttemptStatus.FAILED,
         AuxiliaryAttemptStatus.CANCELLED,
         AuxiliaryAttemptStatus.STALE,
+        AuxiliaryAttemptStatus.TIMED_OUT,
     }
 )
 

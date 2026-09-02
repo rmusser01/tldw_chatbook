@@ -7,12 +7,15 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Coroutine, Optional
 
 from loguru import logger
 
 from tldw_chatbook.Metrics.metrics_logger import log_counter
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
+# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (emergency_stop imports at its read site.)
+# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (scheduler_heartbeat imports at its write site.)
 from tldw_chatbook.Scheduling.constants import (
     HANDLER_TIMEOUT_SECONDS,
     MISSED_FIRE_GRACE_SECONDS,
@@ -55,6 +58,15 @@ LATENESS_CAUSE_STALLED = "stalled"
 class SchedulerLoop:
     """Polls the scheduled-task database and dispatches due tasks."""
 
+    #: TASK-26026: task types that get a durable per-dispatch run ledger.
+    #: Watchlists already have their own (local_watchlist_runs); these two
+    #: are the handlers that lacked one.
+    _LEDGER_TASK_TYPES = frozenset({"reminder", "briefing_job"})
+
+    #: TASK-26028: hard bound on a handler's preflight check so it can
+    #: never wedge the loop (AC#6).
+    _PREFLIGHT_TIMEOUT_SECONDS = 10.0
+
     def __init__(
         self,
         db: Any,
@@ -67,10 +79,19 @@ class SchedulerLoop:
         expected_unhandled_types: frozenset[str] = frozenset(),
         missed_fire_grace_seconds: float = MISSED_FIRE_GRACE_SECONDS,
         handler_timeout_seconds: float | None = HANDLER_TIMEOUT_SECONDS,
+        heartbeat_path: Path | None = None,
+        emergency_stop_path: Path | None = None,
     ) -> None:
         self.db = db
         self.handlers = handlers
         self.poll_interval = poll_interval
+        # TASK-26025: durable liveness. None uses the default user-data
+        # path; injectable for tests. last_success/error persist across
+        # ticks so a stalled loop's last state is inspectable.
+        self._heartbeat_path = heartbeat_path
+        self._emergency_stop_path = emergency_stop_path
+        self._last_success_at: datetime | None = None
+        self._last_error: str | None = None
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.queue_reload_interval_ticks = queue_reload_interval_ticks
         #: Task types that are queued but deliberately have no handler. Declaring
@@ -280,6 +301,13 @@ class SchedulerLoop:
         try:
             await self._reload_queue()
             self.report_configuration()
+            # TASK-26026: before dispatching anything, fail any run rows left
+            # `running` by a prior process exit (AC#4) and prune history to
+            # its retention bound (AC#3). Runs before the poll loop starts,
+            # so no live run of THIS process can be wrongly failed -- no row
+            # boundary needed (unlike the watchlist sweep, which runs
+            # alongside live work). Never lets maintenance break startup.
+            await self._reconcile_and_prune_run_ledger()
             while self.running:
                 reload_event = self._reload_event
                 if reload_event is None:
@@ -334,15 +362,91 @@ class SchedulerLoop:
         handler cannot leave the previous tick's figure standing.
         """
         now = self.clock()
+        tick_error: str | None = None
         try:
             await self._dispatch_due(now)
+        except Exception as exc:  # noqa: BLE001 -- captured for the heartbeat
+            # TASK-26025 AC#3: the last error is RETAINED and surfaced, not
+            # only logged. Re-raised after recording so existing behavior
+            # (the run loop's own handling) is unchanged.
+            tick_error = f"{type(exc).__name__}: {exc}"[:500]
+            raise
         finally:
             self._last_tick_dispatch_seconds = max(
                 (self.clock() - now).total_seconds(), 0.0
             )
+            self._record_heartbeat(now, error=tick_error)
+
+    def _record_heartbeat(
+        self, tick_at: datetime, *, error: str | None
+    ) -> None:
+        """Persist one liveness snapshot (TASK-26025). Never raises."""
+        if error is None:
+            self._last_success_at = tick_at
+        else:
+            self._last_error = error
+        try:
+            from tldw_chatbook.Scheduling.scheduler_heartbeat import (  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+                SchedulerHeartbeat,
+                default_heartbeat_path,
+                write_heartbeat,
+            )
+
+            path = self._heartbeat_path or default_heartbeat_path()
+        except Exception:  # noqa: BLE001 -- resolution must not mask a tick error
+            return
+        write_heartbeat(
+            path,
+            SchedulerHeartbeat(
+                last_tick_at=tick_at,
+                last_success_at=self._last_success_at,
+                last_error=self._last_error,
+                poll_interval=self.poll_interval,
+                tick_count=self._tick_count,
+            ),
+        )
+
+    def _emergency_stopped(self) -> bool:
+        """Whether the global emergency stop holds new dispatches (26004)."""
+        # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+        from tldw_chatbook.emergency_stop import (
+            default_emergency_stop_path,
+            is_emergency_stopped,
+        )
+
+        path = getattr(self, "_emergency_stop_path", None) or (
+            default_emergency_stop_path()
+        )
+        return is_emergency_stopped(path)
+
+    async def _reconcile_and_prune_run_ledger(self) -> None:
+        """Startup maintenance for the TASK-26026 run ledger. Never raises."""
+        if not hasattr(self.db, "fail_interrupted_task_runs"):
+            return
+        try:
+            failed = await asyncio.to_thread(
+                self.db.fail_interrupted_task_runs, now=self.clock()
+            )
+            if failed:
+                logger.info(
+                    "run-ledger reconcile: failed {n} interrupted run(s)", n=failed
+                )
+            await asyncio.to_thread(self.db.prune_task_runs)
+        except Exception:  # noqa: BLE001 -- maintenance never breaks startup
+            logger.opt(exception=True).debug("run-ledger maintenance failed")
 
     async def _dispatch_due(self, now: datetime) -> None:
-        """Dispatch everything due at ``now`` (the tick's frozen clock)."""
+        """Dispatch everything due at ``now`` (the tick's frozen clock).
+
+        TASK-26004: the global emergency stop is checked BEFORE draining the
+        due queue, so a stop holds new dispatches without consuming them --
+        held tasks stay queued and fire when the stop clears (AC#1/#2/#6).
+        Fail-safe: an unreadable stop state reads as stopped, so a doubt
+        holds work rather than proceeding (AC#4).
+        """
+        if self._emergency_stopped():
+            logger.debug("scheduler: emergency stop active; holding due dispatches")
+            return
         due = self.queue.pop_due(now)
         for task in due:
             task_type = task.get("type", "reminder")
@@ -403,6 +507,28 @@ class SchedulerLoop:
         task_id = task.get("id")
         if scheduled:
             self._report_lateness_cause(task, task_type, now)
+        # TASK-26026: open a durable run row for ledgered types (excluding
+        # server-scoped rows, whose history is server-authoritative per
+        # ADR-077 -- AC#6). Never lets a ledger write break dispatch.
+        run_id = await self._begin_run_ledger(task, task_type, task_id, now)
+        # TASK-26028: a handler may declare a preflight that runs immediately
+        # before dispatch. A failed preflight is a DISTINCT, legible outcome
+        # (never runs the handler), records a grouped incident (told once per
+        # condition), and keeps the task visibly needing attention.
+        preflight_reason = await self._run_preflight(handler, task)
+        if preflight_reason is not None:
+            await self._finish_run_ledger(
+                run_id, "preflight_failed", now, error=preflight_reason
+            )
+            self._record_preflight_incident(task, task_type, task_id, preflight_reason)
+            # AC#3 (review minor #2): a failed preflight must NOT consume the
+            # occurrence -- calling mark_reminder_dispatched would disable a
+            # one_time reminder forever (enabled=False, next_run_at=None),
+            # hiding the very problem the preflight surfaced. The task stays
+            # due so it retries once the precondition is fixed; the grouped
+            # incident (recorded above) prevents notification spam. It never
+            # ran, so there is no dispatch to record on the task row.
+            return False
         timeout = self._effective_timeout_seconds(task)
         timed_out = False
         try:
@@ -423,11 +549,14 @@ class SchedulerLoop:
                 task_id=task_id,
                 timeout=timeout,
             )
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "{task_type} handler failed for task {task_id}",
                 task_type=task_type,
                 task_id=task_id,
+            )
+            await self._finish_run_ledger(
+                run_id, "failed", now, error=f"{type(exc).__name__}: {exc}"
             )
             if task_type == "reminder" and task_id:
                 await asyncio.to_thread(
@@ -439,6 +568,12 @@ class SchedulerLoop:
                 )
             return False
 
+        await self._finish_run_ledger(
+            run_id,
+            "timed_out" if timed_out else "completed",
+            now,
+            error="handler cancelled at execution deadline" if timed_out else None,
+        )
         if task_type == "reminder" and task_id:
             await asyncio.to_thread(
                 self.db.mark_reminder_dispatched,
@@ -449,6 +584,103 @@ class SchedulerLoop:
                 timed_out=timed_out,
             )
         return not timed_out
+
+    async def _begin_run_ledger(
+        self, task: dict[str, Any], task_type: str, task_id: Any, now: datetime
+    ) -> int | None:
+        """Open a run-ledger row for a ledgered, non-server-scoped task."""
+        if (
+            task_type not in self._LEDGER_TASK_TYPES
+            or not task_id
+            or is_server_scoped_owner(task.get("owner_id"))
+            or not hasattr(self.db, "begin_task_run")
+        ):
+            return None
+        try:
+            return await asyncio.to_thread(
+                self.db.begin_task_run, str(task_id), task_type, now
+            )
+        except Exception:  # noqa: BLE001 -- the ledger never breaks dispatch
+            logger.opt(exception=True).debug("run-ledger begin failed")
+            return None
+
+    async def _finish_run_ledger(
+        self, run_id: int | None, status: str, now: datetime, *, error: str | None
+    ) -> None:
+        """Close a run-ledger row with its terminal status."""
+        if run_id is None or not hasattr(self.db, "finish_task_run"):
+            return
+        try:
+            await asyncio.to_thread(
+                self.db.finish_task_run, run_id, status, now, error=error
+            )
+        except Exception:  # noqa: BLE001 -- the ledger never breaks dispatch
+            logger.opt(exception=True).debug("run-ledger finish failed")
+
+    async def _run_preflight(self, handler: Handler, task: dict[str, Any]):
+        """Run a handler's optional preflight; return a reason string on
+        failure, or None to proceed (TASK-26028).
+
+        Bounded so a preflight cannot itself wedge the loop (AC#6), and
+        never raises out -- a preflight that errors is treated as a
+        proceed, not a false block (the handler's own failure handling
+        then applies).
+        """
+        preflight = getattr(handler, "preflight", None)
+        if not callable(preflight):
+            return None
+        try:
+            if asyncio.iscoroutinefunction(preflight):
+                result = await asyncio.wait_for(
+                    preflight(task), timeout=self._PREFLIGHT_TIMEOUT_SECONDS
+                )
+            else:
+                # Qodo #6 (PR #2301): a SYNC preflight ran inline on the
+                # scheduler loop, so a blocking one wedged every dispatch and
+                # heartbeat and the timeout could never interrupt it. Run it
+                # off-loop under the same bound. (On timeout the worker
+                # thread finishes in the background; the loop proceeds.)
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(preflight, task),
+                    timeout=self._PREFLIGHT_TIMEOUT_SECONDS,
+                )
+                if asyncio.iscoroutine(result):
+                    # a non-async callable can still return a coroutine
+                    result = await asyncio.wait_for(
+                        result, timeout=self._PREFLIGHT_TIMEOUT_SECONDS
+                    )
+        except Exception:  # noqa: BLE001 -- a broken preflight never blocks dispatch
+            logger.opt(exception=True).debug("preflight check raised; proceeding")
+            return None
+        ok, reason = result if isinstance(result, tuple) else (bool(result), "")
+        if ok:
+            return None
+        return str(reason or "preflight check failed")
+
+    def _record_preflight_incident(
+        self, task: dict[str, Any], task_type: str, task_id: Any, reason: str
+    ) -> None:
+        """Record a grouped incident for a preflight failure (TASK-26028
+        AC#4, composing with TASK-26027). Never breaks dispatch."""
+        if (
+            not task_id
+            or is_server_scoped_owner(task.get("owner_id"))
+            or not hasattr(self.db, "record_task_failure")
+        ):
+            return
+        try:
+            from tldw_chatbook.Scheduling.task_incidents import (
+                normalize_error_signature,
+            )
+
+            self.db.record_task_failure(
+                str(task_id),
+                task_type,
+                normalize_error_signature(f"preflight: {reason}"),
+                self.clock(),
+            )
+        except Exception:  # noqa: BLE001 -- incident recording never breaks dispatch
+            logger.opt(exception=True).debug("preflight incident record failed")
 
     def _report_lateness_cause(
         self, task: dict[str, Any], task_type: str, now: datetime

@@ -3753,6 +3753,44 @@ def test_approve_for_session_is_not_re_prompted_next_turn():
 # ---------------------------------------------------------------------------
 
 
+def test_stuck_visible_copy_carries_the_budget_wrapup_summary():
+    """TASK-26001 review I-2: the wrap-up call at budget exhaustion is the one
+    model call the run paid for at the end -- the consumer used to drop its
+    output, so on non-streaming providers the summary was invisible."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_models import RUN_STUCK, STEP_ERROR
+
+    outcome = SimpleNamespace(
+        status=RUN_STUCK,
+        final_text="Summary: parsed 3 of 5 files; auth blocked the rest.",
+        steps=[
+            SimpleNamespace(kind=STEP_ERROR, summary="wall-clock budget exhausted")
+        ],
+    )
+
+    copy = ConsoleChatController._agent_failure_visible_copy(outcome)
+
+    assert "wall-clock budget exhausted" in copy
+    assert "parsed 3 of 5 files" in copy, "the wrap-up summary must be visible"
+
+
+def test_stuck_visible_copy_without_a_summary_is_unchanged():
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_models import RUN_STUCK, STEP_ERROR
+
+    outcome = SimpleNamespace(
+        status=RUN_STUCK,
+        final_text="",
+        steps=[SimpleNamespace(kind=STEP_ERROR, summary="step budget exhausted")],
+    )
+
+    copy = ConsoleChatController._agent_failure_visible_copy(outcome)
+
+    assert copy == "Agent run stuck: step budget exhausted."
+
+
 def test_agent_failure_visible_copy_avoids_double_lead_in_for_loop_guard():
     """Round 1 review (Minor): `agent_runtime`'s loop-guard summary already
     reads as a complete, user-facing sentence ("Agent stopped: ...") -- this
@@ -8855,3 +8893,34 @@ def test_empty_continuation_discard_reclaims_generation_runtime_owner(
     )
     assert store._generation_runtime_counts() == (0, 0, 0)
     db.close_connection()
+
+
+def test_wrapup_summary_suffix_dropped_when_the_row_already_streamed_it():
+    """Review A-2: streaming providers stream the wrap-up summary into the
+    row before the finalizer runs; the visible copy must not repeat it."""
+    copy = "Agent run stuck: wall-clock budget exhausted.\n\nSummary text here."
+
+    deduped = ConsoleChatController._without_duplicated_summary(
+        copy, "Summary text here.", "partial answer...\n\nSummary text here."
+    )
+
+    assert deduped == "Agent run stuck: wall-clock budget exhausted."
+
+
+def test_wrapup_summary_suffix_kept_for_non_streaming_rows():
+    copy = "Agent run stuck: wall-clock budget exhausted.\n\nSummary text here."
+
+    kept = ConsoleChatController._without_duplicated_summary(
+        copy, "Summary text here.", ""
+    )
+
+    assert kept == copy
+
+
+def test_empty_summary_never_alters_the_copy():
+    copy = "Agent run stuck: step budget exhausted."
+
+    assert (
+        ConsoleChatController._without_duplicated_summary(copy, "", "anything")
+        == copy
+    )

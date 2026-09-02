@@ -14,6 +14,8 @@ from pydantic import ValidationError as PydanticValidationError
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools.raw_cli_executor import (
+    RawCliHardlineViolation,
+    failure_hint,
     MAX_RAW_COMMAND_BYTES,
     MAX_RAW_TIMEOUT_SECONDS,
     RawCliRequest,
@@ -460,6 +462,14 @@ class RawShellToolProvider:
                 args,
                 invocation_id=current_tool_call_id() or f"raw-shell-{uuid4()}",
             )
+        except RawCliHardlineViolation as exc:
+            # TASK-25905 AC#4: the floor's refusal is ITS OWN thing -- it
+            # names the rule, states it is not a user denial, and no
+            # approval option (session grants included) can clear it.
+            return ToolResult.blocked(
+                f"{exc} — this is the built-in safety floor, "
+                "not a user denial; it cannot be approved or overridden"
+            )
         except (TypeError, ValueError, OSError) as exc:
             return ToolResult(ok=False, error=f"invalid shell_exec request: {exc}")
         stamp = self._pop_stamp(run_id, RAW_SHELL_TOOL_NAME)
@@ -536,6 +546,15 @@ class RawShellToolProvider:
             f"stdout:\n{result.stdout_preview or '(no output)'}\n"
             f"stderr:\n{result.stderr_preview or '(no output)'}"
         )[:_MAX_MODEL_RESULT_CHARS]
+        # TASK-26006: one labeled recovery line for known failure shapes,
+        # APPENDED after the untouched output -- never on success, never
+        # more than one, absent for unrecognized failures.
+        hint = failure_hint(
+            result.exit_code,
+            f"{result.stdout_preview}\n{result.stderr_preview}",
+        )
+        if hint is not None:
+            detail = f"{detail}\n{hint}"
         if result.terminal_state == "exited" and result.exit_code == 0:
             return ToolResult(ok=True, content=detail)
         if result.terminal_state == "timed_out":

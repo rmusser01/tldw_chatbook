@@ -18,7 +18,17 @@ from zoneinfo import ZoneInfo
 from croniter import croniter
 from loguru import logger
 
-from tldw_chatbook.Scheduling.automation_health import compute_local_health
+# ADR-097 boot ratchet: automation_health loads on first use. A thin module-
+# level proxy (not a plain deferred import) keeps `compute_local_health`
+# patchable as an attribute of THIS module -- Tests/Scheduling/test_run_now.py
+# stubs it here, and a function-local import would silently bypass the stub.
+def compute_local_health(app, row):
+    from tldw_chatbook.Scheduling.automation_health import (
+        compute_local_health as _impl,
+    )
+
+    return _impl(app, row)
+
 # ADR-097: automation_preview / automation_validation / schedule_compute are
 # imported function-level in the authoring facade below -- this module is
 # boot-resident and eager imports of the authoring stack breached the

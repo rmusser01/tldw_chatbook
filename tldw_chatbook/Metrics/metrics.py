@@ -23,9 +23,12 @@ of time series, overwhelming your Prometheus server.
 #
 # Imports
 import functools
+import os
 import threading
 import time
 import logging
+from typing import Any, Dict, Optional
+
 import psutil  #
 
 # Third-party Imports
@@ -242,24 +245,130 @@ def log_resource_usage(labels=None):
     )
 
 
-def init_metrics_server(port: int = 8000) -> bool:
-    """Start the Prometheus server and report whether it is available.
+#: Shipped defaults for the metrics listener. Disabled, and loopback-only when
+#: enabled -- ``prometheus_client.start_http_server`` defaults to ``0.0.0.0``,
+#: which we deliberately do not inherit.
+_METRICS_DEFAULT_ENABLED = False
+#: 9090 is the Prometheus convention. 8000 collided with ``[web_server] port``.
+_METRICS_DEFAULT_PORT = 9090
+_METRICS_DEFAULT_BIND_ADDRESS = "127.0.0.1"
+
+#: Addresses that keep the endpoint on this machine. Anything else is reachable
+#: from the network and is warned about loudly when the listener starts.
+_LOOPBACK_ADDRESSES = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def _get_cli_setting(section: str, key: str, default: Any) -> Any:
+    """Read one config value.
+
+    Indirection on purpose: it keeps the ``config`` import lazy (this module is
+    imported early) and lets tests exercise resolution without a config file on
+    disk.
+    """
+    from tldw_chatbook.config import get_cli_setting
+
+    return get_cli_setting(section, key, default)
+
+
+def _metrics_server_config() -> Dict[str, Any]:
+    """Resolve whether to listen, and where.
+
+    Every value fails CLOSED. ``bool("false")`` is ``True`` in Python, so a
+    quoted boolean -- a habit carried over from YAML and environment variables
+    -- would otherwise mean the user typed "off" and got an unauthenticated
+    listener. That is the same fail-open shape this module was fixed to remove,
+    so coercion goes through the shared config helpers rather than builtins.
+
+    ``METRICS_PORT`` continues to override the port because it predates this
+    function, but it does NOT enable the listener -- that is a config decision
+    (TASK-25914 AC#1). A junk env value falls back to the *configured* port
+    rather than discarding it.
+    """
+    from tldw_chatbook.config import coerce_bool_setting, coerce_int_setting
+
+    enabled = bool(
+        coerce_bool_setting(
+            _get_cli_setting("metrics", "enabled", _METRICS_DEFAULT_ENABLED),
+            _METRICS_DEFAULT_ENABLED,
+        )
+    )
+
+    configured_port = coerce_int_setting(
+        _get_cli_setting("metrics", "port", _METRICS_DEFAULT_PORT),
+        _METRICS_DEFAULT_PORT,
+        minimum=1,
+        maximum=65535,
+    )
+    env_port = os.environ.get("METRICS_PORT")
+    port = (
+        coerce_int_setting(env_port, configured_port, minimum=1, maximum=65535)
+        if env_port
+        else configured_port
+    )
+
+    # A non-string or empty address would be stringified into the socket layer:
+    # str(0) == "0", which getaddrinfo resolves to 0.0.0.0 -- all interfaces.
+    raw_address = _get_cli_setting(
+        "metrics", "bind_address", _METRICS_DEFAULT_BIND_ADDRESS
+    )
+    bind_address = (
+        raw_address.strip()
+        if isinstance(raw_address, str) and raw_address.strip()
+        else _METRICS_DEFAULT_BIND_ADDRESS
+    )
+
+    return {"enabled": enabled, "port": port, "bind_address": bind_address}
+
+
+def init_metrics_server(port: Optional[int] = None) -> bool:
+    """Start the Prometheus listener if the user has asked for one.
+
+    Binding a network socket is opt-in. Having ``prometheus_client`` installed
+    -- which the ``dev`` and ``debugging`` extras both do -- is not consent, so
+    the config gate is checked before anything is bound, and before the
+    availability check so that a missing dependency can never mask a broken
+    gate (TASK-25914).
 
     Args:
-        port: TCP port on which the metrics server should listen.
+        port: Overrides the configured port when given.
 
     Returns:
-        True when the server starts, or False when the optional Prometheus
-        dependency is unavailable.
+        True when a listener was started, False otherwise.
     """
-    if not PROMETHEUS_AVAILABLE:
-        logging.info(
-            "Prometheus metrics are unavailable. "
-            "Install tldw_chatbook[debugging] to enable them."
+    settings = _metrics_server_config()
+
+    if not settings["enabled"]:
+        logging.debug(
+            "Prometheus metrics listener disabled; set [metrics] enabled = true "
+            "to expose one. Metric collection is unaffected."
         )
         return False
-    start_http_server(port)
-    logging.info("Prometheus metrics server started on port %s", port)
+
+    if not PROMETHEUS_AVAILABLE:
+        logging.info(
+            "Prometheus metrics listener is enabled in config but the optional "
+            "dependency is missing. Install tldw_chatbook[debugging] to use it."
+        )
+        return False
+
+    bind_port = settings["port"] if port is None else port
+    bind_address = settings["bind_address"]
+
+    start_http_server(bind_port, addr=bind_address)
+
+    if bind_address in _LOOPBACK_ADDRESSES:
+        logging.info(
+            "Prometheus metrics listener started on %s:%s", bind_address, bind_port
+        )
+    else:
+        logging.warning(
+            "Prometheus metrics listener started on %s:%s -- this is NOT "
+            "loopback, so the unauthenticated metrics endpoint is reachable "
+            "from the network. Set [metrics] bind_address = \"127.0.0.1\" to "
+            "restrict it.",
+            bind_address,
+            bind_port,
+        )
     return True
 
 
@@ -283,7 +392,7 @@ def init_metrics_server(port: int = 8000) -> bool:
 #
 # def main():
 #     # Start the metrics server once at the beginning of your app
-#     init_metrics_server(port=8000)
+#     init_metrics_server()  # opt-in via [metrics] enabled
 #
 #     # Example usage
 #     user_id = 0

@@ -59,6 +59,10 @@ _FAST_DENY_TOOLTIP = "Deny and resume immediately (skips Select + Submit)."
 _DECISION_OPTIONS: list[tuple[str, str]] = [
     (_APPROVE_ONCE_LABEL, "approve_once"),
     ("Approve for session", "approve_session"),
+    # TASK-26012: persists an allow scoped to EXACTLY the arguments shown
+    # on this card (AC#3: the rule is created from what the user read);
+    # the same tool with different arguments still asks.
+    ("Always allow this exact input", "allow_matching"),
     ("Always allow", "always_allow"),
     (_DENY_LABEL, "deny"),
 ]

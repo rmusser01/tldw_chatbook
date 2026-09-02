@@ -3,7 +3,10 @@
 #
 # Imports
 import asyncio
+import faulthandler
 import logging
+import os
+import signal
 import sys
 import traceback
 from logging.handlers import RotatingFileHandler
@@ -456,6 +459,96 @@ def _forward_loguru_to_standard(message) -> None:
         std_logger.log(std_level, record["message"], extra=extra)
 
 
+#: Where faulthandler writes. Sits beside the private application log, and is
+#: treated with the same care: a dump contains live stack frames.
+CRASH_DUMP_FILENAME = "faulthandler.log"
+
+#: Dumps append, so an unattended process that keeps hitting the same fault
+#: could grow the file without bound. Reset at startup once past this ceiling.
+#: ponytail: truncate-at-startup, not real rotation -- a single oversized file
+#: is the only failure mode, and one previous crash is what anyone actually
+#: reads. Move to a generation scheme only if that proves insufficient.
+CRASH_DUMP_MAX_BYTES = 1_048_576
+
+#: Held open for the process lifetime: faulthandler writes to this descriptor
+#: from a signal/fault context, so it cannot be reopened lazily.
+_crash_dump_stream = None
+
+
+def enable_crash_forensics():
+    """Install faulthandler so a segfault or deadlock leaves evidence.
+
+    Writes to the private log directory rather than stderr, because a TUI owns
+    the screen and a dump printed there is lost with the alternate buffer. All
+    threads are included so a deadlock -- not just a crash -- is diagnosable,
+    and ``SIGUSR2`` dumps on demand from a process that is still hung.
+
+    Never raises: this is a diagnostic aid, and failing to install it must not
+    become a boot failure.
+
+    Returns:
+        The dump file path, or None when forensics could not be installed.
+    """
+    global _crash_dump_stream
+
+    if _crash_dump_stream is not None:
+        # `configure_application_logging` runs twice in a normal boot; the
+        # first install is the one that counts.
+        return None
+
+    stream = None
+    try:
+        log_directory = lexical_path(get_cli_log_file_path()).parent
+        secure_private_directory(log_directory, create=True, application_owned=True)
+        dump_path = log_directory / CRASH_DUMP_FILENAME
+
+        descriptor = os.open(
+            dump_path,
+            os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        stream = os.fdopen(descriptor, "ab", buffering=0)
+
+        # Bound the file through the descriptor we just opened, not by path.
+        # `os.truncate(path, 0)` follows symlinks, so a link planted at
+        # faulthandler.log would have had its TARGET truncated before the
+        # O_NOFOLLOW open refused it.
+        if os.fstat(stream.fileno()).st_size > CRASH_DUMP_MAX_BYTES:
+            os.ftruncate(stream.fileno(), 0)
+
+        faulthandler.enable(file=stream, all_threads=True)
+
+        # On-demand dump from a wedged process. Absent on Windows.
+        on_demand_signal = getattr(signal, "SIGUSR2", None)
+        if on_demand_signal is not None and hasattr(faulthandler, "register"):
+            try:
+                faulthandler.register(
+                    on_demand_signal, file=stream, all_threads=True, chain=False
+                )
+            except (OSError, RuntimeError, ValueError):
+                # Some embeddings disallow handler registration; the crash
+                # dump above is the part that matters.
+                pass
+
+        # Keep a reference so the descriptor outlives this frame.
+        _crash_dump_stream = stream
+        return dump_path
+    except Exception as exc:  # noqa: BLE001 -- must never break startup
+        if stream is not None:
+            # Otherwise the descriptor leaks on every failed attempt.
+            try:
+                stream.close()
+            except OSError:
+                pass
+        # Swallowing silently would make a misconfiguration invisible -- this
+        # branch hid a TypeError during development. Report the class only; the
+        # message could carry a path.
+        logging.debug(
+            "Crash forensics unavailable (exception_type=%s).", type(exc).__name__
+        )
+        return None
+
+
 def configure_application_logging(app_instance):
     """Sets up all logging handlers, including Loguru integration."""
     # FIXME - LOGGING MAY BRING BACK BLINKING
@@ -464,6 +557,9 @@ def configure_application_logging(app_instance):
     logging.getLogger().addHandler(temp_handler)
     # This first logging.info will go to the stderr handler from the initial basicConfig
     logging.info("--- _setup_logging START (from Logging_Config.py) ---")
+    # Install before the rest of setup: a crash during logging configuration is
+    # exactly the sort this is meant to catch (TASK-26037).
+    enable_crash_forensics()
     logging.getLogger("requests").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)

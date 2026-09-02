@@ -44,14 +44,11 @@ def _table_names(conn: sqlite3.Connection) -> set[str]:
 
 
 def test_migration_v0_to_v1(tmp_path):
-    # A fresh ScheduledTasksDB runs the full chain: v0 -> v1 -> v2 -> v3 -> v4
-    # (v2 = missed_count, task-18937; v3 = timeout_seconds, task-18939; v4 =
-    # automation runs/results, schedules-handoff §4). The individual hops
-    # are covered in test_missed_fire.py, test_handler_timeout.py, and this
-    # file's v4 tests; what this pins is that a fresh database reaches the
-    # current version end-to-end.
+    # Full chain: v0..v3 as before; v4 = automation runs/results
+    # (schedules-handoff §4, dev); v5 = scheduled_task_runs ledger
+    # (task-26026); v6 = task_incidents (task-26027).
     db = ScheduledTasksDB(tmp_path / "test.db")
-    assert db.get_schema_version() == 4
+    assert db.get_schema_version() == 6
 
 
 def test_migration_v0_to_v1_directly(tmp_path):
@@ -69,7 +66,10 @@ def test_migration_v0_to_v1_directly(tmp_path):
 
 def test_migration_v0_to_v1_to_v0_rollback(tmp_path):
     db = ScheduledTasksDB(tmp_path / "test.db")
-    assert db.get_schema_version() == 4
+    # Full chain: v0..v3 as before; v4 = automation runs/results
+    # (schedules-handoff §4, dev); v5 = scheduled_task_runs ledger
+    # (task-26026); v6 = task_incidents (task-26027).
+    assert db.get_schema_version() == 6
 
     v0_to_v1.rollback(db)
 
@@ -90,7 +90,7 @@ def test_v4_creates_runs_and_results_tables(tmp_path):
             )
         }
     assert {"automation_runs", "automation_results"} <= tables
-    assert db.get_schema_version() == 4
+    assert db.get_schema_version() == 6
 
 
 def test_v4_adds_definition_and_reminder_columns(tmp_path):
@@ -117,7 +117,7 @@ def test_v4_preserves_existing_rows_and_is_idempotent(tmp_path):
     migrate(db)  # second application must be a no-op
     row = db.get_reminder_task(task_id)
     assert row is not None and row["title"] == "keep me"
-    assert db.get_schema_version() == 4
+    assert db.get_schema_version() == 6
 
 
 def test_v4_migrate_then_rollback_round_trips_to_v3(tmp_path):
@@ -186,7 +186,7 @@ def test_warm_reopen_skips_migration_module_imports(tmp_path):
         sys.modules.pop(name)
 
     db2 = ScheduledTasksDB(path, client_id="t")  # warm reopen
-    assert db2.get_schema_version() == 4
+    assert db2.get_schema_version() == 6
     reimported = [m for m in sys.modules if m.startswith(prefix)]
     assert reimported == [], (
         "warm reopen re-imported migration modules despite the recorded "

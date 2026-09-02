@@ -24,7 +24,9 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     request_route_provenance,
     trace_provenance_admission_transaction,
 )
-from tldw_chatbook.Chat.console_trace_service import TraceCallPersistenceError
+from tldw_chatbook.Chat.console_trace_errors import (  # ADR-097 boot ratchet
+    TraceCallPersistenceError,
+)
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_prepared_request import PreparedConsoleRequest

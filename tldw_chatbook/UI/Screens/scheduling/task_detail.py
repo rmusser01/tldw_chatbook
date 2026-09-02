@@ -13,6 +13,7 @@ from textual.widgets import Button, Static
 from ....Scheduling.events import (
     DeleteTaskRequested,
     DisableTaskRequested,
+    AcknowledgeIncidentRequested,
     EditTaskRequested,
     EnableTaskRequested,
     RunReminderNowRequested,
@@ -184,6 +185,47 @@ def _format_last_run(task: ReminderTask | ScheduledTask | None) -> str:
     if task.last_run_at is None:
         return "Never run"
     return f"{task.last_run_at.strftime('%Y-%m-%d %H:%M')} {_format_timezone(task.last_run_at)}"
+
+
+def format_run_history(runs) -> str:
+    """TASK-26026: a compact multi-line run history, newest first.
+
+    ``runs`` is the ``list_task_runs`` shape (dicts with status/started_at/
+    error_msg). Empty/None reads as "No runs recorded yet" -- distinct from
+    a task that has a last_status but no ledger rows (a pre-ledger task).
+    """
+    if not runs:
+        return "No runs recorded yet"
+    lines = []
+    for run in runs[:8]:
+        started = str(run.get("started_at") or "?")[:16].replace("T", " ")
+        status = str(run.get("status") or "?")
+        error = run.get("error_msg")
+        suffix = f" — {str(error)[:80]}" if error else ""
+        lines.append(f"{started}  {status}{suffix}")
+    return "\n".join(lines)
+
+
+def format_incidents(incidents) -> str:
+    """TASK-26027: a compact incident list, newest first.
+
+    Shows only OPEN incidents (alerting/acknowledged) -- a closed incident
+    is resolved and not actionable. Empty reads as "No open incidents".
+    """
+    if not incidents:
+        return "No open incidents"
+    open_rows = [
+        row for row in incidents if str(row.get("status")) != "closed"
+    ]
+    if not open_rows:
+        return "No open incidents"
+    lines = []
+    for row in open_rows[:5]:
+        status = str(row.get("status") or "?")
+        count = row.get("occurrence_count") or 1
+        sig = str(row.get("signature") or "")[:80]
+        lines.append(f"[{status} ×{count}] {sig}")
+    return "\n".join(lines)
 
 
 def _humanize_cron(cron: str | None, timezone: str | None = None) -> str:
@@ -461,6 +503,25 @@ class TaskDetail(Vertical):
                 id="scheduling-task-detail-missed",
                 classes="scheduling-detail-missed",
             )
+            # TASK-26026: durable per-dispatch run history -- the whole
+            # point is that run N-1 is recoverable, not just the latest.
+            yield Static(
+                "Recent runs:", classes="scheduling-detail-label"
+            )
+            yield Static(
+                "No runs recorded yet",
+                id="scheduling-task-detail-run-history",
+                classes="scheduling-detail-value",
+            )
+            # TASK-26027: open failure incidents + an acknowledge action.
+            yield Static(
+                "Open incidents:", classes="scheduling-detail-label"
+            )
+            yield Static(
+                "No open incidents",
+                id="scheduling-task-detail-incidents",
+                classes="scheduling-detail-value",
+            )
             # task-23106: rows managed by other systems say so, and where
             # to edit them, instead of silently hiding the action row.
             yield Static(
@@ -474,6 +535,13 @@ class TaskDetail(Vertical):
                 id="scheduling-edit-task",
                 variant="primary",
                 tooltip="Edit this scheduled task.",
+            ),
+            Button(
+                "Acknowledge incident",
+                id="scheduling-ack-incident",
+                tooltip="Silence notifications for the current failure "
+                "incident until it recurs after a success. Does not disable "
+                "the task.",
             ),
             Button(
                 "Run now",
@@ -524,6 +592,7 @@ class TaskDetail(Vertical):
             "scheduling-enable-task",
             "scheduling-disable-task",
             "scheduling-delete-task",
+            "scheduling-ack-incident",
         }:
             event.stop()
         if button_id == "scheduling-edit-task":
@@ -536,6 +605,33 @@ class TaskDetail(Vertical):
             self._request_disable()
         elif button_id == "scheduling-delete-task":
             self.request_delete()
+        elif button_id == "scheduling-ack-incident":
+            self._request_acknowledge()
+
+    def _sync_acknowledge_button(self) -> None:
+        """Enable the acknowledge button only when an alerting incident exists."""
+        try:
+            button = self.query_one("#scheduling-ack-incident", Button)
+        except Exception:  # noqa: BLE001 -- absent before mount
+            return
+        incidents = getattr(self, "_current_incidents", []) or []
+        alerting = [
+            row for row in incidents if str(row.get("status")) == "alerting"
+        ]
+        button.disabled = not alerting
+        button.display = bool(alerting)
+
+    def _request_acknowledge(self) -> None:
+        """Post an acknowledge request for the newest alerting incident."""
+        incidents = getattr(self, "_current_incidents", []) or []
+        alerting = [
+            row for row in incidents if str(row.get("status")) == "alerting"
+        ]
+        if not alerting:
+            return
+        incident_id = alerting[0].get("id")
+        if incident_id is not None:
+            self.post_message(AcknowledgeIncidentRequested(int(incident_id)))
 
     def _request_edit(self) -> None:
         """Post an edit request for the current reminder."""
@@ -576,10 +672,16 @@ class TaskDetail(Vertical):
             self.post_message(DeleteTaskRequested(self._current_task))
 
     def set_task(
-        self, task: ReminderTask | ScheduledTask | None, *, queue_empty: bool = False
+        self,
+        task: ReminderTask | ScheduledTask | None,
+        *,
+        queue_empty: bool = False,
+        run_history=None,
+        incidents=None,
     ) -> None:
         """Update the detail view for the given task (or clear it)."""
         self._current_task = task
+        self._current_incidents = list(incidents or [])
         metadata = self.query_one("#scheduling-task-detail-metadata", Vertical)
         lifecycle = self.query_one("#scheduling-task-detail-lifecycle", Horizontal)
         self.query_one("#schedules-follow-in-console", Button)
@@ -657,6 +759,13 @@ class TaskDetail(Vertical):
         )
         self._update_static("scheduling-task-detail-next-run", _format_next_run(task))
         self._update_missed_notice(task)
+        self._update_static(
+            "scheduling-task-detail-run-history", format_run_history(run_history)
+        )
+        self._update_static(
+            "scheduling-task-detail-incidents", format_incidents(incidents)
+        )
+        self._sync_acknowledge_button()
 
         status = _task_status(task)
         badge = self.query_one("#scheduling-task-status-badge", Static)

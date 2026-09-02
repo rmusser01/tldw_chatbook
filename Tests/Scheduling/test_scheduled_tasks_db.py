@@ -38,9 +38,10 @@ def test_get_scheduled_tasks_db_path_returns_path():
 
 def test_get_schema_version(db: ScheduledTasksDB) -> None:
     # v2 added missed_count (task-18937); v3 adds timeout_seconds
-    # (task-18939); v4 adds automation runs/results (schedules-handoff
-    # §4).
-    assert db.get_schema_version() == 4
+    # Full chain: v0..v3 as before; v4 = automation runs/results
+    # (schedules-handoff §4, dev); v5 = scheduled_task_runs ledger
+    # (task-26026); v6 = task_incidents (task-26027).
+    assert db.get_schema_version() == 6
 
 
 def test_create_and_get_reminder_task(db: ScheduledTasksDB) -> None:

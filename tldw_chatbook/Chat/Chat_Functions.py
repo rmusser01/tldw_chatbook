@@ -1178,14 +1178,30 @@ def chat_api_call(
                 message=f"Authentication failed for {endpoint_lower}. Check API key. Detail: {error_text[:200]}",
             )
         elif status_code == 429:
+            # TASK-25901 AC#2: carry the provider's own Retry-After when it is
+            # a usable number of seconds; the retry backoff honours it.
+            retry_after_header = None
+            try:
+                raw_retry_after = getattr(e.response, "headers", {}).get(
+                    "Retry-After"
+                )
+                if raw_retry_after is not None:
+                    retry_after_header = float(str(raw_retry_after).strip())
+            except (TypeError, ValueError):
+                retry_after_header = None
             raise ChatRateLimitError(
                 provider=endpoint_lower,
                 message=f"Rate limit exceeded for {endpoint_lower}. Detail: {error_text[:200]}",
+                retry_after=retry_after_header,
             )
         elif 400 <= status_code < 500:
+            # Carry the REAL status: 402/403 mean the money or quota is gone,
+            # which the fallback chain treats differently from a malformed
+            # request (TASK-25902 review C3c). Type unchanged for catchers.
             raise ChatBadRequestError(
                 provider=endpoint_lower,
                 message=f"Bad request to {endpoint_lower} (Status {status_code}). Detail: {error_text[:200]}",
+                status_code=status_code,
             )
         elif 500 <= status_code < 600:
             raise ChatProviderError(

@@ -556,6 +556,12 @@ def test_corrupt_scope_and_selection_rows_decode_as_ineligible() -> None:
         (AuxiliaryAttemptStatus.FAILED, None),
         (AuxiliaryAttemptStatus.CANCELLED, None),
         (AuxiliaryAttemptStatus.STALE, None),
+        # TASK-26016 review Critical: TIMED_OUT existed only in the enum --
+        # the real table's CHECK rejected it, so every actual timeout raised
+        # IntegrityError mid-handler instead of finishing the ledger. The
+        # compaction suite's **kwargs fake hid it; THIS parametrization is
+        # the real-DB guard.
+        (AuxiliaryAttemptStatus.TIMED_OUT, None),
     ],
 )
 def test_auxiliary_attempt_ledger_accepts_usage_but_no_content_fields(

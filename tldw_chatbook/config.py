@@ -5,18 +5,21 @@ from __future__ import annotations
 
 # Imports
 import copy
+import shutil
 from contextlib import ExitStack, contextmanager
 import importlib.util
 import json
 import sys
+import difflib
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 if sys.version_info < (3, 11):
     import tomli as tomllib
 else:
     import tomllib
 import os
+import time
 from pathlib import Path
 import toml
 import portalocker
@@ -30,6 +33,7 @@ from typing import (
     Mapping,
     NamedTuple,
     Optional,
+    Sequence,
     TYPE_CHECKING,
     Iterator,
 )
@@ -851,6 +855,20 @@ MIN_CONSOLE_AGENT_MAX_TOTAL_TOKENS = 0
 #: really executes on its abandoned thread -- see
 #: `RunBudget.max_tool_call_seconds`.
 DEFAULT_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS = 3600.0
+#: TASK-25901: transient model failures (429, 5xx, dropped connection) retried
+#: inside the loop before a run gives up. Two rides out a brief blip without
+#: keeping a user waiting on a provider that is genuinely down; 0 restores the
+#: pre-retry behaviour of ending the run on the first failure. Terminal errors
+#: (auth, bad request, config) are never retried at any setting.
+DEFAULT_CONSOLE_AGENT_MAX_MODEL_RETRIES = 2
+MIN_CONSOLE_AGENT_MAX_MODEL_RETRIES = 0
+
+#: TASK-26001: fraction of any budget dimension at which the running agent is
+#: told once to wrap up. Clamped to [0.0, 1.0]; 1.0 effectively disables the
+#: warning (exhaustion arrives with it).
+DEFAULT_CONSOLE_AGENT_BUDGET_WARNING_FRACTION = 0.8
+MIN_CONSOLE_AGENT_BUDGET_WARNING_FRACTION = 0.0
+
 MIN_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS = 0.0
 
 # Ephemeral side chat (Console selection menu): the default prompt template
@@ -3185,6 +3203,7 @@ LOCAL_PROVIDERS = {
 CONFIG_TOML_CONTENT = """
 # Configuration for tldw-chatbook TUI App
 # Located at: ~/.config/tldw_cli/config.toml
+config_schema_version = 1  # TASK-26040: config schema version; migrated forward on load
 [general]
 default_tab = "chat"  # "chat", "character", "logs", "media", "search", "ingest", "stats"
 focus_mode = false  # Start the Console chrome-free (no nav bar / workbench header; one-line status bar kept)
@@ -3227,6 +3246,9 @@ compaction_representation = "text_summary"  # text_summary, visual_transcript, h
 compaction_trigger_ratio = 0.80
 compaction_target_ratio = 0.55
 compaction_summary_max_tokens = 1024
+compaction_auxiliary_timeout_seconds = 120  # wall-clock bound on the summarizer call; invalid/<=0 falls back to 120
+compaction_native_delegation = false     # TASK-26021: delegate compaction to a provider's server-side compact where the gateway advertises it (no bridged provider does yet); any failure falls back to the local summarizer call
+micro_compaction_every_turns = 0         # TASK-25910: in AUTOMATIC mode, fold the oldest exchange into memory every N completed turns (0 = off; bounds prompt-cache breaks to 1/N of turns)
 compaction_failure_behavior = "stop_and_ask"  # stop_and_ask, omit_older_context
 compaction_carry_forward_mode = "memory_with_recent_turns"  # memory_with_recent_turns, memory_with_latest_exchange
 # Confinement root for the fs_*/git_* agent tools (ADR-032). Empty = the app's
@@ -3387,6 +3409,19 @@ items_width = 40
 # caller-supplied native Anthropic tool dicts already carrying cache_control
 # still pass through verbatim.
 anthropic_enabled = true
+# TASK-26014: cache TTL tier -- "5m" (default) or "1h". 1h keeps the prefix
+# cached across a coffee break so a returning conversation is not re-billed
+# the 1.25x write premium, but a 1h write bills ~2x vs 5m's 1.25x, so it
+# wins only when gaps routinely exceed 5 minutes. Unsupported models and any
+# unrecognized value fall back to 5m silently; the kill switch above
+# disables this along with everything else.
+cache_ttl = "5m"
+# TASK-26015: send OpenAI/Codex a stable prompt_cache_key derived from the
+# conversation's stable prefix (system prompt + tools) so the provider can
+# route repeated prefixes to the same implicit-cache node. It is a digest,
+# never content; unknown to providers that ignore it (harmless). OFF by
+# default = today's request shape exactly.
+openai_cache_key = false
 
 [agents]
 # Sub-agent fleet knobs. Every key here is COMMENTED OUT on purpose: the
@@ -3410,6 +3445,22 @@ anthropic_enabled = true
 # between the child's own steps, so it does not interrupt a provider call
 # already in flight.
 # child_max_wall_seconds = 1800.0
+#
+# TASK-25911: deterministic stale tool-result pruning on the agent send
+# payload -- big old tool outputs shrink to a bounded head plus a note,
+# with no LLM call. OFF by default; the thresholds below are the shipped
+# defaults when enabled. min_reclaim keeps prompt-cache breaks episodic.
+# prune_stale_tool_results = false
+# prune_keep_recent_turns = 4   # counts ROUNDS at the agent seam (one model call + its results), not conversational turns
+# prune_min_result_chars = 4000
+# prune_head_chars = 1000
+# prune_min_reclaim_chars = 8000
+#
+# TASK-25912: replace image payloads in OLDER turns of the agent send
+# payload with text placeholders (~1600 tokens back per image). The
+# stored conversation is untouched. OFF by default.
+# retire_stale_images = false
+# retire_images_keep_recent_turns = 4
 #
 # Whether a background sub-agent finishing after its turn WAKES its
 # supervisor so it can act on the result (an injected, clearly machine-
@@ -3471,6 +3522,19 @@ file_log_level = "INFO" # File Log Level: DEBUG, INFO, WARNING, ERROR, CRITICAL
 log_max_bytes = 10485760 # 10 MB
 log_backup_count = 5
 
+[metrics]
+# Prometheus metrics listener. OFF by default: having the optional
+# `prometheus_client` dependency installed (the `dev` and `debugging` extras
+# both pull it in) is not consent to open a network socket.
+# Metric collection itself is unaffected by this setting -- it only controls
+# whether an HTTP endpoint is exposed for scraping.
+enabled = false
+# Bind address. Loopback by default; prometheus_client's own default is
+# 0.0.0.0, which would expose the endpoint to your whole network.
+bind_address = "127.0.0.1"
+# 9090 is the Prometheus convention. 8000 is already taken by [web_server].
+port = 9090
+
 [database]
 # scheduled_tasks_db_path = "/custom/path.db"  # optional override
 # tts_profiles_db_path = "/custom/path.db"  # optional override
@@ -3500,6 +3564,21 @@ USER_DB_BASE_DIR = "~/.local/share/tldw_cli/"
 # Database integrity checking
 check_integrity_on_startup = false  # Enable/disable automatic integrity checks on startup
 integrity_check_timeout = 30  # Maximum seconds to wait for integrity check
+
+[webhooks]
+# TASK-26031: outbound signed webhooks for agent run lifecycle events. OFF by
+# default -- with no url configured, no request is ever made. Payloads carry
+# identifiers + an outcome category only (never message content, tool args, or
+# credentials) and are signed X-Tldw-Signature: sha256=HMAC-SHA256(secret,body).
+# The destination is subject to the SSRF egress policy ([web_security]): a
+# localhost/LAN url (e.g. a local dashboard) is blocked by default and needs
+# its host added to [web_security] allowed_hosts to be delivered to.
+enabled = false
+url = ""            # e.g. "https://your-dashboard.example/hooks/tldw"
+secret = ""         # shared secret the receiver uses to verify the signature
+# Which lifecycle events to POST. Omit to subscribe to all supported events.
+events = ["completed", "failed"]
+timeout_seconds = 5.0   # bounded; a slow/dead endpoint never delays the run
 
 [scheduling]
 # Background sync and scheduler defaults for the scheduling module.
@@ -3609,6 +3688,14 @@ local_transformers = ["None"]
 local_mlx_lm = ["None"]
 
 [model_catalog]
+# TASK-26023: use the upstream models.dev catalog as a LOWER-priority
+# gap-fill for model context windows, vision flags, and pricing -- BENEATH
+# your hand-maintained entries, so a local override always wins. Off by
+# default (offline/today unchanged, no fabricated prices). When on, the
+# lookup path never touches the network: fetching is explicit/background and
+# disk-cached with a conditional (ETag) GET. A displayed models.dev figure
+# is labeled with source "models.dev" so it is traceable.
+use_models_dev = false
 # Automatic model-list refresh for cloud providers (ADR-020).
 auto_refresh_enabled = true
 # The startup check is confirm-first: nothing is contacted online until the
@@ -4031,6 +4118,16 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
 
 [chat_defaults]
 rag_auto_retrieve_on_send = false  # New Console chats do not search Library automatically
+# TASK-26024: route Console SIDE tasks (compaction/summarization -- titling
+# here is deterministic, no model) to a cheaper auxiliary model. Both keys
+# empty = today's behavior (side tasks use the main chat model). Model-only
+# keeps the main provider; a cross-provider auxiliary must resolve ready or
+# the side task silently falls back to the main model. The auxiliary NEVER
+# handles a user-visible chat turn. (The auto-on-send compaction stays on
+# the main model; this routes manual /rewind summarize, "compact now", and
+# per-turn micro-compaction.)
+# auxiliary_provider = ""
+# auxiliary_model = ""
 # Default settings specifically for the 'Chat' tab
 user_display_name = "User"
 provider = "OpenAI"
@@ -5070,6 +5167,18 @@ except tomllib.TOMLDecodeError as e:
 # --- Primary Configuration Loading Logic for the CLI ---
 _CONFIG_CACHE: Optional[Dict[str, Any]] = None
 _CONFIG_CACHE_SOURCE: Optional[Path] = None
+#: TASK-26038: (mtime_ns, size) of the config file at its last successful
+#: load, and the last monotonic time we statted it. A THROTTLED inline
+#: metadata check on the read path picks up external edits without a
+#: filesystem watcher or a polling thread, while keeping TASK-21124's
+#: near-zero hot path (one stat per throttle window, not per read).
+_CONFIG_FILE_STAMP: Optional[tuple[int, int]] = None
+_CONFIG_STAT_CHECKED_MONOTONIC: float = 0.0
+#: How often (seconds) the read path may re-stat the file. An external edit
+#: is picked up on the next read after this window. Small enough to feel
+#: immediate, large enough that a burst of ~400 get_cli_setting calls in one
+#: render statts at most once.
+_CONFIG_STAT_THROTTLE_SECONDS: float = 1.0
 _FIRST_PROFILE_CREATED_THIS_SESSION = False
 
 
@@ -5081,6 +5190,287 @@ def first_profile_created_this_session() -> bool:
         otherwise ``False``.
     """
     return _FIRST_PROFILE_CREATED_THIS_SESSION
+
+
+# --- TASK-26039: advisory unknown/deprecated config-key validation ---
+
+#: Dotted section prefixes whose sub-keys are legitimately user-defined, so
+#: unknown-key reporting must stay silent under them (AC#6). Kept conservative
+#: -- only genuinely dynamic-keyed sections -- so real typos elsewhere still
+#: surface. Each entry is a tuple path prefix.
+_FREEFORM_CONFIG_PREFIXES: tuple[tuple[str, ...], ...] = (
+    ("agents",),                # deliberately EMPTY in the default shape: the
+                                # authoritative defaults live in
+                                # Agents/agent_service.py (two-homes drift),
+                                # so documented overrides here would all flag
+                                # as unknown (Qodo #13, PR #2301)
+    ("api_settings",),          # provider configs incl. user-added custom providers
+    ("providers",),             # provider display sections + model lists
+    ("model_capabilities", "models"),    # arbitrary model names
+    ("model_capabilities", "patterns"),  # arbitrary model-name patterns
+    ("SearchEngines",),         # per-engine configs
+    ("Prompts",),               # user prompt content
+    ("prompts",),
+)
+
+#: Keys/sections known to be renamed or removed, mapped to their replacement
+#: dotted path (AC#3). A user path equal to a key here, or nested under it, is
+#: reported as deprecated (naming the replacement) instead of unknown.
+_DEPRECATED_CONFIG_KEYS: Dict[str, str] = {
+    # Legacy provider keys: `[API] <provider>_api_key` was superseded by the
+    # `[api_settings.<provider>] api_key` table (still honored as the lowest
+    # -precedence fallback -- see _normalize_legacy_provider_api_key).
+    "API": "api_settings",
+}
+
+
+@dataclass(frozen=True)
+class ConfigKeyFinding:
+    """One advisory config-key finding."""
+
+    path: str                       # dotted path, e.g. "general.focus_mdoe"
+    kind: str                       # "unknown" | "deprecated"
+    suggestion: Optional[str] = None  # near-miss key or replacement path
+
+
+def _is_freeform_config_path(path: tuple[str, ...]) -> bool:
+    return any(
+        len(path) >= len(prefix) and path[: len(prefix)] == prefix
+        for prefix in _FREEFORM_CONFIG_PREFIXES
+    )
+
+
+def _deprecated_config_replacement(path: tuple[str, ...]) -> Optional[str]:
+    """Return the replacement dotted path if ``path`` is (under) a deprecated key."""
+    for i in range(1, len(path) + 1):
+        prefix = ".".join(path[:i])
+        replacement = _DEPRECATED_CONFIG_KEYS.get(prefix)
+        if replacement is not None:
+            tail = path[i:]
+            return ".".join((replacement, *tail)) if tail else replacement
+    return None
+
+
+def validate_config_keys(
+    user_config: Mapping[str, Any],
+    reference: Optional[Mapping[str, Any]] = None,
+) -> list[ConfigKeyFinding]:
+    """Report keys present in ``user_config`` that no code reads (TASK-26039).
+
+    Advisory only -- the caller never rejects the config. A key absent from the
+    ``reference`` shape (the programmatic defaults) is ``unknown``; a near miss
+    against a sibling reference key carries that suggestion (AC#2); a key known
+    to be renamed is ``deprecated`` with its replacement (AC#3); nested tables
+    are covered (AC#5); user-extensible sections are exempt (AC#6).
+    """
+    if reference is None:
+        reference = DEFAULT_CONFIG_FROM_TOML
+    findings: list[ConfigKeyFinding] = []
+
+    def _walk(user: Mapping[str, Any], ref: Mapping[str, Any], path: tuple[str, ...]):
+        for key, value in user.items():
+            here = (*path, key)
+            replacement = _deprecated_config_replacement(here)
+            if replacement is not None:
+                findings.append(ConfigKeyFinding(".".join(here), "deprecated", replacement))
+                continue
+            if key in ref:
+                ref_value = ref[key]
+                if isinstance(value, Mapping) and isinstance(ref_value, Mapping):
+                    if not _is_freeform_config_path(here):
+                        _walk(value, ref_value, here)
+                continue
+            if _is_freeform_config_path(here):
+                continue
+            siblings = [k for k in ref.keys() if isinstance(k, str)]
+            match = difflib.get_close_matches(key, siblings, n=1, cutoff=0.8)
+            suggestion = ".".join((*path, match[0])) if match else None
+            findings.append(ConfigKeyFinding(".".join(here), "unknown", suggestion))
+
+    _walk(user_config, reference, ())
+    return findings
+
+
+def format_config_key_report(findings: Sequence[ConfigKeyFinding]) -> str:
+    """Render key findings as a short advisory block (empty string when none)."""
+    if not findings:
+        return ""
+    lines: list[str] = []
+    for f in findings:
+        if f.kind == "deprecated":
+            lines.append(f"deprecated key '{f.path}' -> use '{f.suggestion}'")
+        elif f.suggestion:
+            lines.append(f"unknown key '{f.path}' (did you mean '{f.suggestion}'?)")
+        else:
+            lines.append(f"unknown key '{f.path}' (no code reads it)")
+    return "Advisory: " + "; ".join(lines)
+
+
+#: TASK-26040: the config file's schema version. Bumped when a numbered
+#: migration is added to ``_CONFIG_MIGRATIONS``; a fresh config is created
+#: carrying this version. An unversioned (pre-existing) file is treated as
+#: the baseline (0) and migrated forward, never rejected.
+CONFIG_SCHEMA_VERSION_KEY = "config_schema_version"
+_CURRENT_CONFIG_SCHEMA_VERSION = 1
+
+#: Numbered stepwise migrations: ``{target_version: fn(config) -> config}``.
+#: Each transforms a config AT (target-1) into (target). Empty today -- this
+#: is the first versioned config -- but the runner is exercised by tests and
+#: ready for the first key rename, mirroring the DB migration pattern.
+_CONFIG_MIGRATIONS: Dict[int, Any] = {}
+
+
+def migrate_config_forward(
+    config: Dict[str, Any],
+) -> tuple[Dict[str, Any], bool, Optional[str]]:
+    """Run stepwise forward migrations on one config (TASK-26040).
+
+    Returns ``(migrated, changed, conflict)``:
+    * ``migrated`` -- the config transformed to the current version (or the
+      input unchanged when already current, or when a conflict blocks it).
+    * ``changed`` -- whether anything (including a first version stamp) changed.
+    * ``conflict`` -- a human-readable reason when the config is from a NEWER
+      version than this code understands (AC#5); the config is returned
+      untouched rather than mangled.
+    """
+    version = config.get(CONFIG_SCHEMA_VERSION_KEY, 0)
+    try:
+        version = int(version)
+    except (TypeError, ValueError):
+        version = 0  # a junk version stamp is treated as the baseline
+    if version > _CURRENT_CONFIG_SCHEMA_VERSION:
+        return (
+            config,
+            False,
+            (
+                f"config schema version {version} is newer than this "
+                f"application supports ({_CURRENT_CONFIG_SCHEMA_VERSION}); "
+                "not migrating -- upgrade the application or restore an "
+                "older config."
+            ),
+        )
+    if version == _CURRENT_CONFIG_SCHEMA_VERSION:
+        return config, False, None
+    migrated = copy.deepcopy(config)
+    for target in range(version + 1, _CURRENT_CONFIG_SCHEMA_VERSION + 1):
+        migration = _CONFIG_MIGRATIONS.get(target)
+        if migration is not None:
+            migrated = migration(migrated)
+    migrated[CONFIG_SCHEMA_VERSION_KEY] = _CURRENT_CONFIG_SCHEMA_VERSION
+    return migrated, True, None
+
+
+#: TASK-26040: set when the loaded config declares a schema version NEWER
+#: than this application understands. The config is served untouched (never
+#: mangled by a downgrade migration); this signal lets ``app.py`` surface a
+#: loud, user-visible warning, mirroring ``ConfigLoadFailure``.
+_CONFIG_SCHEMA_CONFLICT: Optional[str] = None
+
+
+def get_config_schema_conflict() -> Optional[str]:
+    """Return the newer-than-supported schema warning, if the last load hit one."""
+    return _CONFIG_SCHEMA_CONFLICT
+
+
+def _has_pending_config_migration(from_version: int) -> bool:
+    """Whether any real migration FUNCTION exists between ``from_version`` and now.
+
+    A bare version stamp (no function in range) is NOT worth a full-file
+    rewrite -- it would strip the user's hand-written comments -- so the stamp
+    rides the next natural save instead. Only an actual content transform
+    forces the persist path.
+    """
+    return any(
+        _CONFIG_MIGRATIONS.get(v) is not None
+        for v in range(from_version + 1, _CURRENT_CONFIG_SCHEMA_VERSION + 1)
+    )
+
+
+def migrate_config_file_if_needed() -> Optional[Path]:
+    """Persist a forward migration of the on-disk config (TASK-26040 AC#3/#4).
+
+    Runs under the write lock. Reads the raw file, and only when an actual
+    migration function must run does it back up the original and atomically
+    rewrite the migrated result. A failed migration raises before any write,
+    leaving the original file untouched. Returns the backup path when a
+    migration was written, else ``None`` (no file, already current, bare
+    stamp only, or a newer-than-supported version).
+    """
+    if not _CONFIG_MIGRATIONS:
+        return None  # no real migration exists yet -- free no-op
+    config_path = _get_effective_config_path()
+    with _config_write_lock(config_path):
+        current_serialized = _try_read_cli_config_serialized_unlocked(config_path)
+        if current_serialized is None:
+            return None  # no file yet -- creation stamps the version itself
+        raw = tomllib.loads(current_serialized)
+        raw_version = raw.get(CONFIG_SCHEMA_VERSION_KEY, 0)
+        try:
+            raw_version = int(raw_version)
+        except (TypeError, ValueError):
+            raw_version = 0
+        if raw_version >= _CURRENT_CONFIG_SCHEMA_VERSION:
+            return None
+        if not _has_pending_config_migration(raw_version):
+            return None
+        migrated, changed, conflict = migrate_config_forward(raw)
+        if conflict is not None or not changed:
+            return None
+        backup_path = _write_serialized_config_artifact_unlocked(
+            _advanced_backup_path(config_path),
+            current_serialized,
+            config_path=config_path,
+        )
+        persisted = _config_data_for_persistence(migrated)
+        raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
+        _publish_runtime_config_unlocked(raw_config=raw_written)
+        return backup_path
+
+
+#: (path, mtime_ns, size) of the corrupt file most recently preserved aside,
+#: with the aside path. On a persistent parse failure the cache is never
+#: populated, so every read re-enters this path; without this dedup a live TUI
+#: would copy the same broken file and mint a new .corrupt-<stamp> on every
+#: read (lane-7 review Important #2). Only a genuinely changed corrupt file
+#: (the user edited it again, still broken) earns a fresh aside.
+_LAST_PRESERVED_CORRUPT_KEY: Optional[tuple[str, int, int]] = None
+_LAST_PRESERVED_CORRUPT_ASIDE: Optional[Path] = None
+
+
+def _preserve_corrupt_config_aside(config_path: Path) -> Optional[Path]:
+    """Copy an unparseable config file aside so the user's edits survive.
+
+    TASK-26036 AC#2. Best-effort: a failure to copy must never break the
+    fallback path (the whole point is resilience), so any error is logged
+    and swallowed. Deduplicated by the corrupt file's (mtime_ns, size) so a
+    persistently-broken file is preserved once, not on every read. Returns
+    the aside path (freshly made or the prior one for an unchanged file).
+    """
+    global _LAST_PRESERVED_CORRUPT_KEY, _LAST_PRESERVED_CORRUPT_ASIDE
+    try:
+        source = Path(config_path)
+        if not source.exists():
+            return None
+        stat = source.stat()
+        key = (str(source), stat.st_mtime_ns, stat.st_size)
+        if (
+            key == _LAST_PRESERVED_CORRUPT_KEY
+            and _LAST_PRESERVED_CORRUPT_ASIDE is not None
+            and _LAST_PRESERVED_CORRUPT_ASIDE.exists()
+        ):
+            return _LAST_PRESERVED_CORRUPT_ASIDE
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        aside = source.with_name(f"{source.name}.corrupt-{stamp}")
+        shutil.copy2(source, aside)
+        logger.warning(
+            f"Preserved unparseable config {source} at {aside}"
+        )
+        _LAST_PRESERVED_CORRUPT_KEY = key
+        _LAST_PRESERVED_CORRUPT_ASIDE = aside
+        return aside
+    except Exception as exc:  # noqa: BLE001 -- resilience path never raises
+        logger.warning(f"Could not preserve corrupt config aside: {exc!r}")
+        return None
 
 
 class ConfigLoadFailure(NamedTuple):
@@ -5132,6 +5522,8 @@ def _load_cli_config_bootstrap_unlocked(
 ) -> _ConfigBootstrapResult:
     global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE, _LAST_CONFIG_LOAD_FAILURE
     global _FIRST_PROFILE_CREATED_THIS_SESSION
+    global _CONFIG_FILE_STAMP, _CONFIG_STAT_CHECKED_MONOTONIC
+    global _CONFIG_SCHEMA_CONFLICT
     config_path = _get_effective_config_path()
     if (
         _CONFIG_CACHE is not None
@@ -5140,8 +5532,19 @@ def _load_cli_config_bootstrap_unlocked(
     ):
         return _ConfigBootstrapResult(_CONFIG_CACHE, True)
 
+    # TASK-26036: retain the last successfully loaded config for THIS path
+    # before clearing the cache, so a parse failure on a force-reload can
+    # serve it instead of reverting security-relevant settings to defaults.
+    retained_good = (
+        copy.deepcopy(_CONFIG_CACHE)
+        if _CONFIG_CACHE is not None and _CONFIG_CACHE_SOURCE == config_path
+        else None
+    )
     _CONFIG_CACHE = None
     _CONFIG_CACHE_SOURCE = None
+    # TASK-26040 (lane-7 review Minor): clear any prior schema conflict so a
+    # later parse-failure load does not retain a stale "newer version" warning.
+    _CONFIG_SCHEMA_CONFLICT = None
 
     # Start with the programmatic defaults defined in CONFIG_TOML_CONTENT
     loaded_config = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
@@ -5159,6 +5562,16 @@ def _load_cli_config_bootstrap_unlocked(
         with open_private_binary(config_path) as opened:
             _report_config_path_posture(opened.result)
             user_config_from_file = tomllib.load(opened.stream)
+        # TASK-26040: migrate the RAW file forward before the default merge --
+        # an unversioned file must be seen as the baseline (0), not inherit the
+        # default's current version and skip its migrations. A newer-than-code
+        # version is served untouched with a recorded conflict warning.
+        user_config_from_file, _schema_changed, _schema_conflict = (
+            migrate_config_forward(user_config_from_file)
+        )
+        _CONFIG_SCHEMA_CONFLICT = _schema_conflict
+        if _schema_conflict is not None:
+            logger.warning(_schema_conflict)
         loaded_config = deep_merge_dicts(loaded_config, user_config_from_file)
         logger.info(f"Successfully loaded and merged CLI config from {config_path}")
         decryption = _decrypt_config_section_with_status(loaded_config, strict=True)
@@ -5209,7 +5622,23 @@ def _load_cli_config_bootstrap_unlocked(
         # `.succeeded`). Recording it lets `app.py` surface a loud,
         # user-visible notification instead of a silent `default_user`
         # fallback (see `ConfigLoadFailure`/`get_config_load_failure`).
-        _LAST_CONFIG_LOAD_FAILURE = ConfigLoadFailure(path=config_path, message=str(e))
+        # TASK-26036: preserve the unparseable file aside (never lose the
+        # user's edits) and serve the LAST KNOWN GOOD config instead of
+        # built-in defaults, so a mid-edit break can't silently revert
+        # encryption/database/provider settings.
+        aside = _preserve_corrupt_config_aside(config_path)
+        in_effect = "built-in defaults"
+        if retained_good is not None:
+            loaded_config = copy.deepcopy(retained_good)
+            in_effect = "the last successfully loaded configuration"
+        _LAST_CONFIG_LOAD_FAILURE = ConfigLoadFailure(
+            path=config_path,
+            message=(
+                f"{e} (now serving {in_effect}"
+                + (f"; the unreadable file was kept at {aside.name}" if aside else "")
+                + ")"
+            ),
+        )
     except Exception as e:
         logger.opt(exception=True).error(
             f"An unexpected error occurred while loading CLI config {config_path}: {e}. Using internal defaults + any previous successful load."
@@ -5218,6 +5647,10 @@ def _load_cli_config_bootstrap_unlocked(
     if bootstrap_succeeded:
         _CONFIG_CACHE = loaded_config
         _CONFIG_CACHE_SOURCE = config_path
+        # TASK-26038: stamp the file we just loaded so a later external edit
+        # is detected, and reset the throttle so the next read re-checks.
+        _CONFIG_FILE_STAMP = _current_config_file_stamp(config_path)
+        _CONFIG_STAT_CHECKED_MONOTONIC = time.monotonic()
         # A later successful load (e.g. the user or the app repaired the
         # file) retires any previously recorded parse failure.
         _LAST_CONFIG_LOAD_FAILURE = None
@@ -5368,6 +5801,33 @@ def _config_write_lock(config_path: Path) -> Iterator[None]:
         yield
 
 
+def _current_config_file_stamp(config_path: Path) -> Optional[tuple[int, int]]:
+    """(mtime_ns, size) for the config file, or None when absent/unreadable."""
+    try:
+        st = os.stat(config_path)
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+
+
+def _external_edit_detected(config_path: Path) -> bool:
+    """TASK-26038: THROTTLED check for an external edit since the last load.
+
+    Returns True (invalidating the cache) at most once per external change,
+    and stats at most once per ``_CONFIG_STAT_THROTTLE_SECONDS`` so the read
+    hot path keeps its near-zero cost. No thread, no watcher.
+    """
+    global _CONFIG_STAT_CHECKED_MONOTONIC
+    if _CONFIG_FILE_STAMP is None:
+        return False
+    now = time.monotonic()
+    if now - _CONFIG_STAT_CHECKED_MONOTONIC < _CONFIG_STAT_THROTTLE_SECONDS:
+        return False
+    _CONFIG_STAT_CHECKED_MONOTONIC = now
+    current = _current_config_file_stamp(config_path)
+    return current is not None and current != _CONFIG_FILE_STAMP
+
+
 def _load_cli_config_bootstrap(
     force_reload: bool = False,
 ) -> _ConfigBootstrapResult:
@@ -5422,21 +5882,32 @@ def _load_cli_config_bootstrap(
     copy semantics of `load_cli_config_and_ensure_existence` are unchanged.
     """
 
+    edit_detected = False
     if not force_reload:
         config_path = _get_effective_config_path()
         generation_before = _CONFIG_GENERATION
         cached_config = _CONFIG_CACHE
         cached_source = _CONFIG_CACHE_SOURCE
-        if (
+        base_hit = (
             cached_config is not None
             and cached_source == config_path
             and _CONFIG_CACHE is cached_config
             and _CONFIG_GENERATION == generation_before
-        ):
-            return _ConfigBootstrapResult(cached_config, True)
+        )
+        # TASK-26038: only stat when we would otherwise hit -- a miss already
+        # re-reads. The (throttled) check turns a hit into a forced re-read,
+        # never a false hit, so the lock-free soundness reasoning is intact.
+        if base_hit:
+            edit_detected = _external_edit_detected(config_path)
+            if not edit_detected:
+                return _ConfigBootstrapResult(cached_config, True)
 
     with _config_file_lock():
-        return _load_cli_config_bootstrap_unlocked(force_reload=force_reload)
+        # An external edit forces the locked path past its own cache fast
+        # path so the changed file is actually re-read (and re-stamped).
+        return _load_cli_config_bootstrap_unlocked(
+            force_reload=force_reload or edit_detected
+        )
 
 
 def _prepare_config_parent(config_path: Path) -> Path | None:
@@ -5585,6 +6056,7 @@ def _install_bootstrap_cache_from_raw(
     """
 
     global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE, _LAST_CONFIG_LOAD_FAILURE
+    global _CONFIG_FILE_STAMP, _CONFIG_STAT_CHECKED_MONOTONIC
 
     config_path = _get_effective_config_path()
     merged = deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, dict(raw_config))
@@ -5604,6 +6076,14 @@ def _install_bootstrap_cache_from_raw(
     _CONFIG_CACHE = loaded_config
     _CONFIG_CACHE_SOURCE = config_path
     _LAST_CONFIG_LOAD_FAILURE = None
+    # TASK-26038 (lane-7 review Important #1): stamp the file WE just wrote so a
+    # read after the stat-throttle window does not mistake our own write for an
+    # external edit and force a redundant locked re-read. This is the write-path
+    # twin of the stamp refresh in `_load_cli_config_bootstrap_unlocked`;
+    # refreshing only one twin left the TASK-21124 coalescing broken on the
+    # first read after every write.
+    _CONFIG_FILE_STAMP = _current_config_file_stamp(config_path)
+    _CONFIG_STAT_CHECKED_MONOTONIC = time.monotonic()
     return loaded_config
 
 

@@ -96,6 +96,10 @@ ToolOutcome: TypeAlias = Literal["success", "failed", "blocked", "timeout", "can
 # below -- prepended by the mechanism, never trusted from input.
 STEERING_SOURCE_SUPERVISOR = "supervisor"
 STEERING_SOURCE_USER = "user"
+# TASK-26000: an active-turn redirect. Unlike the two steering sources it is
+# rendered PLAIN (a real user reply, no "[Steering from ...]" wrapper) -- the
+# loop branches on it before format_steering_message is ever called.
+STEERING_SOURCE_REDIRECT = "redirect"
 #: Cap on one steering entry's text, enforced by the producers at their own
 #: boundaries (send_to_agent -- Task 2; the panel input -- Task 3). The
 #: ``max_subagent_result_chars`` shape: a plain int ceiling, 4000.
@@ -465,6 +469,15 @@ class RunBudget:
     # wrapper reporting "timed out" for a call that later really executes
     # on its abandoned thread -- see `_call_with_timeout`'s docstring).
     max_tool_call_seconds: float = 300.0
+    #: TASK-25901: how many times a TRANSIENT model failure may be retried
+    #: inside the loop before the run gives up. 0 reproduces the pre-retry
+    #: behaviour exactly (raise on the first failure). Terminal errors ignore
+    #: this entirely -- they are never retried at any setting.
+    max_model_retries: int = 2
+    #: TASK-26001: fraction of any budget dimension at which the model is told
+    #: once to start wrapping up. The notice rides the newest tool result --
+    #: never a synthetic user turn -- so the prompt-cache prefix stays intact.
+    budget_warning_fraction: float = 0.8
 
     def __post_init__(self) -> None:
         if self.max_steps > MAX_RUN_CONTROL_STEPS:
@@ -681,6 +694,16 @@ class AgentConfig:
     def __post_init__(self) -> None:
         if self.response_reserve_tokens < 0:
             raise ValueError("response_reserve_tokens must be non-negative")
+
+    #: TASK-26002: the provider this run is talking to, so the loop can name
+    #: it when reporting a provider-level fault. Defaults empty: the loop is
+    #: pure and must not require it, and an unset value simply reads as
+    #: "unknown provider" in the message.
+    provider: str = ""
+    #: ADR-110: ordered provider fallback chain, consulted only after retry
+    #: is exhausted or on a credit/quota-terminal class. Empty means no
+    #: fallback and no projection code runs at all.
+    fallback_providers: tuple[str, ...] = ()
 
 
 @dataclass

@@ -581,7 +581,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 63  # Epoch-safe semantic trace graph collection.
+    _CURRENT_SCHEMA_VERSION = 64  # Auxiliary-attempt ledger accepts 'timed_out' (after v63 trace-graph GC).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -7505,6 +7505,42 @@ UPDATE db_schema_version
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v63_to_v64(self, conn: sqlite3.Connection) -> None:
+        """Widen the auxiliary-attempt status CHECK to accept 'timed_out'."""
+
+        self._require_migration_entry_version(conn, 63, "V63→V64")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v63_to_v64_auxiliary_timed_out_status.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V63→V64",
+                )
+                version_cursor = cursor.execute(
+                    "UPDATE db_schema_version SET version = 64 "
+                    "WHERE schema_name = ? AND version = 63",
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V63→V64] Migration version update was not applied"
+                    )
+            if self._get_db_version(conn) != 64:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V63→V64] Migration version check failed"
+                )
+        except SchemaError:
+            raise
+        except Exception as exc:
+            raise SchemaError(
+                f"Migration from V63 to V64 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -7720,6 +7756,7 @@ UPDATE db_schema_version
                     60: self._migrate_from_v60_to_v61,
                     61: self._migrate_from_v61_to_v62,
                     62: self._migrate_from_v62_to_v63,
+                    63: self._migrate_from_v63_to_v64,
                 }
 
                 if current_db_version == 0:

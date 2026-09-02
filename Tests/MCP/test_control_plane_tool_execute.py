@@ -2681,7 +2681,14 @@ def test_real_local_provider_truncated_json_fragments_are_secret_safe(
         handle.close()
 
     assert detail.provider_terminal is LocalProviderTerminal.RETURNED
-    assert detail.result.content.endswith("… [truncated]")
+    # TASK-25904 composition: with the workspace executor the hub local
+    # provider has a spill home, so an oversized result carries a bounded
+    # preview + spill pointer instead of the bare-truncation tail. Both
+    # shapes are bounded; the secret-safety asserts below cover either.
+    assert detail.result.content.endswith("… [truncated]") or (
+        "[output truncated:" in detail.result.content
+        and "full output saved to" in detail.result.content
+    )
     audited = []
     monkeypatch.setattr(
         service,

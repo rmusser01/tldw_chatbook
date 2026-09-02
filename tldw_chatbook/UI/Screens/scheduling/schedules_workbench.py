@@ -30,6 +30,7 @@ from ....Scheduling.automation_health import compute_local_health
 from ....Scheduling.events import (
     DeleteTaskRequested,
     DisableTaskRequested,
+    AcknowledgeIncidentRequested,
     EditTaskRequested,
     EnableTaskRequested,
     RunReminderNowRequested,
@@ -274,6 +275,9 @@ class SchedulesWorkbench(BaseAppScreen):
                 active_server_id=active_server_id,
                 server_available=server_available,
             )
+            # TASK-26025: scheduler liveness -- a stale heartbeat reads
+            # distinctly from an empty queue and a never-started loop.
+            yield Static("", id="scheduling-liveness")
             with TabbedContent(id="scheduling-tabs"):
                 with TabPane("Queue", id="scheduling-queue-tab"):
                     with Horizontal(id="scheduling-workbench"):
@@ -375,9 +379,44 @@ class SchedulesWorkbench(BaseAppScreen):
         )
         self._request_tasks_refresh()
         self._request_automations_refresh()
+        self._refresh_scheduler_liveness()
+
+    def _refresh_scheduler_liveness(self) -> None:
+        """Update the scheduler-liveness line from the durable heartbeat
+        (TASK-26025). Never raises -- a diagnostics read must not break the
+        screen."""
+        try:
+            from datetime import datetime, timezone
+
+            from ....config import get_cli_setting
+            from ....Scheduling.constants import SCHEDULER_POLL_INTERVAL_SECONDS
+            from ....Scheduling.scheduler_heartbeat import (
+                default_heartbeat_path,
+                read_heartbeat,
+                scheduler_liveness_line,
+            )
+
+            poll = get_cli_setting(
+                "scheduling",
+                "scheduler_poll_interval_seconds",
+                SCHEDULER_POLL_INTERVAL_SECONDS,
+            )
+            line = scheduler_liveness_line(
+                read_heartbeat(default_heartbeat_path()),
+                now=datetime.now(timezone.utc),
+                poll_interval=float(poll or SCHEDULER_POLL_INTERVAL_SECONDS),
+            )
+            self._update_static_content(
+                self.query_one("#scheduling-liveness", Static), line
+            )
+        except Exception:  # noqa: BLE001 -- liveness display never breaks the screen
+            pass
 
     def _refresh_next_run_rendering(self) -> None:
         """Re-render the queue so relative next-run text stays honest.
+
+        Also refreshes the scheduler-liveness line (TASK-26025) so a loop
+        that dies while the screen is open turns visibly stale.
 
         Skips unless this screen is the top of the stack. (Textual's
         ``is_current`` also counts screens behind the top one --
@@ -388,7 +427,12 @@ class SchedulesWorkbench(BaseAppScreen):
         nothing to refresh, and the no-service path must keep its own
         detail-pane copy.
         """
-        if self.app.screen is not self or not self._visible_tasks:
+        if self.app.screen is not self:
+            return
+        # TASK-26025: refresh liveness even on an empty queue -- a stall
+        # with nothing queued is exactly the case AC#2 must distinguish.
+        self._refresh_scheduler_liveness()
+        if not self._visible_tasks:
             return
         self._render_table()
 
@@ -562,6 +606,41 @@ class SchedulesWorkbench(BaseAppScreen):
         """Update the detail pane when the user highlights a task row."""
         self._update_detail_for_index(event.cursor_row)
 
+    def _incidents_for(self, task_id) -> list:
+        """TASK-26027: the selected task's failure incidents (fail-safe).
+
+        Reminders key their incidents by the raw task id; briefings (whose
+        failures the briefing handler records) key by "briefing:<id>", so
+        both spellings are queried.
+        """
+        db = getattr(self._scheduling_service, "db", None)
+        reader = getattr(db, "list_task_incidents", None)
+        if not callable(reader):
+            return []
+        rows: list = []
+        for key in (str(task_id), f"briefing:{task_id}"):
+            try:
+                rows.extend(reader(key, limit=10))
+            except Exception:  # noqa: BLE001 -- never breaks the pane
+                pass
+        return rows
+
+    def _run_history_for(self, task_id) -> list:
+        """TASK-26026: the selected task's durable run history, newest first.
+
+        Fail-safe: a missing service/method or a read error yields an empty
+        history rather than breaking the detail pane.
+        """
+        service = self._scheduling_service
+        db = getattr(service, "db", None)
+        reader = getattr(db, "list_task_runs", None)
+        if not callable(reader):
+            return []
+        try:
+            return list(reader(str(task_id), limit=8))
+        except Exception:  # noqa: BLE001 -- history read never breaks the pane
+            return []
+
     def _update_detail_for_index(self, index: int) -> None:
         """Render task details in the detail and inspector panes."""
         if not (0 <= index < len(self._visible_tasks)):
@@ -574,7 +653,11 @@ class SchedulesWorkbench(BaseAppScreen):
 
         task = self._visible_tasks[index]
         self._selected_task_id = task.id
-        self.query_one("#scheduling-task-detail", TaskDetail).set_task(task)
+        self.query_one("#scheduling-task-detail", TaskDetail).set_task(
+            task,
+            run_history=self._run_history_for(task.id),
+            incidents=self._incidents_for(task.id),
+        )
         self.query_one("#scheduling-task-inspector", TaskInspector).set_task(task)
 
     async def _refresh_console_context(self) -> None:
@@ -942,6 +1025,29 @@ class SchedulesWorkbench(BaseAppScreen):
             exclusive=True,
             group="schedules-save-reminder",
         )  # type: ignore[arg-type]
+
+    @on(AcknowledgeIncidentRequested)
+    def _on_acknowledge_incident(self, event) -> None:
+        """TASK-26027: acknowledge one incident, then refresh the detail."""
+        event.stop()
+        db = getattr(self._scheduling_service, "db", None)
+        ack = getattr(db, "acknowledge_incident", None)
+        if not callable(ack):
+            return
+        try:
+            from datetime import datetime, timezone
+
+            ack(int(event.incident_id), datetime.now(timezone.utc))
+        except Exception:  # noqa: BLE001 -- ack failure never breaks the screen
+            logger.debug("acknowledge_incident failed")
+            return
+        # re-render the detail so the acked incident drops out of the
+        # alerting set and the button hides.
+        if self._selected_task_id is not None:
+            for index, task in enumerate(self._visible_tasks):
+                if task.id == self._selected_task_id:
+                    self._update_detail_for_index(index)
+                    break
 
     @on(EditTaskRequested)
     def _on_edit_task_requested(self, event: EditTaskRequested) -> None:

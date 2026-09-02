@@ -6,6 +6,7 @@ No Textual, app, DB, or I/O imports.
 from __future__ import annotations
 
 import json
+import time
 from collections import deque
 from collections.abc import Mapping
 from copy import deepcopy
@@ -28,6 +29,10 @@ from tldw_chatbook.model_capabilities import (
     moonshot_model_returns_reasoning_content,
 )
 
+# ADR-097 boot ratchet: deferred off the boot path (loads on first use). The
+# retry/fallback/projection helpers are loop-only dependencies, imported
+# at the top of `run_agent_loop`; `FallbackRuntime` appears here only as
+# a string annotation on `LoopDeps.fallback`.
 from .agent_models import (
     CHECK_AGENTS_TOOL_NAME,
     FENCE_TOOL_RESULT_PREFIX,
@@ -54,6 +59,7 @@ from .agent_models import (
     STEP_MODEL_ERROR,
     STEP_MODEL_REQUEST_STARTED,
     STEP_MODEL_RESPONSE_COMPLETED,
+    STEERING_SOURCE_REDIRECT,
     STEP_APPROVAL_APPROVED,
     STEP_APPROVAL_DENIED,
     STEP_APPROVAL_REQUESTED,
@@ -275,6 +281,28 @@ def split_visible_text_and_tool_call(text: str) -> tuple[str, ToolCall | None]:
         if call is not None:
             return text[:idx].rstrip(), call
         start = idx + len(FENCE_OPEN)
+
+
+def strip_trailing_open_fence(text: str) -> str:
+    """Drop a TRAILING unterminated tool-call fence from cut-off text.
+
+    TASK-26000 review F4: a stream aborted mid-fence leaves ``FENCE_OPEN``
+    plus partial JSON with no closing fence. Shipping that as assistant
+    context baits the model into resuming the call the user just cancelled.
+    Only the dangling-open case is truncated: a look-alike tag
+    (```tool_call_schema in prose) has a non-line-end character right after
+    the tag and stays; a CLOSED fence (parseable or not) stays -- the
+    caller's ``split_visible_text_and_tool_call`` already decided its fate.
+    """
+    idx = text.rfind(FENCE_OPEN)
+    if idx == -1:
+        return text
+    after = text[idx + len(FENCE_OPEN) :]
+    if after[:1] not in ("", "\n", "\r"):
+        return text
+    if _FENCE_CLOSE in after.lstrip("\r\n"):
+        return text
+    return text[:idx].rstrip()
 
 
 def stream_prefix_verdict(prefix: str) -> str:
@@ -545,6 +573,20 @@ class LoopDeps:
     ) = None
     owner_seq_start: int = 0
     next_owner_seq: Callable[[], int] | None = None
+    # Appended after every pre-existing field, per this class's convention, so
+    # legacy positional LoopDeps callers keep their exact slots.
+    # TASK-25901: injected so retry backoff is testable without real sleeping.
+    sleep: Callable[[float], None] = time.sleep
+    # ADR-110 / TASK-25902: resolved fallback chain + per-provider closure
+    # builder. None (the default) means no chain is configured and no fallback
+    # code runs at all.
+    fallback: "FallbackRuntime | None" = None
+    # TASK-26000: probe -- does the mailbox hold a redirect entry? Read-only
+    # (never consumes); the loop only drains when this answers True, so plain
+    # steering keeps its pre-model-call delivery point. None = no redirect
+    # surface wired (every legacy caller), byte-identical behaviour.
+    has_pending_redirect: Callable[[], bool] | None = None
+
 
 
 def _continuation_calls_match(
@@ -895,6 +937,34 @@ def _effective_review_verdict(
     return verdicts.get(call.name, "proceed")
 
 
+#: TASK-26002: consecutive empty turns before the run stops. Two, because one
+#: empty is a blip worth retrying and a second from the same provider and model
+#: means the fault is deterministic. Empty-turn retries carry no backoff
+#: deliberately: the streak is capped here and bounded by max_model_turns, and
+#: an empty response returns fast enough that waiting would only delay the
+#: honest failure (review minor, 2026-08-31).
+EMPTY_TURN_LIMIT = 2
+
+#: TASK-26001: the one-time approach-warning and the exhaustion wrap-up ask.
+#: The warning is APPENDED to the newest tool-result message -- appending to
+#: the last message leaves every earlier byte identical, so the provider-side
+#: prompt-cache prefix survives; a synthetic user turn would both break it and
+#: put words in the user's mouth.
+BUDGET_WARNING_TEMPLATE = (
+    "\n\n[budget notice: this run has used over {percent}% of its {kind} "
+    "budget — finish up or summarize your progress soon.]"
+)
+BUDGET_WRAPUP_INSTRUCTION = (
+    "The run's {kind} budget is exhausted and no more tool calls are "
+    "possible. In one short reply, summarize what was accomplished, what "
+    "remains unfinished, and any partial results worth keeping."
+)
+
+#: Backoff shape for transient model failures (TASK-25901). The attempt COUNT
+#: is per-run config (`RunBudget.max_model_retries`); this is only the delay
+#: curve.
+
+
 def run_agent_loop(
     config: AgentConfig,
     initial_messages: list[dict],
@@ -936,6 +1006,18 @@ def run_agent_loop(
         (task-326) ``total_tokens`` — the measured cumulative prompt+
         completion token spend checked against ``max_total_tokens``.
     """
+    # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+    from .fallback_chain import is_credit_terminal
+    from .history_projection import ProjectionError, project_history_for_protocol
+    from .model_retry import (
+        RetryPolicy,
+        is_transient_model_error,
+        retry_delay_seconds,
+    )
+
+    # Backoff shape for transient model failures (TASK-25901); the attempt
+    # COUNT is per-run config, this is only the delay curve.
+    _MODEL_RETRY_POLICY = RetryPolicy(max_attempts=0, base_delay=1.0, max_delay=30.0)
     budget = config.budget
     steps: list[AgentStep] = []
     messages = list(initial_messages)
@@ -951,6 +1033,26 @@ def run_agent_loop(
     coherent_len = len(messages)
     active = list(active_schemas)
     started = deps.clock()
+    # ADR-110: the ACTIVE model-call slots. A provider switch replaces these
+    # locals -- never LoopDeps (TASK-25913: rebuilding deps would reset the
+    # wall-budget origin the tool clamp reads from) -- which is also what makes
+    # the switch STICKY: after a switch every subsequent turn goes to the new
+    # provider, rather than re-failing the primary per call.
+    active_call_model = deps.call_model
+    active_call_model_with_continuation = deps.call_model_with_continuation
+    fallback_candidates = (
+        list(deps.fallback.candidates) if deps.fallback is not None else []
+    )
+    active_provider = config.provider or "unknown"
+    budget_warning_delivered = False
+    #: TASK-25901: transient-failure retries used so far in THIS run. Counted
+    #: per run rather than per turn: a provider failing every turn is a failing
+    #: provider, and should stop the run rather than pay the budget down twice.
+    model_retry_attempts = 0
+    #: TASK-26002: CONSECUTIVE empty turns. Reset by any turn that produces
+    #: text or a tool call, so two empties separated by real content are two
+    #: blips rather than a deterministic fault.
+    consecutive_empty_turns = 0
     spawned = 0
     model_turns = 0
     total_tokens = 0
@@ -1164,6 +1266,99 @@ def run_agent_loop(
                 if canonical.state == "pending":
                     restored_calls.append(call)
 
+    def _budget_fractions() -> dict:
+        used = {}
+        if budget.max_model_turns:
+            used["model-turn"] = model_turns / budget.max_model_turns
+        if budget.max_steps:
+            used["step"] = budget_steps / budget.max_steps
+        if budget.max_wall_seconds:
+            used["wall-clock"] = (deps.clock() - started) / budget.max_wall_seconds
+        if budget.max_total_tokens:
+            used["token"] = total_tokens / budget.max_total_tokens
+        return used
+
+    def _exhausted(kind: str):
+        """One tools-stripped summary call, then an honest RUN_STUCK.
+
+        TASK-26001. The error step is recorded FIRST so an exhausted run stays
+        distinguishable from success whatever the wrap-up does (AC#6). The
+        wrap-up is a single call with no tool schemas -- any tool call in its
+        response is ignored, so it cannot loop or spawn (AC#4) -- and a failure
+        inside it costs only the summary, never the honest termination (AC#5).
+        Skipped mid-continuation: a wrap-up request without the in-flight
+        checkpoint would trip provider-continuation validation.
+        """
+        nonlocal total_tokens
+        add(STEP_ERROR, summary=f"{kind} budget exhausted")
+        if continuation_checkpoint is not None or deps.should_cancel():
+            return _outcome(RUN_STUCK)
+        try:
+            # The COHERENT prefix, not raw `messages`: a step-budget
+            # exhaustion can land mid-batch, where raw history ends inside a
+            # half-answered native tool_calls pair -- exactly the shape that
+            # poisons a provider call (the fleet-continuation coherence
+            # property caught this in the first implementation).
+            wrap_messages = list(messages[:coherent_len])
+            wrap_messages.append(
+                {
+                    "role": "user",
+                    "content": BUDGET_WRAPUP_INSTRUCTION.format(kind=kind),
+                }
+            )
+            wrap_turn = (
+                active_call_model_with_continuation(wrap_messages, (), None)
+                if active_call_model_with_continuation is not None
+                else active_call_model(wrap_messages, ())
+            )
+            total_tokens += getattr(wrap_turn, "tokens", 0) or 0
+            summary_text = str(getattr(wrap_turn, "text", "") or "").strip()
+            if summary_text:
+                return _outcome(RUN_STUCK, final_text=summary_text)
+        except Exception:  # noqa: BLE001 -- the summary is best-effort
+            trace(
+                STEP_MODEL_ERROR,
+                summary="Budget wrap-up call failed; terminating without one",
+                status="failed",
+                field_states={"payload": "omitted"},
+                sensitivity="diagnostic",
+            )
+        return _outcome(RUN_STUCK)
+
+    def _maybe_deliver_budget_warning() -> None:
+        """Tell the model ONCE, cache-safely, that the budget is running out.
+
+        Only ever attaches to the newest message and only when that message is
+        a tool result (native ``role:"tool"`` or the fence-protocol user-role
+        result) -- appending to the last message keeps every earlier byte
+        identical, so the provider prompt-cache prefix is preserved (AC#2),
+        and no synthetic user turn is inserted (AC#1). When the newest message
+        is not a tool result the delivery simply waits for the next iteration.
+        """
+        nonlocal budget_warning_delivered
+        if budget_warning_delivered or not messages:
+            return
+        fractions = _budget_fractions()
+        if not fractions:
+            return
+        kind, fraction = max(fractions.items(), key=lambda kv: kv[1])
+        if fraction < budget.budget_warning_fraction:
+            return
+        newest = messages[-1]
+        if not isinstance(newest, dict):
+            return
+        content = str(newest.get("content") or "")
+        is_tool_result = newest.get("role") == "tool" or (
+            newest.get("role") == "user"
+            and content.startswith(FENCE_TOOL_RESULT_PREFIX)
+        )
+        if not is_tool_result:
+            return
+        newest["content"] = content + BUDGET_WARNING_TEMPLATE.format(
+            percent=int(fraction * 100), kind=kind
+        )
+        budget_warning_delivered = True
+
     while True:
         if deps.should_cancel():
             trace(
@@ -1175,17 +1370,14 @@ def run_agent_loop(
             )
             return _outcome(RUN_CANCELLED)
         if budget_steps >= budget.max_steps:
-            add(STEP_ERROR, summary="step budget exhausted")
-            return _outcome(RUN_STUCK)
+            return _exhausted("step")
         if model_turns >= budget.max_model_turns:
-            add(STEP_ERROR, summary="model-turn budget exhausted")
-            return _outcome(RUN_STUCK)
+            return _exhausted("model-turn")
         if deps.clock() - started > budget.max_wall_seconds:
-            add(STEP_ERROR, summary="wall-clock budget exhausted")
-            return _outcome(RUN_STUCK)
+            return _exhausted("wall-clock")
         if budget.max_total_tokens and total_tokens >= budget.max_total_tokens:
-            add(STEP_ERROR, summary="token budget exhausted")
-            return _outcome(RUN_STUCK)
+            return _exhausted("token")
+        _maybe_deliver_budget_warning()
 
         restoring_batch = restored_calls is not None and bool(restored_calls)
         ephemeral_continuation = False
@@ -1218,8 +1410,14 @@ def run_agent_loop(
                         ]
                     )
                     for steer_source, steer_text, source_event_id in entries:
-                        steer_message = format_steering_message(
-                            steer_source, steer_text
+                        # TASK-26000 AC#4: a redirect that missed its model
+                        # call (tool was executing) degrades to this drain,
+                        # but stays a PLAIN user reply -- it is a correction,
+                        # not injected guidance.
+                        steer_message = (
+                            steer_text
+                            if steer_source == STEERING_SOURCE_REDIRECT
+                            else format_steering_message(steer_source, steer_text)
                         )
                         messages.append({"role": "user", "content": steer_message})
                         add(
@@ -1290,15 +1488,147 @@ def run_agent_loop(
             )
             try:
                 turn = (
-                    deps.call_model_with_continuation(
+                    active_call_model_with_continuation(
                         messages,
                         tuple(active),
                         continuation_checkpoint,
                     )
-                    if deps.call_model_with_continuation is not None
-                    else deps.call_model(messages, tuple(active))
+                    if active_call_model_with_continuation is not None
+                    else active_call_model(messages, tuple(active))
                 )
-            except Exception:
+            except Exception as exc:
+                # TASK-25901: a transient provider failure used to discard the
+                # whole run along with every tool result already in it. Retry
+                # in place -- deliberately NOT by rebuilding LoopDeps, which
+                # would reset the wall-budget origin TASK-25913's tool clamp
+                # reads from and quietly make that bound permissive.
+                if (
+                    is_transient_model_error(exc)
+                    and model_retry_attempts < budget.max_model_retries
+                ):
+                    delay = retry_delay_seconds(
+                        model_retry_attempts + 1, exc, _MODEL_RETRY_POLICY
+                    )
+                    remaining_wall = budget.max_wall_seconds - (
+                        deps.clock() - started
+                    )
+                    if delay <= remaining_wall:
+                        model_retry_attempts += 1
+                        trace(
+                            STEP_MODEL_ERROR,
+                            summary=(
+                                f"Model request failed; retry "
+                                f"{model_retry_attempts} of "
+                                f"{budget.max_model_retries} in {delay:.2f}s "
+                                f"({type(exc).__name__})"
+                            ),
+                            status="failed",
+                            field_states={"payload": "omitted"},
+                            sensitivity="diagnostic",
+                            parent_step_index=model_request_step.index,
+                        )
+                        # Sliced so a Stop during backoff is honoured within
+                        # half a second instead of holding a cancelled run for
+                        # up to the full delay (review minor, 2026-08-31).
+                        slept = 0.0
+                        while slept < delay and not deps.should_cancel():
+                            step_sleep = min(0.5, delay - slept)
+                            deps.sleep(step_sleep)
+                            slept += step_sleep
+                        continue
+                # ADR-110: fallback is consulted only AFTER retry declines --
+                # retries exhausted on a transient error, or a credit/quota-
+                # terminal class retry cannot help with. Refused outright while
+                # a provider continuation is in flight: mid-continuation
+                # history is provider-specific state that cannot be projected
+                # faithfully (decision 5; review I4).
+                if (
+                    deps.fallback is not None
+                    and fallback_candidates
+                    and continuation_checkpoint is None
+                    and (
+                        is_credit_terminal(exc)
+                        or is_transient_model_error(exc)
+                    )
+                ):
+                    switched = False
+                    while fallback_candidates:
+                        candidate = fallback_candidates.pop(0)
+                        if not candidate.ready:
+                            trace(
+                                STEP_MODEL_ERROR,
+                                summary=(
+                                    f"Provider fallback skipped: "
+                                    f"{candidate.provider} "
+                                    f"({candidate.skip_reason})"
+                                ),
+                                status="failed",
+                                field_states={"payload": "omitted"},
+                                sensitivity="diagnostic",
+                                parent_step_index=model_request_step.index,
+                            )
+                            continue
+                        try:
+                            projected = project_history_for_protocol(
+                                messages, native=candidate.native
+                            )
+                        except ProjectionError as projection_error:
+                            trace(
+                                STEP_MODEL_ERROR,
+                                summary=(
+                                    f"Provider fallback refused: "
+                                    f"{candidate.provider} (history not "
+                                    f"projectable: {projection_error})"
+                                ),
+                                status="failed",
+                                field_states={"payload": "omitted"},
+                                sensitivity="diagnostic",
+                                parent_step_index=model_request_step.index,
+                            )
+                            continue
+                        new_call = deps.fallback.build(candidate.provider)
+                        if new_call is None:
+                            # Review M-1: the only silent skip in the chain
+                            # walk -- trace it like the unready skip, or a
+                            # user's configured candidate vanishes without a
+                            # word.
+                            trace(
+                                STEP_MODEL_ERROR,
+                                summary=(
+                                    f"Provider fallback skipped: "
+                                    f"{candidate.provider} (could not build "
+                                    f"a model call for it)"
+                                ),
+                                status="failed",
+                                field_states={"payload": "omitted"},
+                                sensitivity="diagnostic",
+                                parent_step_index=model_request_step.index,
+                            )
+                            continue
+                        # Length-preserving by construction, so coherent_len
+                        # and every step index stay valid; in-place so the
+                        # projection becomes the run's canonical history
+                        # (decision 4 -- the run now IS the new protocol).
+                        messages[:] = projected
+                        active_call_model = new_call
+                        active_call_model_with_continuation = new_call
+                        trace(
+                            STEP_MODEL_ERROR,
+                            summary=(
+                                f"Provider fallback: {active_provider} -> "
+                                f"{candidate.provider} "
+                                f"(after {type(exc).__name__})"
+                            ),
+                            status="failed",
+                            field_states={"payload": "omitted"},
+                            sensitivity="diagnostic",
+                            parent_step_index=model_request_step.index,
+                        )
+                        active_provider = candidate.provider
+                        switched = True
+                        break
+                    if switched:
+                        continue
                 trace(
                     STEP_MODEL_ERROR,
                     summary="Model request failed",
@@ -1331,6 +1661,100 @@ def run_agent_loop(
                 # fence is the fallback rationale (explicit key wins inside
                 # with_preamble_rationale).
                 calls = list(with_preamble_rationale([fenced], _visible))
+        if calls:
+            # A tool call is content: it resets the empty streak even when the
+            # turn carried no text, which is the ordinary shape of a model
+            # deciding to call a tool (TASK-26002 AC#5). Sits AFTER the fence
+            # split on purpose -- a call parsed out of fence text is as much
+            # content as a native one, and fence providers (mostly local
+            # inference servers) are exactly the flaky-empties population this
+            # guard was written for (review I1, 2026-08-31).
+            consecutive_empty_turns = 0
+        # TASK-26000: an active-turn redirect. The service aborted the
+        # in-flight model request (the transport returns early with the
+        # partial), so this turn is the CUT-OFF response: keep its visible
+        # text as assistant context, drop its tool calls (the user just
+        # cancelled them), append the correction as a plain user message, and
+        # re-ask -- via `continue`, never loop re-entry, so the sticky
+        # fallback switch living in the loop locals survives a redirect
+        # (ADR-110). Ordering pins: Stop wins (a cancelled run never
+        # redirects), and a mid-continuation turn refuses -- the entry stays
+        # in the mailbox and degrades to the next pre-call drain (AC#4),
+        # because rewriting a turn whose batch is durably persisted would
+        # corrupt the checkpoint contract.
+        if (
+            deps.has_pending_redirect is not None
+            and not restoring_batch
+            and continuation_checkpoint is None
+            and turn.provider_continuation is None
+            # Probe order matters: has_pending_redirect FIRST, so the
+            # common no-redirect turn never spends an extra should_cancel
+            # poll (test_fleet_stop_semantics counts those polls exactly).
+            # Stop still beats redirect -- the cancel check runs whenever a
+            # redirect is actually pending.
+            and deps.has_pending_redirect()
+            and not deps.should_cancel()
+        ):
+            try:
+                entries = (
+                    deps.drain_mailbox_with_causes()
+                    if deps.drain_mailbox_with_causes is not None
+                    else [
+                        (source, text, None)
+                        for source, text in (
+                            deps.drain_mailbox() if deps.drain_mailbox else []
+                        )
+                    ]
+                )
+            except Exception:  # noqa: BLE001 -- containment, like the pre-call drain
+                logger.opt(exception=True).warning(
+                    "redirect drain raised; classifying the turn normally"
+                )
+                entries = []
+            if entries:
+                visible, _cut_fence = split_visible_text_and_tool_call(turn.text)
+                visible = strip_trailing_open_fence(visible)
+                # Review F3: the redirected model turn never reaches the
+                # STEP_MODEL block below (`continue` skips it), so without
+                # this the cut partial would survive ONLY inside `messages`.
+                trace(
+                    STEP_STEERING,
+                    summary=(
+                        "Turn redirected by user; "
+                        f"{len(visible.strip())} chars of partial retained"
+                    ),
+                    status="redirected",
+                    sensitivity="diagnostic",
+                )
+                if visible.strip():
+                    # AC#3: the partial the user watched stream stays in
+                    # context; the fence (a call the user just cancelled)
+                    # does not, and is never executed.
+                    messages.append(
+                        {"role": "assistant", "content": visible.strip()}
+                    )
+                for steer_source, steer_text, source_event_id in entries:
+                    content = (
+                        steer_text
+                        if steer_source == STEERING_SOURCE_REDIRECT
+                        else format_steering_message(steer_source, steer_text)
+                    )
+                    messages.append({"role": "user", "content": content})
+                    add(
+                        STEP_STEERING,
+                        summary=content[:200],
+                        parent_event_id=source_event_id,
+                        source_event_id=source_event_id,
+                    )
+                    _emit_record(
+                        deps,
+                        "steering",
+                        content=content,
+                        tool="",
+                        status=steer_source,
+                        call_id="",
+                    )
+                continue
         candidate = turn.provider_continuation
         if not restoring_batch and calls and candidate is not None:
             context = deps.continuation_context
@@ -1375,6 +1799,41 @@ def run_agent_loop(
                     source_step_index=model_request_step.index,
                 )
                 return _outcome(RUN_CANCELLED, final_text=turn.text)
+            # TASK-26002 + review I2 (2026-08-31): an empty turn is a provider
+            # fault and must be classified BEFORE anything about it is
+            # persisted. Previously the state="complete" continuation branch
+            # below ran first, durably recording a FinalContinuation with
+            # empty content -- and the retry then re-asked with a *completed*
+            # checkpoint in flight, a shape the validators were never written
+            # for. Skipping persistence here also keeps blank model steps out
+            # of the transcript and the run log.
+            if not str(turn.text or "").strip():
+                consecutive_empty_turns += 1
+                if consecutive_empty_turns >= EMPTY_TURN_LIMIT:
+                    add(
+                        STEP_ERROR,
+                        summary=(
+                            f"{consecutive_empty_turns} consecutive empty "
+                            f"responses from provider "
+                            f"'{active_provider}' model "
+                            f"'{config.model}' — stopping rather than "
+                            f"retrying a deterministic fault"
+                        ),
+                    )
+                    return _outcome(RUN_STUCK)
+                trace(
+                    STEP_MODEL_ERROR,
+                    summary=(
+                        f"Empty response from '{active_provider}' "
+                        f"model '{config.model}'; retrying "
+                        f"({consecutive_empty_turns} of {EMPTY_TURN_LIMIT})"
+                    ),
+                    status="failed",
+                    field_states={"payload": "omitted"},
+                    sensitivity="diagnostic",
+                    parent_step_index=model_request_step.index,
+                )
+                continue
             if candidate is not None:
                 context = deps.continuation_context
                 try:
@@ -1439,6 +1898,9 @@ def run_agent_loop(
                 call_id="",
             )
         if not calls:
+            # Emptiness was already classified before the continuation block
+            # above (review I2), so a turn reaching here has real text.
+            consecutive_empty_turns = 0
             return _outcome(RUN_DONE, final_text=turn.text)
         if not restoring_batch:
             messages.append(

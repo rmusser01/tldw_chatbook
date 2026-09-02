@@ -17,6 +17,7 @@ from tldw_chatbook.MCP.permission_store import (
     SCHEMA_VERSION,
     STORE_STATES,
     MCPPermissionStore,
+    definition_hash,
 )
 
 
@@ -734,3 +735,135 @@ def test_unknown_profile_id_inherits_everything(store):
         payload, "local:__local__", "fs_read", profile_id="ws-never-created"
     )
     assert state.state == DEFAULT_GLOBAL  # fresh workspace behaves like today
+
+
+# --- TASK-26012: per-argument allow rules -----------------------------------
+
+
+def _rule_tool(server_key="srv", name="search", *, tags=(), schema=None):
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+    return HubTool(
+        server_key=server_key,
+        server_label="Server",
+        source="mcp",
+        name=name,
+        description="A tool.",
+        input_schema=schema or {"type": "object"},
+        tags=tuple(tags),
+        stale=False,
+        executable=True,
+    )
+
+
+def test_arg_rule_allows_exact_args_and_still_prompts_otherwise(tmp_path) -> None:
+    """AC#1/#2: the rule quiets exactly the saved argument shape."""
+    from tldw_chatbook.MCP.permission_store import (
+        MCPPermissionStore,
+        arg_rule_allows,
+    )
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "site status", "limit": 5},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+
+    payload = store.load()
+    assert arg_rule_allows(payload, tool, {"query": "site status", "limit": 5})
+    assert arg_rule_allows(payload, tool, {"limit": 5, "query": "site status"}), (
+        "argument order must not matter"
+    )
+    assert not arg_rule_allows(payload, tool, {"query": "DIFFERENT", "limit": 5})
+    assert not arg_rule_allows(payload, tool, {"query": "site status"})
+
+
+def test_arg_rule_field_glob_patterns_match_one_field(tmp_path) -> None:
+    """AC#1: hand-written field/pattern rules give hermes-style globs."""
+    from tldw_chatbook.MCP.permission_store import (
+        MCPPermissionStore,
+        arg_rule_allows,
+    )
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    payload = store.load()
+    profile = payload["profiles"]["default"]
+    entry = (
+        profile.setdefault("servers", {})
+        .setdefault("srv", {})
+        .setdefault("tools", {})
+        .setdefault("search", {})
+    )
+    entry["arg_rules"] = [
+        {
+            "field": "query",
+            "pattern": "docs *",
+            "definition_hash": definition_hash(
+                tool.description, tool.input_schema
+            ),
+        }
+    ]
+
+    assert arg_rule_allows(payload, tool, {"query": "docs search syntax"})
+    assert not arg_rule_allows(payload, tool, {"query": "rm everything"})
+
+
+def test_arg_rules_participate_in_the_rug_pull_guard(tmp_path) -> None:
+    """AC#4: a changed tool definition makes the rule inert."""
+    from tldw_chatbook.MCP.permission_store import (
+        MCPPermissionStore,
+        arg_rule_allows,
+    )
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+    changed = _rule_tool(schema={"type": "object", "properties": {"q": {}}})
+
+    payload = store.load()
+    assert arg_rule_allows(payload, tool, {"query": "x"})
+    assert not arg_rule_allows(payload, changed, {"query": "x"})
+
+
+def test_arg_rules_never_quiet_high_risk_tools(tmp_path) -> None:
+    """AC#5: the risk floor beats any argument rule."""
+    from tldw_chatbook.MCP.permission_store import (
+        MCPPermissionStore,
+        arg_rule_allows,
+    )
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    risky = _rule_tool(tags=("mutates",))
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(risky.description, risky.input_schema),
+    )
+
+    assert not arg_rule_allows(store.load(), risky, {"query": "x"})
+
+
+def test_service_arg_rule_round_trip(tmp_path) -> None:
+    """The service passthrough hashes the live tool and the matcher agrees."""
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
+
+    service = UnifiedMCPControlPlaneService.__new__(UnifiedMCPControlPlaneService)
+    service._permission_store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+
+    service.add_tool_arg_rule("srv", "search", args={"query": "x"}, tool=tool)
+
+    assert service.arg_rule_allows_call(tool, {"query": "x"}) is True
+    assert service.arg_rule_allows_call(tool, {"query": "y"}) is False

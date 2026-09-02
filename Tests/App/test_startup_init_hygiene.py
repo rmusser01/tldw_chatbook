@@ -370,7 +370,6 @@ def test_alternate_startup_metrics_failures_are_type_only() -> None:
     )
     failure_logger = FakeLogger()
     failure_namespace = {
-        "os": SimpleNamespace(environ={"METRICS_PORT": "8000"}),
         "init_metrics_server": fail_metrics,
         "init_otel_metrics": fail_metrics,
         "loguru_logger": failure_logger,
@@ -387,7 +386,6 @@ def test_alternate_startup_metrics_failures_are_type_only() -> None:
 
     success_logger = FakeLogger()
     success_namespace = {
-        "os": SimpleNamespace(environ={"METRICS_PORT": "8000"}),
         "init_metrics_server": lambda **_kwargs: True,
         "init_otel_metrics": lambda: True,
         "loguru_logger": success_logger,

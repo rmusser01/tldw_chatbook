@@ -269,7 +269,22 @@ def test_property_final_messages_end_at_a_coherent_boundary(script_shape):
     final = outcome.final_messages
     _assert_coherent(final)
     boundary = seen[-1] if seen else [{"role": "user", "content": "hi"}]
-    if outcome.status == RUN_DONE:
+    # TASK-26001: budget exhaustion now makes one final tools-stripped
+    # wrap-up call whose input is the coherent prefix plus a single
+    # instruction message. That call is legitimately the model's last view,
+    # but the instruction never enters the retained transcript.
+    is_wrapup_view = (
+        outcome.status == RUN_STUCK
+        and boundary
+        and boundary[-1].get("role") == "user"
+        and "budget is exhausted" in str(boundary[-1].get("content", ""))
+    )
+    if is_wrapup_view:
+        assert final == boundary[:-1], (
+            "the wrap-up instruction must not be retained, and the wrap-up "
+            "input must be exactly the coherent prefix"
+        )
+    elif outcome.status == RUN_DONE:
         assert final == boundary + [
             {"role": "assistant", "content": outcome.final_text}
         ]

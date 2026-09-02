@@ -128,6 +128,7 @@ from tldw_chatbook.Chat.console_history_budget import (
     count_console_messages_tokens,
     provider_continuation_owner_groups,
 )
+# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (console_auxiliary_routing imports at its one call site.)
 from tldw_chatbook.Agents.agent_service import append_personal_context
 from tldw_chatbook.Chat.console_context_compaction import (
     NO_LEGACY_MEMORY,
@@ -147,6 +148,10 @@ from tldw_chatbook.Chat.console_context_compaction import (
     complete_durable_units,
     decide_compaction,
     plan_compaction,
+    manual_summary_preview,
+    micro_compaction_due,
+    resolve_micro_escalation,
+    sanitize_summary_focus,
     plan_manual_prefix,
     plan_manual_range,
     prefix_digest,
@@ -290,7 +295,9 @@ from tldw_chatbook.Chat.console_turn_preparation import (
     build_console_request_for_preparation,
     pause_for_trace_call_failure,
 )
-from tldw_chatbook.Chat.console_trace_service import TraceCallPersistenceError
+from tldw_chatbook.Chat.console_trace_errors import (  # ADR-097 boot ratchet
+    TraceCallPersistenceError,
+)
 from tldw_chatbook.Chat.library_preparation import (
     LibraryPreparationContribution,
     library_preparation_event_for_outcome,
@@ -329,6 +336,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 
 from tldw_chatbook.Agents.builtin_tool_gate import (
+    DENIAL_POLICY,
     LOCAL_TOOLS_DEFAULT_ENABLED,
     build_builtin_gate,
 )
@@ -1199,7 +1207,7 @@ def commit_project_instruction_dispatch_decision(
 #: and must say who refused and which tool -- matching the wording
 #: `BuiltinToolGate.check` already uses for a denied tool, so a refusal reads
 #: the same whether it was stopped here or at the gate.
-USER_DENIED_REFUSAL = "tool call denied by the user: {name}"
+USER_DENIED_REFUSAL = "tool call denied by the user: {name}. " + DENIAL_POLICY
 
 AGENT_LESSON_APPROVAL_REQUIRED = "approval_required"
 AGENT_LESSON_FOREGROUND_REQUIRED = "foreground_required"
@@ -2600,6 +2608,21 @@ class _DispatchRecoveryRefusal(RuntimeError):
 
 
 @dataclass(frozen=True)
+class _ManualSummaryPlanning:
+    """TASK-26017: everything the manual-summary commit path needs after
+    planning -- shared by preview (which stops here) and commit."""
+
+    session_id: str
+    snapshots: tuple
+    resolution: object
+    prompt: object
+    configuration: object
+    service: object
+    prepare_projection: object
+    plan_result: object
+
+
+@dataclass(frozen=True)
 class ConsoleSubmitResult:
     """Result returned to the composer after a Console submit attempt."""
 
@@ -2809,6 +2832,41 @@ class ConsoleChatController:
     #: finite so the composer never wedges.
     PROVIDER_VALIDATION_TIMEOUT_SECONDS = 30.0
 
+    async def _auxiliary_compaction_resolution(
+        self, main_selection, main_resolution):
+        """Resolve a cheaper auxiliary model for compaction, or fall back.
+
+        TASK-26024. Reads ``[chat_defaults] auxiliary_provider`` /
+        ``auxiliary_model``; unconfigured reproduces today (returns the main
+        resolution, AC#2), and an auxiliary that will not resolve ready
+        falls back to the main rather than failing the side task (AC#3).
+        Only ever called on the compaction path -- never a chat send
+        (AC#5). Separate attribution is automatic: the auxiliary-attempt
+        ledger records provider+model per attempt (AC#4).
+        """
+        try:
+            aux_provider = get_cli_setting(
+                "chat_defaults", "auxiliary_provider", None
+            )
+            aux_model = get_cli_setting("chat_defaults", "auxiliary_model", None)
+        except Exception:
+            return main_resolution
+        from tldw_chatbook.Chat.console_auxiliary_routing import (  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+            auxiliary_selection_from_config,
+            select_auxiliary_or_main,
+        )
+
+        aux_selection = auxiliary_selection_from_config(
+            main_selection, provider=aux_provider, model=aux_model
+        )
+        if aux_selection is None:
+            return main_resolution
+        try:
+            aux_resolution = await self._resolve_for_send_bounded(aux_selection)
+        except Exception:
+            return main_resolution
+        return select_auxiliary_or_main(aux_resolution, main_resolution)
+
     async def _resolve_for_send_bounded(self, selection: Any) -> Any:
         """resolve_for_send with a hard deadline (UAT H-3).
 
@@ -2979,7 +3037,16 @@ class ConsoleChatController:
                     persistence_db_present=True,
                 ).warning("console_context_repository_init_failed")
         self._compaction_service = (
-            ConsoleCompactionService(self._context_repository, provider_gateway)
+            ConsoleCompactionService(
+                self._context_repository,
+                provider_gateway,
+                auxiliary_timeout_seconds=get_cli_setting(
+                    "console", "compaction_auxiliary_timeout_seconds", None
+                ),
+                native_compaction_delegation=get_cli_setting(
+                    "console", "compaction_native_delegation", False
+                ),
+            )
             if self._context_repository is not None
             and callable(getattr(provider_gateway, "complete_auxiliary", None))
             else None
@@ -3258,6 +3325,34 @@ class ConsoleChatController:
         #: docstring for the resulting, deliberately-scoped-down, limit on
         #: the three worker-thread approval/confirm bridges below.
         self._active_cancel_events: dict[str, threading.Event] = {}
+        #: TASK-25903: per-session steer callables, populated by the bridge's
+        #: on_steer_ready when a primary run's mailbox registers. A stale
+        #: entry is harmless -- the service refuses once the mailbox is
+        #: unregistered -- so this map is hygiene, not the safety boundary.
+        self._active_steer_hooks: dict[str, Callable[[str], str | None]] = {}
+        #: TASK-26000: same lifecycle as _active_steer_hooks, but the hook
+        #: cuts the in-flight model response and re-runs the turn.
+        self._active_redirect_hooks: dict[str, Callable[[str], str | None]] = {}
+        #: TASK-26019: the LAST prepared request's token accounting per
+        #: session -- captured at the send preflight (the same accounting
+        #: that built the request), read by the context breakdown surface.
+        self._context_accounting_by_session: dict[str, object] = {}
+        #: TASK-25910: completed-turn counters per session for the
+        #: micro-compaction cadence; a per-session in-flight guard keeps
+        #: a slow fold from stacking.
+        self._micro_compaction_counters: dict[str, int] = {}
+        self._micro_compaction_inflight: set[str] = set()
+        self._micro_compaction_tasks: dict[str, object] = {}
+        # Read once at construction (the 26016 timeout-knob precedent, and
+        # a per-completion get_cli_setting call would also exhaust every
+        # test double with a finite side_effect list): cadence changes
+        # take effect on the next app start.
+        try:
+            self._micro_compaction_cadence = get_cli_setting(
+                "console", "micro_compaction_every_turns", 0
+            )
+        except Exception:
+            self._micro_compaction_cadence = 0
         self._active_capture_details: dict[str, CaptureDetail] = {}
         # Cost-ticker PR3: per-session cache-break/TTL ground truth for the
         # cost chip. All three are process-local and best-effort -- a missed
@@ -5115,6 +5210,18 @@ class ConsoleChatController:
             A human-readable refusal message if the send must be blocked
             right now, otherwise ``None`` when the send is allowed.
         """
+        # TASK-26004: the global emergency stop refuses EVERY new send
+        # first (AC#1), reporting plainly with the clear hint (AC#5) and
+        # fail-safe to stopped on an unreadable state (AC#4). In-flight runs
+        # are untouched -- this only gates STARTING new work.
+        from tldw_chatbook.emergency_stop import (
+            default_emergency_stop_path,
+            emergency_stop_state,
+        )
+
+        estop = emergency_stop_state(default_emergency_stop_path())
+        if estop.active:
+            return estop.visible_copy()
         interrupted = self.store.interrupted_provider_continuation_message(session_id)
         if interrupted is not None and not self.provider_continuation_owner_is_live(
             interrupted.id
@@ -5319,6 +5426,8 @@ class ConsoleChatController:
                 self._active_stream_tasks.pop(session_id, None)
                 self._active_assistant_message_ids.pop(session_id, None)
                 self._active_cancel_events.pop(session_id, None)
+                self._active_steer_hooks.pop(session_id, None)
+                self._active_redirect_hooks.pop(session_id, None)
                 self._stop_requested = False
         try:
             current = self.store.get_message(message.id)
@@ -13401,6 +13510,54 @@ class ConsoleChatController:
         with self._pending_skill_script_lock:
             return list(self._pending_skill_script_rounds)
 
+    def steer_active_run(self, text: str) -> str | None:
+        """Deliver ``text`` into the ACTIVE session's running agent turn.
+
+        TASK-25903. Plain submission still queues for the next turn -- that
+        default is unchanged (AC#4); this is the explicit per-message opt-in
+        behind the ``/steer`` command. Only ever targets the viewed session,
+        mirroring ``stop_active_run``'s contract.
+
+        Returns:
+            None when the text was delivered into the live run; a
+            human-readable refusal otherwise (no active run, run already
+            finished, empty text, over the steering cap).
+        """
+        session_id = self.store.active_session_id
+        steer = self._active_steer_hooks.get(session_id) if session_id else None
+        if steer is None:
+            return "no active run to steer — plain messages queue for the next turn"
+        return steer(text)
+
+    def context_breakdown_accounting(self, session_id: str):
+        """The LAST prepared request's accounting for one session, if any.
+
+        TASK-26019. Captured at the send preflight; None before the first
+        send of a session (the surface says so rather than estimating).
+        Reading it never triggers a model call (AC#5).
+        """
+        return self._context_accounting_by_session.get(session_id)
+
+    def redirect_active_run(self, text: str) -> str | None:
+        """Cut off the ACTIVE session's current model response and re-run the
+        turn with ``text`` as a plain user correction.
+
+        TASK-26000. Unlike ``steer_active_run`` (which lets the current
+        response finish), this aborts the in-flight model request; completed
+        tool results and the partial the user watched stream are retained.
+        Plain Stop is untouched and remains terminal.
+
+        Returns:
+            None when delivered; a human-readable refusal otherwise.
+        """
+        session_id = self.store.active_session_id
+        redirect = (
+            self._active_redirect_hooks.get(session_id) if session_id else None
+        )
+        if redirect is None:
+            return "no active run to redirect — plain messages queue for the next turn"
+        return redirect(text)
+
     def stop_active_run(self, *, record_user_stop: bool = True) -> bool:
         """Request the ACTIVE (viewed) session's stream to stop at the next
         safe boundary.
@@ -13588,6 +13745,8 @@ class ConsoleChatController:
                 self._active_stream_tasks.pop(session_id, None)
                 self._active_assistant_message_ids.pop(session_id, None)
                 self._active_cancel_events.pop(session_id, None)
+                self._active_steer_hooks.pop(session_id, None)
+                self._active_redirect_hooks.pop(session_id, None)
         for task in submit_tasks:
             self._unregister_submit_task(task)
         if current not in tasks:
@@ -13827,6 +13986,8 @@ class ConsoleChatController:
                 self._active_stream_tasks.pop(session_id, None)
                 self._active_assistant_message_ids.pop(session_id, None)
                 self._active_cancel_events.pop(session_id, None)
+                self._active_steer_hooks.pop(session_id, None)
+                self._active_redirect_hooks.pop(session_id, None)
 
     def _active_streaming_assistant_message_id(self) -> str | None:
         """Return the visible streaming assistant message for the active session."""
@@ -14277,18 +14438,33 @@ class ConsoleChatController:
         )
         return result
 
-    async def summarize_up_to(self, message_id: str) -> ConsoleSubmitResult:
-        """Create a generated memory for complete units strictly before a prompt."""
-        return await self._summarize_manual(message_id, from_here=False)
-
-    async def summarize_from(self, message_id: str) -> ConsoleSubmitResult:
-        """Create a generated memory for the complete inclusive range to the leaf."""
-        return await self._summarize_manual(message_id, from_here=True)
-
-    async def _summarize_manual(
-        self, message_id: str, *, from_here: bool
+    async def summarize_up_to(
+        self, message_id: str, focus: str = ""
     ) -> ConsoleSubmitResult:
-        """Plan and execute either manual memory direction through one service."""
+        """Create a generated memory for complete units strictly before a prompt."""
+        return await self._summarize_manual(
+            message_id, from_here=False, focus=focus
+        )
+
+    async def summarize_from(
+        self, message_id: str, focus: str = ""
+    ) -> ConsoleSubmitResult:
+        """Create a generated memory for the complete inclusive range to the leaf."""
+        return await self._summarize_manual(
+            message_id, from_here=True, focus=focus
+        )
+
+    async def _manual_summary_planning(
+        self, message_id: str, *, from_here: bool, focus: str = ""
+    ):
+        """Shared planning for preview and commit (TASK-26017 AC#4).
+
+        Everything up to (and including) plan construction -- guards,
+        snapshots, provider resolution, prompt, projections -- with NO
+        admission, no attempt-ledger write, and no model call. Returns a
+        blocked ``ConsoleSubmitResult`` or a ``_ManualSummaryPlanning``.
+        """
+        focus = sanitize_summary_focus(focus)
         active_rejection = self._active_run_rejection()
         if active_rejection is not None:
             return active_rejection
@@ -14351,6 +14527,11 @@ class ConsoleChatController:
                 session_id,
                 self._blocked_visible_copy(getattr(resolution, "visible_copy", "")),
             )
+        # TASK-26024: route the summary call to a cheaper auxiliary model
+        # when configured; falls back to this resolution otherwise.
+        resolution = await self._auxiliary_compaction_resolution(
+            configuration.provider_selection, resolution
+        )
         prompt = CompactionPromptSnapshot(
             get_internal_prompt("console.rewind_summarize")
         )
@@ -14415,6 +14596,7 @@ class ConsoleChatController:
                 max_visual_inputs=max_visual_inputs,
                 prepare_projection=prepare_projection,
                 prepare_auxiliary=prepare_auxiliary,
+                focus=focus,
             )
             if from_here
             else plan_manual_prefix(
@@ -14427,12 +14609,60 @@ class ConsoleChatController:
                 max_visual_inputs=max_visual_inputs,
                 prepare_projection=prepare_projection,
                 prepare_auxiliary=prepare_auxiliary,
+                focus=focus,
             )
         )
         if plan_result.plan is None:
             return self._summarize_block(
                 session_id, self._manual_plan_failure_copy(plan_result.reason)
             )
+        return _ManualSummaryPlanning(
+            session_id=session_id,
+            snapshots=snapshots,
+            resolution=resolution,
+            prompt=prompt,
+            configuration=configuration,
+            service=service,
+            prepare_projection=prepare_projection,
+            plan_result=plan_result,
+        )
+
+    async def preview_summarize(self, message_id: str, *, from_here: bool):
+        """TASK-26017: what a manual summarize WILL do -- planning only.
+
+        Runs the SAME planning as the commit path (AC#4) and stops before
+        any admission, attempt-ledger write, or model call (AC#2/#5).
+
+        Returns:
+            A ``ManualSummaryPreview`` on success, or the blocked
+            ``ConsoleSubmitResult`` the commit path would have produced.
+        """
+        planning = await self._manual_summary_planning(
+            message_id, from_here=from_here
+        )
+        if isinstance(planning, ConsoleSubmitResult):
+            return planning
+        return manual_summary_preview(
+            planning.plan_result.plan, from_here=from_here
+        )
+
+    async def _summarize_manual(
+        self, message_id: str, *, from_here: bool, focus: str = ""
+    ) -> ConsoleSubmitResult:
+        """Plan and execute either manual memory direction through one service."""
+        planning = await self._manual_summary_planning(
+            message_id, from_here=from_here, focus=focus
+        )
+        if isinstance(planning, ConsoleSubmitResult):
+            return planning
+        session_id = planning.session_id
+        snapshots = planning.snapshots
+        resolution = planning.resolution
+        prompt = planning.prompt
+        configuration = planning.configuration
+        service = planning.service
+        prepare_projection = planning.prepare_projection
+        plan_result = planning.plan_result
         admission = self._manual_memory_admission(
             session_id=session_id,
             snapshots=snapshots,
@@ -14518,6 +14748,8 @@ class ConsoleChatController:
             )
         elif transaction.reason == "summary_did_not_make_progress":
             visible_copy = "The summary would not reduce this conversation's context."
+        elif transaction.reason == "auxiliary_timed_out":
+            visible_copy = "The summarizer timed out. No memory was saved."
         elif transaction.reason == "invalid_summary_output":
             visible_copy = "The model returned an invalid summary."
         else:
@@ -18371,8 +18603,53 @@ class ConsoleChatController:
                     bump_epoch(session_id)
         return count
 
-    async def compact_context_now(self, session_id: str) -> tuple[bool, str]:
-        """Run one user-initiated bounded compaction without sending a turn."""
+    def _maybe_schedule_micro_compaction(self, session_id: str) -> None:
+        """One cadence step after a completed turn (TASK-25910 AC#1/#4).
+
+        Never runs during a send (the compact entry re-checks run state),
+        never blocks anything here (fire-and-forget task on the running
+        loop; off-loop callers simply skip the beat), and folds only when
+        the configured cadence comes due. Cadence 0 (the default) is fully
+        off -- today's behavior exactly (AC#2). Known nuance (review #7):
+        a manual /rewind summarize also lands a COMPLETED transition and
+        ticks the counter -- one beat of cadence drift, accepted.
+        """
+        cadence = self._micro_compaction_cadence
+        due, next_counter = micro_compaction_due(
+            self._micro_compaction_counters.get(session_id, 0), cadence
+        )
+        self._micro_compaction_counters[session_id] = next_counter
+        if not due or session_id in self._micro_compaction_inflight:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        async def _run() -> None:
+            try:
+                await self.compact_context_now(session_id, micro=True)
+            except Exception:  # noqa: BLE001 -- a background fold never raises out
+                logger.opt(exception=True).debug("micro_compaction_failed")
+            finally:
+                self._micro_compaction_inflight.discard(session_id)
+                self._micro_compaction_tasks.pop(session_id, None)
+
+        self._micro_compaction_inflight.add(session_id)
+        # Review #9: hold the reference (asyncio's documented GC hazard);
+        # dropped in _run's finally alongside the in-flight guard.
+        self._micro_compaction_tasks[session_id] = loop.create_task(_run())
+
+    async def compact_context_now(
+        self, session_id: str, *, micro: bool = False
+    ) -> tuple[bool, str]:
+        """Run one user-initiated bounded compaction without sending a turn.
+
+        TASK-25910: ``micro=True`` is the per-turn micro-compaction pass --
+        same assembly, but the preflight only escalates a below-trigger
+        AUTOMATIC decision (never ASK) and caps the plan at the single
+        oldest exchange; every refusal is silent for that caller.
+        """
         if not self.run_state_for(session_id).is_send_allowed:
             return False, "Wait for the active run to finish before compacting."
         owner = next(
@@ -18381,15 +18658,22 @@ class ConsoleChatController:
         if owner is None or owner.persisted_conversation_id is None:
             return False, "Send or save this conversation before compacting it."
         try:
-            resolution = await self._resolve_for_send_bounded(
-                self._provider_selection()
-            )
+            # Review #2: the OWNING session's provider, never the viewed
+            # tab's -- a background micro fold can fire on a session the
+            # user has switched away from.
+            main_selection = self._provider_selection_for_session(session_id)
+            resolution = await self._resolve_for_send_bounded(main_selection)
         except Exception:
             return False, "The active provider could not be prepared for compaction."
         if not getattr(resolution, "ready", False):
             return False, self._blocked_visible_copy(
                 getattr(resolution, "visible_copy", "")
             )
+        # TASK-26024: route the compaction summary to a cheaper auxiliary
+        # model when configured (fallback to this resolution otherwise).
+        resolution = await self._auxiliary_compaction_resolution(
+            main_selection, resolution
+        )
         overrides, global_overrides, before_memory = self.context_control_inputs(
             session_id
         )
@@ -18413,8 +18697,9 @@ class ConsoleChatController:
             ),
             assistant_message_id="",
             agent_tools_enabled=False,
-            force_compaction=True,
+            force_compaction=not micro,
             manual_action=True,
+            micro_compaction=micro,
             continuation_sidecar=continuation_sidecar,
             continuation_target=continuation_target,
         )
@@ -18523,6 +18808,7 @@ class ConsoleChatController:
         agent_tools_enabled: bool,
         force_compaction: bool = False,
         manual_action: bool = False,
+        micro_compaction: bool = False,
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_target: ContinuationRestoreTarget | None = None,
         thinking_sidecar: tuple[ProviderThinkingSidecar, ...] = (),
@@ -18616,6 +18902,11 @@ class ConsoleChatController:
                 continuation_target=continuation_target,
             )
         capacity = prepared_before.capacity
+        # TASK-26019: this accounting IS the request's own (AC#2); the
+        # breakdown surface reads the latest copy, no re-estimation.
+        self._context_accounting_by_session[session_id] = (
+            prepared_before.accounting
+        )
         mandatory_tokens = (
             prepared_before.accounting.non_compactable_tokens
             - prepared_before.accounting.memory_tokens
@@ -18669,6 +18960,21 @@ class ConsoleChatController:
             decision = CompactionDecision.NON_COMPACTABLE
         elif force_compaction and units:
             decision = CompactionDecision.AUTOMATIC
+        # TASK-25910: the escalation ruling is a pure, pinned function in
+        # console_context_compaction (review Critical 2026-09-01: the
+        # inline version was an uncovered runtime NameError). Every micro
+        # pass is capped to the single oldest exchange or silently no-ops.
+        micro_escalated = False
+        if micro_compaction:
+            ruling = resolve_micro_escalation(
+                decision,
+                units_present=bool(units),
+                compaction_mode=resolved.policy.compaction_mode,
+                effective_kind=effective.kind,
+            )
+            if ruling is None:
+                return _flatten_preflight_messages(semantic), None
+            decision, micro_escalated = ruling
         logger.info("console_context_policy_decision")
         if decision in {CompactionDecision.OFF, CompactionDecision.BELOW_TRIGGER}:
             return _flatten_preflight_messages(semantic), None
@@ -18817,7 +19123,13 @@ class ConsoleChatController:
             max_visual_inputs=max_visual_inputs,
             prepare_main=prepare_main,
             prepare_auxiliary=prepare_auxiliary,
+            max_units=1 if micro_escalated else None,
         )
+        if micro_escalated and planned.plan is None:
+            # An unprofitable single-exchange fold (too small to beat the
+            # summary cap) just waits for a later tick -- never a blocked
+            # notice from a background pass.
+            return _flatten_preflight_messages(semantic), None
         if planned.plan is None:
             if (
                 resolved.policy.failure_behavior
@@ -19421,6 +19733,13 @@ class ConsoleChatController:
                 # A no-op for the direct path, whose own finally already
                 # popped its own cancel_event before returning.
                 self._active_cancel_events.pop(owner_id, None)
+                # Review A-4 (2026-08-31): without this, a COMPLETED run left
+                # a stale steer hook, so the next /steer refused with the
+                # misleading "that run is not running" instead of the
+                # intended "no active run to steer" -- and 26000's redirect
+                # hook will ride this same lifecycle.
+                self._active_steer_hooks.pop(owner_id, None)
+                self._active_redirect_hooks.pop(owner_id, None)
                 self._active_capture_details.pop(owner_id, None)
 
     @staticmethod
@@ -21270,6 +21589,16 @@ class ConsoleChatController:
                 scratch_root=scratch_snapshot.root,
                 scratch_lease=scratch_lease,
                 review_tool_calls=review_hook,
+                on_steer_ready=(
+                    lambda steer, _sid=session_id: self._active_steer_hooks.__setitem__(
+                        _sid, steer
+                    )
+                ),
+                on_redirect_ready=(
+                    lambda redirect, _sid=session_id: (
+                        self._active_redirect_hooks.__setitem__(_sid, redirect)
+                    )
+                ),
                 local_provider=local_provider,
                 virtual_cli_provider=virtual_cli_provider,
                 raw_shell_provider=raw_shell_provider,
@@ -21712,12 +22041,16 @@ class ConsoleChatController:
         placeholder = self._ensure_assistant_placeholder(
             assistant_message_id, session_id
         )
+        wrapup_summary = str(getattr(outcome, "final_text", "") or "").strip()
         if placeholder is not None:
             failed = self.store.mark_message_failed(assistant_message_id)
             self._record_run_assistant_message(run_id, failed)
-            self._append_failure_system_row(session_id, visible_copy)
+            row_copy = self._without_duplicated_summary(
+                visible_copy, wrapup_summary, failed.content
+            )
+            self._append_failure_system_row(session_id, row_copy)
             self._set_run_state(
-                ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy),
+                ConsoleRunState(ConsoleRunStatus.FAILED, row_copy),
                 session_id=session_id,
             )
             return ConsoleSubmitResult(True, True, failed.content)
@@ -21727,7 +22060,12 @@ class ConsoleChatController:
             "pending",
             "streaming",
         }:
-            self.store.append_stream_chunk(runtime_written.id, f"\n\n{visible_copy}")
+            appended_copy = self._without_duplicated_summary(
+                visible_copy, wrapup_summary, runtime_written.content
+            )
+            self.store.append_stream_chunk(
+                runtime_written.id, f"\n\n{appended_copy}"
+            )
             failed = self.store.mark_message_failed(runtime_written.id)
         else:
             failed = self._append_failed_assistant(session_id, visible_copy)
@@ -21927,15 +22265,43 @@ class ConsoleChatController:
                 reason = step.summary
                 break
         if outcome.status == RUN_STUCK:
+            # TASK-26001 review I-2: a budget-exhausted run may carry the
+            # wrap-up summary in final_text -- the one model call it paid
+            # for at exhaustion. This consumer previously dropped it, so on
+            # non-streaming providers the summary was invisible.
+            summary = str(getattr(outcome, "final_text", "") or "").strip()
+            suffix = f"\n\n{summary}" if summary else ""
             if reason.startswith("Agent stopped:"):
                 # Round 1 review (Minor): the loop-guard's own copy
                 # (agent_runtime.py) already reads as a complete,
                 # user-facing sentence -- prefixing "Agent run stuck: "
                 # here would double the lead-in ("Agent run stuck: Agent
                 # stopped: ...").
-                return reason
-            return f"Agent run stuck: {reason or 'budget or loop limit reached'}."
+                return reason + suffix
+            return (
+                f"Agent run stuck: "
+                f"{reason or 'budget or loop limit reached'}.{suffix}"
+            )
         return f"Agent run failed: {reason or outcome.status}."
+
+    @staticmethod
+    def _without_duplicated_summary(
+        visible_copy: str, summary: str, row_content: str
+    ) -> str:
+        """Drop the wrap-up-summary suffix when the row already shows it.
+
+        Review A-2 (2026-08-31): on streaming providers the budget wrap-up
+        call streams its summary into the assistant row BEFORE the finalizer
+        runs, and the visible copy now also carries it -- so the same text
+        appeared twice (or was appended into the very row that streamed it).
+        The suffix is kept only when the surviving row does NOT already
+        contain the summary, which is exactly the non-streaming case the
+        suffix exists for.
+        """
+        if not summary or summary not in (row_content or ""):
+            return visible_copy
+        deduped = visible_copy.replace(f"\n\n{summary}", "", 1)
+        return deduped if deduped.strip() else visible_copy
 
     def _presentation_context_for(self, session_id: str) -> ConsolePresentationContext:
         """Return one session's presentation context with a safe global fallback."""
@@ -22721,6 +23087,12 @@ class ConsoleChatController:
         previous_status = self.run_state_for(target).status
         self._run_states[target] = run_state
         self.run_state_history_for(target).append(run_state.status)
+        if (
+            run_state.status is ConsoleRunStatus.COMPLETED
+            and previous_status is not ConsoleRunStatus.COMPLETED
+            and target
+        ):
+            self._maybe_schedule_micro_compaction(target)
         if self._buddy_sink is not None:
             context_owners = self._buddy_run_owner_context.get() or {}
             if run_state.status is ConsoleRunStatus.VALIDATING:

@@ -22,6 +22,7 @@
 ####################
 #
 # Import necessary libraries
+import hashlib
 import json
 import time
 from collections.abc import Mapping
@@ -518,6 +519,43 @@ def get_openai_embeddings(input_data: str, model: str) -> List[float]:
         raise ValueError(f"OpenAI Embeddings: Unexpected error occurred: {str(e)}")
 
 
+def _openai_prompt_cache_key(
+    system_message: object, tools: object
+) -> str:
+    """A content-addressed, rotation-stable OpenAI ``prompt_cache_key``.
+
+    TASK-26015. Digests the STABLE prefix -- the system message and the
+    tool list, the parts that do not change turn to turn -- so the key is
+    identical across a conversation's turns (AC#2) and changes only when
+    that prefix genuinely changes. It is a SHA-256 digest, never the text
+    (AC#3): the content cannot be recovered from it, and no request is
+    malformed by a hint the provider ignores (AC#4). Not
+    conversation-scoped on purpose: two conversations that share a system
+    prompt and tools SHOULD share a cache node.
+    """
+    payload = json.dumps(
+        {
+            "system": system_message if isinstance(system_message, str) else "",
+            "tools": tools if isinstance(tools, list) else [],
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+        default=str,
+    )
+    return "tldw-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+
+
+def _openai_cache_key_enabled() -> bool:
+    """``[caching] openai_cache_key`` gate -- OFF by default (AC#6)."""
+    try:
+        return bool(get_cli_setting("caching", "openai_cache_key", False))
+    except Exception as exc:  # noqa: BLE001 -- fail safe to OFF (today's behavior)
+        logger.warning(
+            f"caching openai_cache_key read failed; defaulting OFF: {exc!r}"
+        )
+        return False
+
+
 def chat_with_openai(
     input_data: List[Dict[str, Any]],  # Mapped from 'messages_payload'
     model: Optional[str] = None,  # Mapped from 'model'
@@ -753,6 +791,19 @@ def chat_with_openai(
         payload["tool_choice"] = "none"
     if user is not None:
         payload["user"] = user  # 'user' is OpenAI's user identifier field
+    # TASK-26015: a stable prefix-derived cache key -- CANONICAL OpenAI
+    # only (review finding 1). A strict OpenAI-COMPATIBLE server behind a
+    # custom base_url can 400 on an unknown body field, and unlike the
+    # Anthropic cache_control path this one has no degrade-retry, so a
+    # custom endpoint never receives it. Off by default reproduces today's
+    # payload exactly (AC#6).
+    _canonical_openai_endpoint = not (
+        api_base_url or openai_config.get("api_base_url")
+    )
+    if _canonical_openai_endpoint and _openai_cache_key_enabled():
+        payload["prompt_cache_key"] = _openai_prompt_cache_key(
+            system_message, tools
+        )
 
     headers = {
         "Authorization": f"Bearer {final_api_key}",
@@ -1082,6 +1133,43 @@ def _anthropic_caching_enabled() -> bool:
         return True
 
 
+#: TASK-26014: the Anthropic beta opt-in required to emit a 1-hour cache
+#: TTL. Sent only when a 1h marker is actually present in the payload.
+_EXTENDED_CACHE_TTL_BETA = "extended-cache-ttl-2025-04-11"
+
+
+def _anthropic_supports_1h_ttl(model: str) -> bool:
+    """Whether ``model`` accepts the 1-hour cache tier.
+
+    Same family gate as ``_anthropic_supports_caching`` today -- every
+    modern Claude that caches at all also honors the extended TTL. A model
+    outside that set falls back to the 5-minute marker (AC#3).
+    """
+    return _anthropic_supports_caching(model)
+
+
+def _cache_control_marker(model: str) -> dict[str, str]:
+    """The ``cache_control`` value for one breakpoint (TASK-26014).
+
+    Reads ``[caching] cache_ttl`` -- ``"5m"`` (the default and every
+    unrecognized/unsupported value) yields the bare ``{"type":
+    "ephemeral"}`` marker, byte-identical to before; ``"1h"`` yields the
+    extended tier only when the model supports it. Any config read failure
+    falls back to 5m so a broken config never changes request shapes.
+    """
+    marker = {"type": "ephemeral"}
+    try:
+        ttl = str(get_cli_setting("caching", "cache_ttl", "5m") or "5m").strip().lower()
+    except Exception as exc:  # noqa: BLE001 -- fail safe to the 5m default
+        logger.warning(
+            f"caching cache_ttl read failed; defaulting to 5m: {exc!r}"
+        )
+        return marker
+    if ttl == "1h" and _anthropic_supports_1h_ttl(model):
+        return {"type": "ephemeral", "ttl": "1h"}
+    return marker
+
+
 def _without_cache_control(obj: Any) -> Any:
     """Deep-copy ``obj`` with every ``cache_control`` key removed.
 
@@ -1117,6 +1205,17 @@ def _contains_cache_control(obj: Any) -> bool:
         )
     if isinstance(obj, list):
         return any(_contains_cache_control(item) for item in obj)
+    return False
+
+
+def _contains_extended_ttl(obj: Any) -> bool:
+    """True when any nested ``cache_control`` carries ``ttl == "1h"``."""
+    if isinstance(obj, dict):
+        if obj.get("type") == "ephemeral" and obj.get("ttl") == "1h":
+            return True
+        return any(_contains_extended_ttl(value) for value in obj.values())
+    if isinstance(obj, list):
+        return any(_contains_extended_ttl(item) for item in obj)
     return False
 
 
@@ -1463,7 +1562,7 @@ def chat_with_anthropic(
                 {
                     "type": "text",
                     "text": system_prompt,
-                    "cache_control": {"type": "ephemeral"},
+                    "cache_control": _cache_control_marker(current_model),
                 }
             ]
         else:
@@ -1508,7 +1607,7 @@ def chat_with_anthropic(
             # so the caller's input `tools` are never mutated.
             tools_payload[-1] = {
                 **tools_payload[-1],
-                "cache_control": {"type": "ephemeral"},
+                "cache_control": _cache_control_marker(current_model),
             }
         data["tools"] = tools_payload
     if thinking_config is not None:
@@ -1541,8 +1640,13 @@ def chat_with_anthropic(
         last_content = anthropic_messages[-1]["content"]
         last_content[-1] = {
             **last_content[-1],
-            "cache_control": {"type": "ephemeral"},
+            "cache_control": _cache_control_marker(current_model),
         }
+
+    # TASK-26014: the 1h tier is a beta opt-in -- add the header iff a 1h
+    # marker actually made it into the payload (never on the 5m default).
+    if _contains_extended_ttl(data):
+        headers["anthropic-beta"] = _EXTENDED_CACHE_TTL_BETA
 
     api_url = (
         api_base_url
@@ -1609,9 +1713,17 @@ def chat_with_anthropic(
                     "anthropic_cache_control_degrade",
                     labels={"model": current_model},
                 )
+                # Review minor 2: the retry drops cache_control from the
+                # body, so the extended-ttl beta header is no longer needed
+                # -- strip it too rather than resend an unused flag.
+                retry_headers = {
+                    key: value
+                    for key, value in headers.items()
+                    if key != "anthropic-beta"
+                }
                 response = session.post(
                     api_url,
-                    headers=headers,
+                    headers=retry_headers,
                     json=_without_cache_control(data),
                     stream=current_streaming,
                     timeout=180,

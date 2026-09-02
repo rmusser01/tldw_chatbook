@@ -44,6 +44,53 @@ Local owner and no scheduling server connected, the bar collapses to a
 single line ("Local schedules — no scheduling server connected; sync is
 off"), and the **Clear** button only appears once a sync error exists.
 
+## Scheduler liveness
+
+Below the sync bar, a one-line **scheduler liveness** indicator distinguishes
+three states that used to look identical: *not started* (the loop has never
+ticked on this machine), *live* (with the age of the last tick, e.g. "live ·
+last tick 12s ago"), and **STALLED** — the loop has not ticked in several
+poll intervals, so reminders have silently stopped; a stall shows the last
+error the loop hit, if any. Staleness is judged against your configured poll
+interval, so a deliberately long interval is not mistaken for a stall. The
+signal is durable (a small heartbeat file), so a stalled or dead loop is
+distinguishable from an idle one even across a restart.
+
+## Preflight checks
+
+A handler can declare a **preflight** check that runs immediately before a
+task fires — verifying, say, that a watchlist's source still exists or a
+briefing's provider key is still configured. A failed preflight is a
+distinct, legible outcome (shown as *preflight failed* in the run history,
+not confused with a handler crash), never runs the handler, and keeps the
+task visibly needing attention. Repeated preflight failures compose with the
+incident grouping above — you're told once per condition, not once per
+occurrence — and the check is time-bounded so it can't wedge the scheduler.
+Handlers without a preflight fire exactly as before.
+
+## Repeated-failure incidents
+
+A briefing that fails the same way over and over no longer floods you with
+identical notifications. Repeated failures of one watchlist's brief that
+share a normalized error signature (timestamps, ids, paths, and numbers are
+stripped so cosmetic variation doesn't defeat grouping) are grouped into a
+single durable **incident** — only the first failure of a signature alerts;
+the rest are recorded silently. A different error opens its own incident. A
+successful run resolves the incident, so a later recurrence alerts afresh.
+Incidents survive restarts, and acknowledging one suppresses its
+notifications only — it never disables the task or removes it from the queue. The Task Detail pane lists a task's open incidents and offers an **Acknowledge incident** button when one is alerting.
+
+## Run history
+
+The **Task Detail** pane now shows a durable **Recent runs** list for
+reminders and briefings — not just the latest outcome. Each dispatch
+records its own row (start time, status, and any error), so run N-1 is
+recoverable rather than overwritten. History is capped per task (the newest
+50 runs are kept), a run interrupted by an app exit is reconciled to
+*failed* on next start rather than left hanging, and server-scoped tasks
+keep their history server-authoritative (per ADR-077) rather than
+duplicating it locally. The existing missed-fire accounting is unchanged.
+
 ## Creating a scheduled task
 
 Press **c**, or click **+ New** in the Queue tab's pane header, to open
