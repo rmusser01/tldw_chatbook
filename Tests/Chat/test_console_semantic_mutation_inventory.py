@@ -2713,7 +2713,7 @@ def test_inventory_document_exists_and_names_the_contract() -> None:
     assert "ADR-097" in inventory
     assert "Hard deletion" in inventory
     assert "Generated and dynamic SQL" in inventory
-    assert "38 live SQL sink identities and 64 boundary call" in inventory
+    assert "39 live SQL sink identities and 64 boundary call" in inventory
     all_classifications = (
         *DIRECT_SQL_ROUTE_CLASSIFICATION.values(),
         *BOUNDARY_CALL_ROUTE_CLASSIFICATION.values(),
@@ -2724,9 +2724,9 @@ def test_inventory_document_exists_and_names_the_contract() -> None:
     } == {
         "model-visible": 66,
         "visibility/ownership-only": 11,
-        "presentation-only": 25,
+        "presentation-only": 26,
     }
-    assert "66 model-visible, 11 visibility/ownership-only, and 25" in inventory
+    assert "66 model-visible, 11 visibility/ownership-only, and 26" in inventory
     for phrase in (
         "generation settlement",
         "Edit and regeneration replacement",
