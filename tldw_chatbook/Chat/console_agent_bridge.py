@@ -1969,6 +1969,7 @@ class FleetDrained:
 
     conversation_id: str
     children: tuple[SettledChild, ...]
+    drain_id: str = field(default_factory=lambda: str(uuid4()))
 
 
 class FleetDrainFanout:
