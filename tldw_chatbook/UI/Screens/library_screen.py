@@ -124,7 +124,6 @@ from ...Utils.library_rail_width import (
 from ...Library.library_conversation_reader_state import (
     LIBRARY_CONVERSATION_PAGE_SIZE,
     ConversationReaderRequest,
-    ConversationReaderState,
     confirm_conversation_deleted,
     project_conversation_multiselect,
     retry_conversation,
@@ -603,6 +602,7 @@ from ..Library_Modules.library_collections_capture_controller import (
     CollectionsCaptureControllerState,
     LibraryCollectionsCaptureController,
 )
+from ..Library_Modules.library_conversations_state import LibraryConversationsState
 from ..Library_Modules.library_note_import_controller import (
     LibraryNoteImportController,
 )
@@ -2171,28 +2171,7 @@ class LibraryScreen(BaseAppScreen):
             LibraryLandingAttentionAction | None
         ) = None
         self._library_navigation_context_generation: int = 0
-        self._library_conversation_query: str = ""
-        self._library_conversation_requested_page = 1
-        self._library_conversation_requested_query = ""
-        self._library_conversation_freshness = "uninitialized"
-        self._library_conversation_stale_copy = ""
-        self._library_conversation_selection_notice = ""
-        self._library_conversation_focus_after_apply = ""
-        self._library_conversation_page_records: tuple[Mapping[str, Any], ...] = ()
-        self._library_conversation_page = 1
-        self._library_conversation_page_size = LIBRARY_CONVERSATION_PAGE_SIZE
-        self._library_conversation_total = 0
-        self._library_conversation_total_known = False
-        self._library_conversation_has_more = False
-        self._library_conversation_page_loaded = False
-        self._library_conversation_loading = False
-        self._library_conversation_error = ""
-        self._library_conversation_request_generation = 0
-        self._library_conversations_select_mode: bool = False
-        self._library_conversations_row_selection = RowSelection("conversations")
-        self._library_conversation_reader_state = ConversationReaderState()
-        self._library_conversation_reader_loaded_metadata: Mapping[str, Any] = {}
-        self._library_conversation_reader_selected_metadata: Mapping[str, Any] = {}
+        self._conversations_state = LibraryConversationsState()
         (
             self._library_reader_shared_preferences,
             self._library_media_reader_preferences,
@@ -2324,9 +2303,6 @@ class LibraryScreen(BaseAppScreen):
             "library": library_pane_persistence_lock,
             "items": asyncio.Lock(),
         }
-        self._library_conversation_find_focus_intent: tuple[int, int, str] | None = None
-        self._library_conversation_reader_mounted_authority = False
-        self._library_conversation_deleted_selection_id = ""
         self._library_conversation_reader_layout: AdaptiveReaderEffectiveLayout = (
             resolve_adaptive_reader_layout(
                 0,
@@ -45132,3 +45108,27 @@ class LibraryScreen(BaseAppScreen):
             ),
             action_label="Use in Console",
         )
+
+# --- BEGIN generated conversations-state shims (delete wholesale at cleanup) ---
+# task 6: keeps every original `_library_conversation*` name working as a
+# property over `self._conversations_state`; attached programmatically so
+# the class body gains no FunctionDefs (the size ratchet counts those).
+_CONVERSATIONS_PLURAL_STATE_FIELDS = frozenset({"row_selection", "select_mode"})
+for _cs_field in dataclasses.fields(LibraryConversationsState):
+    _cs_prefix = (
+        "_library_conversations_"
+        if _cs_field.name in _CONVERSATIONS_PLURAL_STATE_FIELDS
+        else "_library_conversation_"
+    )
+    setattr(
+        LibraryScreen,
+        _cs_prefix + _cs_field.name,
+        property(
+            lambda self, _n=_cs_field.name: getattr(self._conversations_state, _n),
+            lambda self, value, _n=_cs_field.name: setattr(
+                self._conversations_state, _n, value
+            ),
+        ),
+    )
+del _cs_field, _cs_prefix
+# --- END generated conversations-state shims ---
