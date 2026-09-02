@@ -37,6 +37,7 @@ COMMANDS = [
     "/emergency-stop",
     "/rewind",
     "/research",
+    "/help",
 ]
 
 

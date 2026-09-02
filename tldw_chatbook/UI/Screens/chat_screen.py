@@ -251,6 +251,8 @@ from ...Chat.console_command_grammar import (
     PROMPT_COMMAND_NAME,
     RESEARCH_COMMAND_HANDLER_ID,
     RESEARCH_COMMAND_NAME,
+    HELP_COMMAND_HANDLER_ID,
+    HELP_COMMAND_NAME,
     REWIND_COMMAND_HANDLER_ID,
     EMERGENCY_STOP_COMMAND_HANDLER_ID,
     EMERGENCY_STOP_COMMAND_NAME,
@@ -370,6 +372,11 @@ from ...Chat.console_live_work import (
 from ...Chat.console_command_suggestions import (
     completion_context_for_draft,
     suggestions_for_draft,
+    _COMMAND_DESCRIPTIONS,
+)
+from ...Chat.console_help import (
+    build_command_detail,
+    build_help_listing,
 )
 from ...Chat.console_image_view import (
     ConsoleImageRenderCache,
@@ -15039,6 +15046,7 @@ class ChatScreen(BaseAppScreen):
         REDIRECT_COMMAND_NAME: REDIRECT_COMMAND_HANDLER_ID,
         EMERGENCY_STOP_COMMAND_NAME: EMERGENCY_STOP_COMMAND_HANDLER_ID,
         RESEARCH_COMMAND_NAME: RESEARCH_COMMAND_HANDLER_ID,
+        HELP_COMMAND_NAME: HELP_COMMAND_HANDLER_ID,
     }
 
     def _console_unknown_command_hint(self, name: str) -> str:
@@ -15101,11 +15109,36 @@ class ChatScreen(BaseAppScreen):
             REDIRECT_COMMAND_HANDLER_ID: self._console_command_redirect,
             EMERGENCY_STOP_COMMAND_HANDLER_ID: self._console_command_emergency_stop,
             RESEARCH_COMMAND_HANDLER_ID: self._console_command_research,
+            HELP_COMMAND_HANDLER_ID: self._console_command_help,
         }
         handler = dispatch_map.get(handler_id)
         if handler is None:
             return
         await handler(parse)
+
+    async def _console_command_help(self, parse: CommandParse) -> None:
+        """TASK-25908: list console commands, or detail one, from the live
+        registry. Output is one bounded block appended to the scrollable
+        transcript; gated commands are marked with their unavailability."""
+        ephemeral = self._console_active_session_is_ephemeral()
+
+        def _availability(name: str) -> str | None:
+            handler = self._CONSOLE_COMMAND_NAME_TO_HANDLER_ID.get(name)
+            if handler is None:
+                return None
+            return blocked_reason(handler, ephemeral=ephemeral)
+
+        commands = self._console_command_registry.commands()
+        query = (parse.args or "").strip()
+        if query:
+            text = build_command_detail(
+                commands, _COMMAND_DESCRIPTIONS, query, availability_fn=_availability
+            )
+        else:
+            text = build_help_listing(
+                commands, _COMMAND_DESCRIPTIONS, availability_fn=_availability
+            )
+        await self._append_native_console_system_message(text)
 
     async def _console_command_insert_prompt(self, parse: CommandParse) -> None:
         """Delegate to `ConsolePromptsController` (wave-3 console decomposition, task 3)."""

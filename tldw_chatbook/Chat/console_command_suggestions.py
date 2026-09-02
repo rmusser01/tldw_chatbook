@@ -45,6 +45,7 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "emergency-stop": "Hold ALL new agent runs + scheduled dispatches (clear to resume)",
     "rewind": "Rewind the session to an earlier user prompt",
     "research": "Run deep research in the background; the report is delivered into this conversation",
+    "help": "List the console commands, or /help <command> for one command's detail",
 }
 
 #: Shown for a registered command with no ``_COMMAND_DESCRIPTIONS`` entry --

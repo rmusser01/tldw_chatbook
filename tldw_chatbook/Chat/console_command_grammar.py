@@ -94,6 +94,9 @@ REWIND_COMMAND_HANDLER_ID = "rewind"
 RESEARCH_COMMAND_NAME = "research"
 RESEARCH_COMMAND_ARGUMENT_HINT = "<question>"
 RESEARCH_COMMAND_HANDLER_ID = "research"
+HELP_COMMAND_NAME = "help"
+HELP_COMMAND_ARGUMENT_HINT = "[command]"
+HELP_COMMAND_HANDLER_ID = "help"
 
 
 @dataclass(frozen=True)
@@ -211,6 +214,10 @@ class ConsoleCommandRegistry:
         """Return registered command names, in registration order."""
         return tuple(command.name for command in self._commands.values())
 
+    def commands(self) -> tuple["ConsoleCommand", ...]:
+        """Return the registered commands (name + argument_hint), in order."""
+        return tuple(self._commands.values())
+
 
 def default_console_registry() -> ConsoleCommandRegistry:
     """Build the default registry of native Console slash commands.
@@ -310,6 +317,13 @@ def default_console_registry() -> ConsoleCommandRegistry:
             name=RESEARCH_COMMAND_NAME,
             argument_hint=RESEARCH_COMMAND_ARGUMENT_HINT,
             handler_id=RESEARCH_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=HELP_COMMAND_NAME,
+            argument_hint=HELP_COMMAND_ARGUMENT_HINT,
+            handler_id=HELP_COMMAND_HANDLER_ID,
         )
     )
     return registry
