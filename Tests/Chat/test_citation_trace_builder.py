@@ -1113,16 +1113,13 @@ def test_initial_answer_records_known_repeated_and_unknown_occurrences() -> None
         StructuralValidationState.VALID,
         StructuralValidationState.UNKNOWN_MARKER,
     ]
-    assert [
-        (item.marker_start, item.marker_end) for item in attempt.occurrences
-    ] == [
+    assert [(item.marker_start, item.marker_end) for item in attempt.occurrences] == [
         (first_start, first_start + len("[S1]")),
         (repeated_start, repeated_start + len("[S1]")),
         (unknown_start, unknown_start + len("[S99]")),
     ]
     assert [
-        answer_body[item.marker_start : item.marker_end]
-        for item in attempt.occurrences
+        answer_body[item.marker_start : item.marker_end] for item in attempt.occurrences
     ] == ["[S1]", "[S1]", "[S99]"]
     assert all(
         item.marker_namespace is MarkerNamespace.CHATBOOK_S_V1
