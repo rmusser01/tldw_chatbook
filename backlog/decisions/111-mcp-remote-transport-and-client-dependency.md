@@ -1,15 +1,17 @@
 # ADR-111: MCP remote transport and client dependency
 
-Status: **Proposed**
+Status: **Accepted**
 Date: 2026-09-01
+Accepted: 2026-09-02 — owner chose **Option B** (hand-roll Streamable HTTP + SSE
+on the already-present httpx; no new core dependency, single asyncio
+concurrency model, transports reuse the existing permission gate, rug-pull
+hash, and execution log). TASK-25900 is unblocked; TASK-26032 builds OAuth on
+this transport.
 Related Task: [TASK-25900](../tasks/task-25900%20-%20MCP-client-Streamable-HTTP-and-SSE-transports.md)
 Number swept against local decisions and origin/dev 2026-09-01; 107–109 and 111 were free (max in use locally: 110; on origin/dev: 106). Re-verify at merge time — ADR numbers collide constantly in this repo.
 
-> This ADR records a decision the owner must make before TASK-25900 is
-> implemented. It is deliberately left **Proposed**: the choice adds (or
-> declines to add) a core dependency and fixes the client's concurrency
-> model, which is the owner's call, not the implementer's. No transport code
-> should land until this is Accepted.
+> Accepted 2026-09-02 (Option B). Transport implementation may proceed under
+> TASK-25900.
 
 ## Context
 
