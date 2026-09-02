@@ -838,10 +838,15 @@ git commit -m "feat: inspect tool packs without side effects"
 
 - [ ] **Step 1: Correct empty reviewed-mapping receipt admission, then write safe-compilation tests**
 
-An exact automatic match may require no manual server mapping. Add a failing receipt
-round-trip/activation regression for `reviewed_mappings=[]`, then admit that canonical
-empty list while retaining the existing maximum, sort, uniqueness, strict-field, and
-privacy checks. Run the focused receipt-store tests before continuing.
+An exact automatic match may require no manual server mapping, and Task 8's review
+categories intentionally overlap one diagnostic dimension (`changed`/`missing`) with
+one action dimension (`pending_deny`/`omitted`). Add failing receipt regressions for
+`reviewed_mappings=[]` and these exact-identity overlaps, then admit them while
+rejecting case-fold aliases and incompatible overlaps (`matched` with anything,
+`changed` with `missing`, or `pending_deny` with `omitted`). Apply the 2,000-tool cap
+to distinct identities and retain the existing mapping maximum, sort, per-group
+uniqueness, strict-field, and privacy checks. Run the focused receipt-store tests
+before continuing.
 
 ```python
 compiled = compile_imported_profile(review, destination_inventory)

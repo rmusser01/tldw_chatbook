@@ -29,12 +29,13 @@ Revalidate an approved Tool Pack import review and install exactly its reviewed 
 - [ ] #4 Ambiguous authority outcomes reconcile from strict bytes: exact installed state succeeds idempotently, exact prior absence fails, and any third state returns activation_uncertain without retry.
 - [ ] #5 Import alone leaves existing workspaces and effective policies unchanged, the installed profile has zero references and requires first-bind confirmation, and targeted activation/resolver tests plus scoped static checks pass.
 - [ ] #6 Exact automatic matches activate without fabricating a manual server mapping; detailed import receipts accept and canonically round-trip an empty reviewed-mapping list while preserving all existing mapping validation and bounds.
+- [ ] #7 Detailed receipts faithfully preserve Task 8's overlapping diagnostic/action categories for the same exact identity, while rejecting case-fold aliases, matched/unmatched overlap, changed/missing overlap, pending-Deny/omitted overlap, and more than 2,000 distinct identities.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Add a failing exact-match/no-manual-mapping receipt test, correct the contradictory Task 5 receipt admission rule, and verify the receipt-store suite before activation work resumes.
+1. Add failing receipt regressions, then correct the contradictory Task 5 admission rules so canonical empty mappings and Task 8's constrained exact-identity category overlaps round-trip; keep category-conflict, case-fold alias, and distinct-identity bounds strict, then verify the receipt-store suite.
 2. Add failing safe-compilation and lifecycle-sentinel tests for fallbacks, destination hashes, imported metadata, and privacy.
 3. Implement exact profile compilation from an immutable review and a fresh complete destination inventory.
 4. Add failing stale-review, receipt ordering, install-if-absent, ambiguous reconciliation, and unbound-workspace integration tests.
@@ -45,10 +46,14 @@ ADR required: no new ADR
 ADR path: backlog/decisions/107-portable-tool-use-packs.md
 Reason: ADR-107 already fixes receipt-first unbound activation, exact/manual revalidation, install-if-absent authority semantics, first-bind lifecycle state, and strict outcome reconciliation.
 
-Plan deviation: Task 9's first RED exposed that the Task 5 receipt parser rejected
-`reviewed_mappings=[]`, making the ADR-required exact-match/no-manual-mapping import
-impossible. The scoped file set therefore also modifies
+Plan deviation: Task 9's RED cycles exposed that the Task 5 receipt parser rejected
+both `reviewed_mappings=[]` and every cross-group identity repetition, making the
+ADR-required exact-match/no-manual-mapping import and Task 8's intentionally
+overlapping changed/missing plus pending-Deny/omitted classifications impossible.
+The scoped file set therefore also modifies
 `tldw_chatbook/Tool_Packs/receipt_store.py` and
-`Tests/Tool_Packs/test_receipt_store.py` to accept canonical empty mappings without
-relaxing ordering, uniqueness, identity, privacy, or capacity validation.
+`Tests/Tool_Packs/test_receipt_store.py` to accept canonical empty mappings and the
+same exact identity in one compatible diagnostic/action pair. Ordering, per-group
+uniqueness, case-fold alias rejection, incompatible-category rejection, privacy,
+and the 2,000-distinct-identity capacity bound remain strict.
 <!-- SECTION:PLAN:END -->
