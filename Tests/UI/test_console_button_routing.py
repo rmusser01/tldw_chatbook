@@ -49,7 +49,10 @@ from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Chat.console_prompt_queue import PromptQueuePauseReason
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
@@ -473,6 +476,90 @@ async def test_close_tab_button_drops_an_empty_session_without_confirmation():
         assert doomed.id not in {session.id for session in store.sessions()}
         assert doomed.id not in console._console_undo_histories
         assert not isinstance(host.screen_stack[-1], ConfirmationDialog)
+
+
+@pytest.mark.asyncio
+async def test_close_tab_button_drops_an_idle_saved_session_without_confirmation():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        keeper_id = store.active_session_id
+        saved = store.restore_persisted_session(
+            title="Saved chat",
+            workspace_id=None,
+            persisted_conversation_id="saved-conversation",
+            all_nodes=(
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.USER,
+                    content="already durable",
+                    persisted_message_id="saved-message",
+                ),
+            ),
+        )
+        store.switch_session(keeper_id)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+
+        console.query_one(f"#console-close-session-tab-{saved.id}", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert saved.id not in {session.id for session in store.sessions()}
+        assert not isinstance(host.screen_stack[-1], ConfirmationDialog)
+
+
+@pytest.mark.asyncio
+async def test_close_tab_button_confirms_for_unsaved_message_on_hidden_branch():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        keeper_id = store.active_session_id
+        root = ConsoleChatMessage(
+            id="saved-root",
+            role=ConsoleMessageRole.USER,
+            content="saved root",
+            persisted_message_id="saved-root",
+        )
+        saved_leaf = ConsoleChatMessage(
+            id="saved-leaf",
+            role=ConsoleMessageRole.ASSISTANT,
+            content="saved branch",
+            persisted_message_id="saved-leaf",
+            parent_message_id="saved-root",
+        )
+        saved = store.restore_persisted_session(
+            title="Saved chat with hidden work",
+            workspace_id=None,
+            persisted_conversation_id="saved-conversation",
+            all_nodes=(root, saved_leaf),
+            active_leaf_persisted_id="saved-leaf",
+        )
+        hidden_unsaved = store.create_sibling(
+            saved_leaf.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="unsaved hidden branch",
+        )
+        store.set_active_leaf(saved.id, saved_leaf.id)
+        assert hidden_unsaved.id not in store.active_path_message_ids(saved.id)
+        assert all(
+            message.persisted_message_id is not None
+            for message in store.messages_for_session(saved.id)
+        )
+        store.switch_session(keeper_id)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+
+        console.query_one(f"#console-close-session-tab-{saved.id}", Button).press()
+        dialog = await _wait_for_confirmation(host)
+
+        assert "Transcript messages: 1" in dialog.message
+        assert saved.id in {session.id for session in store.sessions()}
 
 
 @pytest.mark.asyncio

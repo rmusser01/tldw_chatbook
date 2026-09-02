@@ -10466,6 +10466,19 @@ class ConsoleChatStore:
             self._snapshot(message) for message in self._messages_by_session[session_id]
         ]
 
+    def all_messages_for_session(self, session_id: str) -> list[ConsoleChatMessage]:
+        """Return snapshots of every conversation-tree node owned by a session.
+
+        Unlike :meth:`messages_for_session`, this includes inactive branches.
+        Display-only tool markers are excluded because they are not tree nodes.
+        """
+
+        self._session_or_raise(session_id)
+        return [
+            self._snapshot(message)
+            for message in self._nodes_by_session[session_id].values()
+        ]
+
     def read_only_messages_for_session(
         self, session_id: str
     ) -> list[ConsoleChatMessage]:
