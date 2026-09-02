@@ -34,17 +34,26 @@ The isolated implementation branch starts from the fetched `origin/dev` revision
 - the `TASK-26000` manifest assigns the paths together with no captured conflict
   basis at its evidence pin.
 
-Before formatting, implementation rechecks the branch against current
-`origin/dev`. Any upstream deletion, rename, content change, or completed
-formatting is recorded in the task notes and reconciled mechanically. A path is
-never silently dropped or replaced by an unassigned path.
+Before formatting, implementation fetches `origin/dev`, records the fetched SHA,
+rebases the task branch onto it, and then reproduces Ruff status at the rebased
+head. Each original assigned path is compared with the `TASK-26000` evidence pin
+and traced through Git history so that unchanged paths, content changes, deletions,
+renames, and already-clean paths are explicit.
+
+That reconciliation produces an effective owned-path set. An unambiguous rename
+may replace its original path after the task record is amended with the lineage; a
+deleted path is recorded and has no formatter input; and an already-clean path
+remains owned and is still a valid Ruff input but need not produce a diff. An
+ambiguous rename or copy, an unassigned destination already owned elsewhere, or
+any other ownership ambiguity fails closed for user review. A path is never
+silently dropped and an unassigned path is never absorbed.
 
 ## Implementation
 
 Use the repository's pinned Ruff 0.15.22 through Python 3.12.11 to format exactly
-the three assigned paths in one invocation. Do not hand-edit the formatted Python
-output and do not add a dependency, production helper, or abstraction for this
-one-time cleanup.
+the present files in the reconciled owned-path set in one invocation. The Ruff
+input list must equal that set. Do not hand-edit the formatted Python output and do
+not add a dependency, production helper, or abstraction for this one-time cleanup.
 
 The task is a formatter-only maintenance change. The expected Python diff is
 layout-only. Any semantic or comment-invariant difference is a failure, not a
@@ -59,18 +68,22 @@ compare it with the same capture after formatting:
 2. Recursively normalize only `TypeIgnore.lineno`.
 3. Require identical `ast.dump(..., include_attributes=False)` output.
 4. Preserve ordered comment-token text.
-5. For inline `# noqa`, `# type: ignore`, and single-target Ruff directives,
-   preserve the deepest AST-node path and significant-token position to which the
-   comment is anchored.
+5. Express every AST-node path as a stable route of named AST fields and list
+   indexes from the module root. For each inline `# noqa`, `# type: ignore`, and
+   single-target Ruff directive, select the deepest node whose source span covers
+   the comment's physical line and record that route. Also record the comment's
+   significant-token ordinal within its containing logical statement as the
+   position tie-breaker. Require both values to remain equal.
 6. For standalone file directives, preserve the adjacent statement paths between
    which each directive appears.
 7. For every `# fmt: off` / `# fmt: on` pair, preserve the ordered AST-node
    interval enclosed by the pair.
 
 The capture can use an ephemeral script outside the repository. Only its result,
-commands, and relevant summary belong in the task notes. If an invariant differs,
-restore the affected Python path to the pre-format state and investigate before
-continuing.
+commands, and relevant summary belong in the task notes. Tokenization or parse
+errors, non-unique or missing anchors, and unmatched, nested, or otherwise invalid
+`fmt` ranges fail closed. If an invariant differs, restore the affected Python path
+to the pre-format state and investigate before continuing.
 
 ## Verification
 
@@ -80,12 +93,15 @@ After formatting, verify all of the following against the exact owned paths:
 - `ruff check` passes;
 - `ruff format --check` passes;
 - `pytest Tests/Chat/test_citation_service_factory.py Tests/Chat/test_citation_trace_builder.py`
-  passes because these are the direct tests for the production helper and the
-  batch's recorded focused-test surface;
+  passes because these are the two directly assigned test modules and exercise the
+  production helper; this is a proportionate narrowing from the manifest's broader
+  recorded `Tests/Chat` surface for a formatter-only change;
 - `pytest Tests/CI/test_backlog_task_id_uniqueness.py` passes;
 - `git diff --check` passes;
-- the changed-Python set is exactly the assigned set, with no unassigned Python
-  path; and
+- every formatter input equals a present path in the reconciled owned set, and the
+  changed-Python set is contained within that set; if reconciliation confirms all
+  three original paths still exist and fail at those paths, the changed-Python set
+  must equal the original three-path set; and
 - review of the Python diff confirms Ruff-generated layout changes only.
 
 The task does not require the repository-wide test suite: its only Python changes
