@@ -18,6 +18,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
@@ -88,6 +89,15 @@ def _format_result_created(
     else:
         amount = f"{int(seconds // 86400)}d"
     return f"in {amount}" if future else f"{amount} ago"
+
+
+def _degraded(value: Any) -> str:
+    """Dim, escaped fallback for a stored-JSON field whose shape didn't
+    parse as expected (guard-every-imported-read rule -- these fields
+    round-trip through `upsert_automation_results_from_server`, an
+    untrusted-payload boundary, and a malformed value must render
+    degraded, never raise)."""
+    return f"[dim](unparsed — {escape_markup(str(value))})[/dim]"
 
 
 def _review_state_cell(review_state: str) -> Text:
@@ -264,38 +274,56 @@ class ResultsTab(Vertical):
         return result_id
 
     def _show_detail(self, result: dict[str, Any]) -> None:
-        """Render answer / evidence / source_refs / review metadata (spec)."""
+        """Render answer / evidence / source_refs / review metadata (spec).
+
+        Every server/LLM-derived string is markup-escaped before
+        interpolation (the Library-redesign `escape_markup` lesson --
+        this pane renders LLM-generated answers/evidence, so a bracket
+        token in real content is likely, not hypothetical), and every
+        stored-JSON field (`answer`/`source_refs`/each ref item) is
+        shape-checked before use -- a malformed value degrades to an
+        `_degraded()` note instead of raising.
+        """
         lines: list[str] = []
         title = result.get("title") or "(untitled)"
-        lines.append(f"{title}{_result_owner_suffix(result)}")
+        lines.append(f"{escape_markup(str(title))}{_result_owner_suffix(result)}")
         lines.append(
-            f"Kind: {result.get('kind', '?')}  ·  "
-            f"Definition: {result.get('definition_id', '?')}"
+            f"Kind: {escape_markup(str(result.get('kind', '?')))}  ·  "
+            f"Definition: {escape_markup(str(result.get('definition_id', '?')))}"
         )
-        answer = result.get("answer")
-        lines.append(f"Answer: {answer}" if answer else "Answer: (none)")
 
-        source_refs = result.get("source_refs") or []
-        if source_refs:
+        answer = result.get("answer")
+        if not answer:
+            lines.append("Answer: (none)")
+        elif isinstance(answer, str):
+            lines.append(f"Answer: {escape_markup(answer)}")
+        else:
+            lines.append(f"Answer: {_degraded(answer)}")
+
+        source_refs = result.get("source_refs")
+        if not source_refs:
+            lines.append("Evidence: (none)")
+        elif not isinstance(source_refs, list):
+            lines.append(f"Evidence: {_degraded(source_refs)}")
+        else:
             lines.append("Evidence:")
             for ref in source_refs:
                 if isinstance(ref, dict):
-                    source_type = ref.get("source_type", "?")
-                    source_id = ref.get("source_id", "?")
+                    source_type = escape_markup(str(ref.get("source_type", "?")))
+                    source_id = escape_markup(str(ref.get("source_id", "?")))
+                    lines.append(f"  - {source_type}: {source_id}")
+                elif isinstance(ref, str):
+                    lines.append(f"  - {escape_markup(ref)}")
                 else:
-                    source_type, source_id = "?", ref
-                lines.append(f"  - {source_type}: {source_id}")
-        else:
-            lines.append("Evidence: (none)")
+                    lines.append(f"  - {_degraded(ref)}")
 
         review_state = result.get("review_state", "unread")
         review_line = f"Review: {review_state}"
         if result.get("reviewed_at"):
-            review_line += (
-                f" ({result.get('reviewed_by') or '?'} at {result['reviewed_at']})"
-            )
+            reviewed_by = escape_markup(str(result.get("reviewed_by") or "?"))
+            review_line += f" ({reviewed_by} at {result['reviewed_at']})"
         if result.get("review_note"):
-            review_line += f" -- {result['review_note']}"
+            review_line += f" -- {escape_markup(str(result['review_note']))}"
         lines.append(review_line)
 
         if result.get("kind") == "finding":

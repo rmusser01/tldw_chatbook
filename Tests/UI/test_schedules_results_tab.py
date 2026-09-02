@@ -158,6 +158,111 @@ async def test_detail_pane_renders_answer_evidence_and_review_metadata():
         assert "Review: unread" in detail_text
 
 
+async def _detail_text_for(pilot, tab, result: dict) -> str:
+    """Populate a bare ResultsTab with one row, select it, and return the
+    rendered detail-pane text."""
+    tab.populate([result])
+    await pilot.pause()
+    table = tab.query_one("#scheduling-results-table", DataTable)
+    table.cursor_coordinate = (0, 0)
+    await pilot.pause()
+    return str(tab.query_one("#scheduling-results-detail").render())
+
+
+def _base_result(**overrides) -> dict:
+    row = {
+        "id": "res-1",
+        "owner_id": "local",
+        "definition_id": "def-1",
+        "kind": "finding",
+        "title": "Digest",
+        "answer": "fine",
+        "source_refs": [],
+        "review_state": "unread",
+        "reviewed_at": None,
+        "reviewed_by": None,
+        "created_at": "2026-08-30T09:00:05+00:00",
+    }
+    row.update(overrides)
+    return row
+
+
+@pytest.mark.asyncio
+async def test_non_list_source_refs_degrades_instead_of_crashing():
+    """Review fix round 1, finding 1 (HIGH): a syntactically-valid but
+    wrong-shaped source_refs (e.g. an int from a malformed server
+    payload) must render degraded, never raise."""
+    app = _BareResultsApp()
+    async with app.run_test() as pilot:
+        tab = pilot.app.query_one(ResultsTab)
+        await pilot.pause()
+        detail_text = await _detail_text_for(
+            pilot, tab, _base_result(source_refs=5)
+        )
+        assert "unparsed" in detail_text
+        assert "5" in detail_text
+
+
+@pytest.mark.asyncio
+async def test_non_dict_str_evidence_entries_degrade_per_item():
+    """A source_refs list mixing well-shaped and malformed entries renders
+    the good ones normally and each bad one degraded, in place."""
+    app = _BareResultsApp()
+    async with app.run_test() as pilot:
+        tab = pilot.app.query_one(ResultsTab)
+        await pilot.pause()
+        detail_text = await _detail_text_for(
+            pilot,
+            tab,
+            _base_result(
+                source_refs=[
+                    {"source_type": "message", "source_id": "m1"},
+                    42,
+                    ["nested", "list"],
+                ]
+            ),
+        )
+        assert "message: m1" in detail_text
+        assert detail_text.count("unparsed") == 2
+
+
+@pytest.mark.asyncio
+async def test_non_str_answer_degrades_instead_of_crashing():
+    app = _BareResultsApp()
+    async with app.run_test() as pilot:
+        tab = pilot.app.query_one(ResultsTab)
+        await pilot.pause()
+        detail_text = await _detail_text_for(
+            pilot, tab, _base_result(answer={"nested": "dict"})
+        )
+        assert "unparsed" in detail_text
+
+
+@pytest.mark.asyncio
+async def test_bracket_tokens_in_answer_and_title_render_literally():
+    """Review fix round 1, finding 2 (upgraded INFO): this pane renders
+    LLM-generated content, so a `[bold]`-shaped token is realistic, not
+    hypothetical -- it must render as literal text, never be parsed as
+    Rich markup (which would corrupt the render or silently eat the
+    token)."""
+    app = _BareResultsApp()
+    async with app.run_test() as pilot:
+        tab = pilot.app.query_one(ResultsTab)
+        await pilot.pause()
+        detail_text = await _detail_text_for(
+            pilot,
+            tab,
+            _base_result(
+                title="Digest [urgent]",
+                answer="Status: [bold]blocked[/bold] on review",
+                source_refs=[{"source_type": "message", "source_id": "[x]"}],
+            ),
+        )
+        assert "Digest [urgent]" in detail_text
+        assert "[bold]blocked[/bold]" in detail_text
+        assert "message: [x]" in detail_text
+
+
 @pytest.mark.asyncio
 async def test_empty_state_shown_when_no_results():
     app = _BareResultsApp()
