@@ -1,11 +1,11 @@
 ---
 id: TASK-27016
 title: Publish approved Personal Context documentation design
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-01 15:07'
-updated_date: '2026-09-01 17:27'
+updated_date: '2026-09-02 06:27'
 labels: []
 dependencies: []
 references:
@@ -16,32 +16,30 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Publish the reviewed Personal Context documentation design on Chatbook dev so both repositories can use a stable implementation reference.
+Publish and maintain an accurate Personal Context documentation design on Chatbook `dev` so both repositories can use one stable implementation reference. Correct the merged reference when implementation audit evidence shows that it overstates shipped behavior.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 The spec-only branch contains the approved design specification and shipped-behavior corrections without implementation changes.
-- [x] #2 Diff, scope, duplicate-ID, and reference verification passes, and the PR includes this Backlog task record.
-- [x] #3 The task records ADR disposition, exact verification evidence, implementation notes, and final status before the PR is opened.
+- [x] #1 The specification distinguishes reviewed first-link publication from the absent ongoing Personal Context sync caller and labels protocol or future behavior accordingly.
+- [x] #2 The specification accurately documents adaptive-interview egress and disclosure timing, fixed-mode locality, transport/TLS behavior, bootstrap disclosure, local removal/recovery limits, conflict surfaces, and incomplete purge distribution.
+- [x] #3 Both products can reuse one exact four-bullet shared contract that states first-link convergence, queued later mutations, peer-local state, and the separate Shared Core/Sync V2 boundaries without implying ongoing convergence.
+- [x] #4 Diff, scope, semantic, link, and duplicate-ID verification passes for the specification and this task record without application changes.
+- [x] #5 The task records the existing-ADR disposition, exact verification evidence, implementation notes, and In Progress review handoff before a PR is opened.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Verify the approved specification commits and ADR-102 disposition.
-2. Create a spec-only worktree from current origin/dev and cherry-pick the three reviewed specification commits plus this task record.
-3. Run diff, scope, duplicate-ID, and stable-reference checks.
-4. Record exact evidence, close the task, open the spec-only PR, and merge only after required checks/review.
+1. Re-read the merged documentation design, ADR-102, and verified shipped Personal Context behavior.
+2. Correct the specification so every lifecycle, interview, transport, deletion, recovery, conflict, and purge claim distinguishes shipped behavior from protocol capability or future intent.
+3. Replace the exact shared four-bullet contract with first-link-only and current-limitation wording suitable for verbatim reuse in both products.
+4. Run fail-closed diff, semantic, link, scope, and task-ID checks; record exact evidence and implementation notes.
+5. Keep TASK-27016 In Progress until independent review and eventual PR closeout.
 
-ADR required: no new ADR required; existing ADR applies
-ADR path: `backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md`
-Reason: this PR publishes reviewed documentation only; ADR-102 already governs the implemented architecture.
-
-Follow-up correction plan:
-5. Replace the stale pre-merge wording with the completed final checks for 145ac07d527aab6a75e6ffdb406d42b06a7c12f4.
-6. Cite backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md wherever the ADR disposition appears in the spec and task.
-7. Verify exact two-file scope, Markdown and diff hygiene, ADR-path existence, and TASK-27016 uniqueness before closing the task and merging the follow-up PR.
+ADR required: no new ADR required; existing ADR applies.
+ADR path: backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md
+Reason: this correction changes documentation claims only; it does not change the architecture governed by ADR-102.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -75,6 +73,20 @@ Follow-up verification before closeout on origin/dev `0b17f7f73cad28cdb5089aa5ff
 - The repository Python 3.12 environment passed all 3 targeted backlog task-ID uniqueness tests.
 - The all-ref and all-worktree sweeps found only the same TASK-27016 filename and identity.
 - No application test sweep was run because this follow-up is documentation-only.
+
+Shipped-behavior truth correction prepared from current `origin/dev` `e167d0be2ec254595ecaa100c550d30930e645e7`. The specification now separates ADR-102's intended ongoing-sync architecture from the shipped first-link-only lifecycle. It records the absent ongoing Personal Context caller; Notes/Chat-only Manual Sync; adaptive-interview request contents and delayed provider/model disclosure; fixed-mode locality; HTTP/TLS and Test Connection behavior; pre-approval bootstrap metadata; local removal, recovery-import, and key-cleanup limits; absent status/conflict UI; and incomplete purge distribution. It also supplies the exact four-bullet statement that both products must reuse.
+
+ADR required: no new ADR required; existing ADR applies.
+ADR path: `backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md`.
+Reason: this correction changes documentation claims only and records verified implementation gaps; it introduces no storage, authority, synchronization, security, or runtime decision beyond ADR-102.
+
+Verification evidence before independent review:
+- A fail-closed semantic contract check passed all 19 required shipped-boundary claims, confirmed exactly four shared-contract bullets, resolved the three local reference paths, and rejected stale ongoing-sync wording.
+- `git diff --check` exited 0, and the exact-scope assertion found only the specification and TASK-27016 record.
+- `python -m pytest Tests/CI/test_backlog_task_id_uniqueness.py -q` passed all 3 tests under the repository Python 3.12 environment; pytest emitted sandbox cleanup warnings after the successful run.
+- The all-ref and all-worktree sweeps found TASK-27016 only at the same canonical task filename and identity; no distinct claimant path exists.
+- No application test sweep was run because the correction changes documentation and task metadata only.
+- TASK-27016 remains In Progress for independent specification and quality review. No PR was opened.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
