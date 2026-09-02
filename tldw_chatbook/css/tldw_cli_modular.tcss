@@ -3188,6 +3188,12 @@ ConsoleBoundedSection {
     text-style: bold underline;
 }
 
+#console-workspace-tree:focus > .tree--cursor {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
 #console-transcript-region,
 #console-session-surface {
     height: 1fr;
