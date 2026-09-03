@@ -108,6 +108,16 @@ class _ProbeApp(ConsolidatedCSSApp):
         self.resize_messages += 1
 
 
+def _painted_rows_containing(app: _ProbeApp, widget: Widget, token: str) -> list[int]:
+    """Return widget-relative compositor rows containing ``token``."""
+    strips = list(app.screen._compositor.render_strips())
+    return [
+        y - widget.region.y
+        for y in range(widget.region.y, widget.region.bottom)
+        if token in strips[y].crop(widget.region.x, widget.region.right).text
+    ]
+
+
 @pytest.mark.asyncio
 async def test_shell_mounts_three_concrete_widgets_and_two_five_column_grips():
     app = _ProbeApp()
@@ -132,6 +142,26 @@ async def test_shell_mounts_three_concrete_widgets_and_two_five_column_grips():
             PANE_GRIP_WIDTH,
             PANE_GRIP_WIDTH,
         ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_size", [(160, 50), (120, 35), (100, 30), (80, 24)])
+async def test_grips_paint_library_arrows_at_35_and_65_percent_and_items_at_center(
+    terminal_size: tuple[int, int],
+) -> None:
+    app = _ProbeApp()
+
+    async with app.run_test(size=terminal_size) as pilot:
+        await pilot.pause()
+        shell = app.query_one("#probe-shell", LibraryAdaptiveReaderShell)
+        library_rows = _painted_rows_containing(app, shell.library_grip, "<---")
+        items_rows = _painted_rows_containing(app, shell.items_grip, "<---")
+        last_row = shell.library_grip.region.height - 1
+        expected_upper = round(last_row * 0.35)
+        expected_lower = last_row - expected_upper
+
+        assert library_rows == [expected_upper, expected_lower]
+        assert items_rows in ([last_row // 2], [(last_row + 1) // 2])
 
 
 @pytest.mark.asyncio
@@ -515,15 +545,21 @@ def test_shared_shell_structure_is_owned_by_shared_tcss_selectors():
     )
 
 
-def test_shared_tcss_is_structural_while_media_keeps_its_visual_contract():
+def test_shared_tcss_owns_the_calm_visual_contract_for_every_reader():
     source = CSS_SOURCE.read_text(encoding="utf-8")
     shared_grip = source.split(
         ".library-adaptive-reader-shell > .library-adaptive-reader-pane-grip {",
         1,
     )[1].split("}", 1)[0]
 
-    assert "background:" not in shared_grip
-    assert "color:" not in shared_grip
-    assert "text-style:" not in shared_grip
-    assert "#library-media-reader-shell > .library-media-pane-grip {" in source
-    assert "#library-media-reader-shell > .library-media-pane-grip:focus {" in source
+    assert "background: $ds-surface-raised;" in shared_grip
+    assert "color: $ds-text-muted;" in shared_grip
+    assert "text-style: none;" in shared_grip
+    assert "outline: none;" in shared_grip
+    assert (
+        ".library-adaptive-reader-shell > .library-adaptive-reader-pane-grip:focus {"
+        in source
+    )
+    assert "outline-top: solid $ds-action-focus;" in source
+    assert "outline-bottom: solid $ds-action-focus;" in source
+    assert "#library-media-reader-shell > .library-media-pane-grip" not in source

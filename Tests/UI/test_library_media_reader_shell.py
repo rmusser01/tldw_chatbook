@@ -66,6 +66,19 @@ def _painted_text_in_region(app, region) -> str:
     )
 
 
+def _painted_backgrounds_in_region(app, region) -> tuple[tuple[object, ...], ...]:
+    """Return the final composited background color for every grip cell."""
+    strips = list(app.screen._compositor.render_strips())
+    rows: list[tuple[object, ...]] = []
+    for y in range(region.y, region.bottom):
+        cells: list[object] = []
+        for segment in strips[y].crop(region.x, region.right):
+            background = segment.style.bgcolor if segment.style is not None else None
+            cells.extend([background] * len(segment.text))
+        rows.append(tuple(cells))
+    return tuple(rows)
+
+
 def _build_media_test_app():
     app = _build_test_app()
     app.library_new_profile_admission = False
@@ -179,6 +192,38 @@ async def test_grips_are_focusable_clickable_and_geometry_stable():
             await pilot.pause(0.4)
             assert str(grip.label) == "<---"
             assert grip.region.width == PANE_GRIP_WIDTH
+
+
+@pytest.mark.asyncio
+async def test_grip_hover_focus_and_press_keep_neutral_paint_with_accent_endcaps():
+    host = LibraryProductionCSSHarness(_build_media_test_app())
+
+    async with host.run_test(size=(160, 50)) as pilot:
+        _, shell = await _open_media_shell(host, pilot)
+        grip = shell.library_grip
+        region = grip.region
+        rest_backgrounds = _painted_backgrounds_in_region(host, region)
+
+        await pilot.hover(grip)
+        await pilot.pause(0.01)
+        assert _painted_backgrounds_in_region(host, region) == rest_backgrounds
+
+        grip.focus()
+        await pilot.pause()
+        assert grip.has_focus and grip.region == region
+        assert _painted_backgrounds_in_region(host, region) == rest_backgrounds
+        assert grip.styles.outline_top[0] == "solid"
+        assert grip.styles.outline_bottom[0] == "solid"
+        assert grip.styles.outline_left[0] in {"", "none"}
+        assert grip.styles.outline_right[0] in {"", "none"}
+        assert grip.styles.outline_top[1] == grip.styles.color
+        assert grip.styles.outline_bottom[1] == grip.styles.color
+        assert not grip.get_visual_style().reverse
+
+        grip.add_class("-active")
+        await pilot.pause()
+        assert grip.region == region
+        assert _painted_backgrounds_in_region(host, region) == rest_backgrounds
 
 
 @pytest.mark.asyncio

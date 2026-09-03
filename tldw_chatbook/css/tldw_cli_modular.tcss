@@ -2818,6 +2818,12 @@ ConsoleRunLogModal {
     border: none;
 }
 
+.library-adaptive-reader-shell > .library-adaptive-reader-pane-grip:hover,
+.library-adaptive-reader-shell > .library-adaptive-reader-pane-grip.-active {
+    background: $ds-surface-raised;
+    tint: transparent;
+}
+
 #library-conversations-canvas > .ds-toolbar {
     width: 100%;
     min-width: 0;

@@ -1148,36 +1148,31 @@ ConsoleRunLogModal {
     padding: 0;
     border: none !important;
     content-align: center middle;
-}
-
-#library-media-reader-shell > .library-media-pane-grip {
     background: $ds-surface-raised;
     color: $ds-text-muted;
+    text-style: none;
+    tint: transparent;
+    outline: none;
 }
 
-#library-media-reader-shell > .library-media-pane-grip:focus {
-    background: $ds-input-focus-bg;
-    color: $ds-action-focus;
-}
-
-#library-conversations-reader-shell > .library-adaptive-reader-pane-grip {
+.library-adaptive-reader-shell > .library-adaptive-reader-pane-grip:hover,
+.library-adaptive-reader-shell > .library-adaptive-reader-pane-grip.-active {
     background: $ds-surface-raised;
-    color: $ds-text-muted;
+    tint: transparent;
 }
 
-#library-conversations-reader-shell > .library-adaptive-reader-pane-grip:focus {
-    background: $ds-input-focus-bg;
-    color: $ds-action-focus;
+.library-adaptive-reader-shell > .library-adaptive-reader-pane-grip:hover {
+    color: $ds-text-primary;
 }
 
-#library-collections-reader-shell > .library-adaptive-reader-pane-grip {
+.library-adaptive-reader-shell > .library-adaptive-reader-pane-grip:focus {
     background: $ds-surface-raised;
-    color: $ds-text-muted;
-}
-
-#library-collections-reader-shell > .library-adaptive-reader-pane-grip:focus {
-    background: $ds-input-focus-bg;
     color: $ds-action-focus;
+    text-style: bold;
+    tint: transparent;
+    outline: none;
+    outline-top: solid $ds-action-focus;
+    outline-bottom: solid $ds-action-focus;
 }
 
 #library-collections-reader-shell #library-canvas {

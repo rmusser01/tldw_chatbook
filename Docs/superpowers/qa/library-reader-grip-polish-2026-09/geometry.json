@@ -1,0 +1,130 @@
+[
+  {
+    "terminal": [
+      160,
+      50
+    ],
+    "shell": [
+      156,
+      43
+    ],
+    "effective_panes": {
+      "library_open": true,
+      "items_open": true
+    },
+    "grip_widths": [
+      5,
+      5
+    ],
+    "library_arrow_rows": [
+      15,
+      27
+    ],
+    "items_arrow_rows": [
+      21
+    ],
+    "focused_background_unchanged": true,
+    "focused_endcaps": [
+      "top",
+      "bottom"
+    ],
+    "visible_children_inside_shell": true,
+    "reader_inside_shell": true
+  },
+  {
+    "terminal": [
+      120,
+      35
+    ],
+    "shell": [
+      116,
+      28
+    ],
+    "effective_panes": {
+      "library_open": false,
+      "items_open": true
+    },
+    "grip_widths": [
+      5,
+      5
+    ],
+    "library_arrow_rows": [
+      9,
+      18
+    ],
+    "items_arrow_rows": [
+      13
+    ],
+    "focused_background_unchanged": true,
+    "focused_endcaps": [
+      "top",
+      "bottom"
+    ],
+    "visible_children_inside_shell": true,
+    "reader_inside_shell": true
+  },
+  {
+    "terminal": [
+      100,
+      30
+    ],
+    "shell": [
+      100,
+      25
+    ],
+    "effective_panes": {
+      "library_open": false,
+      "items_open": true
+    },
+    "grip_widths": [
+      5,
+      5
+    ],
+    "library_arrow_rows": [
+      8,
+      16
+    ],
+    "items_arrow_rows": [
+      12
+    ],
+    "focused_background_unchanged": true,
+    "focused_endcaps": [
+      "top",
+      "bottom"
+    ],
+    "visible_children_inside_shell": true,
+    "reader_inside_shell": true
+  },
+  {
+    "terminal": [
+      80,
+      24
+    ],
+    "shell": [
+      80,
+      19
+    ],
+    "effective_panes": {
+      "library_open": false,
+      "items_open": false
+    },
+    "grip_widths": [
+      5,
+      5
+    ],
+    "library_arrow_rows": [
+      6,
+      12
+    ],
+    "items_arrow_rows": [
+      9
+    ],
+    "focused_background_unchanged": true,
+    "focused_endcaps": [
+      "top",
+      "bottom"
+    ],
+    "visible_children_inside_shell": true,
+    "reader_inside_shell": true
+  }
+]
