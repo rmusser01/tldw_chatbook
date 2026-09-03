@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-09-02 22:29'
-updated_date: '2026-09-03 04:21'
+updated_date: '2026-09-03 04:48'
 labels:
   - library
   - media-ux
@@ -37,3 +37,9 @@ A lightweight picker to resume, switch between, or dismiss saved review sets (de
 4. 'Sets' toolbar button on the media list (no rail row, hidden in select mode)
 5. Live tmux verify + docs stamp
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented on feat/review-sets-p4 (stacked on p3 #2335). build_picker_rows pure rows (review_set_state) over ONE union liveness snapshot; dumb LibraryReviewSetPickerDialog (SafeModalDismissMixin, decision tuple, literal-Text labels, esc/Close cancel); screen worker collects rows off-loop, push_screen_wait, applies decision off-loop (open = reopen-if-completed + activate + land at resolved cursor; all-tombstoned never activated; dismiss = soft-delete + notice + viewer sync). 'Sets' opener on the media list TITLE row - the action toolbar overflows the narrow Items pane (28025) and one more button crashed rich chop_cells at width 2 (live-verified); not composed on the fresh-empty page (pins ONE recovery action). Live tmux end-to-end pass: create -> walk -> exit -> picker resume at cursor -> dismiss drops footer chrome. Docs: media-and-conversations.md Review sets section. Traps: byte-vs-cell tmux column arithmetic (BSD awk/cut count bytes) gave false negative clicks; Static defaults to 1fr in Horizontal and swallowed the title row.
+<!-- SECTION:NOTES:END -->
