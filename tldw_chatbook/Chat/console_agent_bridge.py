@@ -196,13 +196,6 @@ from tldw_chatbook.Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
-from tldw_chatbook.Chat.stream_stall_watchdog import (
-    DEFAULT_STALL_TIMEOUT_SECONDS,
-    StreamStallError,
-    record_session_stall,
-    reset_session_stalls,
-    watch_content_stalls,
-)
 from tldw_chatbook.config import (
     DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
     MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
@@ -2602,6 +2595,9 @@ def _stall_timeout_seconds() -> float:
     import os
 
     from tldw_chatbook.config import get_cli_setting
+    from tldw_chatbook.Chat.stream_stall_watchdog import (
+        DEFAULT_STALL_TIMEOUT_SECONDS,
+    )
 
     raw: Any = os.environ.get("TLDW_STREAM_STALL_TIMEOUT_SECONDS")
     if raw is None or not str(raw).strip():
@@ -2617,6 +2613,25 @@ def _stall_timeout_seconds() -> float:
     if not math.isfinite(value):
         return DEFAULT_STALL_TIMEOUT_SECONDS
     return value
+
+
+def record_session_stall(*args: Any, **kwargs: Any) -> bool:
+    """Deferred proxy to keep stream_stall_watchdog off the boot import graph
+    (ADR-097 ratchet) while remaining a patchable module attribute for tests."""
+    from tldw_chatbook.Chat.stream_stall_watchdog import (
+        record_session_stall as _impl,
+    )
+
+    return _impl(*args, **kwargs)
+
+
+def reset_session_stalls(*args: Any, **kwargs: Any) -> None:
+    """Deferred proxy (see record_session_stall)."""
+    from tldw_chatbook.Chat.stream_stall_watchdog import (
+        reset_session_stalls as _impl,
+    )
+
+    _impl(*args, **kwargs)
 
 
 class _StreamingModelAdapter:
@@ -3000,6 +3015,10 @@ class _StreamingModelAdapter:
                     getattr(self._resolution, "may_emit_thinking", False)
                 ),
             )
+            from tldw_chatbook.Chat.stream_stall_watchdog import (
+                watch_content_stalls,
+            )
+
             async for chunk in watch_content_stalls(self._gateway.stream_chat(
                 self._resolution,
                 dispatch_messages,
@@ -3079,6 +3098,8 @@ class _StreamingModelAdapter:
         # `child_lifeline`), so `run_reply`'s end-of-turn teardown of the
         # TURN's loop can no longer strand a child mid-call -- the case the
         # timeout above was the last line of defence against.
+        from tldw_chatbook.Chat.stream_stall_watchdog import StreamStallError
+
         future = asyncio.run_coroutine_threadsafe(_consume(), self._submit_loop)
         _stall_session_id = self._store.session_id_for_message(
             self._assistant_message_id
