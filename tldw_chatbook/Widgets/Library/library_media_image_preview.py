@@ -52,6 +52,30 @@ def _detail_type_hint(detail: Mapping[str, Any]) -> str:
     return ""
 
 
+def image_preview_expected(detail: Mapping[str, Any] | None) -> bool:
+    """True when the item's own type says an image (task-30044).
+
+    Gates the "Image preview unavailable" failure chrome: a plain document
+    with no image type hint should read as a document, not as a failed
+    image. Critique 2026-09-03 P2 -- every seeded document's Read tab led
+    with the unavailable status plus a Retry button.
+
+    Args:
+        detail: Loaded media detail, or None.
+
+    Returns:
+        True when a MIME hint or the item's media type indicates an image.
+    """
+    if not isinstance(detail, Mapping):
+        return False
+    if _detail_type_hint(detail):
+        return True
+    for key in ("media_type", "type"):
+        if str(detail.get(key) or "").strip().lower() == "image":
+            return True
+    return False
+
+
 def image_preview_eligibility(
     detail: Mapping[str, Any] | None,
     file_check: Mapping[str, Any] | None,

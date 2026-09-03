@@ -216,3 +216,29 @@ async def test_long_type_values_are_capped_in_the_chooser_label():
         sort_button = app.query_one("#library-media-sort", Button)
         for button in (type_button, sort_button):
             assert button.region.x + button.region.width <= right
+def test_wide_row_prefixes_are_short_so_titles_survive():
+    """Row state prefixes must not displace the title (task-30044).
+
+    Critique 2026-09-03 P2: the wide-mode prefix "Loaded in Reader
+    " consumed ~28 of ~35 label cells, leaving titles as "Quart"/"SQLit" --
+    the row that matters most was the one you couldn't identify.
+    """
+    from tldw_chatbook.Widgets.Library.library_media_canvas import (
+        _media_row_label_rest,
+    )
+
+    loaded = _media_row_label_rest(
+        "Quarterly metrics narrative", "document · 3m", compact=False, loaded=True
+    )
+    assert loaded.startswith(" Loaded · Quarterly")
+    loading = _media_row_label_rest(
+        "Quarterly metrics narrative",
+        "document · 3m",
+        compact=False,
+        loading=True,
+    )
+    assert loading.startswith(" Loading · Quarterly")
+    plain = _media_row_label_rest(
+        "Quarterly metrics narrative", "document · 3m", compact=False
+    )
+    assert plain.startswith(" Quarterly")
