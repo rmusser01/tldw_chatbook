@@ -8,8 +8,15 @@ both primitives and both owners (spec
 `backlog/docs/plan-2026-09-03-schedules-redesign-pr2.md` ruling 2).
 
 Deliberately Textual-free (no `import textual` anywhere in this file, nor
-in anything it imports) so it stays cheap to import -- and unit-testable
-without a Textual harness -- regardless of what pulls it in later.
+in anything it imports): this module's OWN dependency chain never needs
+Textual, so its logic can be exercised with plain function calls, no
+Textual harness required. That claim is scoped to this file's own
+imports, not to importing its dotted package path in general -- `import
+tldw_chatbook.UI.Screens.scheduling.unified_rows` still runs
+`.../scheduling/__init__.py` first, which already eagerly imports
+`SchedulesWorkbench` (Textual) regardless of what this module needs;
+Textual is a hard dependency present in every real run/test environment
+anyway, so that pre-existing package-init cost is harmless in practice.
 `task_detail.py`, `definition_detail.py`, and `results_tab.py` each used
 to define a handful of small, genuinely pure formatters this module also
 needs (schedule-summary prose, the owner label, the dual local/server
@@ -215,7 +222,19 @@ def definition_cron_expression(schedule: dict[str, Any]) -> Any:
 
     The two writers disagree: this client writes ``schedule["cron"]``
     (`AutomationDefinitionForm`'s save payload), the real server sends
-    ``schedule["expression"]``.
+    ``schedule["expression"]`` (recorded fixture
+    ``Tests/Scheduling/fixtures/server_responses/
+    automation_definition_list.json``), and ``_load_server_automations``
+    passes the payload through raw, stamping only ``owner_id``.
+
+    Both readers of that field go through here (final review F1 + its
+    carry-forward, originally in `task_detail.py` before this hoist):
+    `definition_detail`'s "At" row -- where a cron-only read rendered
+    ``At: -`` for EVERY server-owned definition -- and
+    ``AutomationDefinitionForm._prefill_from_row``, where the same read
+    was worse than cosmetic: editing a mirrored server-only definition
+    fell through to the form's default preset, so a save wrote that
+    default OVER the server's real schedule.
 
     Args:
         schedule: A definition's ``schedule`` dict, from either source.
@@ -227,10 +246,19 @@ def definition_cron_expression(schedule: dict[str, Any]) -> Any:
 
 
 def owner_display_label(owner_id: Any) -> str:
-    """Prose owner label shared by every schedules surface.
+    """Prose owner label shared by every schedules surface (final review F6/F7).
 
     ``"This device"`` for a locally-owned row, the server's own id for a
-    server-scoped one (``"server:srv-1"`` -> ``"srv-1"``).
+    server-scoped one (``"server:srv-1"`` -> ``"srv-1"``) -- the
+    vocabulary the spec, the User Guide, and the Automations table's own
+    Name-cell prefix already use. The reminder pane's `Runs on` row used
+    to render the raw metadata string instead (``local``, ``server:1``/
+    ``server <id>``), so the two panes spoke two dialects for the
+    flagship row of the redesign; one helper, one vocabulary.
+
+    `TaskInspector`'s Owner row deliberately keeps `_task_owner_label`'s
+    raw value instead: that pane is the metadata inspector, where the
+    unprettied owner/server ids are the point.
 
     Args:
         owner_id: A row's ``owner_id`` (any type tolerated -- anything
@@ -426,6 +454,15 @@ def _reminder_bucket(task: ReminderTask) -> RowBucket:
     if reminder_has_fired(task):
         return "completed"
     if not task.enabled:
+        return "paused"
+    if task.transfer_state in DORMANT_TRANSFER_STATES:
+        # Mirrors `_definition_bucket`'s dormant fallback (review round
+        # 1, finding 1): `PriorityQueue.load()` excludes a dormant
+        # transfer_state for BOTH primitives (`scheduler/queue.py:96-108`),
+        # and `list_reminder_tasks(armable_only=True)`/
+        # `reminders_due_before` already apply the same exclusion on the
+        # reminder side. "Armed" (spec SS3) is one shared concept across
+        # reminders and definitions, not two independently-scoped rules.
         return "paused"
     return "active"
 

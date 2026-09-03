@@ -118,23 +118,65 @@ class TestReminderHasFired:
 
 
 @pytest.mark.parametrize(
-    "transfer_state",
-    [
-        None,
-        "to_server_pending",
-        "to_server_failed",
-        "to_server_sent",
-        "from_server_pending",
-    ],
+    "transfer_state", [None, "to_server_pending", "to_server_failed"]
 )
-def test_enabled_reminder_stays_active_regardless_of_transfer_state(transfer_state):
-    """spec SS3 / plan ruling 2: enabled reminders are Active, full stop --
-    a reminder's Active bucket does not gate on transfer_state at all
-    (unlike a definition's -- see `definition_is_armed` below). Every
-    dormant/in-flight transfer state must still stay Active."""
+def test_enabled_reminder_stays_active_when_not_dormant(transfer_state):
+    """spec SS3: Active "includ[es] to_server_pending/to_server_failed...
+    they still execute locally" -- these are NOT in DORMANT_TRANSFER_STATES
+    and keep arming, same as the definition side (`definition_is_armed`)."""
     task = _reminder(enabled=True, transfer_state=transfer_state)
     rows = build_unified_rows([task], [], [])
     assert rows[0].bucket == "active"
+
+
+@pytest.mark.parametrize("transfer_state", ["to_server_sent", "from_server_pending"])
+def test_enabled_reminder_parks_under_paused_when_dormant(transfer_state):
+    """Review round 1, finding 1: `_reminder_bucket` must mirror
+    `_definition_bucket`'s dormant fallback (see
+    `test_configured_definition_parks_under_paused_when_dormant` below) --
+    `PriorityQueue.load()` excludes a dormant transfer_state for BOTH
+    primitives (`scheduler/queue.py:96-108`), and
+    `list_reminder_tasks(armable_only=True)`/`reminders_due_before`
+    already apply the same exclusion on the reminder side. An enabled
+    reminder sitting out a dormant transfer is not "armed" -- it does not
+    still execute locally -- so it parks under Paused, not Active;
+    `transfer_state` still carries the raw dormant value for the badge."""
+    task = _reminder(enabled=True, transfer_state=transfer_state)
+    rows = build_unified_rows([task], [], [])
+    assert rows[0].bucket == "paused"
+    assert rows[0].transfer_state == transfer_state
+
+
+def _bucket_for(kind: str, transfer_state: str | None) -> str:
+    """Build one armed (enabled/configured) row of ``kind`` and return its bucket."""
+    if kind == "reminder":
+        rows = build_unified_rows(
+            [_reminder(enabled=True, transfer_state=transfer_state)], [], []
+        )
+    else:
+        definition = _definition(lifecycle="configured", transfer_state=transfer_state)
+        rows = build_unified_rows([], [definition], [])
+    return rows[0].bucket
+
+
+@pytest.mark.parametrize("kind", ["reminder", "definition"])
+@pytest.mark.parametrize(
+    "transfer_state", [None, "to_server_pending", "to_server_failed"]
+)
+def test_both_primitives_stay_active_when_not_dormant(kind, transfer_state):
+    """Pins the symmetry itself (review round 1, finding 2): reminders and
+    definitions must agree on which transfer states still count as
+    "armed" -- neither primitive gets its own rule."""
+    assert _bucket_for(kind, transfer_state) == "active"
+
+
+@pytest.mark.parametrize("kind", ["reminder", "definition"])
+@pytest.mark.parametrize("transfer_state", ["to_server_sent", "from_server_pending"])
+def test_both_primitives_park_under_paused_when_dormant(kind, transfer_state):
+    """Pins the symmetry itself (review round 1, finding 2): a dormant
+    transfer state excludes a row from Active on BOTH primitives, not
+    just definitions."""
+    assert _bucket_for(kind, transfer_state) == "paused"
 
 
 def test_disabled_unfired_reminder_is_paused():
