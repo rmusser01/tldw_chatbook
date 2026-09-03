@@ -455,3 +455,129 @@ caught by direct duplicate events; clearing the wrong phase breaks cancel or
 confirm assertions; and serializing committed navigation replays stale controls
 in the existing real-router return test. No unrelated code, controller ledger,
 general lesson, schema, or ADR changed.
+
+## Round-5 review fix
+
+Resolved the Important post-transfer cancellation finding without changing the
+router, handoff store, modal persistence contract, or cancellation propagation:
+
+- `_reopen_suspended_console_settings()` now returns whether the exact modal
+  restoration took ownership instead of requiring its caller to infer success
+  from the mutable screen-local snapshot slot. A replacement B may therefore
+  occupy that slot immediately after A transfers without making A look like a
+  transient failure.
+- The return worker acknowledges A, clears its active claim pointer, and
+  identity-clears only A's local target synchronously at the successful modal
+  transfer boundary. Optional status mounting happens afterwards. Failure,
+  cancellation, and unmount during that optional work cannot release or
+  recreate the already-settled claim.
+- Added a production-app regression that blocks optional status after the
+  restored modal owns A, navigates away through the real overlay-dismiss/router
+  unmount path, and revisits Console. It proves A was settled before dismissal,
+  the outgoing snapshot carries no stale A retry coordinates, and the revisit
+  neither reopens nor terminally rejects A.
+- Added a mounted interleaving regression that stages B immediately after the
+  real A modal transfer and before optional status work. A reaches the
+  post-transfer path with no retained claim, while B's exact target and private
+  snapshot remain pending; dismissing A then exercises the normal resume path
+  and restores/settles B.
+
+The forced-dismiss behavior remains intentionally bounded: while present, A's
+modal is the sole owner of A's private draft. A real router dismissal may end
+that modal and its draft; this fix does not invent persistence after dismissal.
+The completed A handoff must nevertheless stay settled and must not replay as a
+stale return on the next Console visit.
+
+### Round-5 RED evidence
+
+Initial exact transfer/status and production-router regressions against the
+pre-fix implementation:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py -k 'settles_at_transfer_before_status_and_keeps_replacement or real_router_unmount_after_transfer_does_not_replay_stale_handoff' -q --tb=short --show-capture=no
+2 failed, 335 deselected, 1 warning in 13.99s
+```
+
+Both failures observed `in_flight` instead of `settled` after the modal had
+already restored A and optional status was blocked. The router test continued
+through real forced dismissal, unmount, and revisit before making its final
+assertions; no fixture or collection failure occurred.
+
+After tightening the B regression to stage B inside the exact post-transfer,
+pre-status gap, the final test shape was re-run with the production fix removed:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py -k 'settles_at_transfer_before_status_and_keeps_replacement' -q --tb=short --show-capture=no
+1 failed, 336 deselected, 1 warning in 2.29s
+```
+
+The old mutable-slot inference saw B, classified A as not restored, and never
+entered A's post-transfer status boundary (`None`, expected the exact
+newer-revision classification reached after settlement). This was the expected
+interleaving failure.
+
+### Round-5 GREEN evidence
+
+Final exact regressions:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py -k 'settles_at_transfer_before_status_and_keeps_replacement or real_router_unmount_after_transfer_does_not_replay_stale_handoff' -q --tb=short --show-capture=no
+2 passed, 335 deselected, 1 warning in 14.04s
+```
+
+Prior transfer, transient, cancellation, unmount, and source-reopen slice:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py Tests/UI/test_console_session_settings.py -k 'settles_at_transfer_before_status_and_keeps_replacement or real_router_unmount_after_transfer_does_not_replay_stale_handoff or success_preserves_replacement_staged_during_restore or releases_transient_modal_mount_failure or unmount_releases_acquired_exact_claim or rapid_unmount_before_consumer_keeps_handoff_pending or real_navigation_restores_fresh_console_modal or failed_source_reopen_retains_suspended_snapshot_and_token or cancelled_source_reopen_retains_suspended_snapshot_and_token or covered_cancelled_source_reopen_transfers_exact_draft_to_modal or source_reopen_revalidates_exact_owner_after_model_resolution' -q --tb=short --show-capture=no
+11 passed, 616 deselected, 1 warning in 48.87s
+```
+
+Cumulative Task 4/state slice and complete handoff-store suite:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/State/test_pending_handoff_store.py Tests/State/test_screen_state_store.py Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_native_chat_flow.py Tests/UI/test_console_session_settings.py -k 'conversation_settings or provider_navigation or credential or screen_state or dirty_return_confirmation' -q --tb=short --show-capture=no
+104 passed, 1025 deselected, 1 warning in 107.91s
+
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/State/test_pending_handoff_store.py -q --tb=short --show-capture=no
+90 passed, 1 warning in 0.48s
+```
+
+The warning is the already documented Requests dependency-version warning from
+the shared root virtualenv. No full suite was run, per repository and task
+instructions.
+
+Static verification before the report update:
+
+```text
+../../.venv/bin/python -m ruff check tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_console_native_chat_flow.py
+All checks passed!
+
+../../.venv/bin/python -m py_compile tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_console_native_chat_flow.py
+exit 0
+
+git diff --check
+exit 0
+```
+
+### Round-5 files, ADR check, and self-review
+
+- `tldw_chatbook/UI/Screens/chat_screen.py`
+- `Tests/UI/test_console_native_chat_flow.py`
+- `.superpowers/sdd/2026-09-02-task-30010-conversation-settings-return-contract/task-4-report.md`
+
+ADR required: no new ADR
+
+ADR paths: `backlog/decisions/012-provider-credential-settings-boundary.md` and
+`backlog/decisions/033-application-session-state-ownership.md`
+
+Reason: this correction moves settlement to the ownership boundary already
+required by ADR-033 and leaves ADR-012's credential owner unchanged.
+
+Self-review confirmed that no await exists between successful A transfer and
+exact acknowledgement/identity-guarded local cleanup. The local claim is
+cleared before optional UI work, so every later release path receives `None`.
+Pre-transfer failure still returns false and follows the existing release/session
+repair path; cancellation still propagates. B can neither be acknowledged by A's
+claim nor cleared by A's identity check, and normal Console resume remains the
+only scheduling path after A's modal leaves. No controller ledger, task state,
+general lesson, schema, persistence owner, or ADR changed.

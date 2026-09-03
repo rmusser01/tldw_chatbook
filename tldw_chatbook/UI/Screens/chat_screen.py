@@ -3131,8 +3131,8 @@ class ChatScreen(BaseAppScreen):
         *,
         session_id: str,
         settings_revision: int,
-    ) -> None:
-        """Reopen the retained draft only after an exact failed source route."""
+    ) -> bool:
+        """Transfer the exact retained draft to a restored modal when safe."""
         snapshot = getattr(self, "_suspended_conversation_settings", None)
         store = self._ensure_console_chat_store()
 
@@ -3154,7 +3154,7 @@ class ChatScreen(BaseAppScreen):
                 return False
 
         if not may_push():
-            return
+            return False
         try:
             reopened = await self._open_console_settings(
                 suspended_draft=snapshot,
@@ -3162,7 +3162,7 @@ class ChatScreen(BaseAppScreen):
                 _suspended_owner_token=request_token,
             )
         except Exception:
-            return
+            return False
         if (
             reopened
             and getattr(self, "_suspended_conversation_settings", None) is snapshot
@@ -3171,6 +3171,7 @@ class ChatScreen(BaseAppScreen):
         ):
             self._suspended_conversation_settings = None
             self._suspended_conversation_settings_token = None
+        return reopened
 
     def apply_navigation_context(self, context: Mapping[str, object]) -> None:
         """Capture a saved-chat resume or claim a typed Settings return."""
@@ -3457,16 +3458,23 @@ class ChatScreen(BaseAppScreen):
                 switched_session = True
                 selected_active_session_epoch = store.active_session_epoch()
                 await self._sync_native_console_chat_ui()
-            await self._reopen_suspended_console_settings(
+            restored = await self._reopen_suspended_console_settings(
                 token,
                 session_id=target.session_id,
                 settings_revision=target.settings_revision,
             )
-            restored = self._suspended_conversation_settings is None
             if not restored:
                 handoffs.release(claim)
                 await restore_prior_session_if_still_owned()
                 return
+            # The restored modal now owns A's only private draft. Settle A at
+            # that transfer boundary; status copy below is optional UI work
+            # and cannot make an already-owned draft retryable again.
+            handoffs.acknowledge(claim)
+            if self._pending_conversation_settings_return_claim is claim:
+                self._pending_conversation_settings_return_claim = None
+            self._clear_conversation_settings_return_target(target)
+            claim = None
             try:
                 await self._mount_conversation_settings_return_status(
                     target,
@@ -3477,8 +3485,6 @@ class ChatScreen(BaseAppScreen):
                     "Unable to mount Conversation settings return status",
                     exc_info=True,
                 )
-            handoffs.acknowledge(claim)
-            self._clear_conversation_settings_return_target(target)
         except asyncio.CancelledError:
             if isinstance(handoffs, PendingHandoffStore) and claim is not None:
                 handoffs.release(claim)

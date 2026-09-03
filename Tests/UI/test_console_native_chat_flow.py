@@ -892,6 +892,151 @@ async def test_conversation_settings_return_success_preserves_replacement_staged
 
 
 @pytest.mark.asyncio
+async def test_conversation_settings_return_settles_at_transfer_before_status_and_keeps_replacement(
+    monkeypatch,
+):
+    """A owns its modal before optional status work; B remains independently live."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        first_snapshot = _conversation_settings_return_snapshot()
+        console._suspended_conversation_settings = first_snapshot
+        console._suspended_conversation_settings_token = 135
+        first_target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=first_snapshot,
+        )
+        real_reopen = console._reopen_suspended_console_settings
+        real_mount_status = console._mount_conversation_settings_return_status
+        transferred_before_replacement = False
+        first_status_at_boundary: str | None = None
+        first_claim_at_boundary = None
+        replacement_snapshot: ConsoleSettingsDraftSnapshot | None = None
+        replacement_target: ConsoleSettingsReturnTarget | None = None
+
+        async def stage_replacement_after_transfer(
+            request_token,
+            *,
+            session_id,
+            settings_revision,
+        ):
+            nonlocal transferred_before_replacement
+            nonlocal replacement_snapshot, replacement_target
+            reopened = await real_reopen(
+                request_token,
+                session_id=session_id,
+                settings_revision=settings_revision,
+            )
+            if request_token != 135:
+                return reopened
+            transferred_before_replacement = (
+                console._suspended_conversation_settings is None
+            )
+            replacement_snapshot = _conversation_settings_return_snapshot(
+                model="replacement-model",
+                focus_control_id="console-settings-model-picker",
+            )
+            console._suspended_conversation_settings = replacement_snapshot
+            console._suspended_conversation_settings_token = 136
+            replacement_target = _stage_console_settings_return(
+                app,
+                session_id=session.id,
+                settings_revision=store.session_settings_revision(session.id),
+                snapshot=replacement_snapshot,
+                outcome=ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED,
+            )
+            console.apply_navigation_context(replacement_target.to_context())
+            return transferred_before_replacement
+
+        async def record_first_status_boundary(target, snapshot):
+            nonlocal first_status_at_boundary, first_claim_at_boundary
+            if target.return_revision == first_target.return_revision:
+                first_status_at_boundary = (
+                    app.pending_handoffs.exact_revision_status(
+                        HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                        first_target.return_revision,
+                    )
+                )
+                first_claim_at_boundary = (
+                    console._pending_conversation_settings_return_claim
+                )
+            await real_mount_status(target, snapshot)
+
+        monkeypatch.setattr(
+            console,
+            "_reopen_suspended_console_settings",
+            stage_replacement_after_transfer,
+        )
+        monkeypatch.setattr(
+            console,
+            "_mount_conversation_settings_return_status",
+            record_first_status_boundary,
+        )
+        console.apply_navigation_context(first_target.to_context())
+        for _ in range(80):
+            if (
+                replacement_target is not None
+                and not console._conversation_settings_return_restore_in_progress
+            ):
+                break
+            await pilot.pause(0.05)
+
+        first_modal = host.screen_stack[-1]
+        assert isinstance(first_modal, ConsoleSettingsModal)
+        assert transferred_before_replacement is True
+        # B is now the latest revision, so the public status classifies A as
+        # superseded even though A was already acknowledged exactly.
+        assert first_status_at_boundary == "superseded"
+        assert first_claim_at_boundary is None
+        assert replacement_target is not None
+        assert replacement_snapshot is not None
+        assert console._pending_conversation_settings_return_target == replacement_target
+        assert console._suspended_conversation_settings is replacement_snapshot
+        assert (
+            app.pending_handoffs.exact_revision_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                replacement_target.return_revision,
+            )
+            == "pending"
+        )
+
+        first_modal.dismiss(None)
+        replacement_modal = None
+        for _ in range(120):
+            if (
+                isinstance(host.screen_stack[-1], ConsoleSettingsModal)
+                and host.screen_stack[-1] is not first_modal
+                and console._pending_conversation_settings_return_target is None
+            ):
+                replacement_modal = host.screen_stack[-1]
+                break
+            await pilot.pause(0.05)
+
+        assert replacement_modal is not None
+        assert (
+            replacement_modal.query_one("#console-settings-model-picker").value
+            == "replacement-model"
+        )
+        assert console._suspended_conversation_settings is None
+        assert (
+            app.pending_handoffs.exact_revision_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                replacement_target.return_revision,
+            )
+            == "settled"
+        )
+
+
+@pytest.mark.asyncio
 async def test_conversation_settings_return_releases_transient_modal_mount_failure(
     monkeypatch,
 ):
@@ -1244,6 +1389,130 @@ async def test_conversation_settings_return_real_navigation_restores_fresh_conso
         assert app.screen.query_one(
             "#settings-provider-return-continuation"
         ).display is False
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_real_router_unmount_after_transfer_does_not_replay_stale_handoff(
+    monkeypatch,
+):
+    """Forced dismissal after modal transfer cannot turn A back into pending work."""
+
+    app = _build_production_app(configured_default="chat")
+    _configure_native_ready_console(app)
+    notices: list[str] = []
+    status_started = asyncio.Event()
+    status_cancelled = asyncio.Event()
+    allow_status = asyncio.Event()
+
+    async def block_return_status(self, target, snapshot):
+        status_started.set()
+        try:
+            await allow_status.wait()
+        except asyncio.CancelledError:
+            status_cancelled.set()
+            raise
+
+    monkeypatch.setattr(app, "notify", lambda message, **_kwargs: notices.append(str(message)))
+    monkeypatch.setattr(
+        ChatScreen,
+        "_mount_conversation_settings_return_status",
+        block_return_status,
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        original_console = None
+        for _ in range(200):
+            content = app._navigation_outgoing_screen()
+            if isinstance(content, ChatScreen):
+                original_console = content
+                break
+            await pilot.pause(0.05)
+        assert original_console is not None
+        await _wait_for_selector(
+            original_console,
+            pilot,
+            "#console-native-composer",
+            timeout=10.0,
+        )
+        store = original_console._ensure_console_chat_store()
+        session = store.ensure_session()
+        snapshot = _conversation_settings_return_snapshot()
+        original_console._suspended_conversation_settings = snapshot
+        original_console._suspended_conversation_settings_token = 144
+        target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=snapshot,
+        )
+
+        await app.handle_screen_navigation(NavigateToScreen("settings"))
+        assert isinstance(app._navigation_outgoing_screen(), SettingsScreen)
+        await app.handle_screen_navigation(
+            NavigateToScreen("chat", target.to_context())
+        )
+        await wait_for_signal(
+            status_started,
+            what="blocked post-transfer Conversation settings status",
+        )
+
+        returned_console = app._navigation_outgoing_screen()
+        returned_modal = app.screen
+        assert isinstance(returned_console, ChatScreen)
+        assert returned_console is not original_console
+        assert isinstance(returned_modal, ConsoleSettingsModal)
+        assert returned_console._suspended_conversation_settings is None
+        assert (
+            returned_modal.query_one("#console-settings-temperature", Input).value
+            == "0.7.2"
+        )
+        status_at_transfer = app.pending_handoffs.exact_revision_status(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+            target.return_revision,
+        )
+
+        # The production router dismisses the modal before replacing and
+        # unmounting its content Console. The accepted lifecycle does not
+        # persist the force-dismissed modal draft; it only keeps the already
+        # completed handoff from becoming retry work again.
+        await app.handle_screen_navigation(NavigateToScreen("home"))
+        await wait_for_signal(
+            status_cancelled,
+            what="post-transfer status worker cancellation",
+        )
+        status_after_unmount = app.pending_handoffs.exact_revision_status(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+            target.return_revision,
+        )
+        saved_console_state = app.screen_state_store.restore(
+            "chat",
+            app._current_runtime_identity(),
+        )
+        assert saved_console_state is not None
+
+        await app.handle_screen_navigation(NavigateToScreen("chat"))
+        fresh_console = app._navigation_outgoing_screen()
+        assert isinstance(fresh_console, ChatScreen)
+        assert fresh_console is not returned_console
+        for _ in range(80):
+            if not fresh_console._conversation_settings_return_restore_in_progress:
+                break
+            await pilot.pause(0.05)
+
+        assert status_at_transfer == "settled"
+        assert status_after_unmount == "settled"
+        saved_native_console_state = saved_console_state["native_console_state"]
+        assert saved_native_console_state["suspended_conversation_settings"] is None
+        assert (
+            saved_native_console_state["pending_conversation_settings_return_target"]
+            is None
+        )
+        assert fresh_console._suspended_conversation_settings is None
+        assert fresh_console._pending_conversation_settings_return_target is None
+        assert not isinstance(app.screen, ConsoleSettingsModal)
+        assert not any(
+            "Conversation settings return was stale" in notice for notice in notices
+        )
 
 
 @pytest.mark.asyncio
