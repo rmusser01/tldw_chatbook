@@ -33,7 +33,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleWorkspaceContext,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
-from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_context_policy import (
+    ConsoleContextPolicyOverrides,
+    ContextBudgetMode,
+)
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -597,6 +600,49 @@ async def test_failed_source_reopen_retains_suspended_snapshot_and_token(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_cancelled_source_reopen_retains_suspended_snapshot_and_token(
+    monkeypatch,
+) -> None:
+    """Cancelling the actual mount leaves the exact private retry state owned."""
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-model-picker": "gpt-5"},
+        provider_model_drafts={"openai": "gpt-5"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id="console-settings-model-picker",
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+    screen = ChatScreen.__new__(ChatScreen)
+    fake_app = SimpleNamespace(screen_stack=(screen,))
+    monkeypatch.setattr(ChatScreen, "app", property(lambda _self: fake_app))
+    screen._suspended_conversation_settings = snapshot
+    screen._suspended_conversation_settings_token = 11
+
+    async def cancelled_open(**_kwargs):
+        raise asyncio.CancelledError
+
+    screen._open_console_settings = cancelled_open
+    with pytest.raises(asyncio.CancelledError):
+        await ChatScreen._reopen_suspended_console_settings(screen, 11)
+
+    assert screen._suspended_conversation_settings is snapshot
+    assert screen._suspended_conversation_settings_token == 11
+
+
+def test_resident_console_screen_is_not_active_stack_owner(monkeypatch) -> None:
+    """A hidden resident source must not reopen over the actual top screen."""
+    screen = ChatScreen.__new__(ChatScreen)
+    top_screen = object()
+    fake_app = SimpleNamespace(screen_stack=(screen, top_screen))
+    monkeypatch.setattr(ChatScreen, "app", property(lambda _self: fake_app))
+
+    assert ChatScreen._owns_console_screen_stack(screen) is False
+
+
+@pytest.mark.asyncio
 async def test_open_console_settings_real_callback_stages_typed_credential_route(
     monkeypatch,
 ) -> None:
@@ -618,9 +664,21 @@ async def test_open_console_settings_real_callback_stages_typed_credential_route
     screen = ChatScreen.__new__(ChatScreen)
     staged_modal: list[object] = []
     posted: list[object] = []
-    fake_app = SimpleNamespace(
-        push_screen=lambda modal, callback: staged_modal.extend((modal, callback))
-    )
+    mount_awaited = False
+
+    class MountResult:
+        def __await__(self):
+            async def wait_for_mount():
+                nonlocal mount_awaited
+                mount_awaited = True
+
+            return wait_for_mount().__await__()
+
+    def push_screen(modal, callback):
+        staged_modal.extend((modal, callback))
+        return MountResult()
+
+    fake_app = SimpleNamespace(push_screen=push_screen)
     monkeypatch.setattr(ChatScreen, "app", property(lambda _self: fake_app))
     screen.app_instance = SimpleNamespace(
         pending_handoffs=chat_screen_module.PendingHandoffStore()
@@ -650,11 +708,237 @@ async def test_open_console_settings_real_callback_stages_typed_credential_route
     screen.post_message = posted.append
 
     assert await ChatScreen._open_console_settings(screen) is True
+    assert mount_awaited is True
     callback = staged_modal[1]
     callback(ConsoleSettingsCredentialRequest(snapshot, "openai", "gpt-5"))
 
     assert len(posted) == 1
     assert posted[0].screen_context["provider"] == "openai"
+
+
+@pytest.mark.asyncio
+async def test_open_console_settings_returns_false_when_mount_awaitable_fails(
+    monkeypatch,
+) -> None:
+    """A synchronously pushed modal is not open until AwaitMount succeeds."""
+    settings = ConsoleSessionSettings(provider="openai", model="gpt-5")
+    store = ConsoleChatStore()
+    store.create_session(settings=settings)
+    screen = ChatScreen.__new__(ChatScreen)
+
+    class FailedMount:
+        def __await__(self):
+            async def fail_mount():
+                raise RuntimeError("modal mount failed")
+
+            return fail_mount().__await__()
+
+    fake_app = SimpleNamespace(push_screen=lambda *_args, **_kwargs: FailedMount())
+    monkeypatch.setattr(ChatScreen, "app", property(lambda _self: fake_app))
+    screen._session = SimpleNamespace(
+        _ensure_active_console_session_settings=lambda: settings
+    )
+    screen._ensure_console_chat_store = lambda: store
+    screen._ensure_console_chat_controller = lambda: SimpleNamespace(
+        run_state=SimpleNamespace(is_send_allowed=True),
+        reset_active_context_memory=lambda _session_id: None,
+        undo_context_memory_reset=lambda: None,
+        reset_all_context_memories=lambda _session_id: None,
+        compact_context_now=lambda _session_id: None,
+    )
+    screen._active_console_settings_context_estimate = lambda: (
+        ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
+    )
+    screen._active_console_context_control_state = lambda **_kwargs: None
+    screen._provider_readiness_app_config = lambda: {
+        "api_settings": {"openai": {}}
+    }
+    screen._global_chat_display_name = lambda: "Ada"
+
+    async def provider_models(*_args, **_kwargs):
+        return {"openai": ["gpt-5"]}
+
+    screen._providers_models_for_console_settings = provider_models
+
+    assert await ChatScreen._open_console_settings(screen) is False
+
+
+@pytest.mark.asyncio
+async def test_open_console_settings_propagates_mount_cancellation(monkeypatch) -> None:
+    """AwaitMount cancellation remains visible to the owning Textual worker."""
+    settings = ConsoleSessionSettings(provider="openai", model="gpt-5")
+    store = ConsoleChatStore()
+    store.create_session(settings=settings)
+    screen = ChatScreen.__new__(ChatScreen)
+
+    class CancelledMount:
+        def __await__(self):
+            async def cancel_mount():
+                raise asyncio.CancelledError
+
+            return cancel_mount().__await__()
+
+    fake_app = SimpleNamespace(push_screen=lambda *_args, **_kwargs: CancelledMount())
+    monkeypatch.setattr(ChatScreen, "app", property(lambda _self: fake_app))
+    screen._session = SimpleNamespace(
+        _ensure_active_console_session_settings=lambda: settings
+    )
+    screen._ensure_console_chat_store = lambda: store
+    screen._ensure_console_chat_controller = lambda: SimpleNamespace(
+        run_state=SimpleNamespace(is_send_allowed=True),
+        reset_active_context_memory=lambda _session_id: None,
+        undo_context_memory_reset=lambda: None,
+        reset_all_context_memories=lambda _session_id: None,
+        compact_context_now=lambda _session_id: None,
+    )
+    screen._active_console_settings_context_estimate = lambda: (
+        ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
+    )
+    screen._active_console_context_control_state = lambda **_kwargs: None
+    screen._provider_readiness_app_config = lambda: {
+        "api_settings": {"openai": {}}
+    }
+    screen._global_chat_display_name = lambda: "Ada"
+
+    async def provider_models(*_args, **_kwargs):
+        return {"openai": ["gpt-5"]}
+
+    screen._providers_models_for_console_settings = provider_models
+
+    with pytest.raises(asyncio.CancelledError):
+        await ChatScreen._open_console_settings(screen)
+
+
+@pytest.mark.asyncio
+async def test_suspended_open_uses_active_raw_provider_for_initial_discovery(
+    monkeypatch,
+) -> None:
+    """Fresh composition is seeded from the draft provider, not its canonical origin."""
+    settings = ConsoleSessionSettings(provider="openai", model="gpt-5")
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=settings,
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={
+            "console-settings-provider": "vllm",
+            "console-settings-model-picker": "draft-model",
+            "console-settings-base-url": "http://draft-vllm.invalid:8000",
+        },
+        provider_model_drafts={"openai": "gpt-5", "vllm": "draft-model"},
+        provider_base_url_drafts={
+            "vllm": "http://draft-vllm.invalid:8000"
+        },
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id="console-settings-provider",
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+    store = ConsoleChatStore()
+    store.create_session(settings=settings)
+    screen = ChatScreen.__new__(ChatScreen)
+    staged_modal: list[ConsoleSettingsModal] = []
+    discovery_inputs: list[tuple[str, str | None]] = []
+
+    class Mounted:
+        def __await__(self):
+            async def mounted():
+                return None
+
+            return mounted().__await__()
+
+    def push_screen(modal, callback):
+        staged_modal.append(modal)
+        return Mounted()
+
+    fake_app = SimpleNamespace(push_screen=push_screen)
+    monkeypatch.setattr(ChatScreen, "app", property(lambda _self: fake_app))
+    screen._session = SimpleNamespace(
+        _ensure_active_console_session_settings=lambda: settings
+    )
+    screen._ensure_console_chat_store = lambda: store
+    screen._ensure_console_chat_controller = lambda: SimpleNamespace(
+        run_state=SimpleNamespace(is_send_allowed=True),
+        reset_active_context_memory=lambda _session_id: None,
+        undo_context_memory_reset=lambda: None,
+        reset_all_context_memories=lambda _session_id: None,
+        compact_context_now=lambda _session_id: None,
+    )
+    screen._active_console_settings_context_estimate = lambda: (
+        ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
+    )
+    screen._active_console_context_control_state = lambda **_kwargs: None
+    screen._provider_readiness_app_config = lambda: {
+        "api_settings": {"openai": {}, "vllm": {}}
+    }
+    screen._global_chat_display_name = lambda: "Ada"
+
+    async def provider_models(provider, *, current_model):
+        discovery_inputs.append((provider, current_model))
+        return {"vllm": ["draft-model"]}
+
+    screen._providers_models_for_console_settings = provider_models
+
+    assert await ChatScreen._open_console_settings(
+        screen, suspended_draft=snapshot
+    ) is True
+    assert discovery_inputs == [("vllm", "draft-model")]
+    assert staged_modal[0]._active_provider == "vllm"
+    assert staged_modal[0]._providers_models == {"vllm": ["draft-model"]}
+
+
+@pytest.mark.asyncio
+async def test_suspended_modal_initial_composition_uses_active_raw_provider() -> None:
+    """Connection controls compose for the draft provider before mount events run."""
+    app = ModalHarness()
+    app.app_config = {
+        "api_settings": {
+            "openai": {"api_key": "test-key"},
+            "vllm": {"api_url": "http://canonical-vllm.invalid:8000"},
+        }
+    }
+    settings = ConsoleSessionSettings(provider="openai", model="gpt-5")
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=settings,
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={
+            "console-settings-provider": "vllm",
+            "console-settings-model-picker": "draft-model",
+            "console-settings-base-url": "http://draft-vllm.invalid:8000",
+        },
+        provider_model_drafts={"openai": "gpt-5", "vllm": "draft-model"},
+        provider_base_url_drafts={
+            "vllm": "http://draft-vllm.invalid:8000"
+        },
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id="console-settings-provider",
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+    modal = _basic_modal(
+        settings,
+        app,
+        providers_models={"openai": ["gpt-5"], "vllm": ["draft-model"]},
+        suspended_draft=snapshot,
+    )
+    discovery_provider_calls: list[str] = []
+    supports_discovery = modal._provider_supports_model_discovery
+
+    def record_discovery_provider(provider: str) -> bool:
+        discovery_provider_calls.append(provider)
+        return supports_discovery(provider)
+
+    modal._provider_supports_model_discovery = record_discovery_provider
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        assert discovery_provider_calls[0] == "vllm"
+        assert modal.query_one("#console-settings-provider", Select).value == "vllm"
+        assert modal.query_one(ModelSearchPicker).value == "draft-model"
+        assert modal.query_one("#console-settings-base-url", Input).value == (
+            "http://draft-vllm.invalid:8000"
+        )
+        assert modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button).display is True
 
 
 class FakeConsoleModelDiscoveryScope:
@@ -1137,6 +1421,73 @@ async def test_mounted_suspended_draft_round_trips_context_view_and_focus() -> N
             "not-a-number-yet"
         )
         await _wait_for_focused_id(app, pilot, "console-context-custom-budget")
+
+
+@pytest.mark.asyncio
+async def test_suspended_capture_updates_valid_context_semantics_and_preserves_them_when_raw_turns_invalid() -> None:
+    """Raw invalid edits remain exact without replacing the last valid policy."""
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 24)) as pilot:
+        modal = _basic_modal(settings, app)
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one("#console-context-budget-mode", Select).value = "custom"
+        modal.query_one("#console-context-custom-budget", Input).value = "2048"
+        valid = modal.capture_suspended_draft()
+
+        assert valid.context_policy_overrides.budget_mode is ContextBudgetMode.CUSTOM
+        assert valid.context_policy_overrides.custom_budget_tokens == 2048
+
+        modal.query_one("#console-context-custom-budget", Input).value = "temporarily-invalid"
+        invalid = modal.capture_suspended_draft()
+
+        assert invalid.raw_values["console-context-custom-budget"] == (
+            "temporarily-invalid"
+        )
+        assert invalid.context_policy_overrides == valid.context_policy_overrides
+
+
+@pytest.mark.asyncio
+async def test_suspended_rehydration_rebuilds_context_state_before_raw_overlay() -> None:
+    """Semantic context survives independently from temporarily invalid raw text."""
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    overrides = ConsoleContextPolicyOverrides(
+        budget_mode=ContextBudgetMode.CUSTOM,
+        custom_budget_tokens=3072,
+    )
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=settings,
+        context_policy_overrides=overrides,
+        raw_values={
+            "console-settings-provider": "llama_cpp",
+            "console-settings-model-picker": "model-a",
+            "console-context-budget-mode": "custom",
+            "console-context-custom-budget": "temporarily-invalid",
+        },
+        provider_model_drafts={"llama_cpp": "model-a"},
+        provider_base_url_drafts={},
+        active_view="context",
+        scroll_anchor=0,
+        focus_control_id="console-context-custom-budget",
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+
+    async with app.run_test(size=(120, 24)) as pilot:
+        modal = _basic_modal(settings, app, suspended_draft=snapshot)
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        assert modal._context_state.overrides == overrides
+        assert modal._context_state.resolved_policy.policy.budget_mode is (
+            ContextBudgetMode.CUSTOM
+        )
+        assert modal._context_state.resolved_policy.policy.custom_budget_tokens == 3072
+        assert modal.query_one("#console-context-custom-budget", Input).value == (
+            "temporarily-invalid"
+        )
 
 
 async def _press_new_console_tab(console, store, pilot) -> str:

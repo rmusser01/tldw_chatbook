@@ -827,6 +827,9 @@ async def test_navigation_completion_callback_settles_once_for_guard_veto_and_su
         async def confirm_navigation(self):
             return self.allow
 
+        def refresh(self, **_kwargs):
+            return self
+
     outgoing = FakeOutgoingScreen()
     app._screen_stacks["_default"][:] = [object(), outgoing]
 
@@ -846,6 +849,7 @@ async def test_navigation_completion_callback_settles_once_for_guard_veto_and_su
     )
     monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
     monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+    monkeypatch.setattr(app, "_clear_focus_if_leaving_console", lambda _route: None)
 
     vetoed = NavigateToScreen("chat", on_completion=outcomes.append)
     await app.handle_screen_navigation(vetoed)
@@ -862,7 +866,7 @@ async def test_navigation_completion_callback_settles_once_for_guard_veto_and_su
 
 @pytest.mark.asyncio
 async def test_navigation_commit_settles_success_before_post_switch_failure(monkeypatch):
-    """Synchronous target stack ownership commits before an awaited mount failure."""
+    """Committed ownership reports success while preserving mount diagnostics."""
     app = _build_test_app()
     app._initial_screen_pushed = True
     outcomes: list[bool] = []
@@ -899,7 +903,113 @@ async def test_navigation_commit_settles_success_before_post_switch_failure(monk
     monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
 
     message = NavigateToScreen("chat", on_completion=outcomes.append)
-    await app.handle_screen_navigation(message)
+    with pytest.raises(RuntimeError, match="mount completed after stack transfer"):
+        await app.handle_screen_navigation(message)
+
+    assert outcomes == [True]
+    assert app._screen_stacks["_default"][-1].screen_name == "chat"
+
+
+@pytest.mark.asyncio
+async def test_navigation_commit_reports_success_but_propagates_cancellation(monkeypatch):
+    """Cancellation keeps worker semantics after the target owns the stack."""
+    app = _build_test_app()
+    app._initial_screen_pushed = True
+    outcomes: list[bool] = []
+    mount_started = asyncio.Event()
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    outgoing = SimpleNamespace(screen_name="library")
+    app._screen_stacks["_default"][:] = [object(), outgoing]
+
+    def synchronous_stack_transfer(screen):
+        app._screen_stacks["_default"][-1] = screen
+
+        async def mounting_forever():
+            mount_started.set()
+            await asyncio.Future()
+
+        return mounting_forever()
+
+    monkeypatch.setattr(
+        app,
+        "_resolve_screen_navigation_target",
+        lambda _target: ("chat", "chat", FakeTargetScreen),
+    )
+    monkeypatch.setattr(app, "switch_screen", synchronous_stack_transfer)
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+
+    task = asyncio.create_task(
+        app.handle_screen_navigation(
+            NavigateToScreen("chat", on_completion=outcomes.append)
+        )
+    )
+    await mount_started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert outcomes == [True]
+    assert app._screen_stacks["_default"][-1].screen_name == "chat"
+
+
+@pytest.mark.asyncio
+async def test_navigation_commit_reports_success_but_propagates_release_failure(
+    monkeypatch,
+):
+    """Transition-release diagnostics survive a committed target handoff."""
+    app = _build_test_app()
+    app._initial_screen_pushed = True
+    outcomes: list[bool] = []
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    class FakeOutgoingScreen:
+        screen_name = "library"
+
+        def acquire_navigation_transition(self):
+            def release() -> None:
+                raise RuntimeError("transition release failed")
+
+            return release
+
+        def refresh(self, **_kwargs):
+            return self
+
+    outgoing = FakeOutgoingScreen()
+    app._screen_stacks["_default"][:] = [object(), outgoing]
+
+    def synchronous_stack_transfer(screen):
+        app._screen_stacks["_default"][-1] = screen
+
+        async def mounted():
+            return None
+
+        return mounted()
+
+    monkeypatch.setattr(
+        app,
+        "_resolve_screen_navigation_target",
+        lambda _target: ("chat", "chat", FakeTargetScreen),
+    )
+    monkeypatch.setattr(app, "switch_screen", synchronous_stack_transfer)
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+    monkeypatch.setattr(app, "_clear_focus_if_leaving_console", lambda _route: None)
+
+    with pytest.raises(RuntimeError, match="transition release failed"):
+        await app.handle_screen_navigation(
+            NavigateToScreen("chat", on_completion=outcomes.append)
+        )
 
     assert outcomes == [True]
     assert app._screen_stacks["_default"][-1].screen_name == "chat"
@@ -951,8 +1061,10 @@ async def test_navigation_completion_reports_prestartup_and_unknown_failures(
 
 
 @pytest.mark.asyncio
-async def test_navigation_post_switch_bookkeeping_failure_keeps_committed_success(monkeypatch):
-    """A nav-bar/focus bookkeeping exception cannot roll back owned target success."""
+async def test_navigation_post_switch_bookkeeping_failure_reports_success_and_propagates(
+    monkeypatch,
+):
+    """Bookkeeping diagnostics propagate without rolling back target success."""
     app = _build_test_app()
     app._initial_screen_pushed = True
     outcomes: list[bool] = []
@@ -968,6 +1080,9 @@ async def test_navigation_post_switch_bookkeeping_failure_keeps_committed_succes
 
         async def confirm_navigation(self):
             return True
+
+        def refresh(self, **_kwargs):
+            return self
 
     outgoing = FakeOutgoingScreen()
     app._screen_stacks["_default"][:] = [object(), outgoing]
@@ -993,9 +1108,10 @@ async def test_navigation_post_switch_bookkeeping_failure_keeps_committed_succes
         lambda _route: (_ for _ in ()).throw(RuntimeError("bookkeeping failed")),
     )
 
-    await app.handle_screen_navigation(
-        NavigateToScreen("chat", on_completion=outcomes.append)
-    )
+    with pytest.raises(RuntimeError, match="bookkeeping failed"):
+        await app.handle_screen_navigation(
+            NavigateToScreen("chat", on_completion=outcomes.append)
+        )
 
     assert outcomes == [True]
     assert app._screen_stacks["_default"][-1].screen_name == "chat"

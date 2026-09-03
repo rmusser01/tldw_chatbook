@@ -12605,24 +12605,23 @@ class TldwCli(
         except asyncio.CancelledError:
             # Waiting to acquire the FIFO lock is cancellable too. Once the
             # destination owns Textual's stack, however, a later cancellation
-            # cannot make the source route failed again.
+            # cannot make the source route failed again. Cancellation still
+            # belongs to the worker lifecycle and must remain observable.
             message.report_completion(message.target_ownership_committed)
-            if message.target_ownership_committed:
-                return
             raise
         except Exception:
             if message.target_ownership_committed:
                 message.report_completion(True)
-                return
-            # task-2720: several steps in the locked body are legitimately
-            # unguarded (target resolution, runtime identity, snapshot
-            # restore, transition admission) and a transient error in any
-            # of them used to fail SILENTLY: no message, nav-bar highlight
-            # stuck on the destination, retry clicks no-opped. Recover the
-            # user-facing state, then re-raise so the worker hook still
-            # writes the `worker_failed` diagnostics line (ADR-029).
-            self._notify_navigation_failure(message.screen_name)
-            message.report_completion(False)
+            else:
+                # task-2720: several steps in the locked body are legitimately
+                # unguarded (target resolution, runtime identity, snapshot
+                # restore, transition admission) and a transient error in any
+                # of them used to fail SILENTLY: no message, nav-bar highlight
+                # stuck on the destination, retry clicks no-opped. Recover the
+                # user-facing state, then re-raise so the worker hook still
+                # writes the `worker_failed` diagnostics line (ADR-029).
+                self._notify_navigation_failure(message.screen_name)
+                message.report_completion(False)
             raise
         message.report_completion(message.target_ownership_committed or succeeded)
 
@@ -13186,6 +13185,8 @@ class TldwCli(
             try:
                 await switch_result
             except Exception as exc:
+                if self._navigation_target_owns_stack(new_screen):
+                    message.commit_target_ownership()
                 if message.target_ownership_committed:
                     logger.warning(
                         "Screen mount reported after target ownership "
@@ -13193,7 +13194,7 @@ class TldwCli(
                         screen_name,
                         type(exc).__name__,
                     )
-                    return True
+                    raise
                 logger.opt(exception=True).error(
                     "Screen mount failed (route={}, exception_category={}).",
                     screen_name,
@@ -13230,6 +13231,7 @@ class TldwCli(
                     screen_name,
                     type(exc).__name__,
                 )
+                raise
 
             logger.info(f"Successfully switched to {screen_name} screen")
             return True

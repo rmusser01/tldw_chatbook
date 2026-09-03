@@ -2899,6 +2899,18 @@ class ChatScreen(BaseAppScreen):
             display_name = store.session_user_display_name_override(session_id)
         except KeyError:
             return False
+        active_provider = settings.provider
+        active_model = settings.model
+        if suspended_draft is not None:
+            raw_provider = suspended_draft.raw_values.get(
+                "console-settings-provider"
+            )
+            if type(raw_provider) is str:
+                active_provider = raw_provider
+            active_model = suspended_draft.provider_model_drafts.get(
+                active_provider,
+                settings.model if active_provider == settings.provider else None,
+            )
         effective_thinking_policy = (
             await controller.effective_thinking_history_policy_for_session(session_id)
         )
@@ -2913,8 +2925,8 @@ class ChatScreen(BaseAppScreen):
             thinking_history_effective_policy=effective_thinking_policy,
         )
         providers_models = await self._providers_models_for_console_settings(
-            settings.provider,
-            current_model=settings.model,
+            active_provider,
+            current_model=active_model,
         )
         modal = ConsoleSettingsModal(
             settings=settings,
@@ -2956,7 +2968,7 @@ class ChatScreen(BaseAppScreen):
             self._dispatch_console_settings_submission(result)
 
         try:
-            self.app.push_screen(modal, callback=apply_origin_result)
+            await self.app.push_screen(modal, callback=apply_origin_result)
         except Exception:
             return False
         return True
@@ -3038,9 +3050,10 @@ class ChatScreen(BaseAppScreen):
             navigation.report_completion(False)
 
     def _owns_console_screen_stack(self) -> bool:
-        """Return whether this exact Console instance remains app-stack owned."""
+        """Return whether this exact Console instance owns the active stack top."""
         try:
-            return any(screen is self for screen in self.app.screen_stack)
+            stack = self.app.screen_stack
+            return bool(stack) and stack[-1] is self
         except Exception:
             return False
 

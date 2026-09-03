@@ -998,6 +998,10 @@ class ConsoleSettingsModal(
             estimate=context_estimate,
             overrides=self._draft.context_policy_overrides,
         )
+        if suspended_draft is not None:
+            self._context_state = self._context_state_with_overrides(
+                suspended_draft.context_policy_overrides
+            )
         self._can_save = can_save
         self._focus_model = focus_model
         self._active_view = (
@@ -1277,7 +1281,7 @@ class ConsoleSettingsModal(
         )
         has_model_options = bool(model_options)
         use_model_select = self._should_use_model_select(
-            self._settings.provider,
+            self._active_provider,
             selected_model,
             model_options,
         )
@@ -1401,7 +1405,7 @@ class ConsoleSettingsModal(
                         model_custom.display = True
                         yield model_custom
                         supports_discovery = self._provider_supports_model_discovery(
-                            self._settings.provider
+                            self._active_provider
                         )
                         model_discover = Button(
                             MODEL_DISCOVER_BUTTON_LABEL,
@@ -2207,6 +2211,16 @@ class ConsoleSettingsModal(
         """Capture the raw modal state before a credential-setup handoff."""
         self._store_current_model_for_provider(self._active_provider)
         self._store_current_base_url_for_provider(self._active_provider)
+        try:
+            context_overrides = self._build_context_policy_overrides()
+        except (ContextPolicyError, ValueError):
+            # Raw values below remain exact while semantic state stays on the
+            # most recent complete policy the modal could validate.
+            context_overrides = self._context_state.overrides
+        else:
+            self._context_state = self._context_state_with_overrides(
+                context_overrides
+            )
         raw_values: dict[str, str | bool] = {}
         for control_id in _SNAPSHOT_RAW_VALUE_IDS:
             if control_id == "console-settings-streaming":
@@ -2232,7 +2246,7 @@ class ConsoleSettingsModal(
             scroll_anchor = 0
         return ConsoleSettingsDraftSnapshot(
             settings=self._settings,
-            context_policy_overrides=self._context_state.overrides,
+            context_policy_overrides=context_overrides,
             raw_values=raw_values,
             provider_model_drafts=dict(self._provider_model_drafts),
             provider_base_url_drafts=dict(self._provider_base_url_drafts),
@@ -2247,6 +2261,54 @@ class ConsoleSettingsModal(
                     getattr(self, "_connection_details_disclosed", False)
                 ),
             },
+        )
+
+    def _context_state_with_overrides(
+        self,
+        overrides: ConsoleContextPolicyOverrides,
+    ) -> ConsoleContextControlState:
+        """Rebuild semantic context state while retaining live display inputs."""
+        current = self._context_state
+        inherited = current.inherited_policy
+        inherited_overrides = ConsoleContextPolicyOverrides(
+            budget_mode=inherited.budget_mode,
+            custom_budget_tokens=inherited.custom_budget_tokens,
+            compaction_mode=inherited.compaction_mode,
+            compaction_representation=inherited.compaction_representation,
+            trigger_ratio=inherited.trigger_ratio,
+            target_ratio=inherited.target_ratio,
+            summary_max_tokens=inherited.summary_max_tokens,
+            failure_behavior=inherited.failure_behavior,
+            carry_forward_mode=inherited.carry_forward_mode,
+        )
+        context_ceiling = None
+        if current.model_window_tokens is not None:
+            context_ceiling = (
+                current.model_window_tokens
+                - current.response_max_tokens
+                - int(current.safety_margin_tokens or 0)
+            )
+        provider_input_cap = (
+            current.safe_input_ceiling_tokens
+            if current.safe_input_ceiling_tokens is not None
+            and (
+                context_ceiling is None
+                or current.safe_input_ceiling_tokens < context_ceiling
+            )
+            else None
+        )
+        return build_console_context_control_state(
+            settings=self._settings,
+            estimate=self._context_estimate,
+            overrides=overrides,
+            global_overrides=inherited_overrides,
+            active_memory=current.active_memory,
+            conversation_tokens=current.conversation_tokens,
+            request_overhead_tokens=current.request_overhead_tokens,
+            provider_input_cap_tokens=provider_input_cap,
+            safety_margin_tokens=current.safety_margin_tokens,
+            busy=current.busy,
+            status_message=current.status_message,
         )
 
     def _logical_focus_control_id(self) -> str | None:
