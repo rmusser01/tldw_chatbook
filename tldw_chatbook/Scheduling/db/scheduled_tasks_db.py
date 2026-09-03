@@ -2294,6 +2294,47 @@ class ScheduledTasksDB(BaseDB):
                 cursor.fetchall(), json_fields=self._AUTOMATION_RUN_JSON_FIELDS
             )
 
+    def count_automation_runs(
+        self, definition_id: str, owner_id: Optional[str] = None
+    ) -> int:
+        """Count automation runs for one definition.
+
+        ``automation_runs`` is a local-only table (never synced from the
+        server), so unlike ``count_automation_results`` there is no
+        cross-id-space ambiguity here -- ``definition_id`` is always the
+        LOCAL definition id.
+
+        ``owner_id`` scopes the count the way ``list_automation_runs``
+        already scopes its read (schedules-redesign PR-1 final review
+        F11): the detail pane shows both in one group, and
+        ``convert_row_to_server_mirror``'s "converted" path rewrites a
+        row's ``owner_id`` while keeping its local id -- so an unscoped
+        count beside a scoped last-run could contradict itself on screen
+        ("Run count: 3" next to "Last run: Never run"). The parameter is
+        optional because the existing callers count across owners.
+
+        Args:
+            definition_id: The definition's local id.
+            owner_id: Optional owner scope; ``None`` counts every owner's
+                runs for that definition.
+
+        Returns:
+            The number of ``automation_runs`` rows for that definition.
+        """
+        conditions = ["definition_id = ?"]
+        params: list[Any] = [definition_id]
+        if owner_id is not None:
+            conditions.append("owner_id = ?")
+            params.append(owner_id)
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM automation_runs "
+                f"WHERE {' AND '.join(conditions)}",
+                params,
+            )
+            row = cursor.fetchone()
+            return int(row[0]) if row else 0
+
     def reconcile_stale_automation_runs(self, older_than_seconds: float) -> int:
         """Mark queued/running runs older than the cutoff as interrupted.
 
@@ -2468,7 +2509,10 @@ class ScheduledTasksDB(BaseDB):
             )
 
     def count_automation_results(
-        self, owner_id: str | None, review_state: str | None = None
+        self,
+        owner_id: str | None,
+        review_state: str | None = None,
+        definition_id: str | None = None,
     ) -> int:
         """Count automation results matching ``list_automation_results``.
 
@@ -2480,6 +2524,17 @@ class ScheduledTasksDB(BaseDB):
             owner_id: Owner to scope to, or ``None`` for every owner.
             review_state: Optional ``review_state`` equality filter --
                 ``None`` counts every state.
+            definition_id: Optional ``definition_id`` equality filter,
+                matched exactly as given -- NOT translated across id
+                spaces. A result's ``definition_id`` is whatever id the
+                side that produced it used: a locally-created result
+                carries the LOCAL definition id, while a result mirrored
+                from the server carries the SERVER's id (see
+                ``UI/Screens/scheduling/results_tab.py``'s
+                ``index_definitions_by_id`` for how a caller resolves
+                which space a given definition row lives in). Pass the
+                id in whichever space applies to the rows you expect to
+                count; ``None`` counts every space.
 
         Returns:
             The number of matching ``automation_results`` rows.
@@ -2492,6 +2547,9 @@ class ScheduledTasksDB(BaseDB):
         if owner_id is not None:
             conditions.append("owner_id = ?")
             params.append(owner_id)
+        if definition_id is not None:
+            conditions.append("definition_id = ?")
+            params.append(definition_id)
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         with closing(self._get_connection()) as conn:
             cursor = conn.execute(
@@ -2501,7 +2559,9 @@ class ScheduledTasksDB(BaseDB):
             row = cursor.fetchone()
             return int(row[0]) if row else 0
 
-    def count_unread_results(self, owner_id: str | None) -> int:
+    def count_unread_results(
+        self, owner_id: str | None, definition_id: str | None = None
+    ) -> int:
         """Count unread results (spec §4's inbox badge).
 
         ``owner_id=None`` counts across every owner, matching
@@ -2509,11 +2569,15 @@ class ScheduledTasksDB(BaseDB):
 
         Args:
             owner_id: Owner to scope to, or ``None`` for every owner.
+            definition_id: Optional ``definition_id`` equality filter --
+                see ``count_automation_results`` for the id-space caveat.
 
         Returns:
             The number of ``review_state='unread'`` rows.
         """
-        return self.count_automation_results(owner_id, review_state="unread")
+        return self.count_automation_results(
+            owner_id, review_state="unread", definition_id=definition_id
+        )
 
     def get_automation_result(self, result_id: str) -> Optional[dict[str, Any]]:
         """Fetch an automation result by local id.

@@ -91,6 +91,33 @@ recoverable rather than overwritten. History is capped per task (the newest
 keep their history server-authoritative (per ADR-077) rather than
 duplicating it locally. The existing missed-fire accounting is unchanged.
 
+## Task Detail — grouped fields
+
+A reminder's Task Detail pane shows its body text in a card, then its
+fields as three labeled groups instead of a flat list, matching the same
+label-left/value-right row style used throughout the pane (a reminder with
+no body text shows no card):
+
+- **Details** — `Runs on` (the owner: "This device" for a reminder this
+  device runs, or the server's own id for one the server runs, with the
+  transfer badge text appended while a move is in flight, e.g.
+  "This device (Moving to server…)"). The Automations tab's detail pane
+  words this row exactly the same way.
+- **Frequency** — `Repeat`, `At`, `Timezone`, and `Notifications` (always
+  "Inbox + toast" — every reminder dispatch writes an inbox row and
+  attempts a toast; there is no per-reminder channel setting).
+- **History** (collapsed by default — click its title to expand) —
+  `Last fire` (the last run's time and outcome) and a `Run history`
+  pointer row to the **Recent runs** list, which stays exactly where it
+  was below.
+
+Each group's title is keyboard-focusable: Tab reaches it and Enter
+toggles the group, so collapsing and expanding never needs the mouse.
+That does put three focus stops ahead of the pane's action buttons.
+
+A watchlist or briefing projection (not a reminder) still shows the older
+Type/Schedule rows unchanged — the grouped layout is reminder-specific.
+
 ## Creating a scheduled task
 
 Press **c**, or click **+ New** in the Queue tab's pane header, to open
@@ -404,6 +431,33 @@ showing an empty server-shaped trail; every execution still leaves its
 trail here for server automations: queued, succeeded, failed, timed out,
 skipped, the same events the server records for reconciliation.
 
+### Automations tab — definition detail pane
+
+Highlighting a definition row opens a read-only detail pane alongside the
+list and its run history — the Automations tab's first per-row detail
+view. It shows the question text in a card at the top, then the same
+grouped-row layout as the reminder detail pane:
+
+- **Details** — `Runs on` (owner + transfer badge, same wording as the
+  reminder pane), `Model` (the pinned `provider/model`, or `auto` when
+  the definition pins nothing), `Generation` (always/only-new/never),
+  `Finding policy` (the preset name), and `Sources` (the selected library
+  sources, or "All searchable library" for the default scope). A row the
+  definition does not carry a value for reads **"Not set"** — a
+  definition authored on the server often carries none of these, and the
+  pane never fills the gap in with the create form's defaults.
+- **Frequency** — the schedule summary (repeat/at/timezone, or the raw
+  cron expression for a custom schedule) and `Notifications`.
+- **History** (collapsed by default) — the last run's outcome, total run
+  count, unread results count, and a pointer to the Results tab. Those
+  counts are this device's own execution record, so a server-owned
+  definition reads "Kept on the server — see Run history" instead: only
+  the server holds that definition's execution history, and the run
+  history pane beside it is already showing it.
+
+The detail pane hides at narrow terminal widths, the same responsive rule
+the Queue tab's own detail pane already uses.
+
 ## Results tab — the automation findings inbox
 
 The **Results** tab lists the `automation_results` rows a recurring
@@ -488,7 +542,16 @@ The default bound is `handler_timeout_seconds` under `[scheduling]` in
 bound entirely — every handler may then run as long as it likes, and a
 wedged handler will wedge the scheduler, which is why the default is on.
 
-*Verified against a running tldw_server — 2026-09-02 (schedules-handoff
+*Verified against the schedules redesign PR-1 fix wave — 2026-09-02
+(docs pass against shipped code/tests, live check pending the redesign
+program's later PRs per spec §14: the reminder Task Detail pane's body
+card and grouped Details/Frequency/History rows, and the Automations
+tab's definition detail pane — question card, Details/Frequency/History
+rows incl. Model/Generation/Finding policy/Sources/Notifications, and the
+History group's owner-honest run/unread counts. The owner vocabulary,
+"Not set" placeholders and server-owned History copy documented above are
+each pinned by a test in `Tests/UI/test_schedules_workbench.py` /
+`test_schedules_automations_tab.py`). Verified against a running tldw_server — 2026-09-02 (schedules-handoff
 PR-6 task 6, the program's §10 live gate: real TUI in tmux against
 tldw_server `origin/dev` 25fb0eca59 on a local single-user profile.
 Verified live: authoring a local recurring question, transferring it to

@@ -74,6 +74,46 @@ SchedulesWorkbench TabbedContent TabPane {
     border: solid $ds-grid-line;
 }
 
+/* schedules-redesign PR-1, Task 4: the Automations tab's third pane --
+ * the definitions detail widget (DefinitionDetail), the same list|detail|
+ * inspector idiom as the Queue tab's three panes above.
+ *
+ * min-width 22, not 30 (final review F5): the three panes' min-widths must
+ * SUM to no more than the narrowest width at which all three are still
+ * shown -- 84, the same `hide_detail` threshold the Queue tab's own detail
+ * pane uses. At 30+30+30 = 90 the 84-89 band could not satisfy that, and
+ * Textual's fr layout then gave EVERY pane the full container width,
+ * laying the detail and history panes out entirely off-screen; the split
+ * has overflow: hidden, so not even a scrollbar hinted at it. 30+30+22 =
+ * 82 fits 84 with slack. This floor only ever binds inside that band -- at
+ * any wider width the 1fr share is larger anyway. */
+#scheduling-automations-detail-pane {
+    width: 1fr;
+    min-width: 22;
+    height: 1fr;
+    min-height: 0;
+    padding: 1;
+    border: solid $ds-grid-line;
+}
+
+#scheduling-automation-detail-empty-state {
+    color: $text-muted;
+    text-align: center;
+    padding: 3 1;
+}
+
+/* The two detail panes' body cards: the definitions pane's question and
+ * (final review F10) the reminder pane's body text, same card. */
+#scheduling-automation-detail-question,
+#scheduling-task-detail-body-card {
+    height: auto;
+    padding: 1;
+    margin-bottom: 1;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $text;
+}
+
 #scheduling-automations-table {
     height: 1fr;
 }
@@ -123,7 +163,8 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
 /* Pane headers */
 #scheduling-list-title,
 #scheduling-task-detail-header,
-#scheduling-task-inspector-header {
+#scheduling-task-inspector-header,
+#scheduling-automation-detail-header {
     text-style: bold;
     color: $text;
     padding: 0 0 0 0;
@@ -296,4 +337,64 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
  * the title Static nested inside it too. */
 #scheduling-workbench.compact #scheduling-list-header {
     display: none;
+}
+
+/* schedules-redesign PR-1, Task 1 (fix round 1): DetailValueRow /
+ * DetailGroup (`Widgets/detail_value_row.py`) live here per the task-1
+ * brief's file list rather than as BUNDLED_CSS on the widget classes --
+ * this module is concatenated into the boot-loaded app bundle in the same
+ * parse pass as core/_variables.tcss, so $ds-* tokens resolve directly,
+ * with no local alias workaround. Selectors are plain type/class
+ * (not scheduling-prefixed): the widgets are reusable beyond Scheduling,
+ * and this is just where the first consumer's CSS happens to ship;
+ * graduate to a shared features file if/when a non-scheduling consumer
+ * appears. */
+DetailValueRow {
+    height: auto;
+    min-height: 0;
+}
+
+DetailValueRow .detail-value-row-line {
+    height: 1;
+    min-height: 1;
+}
+
+DetailValueRow .detail-value-row-label {
+    color: $ds-text-muted;
+    width: auto;
+    min-width: 0;
+    height: 1;
+    padding: 0 1 0 0;
+}
+
+DetailValueRow .detail-value-row-value {
+    color: $ds-text-primary;
+    width: 1fr;
+    min-width: 0;
+    height: 1;
+    text-align: right;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+DetailValueRow .detail-value-row-affordance {
+    color: $ds-text-disabled-readable;
+    width: 2;
+    min-width: 2;
+    height: 1;
+    text-align: right;
+    padding: 0 0 0 1;
+}
+
+DetailValueRow .detail-value-row-error {
+    color: $ds-status-error-readable;
+    width: 1fr;
+    height: 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+DetailGroup {
+    background: $ds-surface-panel;
+    border-top: hkey $ds-grid-line;
 }
