@@ -1550,6 +1550,11 @@ def _definition_row(
         "server_id": None,
         "owner_id": "local",
         "name": name,
+        # Qodo MEDIUM (schedules-redesign PR-2): `build_unified_rows`
+        # filters definitions to `family == "recurring_question"` --
+        # every real definition row carries a family, so this fixture
+        # must too.
+        "family": "recurring_question",
         "lifecycle": lifecycle,
         "schedule": {"kind": "one_time", "run_at": "2099-01-01T00:00:00+00:00"},
         "input": {"question": "What changed?"},

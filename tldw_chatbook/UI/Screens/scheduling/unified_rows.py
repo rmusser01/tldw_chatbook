@@ -415,6 +415,16 @@ def reminder_has_fired(task: ReminderTask) -> bool:
     ``next_run_at``) and from a reminder that never ran (no
     ``last_run_at``).
 
+    ``schedule_kind == ScheduleKind.ONE_TIME`` is REQUIRED (Qodo MEDIUM):
+    only a one-time reminder's dispatch clears ``next_run_at`` for good.
+    A recurring reminder can land in that same shape too -- ``cron``
+    exhausted (end-date-passed) or an anomalous row -- and
+    `mark_reminder_dispatched` never touches ``enabled`` on the recurring
+    branch, so without this guard such a row read as "fired" and bucketed
+    Completed despite still being armed to re-enable. `_reminder_bucket`
+    routes that shape to Paused instead (disabled-not-finished, not
+    finished-for-good).
+
     ``enabled`` is deliberately NOT part of the predicate (final review
     F9, ruled): re-enabling a fired one-time reminder does not give it a
     future run -- `_set_reminder_enabled` sends only ``{"enabled": ...}``
@@ -429,7 +439,11 @@ def reminder_has_fired(task: ReminderTask) -> bool:
     Returns:
         ``True`` when the reminder has fired its one-time schedule.
     """
-    return task.next_run_at is None and task.last_run_at is not None
+    return (
+        task.schedule_kind == ScheduleKind.ONE_TIME
+        and task.next_run_at is None
+        and task.last_run_at is not None
+    )
 
 
 def definition_is_armed(definition: dict[str, Any]) -> bool:
@@ -461,6 +475,16 @@ def _reminder_bucket(task: ReminderTask) -> RowBucket:
     if reminder_has_fired(task):
         return "completed"
     if not task.enabled:
+        return "paused"
+    if task.schedule_kind == ScheduleKind.RECURRING and task.next_run_at is None:
+        # Ruled (Qodo MEDIUM, paired with `reminder_has_fired`'s ONE_TIME
+        # guard): a recurring reminder with no next occurrence (exhausted
+        # cron / anomalous row) is disabled-not-finished, not Completed --
+        # recurring never "completes" the way a one-time reminder does.
+        # It also is not caught by the `enabled` check above (`enabled`
+        # is untouched on the recurring dispatch branch), so it needs its
+        # own route to Paused rather than falling through to Active with
+        # nothing left armed to run.
         return "paused"
     if task.transfer_state in DORMANT_TRANSFER_STATES:
         # Mirrors `_definition_bucket`'s dormant fallback (review round
@@ -651,7 +675,23 @@ def build_unified_rows(
     )
     unread_by_row_key = _unread_counts_by_row_key(results, definitions_by_id)
     rows = [_reminder_row(task) for task in reminders]
-    rows.extend(_definition_row(d, unread_by_row_key) for d in definitions)
+    # `family == "recurring_question"` only (Qodo MEDIUM): `definitions`
+    # is never family-filtered upstream (`list_automation_definitions`'s
+    # `family=` default, and a server page can return `agent_task` rows
+    # too -- same guard `_definition_row` for the plain Automations
+    # listing has no equivalent of, since that tab is family-agnostic by
+    # design). An `agent_task`/unknown-family row rendered here would be
+    # a pseudo-recurring Queue entry with no recurring semantics behind
+    # it. Definitions of every family stay visible on the Automations
+    # tab -- still the all-families home until PR-4 retires it (plan
+    # ruling: "their actions stay on the Automations tab until PR-4
+    # retires it") -- PR-4 MUST revisit this filter when that tab goes
+    # away, or agent_task definitions lose their only remaining surface.
+    rows.extend(
+        _definition_row(d, unread_by_row_key)
+        for d in definitions
+        if d.get("family") == "recurring_question"
+    )
     return rows
 
 

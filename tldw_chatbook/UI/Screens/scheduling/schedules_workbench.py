@@ -1118,7 +1118,16 @@ class SchedulesWorkbench(BaseAppScreen):
         try:
             local_rows = await asyncio.to_thread(service.db.list_automation_definitions)
         except Exception:  # noqa: BLE001
-            logger.exception("Failed to load local automation definitions")
+            # `owner_id`/"Queue list" context only (Qodo LOW) -- never
+            # payload content. This is the sibling of the identical
+            # message `_load_local_automations` logs for the Automations
+            # tab's own refresh; without a call-site tag the two were
+            # indistinguishable in the log.
+            logger.exception(
+                "Failed to load local automation definitions for the "
+                "Queue list (owner_id={})",
+                service.owner_id,
+            )
             local_rows = []
         self._queue_local_definitions = local_rows
         local_items = self._device_only_automations(local_rows)
@@ -3473,15 +3482,22 @@ class SchedulesWorkbench(BaseAppScreen):
             _mark_solved, exclusive=True, group="schedules-mark-solved"
         )  # type: ignore[arg-type]
 
-    def _unread_result_ids(self) -> list[str]:
-        """Currently-loaded unread result ids, Results-tab's own listing
-        (already refreshed independently of which tab is active)."""
-        results_tab = self.query_one("#scheduling-results", ResultsTab)
-        return [
-            result["id"]
-            for result in results_tab.results()
-            if result.get("review_state") == "unread"
-        ]
+    def _unread_result_ids(self, service: "SchedulingService") -> list[str]:
+        """Every unread result id across the FULL table, read straight
+        from the DB -- not the Results tab's own listing, which is capped
+        at `RESULTS_INBOX_LIMIT` (200) rows. The rail button's visibility
+        already sums the full-table unread count (`_refresh_results_tab`'s
+        `count_unread_results`); mark-all-read has to clear that same set
+        or an unread row older than the loaded window survives while the
+        button hides itself as if nothing were left (Qodo HIGH).
+        """
+        unread_total = service.db.count_unread_results(owner_id=None)
+        if not unread_total:
+            return []
+        results = service.db.list_automation_results(
+            owner_id=None, review_state="unread", limit=unread_total
+        )
+        return [result["id"] for result in results]
 
     async def _dispatch_mark_all_results_read(
         self, service: "SchedulingService", unread_ids: list[str]
@@ -3527,7 +3543,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 "Scheduling service is unavailable.", severity="warning"
             )
             return
-        unread_ids = self._unread_result_ids()
+        unread_ids = self._unread_result_ids(service)
         if not unread_ids:
             self.app_instance.notify("Nothing unread.", severity="information")
             return
@@ -3553,7 +3569,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 "Scheduling service is unavailable.", severity="warning"
             )
             return
-        unread_ids = self._unread_result_ids()
+        unread_ids = self._unread_result_ids(service)
         if not unread_ids:
             self.app_instance.notify("Nothing unread.", severity="information")
             return

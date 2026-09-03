@@ -161,6 +161,12 @@ class _MixedService(MockSchedulingServiceMixin):
                     "server_id": None,
                     "owner_id": "local",
                     "name": "Definition Title",
+                    # Qodo MEDIUM (schedules-redesign PR-2):
+                    # `build_unified_rows` filters definitions to
+                    # `family == "recurring_question"` -- every real
+                    # definition row carries a family, so this fixture
+                    # must too.
+                    "family": "recurring_question",
                     "lifecycle": "configured",
                     "schedule": {
                         "kind": "one_time",

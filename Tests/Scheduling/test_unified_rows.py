@@ -59,6 +59,11 @@ def _definition(**overrides) -> dict:
         server_id=None,
         owner_id="local",
         name="A Definition",
+        # Qodo MEDIUM: `build_unified_rows` now filters definitions to
+        # `family == "recurring_question"` (unknown/agent_task families
+        # must not render as pseudo-recurring rows) -- every real
+        # definition row carries a family, so the helper must too.
+        family="recurring_question",
         lifecycle="configured",
         transfer_state=None,
         schedule={"kind": "cron", "cron": "0 9 * * *", "timezone": "UTC"},
@@ -89,7 +94,7 @@ def _result(**overrides) -> dict:
 
 class TestReminderHasFired:
     def test_fired_when_disabled_no_next_run_but_has_run(self):
-        task = _reminder(
+        task = _one_time_reminder(
             enabled=False,
             next_run_at=None,
             last_run_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
@@ -105,12 +110,30 @@ class TestReminderHasFired:
         gives it no future run -- only a SCHEDULE edit recomputes
         `next_run_at`, and the due query filters `next_run_at IS NOT
         NULL`. `enabled` is therefore not part of the predicate."""
-        task = _reminder(
+        task = _one_time_reminder(
             enabled=True,
             next_run_at=None,
             last_run_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
         )
         assert reminder_has_fired(task) is True
+
+    def test_recurring_never_fires_even_with_the_same_no_next_run_shape(self):
+        """Qodo MEDIUM: `reminder_has_fired` now REQUIRES the ONE_TIME
+        schedule kind. A recurring reminder can land in the exact same
+        `next_run_at is None, last_run_at is not None` shape -- an
+        exhausted cron (end-date-passed) or an anomalous row -- but
+        `mark_reminder_dispatched` never disables it the way it does a
+        one-time reminder, so treating that shape as "fired" for a
+        recurring row was a false Completed. See
+        `test_recurring_reminder_with_no_next_run_is_paused_not_completed`
+        below for the ruled bucket (Paused, not Completed)."""
+        task = _reminder(
+            schedule_kind=ScheduleKind.RECURRING,
+            enabled=False,
+            next_run_at=None,
+            last_run_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        )
+        assert reminder_has_fired(task) is False
 
     def test_not_fired_when_next_run_still_set(self):
         task = _reminder(
@@ -210,13 +233,32 @@ def test_re_enabled_fired_reminder_is_completed_not_active():
 
 
 def test_fired_reminder_is_completed():
-    task = _reminder(
+    task = _one_time_reminder(
         enabled=False,
         next_run_at=None,
         last_run_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
     )
     rows = build_unified_rows([task], [], [])
     assert rows[0].bucket == "completed"
+
+
+def test_recurring_reminder_with_no_next_run_is_paused_not_completed():
+    """Ruled (Qodo MEDIUM): a RECURRING reminder with `last_run_at` set
+    and `next_run_at` NULL (exhausted cron / anomalous row) is
+    disabled-not-finished, not Completed -- recurring never "completes"
+    the way a one-time reminder does. It is also not caught by
+    `_reminder_bucket`'s `enabled` check when the row is still enabled
+    (`mark_reminder_dispatched` never flips `enabled` on the recurring
+    branch), so it needs its own route to Paused rather than falling
+    through to Active with nothing left armed to run."""
+    task = _reminder(
+        schedule_kind=ScheduleKind.RECURRING,
+        enabled=True,
+        next_run_at=None,
+        last_run_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+    )
+    rows = build_unified_rows([task], [], [])
+    assert rows[0].bucket == "paused"
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +324,23 @@ def test_archived_lifecycle_definition_is_completed():
     assert rows[0].bucket == "completed"
 
 
+def test_agent_task_definition_yields_no_unified_row():
+    """Qodo MEDIUM: `definitions` is never family-filtered upstream (the
+    server can return `agent_task` rows too), so `build_unified_rows`
+    itself must drop anything that is not `recurring_question` -- an
+    `agent_task` row has no recurring semantics behind it and would
+    otherwise render as a pseudo-recurring Queue entry. It stays visible
+    on the Automations tab, which is family-agnostic and unaffected by
+    this filter."""
+    rows = build_unified_rows([], [_definition(family="agent_task")], [])
+    assert rows == []
+
+
+def test_unknown_family_definition_yields_no_unified_row():
+    rows = build_unified_rows([], [_definition(family="something_new")], [])
+    assert rows == []
+
+
 # ---------------------------------------------------------------------------
 # Glyphs (spec SS4)
 # ---------------------------------------------------------------------------
@@ -305,7 +364,7 @@ def test_paused_reminder_glyph_is_pause_bar():
 def test_completed_reminder_glyph_is_check():
     rows = build_unified_rows(
         [
-            _reminder(
+            _one_time_reminder(
                 enabled=False,
                 next_run_at=None,
                 last_run_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
@@ -418,7 +477,7 @@ def _mixed_rows() -> list[UnifiedRow]:
                 enabled=False,
                 next_run_at=datetime(2026, 9, 5, tzinfo=timezone.utc),
             ),
-            _reminder(
+            _one_time_reminder(
                 id="done-rem",
                 title="Old one-shot",
                 enabled=False,

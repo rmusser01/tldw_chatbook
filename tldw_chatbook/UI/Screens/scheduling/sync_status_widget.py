@@ -141,6 +141,10 @@ class SyncStatusWidget(Horizontal):
         that one method rather than fighting over the same two Statics'
         `.display` -- `_apply_collapse`'s own owner/server-based collapse
         decision (and the owner-button/note halves of it) are unchanged.
+
+        Args:
+            compact: Whether the host rail is narrow enough to hide the
+                last-pull/last-push timestamps.
         """
         self.set_class(compact, "compact")
         self._apply_collapse()
