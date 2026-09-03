@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from types import SimpleNamespace
 
 import pytest
 from textual.widgets import Input, Static
@@ -124,6 +125,87 @@ async def test_first_selection_mounts_and_caches_only_requested_view():
         await pilot.pause()
         assert screen.query_one("#ollama-exec-path", Input) is ollama_exec
         assert ollama_exec.value == "/tmp/keep-ollama-value"
+
+
+async def test_failed_server_mount_retains_body_for_retry():
+    """A transient mount failure must not consume the deferred server body."""
+
+    window = LLMManagementWindow.__new__(LLMManagementWindow)
+    body = (SimpleNamespace(is_mounted=False),)
+    window._lazy_server_bodies = {"llamafile": body}
+    window._populated_views = set()
+    window.view_mapping = {"llamafile": "llm-view-llamafile"}
+    window.call_after_refresh = lambda *_args: None
+
+    class FlakyPane:
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        async def mount_all(self, widgets) -> None:
+            self.attempts += 1
+            if self.attempts == 1:
+                raise RuntimeError("transient mount failure")
+            assert tuple(widgets) == body
+
+    pane = FlakyPane()
+    window.query_one = lambda _selector: pane
+
+    with pytest.raises(RuntimeError, match="transient mount failure"):
+        await window._mount_deferred_views("llamafile")
+
+    assert window._lazy_server_bodies["llamafile"] == body
+    assert "llamafile" not in window._populated_views
+
+    await window._mount_deferred_views("llamafile")
+
+    assert "llamafile" not in window._lazy_server_bodies
+    assert "llamafile" in window._populated_views
+
+
+@pytest.mark.parametrize(
+    ("view_name", "populated", "populating", "expected_schedules"),
+    (
+        ("missing", set(), set(), 0),
+        ("remote", {"remote"}, set(), 0),
+        ("remote", set(), {"remote"}, 0),
+        ("remote", set(), set(), 1),
+    ),
+)
+async def test_population_scheduler_guards_duplicate_and_invalid_requests(
+    view_name,
+    populated,
+    populating,
+    expected_schedules,
+):
+    """Only one valid, not-yet-started pane population may be scheduled."""
+
+    window = LLMManagementWindow.__new__(LLMManagementWindow)
+    window.view_mapping = {"remote": "llm-view-remote"}
+    window._populated_views = set(populated)
+    window._populating_views = set(populating)
+    scheduled = []
+
+    def schedule(awaitable, **kwargs):
+        scheduled.append(kwargs)
+        awaitable.close()
+
+    window.run_worker = schedule
+
+    window.ensure_view_populated(view_name)
+
+    assert len(scheduled) == expected_schedules
+    if expected_schedules:
+        assert view_name in window._populating_views
+    else:
+        assert window._populating_views == set(populating)
+    if scheduled:
+        assert scheduled == [
+            {
+                "group": "llm-view-mount-remote",
+                "exclusive": True,
+                "exit_on_error": False,
+            }
+        ]
 
 
 async def test_ollama_view_activates_and_renders_after_deferral():

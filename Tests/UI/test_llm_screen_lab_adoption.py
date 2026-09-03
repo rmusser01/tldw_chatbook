@@ -28,6 +28,9 @@ from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
 from Tests.UI.app_factory import _build_test_app
 
+_MODELS_MOUNT_POLL_ATTEMPTS = 200
+_MODELS_MOUNT_POLL_SECONDS = 0.01
+
 
 @pytest.fixture(autouse=True)
 def _deterministic_models_mount(monkeypatch):
@@ -64,19 +67,19 @@ async def _models_screen(pilot_app, *, populate_all: bool = True):
     screen = LLMScreen(pilot_app)
     await pilot_app.push_screen(screen)
     if populate_all:
-        for _ in range(200):
+        for _ in range(_MODELS_MOUNT_POLL_ATTEMPTS):
             windows = list(screen.query(LLMManagementWindow))
             if windows:
                 break
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(_MODELS_MOUNT_POLL_SECONDS)
         window = windows[0]
-        for _ in range(200):
+        for _ in range(_MODELS_MOUNT_POLL_ATTEMPTS):
             if all(
                 list(window.query(f"#{view_id}"))
                 for view_id in window.view_mapping.values()
             ):
                 break
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(_MODELS_MOUNT_POLL_SECONDS)
         for view_name in window.view_mapping:
             if view_name != "llama-cpp":
                 await window._mount_deferred_views(view_name)
@@ -4855,6 +4858,44 @@ def test_open_installed_switches_and_reveals_exact_reference_without_activation(
     )
     installed.reveal_reference.assert_called_once_with(reference)
     assert not any(call[0] == "activate" for call in installed.method_calls)
+
+
+@pytest.mark.asyncio
+async def test_open_installed_preserves_reference_until_first_lazy_mount(
+    monkeypatch,
+):
+    """First-use Installed navigation must replay the exact requested root."""
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    reference = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    revealed = []
+    original_reveal = InstalledView.reveal_reference
+
+    def capture_reveal(self, requested):
+        revealed.append(requested)
+        return original_reveal(self, requested)
+
+    monkeypatch.setattr(InstalledView, "reveal_reference", capture_reveal)
+    app = _app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await _models_screen(app, populate_all=False)
+        for _ in range(8):
+            await pilot.pause()
+        window = screen.query_one(LLMManagementWindow)
+        assert not list(window.query("#installed-models-view"))
+
+        screen._remote_open_installed_requested(
+            RemoteView.OpenInstalledRequested(reference)
+        )
+        for _ in range(8):
+            await pilot.pause()
+
+        assert revealed == [reference]
+        assert window.active_view == "installed"
+        assert window.query_one("#installed-models-view", InstalledView).is_mounted
 
 
 @pytest.mark.asyncio

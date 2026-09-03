@@ -668,12 +668,15 @@ class LLMManagementWindow(Container):
         except QueryError:
             return
 
-        server_body = self._lazy_server_bodies.pop(view_name, None)
+        server_body = self._lazy_server_bodies.get(view_name)
         if server_body is not None:
-            await pane.mount_all(server_body)
+            remaining = tuple(widget for widget in server_body if not widget.is_mounted)
+            if remaining:
+                await pane.mount_all(remaining)
+            self._lazy_server_bodies.pop(view_name, None)
         elif view_name == "ollama":
             await pane.mount(OllamaServiceView(self._ollama_prereq_text()))
-        else:
+        elif view_name in {"curated", "installed", "external", "remote"}:
             from .Screens.model_curated_view import CuratedView
             from .Screens.model_external_view import ExternalModelView
             from .Screens.model_installed_view import InstalledView
@@ -724,6 +727,8 @@ class LLMManagementWindow(Container):
                     await pane.mount(
                         ExternalModelView(source_service, id="external-models-view")
                     )
+        else:
+            raise RuntimeError(f"Deferred body for {view_name!r} is unavailable")
 
         self._populated_views.add(view_name)
         self.call_after_refresh(self._view_population_ready, view_name)
@@ -763,6 +768,7 @@ class LLMManagementWindow(Container):
         if view_name == "ollama":
             self._autofill_ollama_path()
             self._schedule_ollama_api_state()
+        self._try_commit_pending_managed_gguf_handoff()
         self.post_message(self.DeferredViewsMounted())
 
     async def _ollama_api_available(self) -> bool:
@@ -1558,7 +1564,11 @@ class LLMManagementWindow(Container):
                 )
 
     def compose(self) -> ComposeResult:
-        """Compose stable pane shells and only the initial llama.cpp body."""
+        """Compose stable pane shells and only the initial llama.cpp body.
+
+        Returns:
+            A composition result yielding the stable Models content root.
+        """
 
         roots = compose_widgets(self, self._compose_server_panes())
         if len(roots) != 1 or not isinstance(roots[0], _LLMMainContent):
@@ -1667,12 +1677,41 @@ class LLMManagementWindow(Container):
         self.active_view = "llama-cpp" if provider == "llamacpp" else "llamafile"
         self._pending_managed_gguf_handoff = (provider, reference)
         if reference in {choice.reference for choice in self._managed_gguf_choices}:
-            self._commit_managed_gguf_handoff(provider, reference)
+            self._try_commit_pending_managed_gguf_handoff()
             return True
         if not self._refresh_managed_gguf_inventory():
             self._pending_managed_gguf_handoff = None
             return False
         return True
+
+    def _try_commit_pending_managed_gguf_handoff(self) -> None:
+        """Commit a proven handoff once its lazy provider controls exist."""
+
+        pending = self._pending_managed_gguf_handoff
+        if pending is None:
+            return
+        provider, reference = pending
+        if reference not in {choice.reference for choice in self._managed_gguf_choices}:
+            return
+        if any(self._server_active(item) for item in self.GGUF_PROVIDERS):
+            self._pending_managed_gguf_handoff = None
+            self.post_message(
+                self.ManagedGGUFHandoffResolved(
+                    provider,
+                    reference,
+                    succeeded=False,
+                    reason="server-active",
+                )
+            )
+            return
+        try:
+            self.query_one(f"#{provider}-gguf-source-mode", Select)
+            self.query_one(f"#{provider}-gguf-managed-select", Select)
+        except QueryError:
+            view_name = "llama-cpp" if provider == "llamacpp" else "llamafile"
+            self.ensure_view_populated(view_name)
+            return
+        self._commit_managed_gguf_handoff(provider, reference)
 
     def _commit_managed_gguf_handoff(
         self,
@@ -1691,6 +1730,7 @@ class LLMManagementWindow(Container):
         with mode.prevent(Select.Changed):
             mode.value = GGUFSourceMode.MANAGED.value
         with managed.prevent(Select.Changed):
+            managed.set_options(self._gguf_managed_options())
             managed.value = reference
         self._pending_managed_gguf_handoff = None
         self._render_gguf_source(provider)
@@ -1949,7 +1989,7 @@ class LLMManagementWindow(Container):
         if pending is not None:
             provider, reference = pending
             if not error and reference in references:
-                self._commit_managed_gguf_handoff(provider, reference)
+                self._try_commit_pending_managed_gguf_handoff()
             else:
                 self._pending_managed_gguf_handoff = None
                 self.post_message(
@@ -2162,7 +2202,11 @@ class LLMManagementWindow(Container):
                 logger.error(f"Target view #{target_view_id} not found")
 
     def ensure_view_populated(self, view_name: str) -> None:
-        """Schedule first population for one pane without changing selection."""
+        """Schedule first population for one pane without changing selection.
+
+        Args:
+            view_name: Stable provider or model-library view key to populate.
+        """
 
         if (
             view_name in self._populated_views

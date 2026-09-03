@@ -340,6 +340,9 @@ class LLMScreen(LabScreen):
         #: LabScreen recomposition replaces that window, so window-local
         #: ownership alone would strand the handoff with the detached worker.
         self._remote_runtime_handoff: tuple[str, ArtifactRef] | None = None
+        #: Exact Installed-row navigation retained while the Installed pane
+        #: performs its first lazy mount.
+        self._pending_installed_reveal: ArtifactRef | None = None
         self._machine_memory_snapshot: MachineMemorySnapshot | None = None
         self._machine_memory_observed_label: str | None = None
         self._machine_memory_observed_monotonic: float | None = None
@@ -2526,10 +2529,22 @@ class LLMScreen(LabScreen):
         event.stop()
         if self.llm_window is None or type(event.reference) is not ArtifactRef:
             return
-        installed = self._installed_view()
+        self._pending_installed_reveal = event.reference
         self.llm_window.active_view = "installed"
-        if installed is not None:
-            self.call_after_refresh(installed.reveal_reference, event.reference)
+        self.llm_window.ensure_view_populated("installed")
+        self._replay_pending_installed_reveal()
+
+    def _replay_pending_installed_reveal(self) -> None:
+        """Reveal a retained exact root once the Installed body is mounted."""
+
+        reference = getattr(self, "_pending_installed_reveal", None)
+        if reference is None:
+            return
+        installed = self._installed_view()
+        if installed is None:
+            return
+        self._pending_installed_reveal = None
+        self.call_after_refresh(installed.reveal_reference, reference)
 
     @on(RemoteView.ConfigureRuntimeRequested)
     def _remote_configure_runtime_requested(
@@ -3185,6 +3200,7 @@ class LLMScreen(LabScreen):
         self._hydrate_external_status()
         self._hydrate_remote_machine_memory()
         self._replay_remote_runtime_handoff()
+        self._replay_pending_installed_reveal()
 
     def _hydrate_model_install_progress(self) -> None:
         """Re-apply selected-model context and progress after a recompose.
