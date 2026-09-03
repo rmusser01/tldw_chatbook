@@ -717,6 +717,12 @@ class LocalToolProvider:
         )
         self._spill_lock = threading.Lock()
         self._inline_bytes_by_run: dict[str, int] = {}
+
+        from tldw_chatbook.Agents.fs_read_ledger import ReadLedger
+
+        # TASK-28238 phase 1: (run_id, canonical_path) -> what this run last
+        # saw there. Keyed per run because fleet children SHARE this provider.
+        self._read_ledger = ReadLedger()
         self._promotion_snapshotter = promotion_snapshotter
         self._promotion_revalidator = promotion_revalidator
         self._promotion_stamps: dict[tuple[str, str, str], str] = {}
@@ -1546,6 +1552,11 @@ class LocalToolProvider:
                     else self._result_redaction_root
                 )
                 dispatch_started = True
+                if name == "fs_read":
+                    self._record_fs_read_observation(
+                        clean_args,
+                        authority.root if authority is not None else self._root,
+                    )
                 try:
                     selected_spec = (
                         self._path_specs_by_alias[authority.alias][name]
@@ -1850,6 +1861,39 @@ class LocalToolProvider:
                 ) + len(fitted.encode("utf-8"))
         return fitted
 
+    def _record_fs_read_observation(self, args: dict, root: "Path") -> None:
+        """Stamp the ledger from a provider-side resolve of an fs_read target.
+
+        Never keyed off fs_read's outcome: a missing file and a confinement
+        refusal raise the same LocalToolError type, so the provider resolves
+        the path itself -- refused -> record nothing; absent -> ABSENT;
+        present -> whole-file hash. Never raises.
+        """
+        from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
+        from tldw_chatbook.Agents.run_context import current_run_id
+        from tldw_chatbook.Tools.local_tool_impls import (
+            LocalToolError,
+            resolve_workspace_path,
+        )
+
+        raw = args.get("path")
+        if not isinstance(raw, str) or not raw:
+            return
+        try:
+            resolved = resolve_workspace_path(raw, Path(root).resolve(), intent="read")
+        except (LocalToolError, OSError, ValueError):
+            return  # refused path: not an observation
+        key = canonical_ledger_key(resolved)
+        run_id = current_run_id()
+        if not resolved.is_file():
+            self._read_ledger.record_absent(run_id, key)
+            return
+        hashed = _hash_file(resolved)
+        if hashed is None:
+            return
+        digest, size = hashed
+        self._read_ledger.record_present(run_id, key, digest, size)
+
     def _root_is_valid(self) -> bool:
         """Never raise while revalidating an optional selected-root guard."""
         if self._root_guard is None:
@@ -2048,6 +2092,17 @@ def _promotion_call_kind(name: str, args: object) -> str | None:
     if "promotion" in args:
         return "prepare"
     return None
+
+
+def _hash_file(path: "Path") -> "tuple[str, int] | None":
+    """Whole-file (sha256, size) of ``path``; None when missing/unreadable."""
+    import hashlib
+
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    return hashlib.sha256(data).hexdigest(), len(data)
 
 
 def _proposal_payload(proposal: RepositoryInstructionProposal) -> dict[str, Any]:

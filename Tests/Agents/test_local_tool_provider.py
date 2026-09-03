@@ -3803,3 +3803,48 @@ def test_timeout_for_falls_back_on_malformed_deep_search_timeout_s(
 
     monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
     assert p.timeout_for("local:web_deep_search") == 290.0
+
+
+# --- TASK-28238 phase 1: stale-write guard -- record-on-read ---
+
+def _guard_provider(tmp_path):
+    """Real-executor provider rooted at tmp_path for guard tests."""
+    return make_provider(root=tmp_path, use_default_executor=True, allow_write=True)
+
+
+def test_fs_read_records_whole_file_hash(tmp_path):
+    import hashlib
+    from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
+
+    target = tmp_path / "a.txt"
+    target.write_text("line1\nline2\nline3\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        result = provider.invoke("local:fs_read", {"path": "a.txt", "limit": 1})
+    assert result.ok
+    key = canonical_ledger_key(target.resolve())
+    stamp = provider._read_ledger.stamp_for("run-a", key)
+    assert stamp is not None
+    # whole-file hash, not the windowed first line
+    assert stamp.sha256 == hashlib.sha256(target.read_bytes()).hexdigest()
+
+
+def test_fs_read_of_missing_path_records_absent(tmp_path):
+    from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
+
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        result = provider.invoke("local:fs_read", {"path": "nope.txt"})
+    assert not result.ok  # fs_read itself still errors as today
+    key = canonical_ledger_key((tmp_path / "nope.txt").resolve())
+    stamp = provider._read_ledger.stamp_for("run-a", key)
+    assert stamp is not None and stamp.is_absent
+
+
+def test_fs_read_of_refused_path_records_nothing(tmp_path):
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        result = provider.invoke("local:fs_read", {"path": "../outside.txt"})
+    assert not result.ok
+    # nothing recorded under this run at all
+    assert provider._read_ledger._by_run.get("run-a") in (None, {})
