@@ -91,6 +91,25 @@ recoverable rather than overwritten. History is capped per task (the newest
 keep their history server-authoritative (per ADR-077) rather than
 duplicating it locally. The existing missed-fire accounting is unchanged.
 
+## Task Detail — grouped fields
+
+A reminder's Task Detail pane shows its fields as three labeled groups
+instead of a flat list, matching the same label-left/value-right row style
+used throughout the pane:
+
+- **Details** — `Runs on` (the owner, "This device" or "Server (\<id\>)",
+  with the transfer badge text appended while a move is in flight, e.g.
+  "This device (Moving to server…)").
+- **Frequency** — `Repeat`, `At`, `Timezone`, and `Notifications` (always
+  "Inbox + toast" — every reminder dispatch writes an inbox row and
+  attempts a toast; there is no per-reminder channel setting).
+- **History** (collapsed by default — click its title to expand) —
+  `Last fire` (the last run's time and outcome) and a pointer row to the
+  **Recent runs** list, which stays exactly where it was below.
+
+A watchlist or briefing projection (not a reminder) still shows the older
+Type/Schedule rows unchanged — the grouped layout is reminder-specific.
+
 ## Creating a scheduled task
 
 Press **c**, or click **+ New** in the Queue tab's pane header, to open
@@ -404,6 +423,28 @@ showing an empty server-shaped trail; every execution still leaves its
 trail here for server automations: queued, succeeded, failed, timed out,
 skipped, the same events the server records for reconciliation.
 
+### Automations tab — definition detail pane
+
+Highlighting a definition row opens a read-only detail pane alongside the
+list and its run history — the Automations tab's first per-row detail
+view. It shows the question text in a card at the top, then the same
+grouped-row layout as the reminder detail pane:
+
+- **Details** — `Runs on` (owner + transfer badge, same wording as the
+  reminder pane), `Model` (the pinned `provider/model`, or `auto` when
+  the definition pins nothing), `Generation` (always/only-new/never),
+  `Finding policy` (the preset name), and `Sources` (the selected library
+  sources, or "All searchable library" for the default scope).
+- **Frequency** — the schedule summary (repeat/at/timezone, or the raw
+  cron expression for a custom schedule).
+- **History** (collapsed by default) — the last run's outcome, total run
+  count, unread results count, and a pointer to the Results tab. A
+  server-owned definition honestly shows no local run count or last run
+  here, since only the server holds that definition's execution history.
+
+The detail pane hides at narrow terminal widths, the same responsive rule
+the Queue tab's own detail pane already uses.
+
 ## Results tab — the automation findings inbox
 
 The **Results** tab lists the `automation_results` rows a recurring
@@ -488,7 +529,13 @@ The default bound is `handler_timeout_seconds` under `[scheduling]` in
 bound entirely — every handler may then run as long as it likes, and a
 wedged handler will wedge the scheduler, which is why the default is on.
 
-*Verified against a running tldw_server — 2026-09-02 (schedules-handoff
+*Verified against 98810b90e — 2026-09-02 (schedules redesign PR-1 task 5,
+docs pass against shipped code/tests, live check pending the redesign
+program's later PRs per spec §14: the reminder Task Detail pane's grouped
+Details/Frequency/History rows, and the Automations tab's new definition
+detail pane — question card, Details/Frequency/History rows incl.
+Model/Generation/Finding policy/Sources, and the History group's run/
+unread counts). Verified against a running tldw_server — 2026-09-02 (schedules-handoff
 PR-6 task 6, the program's §10 live gate: real TUI in tmux against
 tldw_server `origin/dev` 25fb0eca59 on a local single-user profile.
 Verified live: authoring a local recurring question, transferring it to
