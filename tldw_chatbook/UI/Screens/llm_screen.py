@@ -405,6 +405,8 @@ class LLMScreen(LabScreen):
                 return
             view = self._curated_view()
             window = self.llm_window
+            if view is None and window is not None:
+                window.active_view = "curated"
             if view is not None and window is not None:
                 view.set_consumer_filter("audio_cpp", allow_installed_return=True)
                 view.ensure_loaded()
@@ -699,10 +701,9 @@ class LLMScreen(LabScreen):
     def _active_install_view(self) -> "CuratedView | RemoteView | None":
         """Return the view rendering the currently in-flight install, if any.
 
-        ``LLMManagementWindow`` composes every rail view eagerly (only
-        ``active_view`` picks which one is visible), so both
-        ``CuratedView`` and ``RemoteView`` are mounted at once regardless
-        of which install (if either) is running -- routing by
+        ``LLMManagementWindow`` now populates panes on first use, so either
+        view may temporarily be absent during first mount or a screen-level
+        recompose. Routing by
         ``_model_install_kind`` (set once, when ``_curated_install_
         requested``/``_remote_install_requested`` accepts a request) is
         what keeps a remote install's progress from also being rendered
@@ -837,6 +838,11 @@ class LLMScreen(LabScreen):
         """Apply screen-retained state to the current deferred view."""
 
         view = self._external_view()
+        if view is None and self._external_operation_status:
+            window = getattr(self, "llm_window", None)
+            if window is not None:
+                window.ensure_view_populated("external")
+            return
         if view is not None and self._external_operation_status:
             view.apply_operation_status(
                 self._external_operation_status,
@@ -3160,15 +3166,11 @@ class LLMScreen(LabScreen):
 
     @on(LLMManagementWindow.DeferredViewsMounted)
     def _on_deferred_views_mounted(self) -> None:
-        """Re-run install-progress hydration once the deferred views exist.
+        """Re-run hydration whenever a lazy Models pane becomes ready.
 
-        task-2900: `on_lab_body_ready`'s single `call_after_refresh` used to
-        suffice because compose built every view synchronously; with the
-        heavy views mounted after first paint, that hydration races the
-        deferred mount and loses (its view lookups no-op). The window posts
-        this message when the views are actually queryable — the correctly
-        ordered second chance. `_hydrate_model_install_progress` is
-        idempotent and internally guarded, so running both is safe.
+        The window posts this after each first-used pane has composed its
+        descendants. Hydration is idempotent, so the initial and later
+        notifications safely share this handler.
         """
         claim = self._audio_cpp_model_request_claim
         if claim is not None:
@@ -3223,6 +3225,13 @@ class LLMScreen(LabScreen):
         every (re)mount, rather than by trying to identify and replay
         whichever specific message the gap happened to swallow.
         """
+        window = getattr(self, "llm_window", None)
+        install_kind = self._model_install_kind
+        if window is not None:
+            if install_kind in {"curated", "remote"}:
+                window.ensure_view_populated(install_kind)
+            if self._model_install_active:
+                window.ensure_view_populated("installed")
         if not self._hydrate_remote_terminal_presentation():
             self._hydrate_remote_completed_presentation()
         view = self._active_install_view()

@@ -452,6 +452,13 @@ class InstalledView(Widget):
         except NoMatches:
             self.refresh(recompose=True)
             return
+        if not list(widget.query("#model-install-progress-phase")):
+            # A progress tick can arrive while the state-change recompose has
+            # mounted the progress root but not its children yet. The latest
+            # progress is already retained above, so let the next composition
+            # render it instead of addressing an incomplete subtree.
+            self.refresh(recompose=True)
+            return
         widget.display = active
         if progress is not None:
             widget.update_progress(progress)

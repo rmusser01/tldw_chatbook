@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Callable
 #
 # 3rd-Party Imports
 from textual import on
-from textual.app import ComposeResult
+from textual.app import ComposeResult, compose as compose_widgets
 from textual.binding import Binding
 from textual.containers import Container, VerticalScroll, Horizontal, Vertical
 from textual.css.query import QueryError
@@ -73,17 +73,37 @@ if TYPE_CHECKING:
 # Functions:
 
 
+class _LazyServerPane(VerticalScroll):
+    """A stable provider pane whose pre-composed body can be mounted later."""
+
+    def defer_body(self) -> tuple[Widget, ...]:
+        """Detach pending compose children without mounting them."""
+
+        body = tuple(self._pending_children)
+        self._pending_children.clear()
+        return body
+
+
+class _LLMMainContent(Container):
+    """Composition root exposing the provider panes collected below it."""
+
+    @property
+    def pending_views(self) -> tuple[Widget, ...]:
+        """Return view roots captured by Textual's compose stack."""
+
+        return tuple(self._pending_children)
+
+
 class OllamaServiceView(VerticalScroll):
     """The Ollama view body, extracted verbatim from `compose` (task-2900).
 
-    Deferred past first paint by `_mount_deferred_views`; the one dynamic
+    Mounted on first selection by `_mount_deferred_views`; the one dynamic
     piece of the original inline block — the prereq line — is computed by
     the window at build time and passed in.
     """
 
     def __init__(self, prereq_text: str, **kwargs) -> None:
-        kwargs.setdefault("id", "llm-view-ollama")
-        kwargs.setdefault("classes", "llm-view")
+        kwargs.setdefault("classes", "llm-view-body")
         super().__init__(**kwargs)
         self._prereq_text = prereq_text
 
@@ -274,13 +294,11 @@ class LLMManagementWindow(Container):
     """
 
     class DeferredViewsMounted(Message):
-        """The deferred model-management views now exist (task-2900).
+        """A lazy model-management view is ready for state hydration.
 
-        Posted at the end of `_finish_deferred_mount` so ancestors that
-        hydrate state into those views on (re)mount — `LLMScreen`'s
-        install-progress hydration fires from `on_lab_body_ready` via one
-        `call_after_refresh`, which raced (and lost to) the deferred mount —
-        get a second, correctly-ordered chance.
+        The historical name is retained for message-handler compatibility.
+        It is posted after initial llama.cpp setup and after each first-used
+        pane has finished composing its descendants.
         """
 
     class ManagedGGUFHandoffResolved(Message):
@@ -582,6 +600,9 @@ class LLMManagementWindow(Container):
             "curated": "curated-models-view",
             "installed": "installed-models-view",
         }
+        self._lazy_server_bodies: dict[str, tuple[Widget, ...]] = {}
+        self._populated_views: set[str] = set()
+        self._populating_views: set[str] = set()
 
         # Map navigation button IDs to view IDs. Order matters: it drives the
         # [/] cycling and the position indicator, so it matches the sidebar's
@@ -604,14 +625,13 @@ class LLMManagementWindow(Container):
         """Called when the widget is mounted."""
         logger.debug("LLMManagementWindow.on_mount called")
         self.watch(self.screen, "focused", self._record_model_library_focus, init=False)
-        # task-2900: the five heavy hidden views — Ollama, Curated, Installed,
-        # External, and Remote — mount here after the first refresh. The
-        # eleven total views then share the normal activation path.
+        # The llama.cpp body is part of the first composition. All other
+        # provider bodies stay unmounted until their first selection.
         self.call_after_refresh(self._finish_deferred_mount)
         self.set_interval(3.0, self._schedule_ollama_api_state)
 
     async def _finish_deferred_mount(self) -> None:
-        """Mount deferred views, then run everything that assumes them.
+        """Activate llama.cpp after its first composed frame is available.
 
         Each step is guarded individually: before task-2900 these were
         independent `call_after_refresh` callbacks, and one failing never
@@ -620,21 +640,8 @@ class LLMManagementWindow(Container):
         Ollama autofill, UX-078). Sequencing adds the ordering guarantee;
         it must not add failure coupling.
         """
-        try:
-            await self._mount_deferred_views()
-        except Exception:
-            logger.exception("Deferred LLM view mount failed")
         for step in (
             self._initialize_view,
-            # Autofill the Ollama executable when it's discoverable (UX-078).
-            self._autofill_ollama_path,
-            # Keep the Ollama API controls gated on a live service (UX-091).
-            # task-15473 made this step await the non-blocking Ollama
-            # probe; task-15211 then moved the await into a widget-owned
-            # worker (see _schedule_ollama_api_state) so an in-flight probe
-            # cannot outlive the screen. The step stays in this loop for
-            # its ordering slot, but it now only SCHEDULES.
-            self._schedule_ollama_api_state,
         ):
             try:
                 result = step()
@@ -644,76 +651,119 @@ class LLMManagementWindow(Container):
                 logger.exception(f"Post-mount step failed: {step.__name__}")
         self.post_message(self.DeferredViewsMounted())
 
-    async def _mount_deferred_views(self) -> None:
-        """Mount the deferred views that arrive CSS-hidden (task-2900).
+    async def _mount_deferred_views(self, view_name: str) -> None:
+        """Populate one stable pane body on first selection.
 
-        Ollama plus the Curated, Installed, External, and Remote library
-        views arrive `display: none` behind the `-active` CSS mechanism.
-        Deferring those five leaves eleven total views and keeps them off the
-        click→paint critical path. Idempotent for re-entered mounts.
+        The method name is retained for compatibility with older task-level
+        architecture checks. Unlike task-2900's batch deferral, this method
+        mounts only the requested body and leaves it cached in its pane.
         """
+        if view_name in self._populated_views:
+            return
+        view_id = self.view_mapping.get(view_name)
+        if view_id is None:
+            return
         try:
-            content = self.query_one("#llm-main-content", Container)
+            pane = self.query_one(f"#{view_id}")
         except QueryError:
             return
-        if self.query("#llm-view-ollama"):
+
+        server_body = self._lazy_server_bodies.pop(view_name, None)
+        if server_body is not None:
+            await pane.mount_all(server_body)
+        elif view_name == "ollama":
+            await pane.mount(OllamaServiceView(self._ollama_prereq_text()))
+        else:
+            from .Screens.model_curated_view import CuratedView
+            from .Screens.model_external_view import ExternalModelView
+            from .Screens.model_installed_view import InstalledView
+            from .Screens.model_remote_view import RemoteView
+
+            legacy_dir = None
+            app_config = getattr(self.app_instance, "app_config", {})
+            if isinstance(app_config, dict):
+                configured = app_config.get("llm_management", {}).get(
+                    "model_download_dir"
+                )
+                if configured:
+                    legacy_dir = Path(str(configured)).expanduser()
+
+            observation_provider = getattr(
+                self.app_instance,
+                "_audio_cpp_model_library_observation_snapshot",
+                None,
+            )
+            if view_name == "curated":
+                await pane.mount(
+                    CuratedView(
+                        observation_provider=observation_provider,
+                        id="curated-models-view",
+                    )
+                )
+            elif view_name == "remote":
+                # Remote is explicitly idle until Search is submitted.
+                await pane.mount(RemoteView(id="remote-models-view"))
+            else:
+                source_service = self.app_instance._ensure_parakeet_source_service()
+                if view_name == "installed":
+                    await pane.mount(
+                        InstalledView(
+                            legacy_dir=legacy_dir,
+                            on_root_activated=source_service.on_root_activated,
+                            may_delete=source_service.may_delete,
+                            recycle_idle=(
+                                self.app_instance._recycle_idle_local_stt_reference
+                            ),
+                            can_start_import=self._can_start_import,
+                            on_import_lane_changed=self._on_import_lane_changed,
+                            observation_provider=observation_provider,
+                            id="installed-models-view",
+                        )
+                    )
+                elif view_name == "external":
+                    await pane.mount(
+                        ExternalModelView(source_service, id="external-models-view")
+                    )
+
+        self._populated_views.add(view_name)
+        self.call_after_refresh(self._view_population_ready, view_name)
+
+    def _view_population_ready(self, view_name: str) -> None:
+        """Hydrate and announce a first-selected body after child composition."""
+
+        if not self.is_attached:
             return
+        progress_ids = {
+            "curated": "curated-model-install-progress",
+            "installed": "installed-model-install-progress",
+            "remote": "remote-model-install-progress",
+        }
+        progress_id = progress_ids.get(view_name)
+        if progress_id is not None:
+            try:
+                progress = self.query_one(f"#{progress_id}")
+            except QueryError:
+                self.call_after_refresh(self._view_population_ready, view_name)
+                return
+            if not list(progress.query("#model-install-progress-phase")):
+                self.call_after_refresh(self._view_population_ready, view_name)
+                return
+        if view_name == "installed" and self._managed_install_progress is not None:
+            from .Screens.model_installed_view import InstalledView
 
-        from .Screens.model_curated_view import CuratedView
-        from .Screens.model_external_view import ExternalModelView
-        from .Screens.model_installed_view import InstalledView
-        from .Screens.model_remote_view import RemoteView
-
-        curated = Container(id="llm-view-curated", classes="llm-view")
-        installed = Container(id="llm-view-installed", classes="llm-view")
-        external = Container(id="llm-view-external", classes="llm-view")
-        remote = Container(id="llm-view-remote", classes="llm-view")
-        await content.mount(
-            OllamaServiceView(self._ollama_prereq_text()),
-            curated,
-            installed,
-            external,
-            remote,
-        )
-
-        legacy_dir = None
-        app_config = getattr(self.app_instance, "app_config", {})
-        if isinstance(app_config, dict):
-            configured = app_config.get("llm_management", {}).get("model_download_dir")
-            if configured:
-                from pathlib import Path
-
-                legacy_dir = Path(str(configured)).expanduser()
-
-        observation_provider = getattr(
-            self.app_instance,
-            "_audio_cpp_model_library_observation_snapshot",
-            None,
-        )
-        await curated.mount(
-            CuratedView(
-                observation_provider=observation_provider,
-                id="curated-models-view",
-            )
-        )
-        source_service = self.app_instance._ensure_parakeet_source_service()
-        await installed.mount(
-            InstalledView(
-                legacy_dir=legacy_dir,
-                on_root_activated=source_service.on_root_activated,
-                may_delete=source_service.may_delete,
-                recycle_idle=self.app_instance._recycle_idle_local_stt_reference,
-                can_start_import=self._can_start_import,
-                on_import_lane_changed=self._on_import_lane_changed,
-                observation_provider=observation_provider,
-                id="installed-models-view",
-            )
-        )
-        await external.mount(
-            ExternalModelView(source_service, id="external-models-view")
-        )
-        # Remote is explicitly idle until Search is submitted.
-        await remote.mount(RemoteView(id="remote-models-view"))
+            try:
+                installed = self.query_one("#installed-models-view", InstalledView)
+            except QueryError:
+                pass
+            else:
+                installed.set_install_state(
+                    self._managed_install_progress,
+                    active=self._managed_install_active,
+                )
+        if view_name == "ollama":
+            self._autofill_ollama_path()
+            self._schedule_ollama_api_state()
+        self.post_message(self.DeferredViewsMounted())
 
     async def _ollama_api_available(self) -> bool:
         """True when an Ollama service answers (app-launched or external)."""
@@ -745,7 +795,11 @@ class LLMManagementWindow(Container):
         scheduling->running race) and post-await re-check (mid-probe
         deactivation, task-15473).
         """
-        if not self.is_attached or not self.screen.is_active:
+        if (
+            "ollama" not in self._populated_views
+            or not self.is_attached
+            or not self.screen.is_active
+        ):
             return
         self.run_worker(
             self._update_ollama_api_state(),
@@ -886,9 +940,12 @@ class LLMManagementWindow(Container):
         via ``self.watch(...)`` (e.g. the Lab rail highlighter) -- with the
         child views already mounted.
         """
-        self.active_view = "llama-cpp"
-        for provider in self.GGUF_PROVIDERS:
-            self._render_gguf_source(provider)
+        if not self.active_view:
+            self.active_view = "llama-cpp"
+        if "llama-cpp" in self._populated_views:
+            self._render_gguf_source("llamacpp")
+        if "llamafile" in self._populated_views:
+            self._render_gguf_source("llamafile")
         self._sync_all_process_controls()
 
     def _ollama_prereq_text(self) -> str:
@@ -1038,15 +1095,15 @@ class LLMManagementWindow(Container):
             classes="gguf-source-status",
         )
 
-    def compose(self) -> ComposeResult:
-        """Compose the LLM Management UI with sidebar navigation and content area."""
+    def _compose_server_panes(self) -> ComposeResult:
+        """Build the six server panes so inactive bodies can be detached."""
         initial_active = {
             provider: self._server_active(provider) for provider in self.GGUF_PROVIDERS
         }
         # Main content area
-        with Container(id="llm-main-content"):
+        with _LLMMainContent(id="llm-main-content"):
             # Llama.cpp View
-            with VerticalScroll(id="llm-view-llama-cpp", classes="llm-view"):
+            with _LazyServerPane(id="llm-view-llama-cpp", classes="llm-view"):
                 yield Label("Llama.cpp Configuration", classes="section-title")
                 yield Label(
                     "Launch a llama.cpp server instance with a GGUF model",
@@ -1141,7 +1198,7 @@ class LLMManagementWindow(Container):
                 )
 
             # Llamafile View
-            with VerticalScroll(id="llm-view-llamafile", classes="llm-view"):
+            with _LazyServerPane(id="llm-view-llamafile", classes="llm-view"):
                 yield Label("Llamafile Configuration", classes="section-title")
                 yield Label(
                     "Run a self-contained llamafile executable (model included)",
@@ -1229,7 +1286,7 @@ class LLMManagementWindow(Container):
                 )
 
             # vLLM View
-            with VerticalScroll(id="llm-view-vllm", classes="llm-view"):
+            with _LazyServerPane(id="llm-view-vllm", classes="llm-view"):
                 yield Label("vLLM Configuration", classes="section-title")
                 yield Label(
                     "High-performance LLM serving with vLLM", classes="description"
@@ -1302,7 +1359,7 @@ class LLMManagementWindow(Container):
                 )
 
             # ONNX View
-            with VerticalScroll(id="llm-view-onnx", classes="llm-view"):
+            with _LazyServerPane(id="llm-view-onnx", classes="llm-view"):
                 yield Label("ONNX Runtime Configuration", classes="section-title")
                 yield Label(
                     "Run ONNX models with optimized inference", classes="description"
@@ -1390,7 +1447,7 @@ class LLMManagementWindow(Container):
                 )
 
             # Transformers View
-            with VerticalScroll(id="llm-view-transformers", classes="llm-view"):
+            with _LazyServerPane(id="llm-view-transformers", classes="llm-view"):
                 yield Label(
                     "Hugging Face Transformers Model Management",
                     classes="section-title",
@@ -1433,7 +1490,7 @@ class LLMManagementWindow(Container):
                 )
 
             # MLX-LM View
-            with VerticalScroll(id="llm-view-mlx-lm", classes="llm-view"):
+            with _LazyServerPane(id="llm-view-mlx-lm", classes="llm-view"):
                 yield Label("MLX-LM Configuration", classes="section-title")
                 yield Label(
                     "Apple Silicon optimized LLM inference", classes="description"
@@ -1499,6 +1556,31 @@ class LLMManagementWindow(Container):
                 yield RichLog(
                     id="mlx-log-output", classes="log_output", wrap=True, highlight=True
                 )
+
+    def compose(self) -> ComposeResult:
+        """Compose stable pane shells and only the initial llama.cpp body."""
+
+        roots = compose_widgets(self, self._compose_server_panes())
+        if len(roots) != 1 or not isinstance(roots[0], _LLMMainContent):
+            raise RuntimeError("LLM server pane composition produced an invalid root")
+        content = roots[0]
+        self._lazy_server_bodies.clear()
+        self._populated_views = {"llama-cpp"}
+        view_name_by_id = {
+            view_id: view_name for view_name, view_id in self.view_mapping.items()
+        }
+        for pane in content.pending_views:
+            if not isinstance(pane, _LazyServerPane):
+                continue
+            view_name = view_name_by_id.get(pane.id or "")
+            if view_name is not None and view_name != "llama-cpp":
+                self._lazy_server_bodies[view_name] = pane.defer_body()
+
+        for view_name in ("ollama", "curated", "installed", "external", "remote"):
+            content.compose_add_child(
+                Container(id=self.view_mapping[view_name], classes="llm-view")
+            )
+        yield content
 
     @on(InstallProgressed)
     def _managed_install_progressed(self, event: InstallProgressed) -> None:
@@ -1850,7 +1932,11 @@ class LLMManagementWindow(Container):
                     external_path=selection.external_path,
                 )
                 self._gguf_sources[provider] = selection
-            select = self.query_one(f"#{provider}-gguf-managed-select", Select)
+            try:
+                select = self.query_one(f"#{provider}-gguf-managed-select", Select)
+            except QueryError:
+                # The sibling GGUF pane has not been selected/mounted yet.
+                continue
             with select.prevent(Select.Changed):
                 select.set_options(self._gguf_managed_options())
                 select.value = (
@@ -2068,17 +2154,74 @@ class LLMManagementWindow(Container):
                 target_view = self.query_one(f"#{target_view_id}")
                 target_view.add_class("-active")
                 logger.info(f"Activated LLM view: {target_view_id}")
-
-                # Populate help text for specific views
-                self._populate_help_text(new_view, target_view)
-                if new_view in self._model_library_focus_ids:
-                    self.call_after_refresh(
-                        self._restore_model_library_focus,
-                        new_view,
-                    )
-                self._start_view_work(new_view, target_view)
+                if new_view not in self._populated_views:
+                    self.ensure_view_populated(new_view)
+                else:
+                    self._finish_view_activation(new_view, target_view)
             except QueryError:
                 logger.error(f"Target view #{target_view_id} not found")
+
+    def ensure_view_populated(self, view_name: str) -> None:
+        """Schedule first population for one pane without changing selection."""
+
+        if (
+            view_name in self._populated_views
+            or view_name in self._populating_views
+            or view_name not in self.view_mapping
+        ):
+            return
+        self._populating_views.add(view_name)
+        self.run_worker(
+            self._activate_deferred_view(view_name),
+            group=f"llm-view-mount-{view_name}",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _activate_deferred_view(self, view_name: str) -> None:
+        """Mount a first-selected pane and finish activation if still visible."""
+
+        try:
+            await self._mount_deferred_views(view_name)
+        except Exception:
+            logger.exception("Lazy LLM view mount failed: {}", view_name)
+            return
+        finally:
+            self._populating_views.discard(view_name)
+        if self.active_view != view_name:
+            return
+        self.call_after_refresh(self._finish_deferred_view_activation, view_name)
+
+    def _finish_deferred_view_activation(self, view_name: str) -> None:
+        """Finish one lazy activation after its descendants have composed."""
+
+        if self.active_view != view_name:
+            return
+        try:
+            target = self.query_one(f"#{self.view_mapping[view_name]}")
+        except QueryError:
+            return
+        self._finish_view_activation(view_name, target)
+
+    def _finish_view_activation(self, view_name: str, target_view: Widget) -> None:
+        """Run behavior that requires the selected pane body to exist."""
+
+        gguf_provider = "llamacpp" if view_name == "llama-cpp" else view_name
+        if gguf_provider in self.GGUF_PROVIDERS:
+            self._render_gguf_source(gguf_provider)
+            if self._managed_gguf_inventory_started:
+                self._apply_managed_gguf_inventory(
+                    self._managed_gguf_inventory_generation,
+                    self._managed_gguf_choices,
+                    self._managed_gguf_inventory_error,
+                )
+        provider = "mlx" if view_name == "mlx-lm" else view_name.replace("-cpp", "cpp")
+        if provider in self.SERVER_CONTROLS:
+            self._sync_process_controls(provider)
+        self._populate_help_text(view_name, target_view)
+        if view_name in self._model_library_focus_ids:
+            self.call_after_refresh(self._restore_model_library_focus, view_name)
+        self._start_view_work(view_name, target_view)
 
     def _record_model_library_focus(self, focused: Widget | None) -> None:
         """Retain stable row focus whenever the screen's reactive focus changes."""

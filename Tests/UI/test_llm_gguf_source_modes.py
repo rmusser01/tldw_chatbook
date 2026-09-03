@@ -122,6 +122,18 @@ async def _mount_models(
         ),
         message="deferred model views did not finish mounting",
     )
+    # Most of this module compares both GGUF providers. Under the lazy-once
+    # lifecycle, visit llamafile once so those comparison tests retain their
+    # original two-pane fixture while the dedicated deferral tests cover the
+    # true first-arrival shape.
+    window.active_view = "llamafile"
+    await _settle_pilot_until(
+        pilot,
+        lambda: len(window.query("#llamafile-gguf-source-mode")) == 1,
+        message="llamafile pane did not populate on first selection",
+    )
+    window.active_view = "llama-cpp"
+    await pilot.pause()
     return app, pilot, context, screen, window, inventory_service
 
 
@@ -1189,9 +1201,23 @@ async def test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable(
         assert PRIVATE_MANAGED_PATH not in text + svg
         assert "<svg" in svg and "</svg>" in svg
 
+        window.active_view = "vllm"
+        await _settle_pilot_until(
+            pilot,
+            lambda: len(window.query("#vllm-model-path")) == 1,
+            message="vLLM pane did not populate on first selection",
+        )
         vllm = window.query_one("#vllm-model-path", Input)
+        window.active_view = "mlx-lm"
+        await _settle_pilot_until(
+            pilot,
+            lambda: len(window.query("#mlx-model-path")) == 1,
+            message="MLX pane did not populate on first selection",
+        )
         mlx = window.query_one("#mlx-model-path", Input)
         vllm.value, mlx.value = "org/vllm", "org/mlx"
+        window.active_view = "llama-cpp"
+        await pilot.pause()
         mode.value = "managed"
         await pilot.pause()
         assert (vllm.value, mlx.value) == ("org/vllm", "org/mlx")
