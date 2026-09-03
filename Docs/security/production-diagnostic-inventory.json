@@ -19,15 +19,15 @@
   },
   "owners": [
     {
-      "call_count": 7,
-      "diagnostic_digest": "261d9666cab90666d2cf",
+      "call_count": 8,
+      "diagnostic_digest": "ac4e33d8ceb55144e64e",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Agents/agent_runtime.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 38,
-      "diagnostic_digest": "d1a8870857f06ce299df",
+      "call_count": 44,
+      "diagnostic_digest": "60e75956ad99763a2c26",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Agents/agent_service.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -54,15 +54,15 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 7,
-      "diagnostic_digest": "4a8ad958487d4c1bd61c",
+      "call_count": 8,
+      "diagnostic_digest": "fd6d4a53b8cf15905469",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Agents/local_tool_provider.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 7,
-      "diagnostic_digest": "238dee71de700d2a41ba",
+      "call_count": 8,
+      "diagnostic_digest": "aebe81fe14167895bfd8",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Agents/mcp_tool_provider.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -89,6 +89,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 5,
+      "diagnostic_digest": "311b013f046a8779745f",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Agents/run_webhooks.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 1,
       "diagnostic_digest": "f77379b3dee552090c55",
       "owner": "TASK-494",
@@ -96,8 +103,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 2,
-      "diagnostic_digest": "6cb45cc26f8523cd58da",
+      "call_count": 3,
+      "diagnostic_digest": "d88800c1fa76127d3002",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Agents/tool_catalog.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -257,15 +264,22 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 28,
-      "diagnostic_digest": "0060bd1188a073060fd7",
+      "call_count": 1,
+      "diagnostic_digest": "9e033a7b75184ade09a7",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/Chat/console_activity_receipts.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
+      "call_count": 29,
+      "diagnostic_digest": "5ccac2b50e8d30033e6c",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_agent_bridge.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 65,
-      "diagnostic_digest": "a6dabc979ad955aa725b",
+      "call_count": 67,
+      "diagnostic_digest": "19602e88d64db2e34989",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_chat_controller.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -278,8 +292,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 7,
-      "diagnostic_digest": "404da874b1a4767d58e7",
+      "call_count": 11,
+      "diagnostic_digest": "67437630422e1bab0823",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_context_compaction.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -299,8 +313,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 8,
-      "diagnostic_digest": "299e31dc758ccb39b5f4",
+      "call_count": 11,
+      "diagnostic_digest": "aab30496184400f10ca1",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_fleet_attention.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -334,8 +348,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 6,
-      "diagnostic_digest": "67382271602eea33afac",
+      "call_count": 7,
+      "diagnostic_digest": "d70543f2cf8b5f28149a",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_launch_wake.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -355,8 +369,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 16,
-      "diagnostic_digest": "3b707b083cced7182898",
+      "call_count": 18,
+      "diagnostic_digest": "1828d489dec64c4989a0",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_provider_gateway.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -376,8 +390,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 14,
-      "diagnostic_digest": "afad07c61d7e2984e3e5",
+      "call_count": 17,
+      "diagnostic_digest": "c444cdf069ecbadf5243",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_runtime.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -649,15 +663,15 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 1,
-      "diagnostic_digest": "6862742d4db6f7d1ab2d",
+      "call_count": 2,
+      "diagnostic_digest": "c767293a3e6ee18cb574",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/AgentRuns_DB.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
       "call_count": 365,
-      "diagnostic_digest": "af2c0435b0ef0e372205",
+      "diagnostic_digest": "e7086308ef9ff2518e2d",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1062,8 +1076,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 140,
-      "diagnostic_digest": "9f344fad707f28908851",
+      "call_count": 143,
+      "diagnostic_digest": "79e6d9261f07f7972efc",
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/LLM_API_Calls.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -1129,6 +1143,13 @@
       "diagnostic_digest": "f419fd59048aa01c80f2",
       "owner": "TASK-494",
       "path": "tldw_chatbook/LLM_Provider_Catalog/model_discovery_disk_cache.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 4,
+      "diagnostic_digest": "f920810172013d111cf5",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/LLM_Provider_Catalog/models_dev_catalog.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -1293,15 +1314,15 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 31,
-      "diagnostic_digest": "910a12548228248eaee2",
+      "call_count": 32,
+      "diagnostic_digest": "d5f84dbd7b13e8f624e4",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Logging_Config.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 48,
-      "diagnostic_digest": "e7bcc40dca9cfbb410a2",
+      "call_count": 52,
+      "diagnostic_digest": "dbf3dcc6bcd0a994f11c",
       "owner": "TASK-492",
       "path": "tldw_chatbook/MCP/client.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -1311,6 +1332,20 @@
       "diagnostic_digest": "b836a17484abae8e1c7b",
       "owner": "TASK-492",
       "path": "tldw_chatbook/MCP/execution_log.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "4140ccc0feeb1d33e399",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/MCP/live_server_request_wiring.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "64628551031cdc7f498a",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/MCP/local_control_service.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
@@ -1370,8 +1405,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 20,
-      "diagnostic_digest": "292cdf7d969cd5c2a78f",
+      "call_count": 22,
+      "diagnostic_digest": "9231b88520d9a120dd5d",
       "owner": "TASK-492",
       "path": "tldw_chatbook/MCP/unified_control_plane_service.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -1419,8 +1454,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 9,
-      "diagnostic_digest": "004a2de99ab74a57fc8f",
+      "call_count": 11,
+      "diagnostic_digest": "e2a7942c821278f05062",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Metrics/metrics.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1769,8 +1804,29 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 4,
-      "diagnostic_digest": "685580e35bcb1803ce11",
+      "call_count": 1,
+      "diagnostic_digest": "0ac81e3e75d24e359227",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Scheduling/db/migrations/v4_to_v5.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "ebc635e15928b091e25e",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Scheduling/db/migrations/v5_to_v6.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 2,
+      "diagnostic_digest": "a7aea934e170bd46f493",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Scheduling/db/migrations/v6_to_v7.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 5,
+      "diagnostic_digest": "7274857d680176bc1146",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Scheduling/db/scheduled_tasks_db.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1790,8 +1846,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 10,
-      "diagnostic_digest": "80ab1fa62feef88cc98c",
+      "call_count": 12,
+      "diagnostic_digest": "363f7f2a75eeadbeb6f7",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Scheduling/scheduler/handlers/briefing_handler.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1804,22 +1860,29 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 9,
-      "diagnostic_digest": "34b48f40fbfd6b33451d",
+      "call_count": 19,
+      "diagnostic_digest": "c0a91b586f6f9f2946fa",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Scheduling/scheduler/loop.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 15,
-      "diagnostic_digest": "df915f1387a84393d915",
+      "call_count": 1,
+      "diagnostic_digest": "077a3ec24984b2ee9188",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Scheduling/scheduler_heartbeat.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 30,
+      "diagnostic_digest": "85faf1dd88102c6d707d",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Scheduling/services/scheduling_service.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 18,
-      "diagnostic_digest": "19f690eb882b7d5c9ba7",
+      "call_count": 35,
+      "diagnostic_digest": "f4e8d6eb51cef7e9606e",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Scheduling/services/sync_engine.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2441,8 +2504,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 20,
-      "diagnostic_digest": "72201dad2822b095ab0c",
+      "call_count": 23,
+      "diagnostic_digest": "6bad02a9cb772ffcdaa7",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Console_Modules/session.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2469,8 +2532,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 39,
-      "diagnostic_digest": "73af1d5e30d31ec6aaeb",
+      "call_count": 40,
+      "diagnostic_digest": "dcf3463074ae19792395",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Console_Modules/workspace.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2609,8 +2672,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 42,
-      "diagnostic_digest": "c17cde3334e3f73ad91a",
+      "call_count": 44,
+      "diagnostic_digest": "76b6720710dcc7b9ce0d",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2700,8 +2763,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 102,
-      "diagnostic_digest": "ef5bf186a4f6e9e90bd7",
+      "call_count": 103,
+      "diagnostic_digest": "0baa074ccf7a002a0041",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/chat_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2742,8 +2805,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 101,
-      "diagnostic_digest": "0303fdb22b637ec3cd98",
+      "call_count": 108,
+      "diagnostic_digest": "91a2a19d731954e8dd84",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/library_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2826,8 +2889,15 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 14,
-      "diagnostic_digest": "d32c6f0cfe356c8f2b6b",
+      "call_count": 2,
+      "diagnostic_digest": "9464185b1733c0018297",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Screens/scheduling/forms/automation_definition_form.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 26,
+      "diagnostic_digest": "a426ac0b3afb8946aa94",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2847,8 +2917,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 49,
-      "diagnostic_digest": "cba6dce7dcecb41b01ab",
+      "call_count": 50,
+      "diagnostic_digest": "efa474aba0230bf5c948",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/settings_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3869,17 +3939,24 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 373,
-      "diagnostic_digest": "fa5591738723e4a2da2f",
+      "call_count": 374,
+      "diagnostic_digest": "ce80717a8585f8f8b83a",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 110,
-      "diagnostic_digest": "a84e10eff8b60c16962f",
+      "call_count": 114,
+      "diagnostic_digest": "a4d5338ae2a43a1841f4",
       "owner": "TASK-494",
       "path": "tldw_chatbook/config.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 2,
+      "diagnostic_digest": "6e8305c6adf434a3b2b8",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/emergency_stop.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -8024,7 +8101,7 @@
           "path_expressions": [
             "self.path"
           ],
-          "scope": "MCPPermissionStore.load",
+          "scope": "MCPPermissionStore._load_locked",
           "status": "legacy_unreviewed"
         },
         {
@@ -8033,7 +8110,7 @@
           "path_expressions": [
             "self.path"
           ],
-          "scope": "MCPPermissionStore.load",
+          "scope": "MCPPermissionStore._load_locked",
           "status": "legacy_unreviewed"
         }
       ],
@@ -10606,6 +10683,24 @@
           "status": "legacy_unreviewed"
         },
         {
+          "call_digest": "6318917cfd755506",
+          "method": "debug",
+          "path_expressions": [
+            "list(loaded_config.get('api_settings', {}).keys())"
+          ],
+          "scope": "_load_cli_config_bootstrap_unlocked",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "632927efbc7d9d1c",
+          "method": "debug",
+          "path_expressions": [
+            "list(loaded_config.keys())"
+          ],
+          "scope": "_load_cli_config_bootstrap_unlocked",
+          "status": "legacy_unreviewed"
+        },
+        {
           "call_digest": "726c7c9ebeec6127",
           "method": "error",
           "path_expressions": [
@@ -10711,6 +10806,16 @@
             "ACTUAL_PROJECT_ROOT"
           ],
           "scope": "_load_settings_uncached",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "ca2f8405ea1b3475",
+          "method": "warning",
+          "path_expressions": [
+            "aside",
+            "source"
+          ],
+          "scope": "_preserve_corrupt_config_aside",
           "status": "legacy_unreviewed"
         },
         {
@@ -11195,10 +11300,10 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 557,
-    "path_privacy_candidate_calls": 711,
+    "owner_files": 568,
+    "path_privacy_candidate_calls": 714,
     "persistent_sink_files": 10,
-    "task_492_calls": 1308,
-    "task_494_calls": 7455
+    "task_492_calls": 1337,
+    "task_494_calls": 7563
   }
 }

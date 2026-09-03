@@ -80,16 +80,19 @@ from tldw_chatbook.Chat.console_trace_final_values import (
     verify_provider_request_shadow,
 )
 from tldw_chatbook.Chat.console_trace_redaction import (
+    BUILTIN_PII_RULESET_REVISION_ID,
     CredentialSanitizer,
     PII_DETECTOR_UNAVAILABLE,
-    redact_pii_value,
+)
+from tldw_chatbook.Chat.console_trace_custom_pii import (
+    redact_pii_value_for_ruleset_revision,
 )
 from tldw_chatbook.Chat.console_trace_models import TraceCallState
-from tldw_chatbook.Chat.console_trace_service import TraceCallPersistenceError
-from tldw_chatbook.Chat.console_trace_settlement import (
-    MAX_TRACE_RESPONSE_BYTES,
-    TraceResponseOmission,
+from tldw_chatbook.Chat.console_trace_errors import (  # ADR-097 boot ratchet
+    TraceCallPersistenceError,
 )
+# ADR-097 boot ratchet: console_trace_settlement (which pulls the semantic-
+# revision stack) is deferred; its two symbols load at their use sites.
 from tldw_chatbook.Chat.console_thinking_history import (
     ProviderThinkingSidecar,
     ThinkingReplayTarget,
@@ -159,7 +162,11 @@ INVALID_LLAMACPP_BASE_URL_COPY = (
 UNSUPPORTED_PROVIDER_RESPONSE_COPY = "Provider returned an unsupported response shape."
 NO_PROVIDER_CONTENT_COPY = "Provider returned no assistant content."
 MAX_TRACE_RESPONSE_ITEMS = 1_024
-_MAX_TRACE_ACCUMULATED_BYTES = MAX_TRACE_RESPONSE_BYTES - 262_144
+def _max_trace_accumulated_bytes() -> int:
+    """ADR-097 boot ratchet: settlement's cap constant, read on first use."""
+    from tldw_chatbook.Chat.console_trace_settlement import MAX_TRACE_RESPONSE_BYTES
+
+    return MAX_TRACE_RESPONSE_BYTES - 262_144
 _UNSUPPORTED_RESPONSE = object()
 _EMPTY_RESPONSE = object()
 _CUSTOM_CREDENTIAL_DECISION_PROVIDERS = frozenset(
@@ -659,6 +666,7 @@ class ConsoleProviderStreamSignals:
     exchange_capture_enabled: bool = False
     capture_detail: CaptureDetail = field(default=CaptureDetail.SAFE, repr=False)
     pii_redaction_enabled: bool = field(default=False, repr=False)
+    pii_ruleset_revision_id: str | None = field(default=None, repr=False)
     completed_exchanges: list["ExchangeCapture"] = field(
         default_factory=list, repr=False
     )
@@ -740,10 +748,14 @@ class ConsoleProviderStreamSignals:
                 flight = self._active_exchanges.pop(token, None)
                 if flight is None:
                     return
+                run_tag = flight.get("trace_run_tag")
+                sequence = flight.get("trace_sequence")
                 self.completed_exchanges.append(
                     _flight_capture(
-                        self.run_tag,
-                        len(self.completed_exchanges),
+                        run_tag if type(run_tag) is str and run_tag else self.run_tag,
+                        sequence
+                        if type(sequence) is int and sequence >= 0
+                        else len(self.completed_exchanges),
                         flight,
                         status,
                         usage_payload,
@@ -759,9 +771,17 @@ class ConsoleProviderStreamSignals:
         with self._exchange_lock:
             captures = list(self.completed_exchanges)
             for flight in self._active_exchanges.values():
+                run_tag = flight.get("trace_run_tag")
+                sequence = flight.get("trace_sequence")
                 captures.append(
                     _flight_capture(
-                        self.run_tag, len(captures), flight, "stopped", None
+                        run_tag if type(run_tag) is str and run_tag else self.run_tag,
+                        sequence
+                        if type(sequence) is int and sequence >= 0
+                        else len(captures),
+                        flight,
+                        "stopped",
+                        None,
                     )
                 )
             return captures
@@ -775,6 +795,8 @@ class ConsoleProviderCallSignals:
     _token: object = field(default_factory=object, init=False, repr=False)
     _usage_payload: dict[str, Any] | None = field(default=None, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
+    _trace_run_tag: str | None = field(default=None, init=False, repr=False)
+    _trace_sequence: int | None = field(default=None, init=False, repr=False)
     _usage_lock: threading.Lock = field(
         default_factory=threading.Lock,
         init=False,
@@ -816,6 +838,33 @@ class ConsoleProviderCallSignals:
     def capture_detail(self) -> CaptureDetail:
         """Return the admission-frozen detail shared by this run."""
         return self._aggregate.capture_detail
+
+    def bind_trace_capture_identity(self, run_tag: str, sequence: int) -> None:
+        """Bind a legacy shadow capture to its normalized durable call.
+
+        Args:
+            run_tag: Normalized provider-run identity.
+            sequence: Normalized call sequence within that run.
+
+        Raises:
+            TypeError: If either identity component has the wrong type.
+            ValueError: If the identity is empty, negative, or conflicts with
+                an identity already bound to this call-scoped signal.
+        """
+
+        if type(run_tag) is not str:
+            raise TypeError("run_tag")
+        if not run_tag:
+            raise ValueError("run_tag")
+        if type(sequence) is not int:
+            raise TypeError("sequence")
+        if sequence < 0:
+            raise ValueError("sequence")
+        identity = (run_tag, sequence)
+        existing = (self._trace_run_tag, self._trace_sequence)
+        if existing != (None, None) and existing != identity:
+            raise ValueError("trace_capture_identity_conflict")
+        self._trace_run_tag, self._trace_sequence = identity
 
     def mark_synthetic_fallback(self) -> None:
         """Mark synthetic fallback usage on the aggregate signal, and flag
@@ -950,8 +999,11 @@ class ConsoleProviderCallSignals:
                 "known_credentials": known_credentials,
                 "capture_detail": self.capture_detail,
                 "pii_redaction_enabled": self._aggregate.pii_redaction_enabled,
+                "pii_ruleset_revision_id": (self._aggregate.pii_ruleset_revision_id),
                 "capture_budget": capture_budget or CaptureBudget(),
                 "created_at": datetime.now(timezone.utc).isoformat(),
+                "trace_run_tag": self._trace_run_tag,
+                "trace_sequence": self._trace_sequence,
             },
         )
 
@@ -1074,31 +1126,37 @@ def _flight_capture(
         credential_omissions.append("response.tool_calls")
     request = flight["request"]
     if flight.get("pii_redaction_enabled") is True:
-        request_redaction = redact_pii_value(request)
-        content_redaction = redact_pii_value(content)
-        tool_redaction = redact_pii_value(tool_calls)
-        request = (
-            request_redaction.value
-            if request_redaction.available
-            else {"omitted": PII_DETECTOR_UNAVAILABLE}
+        redaction = redact_pii_value_for_ruleset_revision(
+            {
+                "request": request,
+                "response_content": content,
+                "response_tool_calls": tool_calls,
+            },
+            flight.get("pii_ruleset_revision_id") or BUILTIN_PII_RULESET_REVISION_ID,
         )
-        content = (
-            content_redaction.value
-            if content_redaction.available
-            else f"[omitted: {PII_DETECTOR_UNAVAILABLE}]"
-        )
-        tool_calls = (
-            tool_redaction.value
-            if tool_redaction.available
-            else [{"omitted": PII_DETECTOR_UNAVAILABLE}]
-        )
-        for path, result in (
-            ("request", request_redaction),
-            ("response.content", content_redaction),
-            ("response.tool_calls", tool_redaction),
+        projected = redaction.value
+        if (
+            redaction.available
+            and isinstance(projected, Mapping)
+            and set(projected)
+            == {"request", "response_content", "response_tool_calls"}
         ):
-            if not result.available:
-                credential_omissions.append(path + ".pii_unavailable")
+            request = projected["request"]
+            content = projected["response_content"]
+            tool_calls = projected["response_tool_calls"]
+        else:
+            reason = redaction.omission_reason_code or PII_DETECTOR_UNAVAILABLE
+            request = {"omitted": reason}
+            content = f"[omitted: {reason}]"
+            tool_calls = [{"omitted": reason}]
+            credential_omissions.extend(
+                path + ".pii_unavailable"
+                for path in (
+                    "request",
+                    "response.content",
+                    "response.tool_calls",
+                )
+            )
     return ExchangeCapture(
         run_tag=run_tag,
         seq=seq,
@@ -1370,9 +1428,7 @@ def _validate_auxiliary_content(role: str, content: Any) -> None:
             raise TypeError("Auxiliary content parts must be mappings.")
         part_type = part.get("type")
         if part_type == "text":
-            if set(part) != {"type", "text"} or not isinstance(
-                part.get("text"), str
-            ):
+            if set(part) != {"type", "text"} or not isinstance(part.get("text"), str):
                 raise ValueError("Auxiliary text parts are invalid.")
             continue
         if part_type != "image_url" or set(part) != {"type", "image_url"}:
@@ -1582,7 +1638,7 @@ class _TraceResponseAccumulator:
         item_bytes = _trace_response_item_bytes(item)
         if (
             item_bytes is None
-            or self._retained_bytes + item_bytes > _MAX_TRACE_ACCUMULATED_BYTES
+            or self._retained_bytes + item_bytes > _max_trace_accumulated_bytes()
         ):
             self._omit("response_accumulation_limit")
             return first_semantic
@@ -1606,6 +1662,24 @@ def _mark_trace_response_started(boundary: object | None) -> None:
         logger.warning("trace_response_checkpoint_failed: {}", type(exc).__name__)
 
 
+def _bind_legacy_capture_to_trace_call(
+    signals: ConsoleProviderCallSignals | None,
+    boundary: object | None,
+) -> None:
+    """Best-effort bind one legacy shadow capture to a normalized call."""
+
+    if signals is None or boundary is None:
+        return
+    identity = getattr(boundary, "identity", None)
+    try:
+        signals.bind_trace_capture_identity(
+            getattr(identity, "run_id"),
+            getattr(identity, "call_sequence"),
+        )
+    except Exception as exc:
+        logger.warning("trace_capture_identity_bind_failed: {}", type(exc).__name__)
+
+
 async def _settle_trace_response(
     boundary: object | None,
     items: Sequence[ProviderStreamItem],
@@ -1615,6 +1689,9 @@ async def _settle_trace_response(
     response_omission: str | None = None,
     signals: ConsoleProviderCallSignals | None = None,
 ) -> None:
+    # ADR-097 boot ratchet: settlement loads on first trace settlement.
+    from tldw_chatbook.Chat.console_trace_settlement import TraceResponseOmission
+
     envelope = (
         TraceResponseOmission(response_omission)
         if response_omission is not None
@@ -2121,6 +2198,10 @@ class ConsoleProviderGateway:
         trace_call_boundary_factory: Optional hard-off normalized-writer seam.
             When supplied, each Capture-On call must reserve and commit
             ``dispatch_started`` before adapter entry.
+        normalized_writes_enabled: Callable rollout gate for normalized trace
+            reservations. Capture-On dispatch fails closed when disabled.
+        trace_compatibility_metrics: Optional content-free compatibility metric
+            recorder used while normalized and legacy paths overlap.
     """
 
     deferred_dispatch_boundary = True
@@ -2145,6 +2226,8 @@ class ConsoleProviderGateway:
             ]
             | None
         ) = None,
+        normalized_writes_enabled: Callable[[], bool] | None = None,
+        trace_compatibility_metrics: object | None = None,
     ) -> None:
         self._owns_http_client = http_client is None
         self.http_client = http_client or self._new_owned_http_client()
@@ -2200,6 +2283,8 @@ class ConsoleProviderGateway:
         self._safe_error_copy = safe_error_copy or safe_provider_error_copy
         self._trace_shadow_sink = trace_shadow_sink
         self._trace_call_boundary_factory = trace_call_boundary_factory
+        self._normalized_writes_enabled = normalized_writes_enabled or (lambda: True)
+        self._trace_compatibility_metrics = trace_compatibility_metrics
         self._adapter_admission_issuer = object()
 
     @property
@@ -2207,16 +2292,19 @@ class ConsoleProviderGateway:
         """Whether this gateway can actually reserve a durable trace call.
 
         TASK-25814: `trace_call_boundary_factory` is documented as optional
-        ("Optional hard-off normalized-writer seam"), and in production it is
-        never supplied -- both callers of `ensure_provider_gateway` omit it.
-        Capture-On dispatch nonetheless requires it, so a turn prepared as
-        Capture-On against a gateway without one can only ever be refused.
-        Callers that CHOOSE the capture mode consult this first, so the
-        refusal in `_reserve_trace_call` stays what it is meant to be -- a
-        guard against a real failure, not the default outcome of every send.
+        ("Optional hard-off normalized-writer seam"). Production supplies the
+        app-owned lazy boundary factory when durable storage is available, and
+        the independent normalized-write rollout gate must also be enabled.
+        Capture-On dispatch without either condition is refused before the
+        adapter; callers that choose capture mode consult this property first.
+
+        Returns:
+            True when normalized capture can reserve durable provider calls.
         """
 
-        return self._trace_call_boundary_factory is not None
+        return self._trace_call_boundary_factory is not None and bool(
+            self._normalized_writes_enabled()
+        )
 
     def _capture_off_admission(
         self, route: ConsoleRequestRoute | None
@@ -2269,8 +2357,9 @@ class ConsoleProviderGateway:
     ) -> object:
         """Create and reserve one distinct Capture-On call boundary."""
 
-        if self._trace_call_boundary_factory is None:
+        if not self.supports_durable_capture:
             raise TraceCallPersistenceError(reservation_status="not_established")
+        assert self._trace_call_boundary_factory is not None
         boundary: object | None = None
         try:
             boundary = self._trace_call_boundary_factory(request, resolution, route)
@@ -2278,13 +2367,23 @@ class ConsoleProviderGateway:
             if not callable(reserve):
                 raise TraceCallPersistenceError()
             reserve()
-            return boundary
         except TraceCallPersistenceError as exc:
             if exc.boundary is None and boundary is not None:
                 raise TraceCallPersistenceError(boundary=boundary) from None
             raise
         except Exception:
             raise TraceCallPersistenceError(reservation_status="unknown") from None
+        metrics = self._trace_compatibility_metrics
+        record = getattr(metrics, "record", None)
+        if callable(record):
+            try:
+                record("normalized_write")
+            except Exception as exc:  # noqa: BLE001 - compatibility metrics are best-effort
+                logger.debug(
+                    "trace compatibility metric skipped after {}",
+                    type(exc).__name__,
+                )
+        return boundary
 
     async def aclose(self) -> None:
         """Close the HTTP client(s) owned by this instance.
@@ -3953,6 +4052,10 @@ class ConsoleProviderGateway:
                     effective_resolution,
                     route,
                 )
+                _bind_legacy_capture_to_trace_call(
+                    call_signals,
+                    trace_call_boundary,
+                )
             else:
                 capture_off_admission = self._capture_off_admission(route)
             if resolution.provider in {"llama_cpp", "local_llamacpp"}:
@@ -4223,6 +4326,10 @@ class ConsoleProviderGateway:
                     ):
                         return
                     retry_signals = signals.new_usage_call()
+                    _bind_legacy_capture_to_trace_call(
+                        retry_signals,
+                        trace_call_boundary,
+                    )
                     budget = CaptureBudget()
                     capture_request, omitted = build_request_capture(
                         {"model": resolution.model},
@@ -4283,16 +4390,16 @@ class ConsoleProviderGateway:
                         effective_resolution,
                         streaming=False,
                     )
+                    fallback_provenance = self._provenance_for_route(
+                        prepared.provenance,
+                        ConsoleRequestRoute.LLAMA_FALLBACK,
+                    )
                     fallback_boundary = self._reserve_trace_call(
                         prepared,
                         fallback_resolution,
                         ConsoleRequestRoute.LLAMA_FALLBACK,
                     )
                     trace_call_boundary = fallback_boundary
-                    fallback_provenance = self._provenance_for_route(
-                        prepared.provenance,
-                        ConsoleRequestRoute.LLAMA_FALLBACK,
-                    )
                     fallback_kwargs = self._trace_surface_kwargs(
                         fallback_boundary,
                         self._chat_api_kwargs_from_prepared(

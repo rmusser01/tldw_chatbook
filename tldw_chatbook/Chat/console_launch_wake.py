@@ -299,6 +299,24 @@ async def deliver_launch_wakes(app: Any, marked: Sequence[str]) -> int:
     # NULL filter), so a second launch re-announces nothing.
     if not wake.seed_from_marks():
         return 0
+    # Claim the pre-hydration coarse marks first: a genuine pre-v15 owed wake
+    # has no receipt to reconstruct and startup reconciliation may correctly
+    # remove that legacy-only mark.  Once the exact owed ledger rows are held
+    # in the wake registry, hydrate before delivery so every later clear/set
+    # request makes its decision against a ready (or explicitly degraded)
+    # receipt snapshot.
+    runtime = getattr(app, "console_runtime", None)
+    ensure_hydration = getattr(runtime, "ensure_activity_hydration", None)
+    if callable(ensure_hydration):
+        hydration = ensure_hydration()
+        if hydration is not None:
+            try:
+                await hydration
+            except Exception as exc:  # noqa: BLE001 - degraded receipts keep marks
+                logger.warning(
+                    "launch activity hydration failed (exception_type={})",
+                    type(exc).__name__,
+                )
     store = controller.store
     # `restore_persisted_session` ACTIVATES what it creates, which is right
     # for a launch with nothing open and wrong for one where Console is the

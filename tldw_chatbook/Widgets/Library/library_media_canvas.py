@@ -16,12 +16,20 @@ from textual.widgets import Button, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 from tldw_chatbook.Library.library_pager_state import LibraryPagerDisplay
-from tldw_chatbook.Library.library_media_state import LibraryMediaCanvasState
+from tldw_chatbook.Library.library_media_state import (
+    LibraryMediaCanvasState,
+    MEDIA_SORT_CHOICES,
+)
+from tldw_chatbook.Widgets.Library.library_choice_strip import (
+    compose_library_choice_strip,
+)
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_DELETE_SELECTED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
+    LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP,
+    LIBRARY_REVIEW_SELECTED_TOOLTIP,
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
     library_choice_label,
     library_choice_tooltip,
@@ -36,6 +44,14 @@ from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 _MEDIA_ROW_COMPACT_HEIGHT = 1
 _MEDIA_ROW_WIDE_HEIGHT = 2
+
+# task-30043 (critique 2026-09-03 P1): the items pane sits at ~40-44 cols in
+# EVERY real shell layout (3-pane reading shell AND the compact stage), so a
+# single six-button row can never render its labels there -- live capture
+# showed ``t so E Tr R Se`` and select mode's bulk actions as bare ``○ ○ ○``.
+# The multi-row grammar below is therefore THE grammar, not a responsive
+# variant: every row's label sum (including the "○ "-prefixed disabled
+# forms) is budgeted to fit the pane's 40-col floor.
 
 
 @dataclass(frozen=True)
@@ -86,6 +102,20 @@ class LibraryMediaRowScroll(VerticalScroll):
         self.post_message(LibraryMediaRowGeometryChanged(self, geometry))
 
 
+def _capped_choice_value(value: str, cap: int = 8) -> str:
+    """Bound a data-derived chooser value for its opener label (task-30043).
+
+    Args:
+        value: The stored value (e.g. a media type).
+        cap: Maximum characters to show before an ellipsis.
+
+    Returns:
+        The value, or its first ``cap - 1`` characters plus ``…``.
+    """
+    value = str(value)
+    return value if len(value) <= cap else value[: cap - 1] + "…"
+
+
 def _media_row_label_rest(
     title: str,
     secondary: str,
@@ -94,19 +124,19 @@ def _media_row_label_rest(
     loading: bool = False,
     loaded: bool = False,
 ) -> str:
-    """Return the marker-free Media row label for one responsive density."""
+    """Return the marker-free Media row label for one responsive density.
+
+    task-30044 (critique 2026-09-03 P2): both densities use the SHORT state
+    prefix ("Loaded · " / "Loading · ") -- the old wide-mode prose ("Loaded
+    in Reader            ") consumed ~28 of ~35 label cells and displaced
+    titles to "Quart"/"SQLit", so the row that mattered most was the one
+    you couldn't identify.
+    """
     visible_title = _visible_row_title(title)
     state = "Loading" if loading else "Loaded" if loaded else ""
+    prefix = f"{state} · " if state else ""
     if compact:
-        prefix = f"{state} · " if state else ""
         return f" {prefix}{visible_title} · {secondary}"
-    prefix = (
-        "Selected · loading preview  "
-        if loading
-        else "Loaded in Reader            "
-        if loaded
-        else ""
-    )
     return f" {prefix}{visible_title}\n    {secondary}"
 
 
@@ -115,6 +145,19 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
     Attributes:
         canvas: Current media canvas display state.
+    """
+
+    BUNDLED_CSS = """
+    /* task-30043: the multi-row action grammar needs CONTENT-width buttons.
+     * Textual Button's 16-cell min-width floor alone would overflow the
+     * pane's 40-col floor (six floors = 96 cells); each row's label budget
+     * is what keeps task-28025's fit contract true. Baseline geometry lives
+     * here so harnesses without the app bundle lay out like the app. */
+    .ds-toolbar > .library-canvas-action,
+    .ds-toolbar > .library-toolbar-count {
+        width: auto;
+        min-width: 0;
+    }
     """
 
     def __init__(
@@ -148,7 +191,13 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # divide the REAL width, so the canvas must be bounded like the
         # viewer already is.
         self.styles.width = "1fr"
-        self.styles.min_width = 40
+        # task-30043: 36, not 40 -- the 3-pane shell actually allots this
+        # pane ~37 visible cells, so a 40-cell floor overflowed the slot and
+        # silently clipped the rightmost ~3 cells of every child (live: the
+        # armed-confirm copy wrapped at 40 and rendered "restore later from
+        # Tr"). The floor only exists to bound the 13fr resolution trap
+        # below; 36 keeps that while letting the canvas fit its real slot.
+        self.styles.min_width = 36
 
     def sync_state(
         self,
@@ -266,6 +315,92 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             button.tooltip = reason
         return button
 
+    def _select_all_button(self, rendered_count: int) -> Button:
+        """Build the Select-all bulk action (summary-row sibling of the count)."""
+        label = f"Select all {rendered_count} shown"
+        select_all = Button(
+            label,
+            id="library-media-select-all",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        return self._gate_stale_action(select_all, label)
+
+    def _clear_selection_button(self) -> Button:
+        """Build the Clear bulk action."""
+        clear = Button(
+            "Clear",
+            id="library-media-select-clear",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        return self._gate_stale_action(clear, "Clear")
+
+    def _bulk_action_button(
+        self,
+        base: str,
+        widget_id: str,
+        disabled_tooltip: str,
+        enabled_tooltip: str,
+        *,
+        danger: bool = False,
+    ) -> Button:
+        """Build one Export/Review/Delete bulk action (task-30043).
+
+        Short REAL words ("Export" / "Review" / "Delete") -- the mode and the
+        adjacent count make them unambiguous, the F-018 tooltips carry the
+        full sentences, and a disabled action can never collapse to a bare
+        "○" marker the way the full labels did at the pane's 40-col floor.
+
+        task-4023 AC#1 (RC-07): "○" disabled marker -- these are the very
+        buttons the user entered Select mode looking for, previously
+        colour-only at a measured 1.39:1. The base label is stashed so
+        `_apply_library_row_toggle`'s in-place patch can rebuild it when
+        the selection count crosses 0.
+        """
+        bulk_disabled = self.canvas.selected_count == 0
+        classes = "library-canvas-action"
+        if danger:
+            classes += " library-media-action-danger"
+        button = Button(
+            library_disabled_action_label(base, bulk_disabled),
+            id=widget_id,
+            classes=classes,
+            compact=True,
+        )
+        button._library_disabled_marker_base = base
+        button.disabled = bulk_disabled
+        # F-018: a disabled action says why.
+        button.tooltip = disabled_tooltip if bulk_disabled else enabled_tooltip
+        return self._gate_stale_action(button, base)
+
+    def _select_mode_bulk_buttons(self) -> ComposeResult:
+        """Yield the Export and Review bulk actions (Delete rides its own row)."""
+        yield self._bulk_action_button(
+            "Export",
+            "library-media-export-selected",
+            LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
+            LIBRARY_EXPORT_SELECTED_TOOLTIP,
+        )
+        # task-28242: "Review selected" pins the selection as an ordered
+        # review set.
+        yield self._bulk_action_button(
+            "Review",
+            "library-media-review-selected",
+            LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP,
+            LIBRARY_REVIEW_SELECTED_TOOLTIP,
+        )
+
+    def _delete_selected_button(self) -> Button:
+        """Build the isolated danger action (task-2853's far-end rule, upgraded)."""
+        return self._bulk_action_button(
+            "Delete",
+            "library-media-delete-selected",
+            LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP,
+            LIBRARY_DELETE_SELECTED_TOOLTIP,
+            danger=True,
+        )
+
     def _gate_mutation_action(self, button: Button, base_label: str) -> Button:
         """Disable even recovery controls only while a write is unsettled."""
         if self.mutation_action_reason:
@@ -282,7 +417,47 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         """
         title_count = self.pager.title_count if self.pager is not None else self.canvas.count
         title = "Media" if title_count is None else f"Media ({title_count})"
-        yield Static(title, id="library-media-title")
+        select_mode = getattr(self.canvas, "select_mode", False)
+        fresh_zero = (
+            self.pager is not None
+            and title_count == 0
+            and not self.canvas.rows
+            and not select_mode
+            and not self.canvas.delete_receipt_count
+            and not self.stale_action_reason
+            and not self.mutation_action_reason
+            and not self.pager.status_copy
+            and not self.pager.retry_visible
+        )
+        # task-28243: the "Sets" picker opener lives on the TITLE row, not the
+        # action toolbar -- that toolbar already overflows the narrow items
+        # pane (task-28025) and one more button pushed a squeezed Button into
+        # rich's zero-width chop_cells crash (live-verified 2026-09-02). The
+        # title row carries ~9 chars in a min-width-40 pane, so both widgets
+        # always render at full width. Auto-width Static + fixed compact
+        # Button only (task-4023's render-safe grammar: no 1fr sibling).
+        # Hidden in select mode like the other list-level actions; on the
+        # fresh-empty page it is not composed at all -- that page pins
+        # exactly ONE recovery action (and display:none still matches DOM
+        # queries).
+        title_row = Horizontal(id="library-media-title-row")
+        title_row.styles.height = "auto"
+        with title_row:
+            title_static = Static(title, id="library-media-title")
+            # A Static defaults to 1fr inside a Horizontal and would swallow
+            # the whole row, pushing the button out of view (live-verified).
+            title_static.styles.width = "auto"
+            yield title_static
+            if not fresh_zero:
+                sets_btn = Button(
+                    "Sets",
+                    id="library-media-review-sets",
+                    classes="library-canvas-action",
+                    compact=True,
+                    tooltip="Resume, switch, or dismiss saved review sets.",
+                )
+                sets_btn.display = not select_mode
+                yield sets_btn
         filter_row = Horizontal(classes="ds-toolbar")
         filter_row.styles.height = "auto"
         with filter_row:
@@ -298,18 +473,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
             clear_filter.disabled = not bool(self.canvas.query)
             yield clear_filter
-        select_mode = getattr(self.canvas, "select_mode", False)
-        if (
-            self.pager is not None
-            and title_count == 0
-            and not self.canvas.rows
-            and not select_mode
-            and not self.canvas.delete_receipt_count
-            and not self.stale_action_reason
-            and not self.mutation_action_reason
-            and not self.pager.status_copy
-            and not self.pager.retry_visible
-        ):
+        if fresh_zero:
             yield Static(
                 self.canvas.empty_copy,
                 id="library-media-status",
@@ -344,82 +508,146 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # horizontal ``ds-toolbar`` rows. Same render-safe shape as those
         # canvases: fixed-width compact Buttons only, never mixed with a
         # 1fr sibling.
-        toolbar = Horizontal(classes="ds-toolbar")
-        toolbar.styles.height = "auto"
         # task-14902: while the type choice strip is open it REPLACES this
         # toolbar row (the Notes Sort precedent -- browse actions hide while
         # the chooser is showing), keeping the vertical budget flat.
         type_choices_visible = getattr(self.canvas, "type_choices_visible", False)
-        toolbar.display = not type_choices_visible
-        with toolbar:
-            type_filter = Button(
-                # task-14902: a chooser-opener, no longer a cycler -- press
-                # opens the direct-pick strip below instead of advancing.
-                library_choice_label(
-                    "type",
-                    "All types"
-                    if self.canvas.active_type is None
-                    else self.canvas.active_type,
+        sort_choices_visible = getattr(self.canvas, "sort_choices_visible", False)
+        toolbar_visible = not (type_choices_visible or sort_choices_visible)
+        sort_labels = dict(MEDIA_SORT_CHOICES)
+        current_sort = getattr(self.canvas, "sort_by", "last_modified_desc")
+        type_filter = Button(
+            # task-14902: a chooser-opener, no longer a cycler -- press
+            # opens the direct-pick strip below instead of advancing.
+            # Qodo #2350: the VALUE is data and can be long; the label caps
+            # it so the chooser row's budget holds (the tooltip and the
+            # chooser strip itself carry the full value).
+            library_choice_label(
+                "type",
+                "All types"
+                if self.canvas.active_type is None
+                else _capped_choice_value(self.canvas.active_type),
+            ),
+            id="library-media-type-filter",
+            classes="library-canvas-action",
+            compact=True,
+            tooltip=library_choice_tooltip(
+                "media type",
+                tuple(
+                    "All types" if value is None else value
+                    for value in self.type_options
                 ),
-                id="library-media-type-filter",
-                classes="library-canvas-action",
-                compact=True,
-                tooltip=library_choice_tooltip(
-                    "media type",
-                    tuple(
-                        "All types" if value is None else value
-                        for value in self.type_options
+            ),
+        )
+        self._gate_mutation_action(type_filter, str(type_filter.label))
+        # task-28013: sort chooser opener -- hidden in select mode like
+        # Export/Trash (Select's toolbar acts on the selection).
+        sort_btn = Button(
+            library_choice_label(
+                "sort", sort_labels.get(current_sort, "Newest")
+            ),
+            id="library-media-sort",
+            classes="library-canvas-action",
+            compact=True,
+            tooltip=library_choice_tooltip(
+                "the sort order", tuple(label for _, label in MEDIA_SORT_CHOICES)
+            ),
+        )
+        sort_btn.display = not select_mode
+        self._gate_stale_action(sort_btn, str(sort_btn.label))
+        export_btn = Button(
+            "Export…",
+            id="library-media-export",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        export_btn.display = not select_mode
+        self._gate_stale_action(export_btn, "Export…")
+        # task-4025: the browsable Trash surface's entry point -- a
+        # plain navigation action (never a `type:` cycle value: `type:`
+        # cycles CONTENT types derived from the records, and trash is a
+        # STATE). Always enabled: the trash count isn't known until its
+        # view fetches, and an empty Trash shows its honest empty copy
+        # rather than this button lying disabled. Hidden in select mode
+        # like "Export…" -- Select's toolbar is for acting on the
+        # selection, not navigating away from it.
+        trash_btn = Button(
+            "Trash",
+            id="library-media-trash-open",
+            classes="library-canvas-action",
+            compact=True,
+            tooltip="Browse and restore deleted media.",
+        )
+        trash_btn.display = not select_mode
+        # task-28242: "Review these" pins the WHOLE filtered result as an
+        # ordered review set and walks it in the Reader. A list-level
+        # action, hidden in select mode like Export/Trash.
+        review_btn = Button(
+            "Review these",
+            id="library-media-review",
+            classes="library-canvas-action",
+            compact=True,
+            tooltip="Review every item in this list, one by one.",
+        )
+        review_btn.display = not select_mode
+        self._gate_stale_action(review_btn, "Review these")
+        # Disable only when there's nothing to select AND we're not
+        # already in select mode -- in select mode the button is "Done"
+        # and must always be pressable so the user can exit even if the
+        # rows dropped to zero (e.g. a background snapshot refresh
+        # emptied the list).
+        select_disabled = rendered_count == 0 and not select_mode
+        select_btn = Button(
+            # task-4023 AC#1 (RC-07): disabled carries the non-colour
+            # "○" marker; the F-018 reason tooltip below says why.
+            library_disabled_action_label(
+                "Done" if select_mode else "Select", select_disabled
+            ),
+            id="library-media-select-toggle",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        select_btn.disabled = select_disabled
+        if select_disabled:
+            select_btn.tooltip = LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
+        self._gate_stale_action(
+            select_btn, "Done" if select_mode else "Select"
+        )
+        # task-30043 (critique P1): at the items pane's ~40-col real width
+        # one Horizontal cannot render six labels (live capture: ``t so E Tr
+        # R Se``), so the browse actions split into rows of readable labels.
+        # In select mode most of these hide (only type + Done remain), so
+        # its single row always fits and the vertical budget stays flat.
+        if not select_mode:
+            toolbar_rows: tuple[tuple[str, tuple[Button, ...]], ...] = (
+                ("library-media-toolbar-choosers", (type_filter, sort_btn)),
+                (
+                    "library-media-toolbar-actions",
+                    (export_btn, trash_btn, select_btn),
+                ),
+                ("library-media-toolbar-review", (review_btn,)),
+            )
+        else:
+            toolbar_rows = (
+                (
+                    "library-media-toolbar",
+                    (
+                        type_filter,
+                        sort_btn,
+                        export_btn,
+                        trash_btn,
+                        review_btn,
+                        select_btn,
                     ),
                 ),
             )
-            yield self._gate_mutation_action(type_filter, str(type_filter.label))
-            export_btn = Button(
-                "Export…",
-                id="library-media-export",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            export_btn.display = not select_mode
-            yield self._gate_stale_action(export_btn, "Export…")
-            # task-4025: the browsable Trash surface's entry point -- a
-            # plain navigation action (never a `type:` cycle value: `type:`
-            # cycles CONTENT types derived from the records, and trash is a
-            # STATE). Always enabled: the trash count isn't known until its
-            # view fetches, and an empty Trash shows its honest empty copy
-            # rather than this button lying disabled. Hidden in select mode
-            # like "Export…" -- Select's toolbar is for acting on the
-            # selection, not navigating away from it.
-            trash_btn = Button(
-                "Trash",
-                id="library-media-trash-open",
-                classes="library-canvas-action",
-                compact=True,
-                tooltip="Browse and restore deleted media.",
-            )
-            trash_btn.display = not select_mode
-            yield trash_btn
-            # Disable only when there's nothing to select AND we're not
-            # already in select mode -- in select mode the button is "Done"
-            # and must always be pressable so the user can exit even if the
-            # rows dropped to zero (e.g. a background snapshot refresh
-            # emptied the list).
-            select_disabled = rendered_count == 0 and not select_mode
-            select_btn = Button(
-                # task-4023 AC#1 (RC-07): disabled carries the non-colour
-                # "○" marker; the F-018 reason tooltip below says why.
-                library_disabled_action_label(
-                    "Done" if select_mode else "Select", select_disabled
-                ),
-                id="library-media-select-toggle",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            select_btn.disabled = select_disabled
-            if select_disabled:
-                select_btn.tooltip = LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
-            yield self._gate_stale_action(
-                select_btn, "Done" if select_mode else "Select"
-            )
+        for row_id, row_buttons in toolbar_rows:
+            row = Horizontal(id=row_id, classes="ds-toolbar")
+            row.styles.height = "auto"
+            row.display = toolbar_visible
+            with row:
+                for button in row_buttons:
+                    yield button
         if type_choices_visible:
             options: list[Option] = []
             highlighted = 0
@@ -442,6 +670,18 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             choices.highlighted = highlighted
             choices.styles.height = min(8, max(1, len(options)))
             yield choices
+        if sort_choices_visible:
+            # task-28013: the sort chooser's direct-pick strip, replacing the
+            # toolbar row exactly like the type chooser (shared helper).
+            yield from compose_library_choice_strip(
+                strip_id="library-media-sort-choices",
+                choice_class="library-media-sort-choice",
+                options=tuple(
+                    (f"library-media-sort-{value}", value, label)
+                    for value, label in MEDIA_SORT_CHOICES
+                ),
+                active_value=current_sort,
+            )
         confirming_bulk_delete = getattr(self.canvas, "confirming_bulk_delete", False)
         if select_mode:
             if confirming_bulk_delete:
@@ -459,12 +699,18 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # AC3's honest "there's no Trash view" copy, which was
                 # true only until this surface existed.
                 item_word = "item" if self.canvas.selected_count == 1 else "items"
-                yield Static(
+                confirm_copy = Static(
                     f"Delete {self.canvas.selected_count} selected {item_word}? "
                     "You can undo right away, or restore later from Trash.",
                     id="library-media-bulk-delete-confirm-copy",
                     markup=False,
                 )
+                # task-30043: bound the copy to the pane so the safety
+                # sentence WRAPS -- unbounded, it clipped mid-word ("You can
+                # und / restore later from Tr") at the narrow pane width.
+                confirm_copy.styles.width = "1fr"
+                confirm_copy.styles.height = "auto"
+                yield confirm_copy
             action_row = Horizontal(classes="ds-toolbar")
             action_row.styles.height = "auto"
             with action_row:
@@ -505,76 +751,26 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     )
                     yield self._gate_mutation_action(cancel, "Cancel")
                 else:
-                    select_all = Button(
-                        f"Select all {rendered_count} shown",
-                        id="library-media-select-all",
-                        classes="library-canvas-action",
-                        compact=True,
-                    )
-                    yield self._gate_stale_action(
-                        select_all, f"Select all {rendered_count} shown"
-                    )
-                    clear = Button(
-                        "Clear",
-                        id="library-media-select-clear",
-                        classes="library-canvas-action",
-                        compact=True,
-                    )
-                    yield self._gate_stale_action(clear, "Clear")
-                    export_disabled = self.canvas.selected_count == 0
-                    export_selected = Button(
-                        # task-4023 AC#1 (RC-07): "○" disabled marker --
-                        # these are the very buttons the user entered
-                        # Select mode looking for, previously colour-only
-                        # at a measured 1.39:1. The base label is stashed
-                        # so `_apply_library_row_toggle`'s in-place patch
-                        # can rebuild it when the selection count crosses 0.
-                        library_disabled_action_label(
-                            "Export selected", export_disabled
-                        ),
-                        id="library-media-export-selected",
-                        classes="library-canvas-action",
-                        compact=True,
-                    )
-                    export_selected._library_disabled_marker_base = (
-                        "Export selected"
-                    )
-                    export_selected.disabled = export_disabled
-                    # F-018: a disabled action says why.
-                    export_selected.tooltip = (
-                        LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP
-                        if export_selected.disabled
-                        else LIBRARY_EXPORT_SELECTED_TOOLTIP
-                    )
-                    yield self._gate_stale_action(
-                        export_selected, "Export selected"
-                    )
-                    # task-2853: the second real bulk action -- "Delete
-                    # selected" -- pushed to the far end (CSS margin, same
-                    # library-media-action-danger idiom the single-item
-                    # viewer's own Delete uses) so it is never adjacent to
-                    # Export selected.
-                    delete_disabled = self.canvas.selected_count == 0
-                    delete_selected = Button(
-                        library_disabled_action_label(
-                            "Delete selected", delete_disabled
-                        ),
-                        id="library-media-delete-selected",
-                        classes="library-canvas-action library-media-action-danger",
-                        compact=True,
-                    )
-                    delete_selected._library_disabled_marker_base = (
-                        "Delete selected"
-                    )
-                    delete_selected.disabled = delete_disabled
-                    delete_selected.tooltip = (
-                        LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP
-                        if delete_selected.disabled
-                        else LIBRARY_DELETE_SELECTED_TOOLTIP
-                    )
-                    yield self._gate_stale_action(
-                        delete_selected, "Delete selected"
-                    )
+                    yield self._select_all_button(rendered_count)
+            if not confirming_bulk_delete:
+                # task-30043: the bulk actions get their own row of short
+                # REAL words ("○ Export", never a bare marker) -- one shared
+                # row rendered them as ``○ ○ ○`` at the pane's 40-col floor.
+                actions_row = Horizontal(
+                    id="library-media-select-actions", classes="ds-toolbar"
+                )
+                actions_row.styles.height = "auto"
+                with actions_row:
+                    yield self._clear_selection_button()
+                    yield from self._select_mode_bulk_buttons()
+                # task-2853's danger-isolation rule, upgraded: Delete gets a
+                # whole row, so it is never adjacent to any other action.
+                danger_row = Horizontal(
+                    id="library-media-select-danger", classes="ds-toolbar"
+                )
+                danger_row.styles.height = "auto"
+                with danger_row:
+                    yield self._delete_selected_button()
 
         # task-4022 AC2: a completed bulk delete's receipt, naming the
         # count with an Undo affordance right at the point of action --
@@ -758,21 +954,33 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
     def _compose_pager(self, pager: LibraryPagerDisplay) -> ComposeResult:
         """Render the controller-owned Media pager below the row viewport."""
-        disabled_reasons = tuple(
-            dict.fromkeys(
-                reason
-                for disabled, reason in (
-                    (pager.previous_disabled, pager.previous_reason),
-                    (pager.next_disabled, pager.next_reason),
+        # task-28016: a single-page result has nowhere to page to, so the
+        # "Page 1 of 1" counter and the boundary reasons ("Already on the
+        # first page.", "No more results.") are pure noise. Show only the item
+        # range and keep the (disabled) controls; both return the moment a
+        # second page exists.
+        disabled_reasons = (
+            ()
+            if pager.single_page
+            else tuple(
+                dict.fromkeys(
+                    reason
+                    for disabled, reason in (
+                        (pager.previous_disabled, pager.previous_reason),
+                        (pager.next_disabled, pager.next_reason),
+                    )
+                    if disabled and reason
                 )
-                if disabled and reason
             )
+        )
+        status_parts = (
+            (pager.range_copy,)
+            if pager.single_page
+            else (pager.range_copy, pager.page_copy)
         )
         with Vertical(id="library-media-pager", classes="library-source-pager"):
             yield Static(
-                " · ".join(
-                    copy for copy in (pager.range_copy, pager.page_copy) if copy
-                ),
+                " · ".join(copy for copy in status_parts if copy),
                 id="library-media-page-status",
                 classes="library-source-pager-status",
                 markup=False,

@@ -553,6 +553,67 @@ def test_list_conversations_scope_all_passes_through_without_workspace_filter():
     assert deleted_only_call[2]["include_deleted"] is False
 
 
+def test_list_conversations_passes_multiple_workspace_ids_to_database():
+    db = FakeDB(conversations_page_rows=[])
+    service = ChatConversationService(db)
+
+    service.list_conversations(
+        scope_type="all",
+        workspace_ids=("ws-roleplay", "ws-research"),
+        limit=50,
+        offset=0,
+    )
+
+    search_call = [call for call in db.calls if call[0] == "search_conversations_page"][
+        -1
+    ]
+    assert search_call[2]["workspace_ids"] == ("ws-roleplay", "ws-research")
+
+
+def test_list_conversations_passes_global_scope_union_to_database():
+    db = FakeDB(conversations_page_rows=[])
+    service = ChatConversationService(db)
+
+    service.list_conversations(
+        scope_type="all",
+        workspace_ids=("ws-default",),
+        include_global_scope=True,
+        limit=50,
+        offset=0,
+    )
+
+    search_call = [call for call in db.calls if call[0] == "search_conversations_page"][
+        -1
+    ]
+    assert search_call[2]["workspace_ids"] == ("ws-default",)
+    assert search_call[2]["include_global_scope"] is True
+
+
+def test_list_conversations_passes_per_term_workspace_unions_to_database():
+    db = FakeDB(conversations_page_rows=[])
+    service = ChatConversationService(db)
+
+    service.list_conversations(
+        query="Roleplay Tavern",
+        scope_type="all",
+        query_terms=("Roleplay", "Tavern"),
+        query_workspace_ids_by_term=(("ws-roleplay",), ("ws-roleplay",)),
+        query_include_global_scope_by_term=(False, False),
+        limit=50,
+        offset=0,
+    )
+
+    search_call = [call for call in db.calls if call[0] == "search_conversations_page"][
+        -1
+    ]
+    assert search_call[2]["query_terms"] == ("Roleplay", "Tavern")
+    assert search_call[2]["query_workspace_ids_by_term"] == (
+        ("ws-roleplay",),
+        ("ws-roleplay",),
+    )
+    assert search_call[2]["query_include_global_scope_by_term"] == (False, False)
+
+
 def test_list_conversations_retains_the_exact_ordinary_page_envelope():
     db = FakeDB(
         conversations_page_rows=[

@@ -31,8 +31,14 @@ import sys
 import threading
 import time
 
+from textual._compositor import Compositor
+from textual.widgets import Button
+
 # Repo-root-relative resolution (mirrors Helper_Scripts/console_latency_probe.py) --
-# no absolute, machine-specific paths.
+# no absolute, machine-specific paths. The local imports below must follow this
+# sys.path insert, which is why they trip E402 (module-level import not at the
+# top of the file) -- each one is annotated `# noqa: E402` deliberately, not
+# because the ordering was overlooked.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from Tests.UI.app_factory import _build_test_app  # noqa: E402
@@ -45,9 +51,18 @@ from Tests.UI.test_library_shell import (  # noqa: E402
     _two_media_items,
     _wait_for_library_shell,
 )
-from textual.widgets import Button  # noqa: E402
-from textual._compositor import Compositor  # noqa: E402
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen  # noqa: E402
+
+#: Main-thread stall sampler tick, in seconds. The sampler thread sleeps
+#: this long between `sys._current_frames()` snapshots, and the settle loop
+#: in `_click` polls the pilot on the same cadence. Every "how many ms did
+#: this bucket of samples represent" computation below derives its
+#: milliseconds-per-sample multiplier from this one constant instead of a
+#: repeated `5` literal, so the interval can only drift in one place.
+_SAMPLE_INTERVAL_SECONDS = 0.005
+#: int, not float: `_report`'s table formats idle/busy ms with `:6d`, so this
+#: must stay a whole number of milliseconds the way the old `* 5` literal did.
+_SAMPLE_INTERVAL_MS = int(_SAMPLE_INTERVAL_SECONDS * 1000)
 
 STATE = {
     "recompose_targets": [],   # (typename,) per recompose(recompose=True)
@@ -87,7 +102,7 @@ def _is_idle(stack):
 
 def _sampler():
     while STATE["sampling"]:
-        time.sleep(0.005)
+        time.sleep(_SAMPLE_INTERVAL_SECONDS)
         with _LOCK:
             if STATE["pending"] is None:
                 continue
@@ -180,7 +195,7 @@ async def _click(screen, pilot, label, button_id):
     quiet = 0
     fu_seen = STATE["full_updates"]
     for _ in range(600):
-        await pilot.pause(0.005)
+        await pilot.pause(_SAMPLE_INTERVAL_SECONDS)
         now = time.perf_counter()
         gap = (now - last) * 1000
         if gap > max_gap:
@@ -214,11 +229,24 @@ async def _click(screen, pilot, label, button_id):
         "fu": fu, "fm": fm, "mounts": mo, "removes": rm,
         "nodes_before": nodes_before, "nodes_after": nodes_after,
         "targets": rc, "samples": samples,
-        "idle_ms": idle * 5, "busy_ms": busy * 5,
+        "idle_ms": idle * _SAMPLE_INTERVAL_MS, "busy_ms": busy * _SAMPLE_INTERVAL_MS,
     }
 
 
-async def main():
+async def main() -> None:
+    """Run the Library click-latency probe and print its report.
+
+    Boots a headless ``LibraryHarness`` app, installs the recompose/
+    render/mount instrumentation (`_install`), replays a fixed sequence of
+    rail clicks (media/notes switches and re-clicks, see `main`'s local
+    `clicks` list), and prints the settle-time table via `_report`.
+
+    Intended to be run as a script
+    (``.venv/bin/python Helper_Scripts/library_click_probe.py``), not
+    imported -- it mutates process-global state (`STATE`) and monkeypatches
+    `BaseAppScreen.refresh`, `Compositor.render_full_update`, and
+    `App._register`/`_unregister` for the lifetime of the process.
+    """
     _install()
     t = threading.Thread(target=_sampler, daemon=True)
     t.start()
@@ -280,7 +308,7 @@ def _report(results):
         print("  what the main thread was doing (5ms samples):")
         for stack, n in worst["samples"]:
             tag = "  [IDLE-WAIT]" if ("selectors.py" in stack[0] and ":select" in stack[0]) else ""
-            print(f"    ~{n*5} ms{tag}:")
+            print(f"    ~{n * _SAMPLE_INTERVAL_MS} ms{tag}:")
             for line in stack[:7]:
                 print(f"       {line}")
     print("=" * 92)

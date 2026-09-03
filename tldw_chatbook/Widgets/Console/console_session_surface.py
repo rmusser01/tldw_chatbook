@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-from typing import Any
+from typing import Any, Callable
 
 from rich.markup import escape as _escape_markup
 from rich.text import Text
+from textual import events
 from textual.app import ComposeResult
 from textual.containers import Horizontal, HorizontalScroll, Vertical
 from textual.css.query import NoMatches
@@ -19,7 +20,12 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunMarker,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
-from tldw_chatbook.Chat.console_glyphs import GLYPH_CLOSE, GLYPH_TEMPORARY
+from tldw_chatbook.Chat.console_glyphs import (
+    GLYPH_CLOSE,
+    GLYPH_COLLAPSE_LEFT,
+    GLYPH_COLLAPSE_RIGHT,
+    GLYPH_TEMPORARY,
+)
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 from tldw_chatbook.Chat.console_onboarding_state import ConsoleSetupCardState
 from tldw_chatbook.Utils.console_background_effects import (
@@ -28,6 +34,9 @@ from tldw_chatbook.Utils.console_background_effects import (
 from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from tldw_chatbook.Widgets.Console.console_background_effect import (
     ConsoleTranscriptSurface,
+)
+from tldw_chatbook.Widgets.Console.console_activity_outcome_notice import (
+    ConsoleActivityOutcomeNotice,
 )
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
@@ -54,6 +63,11 @@ CONSOLE_SESSION_TITLE_MAX_CHARACTERS = 500
 #: Fleet-UX expert review F2 (task-1232): one-time coach-mark row mounted
 #: under the tab strip, hidden until `show_fleet_coachmark` reveals it.
 CONSOLE_FLEET_COACHMARK_DISMISS_WIDTH = 3
+#: TASK-28028: 1-cell overflow hints flanking the tab strip (‹ ›); shown
+#: only while tabs are hidden past that edge. Width includes no padding.
+CONSOLE_TAB_OVERFLOW_HINT_WIDTH = 1
+CONSOLE_TAB_OVERFLOW_LEFT_ID = "console-tab-overflow-left"
+CONSOLE_TAB_OVERFLOW_RIGHT_ID = "console-tab-overflow-right"
 
 
 def _session_tab_tooltip(
@@ -153,6 +167,71 @@ class ConsoleSessionTabButton(Button):
         await super()._on_click(event)
 
 
+class ConsoleSessionTabStrip(HorizontalScroll):
+    """Session tab strip that maps a plain vertical wheel to horizontal scroll.
+
+    TASK-28028: Textual 8.2.8's base wheel handler only scrolls a
+    ``HorizontalScroll`` for shift/ctrl chords -- a plain wheel over this
+    height-1 strip fell through to the vertical path, which
+    ``overflow-y: hidden`` disables, so tabs pushed off-screen were
+    unreachable by wheel. Wheel-down scrolls toward later tabs, wheel-up
+    back toward earlier ones, matching the shift-wheel convention the base
+    class already defines. The event is stopped only when the strip
+    actually moved, so a wheel at an edge still bubbles (e.g. to the
+    transcript around it).
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        #: Set by ``ConsoleSessionSurface``; invoked whenever the strip's
+        #: scroll position OR geometry changes, so the flanking ‹ ›
+        #: overflow hints track what is hidden on each side.
+        self.on_overflow_state_changed: Callable[[], None] | None = None
+
+    def _on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+        if event.ctrl or event.shift:
+            super()._on_mouse_scroll_down(event)
+            return
+        if self._scroll_right_for_pointer(animate=False):
+            event.stop()
+
+    def _on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        if event.ctrl or event.shift:
+            super()._on_mouse_scroll_up(event)
+            return
+        if self._scroll_left_for_pointer(animate=False):
+            event.stop()
+
+    def watch_scroll_x(self, old_value: float, new_value: float) -> None:
+        """Extend the base scrollbar/refresh watcher with hint recomputation.
+
+        Args:
+            old_value: The strip's horizontal scroll offset before the change.
+            new_value: The strip's horizontal scroll offset after the change.
+        """
+        super().watch_scroll_x(old_value, new_value)
+        if round(old_value) != round(new_value):
+            self._notify_overflow_state_changed()
+
+    def _on_resize(self, event: events.Resize) -> None:
+        # A resize re-clips the strip: the hidden-on-each-side truth changes
+        # even though scroll_x did not. No super() call: ScrollableContainer
+        # defines no _on_resize of its own (layout handles the resize).
+        del event
+        self._notify_overflow_state_changed()
+
+    def _notify_overflow_state_changed(self) -> None:
+        callback = self.on_overflow_state_changed
+        if callback is not None:
+            try:
+                callback()
+            except Exception:
+                # Best effort: the hints are an affordance, never a
+                # critical path (same rationale as the scroll scheduling
+                # in ``sync_sessions``).
+                pass
+
+
 class ConsoleSessionSurface(Vertical):
     """Host Console transcript/event stream sessions without legacy chat chrome."""
 
@@ -183,17 +262,10 @@ class ConsoleSessionSurface(Vertical):
         title.styles.min_height = 1
         yield title
 
-        tab_strip = HorizontalScroll(
-            id="console-native-tab-strip",
-            classes="console-session-tab-strip",
-        )
-        tab_strip.styles.height = 1
-        tab_strip.styles.min_height = 1
-        tab_strip.styles.max_height = 1
-        with tab_strip:
-            yield self._build_new_tab_button()
+        yield self._build_tab_strip_row()
         yield self._build_fleet_coachmark()
         yield ChatTaskCards(id="console-task-surface")
+        yield ConsoleActivityOutcomeNotice(id="console-activity-outcome-notice")
         yield ConsoleTranscriptSurface(
             self._transcript_background_effect_settings(
                 self.background_effect_settings
@@ -201,6 +273,86 @@ class ConsoleSessionSurface(Vertical):
             id="console-transcript-surface",
             classes="console-transcript-surface",
         )
+
+    def _build_tab_strip_row(self) -> Horizontal:
+        """Build the tab strip row: ‹ hint, the strip, › hint.
+
+        TASK-28028: the row carries the `.console-session-tab-strip` class
+        (panel background + bottom margin now live on the row, not the
+        strip, so the flanking ‹ › hints sit on the same panel), while the
+        strip itself keeps `#console-native-tab-strip` so every existing
+        query keeps resolving.
+        """
+        tab_strip = ConsoleSessionTabStrip(id="console-native-tab-strip")
+        tab_strip.styles.height = 1
+        tab_strip.styles.min_height = 1
+        tab_strip.styles.max_height = 1
+        # The row owns the strip family's bottom margin now; this inline
+        # zero beats the shared `#console-native-tab-strip` CSS rule so a
+        # margin never eats the row's single line.
+        tab_strip.styles.margin = (0, 0, 0, 0)
+        tab_strip.styles.width = "1fr"
+        tab_strip.on_overflow_state_changed = self._sync_tab_overflow_hints
+        tab_strip.compose_add_child(self._build_new_tab_button())
+
+        strip_row = Horizontal(classes="console-session-tab-strip")
+        strip_row.styles.height = 1
+        strip_row.styles.min_height = 1
+        strip_row.styles.max_height = 1
+        # Children attach via compose_add_child (mirrors the
+        # `_build_fleet_coachmark` pattern) because this helper returns the
+        # built row rather than yielding through the compose generator.
+        strip_row.compose_add_child(
+            self._build_overflow_hint(
+                CONSOLE_TAB_OVERFLOW_LEFT_ID, GLYPH_COLLAPSE_LEFT
+            )
+        )
+        strip_row.compose_add_child(tab_strip)
+        strip_row.compose_add_child(
+            self._build_overflow_hint(
+                CONSOLE_TAB_OVERFLOW_RIGHT_ID, GLYPH_COLLAPSE_RIGHT
+            )
+        )
+        return strip_row
+
+    def _build_overflow_hint(self, hint_id: str, glyph: str) -> Static:
+        """Build one (initially hidden) 1-cell tab-strip overflow hint."""
+        hint = Static(resolve_glyph(glyph), id=hint_id, markup=False)
+        hint.tooltip = "More tabs this way — scroll the tab strip (mouse wheel)."
+        hint.styles.width = CONSOLE_TAB_OVERFLOW_HINT_WIDTH
+        hint.styles.min_width = CONSOLE_TAB_OVERFLOW_HINT_WIDTH
+        hint.styles.max_width = CONSOLE_TAB_OVERFLOW_HINT_WIDTH
+        hint.styles.height = 1
+        hint.styles.min_height = 1
+        hint.styles.max_height = 1
+        # Qodo PR #2327 review: hide with VISIBILITY, not display:none —
+        # a display:none cell leaves the horizontal layout, so re-showing
+        # a hint resized/shifted the 1fr strip (one cell of tab jitter at
+        # each threshold crossing). visibility:hidden keeps the cell's
+        # box in layout at all times, so hint toggles can never move the
+        # strip; the cost is one permanently reserved cell per side.
+        hint.styles.visibility = "hidden"
+        return hint
+
+    def _sync_tab_overflow_hints(self) -> None:
+        """Show ‹ › only on the side of the strip with hidden tabs.
+
+        Best-effort by design (hints are an affordance, not a critical
+        path): absent widgets or a not-yet-laid-out strip leave the hints
+        as-is. Toggles ``visibility`` only — never ``display`` — so the
+        hint cells keep their one-cell boxes in the row's layout and the
+        strip's own region is stable across every toggle.
+        """
+        try:
+            strip = self.query_one("#console-native-tab-strip", HorizontalScroll)
+            left = self.query_one(f"#{CONSOLE_TAB_OVERFLOW_LEFT_ID}", Static)
+            right = self.query_one(f"#{CONSOLE_TAB_OVERFLOW_RIGHT_ID}", Static)
+        except Exception:
+            return
+        hidden_right = round(strip.max_scroll_x - strip.scroll_x) > 0
+        hidden_left = round(strip.scroll_x) > 0
+        left.styles.visibility = "visible" if hidden_left else "hidden"
+        right.styles.visibility = "visible" if hidden_right else "hidden"
 
     def _build_fleet_coachmark(self) -> Horizontal:
         """Build the (initially hidden) one-time parallel-agents coach-mark.
@@ -569,6 +721,15 @@ class ConsoleSessionSurface(Vertical):
             await tab_strip.mount(self._build_new_tab_button())
             await tab_strip.mount(self._build_new_temporary_tab_button())
             self._record_mount_churn(mounted=mounted_count, removed=removed_count)
+        # TASK-28028: mounted/removed tabs change what is hidden past each
+        # edge even when scroll_x does not move; refresh the ‹ › hints once
+        # the new children have laid out (same best-effort rationale as the
+        # scroll scheduling below -- surfaces built outside a running app
+        # have no message pump).
+        try:
+            self.call_after_refresh(self._sync_tab_overflow_hints)
+        except Exception:
+            pass
         if active_session_id is not None:
             try:
                 self.call_after_refresh(
@@ -618,6 +779,10 @@ class ConsoleSessionSurface(Vertical):
             tab_strip.scroll_to_widget(tab, animate=False)
         except Exception:
             return
+        # The programmatic scroll moved scroll_x without a wheel event; the
+        # watcher covers it, but this also catches the no-movement case
+        # where layout only just settled (region was zero above).
+        self._sync_tab_overflow_hints()
 
     def set_session_title(self, title: str | None) -> None:
         """Show the active conversation/session title in the transcript header.

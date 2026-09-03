@@ -10,6 +10,9 @@ from ..base_effect import BaseEffect, register_effect
 @register_effect("terminal_boot")
 class TerminalBootEffect(BaseEffect):
     """Simulates a classic terminal boot-up sequence."""
+    # update() reads `time.time() - self.start_time` as its inter-frame
+    # delta and resets the anchor -- see BaseEffect.FRAME_DELTA_CLOCK.
+    FRAME_DELTA_CLOCK = True
 
     @dataclass
     class BootLine:

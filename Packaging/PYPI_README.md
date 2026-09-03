@@ -1,105 +1,36 @@
 # PyPI Distribution Notes for tldw_chatbook
 
-This document contains notes for maintainers about the PyPI distribution process.
+`Packaging/PYPI_RELEASE.md` is the release runbook. This file is the short
+maintainer checklist.
 
-## Pre-release Checklist
-
-1. **Update Version Number**
-   - Update version in `pyproject.toml`
-   - Update version in `tldw_chatbook/__init__.py`
-   - Update CHANGELOG.md with release notes
-
-2. **Test Installation**
-   ```bash
-   # Create a fresh virtual environment
-   python -m venv test_env
-   source test_env/bin/activate  # Windows: test_env\Scripts\activate
-   
-   # Install in development mode
-   pip install -e .
-   
-   # Run import tests
-   python test_import.py
-   
-   # Test the CLI
-   tldw-cli --help
-   ```
-
-3. **Run Full Test Suite**
-   ```bash
-   pytest
-   ```
-
-4. **Build Distribution**
-   ```bash
-   ./build_dist.sh
-   ```
-
-5. **Test Distribution Locally**
-   ```bash
-   # Create another fresh environment
-   python -m venv dist_test
-   source dist_test/bin/activate
-   
-   # Install from wheel
-   pip install dist/tldw_chatbook-*.whl
-   
-   # Run import tests
-   python test_import.py
-   
-   # Test CLI
-   tldw-cli --help
-   ```
-
-## Upload to TestPyPI First
-
-1. **Configure .pypirc** (if not already done)
-   - Copy `.pypirc.template` to `~/.pypirc`
-   - Add your PyPI tokens
-
-2. **Upload to TestPyPI**
-   ```bash
-   python -m twine upload --repository testpypi dist/*
-   ```
-
-3. **Test from TestPyPI**
-   ```bash
-   pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ tldw_chatbook
-   ```
-
-## Upload to PyPI
-
-Once testing is complete:
+## Required Gates
 
 ```bash
-python -m twine upload dist/*
+python -m pip install "setuptools>=77.0" build twine wheel
+Packaging/build_dist.sh
+python -m pytest Tests/Packaging/test_release_metadata.py -q
+python -m pytest Tests/Packaging/test_installed_distribution.py -m integration -q -p no:cacheprovider
 ```
 
-## Post-release
+`Packaging/build_dist.sh` builds a fresh sdist and wheel, runs `twine check`,
+and verifies both artifacts with `Packaging/check_manifest.py`.
 
-1. Create a git tag:
-   ```bash
-   git tag -a v0.1.0 -m "Release version 0.1.0"
-   git push origin v0.1.0
-   ```
+## Entry Points
 
-2. Create a GitHub release with the changelog
+The PyPI package installs these console scripts:
 
-3. Update version in `pyproject.toml` and `__init__.py` to next development version (e.g., 0.2.0.dev0)
+- `tldw-cli`
+- `tldw-serve`
 
-## Package Structure Verification
+Use `tldw-cli --help` and `tldw-serve --help` for installation smoke tests.
 
-The distribution should include:
-- All Python modules under `tldw_chatbook/`
-- CSS files (*.tcss) in `tldw_chatbook/css/`
-- Theme files in `tldw_chatbook/css/Themes/`
-- JSON templates in `tldw_chatbook/Config_Files/`
-- LICENSE file
-- README.md
+## Publishing
 
-## Common Issues
+Normal publishing is done by `.github/workflows/publish-pypi.yml`:
 
-1. **Missing Data Files**: Check MANIFEST.in and pyproject.toml package-data
-2. **Import Errors**: Ensure all __init__.py files are present
-3. **Entry Point Not Working**: Verify the console_scripts configuration
-4. **Dependencies Missing**: Compare pyproject.toml with requirements.txt
+- Manual workflow dispatch from protected `dev` publishes to TestPyPI through
+  the `testpypi` environment.
+- Protected `v*` tags publish to PyPI through the `pypi` environment after the
+  tag version matches `pyproject.toml`.
+
+Do not use `.pypirc` or long-lived API tokens for routine releases.

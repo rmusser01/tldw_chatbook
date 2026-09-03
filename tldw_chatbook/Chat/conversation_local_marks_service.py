@@ -42,7 +42,13 @@ class ConversationLocalMarksService:
     #: payloads -- but durable across restarts, which is the whole point:
     #: the completion badge must survive the app that showed the toast.
     FLEET_UNSEEN = "fleet_unseen"
-    _ALLOWED_MARK_TYPES = frozenset({STARRED, FLEET_UNSEEN})
+    #: Receipt publication can fail after a survivor settles. This private
+    #: companion mark records that the coarse badge is fallback evidence,
+    #: rather than a stale derivative safe to reconcile away.
+    FLEET_RECEIPT_FALLBACK = "fleet_receipt_fallback"
+    _ALLOWED_MARK_TYPES = frozenset(
+        {STARRED, FLEET_UNSEEN, FLEET_RECEIPT_FALLBACK}
+    )
 
     def __init__(self, db: Any):
         """Initialize the service.

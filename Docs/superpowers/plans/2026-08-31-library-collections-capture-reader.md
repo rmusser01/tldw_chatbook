@@ -10,7 +10,7 @@
 
 **ADR required:** yes
 
-**ADR path:** `backlog/decisions/107-collections-capture-authority-and-legacy-boundary.md`
+**ADR path:** `backlog/decisions/113-collections-capture-authority-and-legacy-boundary.md`
 
 **Reason:** TASK-18919 changes durable Collections storage, source authority, migration, service, and legacy-data boundaries.
 
@@ -19,7 +19,7 @@
 ## Source documents and delivery boundary
 
 - Specification: `Docs/superpowers/specs/2026-08-31-library-collections-capture-reader-design.md`
-- Architecture: `backlog/decisions/107-collections-capture-authority-and-legacy-boundary.md`
+- Architecture: `backlog/decisions/113-collections-capture-authority-and-legacy-boundary.md`
 - Paging contract: `backlog/decisions/067-library-top-level-pagination-contracts.md`
 - Destructive actions: `backlog/decisions/055-library-destructive-action-reversibility-rule.md`
 - Shared reader shell: `backlog/decisions/086-library-adaptive-reader-shell.md`
@@ -268,10 +268,10 @@ changes do not enter the branch.
 ```bash
 git branch -a | rg '18919|collections-capture|reading-snapshot'
 gh pr list --repo rmusser01/tldw_chatbook --state open --search '18919 Collections capture'
-rg -n 'ADR-107|TASK-18919' backlog Docs
+rg -n 'ADR-113|TASK-18919' backlog Docs
 ```
 
-Expected: no competing implementation and one canonical ADR-107/TASK-18919 pair.
+Expected: no competing implementation and one canonical ADR-113/TASK-18919 pair.
 
 - [ ] **Step 3: Record every old generic-container surface before editing**
 
@@ -287,7 +287,7 @@ Ensure the task includes this exact block before production code changes:
 
 ```text
 ADR required: yes
-ADR path: backlog/decisions/107-collections-capture-authority-and-legacy-boundary.md
+ADR path: backlog/decisions/113-collections-capture-authority-and-legacy-boundary.md
 Reason: TASK-18919 changes durable Collections storage, source authority, migration, service, and legacy-data boundaries.
 ```
 
@@ -1292,7 +1292,7 @@ fail-closed behavior, generation fences, file containment, and destructive confi
 - [ ] **Step 5: Complete task evidence only after all acceptance criteria pass**
 
 Check every acceptance criterion, add concise Implementation Notes with both PR links/commits,
-tests, live evidence, ADR-107, trade-offs, and modified files, and add a lessons entry only if this
+tests, live evidence, ADR-113, trade-offs, and modified files, and add a lessons entry only if this
 work produced a concrete reusable incident. Then:
 
 ```bash

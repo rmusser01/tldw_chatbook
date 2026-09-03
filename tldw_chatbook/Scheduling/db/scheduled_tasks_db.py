@@ -21,12 +21,38 @@ from loguru import logger
 
 from tldw_chatbook.DB.base_db import BaseDB
 from tldw_chatbook.DB.sql_validation import validate_identifier
+# ADR-097: schedule_compute / schedule_vocabulary are imported function-level
+# in create_local_copy_from_mirror -- this module is boot-resident and the
+# eager imports tipped the CI ui-ready census (974 > 972; dev sits at 972).
+
+#: ``transfer_state`` values that make a row dormant: excluded from every
+#: armable filter (DB-query and ``PriorityQueue.load`` layers, both
+#: primitives) and refused by every run-now seam. Per
+#: spec-2026-08-31-schedules-handoff-parity.md §6.1 ruling 2, a row only
+#: goes dark once a push attempt actually starts (``to_server_sent``) or a
+#: server-owned mirror's local release copy is queued
+#: (``from_server_pending``) -- ``NULL``, ``to_server_pending`` (merely
+#: queued, not yet attempted), and ``to_server_failed`` (send failed, the
+#: row re-arms) all keep executing locally. This corrects the pre-PR-5 code,
+#: which excluded ANY non-NULL ``transfer_state`` on the definitions side.
+DORMANT_TRANSFER_STATES = ("to_server_sent", "from_server_pending")
+
+#: Every state in which a transfer is genuinely under way (spec §6.3's
+#: "dormant and in-flight rows are read-only except cancel"): the two
+#: dormant states plus `to_server_pending`, which still executes locally
+#: but has a queued create payload snapshotted at begin time -- editing it
+#: would silently ship the pre-edit content and then have the mirror pull
+#: overwrite the edit (final review I7). `to_server_failed` is
+#: deliberately absent: that row re-armed locally, nothing is queued
+#: against it, and editing it before a retry is exactly what the user
+#: should be able to do.
+IN_FLIGHT_TRANSFER_STATES = ("to_server_pending", *DORMANT_TRANSFER_STATES)
 
 
 class ScheduledTasksDB(BaseDB):
     """Database operations for scheduled tasks and reminders."""
 
-    _CURRENT_SCHEMA_VERSION = 4
+    _CURRENT_SCHEMA_VERSION = 7
 
     #: Defensive cap on `list_armable_automation_definitions` -- mirrors the
     #: Automations tab's `AUTOMATIONS_LOAD_MAX_ROWS` cap-500 precedent
@@ -228,7 +254,7 @@ class ScheduledTasksDB(BaseDB):
         """
         if self._schema_is_current():
             # Warm-boot fast path (ADR-097 boot ratchet): a fully-migrated
-            # file DB skips importing the four migration modules entirely,
+            # file DB skips importing any of the migration modules entirely,
             # keeping them out of the `_ui_ready` module census on every
             # boot after the first. Only a PROOF of completeness skips --
             # any probe failure (missing table on a fresh or `:memory:`
@@ -249,11 +275,23 @@ class ScheduledTasksDB(BaseDB):
         from tldw_chatbook.Scheduling.db.migrations.v3_to_v4 import (
             migrate as migrate_v3_to_v4,
         )
+        from tldw_chatbook.Scheduling.db.migrations.v4_to_v5 import (
+            migrate as migrate_v4_to_v5,
+        )
+        from tldw_chatbook.Scheduling.db.migrations.v5_to_v6 import (
+            migrate as migrate_v5_to_v6,
+        )
+        from tldw_chatbook.Scheduling.db.migrations.v6_to_v7 import (
+            migrate as migrate_v6_to_v7,
+        )
 
         migrate_v0_to_v1(self)
         migrate_v1_to_v2(self)
         migrate_v2_to_v3(self)
         migrate_v3_to_v4(self)
+        migrate_v4_to_v5(self)
+        migrate_v5_to_v6(self)
+        migrate_v6_to_v7(self)
 
     def _schema_is_current(self) -> bool:
         """Return True when the recorded version proves the chain already ran.
@@ -586,6 +624,11 @@ class ScheduledTasksDB(BaseDB):
                 for key in self._REMINDER_TASK_COLUMNS
                 if key in item and key not in {"id", "server_id", "owner_id"}
             }
+            # §6.1 ruling 2, same as upsert_automation_definitions_from_
+            # server's existing pop: transfer_state is a local-only marker
+            # a server pull must never overwrite (a real server payload
+            # never carries one, but nothing guarantees that forever).
+            fields.pop("transfer_state", None)
             fields.setdefault("title", "Untitled reminder")
             if "schedule_kind" not in fields:
                 fields["schedule_kind"] = "one_time"
@@ -796,8 +839,18 @@ class ScheduledTasksDB(BaseDB):
         owner_id: Optional[str] = None,
         enabled: Optional[bool] = None,
         status: Optional[str] = None,
+        *,
+        armable_only: bool = False,
     ) -> list[dict[str, Any]]:
-        """List reminder tasks with optional filters."""
+        """List reminder tasks with optional filters.
+
+        ``armable_only=True`` adds the same dormant-transfer-state
+        exclusion `list_armable_automation_definitions` applies (spec §6.1
+        ruling 2: `DORMANT_TRANSFER_STATES` rows sit out): the DB-query
+        half of `PriorityQueue.load`'s defense-in-depth pair. Callers that
+        want every row for display (e.g. the workbench, which shows a
+        dormant row's "waiting for server" state) leave it ``False``.
+        """
         conditions: list[str] = []
         params: list[Any] = []
 
@@ -810,6 +863,12 @@ class ScheduledTasksDB(BaseDB):
         if status is not None:
             conditions.append("last_status = ?")
             params.append(status)
+        if armable_only:
+            placeholders = ", ".join("?" for _ in DORMANT_TRANSFER_STATES)
+            conditions.append(
+                f"(transfer_state IS NULL OR transfer_state NOT IN ({placeholders}))"
+            )
+            params.extend(DORMANT_TRANSFER_STATES)
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
@@ -833,22 +892,221 @@ class ScheduledTasksDB(BaseDB):
             return self._delete_reminder_task_conn(conn, task_id)
 
     def reminders_due_before(self, now: datetime) -> list[dict[str, Any]]:
-        """Return enabled reminders whose next_run_at is at or before ``now``."""
+        """Return enabled reminders whose next_run_at is at or before ``now``.
+
+        Excludes `DORMANT_TRANSFER_STATES` rows unconditionally (spec §6.1
+        ruling 2) -- this is the back-compat ``now=``-provided load path
+        `PriorityQueue.load` uses, i.e. armable-only by construction; its
+        sole caller is the queue, unlike `list_reminder_tasks` which also
+        serves display listings that must keep dormant rows visible.
+        """
         now_iso = self._to_utc_iso(now)
+        dormant_placeholders = ", ".join("?" for _ in DORMANT_TRANSFER_STATES)
         with closing(self._get_connection()) as conn:
             cursor = conn.execute(
-                """
+                f"""
                 SELECT * FROM reminder_tasks
                 WHERE enabled = 1
                   AND next_run_at IS NOT NULL
                   AND next_run_at <= ?
+                  AND (transfer_state IS NULL
+                       OR transfer_state NOT IN ({dormant_placeholders}))
                 ORDER BY next_run_at
                 """,
-                (now_iso,),
+                (now_iso, *DORMANT_TRANSFER_STATES),
             )
             return self._rows_to_dicts(
                 cursor.fetchall(), json_fields=self._REMINDER_JSON_FIELDS
             )
+
+    # -- TASK-26026: durable per-dispatch run ledger --------------------
+
+    #: Retention default -- rows kept per task before pruning. A documented
+    #: bound so the ledger cannot grow without limit (AC#3).
+    DEFAULT_RUN_HISTORY_PER_TASK = 50
+
+    #: The non-terminal status a reconcile sweep fails on next start (AC#4).
+    _RUNNING_RUN_STATUS = "running"
+
+    def begin_task_run(
+        self, task_id: str, task_type: str, started_at: datetime
+    ) -> int:
+        """Record the start of one dispatch; returns the run row id.
+
+        The row is left in ``running`` until ``finish_task_run`` writes a
+        terminal status -- an app exit mid-dispatch therefore leaves a
+        ``running`` row that startup reconciliation fails (AC#4).
+        """
+        now_iso = self._to_utc_iso(started_at)
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "INSERT INTO scheduled_task_runs "
+                "(task_id, task_type, status, started_at, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    str(task_id),
+                    str(task_type),
+                    self._RUNNING_RUN_STATUS,
+                    now_iso,
+                    now_iso,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def finish_task_run(
+        self,
+        run_id: int,
+        status: str,
+        finished_at: datetime,
+        *,
+        error: Optional[str] = None,
+    ) -> None:
+        """Write a run's terminal status/finish/error."""
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE scheduled_task_runs "
+                "SET status = ?, finished_at = ?, error_msg = ? "
+                "WHERE id = ?",
+                (
+                    str(status),
+                    self._to_utc_iso(finished_at),
+                    (str(error)[:1000] if error is not None else None),
+                    int(run_id),
+                ),
+            )
+
+    def list_task_runs(
+        self, task_id: str, *, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """Return a task's run history, newest first (AC#2)."""
+        with closing(self._get_connection()) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM scheduled_task_runs WHERE task_id = ? "
+                "ORDER BY id DESC LIMIT ?",
+                (str(task_id), int(limit)),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def prune_task_runs(
+        self, *, keep_per_task: int = DEFAULT_RUN_HISTORY_PER_TASK
+    ) -> int:
+        """Delete all but the newest ``keep_per_task`` runs per task (AC#3).
+
+        Returns how many rows were removed.
+        """
+        keep = max(0, int(keep_per_task))
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "DELETE FROM scheduled_task_runs WHERE id IN ("
+                "  SELECT id FROM ("
+                "    SELECT id, ROW_NUMBER() OVER ("
+                "      PARTITION BY task_id ORDER BY id DESC"
+                "    ) AS rn FROM scheduled_task_runs"
+                "  ) WHERE rn > ?"
+                ")",
+                (keep,),
+            )
+            return int(cursor.rowcount)
+
+    def fail_interrupted_task_runs(self, *, now: datetime) -> int:
+        """Fail every ``running`` row on startup (AC#4).
+
+        An unfinished run means the app exited mid-dispatch; a terminal
+        ``failed`` with a finish time is more honest than a row stuck
+        ``running`` forever. Finished history is untouched.
+        """
+        now_iso = self._to_utc_iso(now)
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "UPDATE scheduled_task_runs "
+                "SET status = 'failed', "
+                "    finished_at = COALESCE(finished_at, ?), "
+                "    error_msg = COALESCE(error_msg, ?) "
+                "WHERE status = ?",
+                (
+                    now_iso,
+                    "interrupted by application exit",
+                    self._RUNNING_RUN_STATUS,
+                ),
+            )
+            return int(cursor.rowcount)
+
+    # -- TASK-26027: durable failure incidents ---------------------------
+
+    def record_task_failure(
+        self, task_id: str, task_type: str, signature: str, now: datetime
+    ) -> tuple[int, bool]:
+        """Group a failure into an incident; return (incident_id, should_notify).
+
+        A new (task_id, signature) opens an ``alerting`` incident and
+        notifies (AC#1). A repeat of an already-open incident (alerting OR
+        acknowledged) bumps its count and does NOT re-notify -- grouped
+        (AC#1/#2). A different signature opens its own incident (AC#3).
+        """
+        now_iso = self._to_utc_iso(now)
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT id FROM task_incidents "
+                "WHERE task_id = ? AND signature = ? AND status != 'closed' "
+                "LIMIT 1",
+                (str(task_id), str(signature)),
+            ).fetchone()
+            if row is not None:
+                incident_id = int(row[0])
+                conn.execute(
+                    "UPDATE task_incidents "
+                    "SET occurrence_count = occurrence_count + 1, "
+                    "    last_seen_at = ? WHERE id = ?",
+                    (now_iso, incident_id),
+                )
+                return incident_id, False
+            cursor = conn.execute(
+                "INSERT INTO task_incidents "
+                "(task_id, task_type, signature, status, occurrence_count, "
+                " first_seen_at, last_seen_at) "
+                "VALUES (?, ?, ?, 'alerting', 1, ?, ?)",
+                (str(task_id), str(task_type), str(signature), now_iso, now_iso),
+            )
+            return int(cursor.lastrowid), True
+
+    def record_task_success(self, task_id: str, now: datetime) -> int:
+        """Close every open incident for a task; return how many closed (AC#4)."""
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "UPDATE task_incidents "
+                "SET status = 'closed', closed_at = ? "
+                "WHERE task_id = ? AND status != 'closed'",
+                (self._to_utc_iso(now), str(task_id)),
+            )
+            return int(cursor.rowcount)
+
+    def acknowledge_incident(self, incident_id: int, now: datetime) -> None:
+        """Acknowledge one incident: suppress further notifications only.
+
+        Never disables the task or removes it from the queue (AC#7) -- this
+        touches only the incident row.
+        """
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE task_incidents "
+                "SET status = 'acknowledged', acknowledged_at = ? "
+                "WHERE id = ? AND status = 'alerting'",
+                (self._to_utc_iso(now), int(incident_id)),
+            )
+
+    def list_task_incidents(
+        self, task_id: str, *, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Return a task's incidents, newest first (AC-visibility)."""
+        with closing(self._get_connection()) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM task_incidents WHERE task_id = ? "
+                "ORDER BY id DESC LIMIT ?",
+                (str(task_id), int(limit)),
+            ).fetchall()
+            return [dict(row) for row in rows]
 
     def mark_reminder_dispatched(
         self,
@@ -1008,17 +1266,507 @@ class ScheduledTasksDB(BaseDB):
         return cls._MISSED_COUNT_OVERFLOW
 
     # ------------------------------------------------------------------
+    # Transfer state (spec §6) -- shared by both primitives
+    # ------------------------------------------------------------------
+
+    #: ``table_kind`` -> table name, for `set_transfer_state`/
+    #: `clear_transfer_state`. Keys match the ``primitive`` string
+    #: convention used across this module and `SyncEngine`/
+    #: `SchedulingService` (``_REMINDER_PRIMITIVE``/``_DEFINITION_
+    #: PRIMITIVE``) -- not user input, so building the ``UPDATE``'s table
+    #: name from this dict carries no injection risk.
+    _TRANSFER_STATE_TABLES = {
+        "reminder_task": "reminder_tasks",
+        "automation_definition": "automation_definitions",
+    }
+
+    def set_transfer_state(
+        self,
+        table_kind: str,
+        row_id: str,
+        state: Optional[str],
+        *,
+        expected: tuple[Optional[str], ...],
+        pending_mutation: dict[str, Any] | None = None,
+    ) -> bool:
+        """Compare-and-set ``transfer_state`` on a reminder or definition row.
+
+        The transfer machine's transitions (§6.1/§6.2) must be race-safe
+        against a concurrent sync push and a concurrent UI cancel/retry
+        both touching the same row's ``transfer_state`` -- so this is ONE
+        guarded ``UPDATE ... WHERE id = ? AND (<expected-state guard>)``,
+        never a separate SELECT-then-UPDATE: a plain ``SELECT`` takes no
+        lock under Python's ``sqlite3`` default isolation (no implicit
+        ``BEGIN`` before a read), so a read-then-write pair across two
+        statements is NOT serialized against a second connection racing
+        the same row -- two callers could each read the pre-transition
+        state before either writes, and both would then "succeed",
+        the second silently clobbering the first (fix-round-1 finding,
+        reproduced by `test_set_transfer_state_concurrent_callers_do_not_
+        both_succeed`). Folding the state check into the UPDATE's own
+        WHERE clause makes the check-and-write a single statement, which
+        SQLite's writer lock always runs atomically against other
+        connections: whichever caller's UPDATE actually executes first
+        wins and commits; a second caller's UPDATE then finds the WHERE
+        no longer matches (the row already changed), so its
+        ``rowcount`` is 0 and it correctly returns ``False``.
+
+        Deliberately does NOT bump `automation_definitions.version` --
+        same ``bump_version=False`` precedent `update_automation_
+        definition` documents for machinery-driven updates (e.g. the
+        scheduler's ``next_run_at`` advance): a transfer transition is not
+        a user content edit, and bumping it on every transition would
+        pollute optimistic-lock conflict detection the same way.
+
+        Args:
+            table_kind: ``"reminder_task"`` or ``"automation_definition"``.
+            row_id: The row's local id.
+            state: The new ``transfer_state`` value (``None`` clears it).
+            expected: Current-state values that permit the transition.
+                Refused (returns ``False``, no write) when the row's live
+                ``transfer_state`` is not one of these -- including when
+                the row does not exist at all.
+            pending_mutation: Optional ``{"primitive", "owner_id",
+                "payload"}`` (plus an optional ``local_id``, defaulting
+                to ``row_id``) recorded in ``pending_mutations`` in the
+                SAME transaction as the CAS, and ONLY when the CAS
+                actually wrote -- ``update_automation_definition``'s
+                ``if changed and pending_mutation is not None`` precedent.
+                `begin_transfer_to_server` needs exactly that pairing: a
+                crash between arming ``to_server_pending`` and queueing
+                the transfer left a read-only row nothing would ever
+                replay (Qodo review, fix wave 2).
+
+        Returns:
+            ``True`` if the row existed, its current state was in
+            ``expected``, and the write happened; ``False`` otherwise.
+
+        Raises:
+            ValueError: ``table_kind`` is not a known primitive.
+        """
+        table = self._TRANSFER_STATE_TABLES.get(table_kind)
+        if table is None:
+            raise ValueError(f"Unknown table_kind for transfer_state: {table_kind!r}")
+
+        # Build the expected-state guard as part of the UPDATE's WHERE,
+        # not a separate read: `IN (...)` never matches NULL in SQL, so
+        # a `None` in `expected` needs its own `IS NULL` branch alongside
+        # the `IN (...)` branch for any non-NULL expected values.
+        non_null_expected = [value for value in expected if value is not None]
+        guard_clauses: list[str] = []
+        now_iso = self._to_utc_iso(datetime.now(timezone.utc))
+        params: list[Any] = [state, now_iso, row_id]
+        if None in expected:
+            guard_clauses.append("transfer_state IS NULL")
+        if non_null_expected:
+            placeholders = ", ".join("?" for _ in non_null_expected)
+            guard_clauses.append(f"transfer_state IN ({placeholders})")
+            params.extend(non_null_expected)
+        if not guard_clauses:
+            # Nothing in `expected` -- no live state can ever satisfy an
+            # empty set, so refuse without touching the DB.
+            return False
+
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                f"UPDATE {table} SET transfer_state = ?, updated_at = ? "
+                f"WHERE id = ? AND ({' OR '.join(guard_clauses)})",
+                params,
+            )
+            if cursor.rowcount == 0:
+                return False
+            if pending_mutation is not None:
+                self._insert_pending_mutation_conn(
+                    conn,
+                    local_id=pending_mutation.get("local_id") or row_id,
+                    primitive=pending_mutation["primitive"],
+                    owner_id=pending_mutation["owner_id"],
+                    payload=pending_mutation["payload"],
+                    now_iso=now_iso,
+                )
+            return True
+
+    def clear_transfer_state(
+        self,
+        table_kind: str,
+        row_id: str,
+        *,
+        expected: tuple[Optional[str], ...],
+    ) -> bool:
+        """Sugar for ``set_transfer_state(table_kind, row_id, None, ...)``.
+
+        Args:
+            table_kind: ``"reminder_task"`` or ``"automation_definition"``.
+            row_id: The row's local id.
+            expected: Current-state values that permit the clear. The
+                same guarded single-statement UPDATE `set_transfer_state`
+                documents, so a row whose live ``transfer_state`` is not
+                one of these is left untouched.
+
+        Returns:
+            ``True`` when the state was cleared, ``False`` when the guard
+            refused (including a row that does not exist).
+
+        Raises:
+            ValueError: ``table_kind`` is not a known primitive.
+        """
+        return self.set_transfer_state(table_kind, row_id, None, expected=expected)
+
+    def convert_row_to_server_mirror(
+        self,
+        table_kind: str,
+        local_id: str,
+        server_item: dict[str, Any],
+        owner_id: str,
+    ) -> str:
+        """Convert a `transfer_to_server` row into its server-owned mirror.
+
+        Called by `SyncEngine` right after a transfer's create call acks
+        (spec §6.1.4). ``owner_id`` is the DESTINATION scope the transfer
+        targets (the pending mutation's own ``owner_id``, e.g.
+        ``"server:1"``) -- distinct from the transferring row's OWN
+        ``owner_id`` column, which is still ``"local"`` (or whatever it
+        was) until this call changes it. This is the same
+        `target_owner`-vs-row-owner_id distinction
+        `_apply_pulled_reminders`/`upsert_automation_definitions_from_
+        server` already draw for a pull.
+
+        Two outcomes, both inside ONE transaction:
+
+        - A pulled mirror already exists for ``(owner_id, server_id)``
+          (the §4 ``UNIQUE(owner_id, server_id)`` race -- a background
+          pull landed the same server row between this transfer's send
+          and its ack): server-wins, same rule every other pull-mirror
+          write already follows -- keep the PULLED mirror, delete the
+          local transferring row, and transplant its ``created_at`` onto
+          the mirror (plus any `automation_audit_events` rows, definitions
+          only) so the mirror's history/audit linkage doesn't silently
+          reset.
+        - Otherwise: convert the local row in place -- set ``server_id``,
+          reassign ``owner_id`` to the destination scope, and clear
+          ``transfer_state``. Reassigning ``owner_id`` (not just setting
+          ``server_id``) is what actually excludes the row from local
+          execution going forward: every armable filter and
+          `is_server_scoped_owner` key off the ``owner_id`` prefix, not
+          ``transfer_state`` alone (`transfer_state` only covers the
+          in-flight window). Reminders also gain a `sync_mapping` row here
+          (mirrors `_apply_pulled_reminders`'s own bookkeeping for every
+          other server-known reminder); definitions have no equivalent
+          table.
+
+        Args:
+            table_kind: ``"reminder_task"`` or ``"automation_definition"``.
+            local_id: The local row that pushed the transfer.
+            server_item: The server's create response (must carry ``id``).
+            owner_id: The destination owner scope.
+
+        Returns:
+            ``"converted"``, ``"merged"``, or ``"vanished"`` (the local
+            row was already gone by ack time -- same orphan shape as
+            `adopt_server_definition_identity`; nothing left to convert).
+
+        Raises:
+            ValueError: unknown ``table_kind``, or ``server_item`` carries
+                no ``id``.
+        """
+        table = self._TRANSFER_STATE_TABLES.get(table_kind)
+        if table is None:
+            raise ValueError(
+                f"Unknown table_kind for convert_row_to_server_mirror: {table_kind!r}"
+            )
+        server_id = server_item.get("id")
+        if not server_id:
+            raise ValueError(
+                "server_item must carry an 'id' to convert a transferred row"
+            )
+
+        now_iso = self._to_utc_iso(datetime.now(timezone.utc))
+        with self.transaction() as conn:
+            row = conn.execute(
+                f"SELECT created_at FROM {table} WHERE id = ?", (local_id,)
+            ).fetchone()
+            if row is None:
+                return "vanished"
+
+            existing_mirror = conn.execute(
+                f"SELECT id FROM {table} WHERE owner_id = ? AND server_id = ? "
+                "AND id != ?",
+                (owner_id, server_id, local_id),
+            ).fetchone()
+
+            if existing_mirror is not None:
+                mirror_id = existing_mirror["id"]
+                conn.execute(
+                    f"UPDATE {table} SET created_at = ? WHERE id = ?",
+                    (row["created_at"], mirror_id),
+                )
+                if table_kind == "automation_definition":
+                    conn.execute(
+                        "UPDATE automation_audit_events SET definition_id = ? "
+                        "WHERE definition_id = ?",
+                        (mirror_id, local_id),
+                    )
+                conn.execute(f"DELETE FROM {table} WHERE id = ?", (local_id,))
+                return "merged"
+
+            conn.execute(
+                f"UPDATE {table} SET server_id = ?, owner_id = ?, "
+                "transfer_state = NULL, updated_at = ? WHERE id = ?",
+                (server_id, owner_id, now_iso, local_id),
+            )
+            if table_kind == "reminder_task":
+                self._set_sync_mapping_conn(
+                    conn, local_id, server_id, table_kind, owner_id
+                )
+            return "converted"
+
+    def create_local_copy_from_mirror(
+        self,
+        table_kind: str,
+        mirror_id: str,
+        *,
+        pending_mutation: dict[str, Any] | None = None,
+    ) -> Optional[str]:
+        """Create a dormant local-owner copy of a server-owned mirror row (spec §6.2.1).
+
+        Called when a `release_from_server` transfer starts on a mirror
+        row (``owner_id`` != ``"local"``, ``server_id`` set): a NEW row is
+        created with ``owner_id="local"``, a fresh local id, ``server_id=
+        None``, and ``transfer_state="from_server_pending"`` -- a
+        `DORMANT_TRANSFER_STATES` member, so the copy sits out of every
+        armable-row query (Task 1) until the release replay's ack clears
+        it (`SyncEngine._push_definition_release`/`_push_reminder_
+        release`, Task 5). The mirror row itself is left completely
+        untouched -- it keeps executing server-side until the release
+        actually lands.
+
+        A definition's ``schedule`` is stored in SERVER vocabulary on the
+        mirror (pulled verbatim by `upsert_automation_definitions_from_
+        server`, never translated on the way in) and is translated to
+        CLIENT vocabulary here via `to_local_schedule` before ``next_run_
+        at`` is computed -- Task 3's documented translation direction,
+        and this is that function's first real caller. A reminder's
+        schedule fields (`schedule_kind`/`run_at`/`cron`/`timezone`) use
+        the SAME vocabulary on both sides (no rename table exists for
+        them), so they are copied through unchanged.
+
+        ``next_run_at`` is computed FRESH from the (translated) schedule
+        at "now", the same way a brand-new local row's is
+        (`SchedulingService._definition_db_fields_from_preview`'s
+        `compute_next_run_at` call / `_compute_next_run_at`'s one_time-
+        passthrough-or-next-cron-occurrence split) -- not copied from the
+        mirror's own possibly-stale value, since the mirror may not have
+        pulled the server's latest progress yet.
+
+        ONE transaction: the mirror read and the copy's INSERT are atomic,
+        so a concurrent mirror delete/pull-update can never leave the
+        copy built from half-updated data. ``pending_mutation`` joins the
+        release mutation to that same transaction (Qodo review, fix wave
+        2): recording it separately meant a crash -- or a second `begin`
+        arriving between the two -- left a dormant copy that no mutation
+        named and no armable query could ever see. Both the
+        already-queued re-check and the mutation INSERT therefore happen
+        HERE, not in the caller: the caller's own pre-check is a cheap
+        early refusal, this one is the authoritative one.
+
+        Args:
+            table_kind: ``"reminder_task"`` or ``"automation_definition"``.
+            mirror_id: The server-owned mirror row's local id.
+            pending_mutation: Optional ``{"local_id", "primitive",
+                "owner_id", "payload"}`` for the ``release_from_server``
+                mutation. ``local_id`` is the MIRROR's id (Task 5's
+                keying convention), and ``payload["local_copy_id"]`` is
+                filled in here with the id this call generates -- the
+                caller cannot know it ahead of time, the same reason
+                ``create_automation_definition`` keys its own mutation by
+                the id it returns. When given, an already-queued
+                ``release_from_server`` mutation for ``mirror_id``
+                refuses the whole call.
+
+        Returns:
+            The new copy's local id, or ``None`` when a release was
+            already queued for ``mirror_id`` (no copy created, the
+            existing mutation untouched). ``None`` is only ever returned
+            when ``pending_mutation`` is given.
+
+        Raises:
+            ValueError: unknown ``table_kind``, or no row exists at
+                ``mirror_id``.
+        """
+        if table_kind not in self._TRANSFER_STATE_TABLES:
+            raise ValueError(
+                f"Unknown table_kind for create_local_copy_from_mirror: {table_kind!r}"
+            )
+
+        now = datetime.now(timezone.utc)
+        with self.transaction() as conn:
+            if pending_mutation is not None:
+                queued = self._row_to_dict(
+                    conn.execute(
+                        "SELECT payload FROM pending_mutations "
+                        "WHERE local_id = ? AND primitive = ?",
+                        (mirror_id, table_kind),
+                    ).fetchone(),
+                    json_fields={"payload"},
+                )
+                if queued is not None and (queued.get("payload") or {}).get(
+                    "action"
+                ) == "release_from_server":
+                    return None
+
+            if table_kind == "reminder_task":
+                mirror = self._row_to_dict(
+                    conn.execute(
+                        "SELECT * FROM reminder_tasks WHERE id = ?", (mirror_id,)
+                    ).fetchone()
+                )
+                if mirror is None:
+                    raise ValueError(f"No reminder_task mirror row at id {mirror_id!r}")
+
+                schedule_kind = mirror.get("schedule_kind") or "one_time"
+                if schedule_kind == "one_time":
+                    next_run_at = self._parse_utc_iso(mirror.get("run_at"))
+                elif schedule_kind == "recurring" and mirror.get("cron"):
+                    try:
+                        tz: tzinfo = ZoneInfo(mirror.get("timezone") or "UTC")
+                    except Exception:
+                        tz = timezone.utc
+                    next_run_at = (
+                        croniter(mirror["cron"], now.astimezone(tz))
+                        .get_next(datetime)
+                        .astimezone(timezone.utc)
+                    )
+                else:
+                    next_run_at = None
+
+                copy_id = self._create_reminder_task_conn(
+                    conn,
+                    "local",
+                    mirror["title"],
+                    body=mirror.get("body"),
+                    schedule_kind=schedule_kind,
+                    run_at=mirror.get("run_at"),
+                    cron=mirror.get("cron"),
+                    timezone=mirror.get("timezone"),
+                    timeout_seconds=mirror.get("timeout_seconds"),
+                    # A DISABLED server reminder must not arm the moment
+                    # its release acks (final review M11): the copy
+                    # carries the mirror's own `enabled` flag, the same
+                    # way the definitions leg carries `lifecycle` below.
+                    enabled=mirror.get("enabled", 1),
+                    transfer_state="from_server_pending",
+                    next_run_at=next_run_at,
+                )
+                return self._record_release_mutation_conn(
+                    conn, copy_id, pending_mutation, now
+                )
+
+            mirror = self._row_to_dict(
+                conn.execute(
+                    "SELECT * FROM automation_definitions WHERE id = ?", (mirror_id,)
+                ).fetchone(),
+                json_fields=self._AUTOMATION_JSON_FIELDS,
+            )
+            if mirror is None:
+                raise ValueError(
+                    f"No automation_definition mirror row at id {mirror_id!r}"
+                )
+
+            from tldw_chatbook.Scheduling.schedule_compute import compute_next_run_at
+            from tldw_chatbook.Scheduling.schedule_vocabulary import to_local_schedule
+
+            local_schedule = to_local_schedule(mirror.get("schedule") or {})
+            definition_id = str(uuid.uuid4())
+            fields: dict[str, Any] = {
+                "id": definition_id,
+                "owner_id": "local",
+                "family": mirror["family"],
+                "name": mirror["name"],
+                "description": mirror.get("description"),
+                "lifecycle": mirror.get("lifecycle") or "configured",
+                "health": "execution_unavailable",
+                "schedule": local_schedule,
+                "input": mirror.get("input") or {},
+                "config": mirror.get("config") or {},
+                "visibility_policy": mirror.get("visibility_policy") or {},
+                "notification_policy": mirror.get("notification_policy") or {},
+                "approval_policy": mirror.get("approval_policy") or {},
+                "finding_policy": mirror.get("finding_policy") or {},
+                "retention_policy": mirror.get("retention_policy") or {},
+                "version": 1,
+                "transfer_state": "from_server_pending",
+                "next_run_at": compute_next_run_at(local_schedule, now=now),
+                "created_at": now,
+                "updated_at": now,
+            }
+            serialized = self._serialize_definition_fields(fields)
+            self._validate_sql_identifiers(list(serialized.keys()))
+            columns = ", ".join(serialized.keys())
+            placeholders = ", ".join(["?"] * len(serialized))
+            conn.execute(
+                f"INSERT INTO automation_definitions ({columns}) VALUES ({placeholders})",
+                list(serialized.values()),
+            )
+            return self._record_release_mutation_conn(
+                conn, definition_id, pending_mutation, now
+            )
+
+    def _record_release_mutation_conn(
+        self,
+        conn: sqlite3.Connection,
+        copy_id: str,
+        pending_mutation: dict[str, Any] | None,
+        now: datetime,
+    ) -> str:
+        """Record `create_local_copy_from_mirror`'s release mutation, if any.
+
+        Naming ``copy_id`` in the payload is the whole point: the
+        mutation is keyed by the MIRROR's id, so the dormant copy is
+        reachable only through ``payload["local_copy_id"]``, and that id
+        does not exist until the INSERT above ran.
+        """
+        if pending_mutation is not None:
+            payload = dict(pending_mutation["payload"])
+            payload["local_copy_id"] = copy_id
+            self._insert_pending_mutation_conn(
+                conn,
+                local_id=pending_mutation["local_id"],
+                primitive=pending_mutation["primitive"],
+                owner_id=pending_mutation["owner_id"],
+                payload=payload,
+                now_iso=self._to_utc_iso(now),
+            )
+        return copy_id
+
+    # ------------------------------------------------------------------
     # Automation definitions
     # ------------------------------------------------------------------
 
     def create_automation_definition(
-        self, owner_id: str, family: str, name: str, **kwargs: Any
+        self,
+        owner_id: str,
+        family: str,
+        name: str,
+        *,
+        pending_mutation: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> str:
         """Create an automation definition and return its generated local UUID.
 
         Defaults ``lifecycle`` to ``configured`` and ``health`` to
         ``execution_unavailable`` when not provided. JSON fields are serialized
         and datetime fields are converted to UTC ISO-8601 strings.
+
+        When ``pending_mutation`` is given (``{"primitive", "owner_id",
+        "payload"}``), an ``automation_definition`` mutation is recorded in
+        ``pending_mutations`` in the SAME transaction as the INSERT --
+        mirrors ``update_result_review``'s ``pending_mutation`` precedent,
+        so a crash between the two writes can never leave a local row
+        without the outbox row that pushes it. Unlike that precedent,
+        the dict carries no ``local_id``: this call generates the
+        definition's id itself, so the mutation is always keyed by the id
+        this call returns, not one the caller could have supplied ahead
+        of time.
         """
         self._validate_kwargs(
             kwargs, self._AUTOMATION_DEFINITION_COLUMNS, "automation definition"
@@ -1026,6 +1774,7 @@ class ScheduledTasksDB(BaseDB):
 
         definition_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
+        now_iso = self._to_utc_iso(now)
 
         fields: dict[str, Any] = {
             "id": definition_id,
@@ -1035,8 +1784,8 @@ class ScheduledTasksDB(BaseDB):
             "lifecycle": "configured",
             "health": "execution_unavailable",
             "version": 1,
-            "created_at": self._to_utc_iso(now),
-            "updated_at": self._to_utc_iso(now),
+            "created_at": now_iso,
+            "updated_at": now_iso,
         }
 
         for key, value in kwargs.items():
@@ -1058,6 +1807,15 @@ class ScheduledTasksDB(BaseDB):
                 f"INSERT INTO automation_definitions ({columns}) VALUES ({placeholders})",
                 list(fields.values()),
             )
+            if pending_mutation is not None:
+                self._insert_pending_mutation_conn(
+                    conn,
+                    local_id=definition_id,
+                    primitive=pending_mutation["primitive"],
+                    owner_id=pending_mutation["owner_id"],
+                    payload=pending_mutation["payload"],
+                    now_iso=now_iso,
+                )
 
         logger.debug(
             f"Created automation definition {definition_id} for owner {owner_id}"
@@ -1074,13 +1832,45 @@ class ScheduledTasksDB(BaseDB):
                 cursor.fetchone(), json_fields=self._AUTOMATION_JSON_FIELDS
             )
 
+    def get_automation_definition_by_server_id(
+        self, owner_id: str, server_id: str
+    ) -> Optional[dict[str, Any]]:
+        """Fetch an automation definition by owner and server-side identifier.
+
+        Mirrors ``get_reminder_task_by_server_id``. Used by the authoring
+        facade (Task 4) to recover the local row an online create just
+        mirrored via ``upsert_automation_definitions_from_server`` -- that
+        upsert reports only insert/update counts, not the generated id.
+        """
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                "SELECT * FROM automation_definitions WHERE owner_id = ? AND server_id = ?",
+                (owner_id, server_id),
+            )
+            return self._row_to_dict(
+                cursor.fetchone(), json_fields=self._AUTOMATION_JSON_FIELDS
+            )
+
     def list_automation_definitions(
         self,
         owner_id: Optional[str] = None,
         lifecycle: Optional[str] = None,
         family: Optional[str] = None,
     ) -> list[dict[str, Any]]:
-        """List automation definitions with optional filters."""
+        """List automation definitions with optional filters.
+
+        Deliberately ordered by the RAW ``created_at`` string, unlike
+        `list_automation_results` (task 6, D4 sweep). Every write path
+        into this table -- both server-mirror upserts included -- routes
+        through `_serialize_definition_fields` -> `_to_utc_iso`, so every
+        stored value is a normalized ``+00:00`` microsecond timestamp:
+        text order IS instant order here, at full precision. Wrapping it
+        the way the results query is wrapped would be a net LOSS, because
+        SQLite's datetime functions truncate below the millisecond (and
+        `datetime()` below the second), collapsing rows this ordering can
+        currently separate. The guard for mixed formats lives at the
+        write boundary for this table, not at the read.
+        """
         conditions: list[str] = []
         params: list[Any] = []
 
@@ -1098,7 +1888,8 @@ class ScheduledTasksDB(BaseDB):
 
         with closing(self._get_connection()) as conn:
             cursor = conn.execute(
-                f"SELECT * FROM automation_definitions {where_clause} ORDER BY created_at",
+                f"SELECT * FROM automation_definitions {where_clause} "
+                "ORDER BY created_at",
                 params,
             )
             return self._rows_to_dicts(
@@ -1112,13 +1903,15 @@ class ScheduledTasksDB(BaseDB):
 
         A row arms only when all four hold: ``family='recurring_question'``
         (v1 -- the only executor registered), ``lifecycle='configured'``,
-        a real ``next_run_at``, and no transfer in flight
-        (``transfer_state IS NULL`` -- a definition mid-handoff to the
-        server is not this side's to run, spec §6). ``owner_id`` defaults
-        to ``"local"``: this is the accessor half of the defense-in-depth
-        pairing with `PriorityQueue`'s own `is_server_scoped_owner` guard
-        (slice 1) -- neither alone is trusted to keep a server-scoped
-        definition from arming locally.
+        a real ``next_run_at``, and ``transfer_state`` not in
+        `DORMANT_TRANSFER_STATES` -- a definition that has actually been
+        sent to the server (or is a dormant server-release copy) is not
+        this side's to run; a merely-queued or failed transfer keeps
+        arming (spec §6.1 ruling 2). ``owner_id`` defaults to ``"local"``:
+        this is the accessor half of the defense-in-depth pairing with
+        `PriorityQueue`'s own `is_server_scoped_owner` guard (slice 1) --
+        neither alone is trusted to keep a server-scoped definition from
+        arming locally.
 
         The result is bounded to `_ARMABLE_DEFINITIONS_CAP` rows, ordered by
         `next_run_at` ascending, so the soonest-due definitions are kept and
@@ -1133,19 +1926,21 @@ class ScheduledTasksDB(BaseDB):
             Armable definition rows (as dicts), ordered by ``next_run_at``
             ascending, capped at `_ARMABLE_DEFINITIONS_CAP` rows.
         """
+        dormant_placeholders = ", ".join("?" for _ in DORMANT_TRANSFER_STATES)
         with closing(self._get_connection()) as conn:
             cursor = conn.execute(
-                """
+                f"""
                 SELECT * FROM automation_definitions
                 WHERE family = 'recurring_question'
                   AND lifecycle = 'configured'
                   AND next_run_at IS NOT NULL
-                  AND transfer_state IS NULL
+                  AND (transfer_state IS NULL
+                       OR transfer_state NOT IN ({dormant_placeholders}))
                   AND owner_id = ?
                 ORDER BY next_run_at
                 LIMIT ?
                 """,
-                (owner_id, self._ARMABLE_DEFINITIONS_CAP),
+                (*DORMANT_TRANSFER_STATES, owner_id, self._ARMABLE_DEFINITIONS_CAP),
             )
             rows = cursor.fetchall()
             if len(rows) == self._ARMABLE_DEFINITIONS_CAP:
@@ -1158,7 +1953,12 @@ class ScheduledTasksDB(BaseDB):
             return self._rows_to_dicts(rows, json_fields=self._AUTOMATION_JSON_FIELDS)
 
     def update_automation_definition(
-        self, definition_id: str, *, bump_version: bool = True, **kwargs: Any
+        self,
+        definition_id: str,
+        *,
+        bump_version: bool = True,
+        pending_mutation: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> bool:
         """Update automation-definition fields. Returns True if a row changed.
 
@@ -1167,6 +1967,14 @@ class ScheduledTasksDB(BaseDB):
         ``bump_version=False`` for a non-edit update (e.g. the scheduler's
         `next_run_at` advance) so version churn doesn't pollute conflict
         detection -- PR-2 final-review parking note.
+
+        When ``pending_mutation`` is given (``{"primitive", "owner_id",
+        "payload"}``), an ``automation_definition`` mutation is recorded in
+        ``pending_mutations`` -- keyed by ``definition_id`` -- in the SAME
+        transaction as the UPDATE, same atomicity precedent as
+        ``create_automation_definition``'s. Never recorded when the row
+        didn't change (unknown ``definition_id``): there is nothing to
+        push.
         """
         if not kwargs:
             return False
@@ -1199,13 +2007,89 @@ class ScheduledTasksDB(BaseDB):
         if bump_version:
             updates.append("version = version + 1")
         updates.append("updated_at = ?")
-        params.append(self._to_utc_iso(datetime.now(timezone.utc)))
+        now_iso = self._to_utc_iso(datetime.now(timezone.utc))
+        params.append(now_iso)
         params.append(definition_id)
 
         with self.transaction() as conn:
             cursor = conn.execute(
                 f"UPDATE automation_definitions SET {', '.join(updates)} WHERE id = ?",
                 params,
+            )
+            changed = cursor.rowcount > 0
+            if changed and pending_mutation is not None:
+                self._insert_pending_mutation_conn(
+                    conn,
+                    local_id=definition_id,
+                    primitive=pending_mutation["primitive"],
+                    owner_id=pending_mutation["owner_id"],
+                    payload=pending_mutation["payload"],
+                    now_iso=now_iso,
+                )
+            return changed
+
+    def set_definition_resolution(
+        self,
+        definition_id: str,
+        *,
+        state: str,
+        result_id: str | None = None,
+        resolved_by: str | None = None,
+    ) -> bool:
+        """Write a definition's four resolution columns in one transaction.
+
+        Schedules-handoff PR-6 Task 2: the first read/write path for the
+        ``resolution_state``/``resolved_at``/``resolved_by``/``resolved_
+        result_id`` columns added by the v3->v4 migration -- until this
+        method existed nothing in the codebase touched them.
+
+        ``state`` is ``"open"`` or ``"solved"`` (the server's own
+        ``ScheduledTaskDefinitionResolutionState`` literal -- validated by
+        the caller, not here, mirroring ``update_result_review``'s split
+        of validation into the facade and writes into the DB layer).
+        Reopening (``state="open"``) always clears ``resolved_at``/
+        ``resolved_by``/``resolved_result_id`` back to ``None``
+        regardless of what the caller passed for ``result_id``/
+        ``resolved_by`` -- the server's own ``_reopen_definition``
+        (tldw_Server_API/app/services/scheduled_task_automation_service.py,
+        origin/dev) does the same unconditional clear on its side, so a
+        local reopen and a server-mirrored one leave the row in the same
+        shape. Solving stamps ``resolved_at`` to now (UTC).
+
+        Does not bump ``version`` or notify the scheduler queue: this is
+        a side-channel resolution marker, not a content edit, and nothing
+        in ``list_armable_automation_definitions`` reads these columns.
+
+        Args:
+            definition_id: The definition's local id.
+            state: ``"open"`` or ``"solved"``.
+            result_id: The triggering result's id, recorded only when
+                ``state="solved"``.
+            resolved_by: The actor identity, recorded only when
+                ``state="solved"``.
+
+        Returns:
+            ``True`` if a row was found and updated, ``False`` for an
+            unknown ``definition_id`` (no write).
+        """
+        solved = state == "solved"
+        now_iso = self._to_utc_iso(datetime.now(timezone.utc))
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE automation_definitions
+                SET resolution_state = ?, resolved_at = ?, resolved_by = ?,
+                    resolved_result_id = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    state,
+                    now_iso if solved else None,
+                    resolved_by if solved else None,
+                    result_id if solved else None,
+                    now_iso,
+                    definition_id,
+                ),
             )
             return cursor.rowcount > 0
 
@@ -1410,6 +2294,47 @@ class ScheduledTasksDB(BaseDB):
                 cursor.fetchall(), json_fields=self._AUTOMATION_RUN_JSON_FIELDS
             )
 
+    def count_automation_runs(
+        self, definition_id: str, owner_id: Optional[str] = None
+    ) -> int:
+        """Count automation runs for one definition.
+
+        ``automation_runs`` is a local-only table (never synced from the
+        server), so unlike ``count_automation_results`` there is no
+        cross-id-space ambiguity here -- ``definition_id`` is always the
+        LOCAL definition id.
+
+        ``owner_id`` scopes the count the way ``list_automation_runs``
+        already scopes its read (schedules-redesign PR-1 final review
+        F11): the detail pane shows both in one group, and
+        ``convert_row_to_server_mirror``'s "converted" path rewrites a
+        row's ``owner_id`` while keeping its local id -- so an unscoped
+        count beside a scoped last-run could contradict itself on screen
+        ("Run count: 3" next to "Last run: Never run"). The parameter is
+        optional because the existing callers count across owners.
+
+        Args:
+            definition_id: The definition's local id.
+            owner_id: Optional owner scope; ``None`` counts every owner's
+                runs for that definition.
+
+        Returns:
+            The number of ``automation_runs`` rows for that definition.
+        """
+        conditions = ["definition_id = ?"]
+        params: list[Any] = [definition_id]
+        if owner_id is not None:
+            conditions.append("owner_id = ?")
+            params.append(owner_id)
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM automation_runs "
+                f"WHERE {' AND '.join(conditions)}",
+                params,
+            )
+            row = cursor.fetchone()
+            return int(row[0]) if row else 0
+
     def reconcile_stale_automation_runs(self, older_than_seconds: float) -> int:
         """Mark queued/running runs older than the cutoff as interrupted.
 
@@ -1498,19 +2423,68 @@ class ScheduledTasksDB(BaseDB):
 
     def list_automation_results(
         self,
-        owner_id: str,
+        owner_id: str | None,
         review_state: str | None = None,
         definition_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """List automation results for an owner, newest first.
+        """List automation results, newest first.
 
-        Optionally filtered by ``review_state`` and/or ``definition_id``;
-        paginated via ``limit``/``offset``.
+        ``owner_id=None`` lists across every owner (e.g. a single-user
+        local+server inbox); otherwise scoped to that one owner. Optionally
+        filtered by ``review_state`` and/or ``definition_id``; paginated
+        via ``limit``/``offset``.
+
+        Ordered by ``strftime('%Y-%m-%dT%H:%M:%f', created_at)`` rather
+        than a raw string comparison: server-mirrored rows copy
+        ``created_at`` verbatim from the server payload (see
+        ``upsert_automation_results_from_server``), so a mix of formats
+        between locally-created and mirrored rows would otherwise sort by
+        text instead of by instant.
+
+        ``%f`` (millisecond precision), NOT the plain ``datetime()`` this
+        started as: SQLite's ``datetime()`` truncates to whole seconds,
+        and whole seconds is exactly the resolution at which the live
+        server's ``Z``-suffixed timestamps and our own ``+00:00`` ones
+        can disagree (task 6, D4). Both denote UTC, so the suffix only
+        decides the comparison when everything before it is equal -- i.e.
+        WITHIN one second -- which is precisely what ``datetime()``
+        throws away, leaving those rows tied and ordered arbitrarily by
+        the UUID tiebreak. A sync pull mirroring a page of results all
+        stamped in the same second is the normal case, not a corner one.
+        ``'…:06Z'`` (0x5A) vs ``'…:06.5+00:00'`` (0x2E) is the concrete
+        inversion: raw text ranks the earlier row first.
+
+        ``%f`` is itself only MILLISECOND precision, while every locally
+        written row carries MICROSECONDS (``_to_utc_iso`` ->
+        ``datetime.isoformat()``). Rows stamped inside the same
+        millisecond therefore tie on the strftime key and used to fall
+        straight through to the UUID ``id`` -- i.e. arbitrary order for a
+        burst of results written in the same tick. Raw ``created_at`` is
+        the intermediate tiebreak: inside one millisecond the extra
+        digits are what distinguishes the rows, and the write boundary
+        has already normalised the offset, so raw text and true instant
+        agree at that resolution. ``id`` stays last, purely as a
+        deterministic final tiebreak.
+
+        Args:
+            owner_id: Owner to scope to, or ``None`` for every owner.
+            review_state: Optional ``review_state`` equality filter.
+            definition_id: Optional ``definition_id`` equality filter.
+            limit: Maximum number of rows to return.
+            offset: Rows to skip before collecting ``limit`` rows.
+
+        Returns:
+            Matching rows as dicts (JSON fields already decoded), newest
+            first.
         """
-        conditions = ["owner_id = ?"]
-        params: list[Any] = [owner_id]
+        conditions: list[str] = []
+        params: list[Any] = []
+
+        if owner_id is not None:
+            conditions.append("owner_id = ?")
+            params.append(owner_id)
 
         if review_state is not None:
             conditions.append("review_state = ?")
@@ -1520,29 +2494,90 @@ class ScheduledTasksDB(BaseDB):
             conditions.append("definition_id = ?")
             params.append(definition_id)
 
-        where_clause = f"WHERE {' AND '.join(conditions)}"
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         params.extend([limit, offset])
 
         with closing(self._get_connection()) as conn:
             cursor = conn.execute(
                 f"SELECT * FROM automation_results {where_clause} "
-                "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                "ORDER BY strftime('%Y-%m-%dT%H:%M:%f', created_at) DESC, "
+                "created_at DESC, id DESC LIMIT ? OFFSET ?",
                 params,
             )
             return self._rows_to_dicts(
                 cursor.fetchall(), json_fields=self._AUTOMATION_RESULT_JSON_FIELDS
             )
 
-    def count_unread_results(self, owner_id: str) -> int:
-        """Count unread results for an owner (spec §4's inbox badge)."""
+    def count_automation_results(
+        self,
+        owner_id: str | None,
+        review_state: str | None = None,
+        definition_id: str | None = None,
+    ) -> int:
+        """Count automation results matching ``list_automation_results``.
+
+        The unfiltered form is the honest denominator for the inbox's
+        capped listing ("showing newest 200 of N") -- the listing takes a
+        newest-window ``limit``, so it cannot report the total itself.
+
+        Args:
+            owner_id: Owner to scope to, or ``None`` for every owner.
+            review_state: Optional ``review_state`` equality filter --
+                ``None`` counts every state.
+            definition_id: Optional ``definition_id`` equality filter,
+                matched exactly as given -- NOT translated across id
+                spaces. A result's ``definition_id`` is whatever id the
+                side that produced it used: a locally-created result
+                carries the LOCAL definition id, while a result mirrored
+                from the server carries the SERVER's id (see
+                ``UI/Screens/scheduling/results_tab.py``'s
+                ``index_definitions_by_id`` for how a caller resolves
+                which space a given definition row lives in). Pass the
+                id in whichever space applies to the rows you expect to
+                count; ``None`` counts every space.
+
+        Returns:
+            The number of matching ``automation_results`` rows.
+        """
+        conditions: list[str] = []
+        params: list[Any] = []
+        if review_state is not None:
+            conditions.append("review_state = ?")
+            params.append(review_state)
+        if owner_id is not None:
+            conditions.append("owner_id = ?")
+            params.append(owner_id)
+        if definition_id is not None:
+            conditions.append("definition_id = ?")
+            params.append(definition_id)
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         with closing(self._get_connection()) as conn:
             cursor = conn.execute(
-                "SELECT COUNT(*) FROM automation_results "
-                "WHERE owner_id = ? AND review_state = 'unread'",
-                (owner_id,),
+                f"SELECT COUNT(*) FROM automation_results {where_clause}",
+                params,
             )
             row = cursor.fetchone()
             return int(row[0]) if row else 0
+
+    def count_unread_results(
+        self, owner_id: str | None, definition_id: str | None = None
+    ) -> int:
+        """Count unread results (spec §4's inbox badge).
+
+        ``owner_id=None`` counts across every owner, matching
+        ``list_automation_results``'s all-owners mode.
+
+        Args:
+            owner_id: Owner to scope to, or ``None`` for every owner.
+            definition_id: Optional ``definition_id`` equality filter --
+                see ``count_automation_results`` for the id-space caveat.
+
+        Returns:
+            The number of ``review_state='unread'`` rows.
+        """
+        return self.count_automation_results(
+            owner_id, review_state="unread", definition_id=definition_id
+        )
 
     def get_automation_result(self, result_id: str) -> Optional[dict[str, Any]]:
         """Fetch an automation result by local id.
@@ -1719,7 +2754,36 @@ class ScheduledTasksDB(BaseDB):
         return {"inserted": inserted, "updated": updated}
 
     def _serialize_definition_fields(self, fields: dict[str, Any]) -> dict[str, Any]:
-        """Apply the same JSON/datetime conversion `update_automation_definition` uses."""
+        """Apply the same JSON/datetime conversion `update_automation_definition` uses.
+
+        Also strips a `config.scope.resolved_sources` key when present
+        (task 6 fix-round finding): both server-mirror write paths --
+        `adopt_server_definition_identity` and
+        `upsert_automation_definitions_from_server` -- route every
+        definition write through here, so this is the single choke point
+        that covers both. `normalize_recurring_question_scope`'s
+        `"all_searchable_library"` branch (`recurring_question_scope.py`)
+        computes `resolved_sources` fresh on every call as an OUTPUT
+        projection, never an accepted input field -- persisting a
+        server-echoed copy of it would make any later re-normalization of
+        this row's scope (a scheduled dispatch, the sources-readable
+        health check) report a spurious "unsupported field" error and
+        degrade every run. Same bug, same fix shape as the local-authoring
+        path's (`SchedulingService._definition_db_fields_from_preview`),
+        which is a separate write path (`create_automation_definition`/
+        `update_automation_definition` serialize inline, never through
+        this method) and still needs its own strip.
+        """
+        config = fields.get("config")
+        if isinstance(config, dict):
+            scope = config.get("scope")
+            if isinstance(scope, dict) and "resolved_sources" in scope:
+                fields = dict(fields)
+                fields["config"] = {
+                    **config,
+                    "scope": {k: v for k, v in scope.items() if k != "resolved_sources"},
+                }
+
         serialized: dict[str, Any] = {}
         for key, value in fields.items():
             if key in self._AUTOMATION_JSON_FIELDS:
@@ -1729,6 +2793,54 @@ class ScheduledTasksDB(BaseDB):
             else:
                 serialized[key] = value
         return serialized
+
+    def adopt_server_definition_identity(
+        self, local_id: str, server_item: dict[str, Any]
+    ) -> bool:
+        """Adopt a server identity onto a local row after a create/update push.
+
+        Called by `SyncEngine`'s definition push replay (Task 3) right
+        after a `create`/`update` mutation succeeds: sets `server_id` and
+        applies every server-wins field from `server_item` (the create/
+        update response echo) in ONE transaction, same field set and
+        `transfer_state` exclusion as `upsert_automation_definitions_from_
+        server`'s existing-row branch -- but keyed by the local row
+        directly (``id = local_id``) since the caller already knows which
+        local row this mutation came from, rather than matching by
+        ``(owner_id, server_id)``.
+
+        Args:
+            local_id: The local definition row that pushed the mutation.
+            server_item: The definition row echoed back by the server's
+                create/update response.
+
+        Returns:
+            ``True`` if a local row was found and updated, ``False``
+            otherwise (e.g. the row was deleted locally in the meantime).
+        """
+        server_id = server_item.get("id")
+        if not server_id:
+            return False
+
+        fields: dict[str, Any] = {
+            key: server_item[key]
+            for key in self._AUTOMATION_DEFINITION_COLUMNS
+            if key in server_item and key not in {"id", "server_id", "owner_id"}
+        }
+        # §6 parked finding, same as the pull-mirror upsert: transfer_state
+        # is a local-only marker a server echo must never overwrite.
+        fields.pop("transfer_state", None)
+        fields["server_id"] = server_id
+
+        serialized = self._serialize_definition_fields(fields)
+        self._validate_sql_identifiers(list(serialized.keys()))
+        updates = ", ".join(f"{key} = ?" for key in serialized)
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                f"UPDATE automation_definitions SET {updates} WHERE id = ?",
+                [*serialized.values(), local_id],
+            )
+            return cursor.rowcount > 0
 
     def upsert_automation_results_from_server(
         self,
@@ -1781,6 +2893,16 @@ class ScheduledTasksDB(BaseDB):
         then immediately echoes different data back on pull) -- not
         something a client-side guard can detect.
 
+        Task 1 (v7 partial UNIQUE index on ``(owner_id, server_id) WHERE
+        server_id IS NOT NULL``): two overlapping pulls (e.g. a manual
+        sync and a notification-triggered sync racing) can both read this
+        row as absent and both attempt the insert. The loser's INSERT now
+        raises ``IntegrityError`` against that index instead of silently
+        creating a duplicate row -- caught below and routed into the same
+        update-or-skip path the "existing" branch takes (re-fetching the
+        row the race was lost to), not re-raised and not miscounted as a
+        ``dedupe_key`` collision.
+
         Returns:
             ``{"inserted": n, "updated": n, "skipped_dedupe": n}``.
         """
@@ -1831,53 +2953,110 @@ class ScheduledTasksDB(BaseDB):
                             list(serialized.values()),
                         )
                     except sqlite3.IntegrityError as exc:
-                        if "UNIQUE constraint failed" not in str(exc):
+                        message = str(exc)
+                        if "UNIQUE constraint failed" not in message:
                             raise
+                        if "automation_results.server_id" in message:
+                            # Double-pull race (see docstring): another
+                            # writer inserted this exact server row
+                            # between our SELECT miss and this INSERT.
+                            # Re-fetch and fall into the normal
+                            # update-or-skip path below instead of
+                            # raising or double-counting it as a
+                            # dedupe_key collision.
+                            raced_row = conn.execute(
+                                "SELECT id FROM automation_results "
+                                "WHERE owner_id = ? AND server_id = ?",
+                                (owner_id, server_id),
+                            ).fetchone()
+                            if raced_row is None:
+                                # Vanishingly narrow window: the row that
+                                # won the race was itself deleted between
+                                # our failed INSERT and this re-SELECT.
+                                # Nothing to update -- count it (reusing
+                                # skipped_dedupe, the nearest "not applied"
+                                # bucket) so the item isn't dropped
+                                # uncounted.
+                                logger.debug(
+                                    "upsert_automation_results_from_server: "
+                                    f"server_id={server_id} lost the insert "
+                                    "race and the winning row vanished "
+                                    "before re-fetch -- skipping"
+                                )
+                                skipped_dedupe += 1
+                                continue
+                            if self._apply_result_review_update(
+                                conn, owner_id, raced_row["id"], server_id, item,
+                                skip_review_server_ids,
+                            ):
+                                updated += 1
+                            continue
                         # (owner_id, dedupe_key) collided with a
                         # locally-created row -- skip, don't overwrite it.
                         skipped_dedupe += 1
                         continue
                     inserted += 1
                 else:
-                    if server_id in skip_review_server_ids:
-                        # Guard 2 (pushed-this-cycle): just replayed by
-                        # this same sync's pushback phase -- see the
-                        # design comment on this method.
-                        continue
-                    has_pending_review = conn.execute(
-                        """
-                        SELECT 1 FROM pending_mutations
-                        WHERE local_id = ? AND primitive = ? AND owner_id = ?
-                        LIMIT 1
-                        """,
-                        (existing["id"], self._RESULT_REVIEW_PRIMITIVE, owner_id),
-                    ).fetchone()
-                    if has_pending_review is not None:
-                        # Guard 1 (pending-mutation): checked here, inside
-                        # this row's own write transaction, not via a
-                        # snapshot taken before the loop started -- see
-                        # the design comment on this method.
-                        continue
-                    review_fields = {
-                        key: item[key]
-                        for key in self._AUTOMATION_RESULT_REVIEW_FIELDS
-                        if key in item
-                    }
-                    if not review_fields:
-                        continue
-                    serialized = self._serialize_result_fields(review_fields)
-                    self._validate_sql_identifiers(list(serialized.keys()))
-                    updates = ", ".join(f"{key} = ?" for key in serialized)
-                    conn.execute(
-                        f"UPDATE automation_results SET {updates} WHERE id = ?",
-                        [*serialized.values(), existing["id"]],
-                    )
-                    updated += 1
+                    if self._apply_result_review_update(
+                        conn, owner_id, existing["id"], server_id, item,
+                        skip_review_server_ids,
+                    ):
+                        updated += 1
         return {
             "inserted": inserted,
             "updated": updated,
             "skipped_dedupe": skipped_dedupe,
         }
+
+    def _apply_result_review_update(
+        self,
+        conn: sqlite3.Connection,
+        owner_id: str,
+        existing_id: str,
+        server_id: str,
+        item: dict[str, Any],
+        skip_review_server_ids: frozenset[str],
+    ) -> bool:
+        """Update ``existing_id``'s review fields from ``item``, if allowed.
+
+        Shared by ``upsert_automation_results_from_server``'s normal
+        "row already present" branch and its double-pull race recovery --
+        same two TOCTOU guards (see that method's docstring) in both
+        cases. Returns whether a write actually happened.
+        """
+        if server_id in skip_review_server_ids:
+            # Guard 2 (pushed-this-cycle): just replayed by this same
+            # sync's pushback phase -- see the design comment on the
+            # caller.
+            return False
+        has_pending_review = conn.execute(
+            """
+            SELECT 1 FROM pending_mutations
+            WHERE local_id = ? AND primitive = ? AND owner_id = ?
+            LIMIT 1
+            """,
+            (existing_id, self._RESULT_REVIEW_PRIMITIVE, owner_id),
+        ).fetchone()
+        if has_pending_review is not None:
+            # Guard 1 (pending-mutation): checked here, inside this row's
+            # own write transaction -- see the design comment on the
+            # caller.
+            return False
+        review_fields = {
+            key: item[key]
+            for key in self._AUTOMATION_RESULT_REVIEW_FIELDS
+            if key in item
+        }
+        if not review_fields:
+            return False
+        serialized = self._serialize_result_fields(review_fields)
+        self._validate_sql_identifiers(list(serialized.keys()))
+        updates = ", ".join(f"{key} = ?" for key in serialized)
+        conn.execute(
+            f"UPDATE automation_results SET {updates} WHERE id = ?",
+            [*serialized.values(), existing_id],
+        )
+        return True
 
     def _serialize_result_fields(self, fields: dict[str, Any]) -> dict[str, Any]:
         """Apply the same JSON conversion `create_automation_result` uses.
@@ -1990,6 +3169,37 @@ class ScheduledTasksDB(BaseDB):
     # Pending mutations
     # ------------------------------------------------------------------
 
+    def _insert_pending_mutation_conn(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        local_id: str,
+        primitive: str,
+        owner_id: str,
+        payload: dict[str, Any],
+        now_iso: str,
+    ) -> None:
+        """Insert one pending-mutation row on an already-open transaction.
+
+        Shared by callers that record a mutation atomically alongside
+        another write -- same ``INSERT OR REPLACE`` + auto-filled
+        ``idempotency_key`` behavior as the standalone
+        ``record_pending_mutation``, factored out of ``update_result_
+        review``'s inline precedent so ``create_automation_definition``/
+        ``update_automation_definition`` can reuse it (Task 4).
+        """
+        stored_payload = dict(payload)
+        if not stored_payload.get("idempotency_key"):
+            stored_payload["idempotency_key"] = str(uuid.uuid4())
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO pending_mutations
+            (local_id, primitive, owner_id, payload, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (local_id, primitive, owner_id, self._to_json(stored_payload), now_iso),
+        )
+
     def record_pending_mutation(
         self,
         local_id: str,
@@ -2031,17 +3241,29 @@ class ScheduledTasksDB(BaseDB):
 
     def get_pending_mutations(
         self,
-        owner_id: str,
+        owner_id: Optional[str] = None,
         primitive: Optional[str] = None,
     ) -> list[dict[str, Any]]:
-        """Return pending mutations for ``owner_id``, optionally filtered by primitive."""
-        conditions = ["owner_id = ?"]
-        params: list[Any] = [owner_id]
+        """Return pending mutations for ``owner_id``, optionally filtered by primitive.
+
+        ``owner_id=None`` returns every owner's mutations. That is what a
+        release cancel needs (final review C2): the release mutation is
+        keyed by the MIRROR's id under the MIRROR's owner, but cancel is
+        called with the dormant COPY's id, so the only way to find it is a
+        payload scan -- and scoping that scan to "today's active server"
+        silently misses it whenever the server is disconnected or has been
+        switched, which is exactly when a user cancels.
+        """
+        conditions: list[str] = []
+        params: list[Any] = []
+        if owner_id is not None:
+            conditions.append("owner_id = ?")
+            params.append(owner_id)
         if primitive is not None:
             conditions.append("primitive = ?")
             params.append(primitive)
 
-        where_clause = " AND ".join(conditions)
+        where_clause = " AND ".join(conditions) if conditions else "1 = 1"
         with closing(self._get_connection()) as conn:
             cursor = conn.execute(
                 f"""
@@ -2052,6 +3274,37 @@ class ScheduledTasksDB(BaseDB):
                 params,
             )
             return self._rows_to_dicts(cursor.fetchall(), json_fields={"payload"})
+
+    def get_pending_mutation_for_local_id(
+        self, local_id: str, primitive: str
+    ) -> Optional[dict[str, Any]]:
+        """Return the pending mutation for ``local_id``/``primitive``, if
+        any, regardless of which ``owner_id`` it is filed under.
+
+        `get_pending_mutations` above requires the caller to already know
+        `owner_id` -- fine for its own callers, which always read it off
+        the row they already have. A `to_server_failed` row's UI display
+        (schedules-handoff PR-5, Task 7 fix round finding 3) has no such
+        row-derived owner_id to key off: the mutation was recorded under
+        WHATEVER server was active at the time of the (failed) attempt,
+        which is not necessarily the CURRENTLY active server, so guessing
+        via "today's active server" silently misses the mutation after a
+        server switch. Reading the row directly sidesteps the guess
+        entirely -- its own `owner_id` column is the actual answer.
+        """
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                """
+                SELECT * FROM pending_mutations
+                WHERE local_id = ? AND primitive = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (local_id, primitive),
+            )
+            return self._row_to_dict(
+                cursor.fetchone(), json_fields={"payload"}
+            )
 
     def delete_pending_mutation(self, mutation_id: int) -> None:
         """Delete a pending mutation by its row id."""

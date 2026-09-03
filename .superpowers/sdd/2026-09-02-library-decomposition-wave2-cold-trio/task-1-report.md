@@ -118,11 +118,11 @@ $ backlog task create "settings_screen.py needs a size-ratchet budget row" \
     -d "Spec 2026-09-01 non-goal follow-up: the ratchet that let library_screen triple also has no settings row; settings_screen.py was 15,922 lines at the 2026-08-02 doctrine baseline." \
     --ac "Budget row added at measured values" \
     --ac "Mutation-checked (dummy method -> fails)"
-Created task TASK-27020
-File: backlog/tasks/task-27020 - settings_screen.py-needs-a-size-ratchet-budget-row.md
+Created task TASK-31202
+File: backlog/tasks/task-31202 - settings_screen.py-needs-a-size-ratchet-budget-row.md
 ```
 
-`backlog task 27020 --plain` confirms the two `--ac` flags rendered as two
+`backlog task 31202 --plain` confirms the two `--ac` flags rendered as two
 independently-checkable criteria (`#1`, `#2`), not comma-collapsed into one
 run-on item — the known CLI trap from `lessons-backlog-hygiene.md`.
 
@@ -135,7 +135,7 @@ run-on item — the known CLI trap from `lessons-backlog-hygiene.md`.
 - `backlog/tasks/task-27019 - Recompose-census-needs-an-anti-slack-guard-like-the-size-ratchet.md` —
   status → Done, both ACs checked, Implementation Plan and Implementation
   Notes added.
-- `backlog/tasks/task-27020 - settings_screen.py-needs-a-size-ratchet-budget-row.md` —
+- `backlog/tasks/task-31202 - settings_screen.py-needs-a-size-ratchet-budget-row.md` —
   new file, filed via the CLI per the brief's exact command.
 
 ## Verification

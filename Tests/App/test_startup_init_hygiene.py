@@ -16,10 +16,12 @@ the property that would go quietly wrong again:
 from __future__ import annotations
 
 import ast
+from contextlib import contextmanager
 import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
@@ -184,7 +186,9 @@ def test_the_skills_stack_defers_only_the_trust_service(
     local = app.local_skills_service
 
     assert scope is not None and local is not None
-    assert keyring_spy == [], f"building the skills facade hit the keyring: {keyring_spy}"
+    assert keyring_spy == [], (
+        f"building the skills facade hit the keyring: {keyring_spy}"
+    )
 
     assert local.trust_service is not None
     assert "get_keyring" in keyring_spy, (
@@ -276,6 +280,288 @@ def test_apply_seeds_the_registry_and_attaches_the_store() -> None:
     assert app.library_ingest_jobs.merged == (["j1"], 7)
     assert app.library_ingest_jobs.attached is store
     assert app._library_ingest_jobs_store is store
+
+
+# --------------------------------------------------------------------------
+# Portable Tool Pack service stays post-ready and all-or-nothing
+# --------------------------------------------------------------------------
+
+
+def _guarded_tool_pack_registry():
+    from tldw_chatbook.Workspaces.registry_service import (
+        DeferredWorkspaceToolProfileGuard,
+    )
+
+    bootstrap = DeferredWorkspaceToolProfileGuard()
+    registry = SimpleNamespace(
+        tool_profile_guard=bootstrap,
+        attachments=[bootstrap],
+    )
+    registry.attach_tool_profile_guard = lambda guard: registry.attachments.append(
+        guard
+    )
+    return registry, bootstrap
+
+
+def test_deferred_startup_does_not_schedule_tool_pack_composition() -> None:
+    """Tool Packs stay out of boot until the user opens Tool Profiles."""
+    fake = Mock(spec=TldwCli)
+    fake.citation_artifact_ownership_coordinator = None
+    fake.citation_legacy_migration_service = None
+
+    def close_deferred(work, *, name: str):
+        del name
+        work.close()
+
+    fake._create_deferred_startup_task = close_deferred
+
+    TldwCli._schedule_deferred_startup_work(fake)
+
+    callbacks = [call.args[1] for call in fake.set_timer.call_args_list]
+    assert fake._deferred_wire_tool_pack_service not in callbacks
+
+
+def test_tool_pack_wiring_schedules_one_post_ready_thread_worker() -> None:
+    calls: list[dict[str, Any]] = []
+    scheduled_worker = object()
+    registry, bootstrap = _guarded_tool_pack_registry()
+
+    def schedule(work, **kwargs):
+        calls.append({"work": work, **kwargs})
+        return scheduled_worker
+
+    fake = SimpleNamespace(
+        _ui_ready=False,
+        _tool_pack_wiring_started=False,
+        _tool_pack_guard_bootstrap=bootstrap,
+        workspace_registry_service=registry,
+        tool_pack_service=None,
+        tool_pack_service_unavailable_reason="not_ready",
+        _compose_tool_pack_service_off_thread=lambda: None,
+        run_worker=schedule,
+    )
+
+    assert TldwCli._deferred_wire_tool_pack_service(fake) is None
+    assert calls == []
+
+    fake._ui_ready = True
+    first = TldwCli._deferred_wire_tool_pack_service(fake)
+    second = TldwCli._deferred_wire_tool_pack_service(fake)
+
+    assert len(calls) == 1
+    assert first is scheduled_worker
+    assert second is scheduled_worker
+    assert calls[0]["thread"] is True
+    assert calls[0]["exit_on_error"] is False
+    assert fake.tool_pack_service_unavailable_reason == "starting"
+    assert bootstrap.active_guard is None
+
+
+def test_tool_pack_worker_start_failure_keeps_the_bootstrap_fail_closed() -> None:
+    attempts = 0
+
+    def fail_start(*_args, **_kwargs):
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("cancelled before start")
+
+    registry, bootstrap = _guarded_tool_pack_registry()
+    fake = SimpleNamespace(
+        _ui_ready=True,
+        _tool_pack_wiring_started=False,
+        _tool_pack_guard_bootstrap=bootstrap,
+        workspace_registry_service=registry,
+        tool_pack_service=None,
+        tool_pack_service_unavailable_reason="not_ready",
+        _compose_tool_pack_service_off_thread=lambda: None,
+        run_worker=fail_start,
+    )
+
+    TldwCli._deferred_wire_tool_pack_service(fake)
+
+    assert fake.tool_pack_service is None
+    assert fake.tool_pack_service_unavailable_reason == "composition_unavailable"
+    assert fake._tool_pack_wiring_started is False
+    assert bootstrap.active_guard is None
+
+    TldwCli._deferred_wire_tool_pack_service(fake)
+    assert attempts == 2
+
+
+def test_tool_pack_composition_failure_attaches_no_partial_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Tool_Packs.service import ToolPackService
+
+    registry, bootstrap = _guarded_tool_pack_registry()
+    fake = SimpleNamespace(
+        unified_mcp_service=SimpleNamespace(permission_store=object()),
+        local_mcp_control_service=object(),
+        workspace_registry_service=registry,
+        _tool_pack_guard_bootstrap=bootstrap,
+        tool_pack_service=None,
+        tool_pack_service_unavailable_reason="starting",
+        call_from_thread=lambda callback, *args: callback(*args),
+    )
+    fake._mark_tool_pack_service_unavailable = lambda category: (
+        TldwCli._mark_tool_pack_service_unavailable(fake, category)
+    )
+    monkeypatch.setattr(
+        ToolPackService,
+        "compose",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("/private secret")),
+    )
+
+    TldwCli._compose_tool_pack_service_off_thread(fake)
+
+    assert fake.tool_pack_service is None
+    assert fake.tool_pack_service_unavailable_reason == "composition_unavailable"
+    assert fake._tool_pack_wiring_started is False
+    assert registry.attachments == [bootstrap]
+    assert bootstrap.active_guard is None
+
+
+def test_tool_pack_prerequisite_failure_attaches_no_guard() -> None:
+    registry, bootstrap = _guarded_tool_pack_registry()
+    fake = SimpleNamespace(
+        unified_mcp_service=None,
+        local_mcp_control_service=object(),
+        workspace_registry_service=registry,
+        _tool_pack_guard_bootstrap=bootstrap,
+        tool_pack_service=None,
+        tool_pack_service_unavailable_reason="starting",
+        call_from_thread=lambda callback, *args: callback(*args),
+    )
+    fake._mark_tool_pack_service_unavailable = lambda category: (
+        TldwCli._mark_tool_pack_service_unavailable(fake, category)
+    )
+
+    TldwCli._compose_tool_pack_service_off_thread(fake)
+
+    assert fake.tool_pack_service is None
+    assert fake.tool_pack_service_unavailable_reason == "prerequisites_unavailable"
+    assert registry.attachments == [bootstrap]
+    assert bootstrap.active_guard is None
+
+
+def test_complete_tool_pack_composition_attaches_exactly_once_at_user_data_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import tldw_chatbook.app as app_module
+    from tldw_chatbook.Tool_Packs.catalog_snapshot import PermissionInventoryRegistry
+    from tldw_chatbook.Tool_Packs.service import ToolPackService
+
+    calls: list[dict[str, object]] = []
+
+    class Guard:
+        @contextmanager
+        def mutation_scope(self, **_kwargs):
+            yield
+
+    guard = Guard()
+    composed = SimpleNamespace(
+        binding_guard=guard,
+        reconcile_receipts=lambda: SimpleNamespace(unavailable_category=None),
+    )
+    registry, bootstrap = _guarded_tool_pack_registry()
+    fake = SimpleNamespace(
+        unified_mcp_service=SimpleNamespace(permission_store=object()),
+        local_mcp_control_service=object(),
+        workspace_registry_service=registry,
+        _tool_pack_guard_bootstrap=bootstrap,
+        tool_pack_service=None,
+        tool_pack_service_unavailable_reason="starting",
+        tool_pack_receipt_reconciliation_unavailable_reason="not_run",
+        call_from_thread=lambda callback, *args: callback(*args),
+    )
+    fake._mark_tool_pack_service_unavailable = lambda category: (
+        TldwCli._mark_tool_pack_service_unavailable(fake, category)
+    )
+    fake._attach_tool_pack_service = lambda service, owner, guard_bootstrap: (
+        TldwCli._attach_tool_pack_service(fake, service, owner, guard_bootstrap)
+    )
+    fake._record_tool_pack_receipt_reconciliation = lambda service, category: (
+        TldwCli._record_tool_pack_receipt_reconciliation(fake, service, category)
+    )
+    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        PermissionInventoryRegistry, "v1", lambda *_args, **_kwargs: "sealed"
+    )
+    monkeypatch.setattr(
+        ToolPackService,
+        "compose",
+        lambda **kwargs: calls.append(kwargs) or composed,
+    )
+
+    TldwCli._compose_tool_pack_service_off_thread(fake)
+    TldwCli._attach_tool_pack_service(fake, composed, registry, bootstrap)
+
+    assert calls[0]["inventory"] == "sealed"
+    assert calls[0]["receipt_root"] == tmp_path / "tool_pack_receipts"
+    assert fake.tool_pack_service is composed
+    assert fake.tool_pack_service_unavailable_reason is None
+    assert fake.tool_pack_receipt_reconciliation_unavailable_reason is None
+    assert registry.attachments == [bootstrap]
+    assert bootstrap.active_guard is guard
+
+
+def test_tool_pack_attachment_rejects_registry_replacement() -> None:
+    registry_a, bootstrap_a = _guarded_tool_pack_registry()
+    registry_b, bootstrap_b = _guarded_tool_pack_registry()
+    composed = SimpleNamespace(
+        binding_guard=SimpleNamespace(mutation_scope=lambda **_: None)
+    )
+    fake = SimpleNamespace(
+        workspace_registry_service=registry_b,
+        _tool_pack_guard_bootstrap=bootstrap_b,
+        tool_pack_service=None,
+        tool_pack_service_unavailable_reason="starting",
+    )
+    fake._mark_tool_pack_service_unavailable = lambda category: (
+        TldwCli._mark_tool_pack_service_unavailable(fake, category)
+    )
+
+    attached = TldwCli._attach_tool_pack_service(
+        fake, composed, registry_a, bootstrap_a
+    )
+
+    assert attached is False
+    assert fake.tool_pack_service is None
+    assert fake.tool_pack_service_unavailable_reason == "prerequisites_unavailable"
+    assert bootstrap_a.active_guard is None and bootstrap_b.active_guard is None
+
+
+def test_completed_attachment_never_reinvokes_a_mutating_registry_setter() -> None:
+    class Guard:
+        @contextmanager
+        def mutation_scope(self, **_kwargs):
+            yield
+
+    registry, bootstrap = _guarded_tool_pack_registry()
+    setter_calls: list[object] = []
+
+    def mutate_then_raise(value: object) -> None:
+        setter_calls.append(value)
+        registry.tool_profile_guard = value
+        raise RuntimeError("partial")
+
+    registry.attach_tool_profile_guard = mutate_then_raise
+    service = SimpleNamespace(binding_guard=Guard())
+    fake = SimpleNamespace(
+        workspace_registry_service=registry,
+        _tool_pack_guard_bootstrap=bootstrap,
+        tool_pack_service=None,
+        tool_pack_service_unavailable_reason="starting",
+        tool_pack_receipt_reconciliation_unavailable_reason="not_run",
+    )
+    fake._mark_tool_pack_service_unavailable = lambda category: (
+        TldwCli._mark_tool_pack_service_unavailable(fake, category)
+    )
+
+    assert TldwCli._attach_tool_pack_service(fake, service, registry, bootstrap) is True
+    assert setter_calls == []
+    assert registry.tool_profile_guard is bootstrap
+    assert bootstrap.active_guard is service.binding_guard
 
 
 def test_apply_closes_the_store_instead_of_attaching_it_during_shutdown() -> None:
@@ -370,7 +656,6 @@ def test_alternate_startup_metrics_failures_are_type_only() -> None:
     )
     failure_logger = FakeLogger()
     failure_namespace = {
-        "os": SimpleNamespace(environ={"METRICS_PORT": "8000"}),
         "init_metrics_server": fail_metrics,
         "init_otel_metrics": fail_metrics,
         "loguru_logger": failure_logger,
@@ -387,7 +672,6 @@ def test_alternate_startup_metrics_failures_are_type_only() -> None:
 
     success_logger = FakeLogger()
     success_namespace = {
-        "os": SimpleNamespace(environ={"METRICS_PORT": "8000"}),
         "init_metrics_server": lambda **_kwargs: True,
         "init_otel_metrics": lambda: True,
         "loguru_logger": success_logger,

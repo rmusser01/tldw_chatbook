@@ -153,6 +153,7 @@ from tldw_chatbook.Utils.instance_lock import (
     acquire_profile_instance_lock,
 )
 from tldw_chatbook.Constants import (
+    DEFAULT_SPLASH_DURATION_SECONDS,
     MODEL_CATALOG_REFRESH_WORKER_GROUP,
     ALL_TABS,
     TAB_CCP,
@@ -220,7 +221,6 @@ from tldw_chatbook.Chat.console_settings_defaults import ConsoleDefaultDurabilit
 from tldw_chatbook.Chat.server_chat_conversation_service import (
     ServerChatConversationService,
 )
-from tldw_chatbook.Terminal.session_manager import TerminalSessionManager  # noqa: E402
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import (
     DatabaseError as MediaDatabaseError,
@@ -401,6 +401,7 @@ from .config import (
     persist_cli_config_for_shutdown,
     set_encryption_password,
     get_config_load_failure,
+    get_config_schema_conflict,
 )
 from .Event_Handlers import worker_events
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
@@ -703,6 +704,7 @@ from tldw_chatbook.Web_Scraping_Interop import (  # noqa: E402
 )
 from tldw_chatbook.Workspaces import (  # noqa: E402
     ChangeReviewConsentService,
+    DeferredWorkspaceToolProfileGuard,
     LocalWorkspaceRegistryService,
 )
 # NOTE (boot budget, ADR-097): `Workspaces.agent_provisioning` is imported
@@ -779,6 +781,7 @@ if TYPE_CHECKING:
         ExternalReferenceAvailability,
     )
     from tldw_chatbook.Terminal.backend import TerminalBackend
+    from tldw_chatbook.Terminal.session_manager import TerminalSessionManager
     from tldw_chatbook.Model_Artifacts.service import ArtifactRef
     from tldw_chatbook.LLM_Provider_Catalog.model_discovery_disk_cache import (
         ModelCatalogDiskStore,
@@ -797,9 +800,10 @@ DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
 #: caller enters Collections before this timer fires.
 DEFERRED_COLLECTIONS_CAPTURE_WIRING_DELAY_SECONDS = 0.1
 #: Notes organization composition is not needed for the first interactive
-#: frame. Keep its repository, validator, and agent-lesson seed imports beyond
-#: the ADR-097 UI-ready module census.
-DEFERRED_NOTES_ORGANIZATION_WIRING_DELAY_SECONDS = 0.1
+#: frame. Give it the same explicit post-startup window as other idle
+#: maintenance: a 0.1 s timer could expire while synchronous post-ready setup
+#: was still running and race the ADR-097 UI-ready module census.
+DEFERRED_NOTES_ORGANIZATION_WIRING_DELAY_SECONDS = 5.0
 #: Workspace agent provisioning (task-8) deferral: after `_ui_ready` so
 #: `Workspaces.agent_provisioning` stays out of the UI-ready census
 #: (ADR-097); same 0.1-0.2 s non-essential-startup window as audio.
@@ -6886,6 +6890,125 @@ def _build_notes_scope_service(
     )
 
 
+def _active_notes_sync_server_profile_id(app: Any) -> str:
+    """Return the authoritative server profile eligible for Notes Sync.
+
+    Args:
+        app: Application composition owner.
+
+    Returns:
+        Active server profile identity, or an empty string for local runtime.
+    """
+
+    runtime_state = getattr(getattr(app, "runtime_policy", None), "state", None)
+    server_is_authoritative = runtime_state is None or (
+        getattr(runtime_state, "active_source", None) == "server"
+    )
+    if not server_is_authoritative:
+        return ""
+    return str(
+        getattr(app, "active_server_id", None)
+        or getattr(runtime_state, "active_server_id", None)
+        or ""
+    ).strip()
+
+
+class _DeferredNotesSyncFacade:
+    """Load deferred Notes organization wiring on first real collaborator use.
+
+    Args:
+        app: Application composition owner.
+        target_path: Attribute path to the real collaborator after wiring.
+        lock: Shared re-entrant lock for the facade group.
+    """
+
+    def __init__(
+        self,
+        app: Any,
+        target_path: tuple[str, ...],
+        lock: Any,
+    ) -> None:
+        self._app = app
+        self._target_path = target_path
+        self._lock = lock
+
+    def _target(self) -> Any:
+        with self._lock:
+            _wire_notes_sync_services(self._app)
+            target = self._app
+            for attribute in self._target_path:
+                target = getattr(target, attribute, None)
+            if target is None or target is self:
+                raise RuntimeError("notes_organization_sync_unavailable")
+            return target
+
+    def __getattr__(self, attribute: str) -> Any:
+        return getattr(self._target(), attribute)
+
+
+def _install_deferred_notes_sync_facades(app: Any) -> bool:
+    """Protect the post-ready delay with first-use Notes Sync wiring.
+
+    Args:
+        app: Application composition owner whose collaborators are deferred.
+
+    Returns:
+        True when deferred facades are installed or already active.
+    """
+
+    if not _active_notes_sync_server_profile_id(app):
+        return False
+    notes_scope_service = getattr(app, "notes_scope_service", None)
+    if (
+        getattr(app, "chachanotes_db", None) is None
+        or getattr(app, "sync_state_repository", None) is None
+        or notes_scope_service is None
+    ):
+        return False
+    current = getattr(app, "notes_organization_sync_service", None)
+    if current is not None:
+        return isinstance(current, _DeferredNotesSyncFacade)
+
+    lock = threading.RLock()
+    repository = _DeferredNotesSyncFacade(
+        app,
+        ("notes_organization_repository",),
+        lock,
+    )
+    service = _DeferredNotesSyncFacade(
+        app,
+        ("notes_organization_sync_service",),
+        lock,
+    )
+    producer = _DeferredNotesSyncFacade(
+        app,
+        ("notes_scope_service", "sync_v2_notes_producer"),
+        lock,
+    )
+    app.notes_organization_repository = repository
+    app.notes_organization_sync_service = service
+    notes_scope_service.sync_v2_notes_producer = producer
+    notes_scope_service.organization_sync_service = service
+    local_notes = getattr(notes_scope_service, "local_notes_service", None)
+    if local_notes is not None:
+        local_notes.organization_sync_service = service
+    local_chat = getattr(app, "local_chat_conversation_service", None)
+    if local_chat is not None:
+        local_chat.organization_sync_service = service
+    local_first = getattr(app, "local_first_sync_service", None)
+    if local_first is not None:
+        local_first.notes_organization_repository = repository
+        local_first.notes_organization_sync_service = service
+    restore = getattr(app, "sync_restore_service", None)
+    if restore is not None:
+        restore.notes_organization_repository = repository
+    manual = getattr(app, "manual_sync_control_service", None)
+    if manual is not None:
+        manual.notes_organization_sync_service = service
+        manual.notes_repository = repository
+    return True
+
+
 def _wire_notes_sync_services(app: Any) -> None:
     """Finish Notes Sync composition after both SQLite owners exist."""
 
@@ -6903,19 +7026,7 @@ def _wire_notes_sync_services(app: Any) -> None:
     notes_db = getattr(app, "chachanotes_db", None)
     state_repository = getattr(app, "sync_state_repository", None)
     notes_scope_service = getattr(app, "notes_scope_service", None)
-    runtime_state = getattr(getattr(app, "runtime_policy", None), "state", None)
-    server_is_authoritative = runtime_state is None or (
-        getattr(runtime_state, "active_source", None) == "server"
-    )
-    active_server_profile_id = (
-        str(
-            getattr(app, "active_server_id", None)
-            or getattr(runtime_state, "active_server_id", None)
-            or ""
-        ).strip()
-        if server_is_authoritative
-        else ""
-    )
+    active_server_profile_id = _active_notes_sync_server_profile_id(app)
     if not active_server_profile_id:
         app.notes_organization_repository = None
         app.notes_organization_sync_service = None
@@ -6949,6 +7060,8 @@ def _wire_notes_sync_services(app: Any) -> None:
     if notes_db is None or state_repository is None or notes_scope_service is None:
         return
     repository = getattr(app, "notes_organization_repository", None)
+    if isinstance(repository, _DeferredNotesSyncFacade):
+        repository = None
     if (
         repository is None
         or getattr(repository, "db", None) is not notes_db
@@ -7455,10 +7568,10 @@ class TldwCli(
         self.app_config = load_settings()
         self.raw_cli_runtime = RawCliRuntime(lambda: _read_app_raw_cli_permitted(self))
         self._raw_cli_runtime_shutdown_task: asyncio.Task[Any] | None = None
-        self.terminal_session_manager = TerminalSessionManager(
-            lambda: _read_app_raw_cli_permitted(self),
-            _build_terminal_backend,
-        )
+        # App-owned, but first-use: importing Terminal here spent three
+        # first-paint modules before a user opened or armed a session.
+        self._terminal_session_manager: "TerminalSessionManager | None" = None
+        self._terminal_session_manager_lock = threading.Lock()
         self._terminal_session_manager_shutdown_task: asyncio.Task[None] | None = None
         # Default-save failures belong to the application lifetime rather
         # than whichever Console screen happens to be mounted.  New-chat
@@ -7505,6 +7618,11 @@ class TldwCli(
         # (including the resolved data directory silently becoming the
         # `default_user` profile) had no visible signal at all.
         self._config_load_failure = get_config_load_failure()
+        # TASK-26040 (lane-7 review Important #3): snapshot a newer-than-
+        # supported config schema version the loader detected. Served
+        # untouched (never mangled by a downgrade); surfaced once mounted,
+        # mirroring the parse-failure notification above.
+        self._config_schema_conflict = get_config_schema_conflict()
         # RAG-53 (task-7): advisory per-profile instance lock. The profile
         # (and thus its data dir) is final as soon as config is loaded --
         # earliest sound point for this. Detection only: never blocks,
@@ -7755,6 +7873,15 @@ class TldwCli(
         self._tts_initialization_task: asyncio.Task | None = None
         self._stts_initialization_task: asyncio.Task | None = None
         self._deferred_startup_tasks: set[asyncio.Task] = set()
+        # Portable Tool Packs are unavailable until first Tool Profiles use
+        # composes every authority owner and attaches one complete guard.
+        self.tool_pack_service: Any | None = None
+        self.tool_pack_service_unavailable_reason: str | None = "not_ready"
+        self.tool_pack_receipt_reconciliation_unavailable_reason: str | None = (
+            "not_run"
+        )
+        self._tool_pack_wiring_started = False
+        self._tool_pack_composition_worker: Worker | None = None
         self._screen_preimport_thread: threading.Thread | None = None
         # task-21110: the splash-overlapped warm-up of the INITIAL route's
         # module. Separate from `_screen_preimport_thread` (the whole-registry
@@ -7872,6 +7999,7 @@ class TldwCli(
         self._notes_sync_runtime_owner_lock = threading.Lock()
         self._notes_sync_runtime_start_task: asyncio.Task[None] | None = None
         self._notes_sync_runtime_shutdown_task: asyncio.Task[None] | None = None
+        self._recover_inflight_transfers_task: asyncio.Task[None] | None = None
         # RAG admin trio (server/local/scope) is built lazily on first access
         # (task-254): its legacy UI consumers were deleted and nothing reads
         # these services at startup, so eager construction only added launch
@@ -7937,6 +8065,41 @@ class TldwCli(
 
         # Final memory check
         log_resource_usage()
+
+    @property
+    def terminal_session_manager(self) -> "TerminalSessionManager":
+        """Return the single app-owned Terminal manager, creating it on use.
+
+        Returns:
+            The app-owned terminal session manager.
+        """
+
+        manager = self._terminal_session_manager
+        if manager is not None:
+            return manager
+        with self._terminal_session_manager_lock:
+            manager = self._terminal_session_manager
+            if manager is None:
+                from tldw_chatbook.Terminal.session_manager import (
+                    TerminalSessionManager,
+                )
+
+                manager = TerminalSessionManager(
+                    lambda: _read_app_raw_cli_permitted(self),
+                    _build_terminal_backend,
+                )
+                self._terminal_session_manager = manager
+        return manager
+
+    @terminal_session_manager.setter
+    def terminal_session_manager(self, manager: Any) -> None:
+        """Replace the app-owned manager for lifecycle tests and adapters.
+
+        Args:
+            manager: Replacement terminal session manager.
+        """
+
+        self._terminal_session_manager = manager
 
     def _timed_init_task(self, task_name: str, func: Callable[..., Any], *args: Any):
         """Run one phase-3 initializer and record how long IT took.
@@ -9108,6 +9271,139 @@ class TldwCli(
                 type(exc).__name__,
             )
 
+    def _deferred_wire_tool_pack_service(self) -> Worker | None:
+        """Schedule one complete Tool Pack composition on first feature use."""
+        if not getattr(self, "_ui_ready", False) or getattr(
+            self, "tool_pack_service", None
+        ) is not None:
+            return
+        if getattr(self, "_tool_pack_wiring_started", False):
+            return getattr(self, "_tool_pack_composition_worker", None)
+        self._tool_pack_wiring_started = True
+        self.tool_pack_service_unavailable_reason = "starting"
+        try:
+            worker = self.run_worker(
+                self._compose_tool_pack_service_off_thread,
+                name="deferred_tool_pack_service_composition",
+                group="tool-pack-service-composition",
+                thread=True,
+                exclusive=True,
+                exit_on_error=False,
+            )
+            self._tool_pack_composition_worker = worker
+            return worker
+        except Exception:
+            self._tool_pack_wiring_started = False
+            self.tool_pack_service_unavailable_reason = "composition_unavailable"
+            return None
+
+    def _compose_tool_pack_service_off_thread(self) -> None:
+        """Compose, activate, then reconcile away from the Textual event loop."""
+        try:
+            unified = getattr(self, "unified_mcp_service", None)
+            local_control = getattr(self, "local_mcp_control_service", None)
+            registry = getattr(self, "workspace_registry_service", None)
+            bootstrap = getattr(self, "_tool_pack_guard_bootstrap", None)
+            permission_store = getattr(unified, "permission_store", None)
+            if (
+                permission_store is None
+                or local_control is None
+                or registry is None
+                or type(bootstrap) is not DeferredWorkspaceToolProfileGuard
+                or getattr(registry, "tool_profile_guard", None) is not bootstrap
+            ):
+                self.call_from_thread(
+                    self._mark_tool_pack_service_unavailable,
+                    "prerequisites_unavailable",
+                )
+                return
+
+            # Deferred imports are intentional: service composition pulls in
+            # archive, receipt, import, activation, and removal owners.
+            from tldw_chatbook.MCP.local_server_tools import (
+                resolve_server_workspace_root,
+            )
+            from tldw_chatbook.Tool_Packs.catalog_snapshot import (
+                PermissionInventoryRegistry,
+            )
+            from tldw_chatbook.Tool_Packs.service import ToolPackService
+
+            inventory = PermissionInventoryRegistry.v1(
+                local_control,
+                fallback_root=resolve_server_workspace_root(),
+            )
+            service = ToolPackService.compose(
+                permission_store=permission_store,
+                inventory=inventory,
+                workspace_registry=registry,
+                receipt_root=get_user_data_dir() / "tool_pack_receipts",
+            )
+            attached = self.call_from_thread(
+                self._attach_tool_pack_service,
+                service,
+                registry,
+                bootstrap,
+            )
+            if attached is not True:
+                return
+            recovery = service.reconcile_receipts()
+            self.call_from_thread(
+                self._record_tool_pack_receipt_reconciliation,
+                service,
+                recovery.unavailable_category,
+            )
+        except Exception:
+            self.call_from_thread(
+                self._mark_tool_pack_service_unavailable,
+                "composition_unavailable",
+            )
+
+    def _attach_tool_pack_service(
+        self,
+        service: object,
+        registry: object,
+        bootstrap: object,
+    ) -> bool:
+        """Atomically activate one complete guard for the captured registry."""
+        if getattr(self, "tool_pack_service", None) is not None:
+            return False
+        if (
+            getattr(self, "workspace_registry_service", None) is not registry
+            or getattr(self, "_tool_pack_guard_bootstrap", None) is not bootstrap
+            or type(bootstrap) is not DeferredWorkspaceToolProfileGuard
+            or getattr(registry, "tool_profile_guard", None) is not bootstrap
+        ):
+            self._mark_tool_pack_service_unavailable("prerequisites_unavailable")
+            return False
+        try:
+            guard = service.binding_guard  # type: ignore[attr-defined]
+            if bootstrap.activate(guard) is not True:
+                raise RuntimeError("Tool Pack guard was already active")
+            if bootstrap.active_guard is not guard:
+                raise RuntimeError("Tool Pack guard activation was not atomic")
+        except Exception:
+            self._mark_tool_pack_service_unavailable("composition_unavailable")
+            return False
+        self.tool_pack_service = service
+        self.tool_pack_service_unavailable_reason = None
+        self.tool_pack_receipt_reconciliation_unavailable_reason = "pending"
+        return True
+
+    def _record_tool_pack_receipt_reconciliation(
+        self, service: object, unavailable_category: str | None
+    ) -> None:
+        """Record recovery only for the service that still owns authority."""
+        if getattr(self, "tool_pack_service", None) is service:
+            self.tool_pack_receipt_reconciliation_unavailable_reason = (
+                unavailable_category
+            )
+
+    def _mark_tool_pack_service_unavailable(self, category: str) -> None:
+        """Expose one stable unavailable category without diagnostic detail."""
+        if getattr(self, "tool_pack_service", None) is None:
+            self._tool_pack_wiring_started = False
+            self.tool_pack_service_unavailable_reason = category
+
     def _deferred_wire_notes_sync_services(self) -> None:
         """Compose Notes organization Sync after the first interactive frame."""
 
@@ -9480,6 +9776,7 @@ class TldwCli(
 
     def _wire_workspace_registry_services(self) -> None:
         self.change_review_consent_service = None
+        self._tool_pack_guard_bootstrap = None
         try:
             self.local_workspace_db = WorkspaceDB(
                 get_workspaces_db_path(),
@@ -9487,6 +9784,10 @@ class TldwCli(
             )
             self.workspace_registry_service = LocalWorkspaceRegistryService(
                 self.local_workspace_db,
+            )
+            self._tool_pack_guard_bootstrap = DeferredWorkspaceToolProfileGuard()
+            self.workspace_registry_service.attach_tool_profile_guard(
+                self._tool_pack_guard_bootstrap
             )
             self.workspace_registry_service.ensure_default_workspace()
             self.change_review_consent_service = ChangeReviewConsentService(
@@ -9501,6 +9802,7 @@ class TldwCli(
             )
             self.local_workspace_db = None
             self.workspace_registry_service = None
+            self._tool_pack_guard_bootstrap = None
 
     def _wire_research_source_association(self) -> None:
         """Compose durable post-ingest association services."""
@@ -10019,6 +10321,11 @@ class TldwCli(
                 chachanotes_db_getter=lambda: getattr(self, "chachanotes_db", None),
                 dispatch_service=self.notification_dispatch_service,
                 notification_app_getter=lambda: self,
+                # TASK-26027: group repeat brief failures into one incident
+                # (the ScheduledTasks DB owns the durable state machine).
+                incident_recorder=getattr(
+                    self.scheduling_service, "db", None
+                ),
             )
 
         # task-19561: shutdown has to be able to reach the generations this
@@ -11359,7 +11666,9 @@ class TldwCli(
         logging.info(f"Splash screen enabled: {splash_enabled}")
         if splash_enabled:
             # Get splash screen configuration
-            splash_duration = get_cli_setting("splash_screen", "duration", 1.5)
+            splash_duration = get_cli_setting(
+                "splash_screen", "duration", DEFAULT_SPLASH_DURATION_SECONDS
+            )
             splash_skip = get_cli_setting("splash_screen", "skip_on_keypress", True)
             splash_progress = get_cli_setting("splash_screen", "show_progress", True)
             splash_card = get_cli_setting("splash_screen", "card_selection", "random")
@@ -14071,6 +14380,19 @@ class TldwCli(
                 "Failed to reconcile stale automation runs at startup"
             )
 
+        # Transfer-machine startup recovery (spec §6.1.3): a row stuck
+        # `to_server_sent` across a crash/restart is the one case
+        # SyncEngine's own push replay deliberately refuses to touch --
+        # this is its only recovery path. Fire-and-forget: on_mount is not
+        # async, and `recover_inflight_transfers` itself never raises
+        # (each sub-step is independently exception-guarded, same
+        # "must never block the scheduler from starting" discipline as
+        # the stale-run reconciliation just above).
+        self._recover_inflight_transfers_task = asyncio.create_task(
+            self.scheduling_service.recover_inflight_transfers(),
+            name="recover_inflight_transfers",
+        )
+
         # Start the background scheduler loop for reminders and scheduled tasks.
         # A COROUTINE worker, never thread=True: scheduled watchlist checks
         # dispatch from this loop, and the watchlists in-flight guard
@@ -14406,6 +14728,27 @@ class TldwCli(
             f"Error: {failure.message}",
             title="Config file failed to load",
             severity="error",
+            timeout=60,
+        )
+
+    def _maybe_warn_config_schema_conflict(self) -> None:
+        """Warn (never block) when the config is from a newer app version.
+
+        TASK-26040 AC#5: a config carrying a schema version newer than this
+        build understands is served untouched rather than migrated (a
+        downgrade could silently drop keys). This surfaces the detected
+        conflict once the UI is up so the user knows why newer settings may
+        not take effect, mirroring `_maybe_warn_config_load_failure`.
+        """
+        conflict = getattr(self, "_config_schema_conflict", None)
+        if not conflict:
+            return
+        self.notify(
+            f"Your configuration was written by a newer version of this "
+            f"application and was left unchanged (not migrated). Some newer "
+            f"settings may not take effect until you upgrade. {conflict}",
+            title="Config is from a newer version",
+            severity="warning",
             timeout=60,
         )
 
@@ -14952,6 +15295,7 @@ class TldwCli(
             self._maybe_offer_project_skills_import()
         try:
             self._maybe_warn_config_load_failure()
+            self._maybe_warn_config_schema_conflict()
         except Exception as e:
             logger.error(
                 "Config load failure warning failed (error_type=%s)",
@@ -15223,10 +15567,6 @@ class TldwCli(
             DEFERRED_COLLECTIONS_CAPTURE_WIRING_DELAY_SECONDS,
             self._deferred_wire_collections_capture_services,
         )
-        self.set_timer(
-            DEFERRED_NOTES_ORGANIZATION_WIRING_DELAY_SECONDS,
-            self._deferred_wire_notes_sync_services,
-        )
         # Workspace agent provisioning (task-8): best-effort hook attach +
         # startup backfill, deferred past `_ui_ready` so the provisioning
         # module stays out of the UI-ready module census (ADR-097).
@@ -15264,6 +15604,15 @@ class TldwCli(
                 name="deferred_legacy_citation_migration",
             )
         self._schedule_launch_wake()
+        # Schedule Notes/Sync last.  Earlier placement let the nominal 0.1 s
+        # delay expire while the remaining synchronous setup below it was
+        # still running, so its import graph could win the race against the
+        # first-interactive-frame census on slower starts.
+        _install_deferred_notes_sync_facades(self)
+        self.set_timer(
+            DEFERRED_NOTES_ORGANIZATION_WIRING_DELAY_SECONDS,
+            self._deferred_wire_notes_sync_services,
+        )
 
     # ------------------------------------------------------------------
     # TASK-22215: the staggered boot-worker fleet
@@ -16485,7 +16834,8 @@ class TldwCli(
 
     async def _run_terminal_session_manager_shutdown(self) -> None:
         """Drain Terminal once, then close remaining parent-owned handles."""
-        manager = getattr(self, "terminal_session_manager", None)
+        # Do not instantiate an unused first-use owner merely to shut it down.
+        manager = getattr(self, "_terminal_session_manager", None)
         if manager is None:
             return
         try:
@@ -17822,12 +18172,26 @@ if __name__ == "__main__":
             exc_info=True,
         )
 
+    # TASK-26040: persist any pending forward config migration once at boot.
+    # A no-op (no lock, no file read) until a real migration is registered.
+    try:
+        from tldw_chatbook.config import migrate_config_file_if_needed
+        migrate_config_file_if_needed()
+    except Exception as e_cfg_migrate:
+        logging.error(
+            f"Config schema migration failed; the original file was left "
+            f"untouched: {e_cfg_migrate}",
+            exc_info=True,
+        )
+
     # --- Initialize Metrics Systems ---
     # Initialize Prometheus metrics server
     try:
-        # Start Prometheus metrics server on port 8000 (or configure via env/config)
-        metrics_port = int(os.environ.get("METRICS_PORT", "8000"))
-        init_metrics_server(port=metrics_port)
+        # Opt-in only: init_metrics_server checks [metrics] enabled before it
+        # binds anything, and resolves port/bind address itself (TASK-25914).
+        # It previously read METRICS_PORT here with a "8000" fallback, which
+        # meant the env default silently overrode a configured port.
+        init_metrics_server()
     except Exception as exc:
         loguru_logger.warning(
             "Prometheus metrics initialization failed (exception_type={}).",

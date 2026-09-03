@@ -223,7 +223,9 @@ def test_ancestor_requirements_only_claims_what_it_can_prove() -> None:
 
 @pytest.mark.ui
 @pytest.mark.asyncio
-async def test_filter_follows_a_class_added_to_an_ancestor_at_runtime() -> None:
+async def test_filter_follows_a_class_added_to_an_ancestor_at_runtime(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """A rule scoped under `.foo` must apply the moment an ancestor gains it.
 
     The ancestor-name set is recomputed on every apply rather than cached,
@@ -239,6 +241,10 @@ async def test_filter_follows_a_class_added_to_an_ancestor_at_runtime() -> None:
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.Utils.textual_css_fastpath import _ordered_candidates
 
+    # Splash disabled (as the sibling fastpath test already does): this test
+    # needs the main UI mounted, and the default splash now runs 7s
+    # (TASK-30016) -- far past the poll window below.
+    _scratch_env(monkeypatch, tmp_path)
     app = _build_test_app()
     async with app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()

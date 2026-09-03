@@ -149,7 +149,7 @@ def test_snapshots_are_real_not_hollow(ratchet) -> None:
     assert len(ready) > len(boot)
 
     css = ratchet.load_json_snapshot("boot-css-bytes")
-    assert len(css["per_source"]) == 5, "expected the five boot-parsed sources"
+    assert len(css["per_source"]) == 6, "expected the six boot-parsed sources"
     assert len(css["per_segment"]) >= 150
     assert css["total"] == sum(css["per_source"].values())
     assert css["total"] == sum(css["per_segment"].values())

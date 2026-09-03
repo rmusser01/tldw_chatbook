@@ -7,6 +7,8 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
+from tldw_chatbook.Agents.builtin_tool_gate import user_denial_refusal
+
 import tldw_chatbook.Chat.console_agent_bridge as bridge_module
 from tldw_chatbook.Agents.agent_models import (
     STEP_ERROR,
@@ -252,7 +254,7 @@ def test_direct_controller_review_results_are_blocked(verdict: str) -> None:
         # whose provider-owned suffix is the runtime tool name.
         "tool execution is disabled by the kill switch",
         "tool is set to Off: calculator",
-        "tool call denied by the user: calculator",
+        user_denial_refusal("calculator"),
         "tool requires approval and none was granted: calculator",
         LOCAL_DENY_REFUSAL,
         LOCAL_TIMEOUT_REFUSAL,

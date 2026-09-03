@@ -1,6 +1,10 @@
 """Unit tests for the Console history token-budget trimmer."""
 
 from tldw_chatbook.Chat.console_history_budget import (
+    StaleImageSettings,
+    ToolResultPruneSettings,
+    prune_stale_tool_results,
+    retire_stale_images,
     DEFAULT_RESPONSE_RESERVATION,
     bound_messages_to_window,
     count_console_messages_tokens,
@@ -221,3 +225,224 @@ def test_reservation_larger_than_window_still_keeps_recent_history():
     )
     assert result.dropped_count == 0
     assert result.messages == msgs
+
+
+# --- TASK-25911: proactive tool-result pruning ------------------------------
+
+
+def _turns_with_tool_rows(native: bool, *, big_chars: int = 6000):
+    """Four rounds; rounds 1 and 2 carry one big tool result each."""
+    big = "x" * big_chars
+    rows: list[dict] = []
+    for index in range(1, 5):
+        rows.append({"role": "user", "content": f"prompt {index}"})
+        if native:
+            rows.append(
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": f"call-{index}",
+                            "type": "function",
+                            "function": {"name": "reader", "arguments": "{}"},
+                        }
+                    ],
+                }
+            )
+            rows.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": f"call-{index}",
+                    "content": big if index <= 2 else "small",
+                }
+            )
+        else:
+            rows.append({"role": "assistant", "content": "calling"})
+            rows.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"Tool result for reader: {big if index <= 2 else 'small'}"
+                    ),
+                }
+            )
+        rows.append({"role": "assistant", "content": f"answer {index}"})
+    return rows
+
+
+def _prune_settings(**overrides):
+    values = dict(
+        keep_recent_turns=2,
+        min_result_chars=4000,
+        head_chars=1000,
+        min_reclaim_chars=2000,
+    )
+    values.update(overrides)
+    return ToolResultPruneSettings(**values)
+
+
+def test_prune_shrinks_old_big_native_tool_results_in_place() -> None:
+    rows = _turns_with_tool_rows(native=True)
+    pruned, stats = prune_stale_tool_results(rows, settings=_prune_settings())
+
+    assert stats.pruned_rows == 2
+    assert stats.chars_removed > 0
+    old_tool_rows = [row for row in pruned if row.get("role") == "tool"][:2]
+    for row in old_tool_rows:
+        assert len(row["content"]) < 6000
+        assert row["content"].startswith("x" * 100), "head must be kept"
+        assert "pruned" in row["content"], "a statement of what was removed"
+        assert "chars removed" in row["content"]
+    # pairing untouched: tool_call_id survives, assistant tool_calls intact
+    assert old_tool_rows[0]["tool_call_id"] == "call-1"
+    # the input list and its rows are never mutated
+    assert len(rows[2]["content"]) == 6000
+
+
+def test_prune_never_touches_the_recent_turns() -> None:
+    rows = _turns_with_tool_rows(native=True)
+    # make round 4's result big too -- recency must protect it
+    rows[-2] = dict(rows[-2], content="y" * 9000)
+
+    pruned, stats = prune_stale_tool_results(rows, settings=_prune_settings())
+
+    assert stats.pruned_rows == 2
+    assert pruned[-2]["content"] == "y" * 9000, "recent round was pruned"
+
+
+def test_prune_handles_fence_protocol_result_rows() -> None:
+    rows = _turns_with_tool_rows(native=False)
+    pruned, stats = prune_stale_tool_results(rows, settings=_prune_settings())
+
+    assert stats.pruned_rows == 2
+    fence_rows = [
+        row
+        for row in pruned
+        if str(row.get("content", "")).startswith("Tool result for ")
+    ]
+    assert len(fence_rows[0]["content"]) < 6000
+    assert fence_rows[0]["content"].startswith("Tool result for reader: xxx")
+    assert "pruned" in fence_rows[0]["content"]
+
+
+def test_prune_below_min_reclaim_is_an_identity() -> None:
+    """AC#3: negligible gain must not break the prompt cache."""
+    rows = _turns_with_tool_rows(native=True)
+    pruned, stats = prune_stale_tool_results(
+        rows, settings=_prune_settings(min_reclaim_chars=1_000_000)
+    )
+
+    assert pruned is rows, "identity object expected on no-op"
+    assert stats.pruned_rows == 0
+    assert stats.chars_removed == 0
+
+
+def test_prune_skips_non_string_and_small_contents() -> None:
+    rows = [
+        {"role": "user", "content": "p1"},
+        {"role": "tool", "tool_call_id": "c1", "content": [{"type": "text"}]},
+        {"role": "tool", "tool_call_id": "c2", "content": "small"},
+        {"role": "assistant", "content": "a1"},
+        {"role": "user", "content": "p2"},
+        {"role": "assistant", "content": "a2"},
+        {"role": "user", "content": "p3"},
+        {"role": "assistant", "content": "a3"},
+    ]
+    pruned, stats = prune_stale_tool_results(rows, settings=_prune_settings())
+
+    assert pruned is rows
+    assert stats.pruned_rows == 0
+
+
+def test_prune_is_idempotent_on_already_pruned_rows() -> None:
+    rows = _turns_with_tool_rows(native=True)
+    first, stats1 = prune_stale_tool_results(
+        rows, settings=_prune_settings(min_reclaim_chars=1)
+    )
+    second, stats2 = prune_stale_tool_results(
+        first, settings=_prune_settings(min_reclaim_chars=1)
+    )
+
+    assert stats1.pruned_rows == 2
+    assert second is first, "second pass must be a no-op"
+    assert stats2.pruned_rows == 0
+
+
+# --- TASK-25912: stale-image retirement -------------------------------------
+
+
+def _turns_with_image_rows():
+    """Four turns; turns 1 and 2 carry an image part, turn 4 does too."""
+    def image_row(index):
+        return {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": f"look at this {index}"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,AAAA"},
+                },
+            ],
+        }
+
+    rows = []
+    for index in range(1, 5):
+        rows.append(
+            image_row(index)
+            if index in (1, 2, 4)
+            else {"role": "user", "content": f"prompt {index}"}
+        )
+        rows.append({"role": "assistant", "content": f"answer {index}"})
+    return rows
+
+
+def test_retire_replaces_old_images_with_a_naming_placeholder() -> None:
+    rows = _turns_with_image_rows()
+    retired, stats = retire_stale_images(
+        rows, settings=StaleImageSettings(keep_recent_turns=2)
+    )
+
+    assert stats.retired_images == 2
+    first = retired[0]["content"]
+    assert all(part.get("type") == "text" for part in first)
+    placeholder = first[-1]["text"]
+    assert "image" in placeholder and "retired" in placeholder
+    assert "image/png" in placeholder, "placeholder must name what was there"
+    assert first[0]["text"] == "look at this 1", "text parts survive"
+    # input rows never mutated (AC#4: stored conversation unchanged)
+    assert rows[0]["content"][1]["type"] == "image_url"
+
+
+def test_retire_keeps_recent_turn_images() -> None:
+    rows = _turns_with_image_rows()
+    retired, stats = retire_stale_images(
+        rows, settings=StaleImageSettings(keep_recent_turns=2)
+    )
+
+    recent = retired[-2]["content"]
+    assert any(part.get("type") == "image_url" for part in recent), (
+        "an in-progress visual task lost its image"
+    )
+
+
+def test_retire_reduces_the_token_count() -> None:
+    """AC#3: the accounting reflects the reclaim."""
+    rows = _turns_with_image_rows()
+    retired, _stats = retire_stale_images(
+        rows, settings=StaleImageSettings(keep_recent_turns=2)
+    )
+
+    before = count_console_messages_tokens(rows, "gpt-4o")
+    after = count_console_messages_tokens(retired, "gpt-4o")
+    assert after < before
+
+
+def test_retire_with_nothing_stale_is_an_identity() -> None:
+    rows = _turns_with_image_rows()
+    retired, stats = retire_stale_images(
+        rows, settings=StaleImageSettings(keep_recent_turns=10)
+    )
+
+    assert retired is rows
+    assert stats.retired_images == 0

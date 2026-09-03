@@ -215,3 +215,52 @@ def test_schema_load_fails_closed_after_catalog_gate_changes(tmp_path: Path) -> 
 
     with pytest.raises(KeyError):
         provider.load_schema("raw_shell:shell_exec")
+
+
+def test_console_raw_shell_resolution_captures_the_exact_named_profile(
+    tmp_path: Path,
+) -> None:
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    class RecordingService:
+        def __init__(self):
+            self.calls = []
+
+        def get_kill_switch(self):
+            return False
+
+        def gate_tool_test_for_profile(self, hub, profile_id):
+            self.calls.append((hub.server_key, hub.name, profile_id))
+            return EffectiveToolState(state="allow", origin="tool_override")
+
+        def gate_tool_test(self, hub):
+            self.calls.append((hub.server_key, hub.name, "default"))
+            return EffectiveToolState(state="allow", origin="tool_override")
+
+    class Runtime(_RuntimeProbe):
+        def set_model_authority_revoker(self, callback):
+            self.revoker = callback
+
+    service = RecordingService()
+    controller = object.__new__(ConsoleChatController)
+    controller.app = SimpleNamespace(
+        unified_mcp_service=service,
+        raw_cli_runtime=Runtime(),
+    )
+    controller._agent_bridge = None
+    context = SimpleNamespace(
+        tool_configuration={"local_tools_enabled": True},
+        tool_policy_profile_id="research",
+    )
+
+    provider, _review = controller._compose_raw_shell_provider(
+        session_id="session-1", turn_context=context, project_root=tmp_path
+    )
+    state = provider._resolve_state(provider.hub_tool())
+
+    assert state.state == "allow"
+    assert service.calls == [
+        (RAW_SHELL_SERVER_KEY, RAW_SHELL_TOOL_NAME, "research")
+    ]

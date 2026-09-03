@@ -130,8 +130,8 @@ def _resize_popover() -> ConsoleModelPopover:
         durability_copy="Temporary until this chat is promoted",
         draft_rebaser=lambda state, **_kwargs: state,
         live_committer=commit,
-        default_readiness_resolver=lambda _provider, _model: (
-            ConsoleSettingsReadiness("Ready", "Ready.", True)
+        default_readiness_resolver=lambda _provider, _model: ConsoleSettingsReadiness(
+            "Ready", "Ready.", True
         ),
     )
 
@@ -155,8 +155,8 @@ def _resize_full_settings(
         can_save=True,
         focus_model=focus_model,
         focus_context=focus_context,
-        default_readiness_resolver=lambda _provider, _model: (
-            ConsoleSettingsReadiness("Ready", "Ready.", True)
+        default_readiness_resolver=lambda _provider, _model: ConsoleSettingsReadiness(
+            "Ready", "Ready.", True
         ),
     )
 
@@ -216,11 +216,12 @@ def _assert_real_mouse_target(modal, button: Button) -> None:
 
 
 def _assert_non_overlapping_regions(buttons: list[Button]) -> None:
-    assert all(button.region.width > 0 and button.region.height > 0 for button in buttons)
+    assert all(
+        button.region.width > 0 and button.region.height > 0 for button in buttons
+    )
     for index, button in enumerate(buttons):
         assert all(
-            not button.region.overlaps(other.region)
-            for other in buttons[index + 1 :]
+            not button.region.overlaps(other.region) for other in buttons[index + 1 :]
         )
 
 
@@ -919,8 +920,8 @@ async def test_quick_defaults_reveals_intent_before_narrow_commit(
 
 
 @pytest.mark.asyncio
-async def test_resize_priority_hands_context_focus_to_reveal_button() -> None:
-    """Crossing 117-to-118 hides focused Context and focuses its handle."""
+async def test_resize_auto_open_does_not_evict_focused_context() -> None:
+    """Crossing 117-to-118 keeps focused Context instead of auto-swapping rails."""
     host = _ready_console_host()
 
     async with host.run_test(size=(117, 40)) as pilot:
@@ -933,16 +934,17 @@ async def test_resize_priority_hands_context_focus_to_reveal_button() -> None:
         await pilot.resize_terminal(118, 40)
         await pilot.pause(0.2)
 
-        reveal = console.query_one("#console-context-rail-open")
-        assert console.query_one("#console-left-rail").display is False
-        assert console.query_one("#console-right-rail").display is True
-        assert reveal.display is True
-        assert pilot.app.focused is reveal
+        assert console.query_one("#console-left-rail").display is True
+        assert console.query_one("#console-right-rail").display is False
+        assert console.query_one("#console-context-rail-handle").display is False
+        assert pilot.app.focused is collapse
 
 
 @pytest.mark.asyncio
-async def test_consecutive_resize_keeps_focus_on_reopened_context_rail() -> None:
-    """A focused Context handle hands focus back when Context reopens."""
+async def test_consecutive_resize_preserves_focused_context_when_auto_open_is_suppressed() -> (
+    None
+):
+    """The protected Context rail and its focus survive adjacent width bands."""
     host = _ready_console_host()
 
     async with host.run_test(size=(117, 40)) as pilot:
@@ -953,13 +955,13 @@ async def test_consecutive_resize_keeps_focus_on_reopened_context_rail() -> None
 
         await pilot.resize_terminal(118, 40)
         await pilot.pause(0.2)
-        reveal = console.query_one("#console-context-rail-open")
-        assert pilot.app.focused is reveal
+        assert console.query_one("#console-left-rail").display is True
+        assert console.query_one("#console-right-rail").display is False
+        assert pilot.app.focused is collapse
 
         await pilot.resize_terminal(129, 40)
         await pilot.pause(0.2)
 
-        collapse = console.query_one("#console-context-rail-collapse")
         assert console.query_one("#console-left-rail").display is True
         assert console.query_one("#console-right-rail").display is False
         assert console.query_one("#console-context-rail-handle").display is False
@@ -1005,14 +1007,12 @@ async def test_resize_event_width_drives_priority_and_focus(monkeypatch) -> None
         await pilot.pause(0.2)
 
         rail_state = console._last_console_rail_state
-        reveal = console.query_one("#console-context-rail-open")
         assert rail_state is not None
-        assert rail_state.left_open is False
-        assert rail_state.right_open is True
-        assert rail_state.right_compact_override is True
-        assert rail_state.compact_override is True
-        assert reveal.display is True
-        assert pilot.app.focused is reveal
+        assert rail_state.left_open is True
+        assert rail_state.right_open is False
+        assert rail_state.right_compact_override is False
+        assert rail_state.compact_override is False
+        assert pilot.app.focused is collapse
 
 
 @pytest.mark.asyncio
@@ -1113,6 +1113,7 @@ async def test_model_summary_sync_invalidates_mounted_context_allocation(
             ),
         )
         console._sync_console_settings_summary()
+        rail.apply_section_open("model", True)
         rail.activate_section("model")
         await _wait_for_context_condition(
             pilot,
@@ -1354,18 +1355,27 @@ async def test_public_close_active_falls_back_and_rail_reopen_keeps_local_state(
         for _ in range(5):
             await pilot.pause()
 
-        session_toggle = rail.query_one("#console-rail-section-toggle-session", Button)
-        session_toggle.scroll_visible(animate=False)
-        await pilot.pause()
-        assert await pilot.click(session_toggle)
+        workspace_toggle = rail.query_one(
+            "#console-rail-section-toggle-workspace", Button
+        )
+        console._toggle_console_rail_section("workspace", next_open=True)
+        rail.activate_section("workspace")
         for _ in range(4):
             await pilot.pause()
         assert rail._active_section_id == "workspace"
+
+        workspace_toggle.scroll_visible(animate=False)
+        await pilot.pause()
+        assert await pilot.click(workspace_toggle)
+        for _ in range(4):
+            await pilot.pause()
+        assert rail._active_section_id == "conversations"
 
         model = rail.query_one("#console-bounded-section-model", ConsoleBoundedSection)
         model_body = rail.query_one("#console-rail-section-body-model")
         overflow = Static("\n".join(f"line {index}" for index in range(30)))
         await model_body.mount(overflow)
+        console._toggle_console_rail_section("model", next_open=True)
         rail.activate_section("model")
         for _ in range(6):
             await pilot.pause()

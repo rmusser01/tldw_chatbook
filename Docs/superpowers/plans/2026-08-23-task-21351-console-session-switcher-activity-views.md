@@ -16,16 +16,22 @@ This plan implements only the approved local Phase 1 in
 `Docs/superpowers/specs/2026-08-23-console-session-switcher-activity-views-design.md`.
 Do not add server workflow correlation, polling, authority caches, or a universal
 work inbox. TASK-20937.6 must be complete before final terminal-parity closeout;
-implementation may begin only from a branch containing the completed TASK-20937
-changes. TASK-21351 remains In Progress as the approved design/umbrella owner.
-At that gate, create one atomic Phase 1 child through Backlog.md with parent
-TASK-21351 and dependency TASK-20937, copy all Phase 1 implementation acceptance
-criteria into it, and link this plan, the approved spec, and ADR-085. Put that
-child In Progress while the parent remains In Progress, and execute these tasks
-under the child. Complete the child's criteria/notes/Done transition first;
-complete the parent's criteria/notes/Done transition only after the child and
-all parent-level evidence are complete. Do not mint the child early: task IDs
-are provisional until re-swept against current remote refs and worktrees.
+on 2026-09-02 the user explicitly waived TASK-20937 as an implementation-start
+gate. TASK-20937.6 remains the final equal-cell Windows Terminal evidence gate,
+not permission to begin. TASK-21351 remains In Progress as the approved
+design/umbrella owner. The re-swept atomic Phase 1 child is TASK-21351.1, linked
+to this plan, the approved spec, ADR-085, and the completed TASK-28125 trust
+baseline. Execute these tasks under that child. Complete the child's
+criteria/notes/Done transition first; complete the parent's criteria/notes/Done
+transition only after the child and all parent-level evidence are complete.
+
+Preserve TASK-28125's strict F2 behavior, deterministic highlighted-result
+activation, terminal-fit scrolling, MRU-other blank-query default, and explicit
+state labels while replacing its temporary two-section projection. Domain-
+semantic search is deterministic over normalized local switcher metadata only:
+plain state aliases plus `is:<state>` and `workspace:<text>`. It never reads
+transcript bodies, computes embeddings, calls a network service, or adds a new
+dependency.
 
 ADR required: yes
 ADR path: `backlog/decisions/085-console-activity-receipts-and-switcher-ownership.md`
@@ -425,7 +431,11 @@ markup/emoji/CJK/RTL, and
 group/star/time/title/key ordering. Add pure History bucket
 tests for `Today`, `Yesterday`, `Previous 7 days`, and `Older` using an injected
 local timezone and clock. Pin midnight boundaries, a DST transition, future
-timestamps (`Today`), and missing/invalid timestamps (`Older`).
+timestamps (`Today`), and missing/invalid timestamps (`Older`). Add domain-
+semantic query cases for plain state aliases, `is:<state>`,
+`workspace:<text>`, combined filters, unsupported `is:` values, and literal
+queries that only resemble filters. Assert the matcher consumes normalized row
+metadata and never transcript bodies.
 
 - [ ] **Step 2: Replace nullable activation inference with explicit payloads**
 
@@ -607,6 +617,13 @@ Add async barriers proving:
 - a late query/page/profile/modal generation cannot replace current state; and
 - closing during a load produces no remount or callback.
 
+Also prove blank-query Enter targets the MRU other open native tab, restored
+state without activation history falls back to the most recently updated other
+open tab, explicit arrow navigation overrides that default, and nonblank search
+activates the committed highlighted result. Cover the inline placeholder, empty-
+Active guidance, and zero-match safe-filter examples without a tutorial modal
+or persisted onboarding flag.
+
 - [ ] **Step 2: Implement the bounded modal structure**
 
 Compose heading, literal selected-mode controls (`Active (N) — selected |
@@ -622,6 +639,10 @@ payload; conversation variants carry a target and notice variants carry the
 explicit receipt action. Never derive behavior from index. Bounded
 mode/page/Cancel controls sit
 outside the 50-row result count.
+The modal receives an immutable preferred MRU-other target for blank-query
+submission and retains it only while that exact target remains present. Search
+copy advertises the safe state/workspace grammar; empty and zero-match guidance
+stays inline in the existing status/result region.
 Session-only receipts whose ephemeral target vanished render as non-subject
 `Session unavailable` notices with receipt-keyed `Mark seen` actions; they never
 activate or fall back to another row.
@@ -646,6 +667,9 @@ this task only after the caller and modal migration are covered together.
 Add modal-scoped F3, Up/Down without wrap, Up-first-to-search, Enter on a focused
 conversation row or current-query top conversation result, F2 only on a focused renameable native row,
 Tab/Shift+Tab visual order, Esc safe dismissal, and always-visible Cancel.
+Blank-query Enter uses the current MRU-other candidate until explicit result
+navigation occurs; explicit navigation and every nonblank committed query use
+the highlighted result instead.
 If search submission's top result is an unavailable notice, move focus to its
 `Mark seen` action and update status without acknowledging; only a subsequent
 Enter on that focused action or a pointer click acknowledges.
@@ -759,11 +783,7 @@ git commit -m "feat(console): acknowledge visible activity outcomes"
 - Modify: `Docs/User_Guide/console/sessions-tabs-workspaces.md`
 - Create: `Docs/superpowers/qa/task-21351-console-switcher-activity/README.md`
 - Modify: `backlog/tasks/task-21351 - Add-activity-views-to-CtrlK-session-switcher.md`
-- Modify: the resolved Phase 1 child task file created at the dependency gate
-
-When the child is created, replace this descriptive file-list entry and the
-Step 9 placeholder with its exact `backlog/tasks/...md` path before beginning
-implementation; do not leave an unresolved child path in the executable plan.
+- Modify: `backlog/tasks/task-21351.1 - Implement-local-Active-History-CtrlK-activity-switcher.md`
 
 - [ ] **Step 1: Update the user guide**
 
@@ -802,12 +822,14 @@ failure → Ctrl+K → Enter → visible notice → `Mark seen`; History search 
 F2 no-fallback; Cancel/Esc; immediate typing after activation. Capture compositor
 or SVG evidence, not style values alone.
 
-- [ ] **Step 6: Record equal-cell terminal parity**
+- [ ] **Step 6: Record available equal-cell terminal parity**
 
-After TASK-20937.6 is complete, capture the same rows/columns in iTerm2 and
-Windows Terminal. Confirm complete modal `<= 35` rows, two-row results, visible
-Cancel/page actions, identical search/mode behavior, and no rail ownership
-regression. Missing Windows Terminal access blocks closeout.
+Capture the same rows/columns in iTerm2 during implementation. After
+TASK-20937.6 is complete, add the matching Windows Terminal evidence. Confirm
+complete modal `<= 35` rows, two-row results, visible Cancel/page actions,
+identical search/mode behavior, and no rail ownership regression. Missing
+Windows Terminal evidence blocks final child/parent closeout, not implementation
+or the other verification work.
 
 - [ ] **Step 7: Self-review and request code review**
 
@@ -827,13 +849,14 @@ both tasks afterward because the CLI can replace free-form sections.
 - [ ] **Step 9: Commit documentation and closeout evidence**
 
 ```bash
-git add Docs/User_Guide/console/sessions-tabs-workspaces.md Docs/superpowers/qa/task-21351-console-switcher-activity/README.md 'backlog/tasks/task-21351 - Add-activity-views-to-CtrlK-session-switcher.md' '<resolved Phase 1 child task path>'
+git add Docs/User_Guide/console/sessions-tabs-workspaces.md Docs/superpowers/qa/task-21351-console-switcher-activity/README.md 'backlog/tasks/task-21351 - Add-activity-views-to-CtrlK-session-switcher.md' 'backlog/tasks/task-21351.1 - Implement-local-Active-History-CtrlK-activity-switcher.md'
 git commit -m "docs(console): verify activity switcher"
 ```
 
 ## Final verification checklist
 
-- [ ] TASK-20937 and TASK-20937.6 are Done on the branch baseline.
+- [ ] The 2026-09-02 implementation-start override is recorded; TASK-20937.6 is
+  treated only as the final equal-cell Windows Terminal evidence gate.
 - [ ] ADR-085 remains Accepted and matches the implementation.
 - [ ] No Phase 2 server integration entered the diff.
 - [ ] `git diff --check` is clean.

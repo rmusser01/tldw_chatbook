@@ -9,7 +9,7 @@ those runs request. Advanced users can also run an explicitly armed, user-only
 raw host command or open a separately armed persistent Terminal without
 involving a model. Reach for Console to send a message, drive a live run, hand
 work off between your sources and a model, or use a real interactive shell.
-This page is the orientation tour; the details live on the child pages:
+This page is the orientation tour; the details live on the child pages below:
 
 - [Chat basics](console/chat-basics.md) — compose, send, stream, stop, act on messages.
 - [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md) — tab strip, "Switch Session", conversation browser, workspaces.
@@ -18,6 +18,7 @@ This page is the orientation tour; the details live on the child pages:
 - [Video generation, playback & streaming](console/video.md) — `/generate-video`, ephemeral videos & tombstones, in-app playback, `/stream-video`.
 - [Agent runs & tools](console/agent-runs-and-tools.md) — per-tab runs, fleet markers, approvals, skills, MCP tools.
 - [Context & RAG](console/context-and-rag.md) — "Chat Context" viewer, prompts, retrieval scope, staged sources, Library RAG.
+- [Semantic trace capture](console/semantic-trace-capture.md) — what Capture On saves, Safe/Full views, masking, forks, legacy traces, export, and purge.
 
 ## Getting there
 
@@ -491,8 +492,38 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 
 While Console is the active screen, the command palette (**Ctrl+P**) also
 gains "Console: …" entries for these same actions. Slash commands
-(`/prompt`, `/system`, `/skills`, `/prefill`, `/generate-image`, `/rewind`)
-are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.md) and [Branching & rewind](console/branching-and-rewind.md).
+(`/prompt`, `/system`, `/skills`, `/prefill`, `/generate-image`, `/steer`,
+`/redirect`, `/emergency-stop`, `/rewind`) are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.md) and [Branching & rewind](console/branching-and-rewind.md).
+
+**Steering a running turn.** `/steer <guidance>` delivers text into the
+*currently running* agent turn — it is read before the next model call, after
+the in-flight tool batch finishes, so it never interrupts a tool mid-write.
+A plain message typed while a run is active still queues for the next turn
+(that default is unchanged); `/steer` is the explicit per-message opt-in.
+Steering is refused with a visible notice — never silently dropped — when no
+run is active, the run has already finished, the text is empty, or it exceeds
+the 4,000-character steering cap.
+
+**Redirecting a running turn.** When the current response is already going
+wrong, `/redirect <correction>` — or the **Redirect** button that appears next
+to **Stop** while a run is active (it sends whatever is typed in the composer)
+— cuts off the in-flight model response and re-runs the turn: completed tool
+results from the turn are kept, the partial text you watched stream stays as
+context, and your correction lands as a plain user message. Contrast with
+`/steer`, which lets the current response finish and only influences the next
+model call. A redirect that arrives while a *tool* is executing degrades to
+steering (delivered before the next model call) rather than interrupting the
+tool. Plain **Stop** is unchanged: it ends the run, no re-run. Refusal rules
+match steering (visible notice; same 4,000-character cap).
+
+**Emergency stop.** `/emergency-stop` is the global brake: it holds **all**
+new agent runs and new scheduled dispatches from starting, across the whole
+app — in-flight runs and already-dispatched scheduled tasks are left to
+finish untouched. The stop is durable (it survives a restart) and
+fail-safe: if its state can't be read, the app treats it as stopped rather
+than proceeding. Any attempted send while it's active is refused with a
+plain notice and how to clear it; `/emergency-stop clear` resumes normal
+operation immediately, no restart needed.
 
 ## Related settings & docs
 

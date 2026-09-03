@@ -380,6 +380,11 @@ def build_field_search_index() -> None:
                 ),
                 ("settings-console-exchange-capture-detail", "Capture detail"),
                 (
+                    "settings-console-trace-pii-redaction",
+                    "Mask detected PII in traces",
+                ),
+                ("settings-console-trace-viewer-profile", "Trace viewer"),
+                (
                     "settings-console-collapse-large-pastes-toggle",
                     "Collapse large pastes",
                 ),
@@ -584,6 +589,10 @@ def build_field_search_index() -> None:
             ),
             SettingsCategoryId.PRIVACY_SECURITY: (
                 ("settings-raw-cli-permitted", "Allow raw CLI host access"),
+            ),
+            SettingsCategoryId.NETWORK: (
+                ("settings-network-ssl-mode", "Certificate verification"),
+                ("settings-network-ca-path", "CA bundle path"),
             ),
             SettingsCategoryId.LIBRARY_RAG: (
                 # Rendered labels first (finding 8: "Hybrid balance" must be

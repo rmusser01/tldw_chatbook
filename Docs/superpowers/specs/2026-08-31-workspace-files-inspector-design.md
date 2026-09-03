@@ -66,9 +66,9 @@ The Console exposes workspaces and their agent activity but does not provide a d
 Two entry points open the same modal:
 
 - The active `ConsoleWorkspaceContext` card exposes **Show Files** on its own compact action row immediately after the existing **RAG Scope** row. It is not added to the width-sensitive **Switch** / **New** row.
-- Each named workspace row in the Workspaces tree exposes **Show files** through its existing asterisk action menu. The menu target captures the stable workspace ID and render-time folder availability; it never activates the row's workspace.
+- Each named workspace row in the Workspaces tree exposes **Show files** through its right-edge `@` action menu. The menu target captures the stable workspace ID and render-time folder availability; it never activates the row's workspace.
 
-The separate workspace switcher remains unchanged and does not gain a fourth persistent button. Both entry paths are text-labeled and keyboard reachable. In the active card, **Show Files** follows **RAG Scope** in focus order; for any visible tree workspace, the existing `m`/asterisk menu includes **Show files**. Both paths route a typed stable workspace ID into the same admission seam. Names, list positions, labels, and widget IDs are display data and are never parsed to resolve the workspace.
+The separate workspace switcher remains unchanged and does not gain a fourth persistent button. Both entry paths are text-labeled and keyboard reachable. In the active card, **Show Files** follows **RAG Scope** in focus order; for any visible tree workspace, the existing `m`/`@` menu includes **Show files**. Both paths route a typed stable workspace ID into the same admission seam. Names, list positions, labels, and widget IDs are display data and are never parsed to resolve the workspace.
 
 The default workspace and workspaces with no local-folder bindings keep the action visible as a focusable, pressable-but-blocked control rather than an unfocusable disabled button. Its tooltip and activation response both say `No local folders are attached. Add one in Settings.` A stale event that reaches the modal after bindings disappear opens the same empty recovery state rather than switching context or selecting another workspace.
 

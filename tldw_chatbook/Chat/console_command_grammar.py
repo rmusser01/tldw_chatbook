@@ -65,6 +65,27 @@ STREAM_VIDEO_COMMAND_NAME = "stream-video"
 STREAM_VIDEO_COMMAND_ARGUMENT_HINT = "<url>"
 STREAM_VIDEO_COMMAND_HANDLER_ID = "stream-video"
 
+#: TASK-25903: deliver text into the ACTIVE run's next model call instead of
+#: queueing it for the next turn. Plain submission still queues -- that default
+#: is unchanged; /steer is the explicit opt-in per message.
+STEER_COMMAND_NAME = "steer"
+STEER_COMMAND_ARGUMENT_HINT = "<guidance for the running agent>"
+STEER_COMMAND_HANDLER_ID = "steer"
+
+#: TASK-28227: cut off the current model response and re-run the turn with
+#: the correction; completed tool results and the streamed partial survive.
+#: /steer lets the current response finish; /redirect is for when it is
+#: already wrong. Stop stays terminal and untouched.
+REDIRECT_COMMAND_NAME = "redirect"
+REDIRECT_COMMAND_ARGUMENT_HINT = "<correction for the running turn>"
+REDIRECT_COMMAND_HANDLER_ID = "redirect"
+
+#: TASK-26004: the global emergency stop. Holds NEW agent runs and scheduled
+#: dispatches; in-flight work is untouched. `/emergency-stop clear` resumes.
+EMERGENCY_STOP_COMMAND_NAME = "emergency-stop"
+EMERGENCY_STOP_COMMAND_ARGUMENT_HINT = "[clear | <reason>]"
+EMERGENCY_STOP_COMMAND_HANDLER_ID = "emergency-stop"
+
 REWIND_COMMAND_NAME = "rewind"
 REWIND_COMMAND_ARGUMENT_HINT = ""
 REWIND_COMMAND_HANDLER_ID = "rewind"
@@ -73,6 +94,27 @@ REWIND_COMMAND_HANDLER_ID = "rewind"
 RESEARCH_COMMAND_NAME = "research"
 RESEARCH_COMMAND_ARGUMENT_HINT = "<question>"
 RESEARCH_COMMAND_HANDLER_ID = "research"
+HELP_COMMAND_NAME = "help"
+HELP_COMMAND_ARGUMENT_HINT = "[command]"
+HELP_COMMAND_HANDLER_ID = "help"
+DOCTOR_COMMAND_NAME = "doctor"
+DOCTOR_COMMAND_ARGUMENT_HINT = "[network]"
+DOCTOR_COMMAND_HANDLER_ID = "doctor"
+
+# TASK-25909: existing Console actions given a typed slash route. All share
+# one handler_id; the screen maps each name to the action method that already
+# implements it (see ChatScreen._CONSOLE_ACTION_COMMAND_TARGETS). No new
+# capability -- every one maps to a palette entry / key binding that works today.
+CONSOLE_ACTION_COMMAND_HANDLER_ID = "console-action"
+CONSOLE_ACTION_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("model", ""),
+    ("sessions", ""),
+    ("workspace", ""),
+    ("new", ""),
+    ("temp", ""),
+    ("settings", ""),
+    ("context", ""),
+)
 
 
 @dataclass(frozen=True)
@@ -190,6 +232,10 @@ class ConsoleCommandRegistry:
         """Return registered command names, in registration order."""
         return tuple(command.name for command in self._commands.values())
 
+    def commands(self) -> tuple["ConsoleCommand", ...]:
+        """Return the registered commands (name + argument_hint), in order."""
+        return tuple(self._commands.values())
+
 
 def default_console_registry() -> ConsoleCommandRegistry:
     """Build the default registry of native Console slash commands.
@@ -258,6 +304,27 @@ def default_console_registry() -> ConsoleCommandRegistry:
     )
     registry.register(
         ConsoleCommand(
+            name=STEER_COMMAND_NAME,
+            argument_hint=STEER_COMMAND_ARGUMENT_HINT,
+            handler_id=STEER_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=REDIRECT_COMMAND_NAME,
+            argument_hint=REDIRECT_COMMAND_ARGUMENT_HINT,
+            handler_id=REDIRECT_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=EMERGENCY_STOP_COMMAND_NAME,
+            argument_hint=EMERGENCY_STOP_COMMAND_ARGUMENT_HINT,
+            handler_id=EMERGENCY_STOP_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
             name=REWIND_COMMAND_NAME,
             argument_hint=REWIND_COMMAND_ARGUMENT_HINT,
             handler_id=REWIND_COMMAND_HANDLER_ID,
@@ -270,4 +337,26 @@ def default_console_registry() -> ConsoleCommandRegistry:
             handler_id=RESEARCH_COMMAND_HANDLER_ID,
         )
     )
+    registry.register(
+        ConsoleCommand(
+            name=HELP_COMMAND_NAME,
+            argument_hint=HELP_COMMAND_ARGUMENT_HINT,
+            handler_id=HELP_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=DOCTOR_COMMAND_NAME,
+            argument_hint=DOCTOR_COMMAND_ARGUMENT_HINT,
+            handler_id=DOCTOR_COMMAND_HANDLER_ID,
+        )
+    )
+    for _action_name, _action_hint in CONSOLE_ACTION_COMMANDS:
+        registry.register(
+            ConsoleCommand(
+                name=_action_name,
+                argument_hint=_action_hint,
+                handler_id=CONSOLE_ACTION_COMMAND_HANDLER_ID,
+            )
+        )
     return registry

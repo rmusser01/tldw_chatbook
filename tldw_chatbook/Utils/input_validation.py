@@ -26,6 +26,7 @@ from ..Metrics.metrics_logger import log_counter, log_histogram
 PROVIDER_API_KEY_MAX_LENGTH = 4096
 CONSOLE_DRAFT_MAX_LENGTH = 100_000
 CONSOLE_FORK_TITLE_MAX_LENGTH = 60
+CONSOLE_SWITCHER_QUERY_MAX_LENGTH = 512
 RAW_CLI_COMMAND_MAX_BYTES = 16 * 1024
 RAW_CLI_TIMEOUT_MAX_SECONDS = 300.0
 TERMINAL_SESSION_NAME_MIN_DISPLAY_CHARACTERS = 1
@@ -179,6 +180,35 @@ class ConsoleForkTitleInput(BaseModel):
     @classmethod
     def _normalize_title(cls, value: object) -> str:
         return validate_console_fork_title(value)
+
+
+class ConsoleSwitcherQueryInput(BaseModel):
+    """Strict shared boundary for the local Ctrl+K search query."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    query: str = Field(max_length=CONSOLE_SWITCHER_QUERY_MAX_LENGTH)
+
+
+def validate_console_switcher_query(value: object) -> str:
+    """Return one bounded Console switcher query without normalization.
+
+    Args:
+        value: Raw value supplied by the Textual search field.
+
+    Returns:
+        The exact validated query string.
+
+    Raises:
+        ValueError: If the value is not text or exceeds the query limit.
+    """
+    try:
+        return ConsoleSwitcherQueryInput.model_validate({"query": value}).query
+    except PydanticValidationError:
+        raise ValueError(
+            "Switcher search must be text containing at most "
+            f"{CONSOLE_SWITCHER_QUERY_MAX_LENGTH} characters."
+        ) from None
 
 
 class TerminalSessionNameInput(BaseModel):

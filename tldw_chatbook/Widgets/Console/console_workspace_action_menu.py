@@ -1,6 +1,6 @@
 """Anchored action menu for one Console workspace tree node (TASK-25712).
 
-Opened by the trailing asterisk on a workspace row in the Workspaces tree
+Opened by the trailing ``@`` on a workspace row in the Workspaces tree
 (pointer) or the ``m`` binding (keyboard). Mirrors
 ``ConsoleConversationActionMenu``: an absolutely-positioned ``Vertical``
 overlaying the screen, keyboard navigable, paged in place ("More" swaps

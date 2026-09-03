@@ -75,6 +75,12 @@ LIBRARY_EXPORT_SELECTED_TOOLTIP = "Export the selected items."
 LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP = "Select one or more items to delete them."
 LIBRARY_DELETE_SELECTED_TOOLTIP = "Move the selected items to trash."
 
+# task-28242: the Media canvas's "Review selected" bulk action, same pair.
+LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP = (
+    "Select one or more items to review them."
+)
+LIBRARY_REVIEW_SELECTED_TOOLTIP = "Review the selected items, one by one."
+
 # task-4023 AC#1 (RC-07): disabled state finally joins the product's
 # non-colour vocabulary. Every disabled Library action label carries a
 # leading "○" -- the existing ✓/○ pair's neutral glyph (ingest option

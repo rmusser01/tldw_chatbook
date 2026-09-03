@@ -1975,6 +1975,29 @@
     }
 
 
+/* ===== WIDGET: ResultsTab (UI/Screens/scheduling/results_tab.py) ===== */
+
+
+    ResultsTab #scheduling-results-table {
+        height: 1fr;
+    }
+    ResultsTab #scheduling-results-empty {
+        color: $text-muted;
+        padding: 2 1;
+        display: none;
+    }
+    ResultsTab #scheduling-results-detail {
+        height: auto;
+        max-height: 14;
+        padding: 0 1;
+        color: $text;
+        border-top: solid $surface-lighten-2;
+    }
+    ResultsTab .results-detail-muted {
+        color: $text-muted;
+    }
+
+
 /* ===== WIDGET: SyncStatusWidget (UI/Screens/scheduling/sync_status_widget.py) ===== */
 
 
@@ -2103,6 +2126,29 @@
 
     TraceFilterBar #trace-filter-compact { width: 1fr; height: 1; color: $text-muted; }
 
+
+
+/* ===== WIDGET: ConsoleActivityOutcomeNotice (Widgets/Console/console_activity_outcome_notice.py) ===== */
+
+
+    ConsoleActivityOutcomeNotice #console-activity-outcome-copy {
+        width: 1fr;
+        height: 1;
+    }
+    ConsoleActivityOutcomeNotice #console-activity-outcome-mark-seen {
+        width: 11;
+        min-width: 11;
+        height: 1;
+        min-height: 1;
+        border: none;
+    }
+    ConsoleActivityOutcomeNotice #console-activity-outcome-dismiss {
+        width: 3;
+        min-width: 3;
+        height: 1;
+        min-height: 1;
+        border: none;
+    }
 
 
 /* ===== WIDGET: AutoSpeakConsentModal (Widgets/Console/console_auto_speak_consent.py) ===== */
@@ -2763,6 +2809,40 @@
     }
 
 
+/* ===== WIDGET: ConsoleSummarizePreviewModal (Widgets/Console/console_summarize_preview_modal.py) ===== */
+
+
+
+    ConsoleSummarizePreviewModal #console-summarize-preview-modal {
+        width: 64;
+        max-width: 95%;
+        height: auto;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    ConsoleSummarizePreviewModal #console-summarize-preview-actions {
+        height: auto;
+        margin-top: 1;
+        align-horizontal: right;
+    }
+
+
+/* ===== WIDGET: LibraryMediaCanvas (Widgets/Library/library_media_canvas.py) ===== */
+
+    /* task-30043: the multi-row action grammar needs CONTENT-width buttons.
+     * Textual Button's 16-cell min-width floor alone would overflow the
+     * pane's 40-col floor (six floors = 96 cells); each row's label budget
+     * is what keeps task-28025's fit contract true. Baseline geometry lives
+     * here so harnesses without the app bundle lay out like the app. */
+    LibraryMediaCanvas .ds-toolbar > .library-canvas-action,
+    LibraryMediaCanvas .ds-toolbar > .library-toolbar-count {
+        width: auto;
+        min-width: 0;
+    }
+
+
 /* ===== WIDGET: LibraryNoteFolderNameDialog (Widgets/Library/library_note_folder_dialog.py) ===== */
 
 
@@ -2775,6 +2855,21 @@
 
 
     LibraryNoteFolderTargetDialog #library-note-folder-target-actions { height: auto; align-horizontal: right; }
+
+
+/* ===== WIDGET: LibraryReviewSetPickerDialog (Widgets/Library/library_review_set_picker.py) ===== */
+
+
+    /* ID subject, not `... > Vertical`: an ancestor-scoped bare-type rule
+     * would trip the CSS fast-path ratchet (275 > 274, UI latency CI). */
+    LibraryReviewSetPickerDialog #library-review-set-picker-dialog {
+        width: 72; max-height: 80%; height: auto; padding: 1 2;
+        border: tall $accent; background: $surface;
+    }
+    LibraryReviewSetPickerDialog #library-review-set-picker-rows { height: auto; max-height: 20; }
+    LibraryReviewSetPickerDialog .library-review-set-row { height: auto; }
+    LibraryReviewSetPickerDialog .library-review-set-open { width: 1fr; }
+    LibraryReviewSetPickerDialog #library-review-set-picker-actions { height: auto; align-horizontal: right; }
 
 
 /* ===== WIDGET: PersonaProfileEditorWidget (Widgets/Persona_Widgets/persona_profile_editor_widget.py) ===== */

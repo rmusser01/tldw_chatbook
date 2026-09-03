@@ -2032,6 +2032,7 @@ class ChatPersistenceService:
             update_data["metadata_json"] = metadata_json
         if clear_generation_provenance:
             update_data["thinking_blocks_json"] = None
+            update_data["provider_continuation_json"] = None
 
         citation_repository = self.citation_repository
         if citation_repository is not None and citation_repository.db is not self.db:

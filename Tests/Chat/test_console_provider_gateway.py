@@ -51,6 +51,10 @@ from tldw_chatbook.Chat.console_trace_models import (
     new_opaque_id,
 )
 from tldw_chatbook.Chat.console_trace_service import TraceCallPersistenceError
+from tldw_chatbook.Chat.console_trace_custom_pii import (
+    register_custom_pii_ruleset,
+    validate_custom_pii_rules_config,
+)
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Chat.console_trace_final_values import (
     ProviderRequestShadowBundle,
@@ -189,6 +193,47 @@ def _capture_on_prepared_request(
         route=ConsoleRequestRoute.FRESH,
         capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
     )
+
+
+@pytest.mark.asyncio
+async def test_compatibility_metric_failure_does_not_orphan_reserved_boundary() -> None:
+    class Boundary:
+        def __init__(self) -> None:
+            self.reserved = False
+
+        def reserve(self) -> None:
+            self.reserved = True
+
+    class Metrics:
+        def record(self, _path: str) -> None:
+            raise RuntimeError("metrics unavailable")
+
+    boundary = Boundary()
+    gateway = ConsoleProviderGateway(
+        trace_call_boundary_factory=lambda _request, _resolution, _route: boundary,
+        trace_compatibility_metrics=Metrics(),
+    )
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        streaming=False,
+    )
+    try:
+        prepared = _capture_on_prepared_request(gateway, resolution)
+
+        result = gateway._reserve_trace_call(
+            prepared,
+            resolution,
+            ConsoleRequestRoute.FRESH,
+        )
+
+        assert result is boundary
+        assert boundary.reserved is True
+    finally:
+        await gateway.aclose()
 
 
 def _prepared_request_with_continuation(
@@ -4788,6 +4833,8 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
         "run_tag",
         "exchange_capture_enabled",
         "capture_detail",
+        "pii_redaction_enabled",
+        "pii_ruleset_revision_id",
         "completed_exchanges",
         "_active_exchanges",
         "_exchange_lock",
@@ -4805,6 +4852,8 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
         "run_tag",
         "exchange_capture_enabled",
         "capture_detail",
+        "pii_redaction_enabled",
+        "pii_ruleset_revision_id",
         "completed_exchanges",
         "_active_exchanges",
         "_exchange_lock",
@@ -9263,9 +9312,7 @@ class TestSignalsExchangeCapture:
             model="model",
             endpoint=None,
             request={
-                "messages_payload": [
-                    {"role": "user", "content": "person@example.test"}
-                ]
+                "messages_payload": [{"role": "user", "content": "person@example.test"}]
             },
             omitted_keys=(),
         )
@@ -9278,6 +9325,66 @@ class TestSignalsExchangeCapture:
         capture = aggregate.exchange_captures()[0]
         assert "person@example.test" not in repr(capture)
         assert "[PII omitted]" in repr(capture)
+
+    def test_custom_pii_legacy_capture_runs_one_batch_for_all_components(
+        self,
+        monkeypatch,
+    ):
+        import tldw_chatbook.Chat.console_trace_custom_pii as custom_pii
+
+        revision_id = "77777777-7777-4777-8777-777777777777"
+        ruleset = validate_custom_pii_rules_config(
+            {
+                "version": 1,
+                "revision_id": revision_id,
+                "rules": [
+                    {
+                        "id": "customer-id",
+                        "label": "Customer ID",
+                        "category": "customer_id",
+                        "pattern": r"customer-[A-Z]{8}",
+                        "flags": [],
+                        "enabled": True,
+                        "priority": 10,
+                    }
+                ],
+            }
+        ).ruleset
+        assert ruleset is not None
+        assert register_custom_pii_ruleset(ruleset) is True
+        calls = 0
+        real_run = custom_pii.run_custom_pii_batch
+
+        def counted_run(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return real_run(*args, **kwargs)
+
+        monkeypatch.setattr(custom_pii, "run_custom_pii_batch", counted_run)
+        aggregate = ConsoleProviderStreamSignals(
+            exchange_capture_enabled=True,
+            capture_detail=CaptureDetail.FULL,
+            pii_redaction_enabled=True,
+            pii_ruleset_revision_id=revision_id,
+        )
+        call = aggregate.new_usage_call()
+        call.begin_exchange(
+            provider="openai",
+            model="model",
+            endpoint=None,
+            request={"value": "customer-ABCDWXYZ"},
+            omitted_keys=(),
+        )
+        call.record_exchange_content("customer-ABCDWXYZ")
+        call.record_exchange_tool_calls(
+            [{"function": {"arguments": "customer-ABCDWXYZ"}}]
+        )
+        call.close_exchange()
+
+        capture = aggregate.exchange_captures()[0]
+        assert calls == 1
+        assert "customer-ABCDWXYZ" not in repr(capture)
+        assert repr(capture).count("[PII omitted]") == 3
 
     def test_close_attaches_this_calls_normalized_usage(self):
         aggregate = ConsoleProviderStreamSignals(exchange_capture_enabled=True)

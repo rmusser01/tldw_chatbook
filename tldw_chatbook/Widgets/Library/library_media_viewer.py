@@ -77,6 +77,7 @@ class LibraryMediaViewer(Vertical):
         confirming_delete: bool = False,
         highlights: Sequence[LibraryMediaHighlightRow] = (),
         editing_analysis: bool = False,
+        generating_analysis: bool = False,
         content_query: str = "",
         content_match_index: int = 0,
         content_mode: str = "raw",
@@ -92,14 +93,25 @@ class LibraryMediaViewer(Vertical):
         image_preview_hidden: bool = False,
         image_preview_available: bool = False,
         image_preview_source: Any = None,
+        review_banner: str = "",
         **kwargs: Any,
     ) -> None:
+        """Hold the viewer's compose inputs.
+
+        Args:
+            viewer: Pure display state for the loaded item.
+            review_banner: One-line active review-set banner ("Reviewing:
+                <name> — X of M · N reviewed · ✓ reviewed"), or "" when no
+                set is active (task-30045). Rendered as literal text (set
+                names derive from user input).
+        """
         super().__init__(**kwargs)
         self.viewer = viewer
         self.editing = editing
         self.confirming_delete = confirming_delete
         self.highlights = tuple(highlights)
         self.editing_analysis = editing_analysis
+        self.generating_analysis = generating_analysis
         self.content_query = content_query
         self.content_match_index = content_match_index
         self.content_mode = content_mode
@@ -115,6 +127,7 @@ class LibraryMediaViewer(Vertical):
         self.image_preview_hidden = image_preview_hidden
         self.image_preview_available = image_preview_available
         self.image_preview_source = image_preview_source
+        self.review_banner = review_banner
         # Fill the (already 13fr) canvas host, not an independent 13fr: an `fr`
         # width here breaks width:100% child resolution so long lines (analysis
         # summary, a long URL) clip instead of wrapping. 1fr fills the same
@@ -184,6 +197,16 @@ class LibraryMediaViewer(Vertical):
             id="library-media-reader-identity",
             markup=False,
         )
+        if self.review_banner:
+            # task-30045 (critique P2): the active review set is a workflow
+            # object -- its name, live progress, and the loaded item's own
+            # reviewed state frame the Reader, not just a footer string.
+            # markup=False: the set name derives from user input.
+            yield Static(
+                self.review_banner,
+                id="library-media-review-banner",
+                markup=False,
+            )
         yield Button("‹ Back", id="library-media-back", compact=True)
         yield Static(
             "Edit media details" if self.editing else self.viewer.title,
@@ -549,13 +572,14 @@ class LibraryMediaViewer(Vertical):
                 yield Button("Cancel", id="library-media-edit-cancel", compact=True)
 
     def _compose_analysis(self) -> ComposeResult:
-        """Render the Analysis section: read-only text + Edit toggle, or the edit form.
+        """Render the Analysis section: read-only text + Edit/Generate, or a form.
 
         Always renders (mirroring the Content section's always-present
-        placeholder) so "Edit analysis" is reachable even when no analysis
-        exists yet -- editing an empty analysis simply creates the first
-        one via ``save_analysis_version``. Analysis (re)generation via an
-        LLM is explicitly out of scope; this only edits existing text.
+        placeholder) so the actions are reachable even when no analysis
+        exists yet. "Edit"/"Add" hand-edits text via ``save_analysis_version``;
+        "Generate" (task-28006) runs the configured analysis provider and
+        persists the result the same way. While a generation is in flight
+        the section shows a progress line instead of the actions.
 
         Returns:
             ComposeResult for the Analysis section.
@@ -567,15 +591,61 @@ class LibraryMediaViewer(Vertical):
         )
         if self.editing_analysis:
             yield from self._compose_analysis_edit_form()
-        else:
+            return
+        if self.generating_analysis:
             yield Static(
                 self.viewer.analysis or "No analysis yet.",
                 id="library-media-viewer-analysis-text",
                 markup=False,
             )
+            yield Static(
+                "Generating analysis…",
+                id="library-media-analysis-generating",
+                classes="destination-purpose",
+                markup=False,
+            )
+            return
+        if self.viewer.analysis:
+            # task-28026: render the analysis in the SAME searchable/
+            # highlightable widgets the Read tab uses, so the in-item find
+            # bar works over the analysis text. The screen's search corpus
+            # (_library_media_content_matches) is mode-aware, so the query,
+            # match count, Prev/Next, and Enter-advance all follow the
+            # active tab. Analysis is plain text -> raw mode, not Markdown.
+            matches = find_content_matches(self.viewer.analysis, self.content_query)
+            yield LibraryMediaContentSearchControls(
+                is_markdown=False,
+                query=self.content_query,
+                matches=matches,
+                match_index=self.content_match_index,
+                id="library-media-content-search-controls",
+            )
+            yield LibraryMediaContentBody(
+                content=self.viewer.analysis,
+                is_markdown=False,
+                mode="raw",
+                query=self.content_query,
+                match_index=self.content_match_index,
+                id="library-media-viewer-content",
+            )
+        else:
+            yield Static(
+                "No analysis yet.",
+                id="library-media-viewer-analysis-text",
+                markup=False,
+            )
+        with Horizontal(classes="ds-toolbar"):
             yield Button(
                 "Edit analysis" if self.viewer.analysis else "Add analysis",
                 id="library-media-analysis-edit",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            # task-28006: LLM generation, in the reading flow (no detour to
+            # the manager). "Regenerate" when an analysis already exists.
+            yield Button(
+                "Regenerate" if self.viewer.analysis else "Generate",
+                id="library-media-analysis-generate",
                 classes="library-canvas-action",
                 compact=True,
             )

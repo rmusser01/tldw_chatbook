@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 from rich.style import Style
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
-from textual.message import Message
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Terminal.contracts import (
@@ -29,7 +28,12 @@ from tldw_chatbook.Terminal.session_manager import (
     TerminalSessionView,
     TerminalViewState,
 )
-
+from tldw_chatbook.Widgets.Console.console_terminal_messages import (
+    ConsoleTerminalActionRequested,
+    ConsoleTerminalInputRequested,
+    ConsoleTerminalResizeRequested,
+    TerminalAction,
+)
 
 _GLOBAL_KEYS = frozenset({"ctrl+p", "ctrl+q", "f1", "f6"})
 _RELEASE_KEY = "ctrl+right_square_bracket"
@@ -62,49 +66,6 @@ _FIXED_KEY_BYTES = {
     "f11": b"\x1b[23~",
     "f12": b"\x1b[24~",
 }
-
-
-class ConsoleTerminalInputRequested(Message):
-    """Carry one freshly encoded key event toward the Terminal controller."""
-
-    def __init__(self, data: bytes) -> None:
-        super().__init__()
-        self.data = data
-
-
-TerminalAction = Literal[
-    "return",
-    "open-settings",
-    "arm",
-    "new",
-    "select",
-    "rename",
-    "focus",
-    "close",
-    "retry",
-    "jump-live",
-]
-
-
-class ConsoleTerminalActionRequested(Message):
-    """Request one direct-user Terminal workspace action."""
-
-    def __init__(self, action: TerminalAction, session_id: str | None = None) -> None:
-        super().__init__()
-        self.action = action
-        self.session_id = session_id
-
-
-class ConsoleTerminalResizeRequested(Message):
-    """Report the viewport's final painted allocation to the screen controller."""
-
-    def __init__(self, width: int, height: int) -> None:
-        super().__init__()
-        self.painted_width = width
-        self.painted_height = height
-        self.clamped = width > MAX_COLUMNS or height > MAX_ROWS
-        self.columns = min(MAX_COLUMNS, max(MIN_COLUMNS, width or 80))
-        self.rows = min(MAX_ROWS, max(MIN_ROWS, height or 24))
 
 
 def terminal_key_bytes(key: str, character: str | None) -> bytes | None:
@@ -359,7 +320,14 @@ class TerminalViewport(Static):
 
     def on_resize(self) -> None:
         """Report descendant-only layout changes using actual painted dimensions."""
-        request = ConsoleTerminalResizeRequested(self.size.width, self.size.height)
+        request = ConsoleTerminalResizeRequested(
+            self.size.width,
+            self.size.height,
+            min_columns=MIN_COLUMNS,
+            max_columns=MAX_COLUMNS,
+            min_rows=MIN_ROWS,
+            max_rows=MAX_ROWS,
+        )
         workspace = self._workspace()
         if workspace is not None:
             workspace.update_painted_allocation(

@@ -11,14 +11,20 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
 from ....Scheduling.events import (
+    CancelTransferRequested,
     DeleteTaskRequested,
     DisableTaskRequested,
+    AcknowledgeIncidentRequested,
     EditTaskRequested,
     EnableTaskRequested,
+    RetryTransferRequested,
     RunReminderNowRequested,
+    TransferToLocalRequested,
+    TransferToServerRequested,
 )
 from ....Scheduling.models import ReminderTask, ScheduledTask, ScheduleKind, TaskStatus
 from ....Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
+from ....Widgets.detail_value_row import DetailGroup, DetailValueRow
 from ..destination_recovery import DestinationRecoveryState
 
 
@@ -186,6 +192,47 @@ def _format_last_run(task: ReminderTask | ScheduledTask | None) -> str:
     return f"{task.last_run_at.strftime('%Y-%m-%d %H:%M')} {_format_timezone(task.last_run_at)}"
 
 
+def format_run_history(runs) -> str:
+    """TASK-26026: a compact multi-line run history, newest first.
+
+    ``runs`` is the ``list_task_runs`` shape (dicts with status/started_at/
+    error_msg). Empty/None reads as "No runs recorded yet" -- distinct from
+    a task that has a last_status but no ledger rows (a pre-ledger task).
+    """
+    if not runs:
+        return "No runs recorded yet"
+    lines = []
+    for run in runs[:8]:
+        started = str(run.get("started_at") or "?")[:16].replace("T", " ")
+        status = str(run.get("status") or "?")
+        error = run.get("error_msg")
+        suffix = f" — {str(error)[:80]}" if error else ""
+        lines.append(f"{started}  {status}{suffix}")
+    return "\n".join(lines)
+
+
+def format_incidents(incidents) -> str:
+    """TASK-26027: a compact incident list, newest first.
+
+    Shows only OPEN incidents (alerting/acknowledged) -- a closed incident
+    is resolved and not actionable. Empty reads as "No open incidents".
+    """
+    if not incidents:
+        return "No open incidents"
+    open_rows = [
+        row for row in incidents if str(row.get("status")) != "closed"
+    ]
+    if not open_rows:
+        return "No open incidents"
+    lines = []
+    for row in open_rows[:5]:
+        status = str(row.get("status") or "?")
+        count = row.get("occurrence_count") or 1
+        sig = str(row.get("signature") or "")[:80]
+        lines.append(f"[{status} ×{count}] {sig}")
+    return "\n".join(lines)
+
+
 def _humanize_cron(cron: str | None, timezone: str | None = None) -> str:
     """Summarize a cron expression in plain English."""
     if not cron:
@@ -344,12 +391,205 @@ def _task_sync_label(task: ReminderTask | ScheduledTask) -> str:
     return "local (read-only projection)"
 
 
+def definition_cron_expression(schedule: dict[str, Any]) -> Any:
+    """An automation definition's cron string, under EITHER key.
+
+    The two writers disagree: this client writes `schedule["cron"]`
+    (`AutomationDefinitionForm`'s save payload), the real server sends
+    `schedule["expression"]` (recorded fixture
+    `Tests/Scheduling/fixtures/server_responses/
+    automation_definition_list.json`), and `_load_server_automations`
+    passes the payload through raw, stamping only `owner_id`.
+
+    Both readers of that field go through here (final review F1 + its
+    carry-forward), and it lives in this leaf module because the two are
+    in packages that cannot import each other: `definition_detail`'s "At"
+    row -- where a cron-only read rendered `At: -` for EVERY server-owned
+    definition -- and `AutomationDefinitionForm._prefill_from_row`, where
+    the same read was worse than cosmetic: editing a mirrored server-only
+    definition fell through to the form's default preset, so a save wrote
+    that default OVER the server's real schedule.
+
+    Args:
+        schedule: A definition's `schedule` dict, from either source.
+
+    Returns:
+        The cron string, or ``None``/empty when neither key carries one.
+    """
+    return schedule.get("cron") or schedule.get("expression")
+
+
+def owner_display_label(owner_id: Any) -> str:
+    """Prose owner label shared by BOTH detail panes (final review F6/F7).
+
+    ``"This device"`` for a locally-owned row, the server's own id for a
+    server-scoped one (``"server:srv-1"`` -> ``"srv-1"``) -- the
+    vocabulary the spec, the User Guide and the Automations table's own
+    Name-cell prefix already use. The reminder pane's `Runs on` row used
+    to render the raw metadata string instead (``local``, ``server:1 /
+    server <id>``), so the two panes spoke two dialects for the flagship
+    row of the redesign. One helper, one vocabulary -- settled before
+    PR-3 turns this row into the transfer dropdown.
+
+    `TaskInspector`'s Owner row deliberately keeps `_task_owner_label`'s
+    raw value: that pane is the metadata inspector, where the unprettied
+    owner/server ids are the point.
+
+    Args:
+        owner_id: A row's ``owner_id`` (any type tolerated -- anything
+            that is not a server-scoped string reads as local).
+
+    Returns:
+        ``"This device"``, or the server's own id.
+    """
+    # ADR-097: scheduler.queue stays off the boot census -- function-local
+    # import, same as `_queue_owner_suffix` below.
+    from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
+
+    if not is_server_scoped_owner(owner_id):
+        return "This device"
+    owner_id = str(owner_id)
+    return owner_id.split(":", 1)[1] if ":" in owner_id else owner_id
+
+
 def _task_owner_label(task: ReminderTask | ScheduledTask) -> str:
-    """Return an owner label for the task."""
+    """Return the RAW owner label for the task (TaskInspector's Owner row).
+
+    Prose-rendered surfaces use `owner_display_label` instead.
+    """
     owner = task.owner_id or "local"
     if isinstance(task, ReminderTask) and task.server_id:
         owner += f" / server {task.server_id}"
     return owner
+
+
+def transfer_row_dict(task: ReminderTask) -> dict[str, Any]:
+    """Build the raw-row dict `SchedulingService.transfer_refusal`/
+    `transfer_warnings` expect from an already-loaded `ReminderTask`
+    (schedules-handoff spec §6.4, PR-5 task 7).
+
+    Both facade functions were written against real DB rows (ISO date
+    strings, plain enum values) -- this reshapes the in-memory Pydantic
+    model to match without a DB round-trip, since every field they read
+    (`owner_id`, `server_id`, `transfer_state`, `schedule_kind`, `run_at`,
+    `timeout_seconds`) is already on the model.
+    """
+    return {
+        "owner_id": task.owner_id,
+        "server_id": task.server_id,
+        "transfer_state": task.transfer_state,
+        "schedule_kind": task.schedule_kind.value,
+        "run_at": task.run_at.isoformat() if task.run_at else None,
+        "timeout_seconds": task.timeout_seconds,
+    }
+
+
+#: Minimal queue-row signal that a transfer is in flight (spec §9's badge
+#: language, pulled forward from PR-6 only far enough to keep PR-5's state
+#: machine from being silently inert -- plan ruling 1 keeps full badge/
+#: owner-column polish out of scope here).
+_TRANSFER_STATE_ROW_LABELS: dict[str, str] = {
+    "to_server_pending": "Moving to server…",
+    "to_server_sent": "Moving to server…",
+    "from_server_pending": "Waiting for server release",
+    "to_server_failed": "Transfer failed — retry/cancel",
+}
+
+
+def _transfer_row_suffix(task: ReminderTask | ScheduledTask) -> str:
+    """Return a queue-row title suffix for an in-flight transfer, or ``""``."""
+    if not isinstance(task, ReminderTask):
+        return ""
+    label = _TRANSFER_STATE_ROW_LABELS.get(task.transfer_state or "")
+    return f" ({label})" if label else ""
+
+
+def _queue_owner_suffix(task: ReminderTask | ScheduledTask, *, compact: bool) -> str:
+    """Return a queue-row title owner suffix, or ``""`` (plan ruling 4).
+
+    Same append-a-parenthetical idiom as `_transfer_row_suffix` above and
+    the same wording as `results_tab._result_owner_suffix` (schedules-
+    handoff PR-6 task 3) -- a local row says nothing, a server-scoped row
+    gets ``" (server: <id>)"``. Hidden at compact width: the compact
+    layout (`SCHEDULES_COMPACT_WORKBENCH_MAX_WIDTH`) already trims panes
+    to fit narrow terminals, and this suffix would be the next thing to
+    overflow the row.
+    """
+    if compact:
+        return ""
+    # ADR-097: scheduler.queue stays off the boot census -- imported
+    # function-locally everywhere else this helper is needed too
+    # (schedules_workbench.py, scheduling_service.py, results_tab.py).
+    from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
+
+    owner_id = task.owner_id
+    if not is_server_scoped_owner(owner_id):
+        return ""
+    owner_id = str(owner_id)
+    label = owner_id.split(":", 1)[1] if ":" in owner_id else owner_id
+    return f" (server: {label})"
+
+
+#: spec §5's Frequency-group "Notifications" row (schedules-redesign PR-1,
+#: task 3). A reminder dispatch always writes an inbox notification and
+#: attempts a transient toast (`ReminderHandler.handle` ->
+#: `NotificationDispatchService.dispatch`, `Scheduling/scheduler/handlers/
+#: reminder_handler.py`) -- there is no per-reminder notification-channel
+#: config to read (survey §4), so this is a fixed label, never derived.
+_REMINDER_NOTIFICATIONS_LABEL = "Inbox + toast"
+
+
+def _reminder_runs_on_label(task: ReminderTask) -> str:
+    """'Runs on' row value (spec §5 Details group): the shared prose owner
+    label plus the existing in-flight transfer badge text, when a transfer
+    is running.
+
+    Final review F6/F7: this used to render `_task_owner_label`'s raw
+    metadata string (``local``), which neither matched the definitions
+    pane's ``This device`` nor the User Guide's own description of this
+    very row. Both panes now go through `owner_display_label`.
+    """
+    return owner_display_label(task.owner_id) + _transfer_row_suffix(task)
+
+
+def _reminder_repeat_label(task: ReminderTask) -> str:
+    """'Repeat' row value (Frequency group): the schedule kind -- the same
+    content the old Type row showed for a reminder, via the same helper
+    (`_humanize_schedule_kind`, unchanged).
+    """
+    return _humanize_schedule_kind(task.schedule_kind)
+
+
+def _reminder_at_label(task: ReminderTask) -> str:
+    """'At' row value (Frequency group): the full schedule summary -- the
+    same content the old Schedule row showed, via the same helper
+    (`_humanize_schedule`, unchanged). The task-3 brief requires reusing
+    the current field-formatting helpers verbatim rather than re-deriving
+    a cadence-only or time-only string from the cron.
+    """
+    return _humanize_schedule(task)
+
+
+def _reminder_timezone_label(task: ReminderTask) -> str:
+    """'Timezone' row value (Frequency group), reusing the same per-kind
+    timezone source `_humanize_schedule`'s own formatting already reads
+    from: `run_at`'s zone for one-time, the stored cron timezone for
+    recurring.
+    """
+    if task.schedule_kind == ScheduleKind.ONE_TIME:
+        return _format_timezone(task.run_at) if task.run_at is not None else "UTC"
+    return task.timezone or "UTC"
+
+
+def _reminder_last_fire_label(task: ReminderTask) -> str:
+    """'Last fire' row value (History group): last_run_at plus the recorded
+    outcome. Uses the underlying status (task-23101 review F5), not the
+    enabled-overlaid display status, so a disabled reminder's last real
+    outcome still shows here -- same discipline as `_update_missed_notice`.
+    """
+    if task.last_run_at is None:
+        return _format_last_run(task)  # "Never run"
+    return f"{_format_last_run(task)} — {_humanize_status(_underlying_status(task))}"
 
 
 def status_badge_text(status: TaskStatus) -> Text:
@@ -405,6 +645,15 @@ class TaskDetail(Vertical):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._current_task: ReminderTask | ScheduledTask | None = None
+        # schedules-redesign PR-1, task 3: reminder-only DetailValueRow
+        # refs, captured in compose() and refreshed in place by set_task
+        # (no recompose). None until first compose().
+        self._runs_on_row: DetailValueRow | None = None
+        self._repeat_row: DetailValueRow | None = None
+        self._at_row: DetailValueRow | None = None
+        self._timezone_row: DetailValueRow | None = None
+        self._last_fire_row: DetailValueRow | None = None
+        self._body_card: Static | None = None
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -425,22 +674,28 @@ class TaskDetail(Vertical):
                     classes="scheduling-detail-value",
                 ),
             )
-            yield Horizontal(
-                Static("Type:", classes="scheduling-detail-label"),
-                Static(
-                    "-",
-                    id="scheduling-task-detail-type",
-                    classes="scheduling-detail-value",
-                ),
-            )
-            yield Horizontal(
-                Static("Schedule:", classes="scheduling-detail-label"),
-                Static(
-                    "-",
-                    id="scheduling-task-detail-schedule",
-                    classes="scheduling-detail-value",
-                ),
-            )
+            # task-3 brief: the old combined Type/Schedule rows only apply
+            # to a `ScheduledTask` projection (watchlist_job/briefing_job)
+            # now -- reminders render Repeat/At/Timezone/Notifications
+            # through the Frequency `DetailGroup` below instead. `set_task`
+            # toggles this container's `.display` per task type.
+            with Vertical(id="scheduling-task-detail-legacy-fields"):
+                yield Horizontal(
+                    Static("Type:", classes="scheduling-detail-label"),
+                    Static(
+                        "-",
+                        id="scheduling-task-detail-type",
+                        classes="scheduling-detail-value",
+                    ),
+                )
+                yield Horizontal(
+                    Static("Schedule:", classes="scheduling-detail-label"),
+                    Static(
+                        "-",
+                        id="scheduling-task-detail-schedule",
+                        classes="scheduling-detail-value",
+                    ),
+                )
             yield Horizontal(
                 Static("Status:", classes="scheduling-detail-label"),
                 Static("-", id="scheduling-task-status-badge"),
@@ -461,6 +716,91 @@ class TaskDetail(Vertical):
                 id="scheduling-task-detail-missed",
                 classes="scheduling-detail-missed",
             )
+            # schedules-redesign PR-1, task 3 (spec §5 reminder column):
+            # Details/Frequency/History groups. Rows are read-only in this
+            # PR (plan ruling 1: `affordance` stays at its False default,
+            # no new bindings). `set_task` shows this container only for a
+            # `ReminderTask`; a `ScheduledTask` projection keeps the
+            # legacy Type/Schedule rows above instead.
+            with Vertical(id="scheduling-task-detail-groups"):
+                # Spec §5 wants the body text in a rounded card above the
+                # groups, exactly like the definitions pane's question
+                # card -- final review F10: it was never built, and
+                # `ReminderTask.body` was rendered nowhere. Same
+                # `markup=False` escape discipline (reminder bodies are
+                # user text); hidden entirely for a body-less reminder
+                # rather than showing an empty bordered box.
+                self._body_card = Static(
+                    "", id="scheduling-task-detail-body-card", markup=False
+                )
+                yield self._body_card
+                self._runs_on_row = DetailValueRow(
+                    "Runs on", "-", value_id="scheduling-detail-runs-on"
+                )
+                yield DetailGroup(
+                    self._runs_on_row,
+                    title="Details",
+                    id="scheduling-detail-group-details",
+                )
+                self._repeat_row = DetailValueRow(
+                    "Repeat", "-", value_id="scheduling-detail-repeat"
+                )
+                self._at_row = DetailValueRow(
+                    "At", "-", value_id="scheduling-detail-at"
+                )
+                self._timezone_row = DetailValueRow(
+                    "Timezone", "-", value_id="scheduling-detail-timezone"
+                )
+                notifications_row = DetailValueRow(
+                    "Notifications",
+                    _REMINDER_NOTIFICATIONS_LABEL,
+                    value_id="scheduling-detail-notifications",
+                )
+                yield DetailGroup(
+                    self._repeat_row,
+                    self._at_row,
+                    self._timezone_row,
+                    notifications_row,
+                    title="Frequency",
+                    id="scheduling-detail-group-frequency",
+                )
+                self._last_fire_row = DetailValueRow(
+                    "Last fire", "-", value_id="scheduling-detail-last-fire"
+                )
+                # Final review N2: labelled "Recent runs" pointing at a
+                # section whose own label is also "Recent runs" -- one of
+                # the two had to be renamed.
+                history_link_row = DetailValueRow(
+                    "Run history",
+                    "See list below",
+                    value_id="scheduling-detail-history-link",
+                )
+                yield DetailGroup(
+                    self._last_fire_row,
+                    history_link_row,
+                    title="History",
+                    collapsed=True,
+                    id="scheduling-detail-group-history",
+                )
+            # TASK-26026: durable per-dispatch run history -- the whole
+            # point is that run N-1 is recoverable, not just the latest.
+            yield Static(
+                "Recent runs:", classes="scheduling-detail-label"
+            )
+            yield Static(
+                "No runs recorded yet",
+                id="scheduling-task-detail-run-history",
+                classes="scheduling-detail-value",
+            )
+            # TASK-26027: open failure incidents + an acknowledge action.
+            yield Static(
+                "Open incidents:", classes="scheduling-detail-label"
+            )
+            yield Static(
+                "No open incidents",
+                id="scheduling-task-detail-incidents",
+                classes="scheduling-detail-value",
+            )
             # task-23106: rows managed by other systems say so, and where
             # to edit them, instead of silently hiding the action row.
             yield Static(
@@ -474,6 +814,13 @@ class TaskDetail(Vertical):
                 id="scheduling-edit-task",
                 variant="primary",
                 tooltip="Edit this scheduled task.",
+            ),
+            Button(
+                "Acknowledge incident",
+                id="scheduling-ack-incident",
+                tooltip="Silence notifications for the current failure "
+                "incident until it recurs after a success. Does not disable "
+                "the task.",
             ),
             Button(
                 "Run now",
@@ -505,6 +852,41 @@ class TaskDetail(Vertical):
             ),
             id="scheduling-task-detail-lifecycle",
         )
+        # schedules-handoff spec §6: per-task ownership transfer. All four
+        # buttons stay visible per-row per UX-059 (only the state-changing
+        # action is enabled); `_update_transfer_buttons` toggles `.display`
+        # per row structure, `set_transfer_reasons` toggles `.disabled` +
+        # the reason text (UX-073).
+        yield Horizontal(
+            Button(
+                "Move to server",
+                id="scheduling-transfer-to-server",
+                variant="primary",
+                tooltip="Queue this task to move to the connected server.",
+            ),
+            Button(
+                "Move to local",
+                id="scheduling-transfer-to-local",
+                variant="primary",
+                tooltip="Queue this server-owned task to move to this device.",
+            ),
+            Button(
+                "Retry transfer",
+                id="scheduling-retry-transfer",
+                variant="warning",
+                tooltip="Retry the failed transfer to the server.",
+            ),
+            Button(
+                "Cancel transfer",
+                id="scheduling-cancel-transfer",
+                variant="warning",
+                tooltip="Cancel this task's in-progress transfer.",
+            ),
+            id="scheduling-task-detail-transfer",
+        )
+        # Visible when a transfer action is disabled: keyboard users can't
+        # see hover tooltips, so the reason must live in text (UX-073).
+        yield Static("", id="scheduling-transfer-why", classes="follow-why")
         yield Button(
             "Follow in Console",
             id="schedules-follow-in-console",
@@ -524,6 +906,11 @@ class TaskDetail(Vertical):
             "scheduling-enable-task",
             "scheduling-disable-task",
             "scheduling-delete-task",
+            "scheduling-ack-incident",
+            "scheduling-transfer-to-server",
+            "scheduling-transfer-to-local",
+            "scheduling-retry-transfer",
+            "scheduling-cancel-transfer",
         }:
             event.stop()
         if button_id == "scheduling-edit-task":
@@ -536,6 +923,41 @@ class TaskDetail(Vertical):
             self._request_disable()
         elif button_id == "scheduling-delete-task":
             self.request_delete()
+        elif button_id == "scheduling-transfer-to-server":
+            self._request_transfer_to_server()
+        elif button_id == "scheduling-transfer-to-local":
+            self._request_transfer_to_local()
+        elif button_id == "scheduling-retry-transfer":
+            self._request_retry_transfer()
+        elif button_id == "scheduling-cancel-transfer":
+            self._request_cancel_transfer()
+        elif button_id == "scheduling-ack-incident":
+            self._request_acknowledge()
+
+    def _sync_acknowledge_button(self) -> None:
+        """Enable the acknowledge button only when an alerting incident exists."""
+        try:
+            button = self.query_one("#scheduling-ack-incident", Button)
+        except Exception:  # noqa: BLE001 -- absent before mount
+            return
+        incidents = getattr(self, "_current_incidents", []) or []
+        alerting = [
+            row for row in incidents if str(row.get("status")) == "alerting"
+        ]
+        button.disabled = not alerting
+        button.display = bool(alerting)
+
+    def _request_acknowledge(self) -> None:
+        """Post an acknowledge request for the newest alerting incident."""
+        incidents = getattr(self, "_current_incidents", []) or []
+        alerting = [
+            row for row in incidents if str(row.get("status")) == "alerting"
+        ]
+        if not alerting:
+            return
+        incident_id = alerting[0].get("id")
+        if incident_id is not None:
+            self.post_message(AcknowledgeIncidentRequested(int(incident_id)))
 
     def _request_edit(self) -> None:
         """Post an edit request for the current reminder."""
@@ -557,6 +979,26 @@ class TaskDetail(Vertical):
         if isinstance(self._current_task, ReminderTask):
             self.post_message(RunReminderNowRequested(self._current_task))
 
+    def _request_transfer_to_server(self) -> None:
+        """Post a local -> server transfer request (spec §6.1)."""
+        if isinstance(self._current_task, ReminderTask):
+            self.post_message(TransferToServerRequested(self._current_task))
+
+    def _request_transfer_to_local(self) -> None:
+        """Post a server -> local release request (spec §6.2)."""
+        if isinstance(self._current_task, ReminderTask):
+            self.post_message(TransferToLocalRequested(self._current_task))
+
+    def _request_retry_transfer(self) -> None:
+        """Post a retry request for a definitively-failed transfer."""
+        if isinstance(self._current_task, ReminderTask):
+            self.post_message(RetryTransferRequested(self._current_task))
+
+    def _request_cancel_transfer(self) -> None:
+        """Post a cancel request for the current task's in-flight transfer."""
+        if isinstance(self._current_task, ReminderTask):
+            self.post_message(CancelTransferRequested(self._current_task))
+
     def request_delete(self) -> None:
         """Open the delete confirmation modal for the current task."""
         if self._current_task is None:
@@ -576,14 +1018,21 @@ class TaskDetail(Vertical):
             self.post_message(DeleteTaskRequested(self._current_task))
 
     def set_task(
-        self, task: ReminderTask | ScheduledTask | None, *, queue_empty: bool = False
+        self,
+        task: ReminderTask | ScheduledTask | None,
+        *,
+        queue_empty: bool = False,
+        run_history=None,
+        incidents=None,
     ) -> None:
         """Update the detail view for the given task (or clear it)."""
         self._current_task = task
+        self._current_incidents = list(incidents or [])
         metadata = self.query_one("#scheduling-task-detail-metadata", Vertical)
         lifecycle = self.query_one("#scheduling-task-detail-lifecycle", Horizontal)
         self.query_one("#schedules-follow-in-console", Button)
         empty_state = self.query_one("#scheduling-task-detail-empty-state", Static)
+        transfer_row = self.query_one("#scheduling-task-detail-transfer", Horizontal)
 
         if task is None:
             empty_copy = (
@@ -595,6 +1044,8 @@ class TaskDetail(Vertical):
             empty_state.display = True
             metadata.display = False
             lifecycle.display = False
+            transfer_row.display = False
+            self.query_one("#scheduling-transfer-why", Static).update("")
             missed_notice = self.query_one("#scheduling-task-detail-missed", Static)
             missed_notice.update("")
             missed_notice.display = False
@@ -611,6 +1062,56 @@ class TaskDetail(Vertical):
         empty_state.display = False
         metadata.display = True
         lifecycle.display = isinstance(task, ReminderTask)
+        transfer_row.display = isinstance(task, ReminderTask)
+
+        # schedules-redesign PR-1, task 3: the Details/Frequency/History
+        # groups are reminder-only (spec §5's reminder column); a
+        # `ScheduledTask` projection (watchlist_job/briefing_job) keeps the
+        # legacy Type/Schedule rows instead, since this regrammar does not
+        # touch projection rendering.
+        is_reminder = isinstance(task, ReminderTask)
+        self.query_one("#scheduling-task-detail-legacy-fields", Vertical).display = (
+            not is_reminder
+        )
+        self.query_one("#scheduling-task-detail-groups", Vertical).display = (
+            is_reminder
+        )
+        if is_reminder:
+            assert self._runs_on_row is not None, "set_task called before mount"
+            body = (task.body or "").strip()
+            self._body_card.update(body)
+            self._body_card.display = bool(body)
+            self._runs_on_row.update_value(_reminder_runs_on_label(task))
+            self._repeat_row.update_value(_reminder_repeat_label(task))
+            self._at_row.update_value(_reminder_at_label(task))
+            self._timezone_row.update_value(_reminder_timezone_label(task))
+            self._last_fire_row.update_value(_reminder_last_fire_label(task))
+
+        if isinstance(task, ReminderTask):
+            # Structural visibility only (spec §6, PR-5 task 7): Move to
+            # server on any local row, Move to local on any server mirror,
+            # Cancel on any in-flight state, Retry only alongside a
+            # definitively-failed to_server transfer (it re-triggers the
+            # SAME facade call as Move to server, but carries the stored
+            # `transfer_errors` beside it -- worth the redundancy). Which
+            # of the always-shown buttons are ENABLED is `set_transfer_
+            # reasons`' job (workbench-computed, via `transfer_refusal`).
+            is_server_owned = str(task.owner_id or "").startswith("server:")
+            transfer_state = task.transfer_state
+            self.query_one("#scheduling-transfer-to-server", Button).display = (
+                not is_server_owned
+            )
+            self.query_one("#scheduling-transfer-to-local", Button).display = (
+                is_server_owned
+            )
+            self.query_one("#scheduling-retry-transfer", Button).display = (
+                transfer_state == "to_server_failed"
+            )
+            self.query_one("#scheduling-cancel-transfer", Button).display = (
+                transfer_state is not None
+            )
+        else:
+            self.query_one("#scheduling-transfer-why", Static).update("")
 
         # task-23106: a row Schedules does not own says who owns it and
         # where to edit it, instead of only hiding the action row.
@@ -657,6 +1158,13 @@ class TaskDetail(Vertical):
         )
         self._update_static("scheduling-task-detail-next-run", _format_next_run(task))
         self._update_missed_notice(task)
+        self._update_static(
+            "scheduling-task-detail-run-history", format_run_history(run_history)
+        )
+        self._update_static(
+            "scheduling-task-detail-incidents", format_incidents(incidents)
+        )
+        self._sync_acknowledge_button()
 
         status = _task_status(task)
         badge = self.query_one("#scheduling-task-status-badge", Static)
@@ -746,6 +1254,106 @@ class TaskDetail(Vertical):
             )
         except Exception:  # noqa: BLE001 - widget not mounted yet
             pass
+
+    def set_transfer_reasons(
+        self,
+        *,
+        to_server_reason: str | None,
+        to_local_reason: str | None,
+        retry_reason: str | None,
+        cancel_reason: str | None,
+        retry_errors: list[str],
+    ) -> None:
+        """Apply disabled-with-reason state to the transfer buttons (UX-073).
+
+        Called by the workbench right after `set_task` -- it holds the
+        `SchedulingService` this widget doesn't reach into, so it computes
+        each reason via `transfer_refusal` (spec §6.4, quoting local
+        health verbatim for a refused `recurring_question` release) and
+        passes only the reason relevant to a button `set_task` already
+        decided to show; `None` means the action is allowed. Each reason
+        is BOTH the button's tooltip and a line in the always-visible
+        Static below the row -- keyboard users can't see hover tooltips.
+        """
+        to_server_btn = self.query_one("#scheduling-transfer-to-server", Button)
+        to_local_btn = self.query_one("#scheduling-transfer-to-local", Button)
+        retry_btn = self.query_one("#scheduling-retry-transfer", Button)
+        cancel_btn = self.query_one("#scheduling-cancel-transfer", Button)
+
+        to_server_btn.disabled = to_server_reason is not None
+        to_server_btn.tooltip = (
+            to_server_reason or "Queue this task to move to the connected server."
+        )
+        to_local_btn.disabled = to_local_reason is not None
+        to_local_btn.tooltip = (
+            to_local_reason
+            or "Queue this server-owned task to move to this device."
+        )
+        retry_btn.disabled = retry_reason is not None
+        retry_btn.tooltip = retry_reason or "Retry the failed transfer to the server."
+        cancel_btn.disabled = cancel_reason is not None
+        cancel_btn.tooltip = (
+            cancel_reason or "Cancel this task's in-progress transfer."
+        )
+
+        reason_lines: list[str] = []
+        if to_server_reason:
+            reason_lines.append(f"Move to server: {to_server_reason}")
+        if to_local_reason:
+            reason_lines.append(f"Move to local: {to_local_reason}")
+        if retry_reason:
+            reason_lines.append(f"Retry transfer: {retry_reason}")
+        if cancel_reason:
+            reason_lines.append(f"Cancel transfer: {cancel_reason}")
+        if retry_errors:
+            reason_lines.append("Last transfer error: " + "; ".join(retry_errors))
+        self.query_one("#scheduling-transfer-why", Static).update(
+            "\n".join(reason_lines)
+        )
+
+    def set_lifecycle_lock(self, reason: str | None) -> None:
+        """Freeze Edit/Enable/Disable/Delete while a transfer is in flight.
+
+        Spec §6.3's "dormant and in-flight rows are read-only except
+        cancel" (final review I7): the transfer snapshotted this row's
+        payload at begin time, so an edit made now ships the PRE-edit
+        content to the server and is then overwritten locally by the
+        first mirror pull -- the user's edit vanishes with no warning.
+        ``reason`` comes from `SchedulingService.transfer_lock_reason`
+        (never re-derived here) and is both each button's tooltip and a
+        line in the always-visible Static, since keyboard users cannot
+        see tooltips (UX-073). ``None`` restores the row's normal
+        enabled/disabled logic, which `set_task` has already applied.
+        """
+        locked = reason is not None
+        for button_id, tooltip in (
+            ("scheduling-edit-task", "Edit this scheduled task."),
+            ("scheduling-delete-task", "Delete this scheduled task."),
+        ):
+            button = self.query_one(f"#{button_id}", Button)
+            button.disabled = locked
+            button.tooltip = reason or tooltip
+        enable_btn = self.query_one("#scheduling-enable-task", Button)
+        disable_btn = self.query_one("#scheduling-disable-task", Button)
+        if locked:
+            enable_btn.disabled = True
+            disable_btn.disabled = True
+            enable_btn.tooltip = reason
+            disable_btn.tooltip = reason
+        else:
+            enable_btn.tooltip = "Enable this scheduled task."
+            disable_btn.tooltip = "Disable this scheduled task."
+
+        why = self.query_one("#scheduling-transfer-why", Static)
+        line = f"Edit/Enable/Disable/Delete: {reason}" if reason else ""
+        existing = [
+            text
+            for text in str(why.renderable).split("\n")
+            if text and not text.startswith("Edit/Enable/Disable/Delete:")
+        ]
+        if line:
+            existing.append(line)
+        why.update("\n".join(existing))
 
     def _update_static(self, widget_id: str, content: str) -> None:
         """Update a child Static widget by id."""

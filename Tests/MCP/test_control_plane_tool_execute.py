@@ -26,7 +26,11 @@ from tldw_chatbook.MCP.hub_test_execution import (
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
 from tldw_chatbook.MCP.local_store import LocalExternalMCPProfile, LocalMCPStore
-from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.MCP.permission_store import (
+    EffectiveToolState,
+    ProfileMutationError,
+    profile_policy_digest,
+)
 from tldw_chatbook.MCP.unified_control_plane_service import (
     UnifiedMCPControlPlaneService,
 )
@@ -34,6 +38,30 @@ import tldw_chatbook.MCP.unified_control_plane_service as control_plane_module
 import tldw_chatbook.Agents.mcp_tool_provider as mcp_provider_module
 import tldw_chatbook.Agents.local_tool_provider as local_tool_provider_module
 import tldw_chatbook.MCP.local_server_tools as local_server_tools_module
+
+
+def test_by_key_test_gate_uses_exact_named_profile(tmp_path):
+    """The by-key gate used by Test Tool never falls back to default."""
+    service, _fake, _client, _store = _service(tmp_path)
+    permission_store = service.permission_store
+    permission_store.ensure_profile("research")
+    service.set_tool_state(
+        "builtin:tldw_chatbook", "calculator", "allow", profile_id="default"
+    )
+    service.set_server_default("builtin:tldw_chatbook", "deny", profile_id="research")
+
+    assert (
+        service.gate_tool_test_by_key(
+            "builtin:tldw_chatbook", "calculator", profile_id="default"
+        ).state
+        == "allow"
+    )
+    assert (
+        service.gate_tool_test_by_key(
+            "builtin:tldw_chatbook", "calculator", profile_id="research"
+        ).state
+        == "deny"
+    )
 
 
 class FakeToolClient:
@@ -1046,6 +1074,100 @@ def _install_prepared_external_catalog(fake: FakeLocalService, tool: HubTool) ->
             },
         }
     ]
+
+
+def _profile_identity(service, profile_id: str) -> tuple[str, int | None]:
+    snapshot = service.permission_store.read_snapshot_strict()
+    profile = snapshot.payload["profiles"][profile_id]
+    lifecycle = profile.get("tool_pack_lifecycle")
+    revision = lifecycle.get("revision") if lifecycle is not None else None
+    return profile_policy_digest(profile), revision
+
+
+@pytest.mark.asyncio
+async def test_prepared_hub_test_uses_exact_captured_named_profile(tmp_path):
+    service, fake, _client, _store = _service(tmp_path)
+    tool = _prepared_external_tool()
+    _install_prepared_external_catalog(fake, tool)
+    service.permission_store.ensure_profile("research")
+    service.set_server_default(tool.server_key, "deny", profile_id="default")
+    service.set_tool_state(
+        tool.server_key,
+        tool.name,
+        "allow",
+        tool=tool,
+        profile_id="research",
+    )
+    digest, revision = _profile_identity(service, "research")
+    service.test_hub_tool = AsyncMock(return_value={"profile": "research"})
+
+    preview = service.prepare_hub_test(
+        tool,
+        profile_id="research",
+        expected_profile_digest=digest,
+        expected_revision=revision,
+    )
+    result = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+
+    assert preview.profile_id == "research"
+    assert preview.profile_policy_digest == digest
+    assert preview.profile_revision == revision
+    assert preview.rendered_gate == "allow"
+    assert result == {"profile": "research"}
+    service.test_hub_tool.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_prepared_hub_profile_change_after_preview_is_stale(tmp_path):
+    service, fake, _client, _store = _service(tmp_path)
+    tool = _prepared_external_tool()
+    _install_prepared_external_catalog(fake, tool)
+    service.permission_store.ensure_profile("research")
+    service.set_tool_state(
+        tool.server_key,
+        tool.name,
+        "allow",
+        tool=tool,
+        profile_id="research",
+    )
+    digest, revision = _profile_identity(service, "research")
+    service.test_hub_tool = AsyncMock(return_value={"should": "not run"})
+    preview = service.prepare_hub_test(
+        tool,
+        profile_id="research",
+        expected_profile_digest=digest,
+        expected_revision=revision,
+    )
+
+    service.set_tool_state(
+        tool.server_key,
+        tool.name,
+        "deny",
+        profile_id="research",
+    )
+    result = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+
+    assert isinstance(result, ToolTestAdmissionStale)
+    assert result.reason == "profile_changed"
+    assert result.refreshed_preview is not None
+    assert result.refreshed_preview.profile_id == "research"
+    assert result.refreshed_preview.profile_policy_digest != digest
+    assert result.refreshed_preview.rendered_gate == "deny"
+    service.test_hub_tool.assert_not_awaited()
+
+
+def test_prepared_hub_rejects_stale_captured_profile_before_minting(tmp_path):
+    service, fake, _client, _store = _service(tmp_path)
+    tool = _prepared_external_tool()
+    _install_prepared_external_catalog(fake, tool)
+    service.permission_store.ensure_profile("research")
+
+    with pytest.raises(ProfileMutationError, match="stale_profile"):
+        service.prepare_hub_test(
+            tool,
+            profile_id="research",
+            expected_profile_digest="f" * 64,
+        )
 
 
 @pytest.mark.asyncio
@@ -2681,7 +2803,14 @@ def test_real_local_provider_truncated_json_fragments_are_secret_safe(
         handle.close()
 
     assert detail.provider_terminal is LocalProviderTerminal.RETURNED
-    assert detail.result.content.endswith("… [truncated]")
+    # TASK-25904 composition: with the workspace executor the hub local
+    # provider has a spill home, so an oversized result carries a bounded
+    # preview + spill pointer instead of the bare-truncation tail. Both
+    # shapes are bounded; the secret-safety asserts below cover either.
+    assert detail.result.content.endswith("… [truncated]") or (
+        "[output truncated:" in detail.result.content
+        and "full output saved to" in detail.result.content
+    )
     audited = []
     monkeypatch.setattr(
         service,

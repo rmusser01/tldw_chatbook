@@ -16,7 +16,7 @@ that was already sitting untracked in the tree.
   detail section (§12, §13–§15). The search row updated to record the
   **BLOCKED** gate outcome (57.1% direct / 45.5% conservative cross-call
   census, both past the 1/3 gate) and its deferral to wave-3's combined
-  search+RAG series (task-27021). The RAG/onboarding-plumbing row got a
+  search+RAG series (task-31203). The RAG/onboarding-plumbing row got a
   one-line forward note that search merges into that pool for wave 3.
 - **New §16 "Wave-2 close — summary"**, appended after §15: the
   re-derived full wave-2 pin trajectory (task-level, git-log-verified, not
@@ -116,7 +116,7 @@ match to the wave-2 plan's own recorded starting baseline), the
 multi-commit-back equivalent of the per-task `git stash -u` technique used
 elsewhere in this ledger, since this comparison spans the WHOLE wave
 rather than one task's uncommitted diff. My own uncommitted doc edits +
-the untracked task-27021 file were `git stash push -u`-ed first so the
+the untracked task-31203 file were `git stash push -u`-ed first so the
 overlay checkout wouldn't touch them; restored via `git checkout HEAD --
 tldw_chatbook Tests` (re-verified `_measure()` back to 42411/1267 and
 `git status` clean) then `git stash pop` afterward.
@@ -198,7 +198,7 @@ the same 54–195 ms range the docstring's own motivating numbers describe.
   mechanism.
 - `tldw_chatbook/UI/Library_Modules/library_collections_state.py`
   (docstring only): same fix.
-- `backlog/tasks/task-27021 - Library-decomposition-wave-3-combined-searchRAG-series.md`
+- `backlog/tasks/task-31203 - Library-decomposition-wave-3-combined-searchRAG-series.md`
   (new, was untracked from Task 8): committed as part of this close.
 
 No test file, no production logic, no `_BUDGETS` row, no

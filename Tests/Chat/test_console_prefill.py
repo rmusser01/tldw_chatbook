@@ -40,11 +40,13 @@ class TestParsePrefillArgs:
 
     def test_pin_word_prefix_is_one_shot(self):
         result = parse_prefill_args("pinch of salt")
-        assert result == PrefillCommandAction(kind=ACTION_ONE_SHOT, text="pinch of salt")
+        assert result == PrefillCommandAction(
+            kind=ACTION_ONE_SHOT, text="pinch of salt"
+        )
 
     def test_plain_text_is_one_shot_stripped(self):
-        result = parse_prefill_args("  {\"answer\":  ")
-        assert result == PrefillCommandAction(kind=ACTION_ONE_SHOT, text="{\"answer\":")
+        result = parse_prefill_args('  {"answer":  ')
+        assert result == PrefillCommandAction(kind=ACTION_ONE_SHOT, text='{"answer":')
 
     def test_over_length_is_error(self):
         result = parse_prefill_args("x" * (PREFILL_MAX_CHARS + 1))

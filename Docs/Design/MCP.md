@@ -166,6 +166,69 @@ because an stdio client cannot display Chatbook's operator approval card.
 > [!WARNING]
 > An external MCP client runs with the user's OS access. It can read private local Library content through exposed tools, resources, and prompts, and it may send that content off-device to a cloud model. Enable only the surface you intend to disclose and trust the client and its model provider.
 
+## Portable Tool Profiles
+
+Chatbook can export and import named tool permission profiles as deterministic
+`.tldw-tool-pack` V1 archives. These are policy packages, not MCP server bundles.
+They contain one flattened set of exact Allow/Ask/Deny rules, Ask/Deny
+future-tool fallbacks, stable permission identities, and contract fingerprints.
+The fingerprints cover raw tool name, description, input schema, and
+policy-relevant risk tags without disclosing description or schema text.
+
+The portability inventory is fail-closed and code-owned. It covers the
+permission-addressable built-in agent tools, the built-in Chatbook MCP tools,
+local/raw-shell/Virtual CLI tools, and local external MCP definitions available
+live or from validated cache. Display-only server-source tools, Library
+capabilities, managed-skill approval, runtime orchestration, and skills are
+explicitly counted as excluded. Adding a permission namespace without an
+inventory adapter or explicit exclusion blocks export.
+
+Export reads one strict permission snapshot and one complete inventory. The
+review is bound to the exact profile policy digest and, for imported profiles,
+its lifecycle revision. Named-profile inheritance, definition-change downgrade,
+and high-risk floors are resolved before serialization. Broad Allow fallbacks
+are clamped to Ask. The global kill switch, runtime availability, connection
+configuration, workspace/Persona gates, and project-instruction state remain
+destination-local and are never serialized.
+
+Import first validates a canonical two-member archive, then performs a
+side-effect-free review against one strict local policy snapshot and one
+inventory snapshot. Exact automatic matching requires authority, server key,
+raw tool name, and contract fingerprint. Mapping one external MCP server to
+another is manual, one-to-one, and shown in the review. A reviewed import creates
+an unbound named profile only; it does not connect a server, install a tool, or
+change any active workspace. Changed or missing Allow/Ask entries are omitted,
+while safe Deny entries may remain pending.
+
+The first bind is a separate workspace transaction and requires confirmation of
+the exact workspace, defaults, profile revision/digest, and effective posture.
+All later resolution, persistent decisions, session approvals, and tool tests
+remain scoped to the captured profile. Individual policy rules are edited only
+in MCP Permissions; Settings owns lifecycle actions and deep-links to that
+editor.
+
+Import receipts are private bounded evidence, never policy authority. Missing
+receipt data degrades provenance but does not weaken the stored policy or clear
+first-bind confirmation. Removal is allowed only for a valid imported profile
+with no active/archived workspace reference and no runtime lease, and leaves a
+hidden permanent-Deny tombstone. Publication, activation, binding, and removal
+use stable path-free failure categories and report uncertain outcomes rather
+than guessing after an ambiguous filesystem or store replacement.
+
+Native Windows archive publication is a separate capability and currently
+returns `tool_pack.export.publication_unsupported` when the required safe
+publication primitives are unavailable. It is not represented as a schema or
+import incompatibility.
+
+V1 rejects executable, skill, plugin, connection, credential, command,
+environment, endpoint, approval, receipt, workspace, Persona, and runtime-install
+fields. A combined Tools+Skills pack or plugin installer is future work and
+requires a new schema, ADR, provenance/signature policy, dependency model,
+permission review, and explicit installation UX. V1 readers must never treat
+unknown composition fields as installable content. See
+[ADR-107](../../backlog/decisions/107-portable-tool-use-packs.md) for the complete
+trust-boundary decision.
+
 ## MCP Tools
 
 ### Chat Tools

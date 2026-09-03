@@ -21,7 +21,7 @@ from .models import (
 )
 
 SEED_SYSTEM_PROMPT = (
-    "You are the default assistant for the \"{name}\" workspace. "
+    'You are the default assistant for the "{name}" workspace. '
     "Help the user with work in this workspace; be direct and grounded in "
     "workspace sources when they are provided."
 )
@@ -59,7 +59,9 @@ class WorkspaceAgentProvisioner:
         self._personas = persona_service
         self._permissions = permission_store
 
-    def provision(self, workspace: WorkspaceRecord) -> WorkspaceAssistantDefaults | None:
+    def provision(
+        self, workspace: WorkspaceRecord
+    ) -> WorkspaceAssistantDefaults | None:
         """Provision the workspace's default agent, or ``None`` on failure.
 
         Never raises: any exception (persona service down, store unwritable,
@@ -124,6 +126,7 @@ class _BackfillRegistryLike(Protocol):
         defaults: WorkspaceAssistantDefaults,
         *,
         confirm_read_write: bool = False,
+        tool_profile_confirmation_token: str | None = None,
     ) -> WorkspaceRecord: ...
 
 

@@ -11,7 +11,6 @@ from tldw_chatbook.Utils.sensitive_config_keys import (
     validate_trace_privacy_config,
 )
 
-
 SAFE_SKILL_TRUST_STATUSES = frozenset(
     {
         "trusted",
@@ -27,6 +26,31 @@ SAFE_SKILL_TRUST_STATUSES = frozenset(
     }
 )
 MAX_SKILL_TRUST_STATUS_CHARS = 80
+SAFE_TRACE_COMPACTION_STATUSES = frozenset({"pending", "running", "complete"})
+SAFE_TRACE_COMPACTION_REASONS = frozenset(
+    {
+        "awaiting_gc",
+        "running",
+        "complete",
+        "database_threshold",
+        "freelist_threshold",
+        "freelist_ratio_threshold",
+        "activity_threshold",
+        "provider_active",
+        "logical_gc_unavailable",
+        "connections_busy",
+        "active_transaction",
+        "wal_checkpoint_failed",
+        "lease_lost",
+        "insufficient_disk",
+        "integrity_check_failed",
+        "interrupted",
+        "cancelled",
+        "vacuum_failed",
+        "sqlite_failure",
+        "compaction_failure",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -47,6 +71,12 @@ class SettingsPrivacyPosture:
         skill_trust_status: Redacted local skill trust aggregate status.
         skill_trust_keyring_convenience_enabled: Whether keyring convenience is enabled.
         skill_trust_reduced_rollback_protection: Whether rollback protection is reduced.
+        trace_capture_enabled: Whether future Console calls require durable capture.
+        trace_pii_masking_enabled: Whether configured trace PII masking is active.
+        trace_viewer_profile: Default redacted trace viewer profile.
+        trace_normalized_writes_enabled: Whether normalized trace writes are enabled.
+        trace_normalized_reads_enabled: Whether normalized trace reads are enabled.
+        trace_legacy_writes_enabled: Whether legacy compatibility writes are enabled.
     """
 
     encryption_enabled: bool
@@ -67,6 +97,20 @@ class SettingsPrivacyPosture:
     trace_capture_enabled: bool = True
     trace_pii_masking_enabled: bool = False
     trace_viewer_profile: str = "safe"
+    trace_normalized_writes_enabled: bool = True
+    trace_normalized_reads_enabled: bool = True
+    trace_legacy_writes_enabled: bool = False
+    trace_custom_pii_enabled_rules: int = 0
+    trace_custom_pii_disabled_rules: int = 0
+    trace_custom_pii_diagnostics: tuple[str, ...] = ()
+    trace_compaction_status: str = "unavailable"
+    trace_compaction_reason: str = "unavailable"
+    trace_compaction_retry_pending: bool = False
+    trace_compaction_progress_basis_points: int = 0
+    trace_compaction_allocated_before: int = 0
+    trace_compaction_allocated_after: int = 0
+    trace_compaction_freelist_before: int = 0
+    trace_compaction_freelist_after: int = 0
 
 
 def build_settings_privacy_posture(
@@ -74,6 +118,7 @@ def build_settings_privacy_posture(
     *,
     environ: Mapping[str, str] | None = None,
     skill_trust: Mapping[str, object] | None = None,
+    trace_maintenance: Mapping[str, object] | None = None,
 ) -> SettingsPrivacyPosture:
     """Build a redacted Privacy & Security posture from config and environment.
 
@@ -81,6 +126,7 @@ def build_settings_privacy_posture(
         app_config: The application configuration mapping to inspect.
         environ: Optional environment mapping. Defaults to ``os.environ``.
         skill_trust: Optional redacted local skill trust posture mapping.
+        trace_maintenance: Optional content-free physical maintenance status.
 
     Returns:
         A posture object containing only counts and status booleans.
@@ -104,6 +150,26 @@ def build_settings_privacy_posture(
     if not isinstance(console, Mapping):
         console = {}
     trace_privacy = validate_trace_privacy_config(console)
+    # Keep this first-paint helper aligned with the runtime policy without
+    # adding config.py to the eager Settings import closure.
+    from tldw_chatbook.config import (
+        coerce_bool_setting,
+        resolve_trace_rollout_settings,
+    )
+
+    rollout = resolve_trace_rollout_settings(console, environ=env)
+    from tldw_chatbook.Chat.console_trace_custom_pii import (
+        validate_custom_pii_rules_config,
+    )
+
+    custom_pii = validate_custom_pii_rules_config(
+        console.get("trace_custom_pii_rules")
+    )
+    custom_rules = () if custom_pii.ruleset is None else custom_pii.ruleset.rules
+    maintenance = (
+        trace_maintenance if isinstance(trace_maintenance, Mapping) else {}
+    )
+
     return SettingsPrivacyPosture(
         encryption_enabled=encryption_enabled,
         sensitive_config_fields=_sensitive_config_field_count(app_config),
@@ -119,9 +185,42 @@ def build_settings_privacy_posture(
         skill_trust_reduced_rollback_protection=_safe_bool(
             trust.get("reduced_rollback_protection")
         ),
-        trace_capture_enabled=console.get("exchange_capture", True) is not False,
+        trace_capture_enabled=coerce_bool_setting(
+            console.get("exchange_capture", True),
+            True,
+        ),
         trace_pii_masking_enabled=trace_privacy.exchange_capture_pii_redaction,
         trace_viewer_profile=trace_privacy.effective_viewer_profile,
+        trace_normalized_writes_enabled=rollout.normalized_writes_enabled,
+        trace_normalized_reads_enabled=rollout.normalized_reads_enabled,
+        trace_legacy_writes_enabled=rollout.legacy_writes_enabled,
+        trace_custom_pii_enabled_rules=sum(rule.enabled for rule in custom_rules),
+        trace_custom_pii_disabled_rules=sum(not rule.enabled for rule in custom_rules),
+        trace_custom_pii_diagnostics=tuple(
+            item.display for item in custom_pii.diagnostics
+        ),
+        trace_compaction_status=_safe_trace_compaction_status(
+            maintenance.get("status")
+        ),
+        trace_compaction_reason=_safe_trace_compaction_reason(
+            maintenance.get("reason_code")
+        ),
+        trace_compaction_retry_pending=maintenance.get("retry_pending") is True,
+        trace_compaction_progress_basis_points=_bounded_nonnegative_int(
+            maintenance.get("progress_basis_points"), maximum=10000
+        ),
+        trace_compaction_allocated_before=_bounded_nonnegative_int(
+            maintenance.get("allocated_bytes_before")
+        ),
+        trace_compaction_allocated_after=_bounded_nonnegative_int(
+            maintenance.get("allocated_bytes_after")
+        ),
+        trace_compaction_freelist_before=_bounded_nonnegative_int(
+            maintenance.get("freelist_bytes_before")
+        ),
+        trace_compaction_freelist_after=_bounded_nonnegative_int(
+            maintenance.get("freelist_bytes_after")
+        ),
     )
 
 
@@ -201,11 +300,90 @@ def build_privacy_posture_rows(posture: SettingsPrivacyPosture) -> tuple[str, ..
             if posture.trace_pii_masking_enabled
             else "Trace PII masking: Off"
         ),
+        _custom_pii_rules_row(posture),
+        *(
+            ("Custom PII diagnostics: " + ", ".join(posture.trace_custom_pii_diagnostics),)
+            if posture.trace_custom_pii_diagnostics
+            else ()
+        ),
         f"Trace viewer: {posture.trace_viewer_profile.title()} disclosure profile",
+        _trace_storage_row(posture),
+        _trace_maintenance_row(posture),
+        (
+            "Trace history: compact and legacy traces are readable"
+            if posture.trace_normalized_reads_enabled
+            else "Trace history: compact traces are retained but temporarily hidden"
+        ),
         f"Data boundary: {posture.data_boundary}",
         f"Server boundary: {posture.server_boundary}",
         "Privacy safety: no secret values were printed or written.",
     )
+
+
+def _trace_storage_row(posture: SettingsPrivacyPosture) -> str:
+    if posture.trace_normalized_writes_enabled and not posture.trace_legacy_writes_enabled:
+        return "Trace storage: compact ledger for new calls; no transcript copies"
+    if posture.trace_normalized_writes_enabled:
+        return "Trace storage: compact ledger plus compatibility copies"
+    if posture.trace_legacy_writes_enabled:
+        return "Trace storage: legacy compatibility copies"
+    return "Trace storage: new trace writes paused"
+
+
+def _custom_pii_rules_row(posture: SettingsPrivacyPosture) -> str:
+    enabled = posture.trace_custom_pii_enabled_rules
+    disabled = posture.trace_custom_pii_disabled_rules
+    invalid = len(posture.trace_custom_pii_diagnostics)
+    if enabled == disabled == invalid == 0:
+        return "Custom PII rules: none configured"
+    return (
+        f"Custom PII rules: {enabled} enabled, {disabled} disabled, {invalid} invalid"
+    )
+
+
+def _trace_maintenance_row(posture: SettingsPrivacyPosture) -> str:
+    status = posture.trace_compaction_status
+    reason = posture.trace_compaction_reason.replace("_", " ")
+    if status == "running":
+        percent = posture.trace_compaction_progress_basis_points // 100
+        return f"Trace physical maintenance: compacting ({percent}%)"
+    if status == "complete":
+        return (
+            "Trace physical maintenance: complete; allocated "
+            f"{_format_bytes(posture.trace_compaction_allocated_before)} → "
+            f"{_format_bytes(posture.trace_compaction_allocated_after)}, free "
+            f"{_format_bytes(posture.trace_compaction_freelist_before)} → "
+            f"{_format_bytes(posture.trace_compaction_freelist_after)}"
+        )
+    if status == "pending":
+        retry = "retry pending; " if posture.trace_compaction_retry_pending else ""
+        return f"Trace physical maintenance: {retry}{reason}"
+    return "Trace physical maintenance: unavailable"
+
+
+def _format_bytes(value: int) -> str:
+    amount = float(value)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if amount < 1024 or unit == "TiB":
+            return f"{int(amount)} {unit}" if unit == "B" else f"{amount:.1f} {unit}"
+        amount /= 1024
+    raise AssertionError("unreachable")
+
+
+def _safe_trace_compaction_status(value: object) -> str:
+    status = str(value or "unavailable")
+    return status if status in SAFE_TRACE_COMPACTION_STATUSES else "unavailable"
+
+
+def _safe_trace_compaction_reason(value: object) -> str:
+    reason = str(value or "unavailable")
+    return reason if reason in SAFE_TRACE_COMPACTION_REASONS else "unavailable"
+
+
+def _bounded_nonnegative_int(value: object, *, maximum: int = 2**63 - 1) -> int:
+    if type(value) is not int:
+        return 0
+    return min(maximum, max(0, value))
 
 
 def _safe_skill_trust_status(value: object) -> str:

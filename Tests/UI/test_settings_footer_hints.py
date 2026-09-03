@@ -77,12 +77,13 @@ def test_category_footer_shortcuts_only_advertise_working_keys():
         category = SettingsCategoryId(category_value)
         shortcuts = SettingsScreen._category_footer_shortcuts(category)
         keys = tuple(key for key, _label in shortcuts)
-        # Network has its own immediate save path; guided categories also
-        # expose the draft save/revert pair.
-        assert ("s" in keys) == (
+        # Network owns a self-contained save path without a SettingsDraft;
+        # guided categories own the paired save/revert path.
+        has_save = (
             category in GUIDED_SETTINGS_MUTATION_CATEGORIES
             or category is SettingsCategoryId.NETWORK
         )
+        assert ("s" in keys) == has_save
         assert ("r" in keys) == (category in GUIDED_SETTINGS_MUTATION_CATEGORIES)
         # t is only advertised where a test action is actually implemented.
         assert ("t" in keys) == (
@@ -92,10 +93,10 @@ def test_category_footer_shortcuts_only_advertise_working_keys():
             assert (key in keys) == (category is SettingsCategoryId.PERSONAL_CONTEXT)
         # Keys and labels stay in lockstep (ADR-031 rule 4: 1:1, no stubs).
         expected_labels = []
-        if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
-            expected_labels += ["save category", "revert category"]
-        elif category is SettingsCategoryId.NETWORK:
+        if has_save:
             expected_labels.append("save category")
+        if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
+            expected_labels.append("revert category")
         if category in SettingsScreen.TESTABLE_SETTINGS_CATEGORIES:
             expected_labels += [
                 SettingsScreen.TEST_ACTION_LABELS.get(category, "test category")
@@ -543,7 +544,7 @@ async def test_f1_help_panel_body_carries_category_contract_when_mounted():
         # Honesty: immediate persistence must not teach save/revert/test keys.
         for label in _ALL_KNOWN_LABELS:
             assert label not in body, (
-                f"read-only F1 body must not advertise {label!r}, got {body!r}"
+                f"immediate-write F1 body must not advertise {label!r}, got {body!r}"
             )
 
 

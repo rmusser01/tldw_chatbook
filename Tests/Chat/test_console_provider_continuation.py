@@ -373,7 +373,7 @@ def test_user_edit_clears_complete_k3_checkpoint_and_refreshes_owner_version() -
         database.close_connection()
 
 
-def test_user_edit_preserves_non_k3_checkpoint_and_refreshes_owner_version() -> None:
+def test_user_edit_clears_non_k3_checkpoint_and_refreshes_owner_version() -> None:
     database, store, _session, owner = _store_with_checkpoint(content="Visible")
     try:
         before = store.get_message(owner.id).provider_continuation_message_version
@@ -384,9 +384,9 @@ def test_user_edit_preserves_non_k3_checkpoint_and_refreshes_owner_version() -> 
         assert updated.persisted_message_id is not None
         row = database.get_message_by_id(updated.persisted_message_id)
         assert row is not None
-        assert updated.provider_continuation == _active_checkpoint()
+        assert updated.provider_continuation is None
         assert updated.provider_continuation_message_version == before + 1
-        assert row["provider_continuation_json"] is not None
+        assert row["provider_continuation_json"] is None
         assert row["content"] == "Edited visible"
     finally:
         database.close_connection()

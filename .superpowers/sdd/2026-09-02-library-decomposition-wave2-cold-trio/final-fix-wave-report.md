@@ -38,7 +38,7 @@ task-27019) so a reader doesn't conflate the two axes.
 **Citation check**: recipe §8 (line ~462) and §16 (line ~1557) already cite
 `.superpowers/sdd/2026-09-02-library-decomposition-wave2-cold-trio/
 task-8-report.md` — verified this is byte-identical to the path now
-tracked by (a), so no citation edit was needed. `backlog/tasks/task-27021
+tracked by (a), so no citation edit was needed. `backlog/tasks/task-31203
 ...md`'s own description references "the wave-2 SDD task-8 report" without
 a literal path, so nothing to fix there either.
 
@@ -89,8 +89,8 @@ shows 9 pure insertions on that file, 0 deletions).
 
 ### 4. Wave-3 size-governance note (Minor #6)
 
-Added AC #4 to `backlog/tasks/task-27021 - Library-decomposition-wave-3-
-combined-searchRAG-series.md` via `backlog task edit 27021 --ac ...`:
+Added AC #4 to `backlog/tasks/task-31203 - Library-decomposition-wave-3-
+combined-searchRAG-series.md` via `backlog task edit 31203 --ac ...`:
 records that `Library_Modules` controller files have no size-ratchet
 governance today (`library_collections_controller.py` measured 1,689
 lines, `library_conversations_controller.py` 1,738 lines — both verified
@@ -148,7 +148,7 @@ fix wave's own 9-line increase.
   (22 files, force-added; this report is the 23rd)
 - `backlog/docs/library-decomposition-recipe.md` — guard-gap note (§16
   Lessons, item 5)
-- `backlog/tasks/task-27021 - Library-decomposition-wave-3-combined-
+- `backlog/tasks/task-31203 - Library-decomposition-wave-3-combined-
   searchRAG-series.md` — AC #4 (size-governance note)
 - `tldw_chatbook/UI/Library_Modules/library_collections_state.py` — stale
   comment rewrite (~132-135)

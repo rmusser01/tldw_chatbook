@@ -9,9 +9,13 @@ methods are sync and worker-thread safe; no Textual/event-loop imports.
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import hashlib
 import json
+import os
+import re
+import tempfile
 import threading
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
@@ -28,6 +32,8 @@ from typing import (
     Sequence,
     TypedDict,
 )
+
+from uuid import uuid4
 
 from loguru import logger
 
@@ -127,6 +133,12 @@ LOCAL_ROOT_CHANGED_REFUSAL = (
 )
 LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL = (
     "Private scratch space is unavailable; the tool was not run."
+)
+# TASK-28238 phase 1: fs_write CAS-injection stale-write guard (Task 3).
+# {old}/{new} are sha256[:8]/size, or the word "absent".
+LOCAL_STALE_WRITE_REFUSAL = (
+    "Stale write refused: {path} changed since you read it "
+    "(was {old}, now {new}). Re-read the file and retry."
 )
 PROMOTION_APPROVAL_REQUIRED = "A fresh exact Agent Lesson promotion approval is required; the file was not changed."
 PROMOTION_FOREGROUND_REQUIRED = (
@@ -362,6 +374,92 @@ class RunAdmittedWorkspaceRoot:
 
 def _fit_result(text: str) -> str:
     raw = text.encode("utf-8")
+    if len(raw) <= _MAX_RESULT_BYTES:
+        return text
+    return raw[:_MAX_RESULT_BYTES].decode("utf-8", errors="ignore") + "\n… [truncated]"
+
+
+# TASK-25904: spill machinery. When a spill home exists (the Console scratch
+# root doubles as it -- fs_read already resolves inside it, so the model can
+# read the tail back with no new grant), an oversized result is written IN
+# FULL to a restricted file and the model receives a bounded preview naming
+# the pre-truncation size and the relative read-back path. Retention bound:
+# spill files live inside the scratch root and share its lifecycle -- the
+# scratch lease's own cleanup is the documented retention.
+
+_SPILL_DIR_NAME = "tool-spill"
+#: A run whose cumulative INLINE output passes this starts spilling even
+#: under the per-result ceiling (AC#5) -- big results are exactly the ones
+#: that move to disk.
+_AGGREGATE_INLINE_BUDGET_BYTES = 256 * 1024
+#: Results at or below this never spill on aggregate pressure (a stream of
+#: tiny results should not become a stream of files).
+_SPILL_FLOOR_BYTES = 4 * 1024
+
+
+def _write_spill(spill_dir: Path, invocation_id: str, text: str) -> Path:
+    """Atomically write one full result with restrictive permissions."""
+    spill_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    safe_id = re.sub(r"[^A-Za-z0-9_.-]", "-", invocation_id)[:60] or "call"
+    final = spill_dir / f"{safe_id}-{uuid4().hex[:8]}.txt"
+    fd, tmp_name = tempfile.mkstemp(dir=spill_dir, prefix=".spill-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.chmod(tmp_name, 0o600)
+        os.replace(tmp_name, final)
+    except Exception:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
+    return final
+
+
+def _fit_or_spill_result(
+    text: str,
+    *,
+    spill_dir: Path | None,
+    invocation_id: str,
+    redaction_root: Path | None = None,
+    force_spill: bool = False,
+) -> str:
+    """Bound one result: inline when small, spill-with-preview when huge.
+
+    Args:
+        text: The tool's full output.
+        spill_dir: Where full outputs may be written; ``None`` reproduces
+            the pre-spill truncation byte-for-byte (AC#6 for standalone
+            providers).
+        invocation_id: Names the spill file after the call.
+        redaction_root: When the spill dir lives under this root, the
+            preview's read-back path is rendered relative to it so the
+            opaque absolute locator never reaches the model.
+        force_spill: Spill even under the per-result ceiling (the AC#5
+            aggregate-budget path); small results still stay inline via
+            the caller's floor check.
+
+    Returns:
+        The exact input when under the ceiling (and not forced), a preview
+        plus read-back pointer when spilled, or today's truncation when no
+        spill home exists or the write fails.
+    """
+    raw = text.encode("utf-8")
+    if len(raw) <= _MAX_RESULT_BYTES and not force_spill:
+        return text
+    if spill_dir is not None:
+        try:
+            path = _write_spill(spill_dir, invocation_id, text)
+            display: Path | str = path
+            base = redaction_root or spill_dir.parent
+            with contextlib.suppress(ValueError):
+                display = path.relative_to(base)
+            preview = raw[:_MAX_RESULT_BYTES].decode("utf-8", errors="ignore")
+            return (
+                f"{preview}\n… [output truncated: {len(raw):,} bytes total; "
+                f"full output saved to {display} — read the rest with fs_read]"
+            )
+        except Exception:  # noqa: BLE001 -- a failed spill degrades to truncation
+            logger.warning("tool output spill failed; falling back to truncation")
     if len(raw) <= _MAX_RESULT_BYTES:
         return text
     return raw[:_MAX_RESULT_BYTES].decode("utf-8", errors="ignore") + "\n… [truncated]"
@@ -616,6 +714,21 @@ class LocalToolProvider:
             if result_redaction_root is not None
             else None
         )
+        # TASK-25904: the scratch root doubles as the spill home -- fs_read
+        # already resolves inside it, so read-back needs no new grant.
+        self._spill_dir = (
+            self._result_redaction_root / _SPILL_DIR_NAME
+            if self._result_redaction_root is not None
+            else None
+        )
+        self._spill_lock = threading.Lock()
+        self._inline_bytes_by_run: dict[str, int] = {}
+
+        from tldw_chatbook.Agents.fs_read_ledger import ReadLedger
+
+        # TASK-28238 phase 1: (run_id, canonical_path) -> what this run last
+        # saw there. Keyed per run because fleet children SHARE this provider.
+        self._read_ledger = ReadLedger()
         self._promotion_snapshotter = promotion_snapshotter
         self._promotion_revalidator = promotion_revalidator
         self._promotion_stamps: dict[tuple[str, str, str], str] = {}
@@ -1305,6 +1418,12 @@ class LocalToolProvider:
             call_id=str(call_id or ""),
             effects=self._specs[name].approval_effects,
             execution_policy=self._specs[name].execution_policy,
+            # TASK-26012 review finding 3: exclude "allow_matching" -- the
+            # card would otherwise offer it (empty options => full set) but
+            # LocalToolProvider has no arg-rule path to consume it, so it
+            # would fail closed silently. Local tools keep the whole-tool
+            # choices only.
+            options=("approve_once", "approve_session", "always_allow", "deny"),
         )
         return gate, False
 
@@ -1439,6 +1558,56 @@ class LocalToolProvider:
                     else self._result_redaction_root
                 )
                 dispatch_started = True
+                # ruling 1 (TASK-28238 P1 T3): `clean_args` is read by the
+                # fs_read branch below BEFORE the fs_write branch's
+                # would-be reassignment; assigning to `clean_args` anywhere
+                # in this closure makes Python treat the name as local to
+                # the whole function, and that earlier read would then hit
+                # an unbound local. `dispatch_args` is a separate alias so
+                # the fs_read branch's `clean_args` reads stay closure
+                # reads of the enclosing scope's variable.
+                dispatch_args = clean_args
+                stale_guard = None
+                if name == "fs_read":
+                    try:
+                        self._record_fs_read_observation(
+                            clean_args,
+                            authority.root if authority is not None else self._root,
+                        )
+                    except Exception:  # noqa: BLE001 - observation must never affect dispatch
+                        pass
+                elif name == "fs_write":
+                    stale_guard = self._fs_write_guard_injection(
+                        clean_args,
+                        authority.root if authority is not None else self._root,
+                    )
+                    if stale_guard is not None:
+                        dispatch_args = stale_guard[0]
+                elif name in {"fs_edit", "fs_patch"} and clean_args.get(
+                    "dry_run"
+                ) is not True:
+                    # A preview never writes, so there is no clobber risk
+                    # for the pre-check to guard against (fs_write's own
+                    # injection already skips on dry_run the same way).
+                    _stale = self._stale_targets_for(
+                        name,
+                        clean_args,
+                        authority.root if authority is not None else self._root,
+                    )
+                    if _stale:
+                        shown, stamp, resolved = _stale[0]
+                        message = self._stale_write_refusal(shown, stamp, resolved)
+                        if len(_stale) > 1:
+                            message += f" (+{len(_stale) - 1} more stale targets)"
+                        provider_terminal = LocalProviderTerminal.RETURNED
+                        return LocalToolInvocationResult(
+                            result=ToolResult.blocked(message),
+                            final_gate=gate.verdict,
+                            approval_consumed=gate.approval_consumed,
+                            reason_code=LocalToolInvocationReason.HANDLER_RETURNED,
+                            dispatch_started=True,
+                            provider_terminal=provider_terminal,
+                        )
                 try:
                     selected_spec = (
                         self._path_specs_by_alias[authority.alias][name]
@@ -1447,13 +1616,20 @@ class LocalToolProvider:
                     )
                     result = ToolResult(
                         ok=True,
-                        content=_fit_result(
+                        content=self._bounded_result(
                             redact_root_locator(
-                                selected_spec.handler(clean_args),
+                                selected_spec.handler(dispatch_args),
                                 redaction_root,
-                            )
+                            ),
+                            invocation_id=name,
                         ),
                     )
+                    if name in {"fs_write", "fs_edit", "fs_patch"}:
+                        self._update_ledger_after_write(
+                            name,
+                            clean_args,
+                            authority.root if authority is not None else self._root,
+                        )
                     provider_terminal = LocalProviderTerminal.RETURNED
                     return LocalToolInvocationResult(
                         result=result,
@@ -1464,6 +1640,24 @@ class LocalToolProvider:
                         provider_terminal=provider_terminal,
                     )
                 except WorkspaceToolExecutionError as exc:
+                    if stale_guard is not None and _is_cas_precondition_failure(
+                        str(exc)
+                    ):
+                        provider_terminal = LocalProviderTerminal.RETURNED
+                        return LocalToolInvocationResult(
+                            result=ToolResult.blocked(
+                                self._stale_write_refusal(
+                                    str(clean_args.get("path", "")),
+                                    stale_guard[1],
+                                    stale_guard[2],
+                                )
+                            ),
+                            final_gate=gate.verdict,
+                            approval_consumed=gate.approval_consumed,
+                            reason_code=LocalToolInvocationReason.HANDLER_RETURNED,
+                            dispatch_started=True,
+                            provider_terminal=provider_terminal,
+                        )
                     provider_terminal = LocalProviderTerminal.RAISED
                     result = _workspace_execution_error_result(
                         exc,
@@ -1713,6 +1907,256 @@ class LocalToolProvider:
             return ToolResult(ok=False, error=str(error)[:_MAX_ERROR_CHARS])
         return ToolResult(ok=True, content=_fit_result(content))
 
+    def _bounded_result(self, text: str, *, invocation_id: str) -> str:
+        """TASK-25904: fit one result, spilling when huge or over the
+        run's aggregate inline budget (AC#5 -- once a run's returned
+        output passes the budget, large results move to disk; small ones
+        stay inline via the floor)."""
+        raw_len = len(text.encode("utf-8"))
+        run_id = current_run_id() or ""
+        force = False
+        if self._spill_dir is not None and run_id:
+            with self._spill_lock:
+                used = self._inline_bytes_by_run.get(run_id, 0)
+            force = (
+                used + raw_len > _AGGREGATE_INLINE_BUDGET_BYTES
+                and raw_len > _SPILL_FLOOR_BYTES
+            )
+        fitted = _fit_or_spill_result(
+            text,
+            spill_dir=self._spill_dir,
+            invocation_id=invocation_id,
+            redaction_root=self._result_redaction_root,
+            force_spill=force,
+        )
+        if self._spill_dir is not None and run_id:
+            with self._spill_lock:
+                self._inline_bytes_by_run[run_id] = self._inline_bytes_by_run.get(
+                    run_id, 0
+                ) + len(fitted.encode("utf-8"))
+        return fitted
+
+    def _record_fs_read_observation(self, args: dict, root: "Path") -> None:
+        """Stamp the ledger from a provider-side resolve of an fs_read target.
+
+        Never keyed off fs_read's outcome: a missing file and a confinement
+        refusal raise the same LocalToolError type, so the provider resolves
+        the path itself -- refused -> record nothing; absent -> ABSENT;
+        present -> whole-file hash. Never raises.
+        """
+        from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
+        from tldw_chatbook.Agents.run_context import current_run_id
+        from tldw_chatbook.Tools.local_tool_impls import (
+            LocalToolError,
+            resolve_workspace_path,
+        )
+
+        raw = args.get("path")
+        if not isinstance(raw, str) or not raw:
+            return
+        try:
+            resolved = resolve_workspace_path(raw, Path(root).resolve(), intent="read")
+        except (LocalToolError, OSError, ValueError):
+            return  # refused path: not an observation
+        key = canonical_ledger_key(resolved)
+        run_id = current_run_id()
+        if not run_id:
+            # Qodo #2: the process-lived MCP server provider
+            # (MCP/local_server_tools.py build_server_local_provider) serves
+            # MANY independent clients, all with an empty run_id -- keying
+            # them into one shared "" bucket would let client B's write
+            # refresh the stamp client A read, masking A's own stale
+            # overwrite (the exact failure per-run keying exists to
+            # prevent). No run identity -> no guard state, matching
+            # pre-feature behavior for these callers.
+            return
+        try:
+            present = resolved.is_file()
+        except OSError:
+            return  # e.g. EACCES on a parent dir -- not an observation
+        if not present:
+            self._read_ledger.record_absent(run_id, key)
+            return
+        hashed = _hash_file(resolved)
+        if hashed is None:
+            return
+        digest, size = hashed
+        self._read_ledger.record_present(run_id, key, digest, size)
+
+    def _stale_write_refusal(self, shown_path: str, stamp, resolved: "Path") -> str:
+        """Build the AC#2 refusal naming the conflict; never raises."""
+
+        def _fmt(sha: "str | None", size: int) -> str:
+            return "absent" if sha is None else f"{sha[:8]}/{size}"
+
+        now = _hash_file(resolved)
+        new_text = "absent" if now is None else _fmt(now[0], now[1])
+        return LOCAL_STALE_WRITE_REFUSAL.format(
+            path=shown_path, old=_fmt(stamp.sha256, stamp.size), new=new_text
+        )
+
+    def _fs_write_guard_injection(
+        self, args: dict, root: "Path"
+    ) -> "tuple[dict, object, Path] | None":
+        """Return (args_with_cas, stamp, resolved) when the ledger arms fs_write.
+
+        None means dispatch unchanged: no stamp, refused path, explicit
+        model-supplied precondition, a promotion call, or a dry-run preview
+        (nothing is written on a preview, so there is no clobber risk to
+        guard against).
+        """
+        from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
+        from tldw_chatbook.Agents.run_context import current_run_id
+        from tldw_chatbook.Tools.local_tool_impls import (
+            LocalToolError,
+            resolve_workspace_path,
+        )
+
+        if not current_run_id():
+            return None
+        if args.get("dry_run") is True:
+            return None
+        if "expected_sha256" in args or "expected_absent" in args:
+            return None
+        if _promotion_call_kind("fs_write", args) is not None:
+            return None
+        raw = args.get("path")
+        if not isinstance(raw, str) or not raw:
+            return None
+        try:
+            resolved = resolve_workspace_path(raw, Path(root).resolve(), intent="write")
+        except (LocalToolError, OSError, ValueError):
+            return None
+        stamp = self._read_ledger.stamp_for(current_run_id(), canonical_ledger_key(resolved))
+        if stamp is None:
+            return None
+        injected = dict(args)
+        if stamp.is_absent:
+            injected["expected_absent"] = True
+        else:
+            injected["expected_sha256"] = stamp.sha256
+        return injected, stamp, resolved
+
+    def _stale_targets_for(
+        self, name: str, args: dict, root: "Path"
+    ) -> "list[tuple[str, object, Path]]":
+        """Targets of an fs_edit/fs_patch whose ledger stamp mismatches disk."""
+        from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
+        from tldw_chatbook.Agents.run_context import current_run_id
+        from tldw_chatbook.Tools.local_tool_impls import (
+            LocalToolError,
+            resolve_workspace_path,
+        )
+
+        run_id = current_run_id()
+        if not run_id:
+            return []
+        try:
+            base = Path(root).resolve()
+        except OSError:
+            return []  # unresolvable root -- no guard, not a raise
+        shown_paths: list[str] = []
+        if name == "fs_edit":
+            raw = args.get("path")
+            if isinstance(raw, str) and raw:
+                shown_paths.append(raw)
+        elif name == "fs_patch":
+            from tldw_chatbook.Tools.patch_tool_impls import (
+                FilesystemPatchError,
+                parse_patch_targets,
+            )
+
+            try:
+                plans = parse_patch_targets(args.get("diff") or "")
+            except FilesystemPatchError:
+                return []  # the handler will refuse the malformed diff itself
+            for plan in plans:
+                if plan.new_path is not None:
+                    shown_paths.append(plan.new_path)
+
+        stale: list[tuple[str, object, Path]] = []
+        for shown in shown_paths:
+            try:
+                resolved = resolve_workspace_path(shown, base, intent="write")
+            except (LocalToolError, OSError, ValueError):
+                continue  # handler will refuse identically
+            stamp = self._read_ledger.stamp_for(run_id, canonical_ledger_key(resolved))
+            if stamp is None:
+                continue
+            now = _hash_file(resolved)
+            if stamp.is_absent:
+                if now is not None:
+                    stale.append((shown, stamp, resolved))
+            elif now is None or now[0] != stamp.sha256:
+                stale.append((shown, stamp, resolved))
+        return stale
+
+    def _update_ledger_after_write(self, name: str, args: dict, root: "Path") -> None:
+        """Re-stamp every written target so an agent's own chain never trips.
+
+        fs_write: the stamp comes straight from the CONTENT ARGUMENT, not a
+        disk re-read -- closes the microsecond window between our atomic
+        replace and a re-read where a peer's write landing in between would
+        get misrecorded as ours. fs_edit/fs_patch: post-handler re-read,
+        since the written bytes are only knowable from disk. Never raises.
+        """
+        from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
+        from tldw_chatbook.Agents.run_context import current_run_id
+        from tldw_chatbook.Tools.local_tool_impls import (
+            LocalToolError,
+            resolve_workspace_path,
+        )
+
+        if args.get("dry_run") is True:
+            return
+        run_id = current_run_id()
+        if not run_id:
+            return
+        base = Path(root).resolve()
+        if name == "fs_write":
+            raw = args.get("path")
+            if not isinstance(raw, str) or not raw:
+                return
+            try:
+                resolved = resolve_workspace_path(raw, base, intent="write")
+            except (LocalToolError, OSError, ValueError):
+                return
+            encoded = str(args.get("content", "")).encode("utf-8")
+            digest = hashlib.sha256(encoded).hexdigest()
+            self._read_ledger.update_written(
+                run_id, canonical_ledger_key(resolved), digest, len(encoded)
+            )
+            return
+        shown_paths: list[str] = []
+        if name == "fs_edit":
+            raw = args.get("path")
+            if isinstance(raw, str) and raw:
+                shown_paths.append(raw)
+        elif name == "fs_patch":
+            from tldw_chatbook.Tools.patch_tool_impls import (
+                FilesystemPatchError,
+                parse_patch_targets,
+            )
+
+            try:
+                plans = parse_patch_targets(args.get("diff") or "")
+            except FilesystemPatchError:
+                return
+            for plan in plans:
+                if plan.new_path is not None:
+                    shown_paths.append(plan.new_path)
+        for shown in shown_paths:
+            try:
+                resolved = resolve_workspace_path(shown, base, intent="write")
+            except (LocalToolError, OSError, ValueError):
+                continue
+            key = canonical_ledger_key(resolved)
+            hashed = _hash_file(resolved)
+            if hashed is None:
+                self._read_ledger.record_absent(run_id, key)
+            else:
+                self._read_ledger.update_written(run_id, key, hashed[0], hashed[1])
+
     def _root_is_valid(self) -> bool:
         """Never raise while revalidating an optional selected-root guard."""
         if self._root_guard is None:
@@ -1911,6 +2355,32 @@ def _promotion_call_kind(name: str, args: object) -> str | None:
     if "promotion" in args:
         return "prepare"
     return None
+
+
+def _hash_file(path: "Path") -> "tuple[str, int] | None":
+    """Whole-file (sha256, size) of ``path``; None when missing/unreadable."""
+    h = hashlib.sha256()
+    total = 0
+    try:
+        with path.open("rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+                total += len(chunk)
+    except OSError:
+        return None
+    return h.hexdigest(), total
+
+
+def _is_cas_precondition_failure(text: str) -> bool:
+    """True for the two genuine stale-write CAS refusals, not lock contention.
+
+    All three messages raised by ``local_tool_impls``'s atomic writer share
+    a "write precondition failed: " prefix, including the portalocker
+    contention message ("target is being modified") -- a transient lock
+    conflict, not staleness, that must not be relabeled "Stale write
+    refused".
+    """
+    return any(m in text for m in ("target digest changed", "target is present"))
 
 
 def _proposal_payload(proposal: RepositoryInstructionProposal) -> dict[str, Any]:

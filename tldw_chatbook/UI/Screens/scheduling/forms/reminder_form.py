@@ -370,6 +370,8 @@ class ReminderForm(ModalScreen):
         task: ReminderTask | None = None,
         *,
         known_timezones: Sequence[str] = (),
+        available_owners: Sequence[tuple[str, str]] = (("This device", "local"),),
+        default_owner: str = "local",
     ) -> None:
         """Initialize the form.
 
@@ -378,12 +380,35 @@ class ReminderForm(ModalScreen):
             known_timezones: Zones already used by existing tasks; offered
                 in the timezone selector alongside the system zone and the
                 curated common zones (task-23102).
+            available_owners: ``(label, owner_id)`` options offered by the
+                "Runs on" selector (task-5). The workbench computes these
+                from its own connected-server state.
+            default_owner: The owner preselected when creating a new
+                reminder -- the current screen owner (task-5 / spec sec 8).
         """
         super().__init__()
         self._reminder_task = task
         self._known_timezones = tuple(known_timezones)
+        self._available_owners = list(available_owners) or [("This device", "local")]
+        self._default_owner = default_owner
         self._dirty = False
         self._ready = False
+
+    def _runs_on_options(self) -> list[tuple[str, str]]:
+        """Runs-on choices: the offered owners, plus this task's own
+        owner when editing one that is not among them (review F4
+        precedent from the timezone selector: an edited row's actual
+        owner must always round-trip, not just the currently connected
+        choices)."""
+        options = list(self._available_owners)
+        task_owner = getattr(self._reminder_task, "owner_id", None)
+        if task_owner and task_owner not in {value for _, value in options}:
+            options.append((task_owner, task_owner))
+        return options
+
+    def _initial_owner(self) -> str:
+        task_owner = getattr(self._reminder_task, "owner_id", None)
+        return task_owner or self._default_owner
 
     def _timezone_options(self) -> list[tuple[str, str]]:
         """(label, zone) options: system zone first, then curated zones,
@@ -473,6 +498,21 @@ class ReminderForm(ModalScreen):
             yield Label(
                 "Edit Scheduled Task" if self._reminder_task else "New Scheduled Task",
                 classes="form-title",
+            )
+
+            yield Label("Runs on:", classes="form-label")
+            yield Select(
+                self._runs_on_options(),
+                allow_blank=False,
+                value=self._initial_owner(),
+                id="reminder-runs-on",
+                disabled=self._reminder_task is not None,
+            )
+            yield Static(
+                "Existing tasks keep the owner they were created with."
+                if self._reminder_task is not None
+                else "Create it locally, or on the connected server if one is available.",
+                classes="form-helper",
             )
 
             yield Label("Title:", classes="form-label")
@@ -682,6 +722,10 @@ class ReminderForm(ModalScreen):
         """The timezone currently selected."""
         return str(self.query_one("#reminder-timezone", Select).value)
 
+    def _selected_owner(self) -> str:
+        """The "Runs on" owner currently selected."""
+        return str(self.query_one("#reminder-runs-on", Select).value)
+
     def _update_preset_field_visibility(self, preset: str) -> None:
         """Show the time-of-day field for presets, the raw cron for custom."""
         time_group = self.query_one("#reminder-preset-time-group", Vertical)
@@ -818,6 +862,9 @@ class ReminderForm(ModalScreen):
             "title": title,
             "body": body,
             "schedule_kind": schedule_kind,
+            # Routing only (task-5) -- the workbench pops this before
+            # building the ReminderTask payload; it is never a task field.
+            "owner_id": self._selected_owner(),
         }
         if schedule_kind == ScheduleKind.ONE_TIME.value:
             form_data["run_at"] = parsed_run_at

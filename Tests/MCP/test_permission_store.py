@@ -17,6 +17,8 @@ from tldw_chatbook.MCP.permission_store import (
     SCHEMA_VERSION,
     STORE_STATES,
     MCPPermissionStore,
+    PermissionStoreSnapshotError,
+    definition_hash,
 )
 
 
@@ -43,6 +45,157 @@ def test_load_returns_fresh_default_payload_when_file_missing(tmp_path):
     assert payload["profiles"]["default"]["global_default"] == "ask"
     assert payload["profiles"]["default"]["servers"] == {}
     assert not (tmp_path / "mcp_permissions.json").exists()
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"{",
+        b'{"schema_version":99}',
+        b'{"schema_version":1,"profiles":null}',
+    ],
+)
+def test_strict_snapshot_rejects_without_touching_bytes(tmp_path, raw):
+    """Reject invalid strict snapshots without invoking legacy recovery."""
+    path = tmp_path / "mcp_permissions.json"
+    path.write_bytes(raw)
+
+    with pytest.raises(PermissionStoreSnapshotError):
+        MCPPermissionStore(path).read_snapshot_strict()
+
+    assert path.read_bytes() == raw
+    assert not path.with_suffix(".json.bak").exists()
+
+
+@pytest.mark.parametrize(
+    "raw, category",
+    [
+        (b"{", "invalid_json"),
+        (
+            b'{"schema_version":1,"schema_version":1,"kill_switch":false,'
+            b'"profiles":{"default":{"global_default":"ask","servers":{}}}}',
+            "duplicate_key",
+        ),
+        (
+            b'{"schema_version":99,"kill_switch":false,"profiles":{}}',
+            "invalid_shape",
+        ),
+    ],
+)
+def test_profile_inventory_snapshot_rejects_global_corruption_without_recovery(
+    tmp_path, raw, category
+):
+    """The UI inventory seam must never synthesize actionable defaults."""
+    path = tmp_path / "mcp_permissions.json"
+    path.write_bytes(raw)
+
+    with pytest.raises(PermissionStoreSnapshotError, match=category):
+        MCPPermissionStore(path).read_profile_inventory_snapshot()
+
+    assert path.read_bytes() == raw
+    assert not path.with_suffix(".json.bak").exists()
+
+
+def test_profile_inventory_snapshot_exposes_only_lifecycle_invalid_profiles(tmp_path):
+    """A policy-valid row with bad lifecycle metadata stays inspectable."""
+    path = tmp_path / "mcp_permissions.json"
+    payload = _fresh_payload_shape()
+    payload["profiles"]["broken"] = {
+        "servers": {},
+        "profile_kind": "tool_pack_imported",
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    snapshot = MCPPermissionStore(path).read_profile_inventory_snapshot()
+
+    assert snapshot.payload["profiles"]["broken"]["profile_kind"] == (
+        "tool_pack_imported"
+    )
+    assert path.read_text(encoding="utf-8") == json.dumps(payload)
+
+
+def test_profile_inventory_snapshot_accepts_legacy_hash_free_allow_null(tmp_path):
+    """A hash-free Allow written by older releases remains valid authority."""
+    path = tmp_path / "mcp_permissions.json"
+    payload = _fresh_payload_shape()
+    payload["profiles"]["default"]["servers"] = {
+        "agent:builtin": {
+            "tools": {
+                "calculator": {
+                    "state": "allow",
+                    "definition_hash": None,
+                }
+            }
+        }
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    strict = MCPPermissionStore(path).read_snapshot_strict()
+    inventory = MCPPermissionStore(path).read_profile_inventory_snapshot()
+
+    assert (
+        strict.payload["profiles"]["default"]["servers"]["agent:builtin"]["tools"][
+            "calculator"
+        ]["definition_hash"]
+        is None
+    )
+    assert inventory.payload == strict.payload
+
+
+def test_profile_inventory_snapshot_fails_closed_on_io_error(tmp_path, monkeypatch):
+    store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+
+    def fail_read(_path):
+        raise PermissionError("unavailable")
+
+    monkeypatch.setattr(type(store.path), "read_bytes", fail_read)
+
+    with pytest.raises(PermissionStoreSnapshotError, match="io_error"):
+        store.read_profile_inventory_snapshot()
+
+
+@pytest.mark.parametrize("raw", [b"{", b'{"schema_version":99}'])
+def test_raw_getters_do_not_recover_invalid_store(tmp_path, raw):
+    """Inspection uses read-only recovery rather than legacy file backup."""
+    path = tmp_path / "mcp_permissions.json"
+    path.write_bytes(raw)
+    store = MCPPermissionStore(path)
+
+    assert store.get_global_default() == DEFAULT_GLOBAL
+    assert store.get_server_entry("local:docs") is None
+    assert store.get_tool_entry("local:docs", "search") is None
+    assert path.read_bytes() == raw
+    assert not path.with_suffix(".json.bak").exists()
+
+
+def test_strict_snapshot_wraps_deeply_nested_json_errors(tmp_path):
+    """A malformed deep document remains a typed, non-mutating failure."""
+    raw = b"[" * 10_000 + b"0" + b"]" * 10_000
+    path = tmp_path / "mcp_permissions.json"
+    path.write_bytes(raw)
+
+    with pytest.raises(PermissionStoreSnapshotError):
+        MCPPermissionStore(path).read_snapshot_strict()
+
+    assert path.read_bytes() == raw
+
+
+def test_strict_snapshot_rejects_float_schema_version(tmp_path):
+    """The strict schema authority accepts integer schema version 1 only."""
+    path = tmp_path / "mcp_permissions.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1.0,
+                "kill_switch": False,
+                "profiles": _fresh_payload_shape()["profiles"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PermissionStoreSnapshotError):
+        MCPPermissionStore(path).read_snapshot_strict()
 
 
 def test_load_backs_up_corrupt_json_and_returns_fresh_default(tmp_path):
@@ -126,6 +279,23 @@ def test_global_default_validates_and_round_trips(tmp_path):
         store.set_global_default("nonsense")
 
 
+def test_raw_getters_read_the_requested_profile_without_seeding(tmp_path):
+    """Profile-specific inspection must not read from or create ``default``."""
+    path = tmp_path / "mcp_permissions.json"
+    store = MCPPermissionStore(path)
+    store.ensure_profile("portable")
+    store.set_global_default("deny", profile_id="portable")
+    store.set_server_default("local:docs", "ask", profile_id="portable")
+    store.set_tool_state("local:docs", "search", "allow", definition_hash="a" * 64, profile_id="portable")
+    before_bytes = path.read_bytes()
+
+    assert store.get_global_default(profile_id="portable") == "deny"
+    assert store.get_server_entry("local:docs", profile_id="portable")["default"] == "ask"
+    assert store.get_tool_entry("local:docs", "search", profile_id="portable")["state"] == "allow"
+    assert store.get_server_entry("local:missing", profile_id="unseeded") is None
+    assert path.read_bytes() == before_bytes
+
+
 def test_set_server_default_and_inherit_prunes_entry(tmp_path):
     store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
     server_key = "local:demo-server"
@@ -167,7 +337,7 @@ def test_set_tool_state_inherit_prunes_tool_but_keeps_server_default(tmp_path):
     server_key = "local:demo-server"
 
     store.set_server_default(server_key, "ask")
-    store.set_tool_state(server_key, "search", "allow", definition_hash="hash-1")
+    store.set_tool_state(server_key, "search", "allow", definition_hash="a" * 64)
 
     store.set_tool_state(server_key, "search", None)
 
@@ -183,6 +353,11 @@ def test_set_tool_state_allow_without_hash_raises_value_error(tmp_path):
     with pytest.raises(ValueError):
         store.set_tool_state("local:demo-server", "search", "allow")
 
+    with pytest.raises(ValueError):
+        store.set_tool_state(
+            "local:demo-server", "search", "allow", definition_hash="not-a-sha256"
+        )
+
 
 def test_set_tool_state_allow_stores_hash_and_clears_config_changed(tmp_path):
     store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
@@ -193,18 +368,18 @@ def test_set_tool_state_allow_stores_hash_and_clears_config_changed(tmp_path):
     tool_entry = store.get_tool_entry(server_key, "search")
     assert tool_entry.get("config_changed") is True
 
-    store.set_tool_state(server_key, "search", "allow", definition_hash="abc123")
+    store.set_tool_state(server_key, "search", "allow", definition_hash="a" * 64)
 
     tool_entry = store.get_tool_entry(server_key, "search")
     assert tool_entry["state"] == "allow"
-    assert tool_entry["definition_hash"] == "abc123"
+    assert tool_entry["definition_hash"] == "a" * 64
     assert "config_changed" not in tool_entry
 
 
 def test_mark_config_changed_returns_true_then_false(tmp_path):
     store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
     server_key = "local:demo-server"
-    store.set_tool_state(server_key, "search", "allow", definition_hash="abc123")
+    store.set_tool_state(server_key, "search", "allow", definition_hash="a" * 64)
 
     first = store.mark_config_changed(server_key, "search")
     second = store.mark_config_changed(server_key, "search")
@@ -221,7 +396,7 @@ def test_mark_config_changed_second_call_does_not_rewrite_file(tmp_path):
     path = tmp_path / "mcp_permissions.json"
     store = MCPPermissionStore(path)
     server_key = "local:demo-server"
-    store.set_tool_state(server_key, "search", "allow", definition_hash="abc123")
+    store.set_tool_state(server_key, "search", "allow", definition_hash="a" * 64)
 
     assert store.mark_config_changed(server_key, "search") is True
     before_bytes = path.read_bytes()
@@ -414,7 +589,8 @@ def test_builtin_allow_survives_schema_change(tmp_path):
     store.set_tool_state(server_key, tool_name, "allow")
     entry = store.get_tool_entry(server_key, tool_name)
     assert entry["state"] == "allow"
-    assert not entry.get("definition_hash")
+    assert "definition_hash" not in entry
+    store.read_snapshot_strict()
 
     def _tool(input_schema):
         return HubTool(
@@ -734,3 +910,135 @@ def test_unknown_profile_id_inherits_everything(store):
         payload, "local:__local__", "fs_read", profile_id="ws-never-created"
     )
     assert state.state == DEFAULT_GLOBAL  # fresh workspace behaves like today
+
+
+# --- TASK-26012: per-argument allow rules -----------------------------------
+
+
+def _rule_tool(server_key="srv", name="search", *, tags=(), schema=None):
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+    return HubTool(
+        server_key=server_key,
+        server_label="Server",
+        source="mcp",
+        name=name,
+        description="A tool.",
+        input_schema=schema or {"type": "object"},
+        tags=tuple(tags),
+        stale=False,
+        executable=True,
+    )
+
+
+def test_arg_rule_allows_exact_args_and_still_prompts_otherwise(tmp_path) -> None:
+    """AC#1/#2: the rule quiets exactly the saved argument shape."""
+    from tldw_chatbook.MCP.permission_store import (
+        MCPPermissionStore,
+        arg_rule_allows,
+    )
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "site status", "limit": 5},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+
+    payload = store.load()
+    assert arg_rule_allows(payload, tool, {"query": "site status", "limit": 5})
+    assert arg_rule_allows(payload, tool, {"limit": 5, "query": "site status"}), (
+        "argument order must not matter"
+    )
+    assert not arg_rule_allows(payload, tool, {"query": "DIFFERENT", "limit": 5})
+    assert not arg_rule_allows(payload, tool, {"query": "site status"})
+
+
+def test_arg_rule_field_glob_patterns_match_one_field(tmp_path) -> None:
+    """AC#1: hand-written field/pattern rules give hermes-style globs."""
+    from tldw_chatbook.MCP.permission_store import (
+        MCPPermissionStore,
+        arg_rule_allows,
+    )
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    payload = store.load()
+    profile = payload["profiles"]["default"]
+    entry = (
+        profile.setdefault("servers", {})
+        .setdefault("srv", {})
+        .setdefault("tools", {})
+        .setdefault("search", {})
+    )
+    entry["arg_rules"] = [
+        {
+            "field": "query",
+            "pattern": "docs *",
+            "definition_hash": definition_hash(
+                tool.description, tool.input_schema
+            ),
+        }
+    ]
+
+    assert arg_rule_allows(payload, tool, {"query": "docs search syntax"})
+    assert not arg_rule_allows(payload, tool, {"query": "rm everything"})
+
+
+def test_arg_rules_participate_in_the_rug_pull_guard(tmp_path) -> None:
+    """AC#4: a changed tool definition makes the rule inert."""
+    from tldw_chatbook.MCP.permission_store import (
+        MCPPermissionStore,
+        arg_rule_allows,
+    )
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+    changed = _rule_tool(schema={"type": "object", "properties": {"q": {}}})
+
+    payload = store.load()
+    assert arg_rule_allows(payload, tool, {"query": "x"})
+    assert not arg_rule_allows(payload, changed, {"query": "x"})
+
+
+def test_arg_rules_never_quiet_high_risk_tools(tmp_path) -> None:
+    """AC#5: the risk floor beats any argument rule."""
+    from tldw_chatbook.MCP.permission_store import (
+        MCPPermissionStore,
+        arg_rule_allows,
+    )
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    risky = _rule_tool(tags=("mutates",))
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(risky.description, risky.input_schema),
+    )
+
+    assert not arg_rule_allows(store.load(), risky, {"query": "x"})
+
+
+def test_service_arg_rule_round_trip(tmp_path) -> None:
+    """The service passthrough hashes the live tool and the matcher agrees."""
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
+
+    service = UnifiedMCPControlPlaneService.__new__(UnifiedMCPControlPlaneService)
+    service._permission_store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+
+    service.add_tool_arg_rule("srv", "search", args={"query": "x"}, tool=tool)
+
+    assert service.arg_rule_allows_call(tool, {"query": "x"}) is True
+    assert service.arg_rule_allows_call(tool, {"query": "y"}) is False

@@ -123,7 +123,11 @@ import asyncio
 from datetime import datetime, timezone
 import inspect
 from dataclasses import dataclass
+from pathlib import Path
+from threading import Lock
+import time
 from typing import TYPE_CHECKING, Any, Callable, Mapping
+from uuid import uuid4
 
 from loguru import logger
 
@@ -135,7 +139,7 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.Chat.thinking_blocks import normalize_thinking_history_policy
 from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
-from tldw_chatbook.config import coerce_bool_setting
+from tldw_chatbook.config import coerce_bool_setting, runtime_capture_policy
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
@@ -156,6 +160,126 @@ _VIEW_RUNTIME_FALLBACK_ATTR = "_console_runtime_fallback"
 # delay: legacy normalization is idle maintenance, never readiness work.
 LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS = 5.0
 LEGACY_TRACE_MAINTENANCE_RETRY_DELAY_SECONDS = 1.0
+TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS = 60.0
+TRACE_PHYSICAL_MAINTENANCE_RETRYABLE_REASONS = frozenset(
+    {
+        "provider_active",
+        "activity_threshold",
+        "maintenance_busy",
+        "retry_backoff",
+        "connections_busy",
+        "active_transaction",
+        "wal_checkpoint_failed",
+        "lease_lost",
+        "insufficient_disk",
+        "integrity_check_failed",
+        "interrupted",
+        "cancelled",
+        "vacuum_failed",
+        "sqlite_failure",
+        "compaction_failure",
+        "database_threshold",
+        "freelist_threshold",
+        "freelist_ratio_threshold",
+    }
+)
+
+
+class _LazyTraceCompatibilityMetrics:
+    """Load the rollout counter implementation on its first actual use."""
+
+    def __init__(self) -> None:
+        self._delegate: Any | None = None
+        self._lock = Lock()
+
+    def _get_delegate(self) -> Any:
+        delegate = self._delegate
+        if delegate is not None:
+            return delegate
+        with self._lock:
+            delegate = self._delegate
+            if delegate is None:
+                from tldw_chatbook.Chat.console_trace_metrics import (
+                    TraceCompatibilityMetrics,
+                )
+
+                delegate = TraceCompatibilityMetrics()
+                self._delegate = delegate
+        return delegate
+
+    def record(self, path: str, count: int = 1) -> None:
+        """Record a content-free compatibility path."""
+
+        self._get_delegate().record(path, count)
+
+    def snapshot(self) -> Mapping[str, int]:
+        """Return the current immutable compatibility counts."""
+
+        return self._get_delegate().snapshot()
+
+
+class _LazyConsoleActivityReceiptService:
+    """Load receipt coordination on first switcher or settlement use."""
+
+    def __init__(self, runs_db: Any, marks: Any | None) -> None:
+        self._runs_db = runs_db
+        self._marks = marks
+        self._delegate: Any | None = None
+        self._lock = Lock()
+
+    def _get_delegate(self) -> Any:
+        delegate = self._delegate
+        if delegate is not None:
+            return delegate
+        with self._lock:
+            delegate = self._delegate
+            if delegate is None:
+                from tldw_chatbook.Chat.console_activity_receipts import (
+                    ConsoleActivityReceiptService,
+                )
+
+                delegate = ConsoleActivityReceiptService(
+                    self._runs_db,
+                    self._marks,
+                )
+                self._delegate = delegate
+        return delegate
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._get_delegate(), name)
+
+
+class _LazyTraceBoundaryFactory:
+    """Load normalized write planning only when a provider call reserves."""
+
+    def __init__(self, database: Any, repository: Any | None) -> None:
+        self._database = database
+        self._repository = repository
+        self._delegate: Any | None = None
+        self._lock = Lock()
+
+    def _get_delegate(self) -> Any:
+        delegate = self._delegate
+        if delegate is not None:
+            return delegate
+        with self._lock:
+            delegate = self._delegate
+            if delegate is None:
+                from tldw_chatbook.Chat.console_trace_runtime import (
+                    ConsoleTraceBoundaryFactory,
+                )
+
+                delegate = ConsoleTraceBoundaryFactory(
+                    self._database,
+                    repository=self._repository,
+                )
+                self._delegate = delegate
+        return delegate
+
+    def __call__(self, request: Any, resolution: Any, route: Any) -> object:
+        """Create one provider-call boundary through the shared delegate."""
+
+        return self._get_delegate()(request, resolution, route)
 
 
 def recover_console_trace_calls(
@@ -581,9 +705,12 @@ class ConsoleRuntime:
         self._provider_gateway: Any | None = None
         self._agent_bridge: Any | None = None
         self._agent_runs_db: Any | None = None
+        self._activity_receipts: Any | None = None
+        self._activity_hydration_task: asyncio.Task[int] | None = None
         self._change_review_coordinator: Any | None = None
         self._chat_controller: Any | None = None
         self._legacy_trace_maintenance_task: asyncio.Task[None] | None = None
+        self.trace_compatibility_metrics = _LazyTraceCompatibilityMetrics()
         self._scratch_spaces = ConsoleScratchSpaceManager()
         self._raw_cli_refusal_stash_bank: dict[str, list[Any]] = {}
         self._persona_buddy_sink = PersonaBuddyConsoleAdapter(
@@ -605,6 +732,14 @@ class ConsoleRuntime:
         #: it already holds afterwards and builds nothing new -- see
         #: `dispose` for why a rebuild during quit is the hazard.
         self._disposed: bool = False
+        self.authority_token = str(uuid4())
+        database = getattr(app, "chachanotes_db", None)
+        database_path = getattr(database, "db_path", None)
+        self.profile_authority = (
+            str(Path(database_path).expanduser().resolve(strict=False))
+            if database_path and str(database_path) != ":memory:"
+            else ""
+        )
         #: Bumped by every `dispose()` -- i.e. once per app run, not once
         #: per navigation. `Tests/UI/test_console_runtime_ownership.py`
         #: reads it to prove the runtime survived a visit.
@@ -639,6 +774,11 @@ class ConsoleRuntime:
         return self._chat_controller
 
     @property
+    def activity_receipts(self) -> Any | None:
+        """The built app-lifetime receipt coordinator, if available."""
+        return self._activity_receipts
+
+    @property
     def scratch_spaces(self) -> ConsoleScratchSpaceManager:
         """The process-lifetime scratch authority shared by Console visits."""
         return self._scratch_spaces
@@ -652,6 +792,15 @@ class ConsoleRuntime:
     def accepts_raw_cli_refusal_callbacks(self) -> bool:
         """Whether raw CLI completion callbacks may still mutate UI state."""
         return not self._disposed
+
+    def trace_compatibility_snapshot(self) -> Mapping[str, int]:
+        """Return the runtime's content-free semantic-trace rollout totals.
+
+        Returns:
+            A fixed-key snapshot containing only compatibility event counts.
+        """
+
+        return self.trace_compatibility_metrics.snapshot()
 
     @property
     def persona_buddy_sink(self) -> PersonaBuddyConsoleAdapter:
@@ -749,6 +898,7 @@ class ConsoleRuntime:
                 getattr(db, "transaction", None)
             )
             legacy_normalizer: Any | None = None
+            native_reader: Any | None = None
 
             def get_legacy_normalizer() -> Any:
                 """Build the legacy adapter only after first paint or first use."""
@@ -762,8 +912,28 @@ class ConsoleRuntime:
                     legacy_normalizer = LegacyTraceNormalizer(db)
                 return legacy_normalizer
 
-            def read_normalized_legacy_calls(message_id: str) -> Any:
-                return get_legacy_normalizer().read_calls(message_id)
+            def get_native_reader() -> Any:
+                """Build the native ledger reader only on first trace inspection."""
+
+                nonlocal native_reader
+                if native_reader is None:
+                    from tldw_chatbook.Chat.console_trace_native_reader import (
+                        ConsoleTraceNativeReader,
+                    )
+
+                    native_reader = ConsoleTraceNativeReader(
+                        db,
+                        repository=persistence.console_trace_repository,
+                    )
+                return native_reader
+
+            def read_normalized_calls(message_id: str) -> Any:
+                """Read native calls first, followed by migrated legacy snapshots."""
+
+                return (
+                    *get_native_reader().read_calls(message_id),
+                    *get_legacy_normalizer().read_calls(message_id),
+                )
         else:
             legacy_normalization_enabled = False
         self._chat_store = ConsoleChatStore(
@@ -773,11 +943,17 @@ class ConsoleRuntime:
                 ConsoleTraceProjection(
                     legacy_reader=db.get_message_exchanges,
                     normalized_reader=(
-                        read_normalized_legacy_calls
+                        read_normalized_calls
                         if legacy_normalization_enabled
                         else None
                     ),
-                    normalized_reads_enabled=legacy_normalization_enabled,
+                    normalized_reads_enabled=lambda: (
+                        runtime_capture_policy().normalized_reads_enabled
+                    ),
+                    normalized_writes_enabled=lambda: (
+                        runtime_capture_policy().normalized_writes_enabled
+                    ),
+                    compatibility_metrics=self.trace_compatibility_metrics,
                 )
                 if db is not None
                 else None
@@ -839,6 +1015,10 @@ class ConsoleRuntime:
                 normalizer=normalizer_factory(),
                 provider_active=provider_active,
             )
+            last_provider_activity = time.monotonic()
+            last_physical_attempt = 0.0
+            last_collected_epoch: int | None = None
+            pending_gc_result: Any | None = None
             while not self._disposed:
                 try:
                     result = await asyncio.to_thread(maintenance.run_batch)
@@ -852,7 +1032,107 @@ class ConsoleRuntime:
                     )
                     continue
                 if result.logical_complete:
-                    await asyncio.sleep(5.0)
+                    now = time.monotonic()
+                    if provider_active():
+                        last_provider_activity = now
+                        await asyncio.sleep(1.0)
+                        continue
+                    if (
+                        now - last_physical_attempt
+                        < TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS
+                    ):
+                        await asyncio.sleep(1.0)
+                        continue
+                    last_physical_attempt = now
+                    try:
+                        from tldw_chatbook.Chat.console_trace_maintenance import (
+                            PhysicalTraceCompactor,
+                            TraceGarbageCollector,
+                        )
+                        from tldw_chatbook.Chat.console_trace_models import (
+                            new_opaque_id,
+                        )
+                        from tldw_chatbook.config import (
+                            resolve_trace_compaction_policy,
+                        )
+
+                        controller = self._chat_controller
+                        pause = getattr(
+                            controller,
+                            "pause_trace_maintenance_dispatch",
+                            lambda: None,
+                        )
+                        resume = getattr(
+                            controller,
+                            "resume_trace_maintenance_dispatch",
+                            lambda: None,
+                        )
+                        app_config = getattr(self._app, "app_config", {}) or {}
+                        console_config = (
+                            app_config.get("console", {})
+                            if isinstance(app_config, Mapping)
+                            else {}
+                        )
+                        controller_idle = getattr(
+                            controller,
+                            "trace_maintenance_idle_seconds",
+                            None,
+                        )
+                        collector = TraceGarbageCollector(database)
+                        current_epoch = await asyncio.to_thread(
+                            collector.current_graph_epoch
+                        )
+                        if pending_gc_result is None:
+                            if current_epoch == last_collected_epoch:
+                                await asyncio.sleep(1.0)
+                                continue
+                            pending_gc_result = await asyncio.to_thread(
+                                collector.collect,
+                                request_id=f"auto-{new_opaque_id()}",
+                            )
+                            last_collected_epoch = int(
+                                getattr(
+                                    pending_gc_result,
+                                    "marked_epoch",
+                                    current_epoch,
+                                )
+                            )
+                        compactor = PhysicalTraceCompactor(
+                            database,
+                            policy=resolve_trace_compaction_policy(console_config),
+                            provider_active=provider_active,
+                            idle_seconds=(
+                                controller_idle
+                                if callable(controller_idle)
+                                else lambda: max(
+                                    0.0, time.monotonic() - last_provider_activity
+                                )
+                            ),
+                            pause_dispatch=pause,
+                            resume_dispatch=resume,
+                            cancel_requested=lambda: self._disposed,
+                        )
+                        outcome = await asyncio.to_thread(
+                            compactor.run_after_gc,
+                            pending_gc_result,
+                        )
+                        if outcome.reason_code == "logical_gc_unavailable":
+                            pending_gc_result = None
+                            last_collected_epoch = None
+                        elif outcome.completed or (
+                            outcome.reason_code
+                            not in TRACE_PHYSICAL_MAINTENANCE_RETRYABLE_REASONS
+                        ):
+                            pending_gc_result = None
+                    except ImportError:
+                        # Narrow test doubles may provide only the legacy worker.
+                        pass
+                    except Exception as exc:  # noqa: BLE001 - durable retry state
+                        logger.warning(
+                            "trace physical maintenance paused after {}",
+                            type(exc).__name__,
+                        )
+                    await asyncio.sleep(1.0)
                     continue
                 if not result.admitted:
                     await asyncio.sleep(1.0)
@@ -894,9 +1174,30 @@ class ConsoleRuntime:
                 ConsoleProviderGateway,
             )
 
+            if trace_call_boundary_factory is None:
+                database = getattr(self._app, "chachanotes_db", None)
+                if database is not None and callable(
+                    getattr(database, "transaction", None)
+                ):
+                    chat_store = self.ensure_chat_store()
+                    persistence = getattr(chat_store, "persistence", None)
+                    repository = getattr(
+                        persistence,
+                        "console_trace_repository",
+                        None,
+                    )
+                    trace_call_boundary_factory = _LazyTraceBoundaryFactory(
+                        database,
+                        repository=repository,
+                    )
+
             self._provider_gateway = ConsoleProviderGateway(
                 config_provider=config_provider,
                 trace_call_boundary_factory=trace_call_boundary_factory,
+                normalized_writes_enabled=lambda: (
+                    runtime_capture_policy().normalized_writes_enabled
+                ),
+                trace_compatibility_metrics=self.trace_compatibility_metrics,
             )
         return self._provider_gateway
 
@@ -943,13 +1244,15 @@ class ConsoleRuntime:
         if not db_path or str(db_path) == ":memory:":
             self._agent_bridge = None
             return None
-        from pathlib import Path
-
         from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
         from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
         runs_db = AgentRunsDB(Path(db_path).parent / "agent_runs.db")
         self._agent_runs_db = runs_db
+        self._activity_receipts = _LazyConsoleActivityReceiptService(
+            runs_db,
+            getattr(self._app, "conversation_local_marks_service", None),
+        )
         # TASK-1971 (Agent Change Review): the tracker is None when git is
         # absent -- the bridge then skips tracking entirely, and runs behave
         # exactly as before the feature existed (spec gating decision).
@@ -999,8 +1302,38 @@ class ConsoleRuntime:
             register_fleet_attention,
         )
 
-        register_fleet_attention(self._agent_bridge, self._app)
+        register_fleet_attention(
+            self._agent_bridge,
+            self._app,
+            receipt_service=self._activity_receipts,
+        )
         return self._agent_bridge
+
+    def ensure_activity_hydration(self) -> asyncio.Task[int] | None:
+        """Start or reuse the one off-loop receipt hydration for this runtime."""
+        service = self._activity_receipts
+        if service is None or self._disposed:
+            return None
+        if service.hydration_state() == "ready":
+            return self._activity_hydration_task
+        task = self._activity_hydration_task
+        if task is not None and not task.done():
+            return task
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return None
+        token = self.authority_token
+
+        async def hydrate() -> int:
+            result = await asyncio.to_thread(service.hydrate_from_storage)
+            if self._disposed or self.authority_token != token:
+                return 0
+            return result
+
+        task = loop.create_task(hydrate())
+        self._activity_hydration_task = task
+        return task
 
     def ensure_chat_controller(self, **kwargs: Any) -> "ConsoleChatController":
         """Return the Console chat controller, creating it lazily.
@@ -1022,6 +1355,7 @@ class ConsoleRuntime:
 
         kwargs.setdefault("buddy_sink", self.persona_buddy_sink)
         kwargs.setdefault("scratch_spaces", self._scratch_spaces)
+        kwargs.setdefault("activity_receipts", self._activity_receipts)
         raw_cli_runtime = getattr(self._app, "raw_cli_runtime", None)
         kwargs.setdefault(
             "cancel_raw_cli_session",
@@ -1305,6 +1639,10 @@ class ConsoleRuntime:
             self._agent_runs_db,
         )
         self.generation += 1
+        hydration_task = self._activity_hydration_task
+        self._activity_hydration_task = None
+        if hydration_task is not None and not hydration_task.done():
+            hydration_task.cancel()
         if controller is not None:
             try:
                 await controller.shutdown()
@@ -1361,6 +1699,22 @@ class ConsoleRuntime:
                 logger.opt(exception=True).warning(
                     "Console runtime: provider gateway close failed at dispose."
                 )
+        try:
+            totals = self.trace_compatibility_snapshot()
+            logger.info(
+                "Console trace compatibility totals: normalized_write={} "
+                "normalized_read={} legacy_read={} fallback_read={} incomplete={}",
+                totals.get("normalized_write", 0),
+                totals.get("normalized_read", 0),
+                totals.get("legacy_read", 0),
+                totals.get("fallback_read", 0),
+                totals.get("incomplete", 0),
+            )
+        except Exception as exc:  # noqa: BLE001 - shutdown metrics are best effort
+            logger.warning(
+                "Console trace compatibility totals unavailable: error_type={}",
+                type(exc).__name__,
+            )
 
 
 def _attach(app: Any, runtime: ConsoleRuntime | None) -> None:

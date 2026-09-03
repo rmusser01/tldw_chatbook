@@ -459,9 +459,9 @@ days whose subjects name the subsystem (measured 2026-09-01):
 | 1 | **conversations** (exemplar) — **complete** (Tasks 6–9) | 10 | 68 methods, 19 fields (2026-09-01 estimate); see §11 for the series' actual, as-landed numbers |
 | 2 | **export** — **complete** (wave-2 Tasks 2–4) | 3 | 13 fields moved; 22 of 51 "export"-named method candidates moved / 29 excluded (18 other-subsystem, 2 `@work` framework-decorator self-type-assertion hazard, 9 unbound-fake-self/silent-Mock test bypasses); see §12 for the series' actual, as-landed numbers |
 | 2 | **collections** — **complete** (wave-2 Tasks 5–7) | 6 | 26 fields moved (1 wiring field stayed); 64 of 67 "collection"-named method candidates moved / 3 excluded (Prompts-owned); see §13–§15 for the series' actual, as-landed numbers |
-| 2 | **search** — **BLOCKED at the entanglement gate** (wave-2 Task 8) | 6 | 14 candidate methods census'd; 8/14 (57.1%, conservative floor 45.5%) cross-call RAG-named methods, both far past the plan's 1/3 gate — the top search bar's submit path *is* the RAG query entry point, not a sibling of it. No code touched (`library_screen.py` byte-identical to HEAD at task start). Per the wave plan's pre-committed contingency, deferred to a COMBINED search+RAG series in wave 3 (task-27021); see §16 and `.superpowers/sdd/2026-09-02-library-decomposition-wave2-cold-trio/task-8-report.md` for the full census |
+| 2 | **search** — **BLOCKED at the entanglement gate** (wave-2 Task 8) | 6 | 14 candidate methods census'd; 8/14 (57.1%, conservative floor 45.5%) cross-call RAG-named methods, both far past the plan's 1/3 gate — the top search bar's submit path *is* the RAG query entry point, not a sibling of it. No code touched (`library_screen.py` byte-identical to HEAD at task start). Per the wave plan's pre-committed contingency, deferred to a COMBINED search+RAG series in wave 3 (task-31203); see §16 and `.superpowers/sdd/2026-09-02-library-decomposition-wave2-cold-trio/task-8-report.md` for the full census |
 | 3 | skills | 15 | |
-| 3 | RAG / onboarding plumbing | 16 | search (above) merges into this pool for wave 3 (task-27021) — see §16 |
+| 3 | RAG / onboarding plumbing | 16 | search (above) merges into this pool for wave 3 (task-31203) — see §16 |
 | 3 | ingest | 23 | |
 | 4 | prompts | 41 | |
 | 4 | media | 55 | |
@@ -1488,7 +1488,7 @@ branch `refactor/library-decomp-wave2-cold-trio`) is closed: the census
 anti-slack guard (Task 1), the export series (Tasks 2–4, §12), and the
 collections series (Tasks 5–7, §13–§15) are complete; the search series
 (Tasks 8–9) is BLOCKED at the entanglement gate by design, deferred to a
-combined search+RAG wave-3 series (task-27021). This section is the
+combined search+RAG wave-3 series (task-31203). This section is the
 wave-level pin trajectory, the full verification battery, and the wave's
 own lessons — read this before starting wave 3.
 
@@ -1553,7 +1553,7 @@ zero drift, nothing to lower.
   submit path *is* the RAG query entry point, not a sibling of it — the
   entanglement is structural, not coincidental. Per the wave plan's
   pre-committed contingency, search+RAG becomes ONE combined series in
-  wave 3 (task-27021, filed at wave close). Full census:
+  wave 3 (task-31203, filed at wave close). Full census:
   `.superpowers/sdd/2026-09-02-library-decomposition-wave2-cold-trio/
   task-8-report.md`.
 

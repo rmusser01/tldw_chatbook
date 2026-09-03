@@ -16,6 +16,8 @@ import uuid
 import webbrowser
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import datetime, timezone
+from enum import Enum
+from contextlib import closing
 from functools import partial
 import hashlib
 from pathlib import Path
@@ -123,6 +125,7 @@ from ...Library.library_export_state import (
 from ...Widgets.Library.library_export_canvas import (
     apply_library_export_submit_gate,
 )
+from ...Chat.Chat_Functions import chat_api_call, extract_response_content
 from ...Library.ingest_analysis import resolve_ingest_analysis_provider
 from ...Library.ingest_capabilities import (
     capabilities_for_backend,
@@ -164,6 +167,7 @@ from ...Library.library_ingest_state import (
 from ...Library.library_media_state import (
     LibraryMediaCanvasState,
     LibraryMediaTrashState,
+    MEDIA_SORT_CHOICES,
     MediaBrowseScope,
     MediaTrashBrowseState,
     MediaTrashScope,
@@ -369,6 +373,8 @@ from ...Library.library_shell_state import (
     LIBRARY_DELETE_SELECTED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
+    LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP,
+    LIBRARY_REVIEW_SELECTED_TOOLTIP,
     LIBRARY_ROW_BROWSE_COLLECTIONS,
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
@@ -719,6 +725,13 @@ def _library_ingest_options_for(owner: Any) -> dict[str, Any]:
 # PR 0a (Library decomposition foundation): the module-level support layer
 # formerly here now lives in tldw_chatbook/UI/Library_Modules/ -- re-exported
 # below so this module's import surface is unchanged.
+
+# task-28012 (Qodo #2309): the media bulk-selection keys, named once so the
+# key ``Binding``s and the advertised footer shortcuts cannot drift apart.
+# (dev commit 53d1789a6 -- new since PR 0a's base, kept inline here rather
+# than moved: it is new screen code, not part of the extracted support layer.)
+_MEDIA_SELECT_MODE_KEY = "s"
+_MEDIA_ROW_SELECT_KEY = "space"
 #
 # _INGEST_OPTIONS_CACHE_ATTR, _read_library_ingest_options_from_config, and
 # _library_ingest_options_for (just above) STAY here rather than moving to
@@ -984,6 +997,41 @@ class LibraryScreen(BaseAppScreen):
         # fields. Advertised via ``LIBRARY_INGEST_SHORTCUTS`` (footer+F1),
         # so ``show=False`` like the other contextual keys.
         Binding("r", "library_ingest_retry_last", "Retry this batch", show=False),
+        # task-28005: sequential-review Prev/Next over the current browse
+        # result. ``check_action`` gates both to the media Reader with a
+        # neighbour in that direction (so they no-op at the list ends and
+        # drop from the footer there); a focused Input/TextArea consumes the
+        # printable key first, so "[" / "]" still type in the search box.
+        Binding("]", "library_media_next_item", "Next item", show=False),
+        Binding("[", "library_media_prev_item", "Previous item", show=False),
+        # task-28012: keyboard access to bulk selection. "s" enters/exits
+        # select mode on the media list; Space toggles the focused row while
+        # in it. ``check_action`` gates both; a focused Input consumes the
+        # printable "s"/Space first, so they still type in the filter/search.
+        Binding(
+            _MEDIA_SELECT_MODE_KEY,
+            "library_media_toggle_select_mode",
+            "Select",
+            show=False,
+        ),
+        Binding(
+            _MEDIA_ROW_SELECT_KEY,
+            "library_media_toggle_row_selection",
+            "Toggle selection",
+            show=False,
+        ),
+        # task-28027: Reader action-row accelerators. check_action gates them
+        # to a plain media Reader (l/t are local-only, c works for server
+        # items too); a focused Input consumes the printable key first, so
+        # they still type in the search/filter boxes.
+        Binding("l", "library_media_read_later", "Read later", show=False),
+        Binding("c", "library_media_use_in_console", "Use in Console", show=False),
+        Binding("t", "library_media_move_to_trash", "Move to trash", show=False),
+        # task-28241: review-set keys, gated in check_action to a plain Reader
+        # with a set active. "R" exits (the set stays resumable); "m" toggles
+        # the current item's done mark (the manual counterpart to ]'s auto-mark).
+        Binding("R", "library_media_exit_review", "Exit review", show=False),
+        Binding("m", "library_media_toggle_reviewed", "Toggle reviewed", show=False),
     ]
 
     #: Footer hint set while the Search/RAG canvas is active — mirrors the
@@ -1112,6 +1160,23 @@ class LibraryScreen(BaseAppScreen):
         ("esc", "focus rail"),
     )
 
+    #: task-28012: the media list teaches the bulk-selection keys the other
+    #: list canvases don't have -- "s" enters Select mode; while selecting,
+    #: Space toggles the focused row and "s" leaves.
+    LIBRARY_MEDIA_LIST_SHORTCUTS = (
+        ("/", "focus search"),
+        ("F6", "next pane"),
+        (_MEDIA_SELECT_MODE_KEY, "select"),
+        ("esc", "focus rail"),
+    )
+    LIBRARY_MEDIA_SELECT_SHORTCUTS = (
+        ("/", "focus search"),
+        ("F6", "next pane"),
+        (_MEDIA_ROW_SELECT_KEY, "toggle selection"),
+        (_MEDIA_SELECT_MODE_KEY, "done selecting"),
+        ("esc", "focus rail"),
+    )
+
     #: task-3302 (MI-04): the Ingest canvas's own keyboard story -- Enter
     #: (in the path field) starts the import when the Start gate is open
     #: (``handle_library_ingest_path_submitted``), Esc returns to the hub
@@ -1220,7 +1285,18 @@ class LibraryScreen(BaseAppScreen):
         WorkbenchPaneTarget("library-canvas", ("library-media-filter",)),
         WorkbenchPaneTarget(
             "library-media-viewer",
-            ("library-media-reader-find", "library-media-back"),
+            # task-28003: the scrollable content is the first F6 target so
+            # a fresh open has a keyboard scroll path. Raw mode focuses its
+            # inner ScrollView (``-content-text``); rendered-Markdown mode
+            # focuses the scrolling body itself (``-viewer-content``, a
+            # ScrollableContainer -- Qodo #2307). Other Reader modes fall
+            # through to Find, which "/" also reaches.
+            (
+                "library-media-viewer-content-text",
+                "library-media-viewer-content",
+                "library-media-reader-find",
+                "library-media-back",
+            ),
         ),
     )
     _NOTES_WORKBENCH_FOCUS_TARGETS = (
@@ -2587,6 +2663,8 @@ class LibraryScreen(BaseAppScreen):
         # task-14902: True while the media type chooser's direct-pick strip
         # replaces the browse toolbar row (the Notes Sort strip pattern).
         self._library_media_type_choices_visible: bool = False
+        # task-28013: the browse sort chooser's direct-pick strip visibility.
+        self._library_media_sort_choices_visible: bool = False
         # Trash owns an independent source scope. Draft and semantic focus
         # remain screen concerns because Task 5 renders their controls; page
         # authority lives exclusively in ``_library_media_trash_browse_controller``.
@@ -2613,6 +2691,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_confirming_delete: bool = False
         self._library_media_highlights: list[dict[str, Any]] = []
         self._library_media_editing_analysis: bool = False
+        # task-28006: an LLM analysis generation is in flight for the open item.
+        self._library_media_generating_analysis: bool = False
         self._library_media_content_query: str = ""
         self._library_media_content_match_index: int = 0
         # task-22209: in-content match list for the open item, memoized on
@@ -2623,8 +2703,11 @@ class LibraryScreen(BaseAppScreen):
         # ever replaced wholesale (a fetch settles) or cleared to None,
         # never mutated in place, so its identity is a sound document
         # marker; the None sentinel guarantees the first lookup misses.
+        # task-28026: keyed by (detail, query, MODE) -- the Read and Analysis
+        # tabs search different corpora of the same detail, so the mode is
+        # part of the key or a tab switch would serve the other tab's matches.
         self._library_media_content_match_memo: (
-            tuple[Any, str, tuple[int, ...]] | None
+            tuple[Any, str, tuple[int, ...], str] | None
         ) = None
         # LIB-13: "rendered" (Markdown, via the same render path Notes
         # Preview uses) or "raw" (plain/highlighted text). Reseeded per
@@ -3531,11 +3614,38 @@ class LibraryScreen(BaseAppScreen):
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
                 and self._library_media_view == "viewer"
             ):
-                return (
+                shortcuts: list[tuple[str, str]] = [
                     ("/", "focus search"),
                     ("F6", "next pane"),
-                    ("esc", self._library_media_escape_label()),
-                )
+                ]
+                # task-28011: while a content search with matches is active,
+                # Enter walks to the next match (find-bar convention).
+                if (
+                    self._library_media_content_query
+                    and self._library_media_content_matches()
+                ):
+                    shortcuts.append(("enter", "next match"))
+                # task-28005: advertise Prev/Next only when there IS a
+                # neighbour that way, so the footer stops teaching a key
+                # that no-ops at the list ends.
+                if self._library_media_item_traversal_active():
+                    progress = self._active_review_set_progress()
+                    if progress is not None:
+                        # task-28241: in a review set, ] / [ walk the pinned set
+                        # (whole thing, not the page), and the footer carries
+                        # the progress plus an exit-review key.
+                        shortcuts.append(("]", "next in set"))
+                        shortcuts.append(("[", "prev in set"))
+                        shortcuts.append(("m", "toggle reviewed"))
+                        shortcuts.append(("R", "exit review"))
+                        shortcuts.append(("", progress))
+                    else:
+                        if self._library_media_adjacent_row(1) is not None:
+                            shortcuts.append(("]", "next item"))
+                        if self._library_media_adjacent_row(-1) is not None:
+                            shortcuts.append(("[", "prev item"))
+                shortcuts.append(("esc", self._library_media_escape_label()))
+                return tuple(shortcuts)
             return self.LIBRARY_DETAIL_BACK_SHORTCUTS
         if self._library_skill_editor_active():
             shortcuts = [("/", "focus search"), ("F6", "next pane")]
@@ -3558,6 +3668,15 @@ class LibraryScreen(BaseAppScreen):
         open_strip = self._library_open_choice_strip()
         if open_strip is not None:
             return (("enter", f"choose {open_strip[0]}"), ("esc", "cancel"))
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+            and self._library_media_view == "list"
+            and self._library_list_canvas_showing_list()
+        ):
+            # task-28012: teach the bulk-selection keys on the media list.
+            if self._library_media_select_mode:
+                return self.LIBRARY_MEDIA_SELECT_SHORTCUTS
+            return self.LIBRARY_MEDIA_LIST_SHORTCUTS
         if self._library_list_canvas_showing_list():
             return self.LIBRARY_LIST_SHORTCUTS
         return self.LIBRARY_GENERAL_SHORTCUTS
@@ -9234,6 +9353,12 @@ class LibraryScreen(BaseAppScreen):
                 focus_identity=None,
             )
             self._request_library_media_facets()
+            # task-28245: NO auto-resume kick here, deliberately. The mount
+            # leg runs during boot, and the worker's lazy review-set imports
+            # raced the _ui_ready module census on slow runners (977 > 972,
+            # flaky Perf Guard). The rail-select seam is the explicit
+            # user gesture that resumes a set (AC#3's cold-start concern is
+            # structurally avoided there).
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
             and self._library_media_view == "trash"
@@ -15226,6 +15351,7 @@ class LibraryScreen(BaseAppScreen):
             confirming_bulk_delete=self._library_media_confirming_bulk_delete,
             delete_receipt_count=len(self._library_media_delete_receipt_ids),
             type_choices_visible=self._library_media_type_choices_visible,
+            sort_choices_visible=self._library_media_sort_choices_visible,
             loading_id=(
                 (self._library_media_reader_session.selected_id or "")
                 if self._library_media_reader_session.pending_request is not None
@@ -15294,6 +15420,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_media_lifecycle_generation
             )
             self._library_media_type_choices_visible = False
+            self._library_media_sort_choices_visible = False
             self._sync_library_media_browse_state(None)
             self._sync_library_media_viewer_mutation_gate()
         return self._library_media_mutation_scope
@@ -19142,6 +19269,7 @@ class LibraryScreen(BaseAppScreen):
             from ...Widgets.Library.library_media_image_preview import (
                 decode_media_image,
                 image_preview_eligibility,
+                image_preview_expected,
             )
 
             # Remote details are rejected before even consulting local file
@@ -19167,15 +19295,28 @@ class LibraryScreen(BaseAppScreen):
                 backend="local",
             )
             if not eligibility.eligible:
-                if (
-                    eligibility.reason == "unavailable"
-                    and self._library_media_preview_request_is_current(
-                        request_generation, canonical_id
-                    )
+                # task-30044 (critique P2): the failure chrome is honest only
+                # when an image was actually EXPECTED -- a plain document
+                # with no image type hint reads as a document, never as a
+                # failed image with a Retry button above its text.
+                if not self._library_media_preview_request_is_current(
+                    request_generation, canonical_id
+                ):
+                    return
+                if eligibility.reason == "unavailable" and image_preview_expected(
+                    detail
                 ):
                     self._library_media_preview_status[canonical_id] = (
                         "Image preview unavailable — showing complete stored text"
                     )
+                    self._sync_library_media_viewer_or_recompose()
+                elif (
+                    self._library_media_preview_status.pop(canonical_id, None)
+                    is not None
+                ):
+                    # Qodo #2351: an item that STOPPED being image-expected
+                    # (edited type, refreshed detail) must also shed any
+                    # previously stamped failure text.
                     self._sync_library_media_viewer_or_recompose()
                 return
             receipt = await self._run_library_service_call(
@@ -23423,6 +23564,9 @@ class LibraryScreen(BaseAppScreen):
                 focus_identity="#library-media-row-0",
             )
             self._request_library_media_facets()
+            # task-28245: entering the media area with an active review set
+            # resumes it at its cursor without a keypress (once per set).
+            self._maybe_auto_resume_review_set()
         # task-2856 AC1: a rail-row press landing on one of the four list
         # canvases focuses its primary list's first row -- the entry-point
         # half of the same seam ``_exit_library_skill_editor_guarded`` /
@@ -23726,6 +23870,9 @@ class LibraryScreen(BaseAppScreen):
             or self._library_media_confirming_bulk_delete
         ):
             return
+        # Mutually exclusive with the sort chooser (task-28013): one strip
+        # replaces the toolbar row at a time.
+        self._library_media_sort_choices_visible = False
         self._library_media_type_choices_visible = (
             not self._library_media_type_choices_visible
         )
@@ -23774,6 +23921,75 @@ class LibraryScreen(BaseAppScreen):
             self,
             "media",
             then=lambda: self._focus_library_control("#library-media-type-filter"),
+        )
+
+    @on(Button.Pressed, "#library-media-sort")
+    def handle_library_media_sort(self, event: Button.Pressed) -> None:
+        """Open (or close) the media browse sort chooser's direct-pick strip.
+
+        task-28013: mirrors the type chooser and the Prompts/Notes sort
+        choosers -- Sort is one control family across the list canvases. Inert
+        while a bulk delete is armed or in flight (task-2853 AC3: nothing may
+        drift the list state under an armed confirm).
+        """
+        event.stop()
+        if (
+            self._library_media_bulk_delete_in_flight
+            or self._library_media_confirming_bulk_delete
+        ):
+            return
+        # Mutually exclusive with the type chooser: only one strip at a time.
+        self._library_media_type_choices_visible = False
+        self._library_media_sort_choices_visible = (
+            not self._library_media_sort_choices_visible
+        )
+        _sync_library_canvas(self, "media")
+        if self._library_media_sort_choices_visible:
+            current = self._library_media_browse_controller.mutation_refresh_scope.sort_by
+            self.call_after_refresh(
+                self._focus_library_choice_strip_active,
+                ".library-media-sort-choice",
+                current,
+            )
+        else:
+            self.call_after_refresh(
+                self._focus_library_control, "#library-media-sort"
+            )
+
+    @on(Button.Pressed, ".library-media-sort-choice")
+    def handle_library_media_sort_choice(self, event: Button.Pressed) -> None:
+        """Apply the exact sort value carried by one strip choice (task-28013).
+
+        Picking the already-active sort only closes the strip -- no service
+        request. Any other value re-fetches page one under the new order.
+        """
+        event.stop()
+        if self._library_media_bulk_delete_in_flight:
+            return
+        requested = str(getattr(event.button, "choice_value", "") or "")
+        self._library_media_sort_choices_visible = False
+        current = self._library_media_browse_controller.mutation_refresh_scope.sort_by
+        valid = {value for value, _ in MEDIA_SORT_CHOICES}
+        if requested not in valid or requested == current:
+            _sync_library_canvas(
+                self,
+                "media",
+                then=lambda: self._focus_library_control("#library-media-sort"),
+            )
+            return
+        self._request_library_media_sort(
+            requested, focus_identity="#library-media-sort"
+        )
+
+    def _request_library_media_sort(
+        self, sort_by: str, *, focus_identity: str | None
+    ) -> Any | None:
+        """Request page one after changing only the applied Media sort order."""
+        self._clear_library_media_selection_for_scope_change()
+        applied = self._library_media_browse_controller.mutation_refresh_scope
+        return self._request_library_media_browse(
+            dataclasses.replace(applied, sort_by=sort_by, page=1),
+            focus_identity=focus_identity,
         )
 
     @on(Button.Pressed, "#library-media-empty-import")
@@ -23880,6 +24096,14 @@ class LibraryScreen(BaseAppScreen):
         the selection [silently]" finding.
         """
         event.stop()
+        self._toggle_library_media_select_mode()
+
+    def _toggle_library_media_select_mode(self) -> None:
+        """Enter/exit media select mode (shared by the button and the key).
+
+        task-28012: the "s" binding reuses this exact seam so the keyboard
+        and the "Select"/"Done" button can never drift.
+        """
         if self._library_media_bulk_delete_in_flight:
             return
         if self._library_media_select_mode:
@@ -23897,6 +24121,51 @@ class LibraryScreen(BaseAppScreen):
             # underneath a new one.
             self._library_media_delete_receipt_ids = ()
         _sync_library_canvas(self, "media")
+
+    def _library_media_select_enter_available(self) -> bool:
+        """Whether ENTERING media Select mode is offered (task-28012).
+
+        Qodo #2309: the keyboard "s" must obey the same availability as the
+        Select button, which is disabled with no rows or on a stale page.
+        Exiting an active selection stays possible regardless (the caller
+        gates that), so this covers entry only. State-level (controller
+        freshness + retained rows), never presentation labels.
+
+        Returns:
+            True when a fresh page with at least one row is showing.
+        """
+        controller = self._library_media_browse_controller
+        if controller.freshness == "stale":
+            return False
+        return bool(controller.retained_items)
+
+    def action_library_media_toggle_select_mode(self) -> None:
+        """Keyboard "s": enter/exit media select mode (task-28012)."""
+        self._toggle_library_media_select_mode()
+
+    def action_library_media_toggle_row_selection(self) -> None:
+        """Keyboard Space: toggle the focused media row's selection (task-28012).
+
+        A no-op outside select mode, while a bulk-delete confirm is armed
+        (task-2853 AC3), or when focus is not on a media row. Mirrors the
+        select-mode branch of ``handle_library_media_row`` but acts on the
+        focused row rather than a pressed button, so keyboard-only users can
+        build a selection without a mouse.
+        """
+        if not self._library_media_select_mode:
+            return
+        if self._library_media_confirming_bulk_delete:
+            return
+        if self._library_media_bulk_delete_in_flight:
+            return
+        focused = self.focused
+        if focused is None or not focused.has_class("library-media-row"):
+            return
+        media_id = str(getattr(focused, "media_id", "") or "")
+        if not media_id:
+            return
+        self._library_media_row_selection.toggle(media_id)
+        _apply_library_row_toggle(self, "media", focused, media_id)
 
     def _exit_library_media_select_mode(self, *, announce_discard: bool) -> None:
         """Leave media Select mode: clear the selection and any pending
@@ -27348,6 +27617,16 @@ class LibraryScreen(BaseAppScreen):
         F1 contamination this task closes. Every action reachable from
         ``BINDINGS`` now has an explicit branch here; see
         ``test_library_screen_bindings_are_all_gated_or_universal``.
+
+        Args:
+            action: The binding's action name Textual is resolving.
+            parameters: The action's positional parameters (unused here;
+                every gated binding is parameterless).
+
+        Returns:
+            ``False`` to deactivate the binding in the current context,
+            ``True`` to force-activate it, or ``None`` to defer to Textual's
+            default resolution.
         """
         if action in {
             "library_notes_new",
@@ -27487,6 +27766,97 @@ class LibraryScreen(BaseAppScreen):
             "library_rag_result_card_open",
         ):
             return self._focused_library_rag_result_card_index() is not None
+        if action == "library_media_toggle_select_mode":
+            # task-28012: only on the media LIST (not viewer/trash), and not
+            # while a bulk-delete confirm is armed or a delete is in flight.
+            if (
+                self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
+                or self._library_media_view != "list"
+                or self._library_media_confirming_bulk_delete
+                or self._library_media_bulk_delete_in_flight
+            ):
+                return False
+            # task-28012 (Qodo #2309): exiting an active selection is always
+            # allowed (rows may have vanished), but ENTERING must obey the
+            # same availability as the Select button -- no rows, or a stale
+            # page, disables it.
+            if self._library_media_select_mode:
+                return True
+            return self._library_media_select_enter_available()
+        if action == "library_media_toggle_row_selection":
+            # task-28012: only while select mode is active with a media row
+            # focused -- otherwise Space falls through to its default. Qodo
+            # #2309: a stale page (or an armed/in-flight bulk delete) gates
+            # row toggling exactly as it gates the row buttons.
+            if not self._library_media_select_mode:
+                return False
+            if (
+                self._library_media_browse_controller.freshness == "stale"
+                or self._library_media_confirming_bulk_delete
+                or self._library_media_bulk_delete_in_flight
+            ):
+                return False
+            focused = self.focused
+            return bool(
+                focused is not None and focused.has_class("library-media-row")
+            )
+        if action in ("library_media_next_item", "library_media_prev_item"):
+            # task-28005: active only in the plain Reader with a neighbour in
+            # that direction, so the key no-ops (and drops from the footer)
+            # at the list ends -- the honest-footer idiom that communicates
+            # the boundary. A focused Input still consumes "[" / "]" first.
+            if not self._library_media_item_traversal_active():
+                return False
+            # task-30041 (critique P1): with an active review set the keys
+            # walk the PINNED SET, so browse-row adjacency is the wrong
+            # gate -- it disabled the documented final-] completion gesture
+            # at the last browse row and misfired whenever set order
+            # diverged from browse order. The walk clamps safely at the
+            # set's ends.
+            if self._review_set_active():
+                return True
+            direction = 1 if action == "library_media_next_item" else -1
+            return self._library_media_adjacent_row(direction) is not None
+        if action in (
+            "library_media_read_later",
+            "library_media_use_in_console",
+            "library_media_move_to_trash",
+        ):
+            # task-28027: Reader action-row accelerators. Only in a plain
+            # media Reader (no edit/confirm/analysis-edit sub-state). Read-
+            # later and Move-to-trash are local-only (mirroring the buttons,
+            # which are hidden for external/server detail); Use-in-Console
+            # works for server items too.
+            session = self._library_media_reader_session
+            if (
+                self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
+                or self._library_media_view != "viewer"
+                or self._library_media_viewer_substate_active()
+            ):
+                return False
+            # Qodo #2317: while a detail request is pending, the selected id
+            # and the displayed detail differ (e.g. mid-traversal), so these
+            # actions would combine the new id with stale detail. Gate them
+            # off until the displayed detail is the settled selected item.
+            if (
+                session.pending_request is not None
+                or session.loaded_id != self._selected_media_id
+            ):
+                return False
+            if action == "library_media_use_in_console":
+                return True
+            return not session.external_detail
+        if action in (
+            "library_media_exit_review",
+            "library_media_toggle_reviewed",
+        ):
+            # task-28241: only in a plain Reader while a review set is active
+            # (so the keys -- and their footer hints -- appear exactly when
+            # there is a review to act on).
+            return (
+                self._library_media_item_traversal_active()
+                and self._review_set_active()
+            )
         if action == "focus_previous_workbench_pane":
             return bool(self._library_selected_row_id)
         return True
@@ -31299,6 +31669,16 @@ class LibraryScreen(BaseAppScreen):
                 "_library_media_type_choices_visible",
             )
         if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+            and self._library_media_view == "list"
+            and self._library_media_sort_choices_visible
+        ):
+            return (
+                "sort",
+                "#library-media-sort",
+                "_library_media_sort_choices_visible",
+            )
+        if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
             and self._library_prompts_view == "list"
             and self._library_prompts_sort_choices_visible
@@ -31344,6 +31724,7 @@ class LibraryScreen(BaseAppScreen):
         self._sync_library_emergency_guard_presentation()
         canvas_kind = {
             "_library_media_type_choices_visible": "media",
+            "_library_media_sort_choices_visible": "media",
             "_library_prompts_sort_choices_visible": "prompts",
             "_library_skills_sort_choices_visible": "skills",
             "_export_state.quality_choices_visible": "export",
@@ -38208,12 +38589,990 @@ class LibraryScreen(BaseAppScreen):
             self._exit_library_media_viewer()
             return
         if layout.items_open:
-            self._focus_library_control("#library-media-filter")
+            self._focus_library_media_items_pane()
         elif layout.library_open:
             self._focus_library_rail_action("#library-search-input")
         else:
             self._exit_library_media_viewer()
         self._register_footer_shortcuts()
+
+    def _library_media_adjacent_row(
+        self, direction: int
+    ) -> tuple[str, str] | None:
+        """Return the (id, title) of the browse row ``direction`` from the current.
+
+        task-28005: neighbours come from the mounted rows -- they carry
+        ``media_id`` in exactly the form ``_selected_media_id`` holds (so no
+        id-format mismatch) and sit in browse order (newest first, so
+        ``direction=+1`` is the next item DOWN the list, matching Down). No
+        neighbour (at a list end, or the current item is off the loaded
+        page) returns None.
+        """
+        rows = list(self.query(".library-media-row"))
+        if not rows:
+            return None
+        selected = str(self._selected_media_id or "")
+        index = next(
+            (
+                i
+                for i, row in enumerate(rows)
+                if str(getattr(row, "media_id", "") or "") == selected
+            ),
+            None,
+        )
+        if index is None:
+            return None
+        neighbour = index + direction
+        if not 0 <= neighbour < len(rows):
+            return None
+        row = rows[neighbour]
+        media_id = str(getattr(row, "media_id", "") or "")
+        title = str(getattr(row, "_library_media_title", "") or media_id)
+        return (media_id, title)
+
+    def _library_media_item_traversal_active(self) -> bool:
+        """True while the Reader is showing a plain item (no sub-state)."""
+        return (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+            and self._library_media_view == "viewer"
+            and not self._library_media_viewer_substate_active()
+            and not self._library_media_select_mode
+        )
+
+    def action_library_media_next_item(self) -> None:
+        """Open the next browse item in the Reader (task-28005)."""
+        self._select_library_media_adjacent_item(1)
+
+    def action_library_media_prev_item(self) -> None:
+        """Open the previous browse item in the Reader (task-28005)."""
+        self._select_library_media_adjacent_item(-1)
+
+    def _select_library_media_adjacent_item(self, direction: int) -> None:
+        if not self._library_media_item_traversal_active():
+            return
+        # task-28241: an active review set supersedes the browse-row traversal
+        # -- ] / [ walk its pinned cursor over the whole set instead of the
+        # mounted (current-page) rows. With no active set, fall through to
+        # task-28005's browse-row behavior.
+        if self._walk_active_review_set(direction):
+            return
+        neighbour = self._library_media_adjacent_row(direction)
+        if neighbour is None:
+            return
+        media_id, title = neighbour
+        self._select_library_media_reader_row(media_id, title, immediate=True)
+
+    def _review_set_service(self):
+        """Return the review-set service, or ``None`` when storage is absent.
+
+        Lazily built from the app's Library collections DB and cached on the
+        screen. Returns ``None`` (never raises) when that DB is unavailable, so
+        every review-set call site can guard on it and fall back cleanly.
+
+        Returns:
+            A ``ReviewSetService`` or ``None``.
+        """
+        service = getattr(self, "_cached_review_set_service", None)
+        if service is not None:
+            return service
+        db = getattr(self.app_instance, "local_library_collections_db", None)
+        if db is None:
+            return None
+        from tldw_chatbook.Library.review_set_service import ReviewSetService
+
+        service = ReviewSetService(db)
+        self._cached_review_set_service = service
+        return service
+
+    #: Max ids per liveness ``IN (…)`` batch, safely under SQLite's default
+    #: 999-variable limit (Qodo #2333: bound the query even for a large set).
+    _REVIEW_SET_LIVENESS_BATCH = 900
+
+    def _review_set_live_ids(self, backing_ids: "Iterable[int]") -> set[int]:
+        """Return the subset of backing media ids that are still live.
+
+        Live means present in the Media table with ``deleted = 0`` and
+        ``is_trash = 0``. Resolved in batched ``IN (…)`` queries (one round-trip
+        per ``_REVIEW_SET_LIVENESS_BATCH`` ids) so the query stays bounded even
+        for a large set, and each cursor is closed deterministically. When the
+        Media DB is unavailable the ids are treated as live -- the walker must
+        not hide items it cannot check.
+
+        Args:
+            backing_ids: The set's backing media ids.
+
+        Returns:
+            The subset that resolves to a live media item.
+        """
+        ids = [int(backing_id) for backing_id in backing_ids]
+        if not ids:
+            return set()
+        media_db = getattr(self.app_instance, "media_db", None)
+        if media_db is None:
+            return set(ids)
+        live: set[int] = set()
+        try:
+            for start in range(0, len(ids), self._REVIEW_SET_LIVENESS_BATCH):
+                chunk = ids[start : start + self._REVIEW_SET_LIVENESS_BATCH]
+                placeholders = ",".join("?" * len(chunk))
+                with closing(
+                    media_db.execute_query(
+                        f"SELECT id FROM Media WHERE id IN ({placeholders}) "
+                        "AND deleted = 0 AND is_trash = 0",
+                        tuple(chunk),
+                    )
+                ) as cursor:
+                    live.update(int(row[0]) for row in cursor.fetchall())
+        except Exception:
+            # Safe fallback: if the Media DB can't be queried, treat every id
+            # as live -- the walker must never HIDE an item it failed to check
+            # (better to show a possibly-deleted item than to skip a real one).
+            return set(ids)
+        return live
+
+    def _walk_active_review_set(self, direction: int) -> bool:
+        """Walk the active review set one step; return ``True`` if it handled it.
+
+        task-28241: a forward step marks the item being left done (the
+        completion gesture on the last item), Prev never marks, and tombstones
+        are skipped -- all decided by the pure ``plan_walk``. The item at the
+        new cursor is loaded through the same actuator the browse traversal
+        uses, so fenced loading, scroll capture/restore, and mode-persistence
+        keep working.
+
+        Args:
+            direction: ``+1`` for Next, ``-1`` for Prev.
+
+        Returns:
+            ``True`` when an active set consumed the step; ``False`` to let the
+            browse-row traversal handle it.
+        """
+        service = self._review_set_service()
+        if service is None:
+            return False
+        # task-30042 (user ruling: silent failure is never acceptable): a
+        # storage error mid-walk surfaces and consumes the key -- falling
+        # through to browse traversal would stack a second action on top of
+        # an error the user hasn't seen yet.
+        try:
+            return self._walk_active_review_set_unguarded(service, direction)
+        except Exception:
+            logger.opt(exception=True).warning("review-set walk failed")
+            self._notify_review_set(
+                "Couldn't walk the review set — storage error.",
+                severity="error",
+            )
+            return True
+
+    def _walk_active_review_set_unguarded(self, service, direction: int) -> bool:
+        """The walk body; storage exceptions are the caller's to surface."""
+        review_set = service.get_active_review_set()
+        if review_set is None:
+            return False
+        from tldw_chatbook.Library.review_set_state import plan_walk, resolve_cursor
+
+        live_ids = self._review_set_live_ids(
+            item.backing_media_id for item in review_set.items
+        )
+        is_live = lambda backing_id: backing_id in live_ids  # noqa: E731
+        by_position = {item.position: item for item in review_set.items}
+
+        # Qodo #2333: the walk marks/advances from the item the Reader is
+        # actually SHOWING, not the persisted cursor -- otherwise a step could
+        # mark an unseen item done. When the Reader is not on a set item (fresh
+        # entry, or a browse item), the first step just RESUMES the set at its
+        # cursor, marking nothing.
+        loaded_backing = self._library_media_reader_session.loaded_backing_id
+        try:
+            loaded_backing = int(loaded_backing) if loaded_backing is not None else None
+        except (TypeError, ValueError):
+            loaded_backing = None
+        displayed_position = next(
+            (
+                item.position
+                for item in review_set.items
+                if item.backing_media_id == loaded_backing
+            ),
+            None,
+        )
+        if displayed_position is None:
+            resumed = resolve_cursor(review_set.items, review_set.cursor, is_live)
+            target = by_position.get(resumed)
+            if target is None:
+                return True  # empty / all-tombstoned set: nothing to load
+            if resumed != review_set.cursor:
+                service.set_cursor(review_set.set_id, resumed)
+            self._select_library_media_reader_row(
+                f"local:media:{target.backing_media_id}",
+                target.title_snapshot,
+                immediate=True,
+            )
+            return True
+
+        outcome = plan_walk(
+            review_set.items, displayed_position, direction, is_live
+        )
+        was_complete = review_set.completed_at is not None
+        if outcome.mark_done_backing_id is not None:
+            service.mark_item_done(
+                review_set.set_id, outcome.mark_done_backing_id, True
+            )
+        if outcome.new_cursor != review_set.cursor:
+            service.set_cursor(review_set.set_id, outcome.new_cursor)
+        complete = service.refresh_completion(review_set.set_id, is_live)
+        if outcome.target is not None:
+            self._select_library_media_reader_row(
+                f"local:media:{outcome.target.backing_media_id}",
+                outcome.target.title_snapshot,
+                immediate=True,
+            )
+        else:
+            # task-30041 (critique P1): the clamp step -- including the
+            # final-] completion gesture -- changes marks/completion without
+            # loading a new item, so the Reader chrome must refresh here or
+            # the footer stays stale at exactly the finish.
+            self._sync_library_media_viewer_or_recompose()
+        if complete and not was_complete and outcome.mark_done_backing_id is not None:
+            live_count = sum(
+                1 for item in review_set.items if is_live(item.backing_media_id)
+            )
+            self._notify_review_set(f"All {live_count} reviewed.")
+        return True
+
+    def _active_review_set_progress(self) -> str | None:
+        """Return the active set's Reader progress line, or ``None``.
+
+        task-28241 (AC3): ``"12 of 40 · 7 reviewed"`` / ``"All N reviewed"`` /
+        ``"No items to review"`` -- computed over LIVE items so a deleted item
+        never inflates the count.
+
+        Returns:
+            The formatted progress string when a set is active, else ``None``.
+        """
+        service = self._review_set_service()
+        if service is None:
+            return None
+        review_set = service.get_active_review_set()
+        if review_set is None:
+            return None
+        from tldw_chatbook.Library.review_set_state import (
+            format_review_progress,
+            review_progress,
+        )
+
+        live_ids = self._review_set_live_ids(
+            item.backing_media_id for item in review_set.items
+        )
+        is_live = lambda backing_id: backing_id in live_ids  # noqa: E731
+        return format_review_progress(
+            review_progress(review_set.items, review_set.cursor, is_live)
+        )
+
+    def _active_review_set_banner(self) -> str | None:
+        """Build the Reader's one-line review-set banner (task-30045).
+
+        ``"Reviewing: <name> — X of M · N reviewed · ✓ reviewed"`` -- the
+        set's identity, its live progress, and (when the loaded item belongs
+        to the set) that item's own reviewed state, so ``m``'s effect is
+        visible at a glance instead of a counter diff. ``None`` when no set
+        is active; fails CLOSED on a storage error (the explicit gesture
+        paths carry the notices).
+
+        Returns:
+            The banner line, or ``None``.
+        """
+        service = self._review_set_service()
+        if service is None:
+            return None
+        try:
+            review_set = service.get_active_review_set()
+            if review_set is None:
+                return None
+            from tldw_chatbook.Library.review_set_state import (
+                format_review_progress,
+                review_progress,
+            )
+
+            live_ids = self._review_set_live_ids(
+                item.backing_media_id for item in review_set.items
+            )
+            progress = format_review_progress(
+                review_progress(
+                    review_set.items,
+                    review_set.cursor,
+                    lambda candidate: candidate in live_ids,
+                )
+            )
+            loaded = self._library_media_reader_session.loaded_backing_id
+            try:
+                loaded = int(loaded) if loaded is not None else None
+            except (TypeError, ValueError):
+                loaded = None
+            item_state = ""
+            current = next(
+                (
+                    item
+                    for item in review_set.items
+                    if item.backing_media_id == loaded
+                ),
+                None,
+            )
+            if current is not None and current.backing_media_id in live_ids:
+                # Live items only (Qodo #2351): progress counts live items,
+                # so claiming a state for a tombstoned (deleted-but-open)
+                # item would contradict the set's own arithmetic.
+                item_state = (
+                    " · ✓ reviewed" if current.done else " · not yet reviewed"
+                )
+            return f"Reviewing: {review_set.name} — {progress}{item_state}"
+        except Exception:
+            logger.opt(exception=True).warning(
+                "review-set banner build failed; omitting the banner"
+            )
+            return None
+
+    def _review_set_active(self) -> bool:
+        """True when a review set is active (drives the Reader footer + gating).
+
+        Fails CLOSED on a storage error (Qodo #2346): this runs on every key
+        resolution and footer render, so raising here would crash-loop the
+        screen and a notice here would toast-storm. The keys degrade to
+        browse traversal; the explicit gesture paths carry the notices.
+        """
+        service = self._review_set_service()
+        if service is None:
+            return False
+        try:
+            return service.get_active_review_set() is not None
+        except Exception:
+            logger.opt(exception=True).warning(
+                "review-set active-check failed; gating fails closed"
+            )
+            return False
+
+    def action_library_media_exit_review(self) -> None:
+        """Exit review mode: deactivate the active set, keeping it resumable.
+
+        task-28241 (AC3): distinct from Escape (which keeps the set active and
+        just leaves the Reader). Only meaningful in the plain Reader with an
+        active set; a no-op otherwise.
+        """
+        if not self._library_media_item_traversal_active():
+            return
+        service = self._review_set_service()
+        if service is None:
+            return
+        # task-30042: surface a storage error instead of crashing the action.
+        try:
+            if service.get_active_review_set() is None:
+                return
+            service.deactivate_active()
+        except Exception:
+            logger.opt(exception=True).warning("review-set exit failed")
+            self._notify_review_set(
+                "Couldn't exit review — storage error.", severity="error"
+            )
+            return
+        self._sync_library_media_viewer_or_recompose()
+
+    def action_library_media_toggle_reviewed(self) -> None:
+        """Toggle the current item's done mark in the active review set.
+
+        task-28241 (AC2): the explicit counterpart to forward-advance's
+        auto-mark -- lets a user un-mark a skimmed item, or mark the last one
+        without advancing. A no-op outside a plain Reader with an active set
+        whose cursor item is loaded.
+        """
+        if not self._library_media_item_traversal_active():
+            return
+        service = self._review_set_service()
+        if service is None:
+            return
+        # task-30042: a storage error on an explicit mark gesture surfaces
+        # instead of crashing the action or silently dropping the mark.
+        try:
+            self._toggle_reviewed_unguarded(service)
+        except Exception:
+            logger.opt(exception=True).warning("review-set toggle failed")
+            self._notify_review_set(
+                "Couldn't update the reviewed mark — storage error.",
+                severity="error",
+            )
+
+    def _toggle_reviewed_unguarded(self, service) -> None:
+        """The toggle body; storage exceptions are the caller's to surface."""
+        review_set = service.get_active_review_set()
+        if review_set is None:
+            return
+        backing_id = self._library_media_reader_session.loaded_backing_id
+        if backing_id is None:
+            return
+        try:
+            backing_id = int(backing_id)
+        except (TypeError, ValueError):
+            return
+        current = next(
+            (
+                item
+                for item in review_set.items
+                if item.backing_media_id == backing_id
+            ),
+            None,
+        )
+        if current is None:
+            return
+        service.mark_item_done(review_set.set_id, backing_id, not current.done)
+        live_ids = self._review_set_live_ids(
+            item.backing_media_id for item in review_set.items
+        )
+        service.refresh_completion(
+            review_set.set_id, lambda candidate: candidate in live_ids
+        )
+        self._sync_library_media_viewer_or_recompose()
+
+    # -- review-set entry points (task-28242) --------------------------------
+
+    @on(Button.Pressed, "#library-media-review")
+    def handle_library_media_review_these(self, event: Button.Pressed) -> None:
+        """Pin the WHOLE filtered list as a review set and open it.
+
+        Args:
+            event: The "Review these" button press.
+        """
+        event.stop()
+        self.run_worker(
+            self._review_these_worker(),
+            group="library_review_set",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    @on(Button.Pressed, "#library-media-review-selected")
+    def handle_library_media_review_selected(self, event: Button.Pressed) -> None:
+        """Pin the current Select-mode selection as a review set and open it.
+
+        Args:
+            event: The "Review selected" bulk-action button press.
+        """
+        event.stop()
+        if getattr(self, "_library_media_bulk_delete_in_flight", False):
+            return
+        selection = self._library_media_row_selection
+        if not selection.count:
+            return
+        backing_ids: list[int] = []
+        for canonical_id in selection.ids:
+            try:
+                backing_ids.append(int(str(canonical_id).rsplit(":", 1)[-1]))
+            except (ValueError, TypeError):
+                continue
+        if not backing_ids:
+            return
+        self.run_worker(
+            self._review_selected_worker(tuple(backing_ids)),
+            group="library_review_set",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _review_these_worker(self) -> None:
+        """Page the whole filtered result, then create + open the set.
+
+        Wrapped so a search/DB failure surfaces a notice instead of a silent
+        no-op (Qodo #2335) -- the worker runs with ``exit_on_error=False``.
+        """
+        try:
+            scope = getattr(
+                self._library_media_browse_controller, "applied_scope", None
+            )
+            if scope is None:
+                return
+            pairs = await self._collect_review_pairs_from_scope(scope)
+            self._create_and_open_review_set(
+                self._review_these_name(scope), "browse", pairs
+            )
+        except Exception:
+            self._notify_review_set(
+                "Couldn't build the review set.", severity="error"
+            )
+
+    async def _review_selected_worker(self, backing_ids: tuple[int, ...]) -> None:
+        """Order the selected ids by the browse sort, then create + open."""
+        try:
+            pairs = await self._order_selected_review_pairs(backing_ids)
+            self._create_and_open_review_set(
+                f"{len(backing_ids)} selected items", "selection", pairs
+            )
+        except Exception:
+            self._notify_review_set(
+                "Couldn't build the review set.", severity="error"
+            )
+
+    async def _collect_review_pairs_from_scope(
+        self, scope: Any
+    ) -> list[tuple[int, str]]:
+        """Page the whole filtered result into ordered (backing_id, title) pairs.
+
+        Reads the raw ``search_media`` envelope page by page (off the event
+        loop) in browse-sort order, stopping at the total, an empty page, or one
+        past the 500 cap (so ``build_pinned_items`` can flag truncation).
+        """
+        search = getattr(
+            getattr(self.app_instance, "media_reading_scope_service", None),
+            "search_media",
+            None,
+        )
+        if not callable(search):
+            return []
+        from tldw_chatbook.Library.review_set_state import REVIEW_SET_CAP
+
+        pairs: list[tuple[int, str]] = []
+        page = 1
+        page_size = scope.page_size
+        while True:
+            filters: dict[str, Any] = {"sort_by": scope.sort_by}
+            if scope.media_type:
+                filters["media_types"] = [scope.media_type]
+            payload = await self._run_library_service_call(
+                search,
+                mode="local",
+                query=scope.query,
+                limit=page_size,
+                offset=(page - 1) * page_size,
+                library_summary=True,
+                isolate_in_worker=True,
+                **filters,
+            )
+            items = payload.get("items", []) if isinstance(payload, Mapping) else []
+            for item in items:
+                pairs.append((int(item["backing_media_id"]), str(item["title"])))
+            total = int(payload.get("total", 0)) if isinstance(payload, Mapping) else 0
+            if (
+                not items
+                or page * page_size >= total
+                or len(pairs) > REVIEW_SET_CAP
+            ):
+                break
+            page += 1
+        return pairs
+
+    async def _order_selected_review_pairs(
+        self, backing_ids: tuple[int, ...]
+    ) -> list[tuple[int, str]]:
+        """Order selected backing ids by the browse sort (deterministic).
+
+        Uses ``search_media``'s ``id_allowlist`` so the selection reads in the
+        same order the user saw, regardless of which pages it spanned -- NOT the
+        unordered RowSelection set.
+        """
+        search = getattr(
+            getattr(self.app_instance, "media_reading_scope_service", None),
+            "search_media",
+            None,
+        )
+        if not callable(search):
+            return []
+        from tldw_chatbook.Library.review_set_state import REVIEW_SET_CAP
+
+        scope = getattr(self._library_media_browse_controller, "applied_scope", None)
+        sort_by = scope.sort_by if scope is not None else "last_modified_desc"
+        # Qodo #2335: bound the query to the cap (+1 to flag overflow), not the
+        # unrestricted selection size.
+        ids = list(backing_ids)[: REVIEW_SET_CAP + 1]
+        payload = await self._run_library_service_call(
+            search,
+            mode="local",
+            query="",
+            library_summary=True,
+            isolate_in_worker=True,
+            id_allowlist=ids,
+            sort_by=sort_by,
+            limit=len(ids),
+            offset=0,
+        )
+        items = payload.get("items", []) if isinstance(payload, Mapping) else []
+        return [(int(item["backing_media_id"]), str(item["title"])) for item in items]
+
+    @staticmethod
+    def _review_these_name(scope: Any) -> str:
+        """A human name for a browse-derived review set."""
+        if scope.query:
+            return f'Search: "{scope.query}"'
+        if scope.media_type:
+            return f"{scope.media_type} items"
+        return "All media"
+
+    def _create_and_open_review_set(
+        self, name: str, origin: str, pairs: list[tuple[int, str]]
+    ) -> None:
+        """Create the set from pinned pairs, activate it, and open it in Reader.
+
+        A no-op (with a notice) when nothing resolved; warns when the 500 cap
+        dropped items.
+
+        Args:
+            name: Human label for the set.
+            origin: ``'browse'`` or ``'selection'``.
+            pairs: Ordered ``(backing_media_id, title)`` pairs.
+        """
+        from tldw_chatbook.Library.review_set_state import (
+            REVIEW_SET_CAP,
+            build_pinned_items,
+        )
+
+        items, truncated = build_pinned_items(pairs, cap=REVIEW_SET_CAP)
+        if not items:
+            self._notify_review_set(
+                "No media items to review.", severity="warning"
+            )
+            return
+        service = self._review_set_service()
+        if service is None:
+            # task-30042: the items resolved but there is nowhere to pin
+            # them -- say so instead of silently discarding the gesture.
+            self._notify_review_set(
+                self._REVIEW_SET_STORAGE_UNAVAILABLE, severity="error"
+            )
+            return
+        service.create_review_set(name, origin, items)
+        if truncated:
+            self._notify_review_set(
+                f"Review set capped at the first {REVIEW_SET_CAP} items.",
+                severity="warning",
+            )
+        else:
+            self._notify_review_set(f"Reviewing {len(items)} items.")
+        self._open_library_media_viewer(f"local:media:{items[0][0]}")
+
+    _REVIEW_SET_STORAGE_UNAVAILABLE = "Review-set storage is unavailable."
+
+    def _notify_review_set(
+        self, message: str, *, severity: str = "information"
+    ) -> None:
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity=severity)
+
+    # -- review-set picker (task-28243) ---------------------------------------
+
+    @on(Button.Pressed, "#library-media-review-sets")
+    def handle_library_media_review_sets(self, event: Button.Pressed) -> None:
+        """Open the saved review-set picker (resume / switch / dismiss).
+
+        Args:
+            event: The "Sets" toolbar button press.
+        """
+        event.stop()
+        self.run_worker(
+            self._review_set_picker_worker(),
+            group="library_review_set",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _review_set_picker_worker(self) -> None:
+        """List saved sets, await one picker decision, and apply it.
+
+        One decision per open (lean v1): resume/switch loads the chosen set at
+        its cursor, dismiss soft-deletes it. Wrapped so a DB failure surfaces a
+        notice instead of a silent no-op (the worker runs with
+        ``exit_on_error=False``).
+        """
+        try:
+            service = self._review_set_service()
+            if service is None:
+                # task-30042: a dead button is indistinguishable from the
+                # feature not existing -- the press always responds.
+                self._notify_review_set(
+                    self._REVIEW_SET_STORAGE_UNAVAILABLE, severity="error"
+                )
+                return
+            rows = await self._run_library_service_call(
+                self._collect_review_set_picker_rows, isolate_in_worker=True
+            )
+            decision = await self._push_review_set_picker(rows)
+            if decision is None:
+                return
+            from tldw_chatbook.Widgets.Library.library_review_set_picker import (
+                PICKER_DISMISS,
+                PICKER_OPEN,
+                PICKER_READ_LATER,
+            )
+
+            action, set_id = decision
+            if action == PICKER_READ_LATER:
+                pairs = await self._review_read_later_pairs()
+                self._create_and_open_review_set(
+                    "Read later", "read_later", pairs
+                )
+                return
+            if action == PICKER_DISMISS:
+                await self._run_library_service_call(
+                    service.dismiss, set_id, isolate_in_worker=True
+                )
+                self._notify_review_set("Review set dismissed.")
+                # Dismissing the ACTIVE set must drop the Reader's set chrome
+                # -- without this the footer kept advertising "] next in set"
+                # after the set was gone (live-verified 2026-09-02).
+                self._sync_library_media_viewer_or_recompose()
+                return
+            if action != PICKER_OPEN:
+                return
+            landing = await self._run_library_service_call(
+                self._activate_review_set, set_id, isolate_in_worker=True
+            )
+            if landing is None:
+                self._notify_review_set(
+                    "All items in this set were removed.", severity="warning"
+                )
+                return
+            self._open_library_media_viewer(f"local:media:{landing}")
+        except Exception:
+            self._notify_review_set(
+                "Couldn't open review sets.", severity="error"
+            )
+
+    async def _review_read_later_pairs(self) -> list[tuple[int, str]]:
+        """Build ordered (backing_id, title) pairs from the read-later queue.
+
+        task-28244: ids come from ``list_read_it_later_media_ids`` (already
+        ordered ``saved_at DESC``); titles come from the same bounded
+        allowlist query Review-selected uses, whose browse-sort order is then
+        discarded in favor of the saved order.
+
+        Returns:
+            Pairs in saved-at order; empty when the queue is empty or the
+            Media DB is unavailable.
+        """
+        from tldw_chatbook.Library.review_set_state import REVIEW_SET_CAP
+
+        lister = getattr(
+            getattr(self.app_instance, "media_db", None),
+            "list_read_it_later_media_ids",
+            None,
+        )
+        if not callable(lister):
+            return []
+        # Bound the DB query itself (Qodo #2340) -- +1 so build_pinned_items
+        # can still flag truncation; the client-side slice stays as a guard
+        # for listers without limit support.
+        ids = await self._run_library_service_call(
+            lister, isolate_in_worker=True, limit=REVIEW_SET_CAP + 1
+        )
+        ids = [int(backing_id) for backing_id in ids][: REVIEW_SET_CAP + 1]
+        if not ids:
+            return []
+        pairs = await self._order_selected_review_pairs(tuple(ids))
+        title_by_id = {backing_id: title for backing_id, title in pairs}
+        return [
+            (backing_id, title_by_id[backing_id])
+            for backing_id in ids
+            if backing_id in title_by_id
+        ]
+
+    def _collect_review_set_picker_rows(
+        self,
+    ) -> list[tuple[str, str, str, bool]]:
+        """Build the picker's display rows with live progress (off the loop).
+
+        One liveness resolve covers the union of every listed set's backing
+        ids, so per-set progress shares a single chunked Media-DB query.
+        """
+        from tldw_chatbook.Library.review_set_state import build_picker_rows
+
+        service = self._review_set_service()
+        if service is None:
+            return []
+        sets = service.list_review_sets()
+        live_ids = self._review_set_live_ids(
+            item.backing_media_id
+            for review_set in sets
+            for item in review_set.items
+        )
+        return build_picker_rows(sets, lambda candidate: candidate in live_ids)
+
+    async def _push_review_set_picker(
+        self, rows: list[tuple[str, str, str, bool]]
+    ) -> tuple[str, str] | None:
+        """Push the picker modal and await its decision.
+
+        Returns:
+            ``("open", set_id)`` | ``("dismiss", set_id)``, or ``None`` on
+            cancel (or when the host cannot push modals).
+        """
+        push_screen_wait = getattr(self.app, "push_screen_wait", None)
+        if not callable(push_screen_wait):
+            return None
+        from tldw_chatbook.Widgets.Library.library_review_set_picker import (
+            LibraryReviewSetPickerDialog,
+        )
+
+        return await push_screen_wait(LibraryReviewSetPickerDialog(rows))
+
+    def _activate_review_set(self, set_id: str) -> int | None:
+        """Activate ``set_id`` and return its landing backing id (off-loop).
+
+        Reopens a completed set first (AC#2); activation deactivates any other
+        active set (the service's one-active invariant). An all-tombstoned set
+        is NOT activated -- the caller shows the empty notice instead (design
+        §7: an empty set is empty, never resumable).
+
+        Returns:
+            The live backing id at the set's resolved cursor, or ``None``.
+        """
+        from tldw_chatbook.Library.review_set_state import resolve_cursor
+
+        service = self._review_set_service()
+        if service is None:
+            return None
+        review_set = service.get_review_set(set_id)
+        if review_set is None:
+            return None
+        live_ids = self._review_set_live_ids(
+            item.backing_media_id for item in review_set.items
+        )
+        resolved = resolve_cursor(
+            review_set.items,
+            review_set.cursor,
+            lambda candidate: candidate in live_ids,
+        )
+        landing = {item.position: item for item in review_set.items}.get(resolved)
+        if landing is None or landing.backing_media_id not in live_ids:
+            return None
+        if review_set.completed_at is not None:
+            service.reopen(set_id)
+        service.activate(set_id)
+        if resolved != review_set.cursor:
+            # Persist the tombstone resolve (the walker does the same on
+            # resume) so a later restore of the deleted item cannot yank a
+            # subsequent resume back to the stale cursor (Qodo #2337).
+            service.set_cursor(set_id, resolved)
+        return landing.backing_media_id
+
+    # -- auto-resume on media entry (task-28245) ------------------------------
+
+    def _maybe_auto_resume_review_set(self) -> None:
+        """Kick the once-per-set auto-resume of an active review set.
+
+        Called ONLY from the rail-select seam (an explicit user gesture) --
+        never from the mount leg, whose boot-time timing made the worker's
+        lazy imports race the _ui_ready module census (flaky Perf Guard).
+        The worker still re-checks the surface right before opening, so an
+        entry that gets yanked away aborts cleanly.
+
+        Its OWN exclusive group, not ``library_review_set`` -- joining the
+        entry-point builders' group would CANCEL an in-flight "Review these"
+        build when the user clicks the Media rail mid-build (Qodo #2342).
+        """
+        self.run_worker(
+            self._auto_resume_review_set_worker(),
+            group="library_review_set_resume",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _auto_resume_review_set_worker(self) -> None:
+        """Open the active set's cursor item in the Reader, once per set.
+
+        AC#1: entering the media area with an active set loads its cursor
+        item without a keypress. Once per set per screen session -- Escape
+        back to the list plus re-entry shows the list, never a yank loop.
+        AC#3: the final still-on-the-media-list + current-screen gates make
+        a cold-start yank abort without opening (and without burning the
+        once-per-set chance). task-30042 (user ruling): failures are NEVER
+        silent -- missing storage warns once per session, and any storage
+        error surfaces; only the ordinary no-active-set case stays quiet.
+        """
+        try:
+            if self._review_set_service() is None:
+                if not getattr(self, "_review_set_storage_warned", False):
+                    self._review_set_storage_warned = True
+                    self._notify_review_set(
+                        self._REVIEW_SET_STORAGE_UNAVAILABLE,
+                        severity="warning",
+                    )
+                return
+            landing = await self._run_library_service_call(
+                self._resolve_active_review_set_landing, isolate_in_worker=True
+            )
+            if landing is None:
+                return
+            set_id, backing_id = landing
+            if (
+                self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
+                or self._library_media_view != "list"
+                or not getattr(self, "is_current", False)
+            ):
+                return
+            resumed: set[str] = getattr(self, "_review_set_auto_resumed", set())
+            if set_id in resumed:
+                return
+            resumed.add(set_id)
+            self._review_set_auto_resumed = resumed
+            self._open_library_media_viewer(f"local:media:{backing_id}")
+        except Exception:
+            # task-30042: resuming failed on a real error -- surface it; the
+            # user has an active set they can no longer see.
+            logger.opt(exception=True).warning("review-set auto-resume failed")
+            self._notify_review_set(
+                "Couldn't resume the review set — storage error.",
+                severity="error",
+            )
+
+    def _resolve_active_review_set_landing(self) -> tuple[str, int] | None:
+        """Resolve the active set's live cursor item (runs off the loop).
+
+        Returns:
+            ``(set_id, backing_media_id)`` for the item the Reader should
+            resume at, or ``None`` when no set is active or every pinned
+            item is a tombstone.
+        """
+        from tldw_chatbook.Library.review_set_state import resolve_cursor
+
+        service = self._review_set_service()
+        if service is None:
+            return None
+        review_set = service.get_active_review_set()
+        if review_set is None:
+            return None
+        live_ids = self._review_set_live_ids(
+            item.backing_media_id for item in review_set.items
+        )
+        resolved = resolve_cursor(
+            review_set.items,
+            review_set.cursor,
+            lambda candidate: candidate in live_ids,
+        )
+        landing = {item.position: item for item in review_set.items}.get(resolved)
+        if landing is None or landing.backing_media_id not in live_ids:
+            return None
+        return review_set.set_id, landing.backing_media_id
+
+    def _focus_library_media_items_pane(self) -> None:
+        """Focus the Items pane at its most useful control (task-28004).
+
+        Prefers the loaded/selected item's ROW so the very next Down/Up
+        walks the list -- Escape-then-Down is the sequential-review
+        gesture (Down moves selection and auto-loads the adjacent item).
+        Landing on the "Filter media" Input instead swallowed those
+        keystrokes (typed characters fell into the filter, Down was inert
+        until a Tab) -- live-verified 2026-09-02. Falls back to the first
+        row, then to the filter when the list is empty.
+        """
+        rows = list(self.query(".library-media-row"))
+        if rows:
+            selected = str(self._selected_media_id or "")
+            target = next(
+                (
+                    row
+                    for row in rows
+                    if str(getattr(row, "media_id", "") or "") == selected
+                ),
+                rows[0],
+            )
+            self.set_focus(target)
+            return
+        self._focus_library_control("#library-media-filter")
 
     def _library_media_escape_label(self) -> str:
         """Describe the action Escape will take from the current effective role."""
@@ -38842,6 +40201,9 @@ class LibraryScreen(BaseAppScreen):
         # and prev/next navigation all search the exact same needle.
         submitted = event.value.strip()
         if submitted == self._library_media_content_query:
+            # task-28011: re-pressing Enter on the same query walks to the
+            # next match (find-bar convention) instead of no-opping.
+            self._advance_library_media_content_match(1)
             return
         self._library_media_content_query = submitted
         self._library_media_content_match_index = 0
@@ -38924,6 +40286,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_media_highlights
             ),
             editing_analysis=self._library_media_editing_analysis,
+            generating_analysis=self._library_media_generating_analysis,
             content_query=self._library_media_content_query,
             content_match_index=self._library_media_content_match_index,
             content_mode=self._library_media_content_mode,
@@ -38944,6 +40307,7 @@ class LibraryScreen(BaseAppScreen):
             image_preview_hidden=preview_hidden,
             image_preview_available=preview_available,
             image_preview_source=preview_source,
+            review_banner=self._active_review_set_banner() or "",
             id="library-media-viewer",
         )
         viewer._library_entry_arrival_note = arrival_note
@@ -39156,8 +40520,12 @@ class LibraryScreen(BaseAppScreen):
         # with byte-identical values must still compare EQUAL so the
         # document is not rebuilt (pinned by task-22207's alternating-focus
         # probe).
+        # task-30045: the review banner is a compose input like any other --
+        # without it here, m/walk syncs kept the stale (or absent) banner.
+        review_banner = self._active_review_set_banner() or ""
         unchanged = (
             (viewer.viewer is viewer_state or viewer.viewer == viewer_state)
+            and viewer.review_banner == review_banner
             and viewer.editing == self._library_media_editing
             and viewer.confirming_delete == self._library_media_confirming_delete
             and tuple(viewer.highlights) == highlights
@@ -39205,6 +40573,7 @@ class LibraryScreen(BaseAppScreen):
             viewer.confirming_delete = self._library_media_confirming_delete
             viewer.highlights = highlights
             viewer.editing_analysis = self._library_media_editing_analysis
+            viewer.generating_analysis = self._library_media_generating_analysis
             viewer.content_query = self._library_media_content_query
             viewer.content_match_index = self._library_media_content_match_index
             viewer.content_mode = self._library_media_content_mode
@@ -39220,6 +40589,7 @@ class LibraryScreen(BaseAppScreen):
             viewer.image_preview_hidden = preview_hidden
             viewer.image_preview_available = preview_available
             viewer.image_preview_source = preview_source
+            viewer.review_banner = review_banner
             viewer.refresh(recompose=True)
         if detail is not None:
             self._library_media_composed_detail = detail
@@ -39295,7 +40665,11 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, ".library-media-reader-mode")
     def handle_library_media_reader_mode(self, event: Button.Pressed) -> None:
-        """Select one permanent Reader mode without reloading the item."""
+        """Select one permanent Reader mode without reloading the item.
+
+        Args:
+            event: The Reader mode button press; its id names the target mode.
+        """
         event.stop()
         button_id = str(event.button.id or "")
         prefix = "library-media-reader-select-"
@@ -39305,6 +40679,7 @@ class LibraryScreen(BaseAppScreen):
         self._capture_library_media_loaded_progress()
         if mode == "read":
             self._library_media_progress_restored_id = None
+        self._reset_library_media_search_on_mode_change(mode)
         self._library_media_reader_session = set_mode(
             self._library_media_reader_session,
             mode,  # type: ignore[arg-type]
@@ -39317,6 +40692,24 @@ class LibraryScreen(BaseAppScreen):
                     self._restore_library_media_loaded_progress, loaded_id
                 )
 
+    def _reset_library_media_search_on_mode_change(self, new_mode: str) -> None:
+        """Drop the in-item search when the Reader actually changes tab.
+
+        task-28026: each Reader tab searches its own corpus (the analysis
+        text vs the transcript), so a real mode transition clears the active
+        query, its match index, and the one-slot match memo rather than
+        carrying one tab's highlights -- and a possibly out-of-range match
+        index -- onto the other tab's text. A no-op re-press of the current
+        mode leaves the search intact.
+
+        Args:
+            new_mode: The Reader mode being switched to.
+        """
+        if new_mode != self._library_media_reader_session.mode:
+            self._library_media_content_query = ""
+            self._library_media_content_match_index = 0
+            self._library_media_content_match_memo = None
+
     def _capture_library_media_loaded_progress(self) -> None:
         """Snapshot and queue persistence of the local content body's offset.
 
@@ -39328,8 +40721,13 @@ class LibraryScreen(BaseAppScreen):
         """
         session = self._library_media_reader_session
         loaded_id = session.loaded_id
+        # task-28026: only the Read tab's content body carries transcript
+        # reading progress. The Analysis tab reuses the same
+        # #library-media-viewer-content id, so a capture taken in any other
+        # mode would persist an unrelated scroll offset as transcript progress.
         if (
             session.external_detail
+            or session.mode != "read"
             or loaded_id is None
             or not loaded_id.startswith("local:media:")
         ):
@@ -39462,8 +40860,16 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-media-reader-find")
     def handle_library_media_reader_find(self, event: Button.Pressed) -> None:
-        """Take Find to the loaded item's content body."""
+        """Take Find to the loaded item's content body.
+
+        Args:
+            event: The Find button press.
+        """
         event.stop()
+        # task-28026: Find is a real Analysis->Read transition too, so it
+        # clears any active analysis search before focusing the transcript
+        # find bar -- the same reset the Reader mode buttons apply.
+        self._reset_library_media_search_on_mode_change("read")
         self._library_media_reader_session = set_mode(
             self._library_media_reader_session, "read"
         )
@@ -39655,17 +41061,24 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_content_match_memo = None
             return ()
         query = self._library_media_content_query
+        # task-28026: the Analysis tab searches the analysis text; every other
+        # mode searches the transcript. Mode is part of the memo key.
+        mode = self._library_media_reader_session.mode
         memo = self._library_media_content_match_memo
-        if memo is not None and memo[0] is detail and memo[1] == query:
+        if (
+            memo is not None
+            and memo[0] is detail
+            and memo[1] == query
+            and memo[3] == mode
+        ):
             return memo[2]
-        matches = find_content_matches(
-            # task-22208 memoizes the viewer state per detail arrival; going
-            # through it keeps this memo's miss path from re-copying the whole
-            # document that 22208 already built for this same arrival.
-            self._library_media_viewer_state_cached(detail).content,
-            query,
-        )
-        self._library_media_content_match_memo = (detail, query, matches)
+        # task-22208 memoizes the viewer state per detail arrival; going
+        # through it keeps this memo's miss path from re-copying the whole
+        # document that 22208 already built for this same arrival.
+        viewer_state = self._library_media_viewer_state_cached(detail)
+        corpus = viewer_state.analysis if mode == "analysis" else viewer_state.content
+        matches = find_content_matches(corpus, query)
+        self._library_media_content_match_memo = (detail, query, matches, mode)
         return matches
 
     def _advance_library_media_content_match(self, step: int) -> None:
@@ -39745,6 +41158,14 @@ class LibraryScreen(BaseAppScreen):
                 later" / "Remove from read-it-later" action.
         """
         event.stop()
+        self._start_library_media_read_later_toggle()
+
+    def _start_library_media_read_later_toggle(self) -> None:
+        """Kick the read-it-later toggle worker for the open item (task-28027).
+
+        Shared by the "Read later" button and the ``l`` accelerator so both
+        read the last-fetched saved state and dispatch the same worker.
+        """
         media_id = self._selected_media_id
         if not media_id:
             return
@@ -39759,6 +41180,24 @@ class LibraryScreen(BaseAppScreen):
                 media_id, currently_saved=currently_saved
             )
         )
+
+    def action_library_media_read_later(self) -> None:
+        """Keyboard 'l': toggle read-it-later for the open item (task-28027)."""
+        self._start_library_media_read_later_toggle()
+
+    def action_library_media_use_in_console(self) -> None:
+        """Keyboard 'c': hand the open item to Console (task-28027)."""
+        self._open_selected_media_handoff()
+
+    def action_library_media_move_to_trash(self) -> None:
+        """Keyboard 't': arm the inline delete confirmation (task-28027).
+
+        Mirrors ``handle_library_media_delete`` -- arming only; the actual
+        trash write still needs the confirm affordance.
+        """
+        self._library_media_confirming_delete = True
+        self._library_media_delete_receipt_ids = ()
+        self._sync_library_media_viewer_or_recompose()
 
     async def _toggle_library_media_read_later(
         self, media_id: str, *, currently_saved: bool
@@ -39938,6 +41377,124 @@ class LibraryScreen(BaseAppScreen):
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
             notify(message, severity="warning")
+
+    @on(Button.Pressed, "#library-media-analysis-generate")
+    def handle_library_media_analysis_generate(self, event: Button.Pressed) -> None:
+        """Generate an analysis for the open item via the configured provider.
+
+        task-28006: resolves the provider through the same seam the ingest
+        path uses (``resolve_ingest_analysis_provider``), so the promise
+        made here and the ingest receipt can never disagree. Not-ready
+        surfaces the resolver's own honest reason instead of dispatching;
+        ready flips the section into its "Generating analysis…" state and
+        hands the call to a worker.
+
+        Args:
+            event: Button press event from the Analysis section's Generate
+                action.
+        """
+        event.stop()
+        if self._library_media_generating_analysis:
+            return
+        media_id = self._selected_media_id
+        if not media_id:
+            return
+        resolution = resolve_ingest_analysis_provider(self.app_instance.app_config)
+        if not resolution.ready:
+            self._notify_library_media_analysis_warning(
+                resolution.hint
+                or f"Analysis provider not ready: {resolution.short_reason}"
+            )
+            return
+        detail = (
+            self._library_media_detail
+            if isinstance(self._library_media_detail, Mapping)
+            else {}
+        )
+        content = str(detail.get("content") or "")
+        if not content.strip():
+            self._notify_library_media_analysis_warning(
+                "This item has no content to analyze."
+            )
+            return
+        self._library_media_generating_analysis = True
+        self._sync_library_media_viewer_or_recompose()
+        self.run_worker(
+            self._generate_library_media_analysis(
+                media_id, content=content, resolution=resolution
+            ),
+            group="library_media_analysis_generate",
+        )
+
+    async def _generate_library_media_analysis(
+        self, media_id: str, *, content: str, resolution: Any
+    ) -> None:
+        """Dispatch the analysis LLM call off-thread, then persist the result.
+
+        Always clears the generating flag and re-fetches detail so the
+        viewer never sticks in the progress state. On any failure the flag
+        is cleared and a quiet warning is surfaced; nothing is persisted.
+
+        Args:
+            media_id: The open Library media item id.
+            content: The document content to analyze.
+            resolution: The ready ``IngestAnalysisResolution`` describing the
+                provider, credential, and sampling parameters.
+        """
+        try:
+            analysis_text = await asyncio.to_thread(
+                self._dispatch_library_media_analysis, content, resolution
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Analysis generation failed for {media_id!r}."
+            )
+            analysis_text = ""
+        analysis_text = (analysis_text or "").strip()
+        self._library_media_generating_analysis = False
+        if not analysis_text:
+            self._notify_library_media_analysis_warning(
+                "Analysis generation returned nothing; the item is unchanged."
+            )
+            self._sync_library_media_viewer_or_recompose()
+            return
+        await self._save_library_media_analysis(
+            media_id, content=content, analysis_content=analysis_text
+        )
+
+    def _dispatch_library_media_analysis(self, content: str, resolution: Any) -> str:
+        """Call the resolved provider once and return the analysis text.
+
+        Runs on a worker thread (``chat_api_call`` is synchronous). The
+        credential is already resolved by the provider seam, so
+        ``api_key_resolved=True`` bypasses a second lookup.
+
+        Args:
+            content: The document content to analyze.
+            resolution: The ready ``IngestAnalysisResolution``.
+
+        Returns:
+            The extracted analysis text, or ``""`` when the response carried
+            none.
+        """
+        user_prompt = (
+            "Analyze and summarize the following content.\n\n"
+            f"---\n\n{content}"
+        )
+        response = chat_api_call(
+            api_endpoint=resolution.dispatch_name,
+            messages_payload=[{"role": "user", "content": user_prompt}],
+            api_key=resolution.api_key,
+            temp=resolution.temperature,
+            system_message=resolution.system_prompt,
+            streaming=False,
+            minp=resolution.min_p,
+            topp=resolution.top_p,
+            model=resolution.model,
+            max_tokens=resolution.max_tokens,
+            api_key_resolved=True,
+        )
+        return extract_response_content(response)
 
     @on(Button.Pressed, "#library-media-open")
     def handle_library_media_open(self, event: Button.Pressed) -> None:

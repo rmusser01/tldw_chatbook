@@ -25,6 +25,9 @@ from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
     build_mcp_review_hook,
 )
+from tldw_chatbook.Chat.console_activity_receipts import (
+    ConsoleActivityReceiptService,
+)
 from tldw_chatbook.Chat.console_prepared_request import build_console_request
 from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
 from tldw_chatbook.Chat.console_trace_provenance import (
@@ -49,6 +52,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleNextSendHistoryProjection,
     ConsoleMessageRole,
     ConsoleProviderSelection,
+    ConsoleRunMarker,
     ConsoleRunState,
     ConsoleRunStatus,
     ConsoleStagedSource,
@@ -93,6 +97,7 @@ from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.Tool_Packs.binding import ToolProfileLifecycleCoordinator
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
@@ -238,6 +243,70 @@ class CharacterEmoteStreamingGateway(StreamingGateway):
         self.messages_seen = messages
         for chunk in self.chunks:
             yield chunk
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raises", [False, True])
+async def test_console_holds_captured_tool_profile_lease_through_run_outcome(
+    raises: bool,
+) -> None:
+    store = ConsoleChatStore()
+    session = store.create_session(title="Lease test")
+    assistant, context = _begin_controller_disclosure(store, session.id)
+    context = ConsoleTurnExecutionContext(
+        configuration=replace(
+            context.configuration,
+            tool_policy_profile_id="research",
+        ),
+        library_authority=context.library_authority,
+        resolved_destination=context.resolved_destination,
+    )
+    lifecycle = ToolProfileLifecycleCoordinator()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=StreamingGateway(),
+    )
+    controller.tool_profile_lifecycle = lifecycle
+    expected = object()
+
+    async def run_inner(**_kwargs):
+        assert lifecycle.active_lease_count("research") == 1
+        assert lifecycle.active_lease_count("default") == 0
+        if raises:
+            raise RuntimeError("run failed")
+        return expected
+
+    controller._stream_assistant_response_inner = run_inner
+    arguments = {
+        "resolution": object(),
+        "provider_messages": [],
+        "assistant_message_id": assistant.id,
+        "route": ConsoleRequestRoute.FRESH,
+        "turn_context": context,
+    }
+
+    if raises:
+        with pytest.raises(RuntimeError, match="run failed"):
+            await controller._stream_assistant_response(**arguments)
+    else:
+        assert await controller._stream_assistant_response(**arguments) is expected
+
+    assert lifecycle.active_lease_count("research") == 0
+
+
+def test_console_captured_profile_lease_scope_supports_recovery_runs() -> None:
+    lifecycle = ToolProfileLifecycleCoordinator()
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(),
+        provider_gateway=StreamingGateway(),
+    )
+    controller.tool_profile_lifecycle = lifecycle
+    turn_context = SimpleNamespace(tool_policy_profile_id="research")
+
+    with controller_module._captured_tool_profile_lease(controller, turn_context):
+        assert lifecycle.active_lease_count("research") == 1
+
+    assert lifecycle.active_lease_count("research") == 0
 
 
 def _activate_character_emote_pack(
@@ -585,6 +654,32 @@ class FakePersistence:
             }
         )
         return True
+
+    def replace_assistant_generation_projection(
+        self,
+        *,
+        message_id,
+        content,
+        thinking_blocks_json,
+        provider_continuation_json,
+        assistant_generation_state,
+        usage_json,
+        expected_version=None,
+    ):
+        committed_version = (expected_version or 0) + 1
+        self.updated_messages.append(
+            {
+                "message_id": message_id,
+                "content": content,
+                "image_data": None,
+                "image_mime_type": None,
+                "thinking_blocks_json": thinking_blocks_json,
+                "provider_continuation_json": provider_continuation_json,
+                "assistant_generation_state": assistant_generation_state,
+                "usage_json": usage_json,
+            }
+        )
+        return committed_version
 
 
 def _roleplay_controller_fixture() -> tuple[
@@ -2409,6 +2504,68 @@ async def test_active_session_failure_toast_not_refired_on_terminal_restamp():
     assert len(toasts) == 1
 
 
+def test_inactive_direct_terminal_outcome_publishes_and_corrects_receipt(tmp_path):
+    store = ConsoleChatStore()
+    active = store.ensure_session(title="Active")
+    background = store.create_session(title="Background", ephemeral=True)
+    store.switch_session(active.id)
+    service = ConsoleActivityReceiptService(
+        AgentRunsDB(tmp_path / "activity-runs.db"), None
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=StreamingGateway(),
+        activity_receipts=service,
+    )
+    controller._ordinary_outcome_ids[background.id] = "turn:durable-preparation"
+    controller._ordinary_outcome_assistant_ids[background.id] = "assistant-1"
+
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.FAILED, "failed"),
+        session_id=background.id,
+    )
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.COMPLETED, "corrected"),
+        session_id=background.id,
+    )
+
+    receipts = service.unseen_snapshot()
+    assert len(receipts) == 1
+    assert receipts[0].logical_outcome_id == "turn:durable-preparation"
+    assert receipts[0].transition_revision == 2
+    assert receipts[0].status == "done"
+    assert receipts[0].session_id == background.id
+    assert receipts[0].assistant_message_id == "assistant-1"
+    assert controller.run_marker_for(background.id) is ConsoleRunMarker.FINISHED_OK
+
+
+def test_inactive_receipt_failure_preserves_compatibility_marker(tmp_path, monkeypatch):
+    store = ConsoleChatStore()
+    active = store.ensure_session(title="Active")
+    background = store.create_session(title="Background", ephemeral=True)
+    store.switch_session(active.id)
+    database = AgentRunsDB(tmp_path / "activity-runs.db")
+    service = ConsoleActivityReceiptService(database, None)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=StreamingGateway(),
+        activity_receipts=service,
+    )
+    controller._ordinary_outcome_ids[background.id] = "turn:write-failure"
+
+    def fail_publish(**_kwargs):
+        raise RuntimeError("receipt write failed")
+
+    monkeypatch.setattr(database, "publish_console_activity", fail_publish)
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.FAILED, "failed"),
+        session_id=background.id,
+    )
+
+    assert service.degraded is True
+    assert controller.run_marker_for(background.id) is ConsoleRunMarker.FINISHED_FAILED
+
+
 @pytest.mark.asyncio
 async def test_active_session_success_stays_silent():
     """FB-05 scope: only failures toast on the viewed session (FB-07's
@@ -3674,16 +3831,28 @@ class _FakeSessionApprovalService:
     double's own bookkeeping."""
 
     def __init__(self) -> None:
-        self._approved: set[tuple[str, str]] = set()
+        self._approved: set[tuple[str, str, str]] = set()
 
     def get_kill_switch(self) -> bool:
         return False
 
-    def approve_for_session(self, server_key: str, tool_name: str) -> None:
-        self._approved.add((server_key, tool_name))
+    def approve_for_session(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        profile_id: str = "default",
+    ) -> None:
+        self._approved.add((profile_id, server_key, tool_name))
 
-    def is_session_approved(self, server_key: str, tool_name: str) -> bool:
-        return (server_key, tool_name) in self._approved
+    def is_session_approved(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        profile_id: str = "default",
+    ) -> bool:
+        return (profile_id, server_key, tool_name) in self._approved
 
 
 class _FakeMutatingRiskyTool:
@@ -3751,6 +3920,44 @@ def test_approve_for_session_is_not_re_prompted_next_turn():
 # ---------------------------------------------------------------------------
 # _agent_failure_visible_copy (TASK-1231/F3 AC4, round 1 review Minor)
 # ---------------------------------------------------------------------------
+
+
+def test_stuck_visible_copy_carries_the_budget_wrapup_summary():
+    """TASK-26001 review I-2: the wrap-up call at budget exhaustion is the one
+    model call the run paid for at the end -- the consumer used to drop its
+    output, so on non-streaming providers the summary was invisible."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_models import RUN_STUCK, STEP_ERROR
+
+    outcome = SimpleNamespace(
+        status=RUN_STUCK,
+        final_text="Summary: parsed 3 of 5 files; auth blocked the rest.",
+        steps=[
+            SimpleNamespace(kind=STEP_ERROR, summary="wall-clock budget exhausted")
+        ],
+    )
+
+    copy = ConsoleChatController._agent_failure_visible_copy(outcome)
+
+    assert "wall-clock budget exhausted" in copy
+    assert "parsed 3 of 5 files" in copy, "the wrap-up summary must be visible"
+
+
+def test_stuck_visible_copy_without_a_summary_is_unchanged():
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_models import RUN_STUCK, STEP_ERROR
+
+    outcome = SimpleNamespace(
+        status=RUN_STUCK,
+        final_text="",
+        steps=[SimpleNamespace(kind=STEP_ERROR, summary="step budget exhausted")],
+    )
+
+    copy = ConsoleChatController._agent_failure_visible_copy(outcome)
+
+    assert copy == "Agent run stuck: step budget exhausted."
 
 
 def test_agent_failure_visible_copy_avoids_double_lead_in_for_loop_guard():
@@ -4920,6 +5127,7 @@ async def test_provider_switch_race_blocks_active_continuation_before_dispatch(
     )
     assert controller.run_state_for(session.id).status is ConsoleRunStatus.BLOCKED
     assert gateway.provider_calls == 0
+    assert store.dispatch_recovery_for_session(session.id) is None
     assert "ACTIVE-SWITCH-PRIVATE-CANARY" not in repr(result)
 
 
@@ -7040,6 +7248,111 @@ async def test_compose_mcp_provider_excludes_console_shadowed_builtin_names():
     }
 
 
+def test_mcp_provider_session_and_persistent_paths_use_named_profile():
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+    class RecordingService:
+        def __init__(self):
+            self.calls = []
+
+        def is_session_approved(
+            self, server_key, tool_name, *, profile_id="default"
+        ):
+            self.calls.append(("read", server_key, tool_name, profile_id))
+            return False
+
+        def approve_for_session(
+            self, server_key, tool_name, *, profile_id="default"
+        ):
+            self.calls.append(("session", server_key, tool_name, profile_id))
+
+        def set_tool_state(
+            self,
+            server_key,
+            tool_name,
+            state,
+            *,
+            tool,
+            profile_id="default",
+        ):
+            self.calls.append(
+                ("persistent", server_key, tool_name, state, profile_id)
+            )
+
+    loop = asyncio.new_event_loop()
+    try:
+        service = RecordingService()
+        provider = controller_module.MCPToolProvider(
+            service=service,
+            main_loop=loop,
+            profile_id_provider=lambda: "research",
+        )
+        tool = HubTool(
+            server_key="local:docs",
+            server_label="Docs",
+            source="local",
+            name="search",
+            description="Search docs",
+            input_schema={"type": "object"},
+            tags=(),
+            stale=False,
+            executable=True,
+        )
+        provider._execute = lambda *_args, **_kwargs: SimpleNamespace(ok=True)
+
+        provider._is_session_approved_safe(tool)
+        provider._apply_verdict("approve_session", tool, {})
+        provider._apply_verdict("always_allow", tool, {})
+
+        assert service.calls == [
+            ("read", "local:docs", "search", "research"),
+            ("read", "local:docs", "search", "research"),
+            ("session", "local:docs", "search", "research"),
+            ("persistent", "local:docs", "search", "allow", "research"),
+        ]
+    finally:
+        loop.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_provider_composition_captures_one_named_profile_for_mcp_and_builtin(
+    monkeypatch,
+):
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    controller.app = SimpleNamespace(unified_mcp_service=object())
+    captured = {}
+
+    async def compose_mcp(*_args, **kwargs):
+        captured["mcp"] = kwargs["profile_id_provider"]()
+        return None
+
+    def compose_local(*_args, **_kwargs):
+        return None, None
+
+    def build_gate(_service, *, profile_id="default"):
+        captured["builtin"] = profile_id
+        return SimpleNamespace()
+
+    monkeypatch.setattr(controller, "_compose_mcp_provider", compose_mcp)
+    monkeypatch.setattr(controller, "_compose_local_provider", compose_local)
+    monkeypatch.setattr(controller_module, "build_builtin_gate", build_gate)
+    context = SimpleNamespace(
+        tool_policy_profile_id="research",
+        persona_policy_rules=None,
+    )
+
+    await controller._compose_agent_request_providers(
+        session_id="session-1",
+        project_selection=None,
+        project_authority_guard=None,
+        turn_context=context,
+        admitted_roots=(),
+    )
+
+    assert captured == {"mcp": "research", "builtin": "research"}
+
+
 # -----------------------------------------------------------------------------
 # PR3a-1 Task 6b (audit F3): a surviving child's spend must not vanish silently
 # -----------------------------------------------------------------------------
@@ -8855,3 +9168,140 @@ def test_empty_continuation_discard_reclaims_generation_runtime_owner(
     )
     assert store._generation_runtime_counts() == (0, 0, 0)
     db.close_connection()
+
+
+def test_wrapup_summary_suffix_dropped_when_the_row_already_streamed_it():
+    """Review A-2: streaming providers stream the wrap-up summary into the
+    row before the finalizer runs; the visible copy must not repeat it."""
+    copy = "Agent run stuck: wall-clock budget exhausted.\n\nSummary text here."
+
+    deduped = ConsoleChatController._without_duplicated_summary(
+        copy, "Summary text here.", "partial answer...\n\nSummary text here."
+    )
+
+    assert deduped == "Agent run stuck: wall-clock budget exhausted."
+
+
+def test_wrapup_summary_suffix_kept_for_non_streaming_rows():
+    copy = "Agent run stuck: wall-clock budget exhausted.\n\nSummary text here."
+
+    kept = ConsoleChatController._without_duplicated_summary(
+        copy, "Summary text here.", ""
+    )
+
+    assert kept == copy
+
+
+def test_empty_summary_never_alters_the_copy():
+    copy = "Agent run stuck: step budget exhausted."
+
+    assert (
+        ConsoleChatController._without_duplicated_summary(copy, "", "anything")
+        == copy
+    )
+
+
+# --- TASK-27021: @-reference expansion at the submit seam ---
+
+
+class _PayloadCapturingGateway(StreamingGateway):
+    def __init__(self):
+        self.messages = None
+
+    async def stream_chat(self, resolution, messages, **kwargs):
+        self.messages = messages
+        for chunk in ("ok",):
+            yield chunk
+
+
+@pytest.mark.asyncio
+async def test_reference_expansion_reaches_provider_but_echo_stays_raw(monkeypatch):
+    """27021 AC#1 + 26020 AC#6: the provider sees the expanded text; the user
+    echo keeps the raw draft; a compact system row records the expansion."""
+    from tldw_chatbook.Chat import console_references as refs
+
+    monkeypatch.setattr(
+        refs, "build_console_reference_resolver",
+        lambda: (lambda token: ("file", "FILE-CONTENT-MARKER", None) if token == "a.py" else None),
+    )
+    monkeypatch.setattr(refs, "run_git_reference", lambda kind, **k: "")
+
+    store = ConsoleChatStore()
+    gateway = _PayloadCapturingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    result = await controller.submit_draft("see @a.py please")
+    assert result.accepted is True
+
+    sent_user = [m for m in (gateway.messages or []) if m.get("role") == "user"]
+    assert sent_user, "provider payload missing user message"
+    assert "FILE-CONTENT-MARKER" in sent_user[-1]["content"]
+
+    rows = store.messages_for_session(store.active_session_id)
+    user_rows = [m for m in rows if m.role.value == "user"]
+    assert user_rows[-1].content == "see @a.py please", "echo must stay raw"
+    system_rows = [m for m in rows if m.role.value == "system" and "@-references" in m.content]
+    assert system_rows and "included" in system_rows[-1].content
+
+
+@pytest.mark.asyncio
+async def test_email_at_sign_is_not_expanded(monkeypatch):
+    from tldw_chatbook.Chat import console_references as refs
+
+    def _explode():
+        raise AssertionError("resolver must not be built for a non-reference draft")
+    monkeypatch.setattr(refs, "build_console_reference_resolver", _explode)
+
+    store = ConsoleChatStore()
+    gateway = _PayloadCapturingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    result = await controller.submit_draft("mail bob@example.com about it")
+    assert result.accepted is True
+    sent_user = [m for m in (gateway.messages or []) if m.get("role") == "user"]
+    assert sent_user[-1]["content"] == "mail bob@example.com about it"
+    rows = store.messages_for_session(store.active_session_id)
+    assert not [m for m in rows if m.role.value == "system" and "@-references" in m.content]
+
+
+@pytest.mark.asyncio
+async def test_expansion_failure_sends_raw_draft(monkeypatch):
+    from tldw_chatbook.Chat import console_references as refs
+
+    def _boom():
+        raise RuntimeError("resolver construction exploded")
+    monkeypatch.setattr(refs, "build_console_reference_resolver", _boom)
+
+    store = ConsoleChatStore()
+    gateway = _PayloadCapturingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    result = await controller.submit_draft("see @a.py please")
+    assert result.accepted is True, "expansion failure must never block the send"
+    sent_user = [m for m in (gateway.messages or []) if m.get("role") == "user"]
+    assert sent_user[-1]["content"] == "see @a.py please"
+
+
+@pytest.mark.asyncio
+async def test_leading_reference_draft_still_gets_audit_row(monkeypatch):
+    """Qodo #7 (PR #2313): a draft STARTING with @ is excluded from ordinary
+    library preparation, but its expansion must still leave the audit row."""
+    from tldw_chatbook.Chat import console_references as refs
+
+    monkeypatch.setattr(
+        refs, "build_console_reference_resolver",
+        lambda: (lambda token: ("file", "LEADER-MARKER", None) if token == "a.py" else None),
+    )
+    monkeypatch.setattr(refs, "run_git_reference", lambda kind, **k: "")
+
+    store = ConsoleChatStore()
+    gateway = _PayloadCapturingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    result = await controller.submit_draft("@a.py explain this")
+    assert result.accepted is True
+    sent_user = [m for m in (gateway.messages or []) if m.get("role") == "user"]
+    assert "LEADER-MARKER" in sent_user[-1]["content"]
+    rows = store.messages_for_session(store.active_session_id)
+    system_rows = [m for m in rows if m.role.value == "system" and "@-references" in m.content]
+    assert system_rows, "leading-@ draft lost its audit row"

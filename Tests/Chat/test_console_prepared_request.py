@@ -25,6 +25,13 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
 )
+from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
+from tldw_chatbook.Chat.console_trace_provenance import (
+    DerivedTraceProvenance,
+    ProviderArtifactTraceProvenance,
+    SavedRevisionTraceProvenance,
+    TraceProvenanceSource,
+)
 
 
 def _word_count(messages: list[dict], _model: str) -> int:
@@ -317,15 +324,11 @@ def test_memory_wire_projection_is_unique_owned_and_private_anchor_free(
         apply_safety_window=False,
     )
 
-    wire = "\n".join(
-        str(row.get("content", "")) for row in prepared.messages_payload
-    )
+    wire = "\n".join(str(row.get("content", "")) for row in prepared.messages_payload)
     if prepared.system_message:
         wire = prepared.system_message + "\n" + wire
     assert wire.count("PROJECTED-MEMORY-CANARY") == 1
-    assert wire.index("ORIGINAL-SYSTEM-CANARY") < wire.index(
-        "PROJECTED-MEMORY-CANARY"
-    )
+    assert wire.index("ORIGINAL-SYSTEM-CANARY") < wire.index("PROJECTED-MEMORY-CANARY")
     assert all(
         prepared_request.PERSISTED_MESSAGE_ID_KEY not in row
         and prepared_request.PERSISTED_CONVERSATION_ID_KEY not in row
@@ -534,7 +537,9 @@ def test_multimodal_and_tool_schema_material_is_in_exact_accounting() -> None:
     assert rich_prepared.accounting.total_input_tokens > (
         plain_prepared.accounting.total_input_tokens + 900
     )
-    assert rich_prepared.accounting.mandatory_tokens > 0
+    # TASK-26019: tool schemas are now their own bucket instead of riding
+    # inside mandatory -- the pin's intent (tools ARE counted) is unchanged.
+    assert rich_prepared.accounting.tool_schema_tokens > 0
     assert rich_prepared.tools == rich.tools
 
 
@@ -890,3 +895,179 @@ def test_active_private_group_is_mandatory_and_fails_closed_when_over_budget() -
     assert prepared.known_overflow is True
     assert prepared.dropped_units == 0
     assert prepared.continuation_groups == (group,)
+
+
+# --- TASK-26019: category breakdown fields on the accounting ----------------
+
+
+def _breakdown_policy():
+    from tldw_chatbook.Chat.console_trace_models import (
+        FrozenTracePolicy,
+        new_opaque_id,
+    )
+
+    return FrozenTracePolicy(
+        policy_id=new_opaque_id(),
+        credential_filter_version="credentials-v1",
+        pii_redaction_enabled=False,
+        pii_ruleset_revision_id=None,
+    )
+
+
+def test_tool_schemas_split_out_of_mandatory_by_construction() -> None:
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "inspect",
+                "description": "words " * 50,
+                "parameters": {"type": "object"},
+            },
+        }
+    ]
+    with_tools = prepare_provider_request(
+        build_console_request([{"role": "user", "content": "describe"}], tools=tools),
+        wire_style="distinct_roles",
+        model="gpt-4o",
+        capacity=_capacity(None),
+    )
+    without_tools = prepare_provider_request(
+        build_console_request([{"role": "user", "content": "describe"}]),
+        wire_style="distinct_roles",
+        model="gpt-4o",
+        capacity=_capacity(None),
+    )
+
+    accounting = with_tools.accounting
+    assert accounting.tool_schema_tokens > 0
+    assert accounting.mandatory_tokens == 0, (
+        "tool schemas must no longer masquerade as mandatory context"
+    )
+    assert without_tools.accounting.tool_schema_tokens == 0
+    # the split is a partition of the same total, not a new estimate
+    assert accounting.total_input_tokens == (
+        accounting.system_tokens
+        + accounting.memory_tokens
+        + accounting.tool_schema_tokens
+        + accounting.mandatory_tokens
+        + accounting.compactable_tokens
+        + accounting.active_request_tokens
+    )
+    # the one existing consumer reads non_compactable -- unchanged meaning
+    assert accounting.non_compactable_tokens == (
+        accounting.total_input_tokens - accounting.compactable_tokens
+    )
+
+
+def test_attachment_tokens_cover_conversation_image_parts() -> None:
+    prepared = prepare_provider_request(
+        build_console_request(
+            [
+                {"role": "user", "content": "one"},
+                {"role": "assistant", "content": "a1"},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "see"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "data:image/png;base64,AA"},
+                        },
+                    ],
+                },
+            ]
+        ),
+        wire_style="distinct_roles",
+        model="gpt-4o",
+        capacity=_capacity(None),
+    )
+
+    accounting = prepared.accounting
+    assert accounting.attachment_tokens > 0
+    assert accounting.attachment_tokens <= (
+        accounting.compactable_tokens + accounting.active_request_tokens
+    )
+
+
+def test_rag_context_attributes_only_with_provenance() -> None:
+    from tldw_chatbook.Chat.console_trace_provenance import (
+        ProviderArtifactTraceProvenance,
+        TraceProvenanceSource,
+    )
+
+    policy = _breakdown_policy()
+    rag_row = {"role": "system", "content": "retrieved snippet " * 30}
+    plain_row = {"role": "system", "content": "instructions"}
+
+    without_provenance = prepare_provider_request(
+        build_console_request(
+            [{"role": "user", "content": "q"}],
+            mandatory=[rag_row, plain_row],
+        ),
+        wire_style="distinct_roles",
+        model="gpt-4o",
+        capacity=_capacity(None),
+    )
+    assert without_provenance.accounting.rag_attributed is False
+    assert without_provenance.accounting.rag_context_tokens == 0
+
+    from tldw_chatbook.Chat.console_trace_provenance import (
+        ConsoleTraceCaptureMode,
+    )
+
+    with_provenance = prepare_provider_request(
+        build_console_request(
+            [{"role": "user", "content": "q"}],
+            mandatory=[rag_row, plain_row],
+            message_provenance=(
+                ProviderArtifactTraceProvenance(
+                    TraceProvenanceSource.ACTIVE_REQUEST, policy
+                ),
+            ),
+            memory_provenance=(),
+            mandatory_provenance=[
+                ProviderArtifactTraceProvenance(
+                    TraceProvenanceSource.RAG_CONTEXT, policy
+                ),
+                ProviderArtifactTraceProvenance(
+                    TraceProvenanceSource.MANDATORY_CONTEXT, policy
+                ),
+            ],
+            tool_provenance=(),
+            capture_policy=policy,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        ),
+        wire_style="distinct_roles",
+        model="gpt-4o",
+        capacity=_capacity(None),
+    )
+    accounting = with_provenance.accounting
+    assert accounting.rag_attributed is True
+    assert 0 < accounting.rag_context_tokens < accounting.mandatory_tokens
+
+
+def test_saved_continuation_is_a_policy_owned_provider_artifact() -> None:
+    group = _private_group("a1", call_id="call_1")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    semantic = build_console_request(
+        [
+            {
+                "role": "assistant",
+                "content": "answer",
+                CONTINUATION_OWNER_KEY: "a1",
+            }
+        ],
+        continuation_groups=(group,),
+        message_provenance=(SavedRevisionTraceProvenance(new_opaque_id()),),
+        memory_provenance=(),
+        mandatory_provenance=(),
+        tool_provenance=(),
+        capture_policy=policy,
+    )
+
+    assert semantic.provenance is not None
+    descriptor = semantic.provenance.active_continuations[0]
+    assert isinstance(descriptor, DerivedTraceProvenance)
+    assert isinstance(descriptor.artifact, ProviderArtifactTraceProvenance)
+    assert descriptor.artifact.source is TraceProvenanceSource.CONTINUATION
+    assert descriptor.artifact.policy == policy

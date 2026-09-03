@@ -30,9 +30,9 @@ _GENERATED_SHEETS = (
 
 
 def _generated_css_text() -> str:
-    return "\n".join(
-        sheet.read_text(encoding="utf-8") for sheet in _GENERATED_SHEETS
-    )
+    return "\n".join(sheet.read_text(encoding="utf-8") for sheet in _GENERATED_SHEETS)
+
+
 _LIBRARY_SCREEN_SOURCE = _REPO_ROOT / "tldw_chatbook/UI/Screens/library_screen.py"
 
 _LIBRARY_NOTES_COMPACT_GEOMETRY = {
@@ -594,7 +594,7 @@ def test_console_inspector_handle_full_height_rule_reaches_generated_bundle() ->
     for css in (source, bundle):
         inspector_handle = _rule_body(css, ".console-inspector-rail-handle")
         assert "height: 100%;" in inspector_handle
-        assert "min-height: 20;" in inspector_handle
+        assert "min-height: 12;" in inspector_handle
         assert "max-height: 100%;" in inspector_handle
         assert "background: $ds-surface-panel;" in inspector_handle
 
@@ -789,9 +789,7 @@ def test_split_sheets_carry_only_their_own_owners_rules() -> None:
             (_CSS_ROOT / filename).read_text(encoding="utf-8"),
             flags=re.DOTALL,
         )
-        selector_text = " ".join(
-            match for match in re.findall(r"([^{}]+)\{", text)
-        )
+        selector_text = " ".join(match for match in re.findall(r"([^{}]+)\{", text))
         tokens = set(re.findall(r"[#.]([A-Za-z0-9_-]+)", selector_text))
         for token in sorted(tokens):
             assert token not in css_builder.AGENTIC_SPLIT_PINNED_TOKENS, (

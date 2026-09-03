@@ -10211,6 +10211,35 @@ async def test_ctrl_k_opens_session_switcher_and_activates_native_session():
 
 
 @pytest.mark.asyncio
+async def test_ctrl_k_blank_enter_activates_most_recent_other_native_session():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await pilot.click("#console-new-chat-tab")
+        await pilot.pause(0.1)
+        await pilot.click("#console-new-chat-tab")
+        await pilot.pause(0.1)
+
+        store = console._console_chat_store
+        expected_session_id = store.most_recent_other_session_id()
+        assert expected_session_id is not None
+        assert expected_session_id != store.active_session_id
+
+        await pilot.press("ctrl+k")
+        await pilot.pause(0.2)
+        assert host.screen_stack[-1].__class__.__name__ == (
+            "ConsoleSessionSwitcherModal"
+        )
+        await pilot.press("enter")
+        await pilot.pause(0.3)
+
+        assert store.active_session_id == expected_session_id
+
+
+@pytest.mark.asyncio
 async def test_ctrl_k_is_inert_while_setup_modal_blocks():
     app = _build_test_app()  # blocked: no provider ready
     host = ConsoleHarness(app)
@@ -10333,6 +10362,7 @@ async def test_switcher_rename_choice_chains_to_rename_modal():
         await _wait_for_selector(console, pilot, "#console-native-composer")
         await pilot.press("ctrl+k")
         await pilot.pause(0.2)
+        await pilot.press("down")
         await pilot.press("f2")
         await pilot.pause(0.3)
         assert host.screen_stack[-1].__class__.__name__ == "ConsoleRenameSessionModal"

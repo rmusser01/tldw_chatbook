@@ -221,7 +221,33 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # to leave the ceiling red or strip the comment to fit). Net wave-2
     # trajectory is still down: 43965 (wave-2 start) -> 42420, a shrink of
     # 1545 lines despite this fix wave's own small increase.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 42420, 1267),
+    #
+    # NOT lowered by the 2026-09-03 merge of origin/dev (base retargeted
+    # to `dev`, absorbing foundation PR #2315 -- identical commits on both
+    # sides, so trivial -- plus ~435 further dev feature commits), same
+    # "concurrent growth outran the earned shrink" posture as the
+    # chat_screen wave-5 note and this same file's own two prior
+    # dev-catch-up entries above (which this wave-2 branch never saw
+    # directly since the foundation commits are identical on both sides;
+    # this is wave-2's own first catch-up). The merge itself transplanted
+    # zero lines into a wave-2-moved method body: a repo-wide diff of
+    # every export-cluster (22) and collections-cluster (64) method name
+    # between the wave-2 fork point and dev found exactly one body
+    # difference, `_close_open_library_choice_strip` (dev added a
+    # `_library_media_sort_choices_visible` dict entry for the new media
+    # sort chooser) -- and that method is screen-owned, never moved (the
+    # export controller's own same-named method is a callback property
+    # forwarding to it, not the moved logic), so git's ordinary 3-way
+    # merge combined dev's new dict entry with wave-2's unrelated
+    # `_library_export_quality_choices_visible` -> `_export_state.
+    # quality_choices_visible` retarget on separate lines of the same
+    # dict literal with no conflict and no manual transplant needed.
+    # Every other net line/method here is dev's review-sets work, the
+    # media sort chooser, and further Reader/library feature work that
+    # landed on dev while this PR was in flight (dev's own pin going into
+    # this merge was 45522/1331). Measured on the merged tree: 42420/1267
+    # -> 43977/1316.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43977, 1316),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

@@ -11,6 +11,11 @@ import pytest
 from loguru import logger
 
 from tldw_chatbook.Chat.console_context_compaction import (
+    DEFAULT_COMPACTION_AUXILIARY_TIMEOUT_SECONDS,
+    MAX_SUMMARY_FOCUS_CHARS,
+    focus_directed_prompt,
+    manual_summary_preview,
+    sanitize_summary_focus,
     COMPACTION_INPUT_CLOSE,
     COMPACTION_INPUT_OPEN,
     CompactionAdmission,
@@ -809,10 +814,7 @@ def _range_semantic(
 
 def _semantic_unit_for_test(unit: DurableConversationUnit) -> ConsoleConversationUnit:
     return ConsoleConversationUnit(
-        tuple(
-            {"role": row.role, "content": row.content}
-            for row in unit.messages
-        )
+        tuple({"role": row.role, "content": row.content} for row in unit.messages)
     )
 
 
@@ -855,9 +857,11 @@ def test_range_to_prefix_orders_early_memory_and_largest_later_prefix() -> None:
     ).plan
 
     assert planned is not None
-    assert [
-        unit.messages[0].message_id for unit in planned.selected_units
-    ] == ["u0", "u2", "u3"]
+    assert [unit.messages[0].message_id for unit in planned.selected_units] == [
+        "u0",
+        "u2",
+        "u3",
+    ]
     assert planned.boundary_message_id == "a3"
     envelope = planned.auxiliary_messages[1]["content"]
     assert envelope.index("UNIT-0-USER") < envelope.index("SEALED-RANGE-MEMORY")
@@ -974,9 +978,9 @@ def test_range_to_prefix_sends_mandatory_early_visual_in_effective_order() -> No
     assert prepared_auxiliary
     content = planned.auxiliary_messages[1]["content"]
     assert isinstance(content, (list, tuple))
-    expected_url = units[0].messages[0].visual_attachments[0].provider_part()[
-        "image_url"
-    ]["url"]
+    expected_url = (
+        units[0].messages[0].visual_attachments[0].provider_part()["image_url"]["url"]
+    )
     early_index = next(
         index
         for index, part in enumerate(content)
@@ -991,14 +995,12 @@ def test_range_to_prefix_sends_mandatory_early_visual_in_effective_order() -> No
     assistant_index = next(
         index
         for index, part in enumerate(content)
-        if part.get("type") == "text"
-        and "early answer" in part.get("text", "")
+        if part.get("type") == "text" and "early answer" in part.get("text", "")
     )
     marker_index = next(
         index
         for index, part in enumerate(content)
-        if part.get("type") == "text"
-        and "SEALED-RANGE-MEMORY" in part.get("text", "")
+        if part.get("type") == "text" and "SEALED-RANGE-MEMORY" in part.get("text", "")
     )
     assert early_index < image_index < assistant_index
     assert assistant_index == marker_index
@@ -1015,9 +1017,7 @@ def test_range_to_prefix_sends_mandatory_early_visual_in_effective_order() -> No
 def test_range_to_prefix_frames_one_tool_bearing_multimodal_unit() -> None:
     tool_unit = DurableConversationUnit(
         (
-            _visual_user_message(
-                "u2", "VISUAL-TOOL-USER " + "x " * 80, image_count=2
-            ),
+            _visual_user_message("u2", "VISUAL-TOOL-USER " + "x " * 80, image_count=2),
             DurableMessageSnapshot(
                 message_id="a2-call",
                 version=1,
@@ -1150,14 +1150,13 @@ def test_ordinary_automatic_compaction_sends_selected_visual() -> None:
     assert planned is not None
     content = planned.auxiliary_messages[1]["content"]
     assert isinstance(content, (list, tuple))
-    expected_url = units[0].messages[0].visual_attachments[0].provider_part()[
-        "image_url"
-    ]["url"]
+    expected_url = (
+        units[0].messages[0].visual_attachments[0].provider_part()["image_url"]["url"]
+    )
     user_index = next(
         index
         for index, part in enumerate(content)
-        if part.get("type") == "text"
-        and "VISUAL-ORDINARY" in part.get("text", "")
+        if part.get("type") == "text" and "VISUAL-ORDINARY" in part.get("text", "")
     )
     image_index = next(
         index
@@ -1248,9 +1247,7 @@ def test_range_to_prefix_refuses_mandatory_visuals_before_auxiliary_preparation(
     units = (
         DurableConversationUnit(
             (
-                _visual_user_message(
-                    "u0", "visual early " + "x " * 80, image_count=2
-                ),
+                _visual_user_message("u0", "visual early " + "x " * 80, image_count=2),
                 _message("a0", "assistant", "early answer " + "y " * 80),
             )
         ),
@@ -1513,6 +1510,18 @@ class _Repository:
         self.starts.append(attempt)
 
     def finish_auxiliary_attempt(self, operation_id, **kwargs) -> bool:
+        # Review Critical (2026-09-01): this fake's **kwargs swallowed a
+        # status the REAL repository's CHECK constraint rejected
+        # (TIMED_OUT missing from the v33 DDL) -- the standing
+        # "**kwargs fakes mask real-service contracts" lesson. Mirror the
+        # real terminal-status validation so the fake can't hide the next
+        # one.
+        from tldw_chatbook.Chat.console_context_repository import (
+            TERMINAL_AUXILIARY_ATTEMPT_STATUSES,
+        )
+
+        if kwargs.get("status") not in TERMINAL_AUXILIARY_ATTEMPT_STATUSES:
+            raise ValueError("status must be a terminal auxiliary-attempt status")
         self.finishes.append((operation_id, kwargs))
         return True
 
@@ -1544,10 +1553,14 @@ class _Gateway:
             self.started.set()
         if self.release is not None:
             await self.release.wait()
+        scripted = getattr(self, "texts", None)
+        text = (
+            scripted[min(self.calls - 1, len(scripted) - 1)] if scripted else self.text
+        )
         return AuxiliaryCompletionResult(
             provider="openai",
             model="gpt-test",
-            text=self.text,
+            text=text,
             usage=ProviderUsage(
                 uncached_input=10,
                 output=self.output_tokens,
@@ -1775,9 +1788,7 @@ def _canonical_automatic_body_tokens(plan, summary: str) -> int:
         memory=(tagged_memory_message(summary),),
     )
     after = _prepare(candidate)
-    empty_memory = _prepare(
-        replace(candidate, memory=(tagged_memory_message(""),))
-    )
+    empty_memory = _prepare(replace(candidate, memory=(tagged_memory_message(""),)))
     return max(
         0,
         after.accounting.memory_tokens - empty_memory.accounting.memory_tokens,
@@ -1785,7 +1796,9 @@ def _canonical_automatic_body_tokens(plan, summary: str) -> int:
 
 
 @pytest.mark.asyncio
-async def test_automatic_compaction_commits_prefix_scope_selection_and_provenance() -> None:
+async def test_automatic_compaction_commits_prefix_scope_selection_and_provenance() -> (
+    None
+):
     repository = _Repository()
     service = ConsoleCompactionService(repository, _Gateway(text="New prefix memory."))
     plan, prompt, prefix, admission, _commit = _transaction_inputs()
@@ -2108,7 +2121,9 @@ async def test_range_compaction_progress_counts_active_thinking_candidate() -> N
     assert repository.commits == []
 
 
-def _manual_transaction_inputs() -> tuple[
+def _manual_transaction_inputs(
+    focus: str = "",
+) -> tuple[
     ManualMemoryPlan,
     CompactionPromptSnapshot,
     BranchMemoryCommit,
@@ -2128,6 +2143,7 @@ def _manual_transaction_inputs() -> tuple[
         prepare_auxiliary=lambda rows, cap: _prepare(
             PreparedConsoleRequest(active_request=rows), response_tokens=cap
         ),
+        focus=focus,
     ).plan
     assert plan is not None
     no_memory = MemorySelectionFence(
@@ -2144,9 +2160,7 @@ def _manual_transaction_inputs() -> tuple[
     lineage = tuple(
         PersistedLineageFenceRow(
             message_id=row.message_id,
-            parent_message_id=(
-                snapshots[index - 1].message_id if index else None
-            ),
+            parent_message_id=(snapshots[index - 1].message_id if index else None),
             version=1,
             deleted=False,
             content_digest=f"digest-{row.message_id}",
@@ -2222,7 +2236,9 @@ def _canonical_manual_body_tokens(plan: ManualMemoryPlan, summary: str) -> int:
 
 
 @pytest.mark.asyncio
-async def test_manual_transaction_rejects_mismatched_plan_before_call_or_ledger() -> None:
+async def test_manual_transaction_rejects_mismatched_plan_before_call_or_ledger() -> (
+    None
+):
     repository = _Repository()
     gateway = _Gateway()
     service = ConsoleCompactionService(repository, gateway)
@@ -2248,7 +2264,9 @@ async def test_manual_transaction_rejects_mismatched_plan_before_call_or_ledger(
 
 
 @pytest.mark.asyncio
-async def test_manual_transaction_rejects_non_suppressing_selection_before_call_or_ledger() -> None:
+async def test_manual_transaction_rejects_non_suppressing_selection_before_call_or_ledger() -> (
+    None
+):
     repository = _Repository()
     gateway = _Gateway()
     service = ConsoleCompactionService(repository, gateway)
@@ -3057,9 +3075,7 @@ class _ControllerRepository(_Repository):
         selection_id,
         expected_revision,
     ):
-        self.undo_calls.append(
-            (conversation_id, selection_id, expected_revision)
-        )
+        self.undo_calls.append((conversation_id, selection_id, expected_revision))
         if (
             not self.reset_selections
             or self.reset_selections[-1].selection_id != selection_id
@@ -3264,9 +3280,7 @@ def _insert_real_prefix_memory(
             conversation_id=conversation_id,
             boundary_message_id=boundary_message_id,
             captured_leaf_message_id=activation_message_id,
-            lineage_json=json.dumps(
-                [boundary_message_id, activation_message_id]
-            ),
+            lineage_json=json.dumps([boundary_message_id, activation_message_id]),
             summary_text=f"Summary for {memory_id}.",
             provider="openai",
             model="gpt-test",
@@ -3388,8 +3402,7 @@ def test_effective_memory_crosses_sibling_event_and_memory_pages(tmp_path) -> No
         for selection in repository.list_active_memory_selections(conversation_id)
     }
     assert "current-memory" not in {
-        memory.memory_id
-        for memory in repository.list_active_memories(conversation_id)
+        memory.memory_id for memory in repository.list_active_memories(conversation_id)
     }
 
     effective = controller._select_session_effective_memory(
@@ -3720,9 +3733,7 @@ async def test_automatic_preflight_uses_active_model_visual_limit(monkeypatch) -
         captured_plan_arguments.update(kwargs)
         return real_plan_compaction(**kwargs)
 
-    monkeypatch.setattr(
-        controller_module, "plan_compaction", capture_plan_arguments
-    )
+    monkeypatch.setattr(controller_module, "plan_compaction", capture_plan_arguments)
     snapshots = controller._durable_context_snapshots(session.id)
     assert snapshots is not None
     assert len(snapshots[0].visual_attachments) == 1
@@ -3790,9 +3801,7 @@ async def test_automatic_preflight_refuses_selected_non_image_attachment_before_
 
 
 @pytest.mark.asyncio
-async def test_bounded_budget_without_older_units_does_not_block_fitting_send() -> (
-    None
-):
+async def test_bounded_budget_without_older_units_does_not_block_fitting_send() -> None:
     """Allow a fitting bounded send when no older unit remains to compact."""
     controller, _store, session, assistant, gateway, provider_messages = (
         _controller_preflight_fixture(
@@ -4139,3 +4148,598 @@ def test_reset_all_invalidates_an_outstanding_exact_undo_token() -> None:
     assert expired[0].active is False
     assert controller.undo_context_memory_reset(*token) is False
     assert repository.undo_calls == []
+
+
+@pytest.mark.asyncio
+async def test_hung_auxiliary_call_times_out_distinctly_and_leaves_memory_intact() -> (
+    None
+):
+    """TASK-26016: the auxiliary call was unbounded -- a hung summarizer
+    blocked the send that triggered it forever. The timeout must finish the
+    ledger as TIMED_OUT (not FAILED-as-model-error, not CANCELLED), return
+    the ordinary FAILED terminal so CompactionFailureBehavior applies, and
+    write no memory."""
+    repository = _Repository()
+    gateway = _Gateway(text="never delivered")
+    gateway.release = asyncio.Event()  # never set: the provider hangs
+    service = ConsoleCompactionService(
+        repository, gateway, auxiliary_timeout_seconds=0.05
+    )
+    plan, prompt, prefix, admission, commit = _transaction_inputs()
+
+    result = await service.compact(
+        admission=admission,
+        branch_commit=commit,
+        plan=plan,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_main=_prepare,
+        prefix_messages=prefix,
+    )
+
+    assert result.terminal is CompactionTerminal.FAILED
+    assert result.reason == "auxiliary_timed_out"
+    assert repository.memories == []
+    assert repository.commits == []
+    assert len(repository.finishes) == 1
+    assert repository.finishes[0][1]["status"] is AuxiliaryAttemptStatus.TIMED_OUT
+
+
+@pytest.mark.asyncio
+async def test_outer_cancellation_still_finishes_cancelled_not_timed_out() -> None:
+    """Stop/teardown during compaction is a CANCELLATION -- the timeout must
+    not absorb it into the timed-out state (AC#2's other direction)."""
+    repository = _Repository()
+    gateway = _Gateway(text="never delivered")
+    gateway.started = asyncio.Event()
+    gateway.release = asyncio.Event()
+    service = ConsoleCompactionService(
+        repository, gateway, auxiliary_timeout_seconds=30.0
+    )
+    plan, prompt, prefix, admission, commit = _transaction_inputs()
+
+    task = asyncio.ensure_future(
+        service.compact(
+            admission=admission,
+            branch_commit=commit,
+            plan=plan,
+            resolution=_resolution(),
+            prompt=prompt,
+            current_admission=lambda: admission,
+            prepare_main=_prepare,
+            prefix_messages=prefix,
+        )
+    )
+    await gateway.started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert len(repository.finishes) == 1
+    assert repository.finishes[0][1]["status"] is AuxiliaryAttemptStatus.CANCELLED
+
+
+def test_auxiliary_timeout_coercion_never_goes_unbounded() -> None:
+    """None / zero / negative / junk all land on the documented default --
+    the call is never unbounded again."""
+    repository = _Repository()
+    gateway = _Gateway()
+    for bad in (None, 0, -5, "junk", float("nan")):
+        service = ConsoleCompactionService(
+            repository, gateway, auxiliary_timeout_seconds=bad
+        )
+        assert (
+            service._auxiliary_timeout == DEFAULT_COMPACTION_AUXILIARY_TIMEOUT_SECONDS
+        )
+    service = ConsoleCompactionService(
+        repository, gateway, auxiliary_timeout_seconds=45
+    )
+    assert service._auxiliary_timeout == 45.0
+
+
+def test_manual_summary_preview_reads_the_plan_without_any_call() -> None:
+    """TASK-26017: the preview is a pure projection of the already-computed
+    ManualMemoryPlan -- counts, retained turns, token change -- with no
+    gateway and no repository anywhere near it (AC#2/#5)."""
+    plan, _prompt, _commit = _manual_transaction_inputs()
+
+    preview = manual_summary_preview(plan, from_here=True)
+
+    assert preview.from_here is True
+    assert preview.turns_summarized == len(plan.selected_units)
+    assert preview.turns_retained == len(plan.retained_units)
+    assert preview.before_tokens == plan.before_tokens
+    assert preview.after_tokens == plan.after_tokens
+    assert preview.output_cap == plan.requested_output_cap
+    assert preview.turns_summarized > 0
+
+
+@pytest.mark.asyncio
+async def test_hung_manual_auxiliary_call_times_out_the_same_way() -> None:
+    """TASK-26016 covers BOTH auxiliary calls: the manual summarize path
+    hangs the run-state at VALIDATING just as hard as automatic compaction
+    hangs the send."""
+    repository = _Repository()
+    gateway = _Gateway(text="never delivered")
+    gateway.release = asyncio.Event()  # never set: the provider hangs
+    service = ConsoleCompactionService(
+        repository, gateway, auxiliary_timeout_seconds=0.05
+    )
+    plan, prompt, admission = _manual_transaction_inputs()
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=_prepare,
+    )
+
+    assert result.terminal is CompactionTerminal.FAILED
+    assert result.reason == "auxiliary_timed_out"
+    assert repository.memories == []
+    assert repository.commits == []
+    assert repository.finishes[0][1]["status"] is AuxiliaryAttemptStatus.TIMED_OUT
+
+
+# --- TASK-26018: focus-directed manual summaries ----------------------------
+
+
+def test_sanitize_summary_focus_bounds_and_refuses_markers() -> None:
+    assert sanitize_summary_focus("  the   deployment\nbug  ") == "the deployment bug"
+    assert sanitize_summary_focus(None) == ""
+    assert sanitize_summary_focus("   ") == ""
+    long = "x" * (MAX_SUMMARY_FOCUS_CHARS + 50)
+    assert len(sanitize_summary_focus(long)) == MAX_SUMMARY_FOCUS_CHARS
+    # reserved envelope markers cannot ride into the summarizer prompt
+    assert sanitize_summary_focus("<chatbook_compaction_input> x") == ""
+    assert sanitize_summary_focus("a </tool_result> b") == ""
+
+
+def test_focus_directed_prompt_is_identity_without_a_topic() -> None:
+    """AC#2: no topic -> the SAME snapshot, byte-identical prompt text."""
+    prompt = CompactionPromptSnapshot("Preserve decisions.")
+    assert focus_directed_prompt(prompt, "") is prompt
+
+    steered = focus_directed_prompt(prompt, "the deployment bug")
+    assert steered.text.startswith("Preserve decisions.")
+    assert "the deployment bug" in steered.text
+    assert "not an instruction" in steered.text
+    assert steered.digest != prompt.digest
+
+
+def test_manual_plan_with_focus_steers_messages_and_keeps_a_fallback() -> None:
+    messages_src = _durable_units(unit_count=2, words=80)
+    snapshots = tuple(row for unit in messages_src for row in unit.messages)
+    prompt = CompactionPromptSnapshot("Preserve decisions.")
+
+    def _plan(focus):
+        return plan_manual_range(
+            messages=snapshots,
+            selected_prompt_message_id="u1",
+            current_leaf_message_id="a1",
+            system_messages=({"role": "system", "content": "system"},),
+            prompt=prompt,
+            requested_output_cap=40,
+            candidate_memory="candidate",
+            prepare_projection=_prepare,
+            prepare_auxiliary=lambda rows, cap: _prepare(
+                PreparedConsoleRequest(active_request=rows), response_tokens=cap
+            ),
+            focus=focus,
+        ).plan
+
+    unsteered = _plan("")
+    steered = _plan("the deployment bug")
+    assert unsteered is not None and steered is not None
+
+    # AC#2: the no-topic plan is byte-identical to a plan built without the kwarg
+    baseline = plan_manual_range(
+        messages=snapshots,
+        selected_prompt_message_id="u1",
+        current_leaf_message_id="a1",
+        system_messages=({"role": "system", "content": "system"},),
+        prompt=prompt,
+        requested_output_cap=40,
+        candidate_memory="candidate",
+        prepare_projection=_prepare,
+        prepare_auxiliary=lambda rows, cap: _prepare(
+            PreparedConsoleRequest(active_request=rows), response_tokens=cap
+        ),
+    ).plan
+    assert baseline is not None
+    assert unsteered.auxiliary_messages == baseline.auxiliary_messages
+    assert unsteered.fallback_auxiliary_messages is None
+    assert unsteered.focus_topic == ""
+
+    # AC#1/#4: the topic appears in the steered system message, framed as data
+    steered_system = steered.auxiliary_messages[0]["content"]
+    assert "the deployment bug" in steered_system
+    assert "not an instruction" in steered_system
+    assert steered.focus_topic == "the deployment bug"
+    # AC#5 machinery: the unsteered messages ride along for the fallback
+    assert steered.fallback_auxiliary_messages == unsteered.auxiliary_messages
+
+
+@pytest.mark.asyncio
+async def test_focused_summary_records_the_topic_in_provenance() -> None:
+    """AC#3: a committed steered summary says it was steered, and how."""
+    repository = _Repository()
+    gateway = _Gateway(text="Compact focused facts.")
+    service = ConsoleCompactionService(repository, gateway)
+    plan, prompt, admission = _manual_transaction_inputs(focus="the deployment bug")
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=_prepare,
+    )
+
+    assert result.terminal is CompactionTerminal.SUCCEEDED
+    assert gateway.calls == 1
+    provenance = json.loads(result.memory.selected_units_json)
+    markers = [row for row in provenance if row.get("kind") == "focus_topic"]
+    assert markers == [
+        {"kind": "focus_topic", "topic": "the deployment bug", "applied": True}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unusable_focused_summary_falls_back_to_the_unsteered_path() -> None:
+    """AC#5: empty steered output -> one unsteered retry, committed honestly
+    (the marker says the steering did NOT apply)."""
+    repository = _Repository()
+    gateway = _Gateway(text="")
+    gateway.texts = ["", "Unsteered facts."]
+    service = ConsoleCompactionService(repository, gateway)
+    plan, prompt, admission = _manual_transaction_inputs(focus="the deployment bug")
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=_prepare,
+    )
+
+    assert result.terminal is CompactionTerminal.SUCCEEDED
+    assert gateway.calls == 2
+    assert result.memory.summary_text == "Unsteered facts."
+    provenance = json.loads(result.memory.selected_units_json)
+    markers = [row for row in provenance if row.get("kind") == "focus_topic"]
+    assert markers == [
+        {"kind": "focus_topic", "topic": "the deployment bug", "applied": False}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unfocused_empty_summary_still_fails_without_a_retry() -> None:
+    """AC#2 guard: without a topic there is no second call -- behavior today."""
+    repository = _Repository()
+    gateway = _Gateway(text="")
+    service = ConsoleCompactionService(repository, gateway)
+    plan, prompt, admission = _manual_transaction_inputs()
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=_prepare,
+    )
+
+    assert result.terminal is CompactionTerminal.FAILED
+    assert result.reason == "invalid_summary_output"
+    assert gateway.calls == 1
+
+
+# --- TASK-25910: per-turn micro-compaction ----------------------------------
+
+
+def test_plan_with_max_units_folds_only_the_oldest_exchange() -> None:
+    """AC#1/#3: the SAME automatic planner, capped to the smallest step --
+    prior memory folds in via the existing iterative path."""
+    semantic = _semantic()
+    before = _prepare(semantic)
+    # Micro folds run BELOW the trigger: the budget is roomy, so removing
+    # one exchange easily satisfies the target check that a full
+    # over-budget compaction would fail at span 1.
+    result = plan_compaction(
+        semantic=semantic,
+        prepared_before=before,
+        durable_units=_durable_units(),
+        resolved_policy=_resolved(budget=4_000),
+        prompt=CompactionPromptSnapshot("Preserve decisions."),
+        prior_memory=None,
+        prepare_main=_prepare,
+        prepare_auxiliary=lambda messages, cap: _prepare(
+            PreparedConsoleRequest(active_request=messages),
+            response_tokens=cap,
+        ),
+        max_units=1,
+    )
+    assert result.plan is not None
+    assert len(result.plan.selected_units) == 1
+    assert result.plan.selected_units[0].messages[0].message_id == "u0"
+
+
+def test_plan_without_max_units_is_byte_identical_to_today() -> None:
+    """AC#2: the kwarg default changes nothing."""
+    semantic = _semantic()
+    before = _prepare(semantic)
+
+    def build(**kwargs):
+        return plan_compaction(
+            semantic=semantic,
+            prepared_before=before,
+            durable_units=_durable_units(),
+            resolved_policy=_resolved(),
+            prompt=CompactionPromptSnapshot("Preserve decisions."),
+            prior_memory=None,
+            prepare_main=_prepare,
+            prepare_auxiliary=lambda messages, cap: _prepare(
+                PreparedConsoleRequest(active_request=messages),
+                response_tokens=cap,
+            ),
+            **kwargs,
+        )
+
+    default_plan = build().plan
+    explicit_none = build(max_units=None).plan
+    assert default_plan is not None and explicit_none is not None
+    assert default_plan.selected_units == explicit_none.selected_units
+    assert len(default_plan.selected_units) == 3
+
+
+def test_micro_compaction_cadence_counter() -> None:
+    """AC#2/#6: fully off at 0; a fold is DUE only every N turns, bounding
+    prompt-cache breaks to 1/N of turns."""
+    from tldw_chatbook.Chat.console_context_compaction import (
+        micro_compaction_due,
+    )
+
+    assert micro_compaction_due(5, 0) == (False, 0)
+    assert micro_compaction_due(0, 3) == (False, 1)
+    assert micro_compaction_due(1, 3) == (False, 2)
+    assert micro_compaction_due(2, 3) == (True, 0)
+    # junk cadence coerces to off
+    assert micro_compaction_due(2, -4) == (False, 0)
+
+
+# --- TASK-26021: provider-native compaction delegation ----------------------
+
+
+class _NativeGateway(_Gateway):
+    """A gateway advertising server-side compaction."""
+
+    def __init__(self, *, native_text="Native summary.", capable=True, **kwargs):
+        super().__init__(**kwargs)
+        self.native_text = native_text
+        self.capable = capable
+        self.native_calls = 0
+        self.native_error: Exception | None = None
+
+    def supports_native_compaction(self, resolution) -> bool:
+        return self.capable
+
+    async def complete_native_compaction(self, request):
+        self.native_calls += 1
+        if self.native_error is not None:
+            raise self.native_error
+        return AuxiliaryCompletionResult(
+            provider="openai",
+            model="gpt-test",
+            text=self.native_text,
+            usage=ProviderUsage(
+                uncached_input=10,
+                output=2,
+                provider="openai",
+                model="gpt-test",
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_delegation_off_by_default_never_touches_the_native_endpoint() -> None:
+    """AC#6/#3: the default is the existing local path, byte-identical."""
+    repository = _Repository()
+    gateway = _NativeGateway(text="Local summary.")
+    service = ConsoleCompactionService(repository, gateway)
+    plan, prompt, admission = _manual_transaction_inputs()
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=_prepare,
+    )
+
+    assert result.terminal is CompactionTerminal.SUCCEEDED
+    assert gateway.native_calls == 0
+    assert gateway.calls == 1
+    assert result.memory.summary_text == "Local summary."
+
+
+@pytest.mark.asyncio
+async def test_delegated_native_compaction_commits_through_the_same_path() -> None:
+    """AC#1/#2/#4: native replaces ONLY the completion step; validation,
+    admission and the record shape are the local path's, and the record
+    says which engine produced it."""
+    repository = _Repository()
+    gateway = _NativeGateway(native_text="Native summary.")
+    service = ConsoleCompactionService(
+        repository, gateway, native_compaction_delegation=True
+    )
+    plan, prompt, admission = _manual_transaction_inputs()
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=_prepare,
+    )
+
+    assert result.terminal is CompactionTerminal.SUCCEEDED
+    assert gateway.native_calls == 1
+    assert gateway.calls == 0
+    assert result.memory.summary_text == "Native summary."
+    provenance = json.loads(result.memory.selected_units_json)
+    engines = [row for row in provenance if row.get("kind") == "compaction_engine"]
+    assert engines == [{"kind": "compaction_engine", "engine": "provider_native"}]
+    assert repository.finishes[0][1]["status"] is AuxiliaryAttemptStatus.SUCCEEDED
+
+
+@pytest.mark.asyncio
+async def test_native_failure_falls_back_to_the_local_path() -> None:
+    """AC#5: a native error costs nothing but the try."""
+    repository = _Repository()
+    gateway = _NativeGateway(text="Local summary.")
+    gateway.native_error = RuntimeError("native endpoint down")
+    service = ConsoleCompactionService(
+        repository, gateway, native_compaction_delegation=True
+    )
+    plan, prompt, admission = _manual_transaction_inputs()
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=_prepare,
+    )
+
+    assert result.terminal is CompactionTerminal.SUCCEEDED
+    assert gateway.native_calls == 1
+    assert gateway.calls == 1
+    assert result.memory.summary_text == "Local summary."
+    provenance = json.loads(result.memory.selected_units_json)
+    assert not any(row.get("kind") == "compaction_engine" for row in provenance), (
+        "a fallback commit must not claim the native engine"
+    )
+
+
+@pytest.mark.asyncio
+async def test_incapable_provider_uses_the_local_path_with_delegation_on() -> None:
+    repository = _Repository()
+    gateway = _NativeGateway(text="Local summary.", capable=False)
+    service = ConsoleCompactionService(
+        repository, gateway, native_compaction_delegation=True
+    )
+    plan, prompt, admission = _manual_transaction_inputs()
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=_prepare,
+    )
+
+    assert result.terminal is CompactionTerminal.SUCCEEDED
+    assert gateway.native_calls == 0
+    assert gateway.calls == 1
+
+
+def test_micro_escalation_ruling_covers_every_gate() -> None:
+    """Review Critical #1 (2026-09-01): the escalation logic lived inline in
+    the controller, referenced ContextCompactionMode WITHOUT importing it,
+    and had zero coverage -- the flagship below-trigger path was a runtime
+    NameError. The ruling is now a pure function owned by THIS module, where
+    the names live and the gates are pinned:
+
+    - below-trigger + AUTOMATIC -> escalate, capped to one exchange
+    - naturally AUTOMATIC (above trigger) -> run, STILL capped (review #5:
+      a background pass never does the monolithic stall the docs disclaim)
+    - ASK mode -> None (AC#5: never silently bypassed)
+    - GENERATED_RANGE memory -> None (review #3: the range planner ignores
+      max_units; a micro pass must not trigger a whole-span reshape)
+    - OFF / no units / non-micro-eligible decisions -> None
+    """
+    from tldw_chatbook.Chat.console_context_compaction import (
+        resolve_micro_escalation,
+    )
+    from tldw_chatbook.Chat.console_context_policy import ContextCompactionMode
+
+    auto = ContextCompactionMode.AUTOMATIC
+
+    assert resolve_micro_escalation(
+        CompactionDecision.BELOW_TRIGGER,
+        units_present=True,
+        compaction_mode=auto,
+        effective_kind=EffectiveMemoryKind.RAW,
+    ) == (CompactionDecision.AUTOMATIC, True)
+
+    assert resolve_micro_escalation(
+        CompactionDecision.AUTOMATIC,
+        units_present=True,
+        compaction_mode=auto,
+        effective_kind=EffectiveMemoryKind.RAW,
+    ) == (CompactionDecision.AUTOMATIC, True)
+
+    assert (
+        resolve_micro_escalation(
+            CompactionDecision.BELOW_TRIGGER,
+            units_present=True,
+            compaction_mode=ContextCompactionMode.ASK,
+            effective_kind=EffectiveMemoryKind.RAW,
+        )
+        is None
+    )
+    assert (
+        resolve_micro_escalation(
+            CompactionDecision.ASK,
+            units_present=True,
+            compaction_mode=ContextCompactionMode.ASK,
+            effective_kind=EffectiveMemoryKind.RAW,
+        )
+        is None
+    )
+    assert (
+        resolve_micro_escalation(
+            CompactionDecision.BELOW_TRIGGER,
+            units_present=True,
+            compaction_mode=auto,
+            effective_kind=EffectiveMemoryKind.GENERATED_RANGE,
+        )
+        is None
+    )
+    assert (
+        resolve_micro_escalation(
+            CompactionDecision.AUTOMATIC,
+            units_present=True,
+            compaction_mode=auto,
+            effective_kind=EffectiveMemoryKind.GENERATED_RANGE,
+        )
+        is None
+    )
+    assert (
+        resolve_micro_escalation(
+            CompactionDecision.BELOW_TRIGGER,
+            units_present=False,
+            compaction_mode=auto,
+            effective_kind=EffectiveMemoryKind.RAW,
+        )
+        is None
+    )
+    assert (
+        resolve_micro_escalation(
+            CompactionDecision.OFF,
+            units_present=True,
+            compaction_mode=ContextCompactionMode.OFF,
+            effective_kind=EffectiveMemoryKind.RAW,
+        )
+        is None
+    )

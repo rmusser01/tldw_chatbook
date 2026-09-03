@@ -96,9 +96,10 @@ def test_complete_durable_units_accept_only_closed_user_led_exchanges(
 
     units = helper(messages)
 
-    assert tuple(
-        tuple(message.message_id for message in unit.messages) for unit in units
-    ) == expected_units
+    assert (
+        tuple(tuple(message.message_id for message in unit.messages) for unit in units)
+        == expected_units
+    )
 
 
 @pytest.mark.parametrize(
@@ -486,16 +487,20 @@ def test_manual_planners_select_exact_units_and_canonical_idle_projections(
     assert result.plan is not None
     plan = result.plan
     assert plan.coverage_kind.value == coverage
-    assert tuple(
-        row.message_id for unit in plan.selected_units for row in unit.messages
-    ) == selected_ids
-    assert tuple(
-        row.message_id for unit in plan.retained_units for row in unit.messages
-    ) == retained_ids
+    assert (
+        tuple(row.message_id for unit in plan.selected_units for row in unit.messages)
+        == selected_ids
+    )
+    assert (
+        tuple(row.message_id for unit in plan.retained_units for row in unit.messages)
+        == retained_ids
+    )
     assert plan.selection_anchor_message_id == kwargs["selected_prompt_message_id"]
     assert plan.start_message_id == start
     assert plan.boundary_message_id == boundary
-    assert plan.before_projection.semantic.system == plan.after_projection.semantic.system
+    assert (
+        plan.before_projection.semantic.system == plan.after_projection.semantic.system
+    )
     assert plan.before_projection.semantic.memory == ()
     assert plan.after_projection.semantic.memory
     assert plan.before_projection.semantic.active_request == (IDLE_REQUEST_SENTINEL,)

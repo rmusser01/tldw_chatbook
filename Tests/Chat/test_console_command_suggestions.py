@@ -32,8 +32,20 @@ COMMANDS = [
     "/generate-image",
     "/generate-video",
     "/stream-video",
+    "/steer",
+    "/redirect",
+    "/emergency-stop",
     "/rewind",
     "/research",
+    "/help",
+    "/doctor",
+    "/model",
+    "/sessions",
+    "/workspace",
+    "/new",
+    "/temp",
+    "/settings",
+    "/context",
 ]
 
 
@@ -50,7 +62,9 @@ def test_prefix_filters_case_insensitively():
 def test_skill_entries_complete_to_skills_invocation():
     # Bare `/skill-name` is not dispatchable (fallback resolver removed), so
     # skill entries insert the canonical `/skills <name> ` form.
-    result = suggestions_for_draft("/w", default_console_registry(), SKILLS)
+    # `/web` uniquely prefixes the web-search skill (no command starts with
+    # "web"); `/w` alone now also matches the /workspace action command.
+    result = suggestions_for_draft("/web", default_console_registry(), SKILLS)
     assert _labels(result) == ["/skills web-search"]
     assert result[0].insert_text == "/skills web-search "
     assert result[0].description == "Search the web"
@@ -154,7 +168,8 @@ def test_skill_rows_fall_back_when_snapshot_description_is_empty():
     """``SkillCommandCandidate.description`` defaults to ""; the popup must
     still never render an empty description (TX-05)."""
     skills = (SkillCommandCandidate(name="mystery"),)
-    command_mode = suggestions_for_draft("/m", default_console_registry(), skills)
+    # `/my` uniquely prefixes the skill; `/m` now also matches /model.
+    command_mode = suggestions_for_draft("/my", default_console_registry(), skills)
     assert command_mode[0].description == "Run this skill"
     arg_mode = suggestions_for_draft("/skills m", default_console_registry(), skills)
     assert arg_mode[0].description == "Run this skill"

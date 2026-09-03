@@ -688,6 +688,45 @@ async def test_media_items_and_reader_are_side_by_side_at_wide_width() -> None:
 
 
 @pytest.mark.asyncio
+async def test_media_toolbar_actions_fit_the_items_panel_at_wide_width() -> None:
+    """task-28025: Trash/Select fit the narrow Items panel, not clipped off it."""
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _wait_for_compact_class(screen, pilot, compact=False)
+
+        def _panel_right() -> int:
+            canvas = screen.query_one("#library-media-canvas")
+            return canvas.region.x + canvas.region.width
+
+        for selector in (
+            "#library-media-type-filter",
+            "#library-media-sort",
+            "#library-media-export",
+            "#library-media-trash-open",
+            "#library-media-select-toggle",
+        ):
+            button = screen.query_one(selector, Button)
+            assert button.region.width > 0, selector
+            assert button.region.x + button.region.width <= _panel_right(), selector
+
+        # Select mode's bulk bar must fit the panel too (same overflow class).
+        screen.query_one("#library-media-select-toggle", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-select-all")
+        for selector in (
+            "#library-media-select-all",
+            "#library-media-select-clear",
+            "#library-media-export-selected",
+        ):
+            button = screen.query_one(selector, Button)
+            assert button.region.width > 0, selector
+            assert button.region.x + button.region.width <= _panel_right(), selector
+
+
+@pytest.mark.asyncio
 async def test_media_list_hides_preview_below_breakpoint() -> None:
     """At 100 cols the list owns the canvas and the preview is unpainted."""
     app = _build_media_test_app()
@@ -929,11 +968,11 @@ async def _assert_keyboard_traversal_and_viewer_entry(size):
             screen, pilot, compact=size[0] < 120
         )
 
-        # Footer honesty: the plain media list advertises the shared
-        # list-canvas set through the one seam, in BOTH layouts.
+        # Footer honesty: the plain media list advertises its own set
+        # (task-28012 adds the "s: select" key), in BOTH layouts.
         assert (
             screen._library_footer_shortcuts_for_current_state()
-            == screen.LIBRARY_LIST_SHORTCUTS
+            == screen.LIBRARY_MEDIA_LIST_SHORTCUTS
         )
 
         # Rows: Up/Down move DOM focus between rows.
@@ -1088,12 +1127,13 @@ async def _assert_select_mode_keyboard_toggle_and_footer(size):
         assert str(row_1.label).startswith("☑")
         assert "2 selected" in str(count.renderable)
 
-        # Footer honesty through the armed sub-state: arming bulk delete
-        # swaps the advertised set to the confirm context (esc cancels), in
-        # this layout exactly as in the other.
+        # Footer honesty through the armed sub-state: while selecting the
+        # footer advertises the select keys (task-28012); arming bulk delete
+        # swaps to the confirm context (esc cancels), in this layout exactly
+        # as in the other.
         assert (
             screen._library_footer_shortcuts_for_current_state()
-            == screen.LIBRARY_LIST_SHORTCUTS
+            == screen.LIBRARY_MEDIA_SELECT_SHORTCUTS
         )
         screen.query_one("#library-media-delete-selected", Button).press()
         await _wait_for_selector(
@@ -1108,7 +1148,7 @@ async def _assert_select_mode_keyboard_toggle_and_footer(size):
         assert not screen.query("#library-media-bulk-delete-confirm-copy")
         assert (
             screen._library_footer_shortcuts_for_current_state()
-            == screen.LIBRARY_LIST_SHORTCUTS
+            == screen.LIBRARY_MEDIA_SELECT_SHORTCUTS
         )
 
 
@@ -1247,6 +1287,27 @@ async def test_compact_media_pager_receipt_and_empty_states_remain_contained() -
         assert empty_canvas.region.contains_region(empty_action.region)
         assert empty_action.can_focus
         assert not empty_screen.query("#library-media-pager")
+
+
+@pytest.mark.asyncio
+async def test_single_page_media_list_drops_pager_boundary_noise() -> None:
+    # task-28016: one page of results has nowhere to page to, so the
+    # "Page 1 of 1" counter and the boundary reasons ("Already on the first
+    # page.", "No more results.") are suppressed; the item range stays and the
+    # (disabled) controls remain so nothing shifts once a second page exists.
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items(3))
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        status = await _wait_for_selector(
+            screen, pilot, "#library-media-page-status"
+        )
+        assert str(status.renderable) == "1-3 of 3"
+        assert not screen.query("#library-media-disabled-reason")
+        assert screen.query_one("#library-media-next", Button).disabled is True
+        assert screen.query_one("#library-media-previous", Button).disabled is True
 
 
 # ---------------------------------------------------------------------------

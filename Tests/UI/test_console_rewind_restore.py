@@ -699,6 +699,12 @@ async def test_summary_worker_uses_bounded_terminal_copy_and_preserves_ui_state(
         await pilot.pause()
         assert transcript.selected_message_id == ids["a1"].id
         controller = console._ensure_console_chat_controller()
+        # TASK-26017: the preview gate runs the REAL planning before the
+        # stubbed summarize; a None preview takes the documented fail-open
+        # path (no modal) so these pins keep exercising the terminal flow.
+        monkeypatch.setattr(
+            controller, "preview_summarize", AsyncMock(return_value=None)
+        )
         result = ConsoleSubmitResult(accepted, False, controller_copy)
         method_name = (
             "summarize_from"
@@ -754,6 +760,10 @@ async def test_summary_worker_refocuses_after_unexpected_error_without_leaking_i
         await pilot.pause()
         assert transcript.selected_message_id == ids["a1"].id
         controller = console._ensure_console_chat_controller()
+        # TASK-26017: same preview-gate bypass as the terminal-copy pins.
+        monkeypatch.setattr(
+            controller, "preview_summarize", AsyncMock(return_value=None)
+        )
         monkeypatch.setattr(
             controller,
             "summarize_from",

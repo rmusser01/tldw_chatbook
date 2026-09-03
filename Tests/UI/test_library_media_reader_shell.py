@@ -222,8 +222,10 @@ async def test_compact_reader_keeps_every_toolbar_action_inside_reader():
 
         reader = shell.reader
         loaded_row = shell.items.query_one("#library-media-row-0", Button)
-        assert "Loaded in Reader" in str(loaded_row.label)
-        assert "loading preview" not in str(loaded_row.label)
+        # task-30044: the short prefix -- the old "Loaded in Reader" prose
+        # displaced the title in the ~35-cell label.
+        assert "Loaded · " in str(loaded_row.label)
+        assert "Loading" not in str(loaded_row.label)
         for selector in (
             "#library-media-reader-find",
             "#library-media-read-later",

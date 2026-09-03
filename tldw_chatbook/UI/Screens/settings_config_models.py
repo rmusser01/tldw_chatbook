@@ -18,6 +18,7 @@ class SettingsCategoryId(StrEnum):
     SPLASH_SCREEN = "splash_screen"
     STORAGE = "storage"
     WORKSPACES = "workspaces"
+    TOOL_PROFILES = "tool-profiles"
     PRIVACY_SECURITY = "privacy-security"
     NETWORK = "network"
     PERSONAL_CONTEXT = "personal-context"

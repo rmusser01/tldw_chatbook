@@ -1,0 +1,28 @@
+{
+  "fixture_version": 1,
+  "seed": "TASK-23113.9-semantic-trace-growth-v1",
+  "turns": 200,
+  "fresh_database_count": 5,
+  "checkpoint_turn": 100,
+  "message_bytes": 512,
+  "replacement_interval": 20,
+  "replacement_fraction": 0.75,
+  "thresholds": {
+    "second_half_to_first_half_bytes_max": 1.25,
+    "second_half_to_first_half_rows_max": 1.25,
+    "total_trace_owned_bytes_max": 2097152
+  },
+  "coverage": {
+    "edits": "Tests/Chat/test_console_trace_runtime.py::test_production_factory_persists_one_item_bounded_replacement",
+    "regeneration": "Tests/Chat/test_trajectory_capture.py::test_regenerate_replacement_identity_resolves_after_persistence",
+    "retries": "Tests/Chat/test_console_request_provenance_routes.py::test_fresh_retry_and_agent_rag_absence_is_explicit",
+    "tools": "Tests/Chat/test_console_trace_provenance.py::test_provider_tool_loop_is_an_exact_ordered_message_overlay",
+    "rag_or_project_context": "Tests/Chat/test_console_trace_provenance.py::test_capture_metadata_survives_without_parallel_rag_values_and_reaches_provider",
+    "forks": "Tests/Chat/test_console_trace_fork_lineage.py::test_fork_attaches_shared_boundary_without_copying_trace_payload_rows",
+    "failures": "Tests/Chat/test_console_trace_call_lifecycle.py::test_real_sqlite_adapter_observes_dispatch_started_commit",
+    "credential_filtering": "Tests/Chat/test_console_trace_privacy_owners.py::test_repository_filters_credentials_before_header_and_artifact_identity",
+    "legacy_migration": "Tests/Chat/test_console_trace_legacy_migration.py::test_batches_resume_delete_only_verified_rows_and_finish_idempotently",
+    "logical_garbage_collection": "Tests/Chat/test_console_trace_graph_gc.py::test_completed_request_is_idempotent_and_reports_logical_reclamation"
+  },
+  "measurement": "Sum the byte lengths of every value and the rows in tables owned by the console_trace_ prefix. First-half and second-half values are incremental from turn 0 to 100 and turn 100 to 200. Five fresh databases are reduced by the median."
+}

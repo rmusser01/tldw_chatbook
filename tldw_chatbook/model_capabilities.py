@@ -866,6 +866,29 @@ def resolve_deepseek_effective_model(model: Optional[str]) -> Optional[str]:
 #
 # ModelCapabilities Class
 #
+def _models_dev_capabilities(provider: str, model: str) -> Dict[str, Any]:
+    """TASK-26023: gap-fill capabilities from models.dev, or an empty dict.
+
+    Origin-inspectable via the ``source`` key (AC#5). Returns {} when the
+    model is unknown upstream too, so the caller keeps its honest-default
+    behavior (AC#6).
+    """
+    try:
+        from tldw_chatbook.LLM_Provider_Catalog.models_dev_catalog import (
+            models_dev_entry,
+        )
+
+        entry = models_dev_entry(provider, model)
+    except Exception:  # noqa: BLE001 -- the gap-fill never breaks a lookup
+        return {}
+    if entry is None:
+        return {}
+    caps: Dict[str, Any] = {"vision": entry.supports_vision, "source": "models.dev"}
+    if entry.context_window is not None:
+        caps["context_window"] = entry.context_window
+    return caps
+
+
 class ModelCapabilities:
     """
     Manages model capability detection based on configuration.
@@ -1009,7 +1032,15 @@ class ModelCapabilities:
                         )
                         break
 
-        # 3. If no match found, use defaults
+        # 3. TASK-26023: upstream models.dev gap-fill, BENEATH the hand-
+        # maintained direct/pattern entries above (AC#2). Disabled by
+        # default and network-free.
+        if not capabilities:
+            upstream = _models_dev_capabilities(provider, model)
+            if upstream:
+                capabilities = upstream
+
+        # 4. If still no match found, use defaults
         if not capabilities:
             if self.defaults.get("log_unknown_models", True):
                 logger.info(

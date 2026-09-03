@@ -29,6 +29,10 @@ _RESOURCE_TABLES = {
     "notes.keyword_collection": ("keyword_collections", "name"),
     "notes.folder": ("note_folders", "name"),
 }
+_KEYWORD_LINK_TABLES = {
+    "note": ("note_keywords", "note_id"),
+    "conversation": ("conversation_keywords", "conversation_id"),
+}
 _HEX_HASH = re.compile(r"[0-9a-f]{64}")
 LOCAL_ID_ALLOCATION_ATTEMPTS = 8
 
@@ -1139,8 +1143,9 @@ class NotesOrganizationRepository:
             str(payload["subject_type"]),
             str(payload["subject_id"]),
         )
-        table = "note_keywords" if subject_type == "note" else "conversation_keywords"
-        column = "note_id" if subject_type == "note" else "conversation_id"
+        table, column = _KEYWORD_LINK_TABLES[
+            "note" if subject_type == "note" else "conversation"
+        ]
         keyword = self.get_resource_by_sync_id(
             "notes.keyword", str(payload["keyword_sync_id"]), cursor=cursor
         )
