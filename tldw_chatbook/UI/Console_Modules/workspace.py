@@ -27,7 +27,6 @@ import asyncio
 from datetime import datetime, timezone
 import inspect
 import time
-from zoneinfo import ZoneInfo
 
 from loguru import logger
 from rich.markup import escape as escape_markup
@@ -52,6 +51,7 @@ from ...Chat.console_switcher_state import (
     build_console_active_results,
     group_console_history_entries,
     parse_console_switcher_instant,
+    resolve_console_history_timezone,
 )
 from ...Chat.console_conversation_hydration import (
     ConversationLoadFailed,
@@ -2898,13 +2898,9 @@ class ConsoleWorkspaceController:
                     lifecycle=lifecycle,
                 )
             )
-        timezone_name = str(
-            getattr(self.app_instance, "local_timezone_name", "UTC") or "UTC"
+        local_timezone = resolve_console_history_timezone(
+            getattr(self.app_instance, "local_timezone_name", None)
         )
-        try:
-            local_timezone = ZoneInfo(timezone_name)
-        except (KeyError, ValueError):
-            local_timezone = ZoneInfo("UTC")
         grouped = group_console_history_entries(
             entries,
             now=history_now,

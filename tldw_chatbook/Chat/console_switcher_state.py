@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from enum import Enum
 from typing import Any, Iterable, Literal, Sequence
 from zoneinfo import ZoneInfo
@@ -991,11 +991,26 @@ def filter_console_active_results(
     return tuple(result for result in results if matches(result))
 
 
+def resolve_console_history_timezone(
+    configured_name: object,
+    *,
+    system_timezone: tzinfo | None = None,
+) -> tzinfo | None:
+    """Resolve an explicit IANA zone; None delegates to host-local rules."""
+    timezone_name = str(configured_name or "").strip()
+    if timezone_name:
+        try:
+            return ZoneInfo(timezone_name)
+        except (KeyError, ValueError):
+            pass
+    return system_timezone
+
+
 def console_history_section(
     value: str | datetime | None,
     *,
     now: datetime,
-    local_timezone: ZoneInfo,
+    local_timezone: tzinfo | None,
 ) -> str:
     """Return the local-calendar section for one persisted timestamp."""
     instant = _parse_instant(value)
@@ -1016,7 +1031,7 @@ def group_console_history_entries(
     entries: Iterable[ConsoleSwitcherEntry],
     *,
     now: datetime,
-    local_timezone: ZoneInfo,
+    local_timezone: tzinfo | None,
 ) -> tuple[ConsoleSwitcherEntry, ...]:
     """Apply pure fixed-order local-calendar sections to a bounded page."""
     order = {"Today": 0, "Yesterday": 1, "Previous 7 days": 2, "Older": 3}

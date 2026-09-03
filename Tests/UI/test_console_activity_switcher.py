@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from datetime import datetime, timezone
 from threading import Event
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 from textual.widgets import Button, Input, Static
@@ -28,6 +30,7 @@ from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
     ConsoleSessionSwitcherModal,
     ConsoleSwitcherChoice,
 )
+import tldw_chatbook.UI.Console_Modules.workspace as workspace_module
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserInputRow,
 )
@@ -210,6 +213,56 @@ async def test_history_uses_one_all_local_bounded_page_with_explicit_targets():
     assert all(
         entry.row_key.startswith("conversation:profile-a:") for entry in page.entries
     )
+
+
+@pytest.mark.asyncio
+async def test_history_loader_groups_missing_timezone_by_host_local_date(monkeypatch):
+    class BoundaryDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            instant = cls(2026, 9, 3, 1, 0, tzinfo=timezone.utc)
+            return (
+                instant.astimezone(tz)
+                if tz is not None
+                else instant.replace(tzinfo=None)
+            )
+
+    def list_conversations(**_kwargs):
+        return {
+            "items": [
+                {
+                    "id": "recent-local-today",
+                    "title": "Recent local conversation",
+                    "scope_type": "global",
+                    "last_modified": "2026-09-02T23:00:00+00:00",
+                }
+            ],
+            "pagination": {"total": 1},
+        }
+
+    monkeypatch.setattr(workspace_module, "datetime", BoundaryDatetime)
+    monkeypatch.setattr(
+        workspace_module,
+        "resolve_console_history_timezone",
+        lambda _configured: ZoneInfo("America/Los_Angeles"),
+    )
+    app = SimpleNamespace(
+        console_runtime=SimpleNamespace(
+            profile_authority="profile-a",
+            authority_token="runtime-a",
+            activity_receipts=_ReceiptSnapshot(),
+        ),
+        local_chat_conversation_service=SimpleNamespace(
+            list_conversations=list_conversations
+        ),
+    )
+    controller = _projection_controller(app)
+
+    page = await controller.load_console_session_switcher_history(
+        query="", offset=0, limit=50
+    )
+
+    assert page.entries[0].section == "Today"
 
 
 @pytest.mark.asyncio
