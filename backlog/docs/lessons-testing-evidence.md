@@ -10951,3 +10951,19 @@ state per rendered callback, never from wall-clock elapsed, or it will
 jump whenever the event loop stalls. Verify pacing behavior with a
 deliberate blocker on the loop, not by watching an idle machine where
 everything looks smooth.
+
+## Unrelated-looking Agents test failures can be schema-budget collapses
+
+Incident (TASK-28238 phase 2, Task 7, 2026-09-03): adding two ~300-token runtime
+tool schemas turned `test_run_log_prompt_integration` /
+`test_run_log_service_wiring` red — tests that never mention worktrees. Root
+cause was not the new feature's logic: those tests use an unrecognized model
+string, `get_model_token_limit` falls back to a 4096-token context (2048
+response reserve), the schema surface had been fitting with 47 tokens to spare,
+and `validated_fallback` is fit-or-nothing — over budget by one token drops
+EVERY tool, including run-log. Lesson: when adding ANY always-disclosed tool
+schema, a red test in a seemingly unrelated Tests/Agents suite is evidence of
+budget collapse, not flake — reproduce by calling
+`build_first_request_schema_plan` directly and printing `used` vs the
+reserve before dismissing or "fixing" the test. Structural fix tracked in
+TASK-31212.
