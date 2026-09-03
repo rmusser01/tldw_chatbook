@@ -26,7 +26,14 @@ def _service(tmp_path) -> ReviewSetService:
     )
 
 
-def _walker_fake(service: ReviewSetService, *, live_ids=None) -> SimpleNamespace:
+def _walker_fake(
+    service: ReviewSetService, *, live_ids=None, loaded=None
+) -> SimpleNamespace:
+    """Fake screen for the walker.
+
+    ``loaded`` is the backing id the Reader is currently showing (Qodo #2333:
+    the walk marks/advances from the DISPLAYED item, not the persisted cursor).
+    """
     calls: list[tuple[str, str]] = []
     fake = SimpleNamespace(
         _review_set_service=lambda: service,
@@ -38,6 +45,7 @@ def _walker_fake(service: ReviewSetService, *, live_ids=None) -> SimpleNamespace
         _select_library_media_reader_row=(
             lambda media_id, title, **_kwargs: calls.append((media_id, title))
         ),
+        _library_media_reader_session=SimpleNamespace(loaded_backing_id=loaded),
     )
     fake._select_calls = calls
     return fake
@@ -48,7 +56,7 @@ def test_walk_forward_advances_marks_left_done_and_loads_next(tmp_path):
     set_id = service.create_review_set(
         "X", origin="browse", items=[(10, "A"), (11, "B"), (12, "C")]
     )
-    fake = _walker_fake(service)
+    fake = _walker_fake(service, loaded=10)
 
     handled = LibraryScreen._walk_active_review_set(fake, 1)
 
@@ -66,7 +74,7 @@ def test_walk_back_moves_without_marking(tmp_path):
         "X", origin="browse", items=[(10, "A"), (11, "B"), (12, "C")]
     )
     service.set_cursor(set_id, 2)
-    fake = _walker_fake(service)
+    fake = _walker_fake(service, loaded=12)
 
     LibraryScreen._walk_active_review_set(fake, -1)
 
@@ -82,7 +90,7 @@ def test_walk_forward_skips_a_tombstoned_target(tmp_path):
         "X", origin="browse", items=[(10, "A"), (11, "B"), (12, "C")]
     )
     # id 11 is deleted -> forward from 0 lands on 12.
-    fake = _walker_fake(service, live_ids={10, 12})
+    fake = _walker_fake(service, live_ids={10, 12}, loaded=10)
 
     LibraryScreen._walk_active_review_set(fake, 1)
 
@@ -98,7 +106,7 @@ def test_walk_forward_on_last_item_completes_without_reloading(tmp_path):
     # The user has already reviewed the first item and is on the last.
     service.mark_item_done(set_id, backing_media_id=10, done=True)
     service.set_cursor(set_id, 1)
-    fake = _walker_fake(service)
+    fake = _walker_fake(service, loaded=11)
 
     LibraryScreen._walk_active_review_set(fake, 1)
 
@@ -107,6 +115,25 @@ def test_walk_forward_on_last_item_completes_without_reloading(tmp_path):
     assert review_set.items[1].done is True  # completion gesture marks the last
     assert review_set.completed_at is not None  # every live item done
     assert fake._select_calls == []  # nothing new to load
+
+
+def test_walk_resumes_at_cursor_without_marking_when_reader_is_off_set(tmp_path):
+    # Qodo #2333: if the Reader is showing a non-set item (fresh entry, or a
+    # browse item), the first ] must NOT mark an unseen item -- it resumes the
+    # set at its cursor.
+    service = _service(tmp_path)
+    set_id = service.create_review_set(
+        "X", origin="browse", items=[(10, "A"), (11, "B"), (12, "C")]
+    )
+    service.set_cursor(set_id, 1)
+    fake = _walker_fake(service, loaded=999)  # 999 is not in the set
+
+    LibraryScreen._walk_active_review_set(fake, 1)
+
+    review_set = service.get_review_set(set_id)
+    assert all(item.done is False for item in review_set.items)  # nothing marked
+    assert fake._select_calls == [("local:media:11", "B")]  # loaded the cursor item
+    assert review_set.cursor == 1  # unchanged (already a live position)
 
 
 def test_walk_returns_false_when_no_set_is_active(tmp_path):
@@ -166,6 +193,41 @@ def test_toggle_reviewed_marks_and_unmarks_the_loaded_item(tmp_path):
 
     LibraryScreen.action_library_media_toggle_reviewed(fake)
     assert service.get_review_set(set_id).items[0].done is False
+
+
+def test_review_set_live_ids_filters_deleted_and_trashed(tmp_path):
+    # Qodo #2333: exercise the REAL Media-DB liveness query (parameter binding,
+    # deleted/is_trash filtering, an unknown id), not the injected fake.
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+    media_db = MediaDatabase(db_path=str(tmp_path / "media.db"), client_id="t")
+    ids = []
+    for index in range(3):
+        media_id, _uuid, _msg = media_db.add_media_with_keywords(
+            title=f"Item {index}",
+            media_type="video",
+            content=f"content {index}",
+            url=f"http://example/{index}",
+        )
+        ids.append(media_id)
+    media_db.soft_delete_media(ids[1])  # deleted = 1
+    media_db.mark_as_trash(ids[2])  # is_trash = 1
+
+    fake = SimpleNamespace(
+        app_instance=SimpleNamespace(media_db=media_db),
+        _REVIEW_SET_LIVENESS_BATCH=LibraryScreen._REVIEW_SET_LIVENESS_BATCH,
+    )
+    live = LibraryScreen._review_set_live_ids(fake, ids + [999_999])
+
+    assert live == {ids[0]}  # only the live item; deleted/trashed/unknown excluded
+
+
+def test_review_set_live_ids_treats_ids_live_when_media_db_absent():
+    fake = SimpleNamespace(
+        app_instance=SimpleNamespace(media_db=None),
+        _REVIEW_SET_LIVENESS_BATCH=LibraryScreen._REVIEW_SET_LIVENESS_BATCH,
+    )
+    assert LibraryScreen._review_set_live_ids(fake, [1, 2, 3]) == {1, 2, 3}
 
 
 def test_review_set_active_reflects_the_service(tmp_path):

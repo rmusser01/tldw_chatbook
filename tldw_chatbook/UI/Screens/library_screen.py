@@ -16,6 +16,7 @@ import webbrowser
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from enum import Enum
+from contextlib import closing
 from functools import partial
 import hashlib
 from pathlib import Path
@@ -41762,14 +41763,19 @@ class LibraryScreen(BaseAppScreen):
         self._cached_review_set_service = service
         return service
 
+    #: Max ids per liveness ``IN (…)`` batch, safely under SQLite's default
+    #: 999-variable limit (Qodo #2333: bound the query even for a large set).
+    _REVIEW_SET_LIVENESS_BATCH = 900
+
     def _review_set_live_ids(self, backing_ids: "Iterable[int]") -> set[int]:
         """Return the subset of backing media ids that are still live.
 
         Live means present in the Media table with ``deleted = 0`` and
-        ``is_trash = 0``. Resolved in ONE query so walking a capped set costs a
-        single round-trip per keypress, not one per item. When the Media DB is
-        unavailable the ids are treated as live -- the walker must not hide
-        items it cannot check.
+        ``is_trash = 0``. Resolved in batched ``IN (…)`` queries (one round-trip
+        per ``_REVIEW_SET_LIVENESS_BATCH`` ids) so the query stays bounded even
+        for a large set, and each cursor is closed deterministically. When the
+        Media DB is unavailable the ids are treated as live -- the walker must
+        not hide items it cannot check.
 
         Args:
             backing_ids: The set's backing media ids.
@@ -41783,17 +41789,25 @@ class LibraryScreen(BaseAppScreen):
         media_db = getattr(self.app_instance, "media_db", None)
         if media_db is None:
             return set(ids)
-        placeholders = ",".join("?" * len(ids))
+        live: set[int] = set()
         try:
-            cursor = media_db.execute_query(
-                f"SELECT id FROM Media WHERE id IN ({placeholders}) "
-                "AND deleted = 0 AND is_trash = 0",
-                tuple(ids),
-            )
-            return {int(row[0]) for row in cursor.fetchall()}
+            for start in range(0, len(ids), self._REVIEW_SET_LIVENESS_BATCH):
+                chunk = ids[start : start + self._REVIEW_SET_LIVENESS_BATCH]
+                placeholders = ",".join("?" * len(chunk))
+                with closing(
+                    media_db.execute_query(
+                        f"SELECT id FROM Media WHERE id IN ({placeholders}) "
+                        "AND deleted = 0 AND is_trash = 0",
+                        tuple(chunk),
+                    )
+                ) as cursor:
+                    live.update(int(row[0]) for row in cursor.fetchall())
         except Exception:
-            logger.debug("Review-set liveness query failed", exc_info=True)
+            # Safe fallback: if the Media DB can't be queried, treat every id
+            # as live -- the walker must never HIDE an item it failed to check
+            # (better to show a possibly-deleted item than to skip a real one).
             return set(ids)
+        return live
 
     def _walk_active_review_set(self, direction: int) -> bool:
         """Walk the active review set one step; return ``True`` if it handled it.
@@ -41818,13 +41832,49 @@ class LibraryScreen(BaseAppScreen):
         review_set = service.get_active_review_set()
         if review_set is None:
             return False
-        from tldw_chatbook.Library.review_set_state import plan_walk
+        from tldw_chatbook.Library.review_set_state import plan_walk, resolve_cursor
 
         live_ids = self._review_set_live_ids(
             item.backing_media_id for item in review_set.items
         )
         is_live = lambda backing_id: backing_id in live_ids  # noqa: E731
-        outcome = plan_walk(review_set.items, review_set.cursor, direction, is_live)
+        by_position = {item.position: item for item in review_set.items}
+
+        # Qodo #2333: the walk marks/advances from the item the Reader is
+        # actually SHOWING, not the persisted cursor -- otherwise a step could
+        # mark an unseen item done. When the Reader is not on a set item (fresh
+        # entry, or a browse item), the first step just RESUMES the set at its
+        # cursor, marking nothing.
+        loaded_backing = self._library_media_reader_session.loaded_backing_id
+        try:
+            loaded_backing = int(loaded_backing) if loaded_backing is not None else None
+        except (TypeError, ValueError):
+            loaded_backing = None
+        displayed_position = next(
+            (
+                item.position
+                for item in review_set.items
+                if item.backing_media_id == loaded_backing
+            ),
+            None,
+        )
+        if displayed_position is None:
+            resumed = resolve_cursor(review_set.items, review_set.cursor, is_live)
+            target = by_position.get(resumed)
+            if target is None:
+                return True  # empty / all-tombstoned set: nothing to load
+            if resumed != review_set.cursor:
+                service.set_cursor(review_set.set_id, resumed)
+            self._select_library_media_reader_row(
+                f"local:media:{target.backing_media_id}",
+                target.title_snapshot,
+                immediate=True,
+            )
+            return True
+
+        outcome = plan_walk(
+            review_set.items, displayed_position, direction, is_live
+        )
         if outcome.mark_done_backing_id is not None:
             service.mark_item_done(
                 review_set.set_id, outcome.mark_done_backing_id, True
