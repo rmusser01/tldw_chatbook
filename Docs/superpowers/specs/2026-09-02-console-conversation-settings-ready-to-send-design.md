@@ -623,6 +623,9 @@ typed readiness and return seams from workstreams 1 and 2; workstream 4 builds o
 the connection-first structure and readiness evidence; workstream 5 follows the
 relevant provider/service contracts. Each task repeats this ADR check and links
 ADR-033.
+Workstream 1 is foundational. Workstreams 2 and 3 may follow it independently;
+workstream 4 depends on structured readiness; workstream 5 follows the relevant
+provider/service contracts. Each task repeats this ADR check and links ADR-033.
 
 ## Acceptance Criteria
 
