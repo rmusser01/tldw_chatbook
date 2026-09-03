@@ -50,7 +50,7 @@ from Tests.Agents.test_fleet_runtime import (
     _fs_local_provider,
     _tool_results,
     _wait_until,
-    git_repo,
+    git_repo,  # noqa: F401  -- pytest fixture, resolved via this import
     make_fleet_service,
 )
 from tldw_chatbook.Agents.agent_models import (
