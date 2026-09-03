@@ -686,6 +686,312 @@ def _valid_structured_readiness(**overrides):
     return session_settings.ConsoleSettingsReadiness(**values)
 
 
+def _blocked_structured_readiness(blocker, recovery_action, **overrides):
+    values = {
+        "label": "Not ready",
+        "detail": "A bounded recovery is required.",
+        "native_send_supported": False,
+        "operability": "not_ready",
+        "blocker": blocker,
+        "recovery_action": recovery_action,
+        "configuration": "configured",
+        "configuration_issue": None,
+        "credential": "not_required",
+        "credential_source": "none",
+        "endpoint": "not_tested",
+        "endpoint_category": None,
+        "model": "unconfirmed",
+        "generation": "not_tested",
+        "generation_category": None,
+    }
+    values.update(overrides)
+    return session_settings.ConsoleSettingsReadiness(**values)
+
+
+@pytest.mark.parametrize(
+    ("blocker", "recovery_action", "facets"),
+    [
+        (
+            "provider_missing",
+            "select_provider",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "provider_missing",
+                "model": "missing",
+            },
+        ),
+        (
+            "provider_unsupported",
+            "select_supported_provider",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "invalid_settings",
+                "credential": "missing",
+            },
+        ),
+        ("endpoint_invalid", "configure_endpoint", {}),
+        (
+            "provider_configuration_invalid",
+            "review_provider_settings",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "invalid_settings",
+                "credential": "missing",
+            },
+        ),
+        (
+            "endpoint_not_saved",
+            "save_endpoint",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "credential_missing",
+                "credential": "missing",
+            },
+        ),
+        (
+            "credential_missing",
+            "configure_credential",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "credential_missing",
+                "credential": "missing",
+            },
+        ),
+        ("model_missing", "select_model", {"model": "missing"}),
+        (
+            "credential_rejected",
+            "configure_credential",
+            {"endpoint": "unreachable", "endpoint_category": "unauthorized"},
+        ),
+        (
+            "endpoint_unreachable",
+            "retry_connection",
+            {"endpoint": "unreachable", "endpoint_category": "timeout"},
+        ),
+        ("active_run", "wait_for_active_run", {}),
+        (
+            "readiness_unknown",
+            "review_provider_settings",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "invalid_settings",
+                "credential": "missing",
+                "model": "missing",
+            },
+        ),
+    ],
+)
+def test_console_readiness_accepts_each_coherent_structured_blocker(
+    blocker,
+    recovery_action,
+    facets,
+):
+    readiness = _blocked_structured_readiness(
+        blocker,
+        recovery_action,
+        **facets,
+    )
+
+    assert readiness.blocker == blocker
+    assert readiness.recovery_action == recovery_action
+
+
+@pytest.mark.parametrize(
+    ("blocker", "expected_recovery", "facets"),
+    [
+        (
+            "provider_missing",
+            "select_provider",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "provider_missing",
+            },
+        ),
+        ("provider_unsupported", "select_supported_provider", {}),
+        ("endpoint_invalid", "configure_endpoint", {}),
+        (
+            "provider_configuration_invalid",
+            "review_provider_settings",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "invalid_settings",
+            },
+        ),
+        ("endpoint_not_saved", "save_endpoint", {}),
+        (
+            "credential_missing",
+            "configure_credential",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "credential_missing",
+                "credential": "missing",
+            },
+        ),
+        ("model_missing", "select_model", {"model": "missing"}),
+        (
+            "credential_rejected",
+            "configure_credential",
+            {"endpoint": "unreachable", "endpoint_category": "unauthorized"},
+        ),
+        (
+            "endpoint_unreachable",
+            "retry_connection",
+            {"endpoint": "unreachable", "endpoint_category": "timeout"},
+        ),
+        ("active_run", "wait_for_active_run", {}),
+        (
+            "readiness_unknown",
+            "review_provider_settings",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "invalid_settings",
+                "credential": "missing",
+                "model": "missing",
+            },
+        ),
+    ],
+)
+def test_console_readiness_rejects_wrong_recovery_for_each_blocker(
+    blocker,
+    expected_recovery,
+    facets,
+):
+    wrong_recovery = (
+        "select_provider" if expected_recovery != "select_provider" else "select_model"
+    )
+
+    with pytest.raises(ValueError):
+        _blocked_structured_readiness(blocker, wrong_recovery, **facets)
+
+
+@pytest.mark.parametrize(
+    ("blocker", "recovery_action", "facets"),
+    [
+        (
+            "active_run",
+            "wait_for_active_run",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "provider_missing",
+                "model": "missing",
+            },
+        ),
+        (
+            "active_run",
+            "wait_for_active_run",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "invalid_settings",
+                "credential": "missing",
+            },
+        ),
+        (
+            "active_run",
+            "wait_for_active_run",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "credential_missing",
+                "credential": "missing",
+            },
+        ),
+        ("active_run", "wait_for_active_run", {"model": "missing"}),
+        (
+            "active_run",
+            "wait_for_active_run",
+            {"endpoint": "unreachable", "endpoint_category": "timeout"},
+        ),
+        (
+            "model_missing",
+            "select_model",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "credential_missing",
+                "credential": "missing",
+                "model": "missing",
+            },
+        ),
+        (
+            "endpoint_unreachable",
+            "retry_connection",
+            {
+                "model": "missing",
+                "endpoint": "unreachable",
+                "endpoint_category": "timeout",
+            },
+        ),
+        (
+            "endpoint_not_saved",
+            "save_endpoint",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "invalid_settings",
+                "credential": "missing",
+            },
+        ),
+        (
+            "provider_configuration_invalid",
+            "review_provider_settings",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "provider_missing",
+                "model": "missing",
+            },
+        ),
+        (
+            "credential_rejected",
+            "configure_credential",
+            {
+                "model": "missing",
+                "endpoint": "unreachable",
+                "endpoint_category": "unauthorized",
+            },
+        ),
+    ],
+)
+def test_console_readiness_rejects_lower_priority_blocker(
+    blocker,
+    recovery_action,
+    facets,
+):
+    with pytest.raises(ValueError):
+        _blocked_structured_readiness(blocker, recovery_action, **facets)
+
+
+def test_credential_missing_blocker_requires_incomplete_configuration():
+    with pytest.raises(ValueError):
+        _blocked_structured_readiness(
+            "credential_missing",
+            "configure_credential",
+            configuration="configured",
+            configuration_issue=None,
+            credential="missing",
+        )
+
+
+@pytest.mark.parametrize(
+    ("category", "wrong_recovery"),
+    [
+        ("timeout", "review_provider_settings"),
+        ("connection_refused", "review_provider_settings"),
+        ("connection_error", "review_provider_settings"),
+        ("invalid_payload", "retry_connection"),
+        ("http_status", "retry_connection"),
+        (None, "retry_connection"),
+    ],
+)
+def test_endpoint_blocker_recovery_must_match_failure_category(
+    category,
+    wrong_recovery,
+):
+    with pytest.raises(ValueError):
+        _blocked_structured_readiness(
+            "endpoint_unreachable",
+            wrong_recovery,
+            endpoint="unreachable",
+            endpoint_category=category,
+        )
+
+
 @pytest.mark.parametrize(
     "overrides",
     [

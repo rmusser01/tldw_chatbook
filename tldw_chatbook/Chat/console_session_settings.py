@@ -149,20 +149,59 @@ _CONSOLE_SETTINGS_RECOVERY_VALUES = frozenset(
         "wait_for_active_run",
     }
 )
-_BLOCKER_RECOVERY_ACTIONS = {
-    "provider_missing": frozenset({"select_provider"}),
-    "provider_unsupported": frozenset({"select_supported_provider"}),
-    "provider_configuration_invalid": frozenset({"review_provider_settings"}),
-    "endpoint_invalid": frozenset({"configure_endpoint"}),
-    "endpoint_not_saved": frozenset({"save_endpoint"}),
-    "credential_missing": frozenset({"configure_credential"}),
-    "credential_rejected": frozenset({"configure_credential"}),
-    "model_missing": frozenset({"select_model"}),
-    "endpoint_unreachable": frozenset(
-        {"retry_connection", "review_provider_settings"}
-    ),
-    "active_run": frozenset({"wait_for_active_run"}),
-    "readiness_unknown": frozenset({"review_provider_settings"}),
+_BLOCKER_RECOVERY_ACTION = {
+    "provider_missing": "select_provider",
+    "provider_unsupported": "select_supported_provider",
+    "provider_configuration_invalid": "review_provider_settings",
+    "endpoint_invalid": "configure_endpoint",
+    "endpoint_not_saved": "save_endpoint",
+    "credential_missing": "configure_credential",
+    "credential_rejected": "configure_credential",
+    "model_missing": "select_model",
+    "active_run": "wait_for_active_run",
+    "readiness_unknown": "review_provider_settings",
+}
+_BLOCKER_PRECEDENCE = {
+    "provider_missing": 0,
+    "provider_unsupported": 1,
+    "endpoint_invalid": 2,
+    "provider_configuration_invalid": 3,
+    "endpoint_not_saved": 4,
+    "credential_missing": 5,
+    "model_missing": 6,
+    "credential_rejected": 7,
+    "endpoint_unreachable": 7,
+    "active_run": 8,
+}
+_CONFIGURATION_ISSUE_BLOCKER = {
+    "provider_missing": "provider_missing",
+    "endpoint_missing": "endpoint_invalid",
+    "invalid_settings": "provider_configuration_invalid",
+    "credential_missing": "credential_missing",
+}
+_RETRYABLE_ENDPOINT_FAILURE_CATEGORIES = frozenset(
+    {"timeout", "connection_refused", "connection_error"}
+)
+_BLOCKER_REQUIRED_FACETS: dict[str, Mapping[str, object]] = {
+    "provider_missing": {
+        "configuration": "incomplete",
+        "configuration_issue": "provider_missing",
+    },
+    "provider_configuration_invalid": {
+        "configuration": "incomplete",
+        "configuration_issue": "invalid_settings",
+    },
+    "credential_missing": {
+        "configuration": "incomplete",
+        "configuration_issue": "credential_missing",
+        "credential": "missing",
+    },
+    "model_missing": {"model": "missing"},
+    "credential_rejected": {
+        "endpoint": "unreachable",
+        "endpoint_category": frozenset({"unauthorized", "forbidden"}),
+    },
+    "endpoint_unreachable": {"endpoint": "unreachable"},
 }
 _CONFIGURATION_VALUES = frozenset({"incomplete", "configured"})
 _CONFIGURATION_ISSUE_VALUES = frozenset(
@@ -519,8 +558,6 @@ class ConsoleSettingsReadiness:
         else:
             if self.blocker is None or self.recovery_action is None:
                 raise ValueError("Blocked Console settings require recovery.")
-            if self.recovery_action not in _BLOCKER_RECOVERY_ACTIONS[self.blocker]:
-                raise ValueError("Console blocker and recovery action conflict.")
 
         if self.configuration == "configured" and self.configuration_issue is not None:
             raise ValueError("Configured Console settings cannot include an issue.")
@@ -547,21 +584,7 @@ class ConsoleSettingsReadiness:
         elif self.generation_category is not None:
             raise ValueError("Console generation category conflicts with its facet.")
 
-        if self.blocker == "credential_missing" and self.credential != "missing":
-            raise ValueError("Missing-credential blocker conflicts with evidence.")
-        if self.blocker == "credential_rejected" and (
-            self.endpoint != "unreachable"
-            or self.endpoint_category not in {"unauthorized", "forbidden"}
-        ):
-            raise ValueError("Rejected-credential blocker conflicts with evidence.")
-        if self.blocker == "model_missing" and self.model != "missing":
-            raise ValueError("Missing-model blocker conflicts with evidence.")
-        if self.blocker == "endpoint_unreachable" and self.endpoint != "unreachable":
-            raise ValueError("Endpoint blocker conflicts with evidence.")
-        if self.blocker == "provider_configuration_invalid" and (
-            self.configuration_issue != "invalid_settings"
-        ):
-            raise ValueError("Provider-configuration blocker conflicts with evidence.")
+        _validate_console_blocker_contract(self)
 
 
 def _validate_console_readiness_literals(readiness: ConsoleSettingsReadiness) -> None:
@@ -610,6 +633,106 @@ def _validate_console_readiness_literals(readiness: ConsoleSettingsReadiness) ->
         )
     ):
         raise ValueError("Console readiness display value is invalid.")
+
+
+def _expected_console_recovery_action(
+    readiness: ConsoleSettingsReadiness,
+) -> ConsoleSettingsRecoveryAction:
+    """Return the one recovery action allowed by a structured blocker."""
+
+    if readiness.blocker == "endpoint_unreachable":
+        if readiness.endpoint_category in _RETRYABLE_ENDPOINT_FAILURE_CATEGORIES:
+            return "retry_connection"
+        return "review_provider_settings"
+    return _BLOCKER_RECOVERY_ACTION[readiness.blocker]
+
+
+def _facet_indicated_blocker(
+    readiness: ConsoleSettingsReadiness,
+) -> ConsoleSettingsBlockerCode | None:
+    """Return the highest-priority blocker encoded by readiness facets."""
+
+    candidates: list[ConsoleSettingsBlockerCode] = []
+    if readiness.configuration == "incomplete":
+        if readiness.configuration_issue is None:
+            candidates.append("provider_configuration_invalid")
+        else:
+            candidates.append(
+                _CONFIGURATION_ISSUE_BLOCKER[readiness.configuration_issue]
+            )
+    if readiness.credential == "missing":
+        candidates.append("credential_missing")
+    if readiness.model == "missing":
+        candidates.append("model_missing")
+    if readiness.endpoint == "unreachable":
+        endpoint_blocker: ConsoleSettingsBlockerCode = "endpoint_unreachable"
+        if readiness.endpoint_category in {"unauthorized", "forbidden"}:
+            endpoint_blocker = "credential_rejected"
+        candidates.append(endpoint_blocker)
+    if not candidates:
+        return None
+    return min(candidates, key=_BLOCKER_PRECEDENCE.__getitem__)
+
+
+def _validate_console_blocker_contract(
+    readiness: ConsoleSettingsReadiness,
+) -> None:
+    """Reject blocked snapshots that disagree with builder precedence."""
+
+    if readiness.operability == "ready_to_send":
+        return
+    if readiness.blocker is None or readiness.recovery_action is None:
+        return
+
+    expected_recovery = _expected_console_recovery_action(readiness)
+    if readiness.recovery_action != expected_recovery:
+        raise ValueError("Console blocker and recovery action conflict.")
+
+    if readiness.blocker == "readiness_unknown":
+        legacy_facets = (
+            readiness.configuration,
+            readiness.configuration_issue,
+            readiness.credential,
+            readiness.credential_source,
+            readiness.endpoint,
+            readiness.endpoint_category,
+            readiness.model,
+            readiness.generation,
+            readiness.generation_category,
+        )
+        if legacy_facets != (
+            "incomplete",
+            "invalid_settings",
+            "missing",
+            "none",
+            "not_tested",
+            None,
+            "missing",
+            "not_tested",
+            None,
+        ):
+            raise ValueError("Unknown Console readiness must use legacy facets.")
+        return
+
+    required_facets = _BLOCKER_REQUIRED_FACETS.get(readiness.blocker, {})
+    for field_name, expected in required_facets.items():
+        actual = getattr(readiness, field_name)
+        if isinstance(expected, frozenset):
+            matches = actual in expected
+        else:
+            matches = actual == expected
+        if not matches:
+            raise ValueError("Console blocker conflicts with readiness facets.")
+
+    indicated = _facet_indicated_blocker(readiness)
+    if indicated is None:
+        return
+    blocker_priority = _BLOCKER_PRECEDENCE[readiness.blocker]
+    indicated_priority = _BLOCKER_PRECEDENCE[indicated]
+    if blocker_priority > indicated_priority or (
+        blocker_priority == indicated_priority and readiness.blocker != indicated
+    ):
+        raise ValueError("Console blocker violates readiness precedence.")
 
 
 @dataclass(frozen=True)
