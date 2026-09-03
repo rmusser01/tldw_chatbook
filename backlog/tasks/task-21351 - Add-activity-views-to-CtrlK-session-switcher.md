@@ -4,7 +4,7 @@ title: Add activity views to Ctrl+K session switcher
 status: In Progress
 assignee: []
 created_date: '2026-08-23 22:37'
-updated_date: '2026-09-02 15:38'
+updated_date: '2026-09-02 21:36'
 labels: []
 dependencies:
   - TASK-20937
@@ -105,11 +105,13 @@ Focused automated and production-shaped verification passes, independent review 
 
 ADR required: yes. ADR path: backlog/decisions/085-console-activity-receipts-and-switcher-ownership.md.
 
-Remaining closeout gate: parent AC #10 equal-cell iTerm2 and Windows Terminal parity. iTerm2 automation is blocked by macOS Accessibility/TCC permission; Windows Terminal remains blocked by TASK-20937.6. Parent intentionally remains In Progress.
+Remaining closeout gate: parent AC #10 equal-cell native terminal parity. iTerm2 evidence is complete; Windows Terminal remains blocked by TASK-20937.6. Parent intentionally remains In Progress.
 
 2026-09-02 Impeccable refinement: clarified visible scope and exact Enter consequence; adopted content-sized, left-aligned, theme-semantic rows; distilled update metadata; simplified search guidance; added contextual hints, Home/End/Page navigation, and keyboard/pointer Mark seen confirmation parity. Fresh evidence: 90 targeted switcher/trust UI tests passed, 2 hermetic production/compositor capture tests passed, the Impeccable detector returned no findings, and scoped Ruff plus git diff --check passed. No new ADR was required because these presentation refinements stay within ADR-085. AC #10 remains open solely for equal-cell native terminal parity.
 
 2026-09-02 PR review follow-up: rebased onto dev 25478303e and addressed Qodo findings with bounded keyset receipt pagination, a stats-free plan-pinned unseen index, strict Pydantic receipt/query boundaries, explicit Mark seen handling for missing persisted destinations, authority-token fencing for unavailable notices, and complete public API documentation. Kept the read on AgentRunsDB.connection() because transaction() issues BEGIN IMMEDIATE and is intentionally reserved for writes. Rebuilt generated CSS and the reviewed persistent-diagnostic inventory. Verification: 12 receipt DB tests, 177 Chat projection/receipt tests, 50 activity switcher/outcome UI tests, 58 switcher trust/keyboard/rail tests, and all 23 PR performance guards pass; CSS, index-plan, diagnostic, profile-path, backlog-ID, schema-allowlist, Ruff, Impeccable, and diff checks pass. No new ADR is required; these review corrections remain within ADR-085. Native-terminal parity remains the sole closeout gate.
 
 2026-09-02 CI follow-up: the Linux UI-ready census measured 973/972 while repeated macOS runs measured 970-971/972. Root cause was the new receipt coordinator implementation module importing during Console bridge mount. Added a thread-safe lazy proxy in the already-resident ConsoleRuntime and pinned console_activity_receipts as absent at UI readiness, so first switcher or settlement use constructs the same service without spending first-paint module budget. Verification: the born-red census now passes at 970/972 locally, all 23 PR performance guards pass, and 135 receipt/switcher/runtime ownership tests pass. No new ADR is required; the fix follows the existing ADR-097 ratchet policy and preserves ADR-085 ownership.
+
+2026-09-02 native iTerm2 UAT: completed the macOS equal-cell walkthrough at 160x45. Reciprocal MRU blank Enter, History fit/grouping, and exact saved-destination activation passed. The walkthrough found and drove the repair of History workspace semantics: `workspace:roleplay` had been forwarded to conversation FTS even though workspace labels are not indexed. Commit `c5e5918bf` separates the domain query from FTS, resolves labels to bounded workspace filters, handles the visible `Chats` global/default union, and consumes saved-state aliases. The post-fix focused rail passes 193 tests; scoped Ruff and `git diff --check` pass. Checksummed evidence is in `Docs/superpowers/qa/task-21351-console-switcher-activity/task-21351-iterm2-uat-2026-09-02.md`. Parent AC #10 remains open only for Windows Terminal evidence through TASK-20937.6. No new ADR is required; this enforces ADR-085's existing semantic-search boundary.
 <!-- SECTION:NOTES:END -->
