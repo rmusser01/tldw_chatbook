@@ -37,6 +37,8 @@ def _walker_fake(
     the walk marks/advances from the DISPLAYED item, not the persisted cursor).
     """
     calls: list[tuple[str, str]] = []
+    notices: list[tuple[str, str]] = []
+    syncs: list[bool] = []
     fake = SimpleNamespace(
         _review_set_service=lambda: service,
         _review_set_live_ids=(
@@ -48,8 +50,21 @@ def _walker_fake(
             lambda media_id, title, **_kwargs: calls.append((media_id, title))
         ),
         _library_media_reader_session=SimpleNamespace(loaded_backing_id=loaded),
+        _notify_review_set=(
+            lambda message, severity="information": notices.append(
+                (message, severity)
+            )
+        ),
+        _sync_library_media_viewer_or_recompose=lambda: syncs.append(True),
     )
     fake._select_calls = calls
+    fake._notices = notices
+    fake._syncs = syncs
+    for name in (
+        "_walk_active_review_set_unguarded",
+        "_toggle_reviewed_unguarded",
+    ):
+        setattr(fake, name, MethodType(getattr(LibraryScreen, name), fake))
     return fake
 
 
@@ -136,6 +151,110 @@ def test_walk_resumes_at_cursor_without_marking_when_reader_is_off_set(tmp_path)
     assert all(item.done is False for item in review_set.items)  # nothing marked
     assert fake._select_calls == [("local:media:11", "B")]  # loaded the cursor item
     assert review_set.cursor == 1  # unchanged (already a live position)
+
+
+# --- the finish line (task-30041, critique 2026-09-03) -----------------------
+
+
+def test_check_action_enables_walk_keys_whenever_a_set_is_active(tmp_path):
+    """]/[ must gate on the ACTIVE SET, not browse-row adjacency.
+
+    Critique P1: at the last browse row _library_media_adjacent_row returns
+    None, which disabled the documented final-] completion gesture at the
+    binding layer (and misfired whenever set order diverged from browse
+    order). With a set active the walk clamps safely, so the keys stay live.
+    """
+    fake = SimpleNamespace(
+        _library_media_item_traversal_active=lambda: True,
+        _review_set_active=lambda: True,
+        _library_media_adjacent_row=lambda direction: None,  # last browse row
+    )
+    assert (
+        LibraryScreen.check_action(fake, "library_media_next_item", ()) is True
+    )
+    assert (
+        LibraryScreen.check_action(fake, "library_media_prev_item", ()) is True
+    )
+
+    fake._review_set_active = lambda: False
+    assert (
+        LibraryScreen.check_action(fake, "library_media_next_item", ()) is False
+    )
+
+
+def test_walk_final_forward_syncs_the_footer_and_notifies_completion(tmp_path):
+    """The completion gesture refreshes the chrome and gets a real moment.
+
+    Critique P1: the clamp branch marked the last item and refreshed
+    completion but skipped the viewer sync, so the footer stayed stale at
+    exactly the finish; and completing a set had no acknowledgment at all.
+    """
+    service = _service(tmp_path)
+    set_id = service.create_review_set(
+        "X", origin="browse", items=[(10, "A"), (11, "B")]
+    )
+    service.mark_item_done(set_id, backing_media_id=10, done=True)
+    service.set_cursor(set_id, 1)
+    fake = _walker_fake(service, loaded=11)
+
+    LibraryScreen._walk_active_review_set(fake, 1)
+
+    review_set = service.get_review_set(set_id)
+    assert review_set.completed_at is not None
+    assert fake._syncs == [True]  # footer refreshed at the finish
+    assert any("All 2 reviewed" in message for message, _sev in fake._notices)
+
+
+def test_walk_completion_notice_fires_only_on_the_completing_walk(tmp_path):
+    """A ] pressed after completion must not re-announce."""
+    service = _service(tmp_path)
+    set_id = service.create_review_set(
+        "X", origin="browse", items=[(10, "A"), (11, "B")]
+    )
+    service.mark_item_done(set_id, backing_media_id=10, done=True)
+    service.set_cursor(set_id, 1)
+    fake = _walker_fake(service, loaded=11)
+
+    LibraryScreen._walk_active_review_set(fake, 1)  # completes
+    LibraryScreen._walk_active_review_set(fake, 1)  # idempotent extra press
+
+    completion_notices = [
+        message for message, _sev in fake._notices if "All 2 reviewed" in message
+    ]
+    assert len(completion_notices) == 1
+
+
+# --- no silent failures (task-30042, critique 2026-09-03) --------------------
+
+
+def test_walk_failure_notifies_and_consumes_instead_of_raising(tmp_path):
+    """Storage exploding mid-walk surfaces an error, never a crash."""
+
+    class _Boom:
+        def get_active_review_set(self):
+            raise RuntimeError("db gone")
+
+    fake = _walker_fake(_service(tmp_path))
+    fake._review_set_service = lambda: _Boom()
+
+    handled = LibraryScreen._walk_active_review_set(fake, 1)
+
+    assert handled is True  # consumed; no browse fallback double-action
+    assert any(severity == "error" for _msg, severity in fake._notices)
+
+
+def test_toggle_reviewed_failure_notifies(tmp_path):
+    class _Boom:
+        def get_active_review_set(self):
+            raise RuntimeError("db gone")
+
+    fake = _walker_fake(_service(tmp_path))
+    fake._review_set_service = lambda: _Boom()
+    fake._library_media_item_traversal_active = lambda: True
+
+    LibraryScreen.action_library_media_toggle_reviewed(fake)  # must not raise
+
+    assert any(severity == "error" for _msg, severity in fake._notices)
 
 
 def test_walk_returns_false_when_no_set_is_active(tmp_path):
@@ -666,6 +785,75 @@ async def test_read_later_pairs_run_against_the_real_media_db(tmp_path):
         ids[0],
     ]
     assert fake._opened == [f"local:media:{ids[2]}"]
+
+
+@pytest.mark.asyncio
+async def test_picker_press_with_unavailable_storage_notifies(tmp_path):
+    """Pressing Sets with no storage must say so, never silently no-op.
+
+    task-30042 (critique P1 + user ruling: silent failure is never
+    acceptable): a dead button is indistinguishable from the feature not
+    existing.
+    """
+    fake = _picker_fake(_service(tmp_path), decision=None)
+    fake._review_set_service = lambda: None
+
+    await fake._review_set_picker_worker()
+
+    assert any(
+        "storage" in message.lower() and severity == "error"
+        for message, severity in fake._notices
+    )
+
+
+def test_create_with_unavailable_storage_notifies(tmp_path):
+    """A build that resolved items but has no storage must not vanish."""
+    fake = _entry_fake(_service(tmp_path))
+    fake._review_set_service = lambda: None
+
+    LibraryScreen._create_and_open_review_set(
+        fake, "Talks", "browse", [(10, "A")]
+    )
+
+    assert fake._opened == []
+    assert any(
+        "storage" in message.lower() and severity == "error"
+        for message, severity in fake._notices
+    )
+
+
+@pytest.mark.asyncio
+async def test_auto_resume_failure_notifies(tmp_path):
+    """Auto-resume exceptions surface an error instead of the old silence."""
+    service = _service(tmp_path)
+    service.create_review_set("X", origin="browse", items=[(10, "A")])
+    fake = _auto_resume_fake(service)
+
+    def boom():
+        raise RuntimeError("db gone")
+
+    fake._resolve_active_review_set_landing = boom
+
+    await fake._auto_resume_review_set_worker()  # must not raise
+
+    assert any(severity == "error" for _msg, severity in fake._notices)
+
+
+@pytest.mark.asyncio
+async def test_auto_resume_with_unavailable_storage_warns_once(tmp_path):
+    """Missing storage on media entry warns once per session, not per visit."""
+    fake = _auto_resume_fake(_service(tmp_path))
+    fake._review_set_service = lambda: None
+
+    await fake._auto_resume_review_set_worker()
+    await fake._auto_resume_review_set_worker()
+
+    warnings = [
+        message
+        for message, severity in fake._notices
+        if severity == "warning" and "storage" in message.lower()
+    ]
+    assert len(warnings) == 1
 
 
 @pytest.mark.asyncio
