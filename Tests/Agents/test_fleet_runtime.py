@@ -3767,6 +3767,61 @@ def test_isolated_spawn_writes_are_invisible_until_merge(db, git_repo):
     assert wt.worktree_path.is_dir()
 
 
+def test_end_of_turn_gc_sweeps_a_clean_never_merged_worktree_but_spares_a_dirty_one(
+    db, git_repo
+):
+    """I3/(e) (TASK-28238 P2 T7 final fix wave): the end-of-turn GC sweep
+    (`_sweep_stale_agent_worktrees`, wired into `run_turn`'s teardown right
+    after `_settle_fleet`) reaps an isolated child's worktree that finished
+    without ever being merged/discarded -- but ONLY when it is clean.
+    Real spawns through the model loop (not the `_seed_worktree_reply`
+    shortcut other worktree tests use), so this exercises the actual
+    production wiring end-to-end: `_admit_agent_worktree` ->
+    `_settle_fleet` -> `_sweep_stale_agent_worktrees`.
+    """
+    provider = _fs_local_provider(git_repo)
+    service, chat, coordinator = make_fleet_service(
+        db,
+        parent_replies=[
+            fence(SPAWN_TOOL_NAME, {"task": "clean task", "isolation": "worktree"}),
+            fence(SPAWN_TOOL_NAME, {"task": "dirty task", "isolation": "worktree"}),
+            "spawned both",
+        ],
+        child_replies={
+            # Never writes -- its worktree is byte-identical to HEAD.
+            "clean task": ["nothing to do here"],
+            "dirty task": [
+                fence("fs_write", {"path": "d.txt", "content": "dirty\n"}),
+                "wrote it",
+            ],
+        },
+        providers=(provider,),
+    )
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=ISO_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    join_fleet_children(service)
+
+    handles_by_task = {h.task: h for h in coordinator.snapshot()}
+    # The sweep (pure git, keyed by branch name) never touches this
+    # in-memory map -- reading the path off it, not off
+    # `_worktrees_base()`'s own naming scheme, is what avoids duplicating
+    # `create_agent_worktree`'s internals here.
+    clean_wt = service._agent_worktrees[handles_by_task["clean task"].handle_id]
+    dirty_wt = service._agent_worktrees[handles_by_task["dirty task"].handle_id]
+    # The clean child's worktree is gone -- swept, never merged/discarded.
+    assert not clean_wt.worktree_path.exists()
+    # The dirty child's worktree survives -- git itself refused to remove
+    # it (no --force), same guarantee the discard tool's own schema
+    # promises for anything not explicitly confirmed.
+    assert dirty_wt.worktree_path.is_dir()
+    assert (dirty_wt.worktree_path / "d.txt").read_text() == "dirty\n"
+
+
 def test_isolated_spawn_refuses_on_non_git_workspace(db, tmp_path):
     """AC#2 (TASK-28238 P2 T4): isolation="worktree" against a workspace
     root that is not a git repo is an honest refusal naming the reason,
@@ -3798,6 +3853,14 @@ def test_isolated_spawn_refuses_on_non_git_workspace(db, tmp_path):
     # No handle survives the refusal -- the reserved slot was unwound.
     assert coordinator.live_count() == 0
     assert service._agent_worktrees == {}
+    # I1 (TASK-28238 P2 T7 final fix wave): the child's DB row must not be
+    # stranded at "running" -- `db.create_run` fires before the admit
+    # block, and nothing else ever marks this refused child terminal.
+    child_rows = db.list_runs("c", agent_kind="subagent")
+    assert child_rows, "the refused child's run row must exist"
+    assert all(row["status"] in TERMINAL_RUN_STATUSES for row in child_rows), (
+        child_rows
+    )
 
 
 # -- TASK-28238 phase 2 T4 review fix: inline spawns must refuse isolation --
@@ -3830,6 +3893,42 @@ def test_isolated_spawn_refuses_without_fleet(db, monkeypatch):
     assert results and all("no_fleet" in r for r in results), results
     # No child was created -- the refusal costs no spawn slot.
     assert db.count_subagent_runs("c") == 0
+
+
+def test_isolated_spawn_refuses_unknown_isolation_value(db, git_repo):
+    """I2 (TASK-28238 P2 T7 final fix wave): the `isolation` argument is a
+    model-supplied JSON-fence string with no schema enum enforcement --
+    every check elsewhere only ever compares `== "worktree"`, so a typo or
+    an invented value like "sandbox" matched NONE of them and fell through
+    to a NORMAL shared-tree child launch with a success message, silently
+    ignoring the isolation request instead of refusing it.
+    """
+    provider = _fs_local_provider(git_repo)
+    service, chat, coordinator = make_fleet_service(
+        db,
+        parent_replies=[
+            fence(SPAWN_TOOL_NAME, {"task": "iso task", "isolation": "sandbox"}),
+            "done",
+        ],
+        providers=(provider,),
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=ISO_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    results = _tool_results(db.get_run(run_id), SPAWN_TOOL_NAME)
+    assert results and all(
+        'unknown isolation "sandbox"' in r and "invalid_isolation" in r
+        for r in results
+    ), results
+    # No child was created -- the refusal costs no spawn slot, and no
+    # child silently shared the tree.
+    assert db.count_subagent_runs("c") == 0
+    assert coordinator.live_count() == 0
+    assert service._agent_worktrees == {}
 
 
 def test_plain_inline_spawn_without_isolation_still_works(db, monkeypatch):
@@ -4083,6 +4182,12 @@ def test_discard_requires_confirm_and_refuses_when_none(db, git_repo):
     handle = coordinator.reserve("child task", None)
     coordinator.finish(handle.handle_id, RUN_DONE)
     wt = agent_worktree.create_agent_worktree(git_repo, handle.handle_id)
+    # I3 (TASK-28238 P2 T7 final fix wave): dirty on purpose -- a CLEAN,
+    # never-merged worktree is now legitimately reaped by run_turn's own
+    # end-of-turn GC sweep (that is I3's whole point); this test's own
+    # concern is that the REFUSED tool call itself made no side effect,
+    # which needs the sweep to have nothing to reap here either.
+    (wt.worktree_path / "child.txt").write_text("agent work\n")
     chat.parent_replies.extend(
         [
             _seed_worktree_reply(
@@ -4172,6 +4277,10 @@ def test_discard_refuses_while_child_still_running(db, git_repo):
     handle = coordinator.reserve("child task", None)  # left "running"
     wt = agent_worktree.create_agent_worktree(git_repo, handle.handle_id)
     assert isinstance(wt, agent_worktree.AgentWorktree)
+    # I3 (TASK-28238 P2 T7 final fix wave): dirty on purpose -- see the
+    # identical note on `test_discard_requires_confirm_and_refuses_when_
+    # none` above.
+    (wt.worktree_path / "child.txt").write_text("agent work\n")
     chat.parent_replies.extend(
         [
             _seed_worktree_reply(
@@ -4202,6 +4311,10 @@ def test_discard_deny_refuses_and_leaves_worktree_untouched(db, git_repo):
     handle = coordinator.reserve("child task", None)
     coordinator.finish(handle.handle_id, RUN_DONE)
     wt = agent_worktree.create_agent_worktree(git_repo, handle.handle_id)
+    # I3 (TASK-28238 P2 T7 final fix wave): dirty on purpose -- see the
+    # identical note on `test_discard_requires_confirm_and_refuses_when_
+    # none` above.
+    (wt.worktree_path / "child.txt").write_text("agent work\n")
     chat.parent_replies.extend(
         [
             _seed_worktree_reply(
@@ -4252,6 +4365,68 @@ def test_merge_refuses_without_a_local_provider(db, git_repo):
     assert outcome.status == RUN_DONE
     results = _tool_results(db.get_run(run_id), MERGE_AGENT_WORKTREE_TOOL_NAME)
     assert results and all("no local filesystem provider" in r for r in results), results
+
+
+def test_retire_after_map_reset_still_clears_provider_routing(db, git_repo):
+    """M1 (TASK-28238 P2 T7 final fix wave): `self._agent_worktrees` and the
+    provider's own `_agent_roots` are two separate maps. If the FIRST loses
+    its entry (e.g. run_turn resets `self._agent_worktrees = {}` for the
+    next turn) before retire runs, `_retire_agent_worktree` must still
+    un-admit the provider's routing -- early-returning on `wt is None`
+    BEFORE that call leaks `_agent_roots[run_id]` and its alias's
+    dispatch-spec cache entry for the rest of the process.
+    """
+    provider = _fs_local_provider(git_repo)
+    service, _chat, coordinator = make_fleet_service(
+        db, parent_replies=[], providers=(provider,)
+    )
+    handle = coordinator.reserve("child task", None)
+    # run_turn normally sets this up fresh per turn -- reproduce that
+    # here since this test drives `_admit_agent_worktree` directly.
+    service._agent_worktrees = {}
+    # A fresh id per test run -- `_worktrees_base()` is a real shared OS
+    # temp directory, not per-test isolated, so a fixed literal here would
+    # collide with a leftover directory from a prior run of this test.
+    child_run_id = handle.handle_id
+    refusal = service._admit_agent_worktree(handle, child_run_id)
+    assert refusal is None
+    assert child_run_id in provider._agent_roots
+
+    # Simulate the map reset WITHOUT the provider's own map being cleared.
+    service._agent_worktrees.clear()
+
+    service._retire_agent_worktree(child_run_id, handle.handle_id)
+    assert child_run_id not in provider._agent_roots
+
+
+def test_admit_refuses_when_root_identity_raises_oserror(db, git_repo, monkeypatch):
+    """M2 (TASK-28238 P2 T7 final fix wave): `_worktree_root_identity` does
+    a raw `os.lstat` walk -- a transient OS-level failure there (e.g. a
+    concurrent unmount) must land in `_admit_agent_worktree`'s refusal
+    path, including the worktree cleanup, exactly like the existing
+    `WorkspaceToolExecutionError`/`ValueError` cases -- not propagate out
+    of the tool call as an unhandled exception.
+    """
+    provider = _fs_local_provider(git_repo)
+    service, _chat, coordinator = make_fleet_service(
+        db, parent_replies=[], providers=(provider,)
+    )
+    handle = coordinator.reserve("child task", None)
+    service._agent_worktrees = {}
+    child_run_id = handle.handle_id
+
+    def _raise_oserror(_path):
+        raise OSError("simulated lstat failure")
+
+    monkeypatch.setattr(agent_worktree.os, "lstat", _raise_oserror)
+
+    refusal = service._admit_agent_worktree(handle, child_run_id)
+    assert refusal is not None
+    assert "admit_failed" in refusal
+    assert "simulated lstat failure" in refusal
+    # The refusal path's cleanup ran -- no tracking entry survives.
+    assert handle.handle_id not in service._agent_worktrees
+    assert child_run_id not in provider._agent_roots
 
 
 # -- TASK-28238 phase 2 T6: the confirm payload carries a diffstat preview --

@@ -71,7 +71,65 @@ def test_uncommitted_shared_changes_do_not_carry(repo):
     discard_agent_worktree(repo, wt)
 
 
+# -- I3 (TASK-28238 P2 T7 final fix wave): force=False GC-safe discard ----
+#
+# `discard_agent_worktree`'s force=True default is today's explicit-
+# discard-tool behavior (`worktree remove --force`, `branch -D`) --
+# unchanged. `prune_stale_agent_worktrees` (implicit GC) passes force=False:
+# a plain `git worktree remove` refuses a DIRTY worktree instead of
+# destroying it, and a successful removal's branch delete uses lowercase
+# `-d`, which refuses an unmerged branch -- unlike the explicit tool, GC
+# must never destroy work the user never confirmed discarding.
+
+
+def test_discard_force_false_removes_clean_worktree_and_branch(repo):
+    wt = create_agent_worktree(repo, "run-forcefls")
+    assert discard_agent_worktree(repo, wt, force=False) is None
+    assert not wt.worktree_path.exists()
+    branches = _git(repo, "branch", "--list", wt.branch)
+    assert wt.branch not in branches
+
+
+def test_discard_force_false_refuses_a_dirty_worktree(repo):
+    wt = create_agent_worktree(repo, "run-dirtyone")
+    (wt.worktree_path / "a.txt").write_text("uncommitted child change\n")
+    refusal = discard_agent_worktree(repo, wt, force=False)
+    assert isinstance(refusal, WorktreeRefusal)
+    assert refusal.reason_code == "worktree_remove_failed"
+    # Left on disk untouched, exactly as the discard tool's own schema
+    # promises for the "never merged/discarded" case.
+    assert wt.worktree_path.is_dir()
+    assert (wt.worktree_path / "a.txt").read_text() == "uncommitted child change\n"
+    discard_agent_worktree(repo, wt)  # force=True cleanup for the test itself
+
+
+def test_discard_force_false_leaves_an_unmerged_branch_ref_behind(repo):
+    """A CLEAN worktree (removable without --force) whose branch carries a
+    commit not merged into the shared tree's checked-out branch: the
+    worktree goes, but `branch -d` refuses an unmerged branch on purpose --
+    the ref survives so the commit is never silently lost."""
+    wt = create_agent_worktree(repo, "run-uniquecm")
+    (wt.worktree_path / "b.txt").write_text("agent commit\n")
+    _git(
+        wt.worktree_path,
+        "-c", "user.name=t", "-c", "user.email=t@t",
+        "add", "-A",
+    )
+    _git(
+        wt.worktree_path,
+        "-c", "user.name=t", "-c", "user.email=t@t",
+        "commit", "-m", "agent work",
+    )
+    refusal = discard_agent_worktree(repo, wt, force=False)
+    assert refusal is None
+    assert not wt.worktree_path.exists()
+    branches = _git(repo, "branch", "--list", wt.branch)
+    assert wt.branch in branches  # ref survives -- the commit is not lost
+
+
 def test_prune_removes_only_dead_runs(repo):
+    """(a) a clean worktree gets removed AND its ancestor branch deleted;
+    (c) a run id in `live_run_ids` is skipped entirely."""
     live = create_agent_worktree(repo, "run-live0001")
     dead = create_agent_worktree(repo, "run-dead0001")
     assert isinstance(live, AgentWorktree) and isinstance(dead, AgentWorktree)
@@ -79,7 +137,38 @@ def test_prune_removes_only_dead_runs(repo):
     assert removed == 1
     assert live.worktree_path.exists()
     assert not dead.worktree_path.exists()
+    assert dead.branch not in _git(repo, "branch", "--list", dead.branch)
     discard_agent_worktree(repo, live)
+
+
+def test_prune_skips_a_dirty_worktree(repo):
+    """(b) implicit GC must never destroy uncommitted work -- a dirty
+    worktree is left on disk, exactly as the tool schemas promise."""
+    dirty = create_agent_worktree(repo, "run-dirtygc1")
+    (dirty.worktree_path / "a.txt").write_text("uncommitted change\n")
+    removed = prune_stale_agent_worktrees(repo, live_run_ids=set())
+    assert removed == 0
+    assert dirty.worktree_path.is_dir()
+    assert (dirty.worktree_path / "a.txt").read_text() == "uncommitted change\n"
+    discard_agent_worktree(repo, dirty)  # force=True cleanup for the test itself
+
+
+def test_prune_removes_a_clean_worktree_but_leaves_an_unmerged_branch_ref(repo):
+    """(d) a CLEAN worktree (removable) whose branch carries a commit not
+    merged into the shared tree: the worktree goes, but the commit is
+    never silently lost -- the branch ref survives."""
+    wt = create_agent_worktree(repo, "run-uniquegc")
+    (wt.worktree_path / "b.txt").write_text("agent commit\n")
+    _git(wt.worktree_path, "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A")
+    _git(
+        wt.worktree_path,
+        "-c", "user.name=t", "-c", "user.email=t@t",
+        "commit", "-m", "agent work",
+    )
+    removed = prune_stale_agent_worktrees(repo, live_run_ids=set())
+    assert removed == 1
+    assert not wt.worktree_path.exists()
+    assert wt.branch in _git(repo, "branch", "--list", wt.branch)
 
 
 def test_create_refuses_when_worktree_base_unwritable(tmp_path, repo, monkeypatch):
