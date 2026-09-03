@@ -231,11 +231,45 @@ def test_suspended_draft_round_trips_raw_modal_values_and_sensitive_session_fiel
         "advanced_generation": True,
         "connection_details": False,
     }
+    for private_value in (
+        "private system text",
+        "private prefill text",
+        "127.0.0.1",
+        "model-a",
+    ):
+        assert private_value not in repr(restored)
 
     mapping["raw_values"]["console-settings-temperature"] = "changed"  # type: ignore[index]
     mapping["provider_model_drafts"]["openai"] = "changed"  # type: ignore[index]
     assert restored.raw_values["console-settings-temperature"] == "0.7.2"
     assert restored.provider_model_drafts["openai"] == "gpt-5"
+
+
+def test_credential_request_rejects_values_the_navigation_target_would_reject() -> None:
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-model-picker": "gpt-5"},
+        provider_model_drafts={"openai": "gpt-5"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id="console-settings-model-picker",
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+
+    with pytest.raises(ValueError):
+        ConsoleSettingsCredentialRequest(
+            snapshot=snapshot,
+            provider="openai\nunsafe",
+            model="gpt-5",
+        )
+    with pytest.raises(ValueError):
+        ConsoleSettingsCredentialRequest(
+            snapshot=snapshot,
+            provider="openai",
+            model="gpt-5\nunsafe",
+        )
 
 
 def test_credential_request_stages_only_a_secret_free_return_and_navigation_context() -> None:
@@ -311,6 +345,76 @@ def test_credential_request_stages_only_a_secret_free_return_and_navigation_cont
         "field": "api_key",
         "return_revision": claim.revision,
     }
+
+
+def test_credential_route_staging_is_atomic_when_navigation_target_is_invalid(
+    monkeypatch,
+) -> None:
+    """A target construction failure must not strand a return handoff."""
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-model-picker": "gpt-5"},
+        provider_model_drafts={"openai": "gpt-5"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id="console-settings-model-picker",
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+    request = ConsoleSettingsCredentialRequest(snapshot, "openai", "gpt-5")
+    store = ConsoleChatStore()
+    session = store.create_session(settings=snapshot.settings)
+    screen = ChatScreen.__new__(ChatScreen)
+    handoffs = chat_screen_module.PendingHandoffStore()
+    screen.app_instance = SimpleNamespace(pending_handoffs=handoffs)
+    screen._ensure_console_chat_store = lambda: store
+    screen.post_message = lambda _message: None
+    monkeypatch.setattr(
+        chat_screen_module,
+        "ProviderSettingsNavigationTarget",
+        lambda **_kwargs: (_ for _ in ()).throw(ValueError("target rejected")),
+    )
+
+    with pytest.raises(ValueError, match="target rejected"):
+        ChatScreen._stage_console_settings_credential_request(
+            screen, request, session_id=session.id
+        )
+
+    assert not hasattr(screen, "_suspended_conversation_settings")
+    assert handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN) is None
+
+
+def test_credential_route_navigation_rejection_clears_exact_staged_return_slot() -> None:
+    """The source repair callback leaves no orphan when the Console guard vetoes."""
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-model-picker": "gpt-5"},
+        provider_model_drafts={"openai": "gpt-5"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id="console-settings-model-picker",
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+    request = ConsoleSettingsCredentialRequest(snapshot, "openai", "gpt-5")
+    store = ConsoleChatStore()
+    session = store.create_session(settings=snapshot.settings)
+    screen = ChatScreen.__new__(ChatScreen)
+    handoffs = chat_screen_module.PendingHandoffStore()
+    messages: list[object] = []
+    screen.app_instance = SimpleNamespace(pending_handoffs=handoffs)
+    screen._ensure_console_chat_store = lambda: store
+    screen.post_message = messages.append
+
+    ChatScreen._stage_console_settings_credential_request(
+        screen, request, session_id=session.id
+    )
+    messages[0].report_completion(False)
+
+    assert screen._suspended_conversation_settings is None
+    assert handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN) is None
 
 
 class FakeConsoleModelDiscoveryScope:
@@ -455,6 +559,266 @@ async def _wait_for_focused_id(host: App[None], pilot, widget_id: str) -> None:
     raise AssertionError(
         f"Expected focus on {widget_id!r}, found {getattr(host.focused, 'id', None)!r}"
     )
+
+
+@pytest.mark.asyncio
+async def test_missing_credential_action_is_mounted_only_for_missing_cloud_credentials() -> None:
+    """Conversation settings exposes Settings-owned credential recovery only when blocked."""
+    app = ModalHarness()
+    app.app_config = {"api_settings": {"openai": {}}}
+    results: list[object] = []
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        app,
+        providers_models={"openai": ["gpt-5"]},
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal, callback=results.append)
+        await pilot.pause()
+        action = app.screen.query_one("#console-settings-configure-credential", Button)
+        assert action.display is True
+        assert str(action.label) == "Configure credential…"
+        await pilot.click("#console-settings-configure-credential")
+        await pilot.pause()
+
+    assert len(results) == 1
+    assert isinstance(results[0], ConsoleSettingsCredentialRequest)
+    assert results[0].provider == "openai"
+
+
+@pytest.mark.asyncio
+async def test_mounted_configure_credential_uses_chatscreen_push_callback_and_typed_stage() -> None:
+    """The mounted action travels through ChatScreen's real modal callback."""
+    app = ModalHarness()
+    app.app_config = {"api_settings": {"openai": {}}}
+    settings = ConsoleSessionSettings(provider="openai", model="gpt-5")
+    store = ConsoleChatStore()
+    session = store.create_session(settings=settings)
+    posted: list[object] = []
+    screen = ChatScreen.__new__(ChatScreen)
+    screen.app_instance = SimpleNamespace(
+        pending_handoffs=chat_screen_module.PendingHandoffStore(),
+    )
+    screen._ensure_console_chat_store = lambda: store
+    screen.post_message = posted.append
+    modal = _basic_modal(
+        settings,
+        app,
+        providers_models={"openai": ["gpt-5"]},
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            modal,
+            callback=lambda result: (
+                ChatScreen._stage_console_settings_credential_request(
+                    screen,
+                    result,
+                    session_id=session.id,
+                )
+                if isinstance(result, ConsoleSettingsCredentialRequest)
+                else None
+            ),
+        )
+        await pilot.click("#console-settings-configure-credential")
+        await pilot.pause()
+
+    assert len(posted) == 1
+    navigation = posted[0]
+    assert navigation.screen_name == "settings"
+    target = navigation.screen_context
+    assert target == {
+        "category": "providers-models",
+        "provider": "openai",
+        "model": "gpt-5",
+        "field": "api_key",
+        "return_revision": 1,
+    }
+    assert screen._suspended_conversation_settings is not None
+    assert screen._suspended_conversation_settings.settings == settings
+    claim = screen.app_instance.pending_handoffs.claim(
+        HandoffChannel.CONVERSATION_SETTINGS_RETURN
+    )
+    assert claim is not None
+    assert claim.value.session_id == session.id
+
+
+@pytest.mark.asyncio
+async def test_mounted_suspended_draft_rehydrates_raw_provider_drafts_and_focus() -> None:
+    """Mounted capture and fresh modal rehydration retain raw, per-provider state."""
+    app = ModalHarness()
+    app.app_config = {
+        "api_settings": {
+            "llama_cpp": {"api_url": "http://canonical-llama.invalid:8080"},
+            "vllm": {"api_url": "http://canonical-vllm.invalid:8000"},
+        }
+    }
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="canonical-model",
+        base_url="http://canonical-llama.invalid:8080",
+        system_prompt="private system prompt",
+        pinned_prefill="private prefill",
+    )
+    providers_models = {
+        "llama_cpp": ["canonical-model", "llama-draft"],
+        "vllm": ["canonical-vllm", "vllm-draft"],
+    }
+    original = _basic_modal(settings, app, providers_models=providers_models)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(original)
+        await pilot.pause()
+        original.query_one("#console-settings-temperature", Input).value = "0.7.2"
+        original.query_one("#console-settings-user-display-name", Input).value = "Ada"
+        original.query_one("#console-context-custom-budget", Input).value = "raw-budget"
+        original.query_one(ModelSearchPicker).set_model_value("llama-draft")
+        original.query_one("#console-settings-base-url", Input).value = (
+            "http://draft-llama.invalid:9090"
+        )
+        original.query_one("#console-settings-provider", Select).value = "vllm"
+        await pilot.pause()
+        original.query_one(ModelSearchPicker).set_model_value("vllm-draft")
+        original.query_one("#console-settings-base-url", Input).value = (
+            "http://draft-vllm.invalid:8001"
+        )
+        original.query_one("#console-settings-provider", Select).value = "llama_cpp"
+        await pilot.pause()
+        original._advanced_generation_disclosed = True
+        original._connection_details_disclosed = True
+        original.query_one(ModelSearchPicker).focus_input()
+        await pilot.pause()
+        body = original.query_one("#console-settings-body", ScrollableContainer)
+        body.scroll_to(y=7, animate=False)
+        await pilot.pause()
+        snapshot = original.capture_suspended_draft()
+        expected_scroll_anchor = int(body.scroll_y)
+        assert snapshot.settings.system_prompt == "private system prompt"
+        assert snapshot.settings.pinned_prefill == "private prefill"
+        assert snapshot.active_view == "model"
+        assert snapshot.focus_control_id == "console-settings-model-picker"
+        assert snapshot.scroll_anchor == expected_scroll_anchor
+        assert snapshot.provider_model_drafts == {
+            "llama_cpp": "llama-draft",
+            "vllm": "vllm-draft",
+        }
+        assert snapshot.provider_base_url_drafts == {
+            "llama_cpp": "http://draft-llama.invalid:9090",
+            "vllm": "http://draft-vllm.invalid:8001",
+        }
+        detached = snapshot.to_mapping()
+        detached["raw_values"]["console-settings-temperature"] = "changed"  # type: ignore[index]
+        assert snapshot.raw_values["console-settings-temperature"] == "0.7.2"
+        await app.pop_screen()
+
+        restored = ConsoleSettingsDraftSnapshot.from_mapping(snapshot.to_mapping())
+        assert restored is not None
+        fresh = _basic_modal(
+            ConsoleSessionSettings(
+                provider="llama_cpp",
+                model="canonical-model",
+                base_url="http://canonical-llama.invalid:8080",
+            ),
+            app,
+            providers_models=providers_models,
+            suspended_draft=restored,
+        )
+        await app.push_screen(fresh)
+        await pilot.pause()
+        assert fresh.query_one(ModelSearchPicker).value == "llama-draft"
+        assert fresh.query_one("#console-settings-base-url", Input).value == (
+            "http://draft-llama.invalid:9090"
+        )
+        assert fresh.query_one("#console-settings-temperature", Input).value == "0.7.2"
+        assert fresh.query_one("#console-settings-user-display-name", Input).value == "Ada"
+        assert fresh.query_one("#console-context-custom-budget", Input).value == "raw-budget"
+        assert fresh._advanced_generation_disclosed is True
+        assert fresh._connection_details_disclosed is True
+        assert getattr(app.focused, "id", None) == "model-search-picker-input"
+        assert int(
+            fresh.query_one("#console-settings-body", ScrollableContainer).scroll_y
+        ) == expected_scroll_anchor
+        fresh.query_one("#console-settings-provider", Select).value = "vllm"
+        await pilot.pause()
+        assert fresh.query_one(ModelSearchPicker).value == "vllm-draft"
+        assert fresh.query_one("#console-settings-base-url", Input).value == (
+            "http://draft-vllm.invalid:8001"
+        )
+        fresh.query_one("#console-settings-provider", Select).value = "llama_cpp"
+        await pilot.pause()
+        assert fresh.query_one(ModelSearchPicker).value == "llama-draft"
+        assert fresh.query_one("#console-settings-base-url", Input).value == (
+            "http://draft-llama.invalid:9090"
+        )
+
+
+@pytest.mark.asyncio
+async def test_suspended_focus_falls_back_to_connection_provider_when_target_hidden() -> None:
+    app = ModalHarness()
+    app.app_config = {"api_settings": {"openai": {"api_key": "test-key"}}}
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={
+            "console-settings-provider": "openai",
+            "console-settings-model-picker": "gpt-5",
+        },
+        provider_model_drafts={"openai": "gpt-5"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id="console-settings-base-url",
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            _basic_modal(
+                snapshot.settings,
+                app,
+                providers_models={"openai": ["gpt-5"]},
+                suspended_draft=snapshot,
+            )
+        )
+        await _wait_for_focused_id(app, pilot, "console-settings-provider")
+
+
+@pytest.mark.asyncio
+async def test_mounted_suspended_draft_round_trips_context_view_and_focus() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 24)) as pilot:
+        original = _basic_modal(settings, app)
+        await app.push_screen(original)
+        await pilot.click("#console-settings-view-context")
+        await pilot.pause()
+        context_budget = original.query_one("#console-context-custom-budget", Input)
+        context_budget.value = "not-a-number-yet"
+        context_budget.focus()
+        await pilot.pause()
+        snapshot = original.capture_suspended_draft()
+        assert snapshot.active_view == "context"
+        assert snapshot.focus_control_id == "console-context-custom-budget"
+        assert snapshot.raw_values["console-context-custom-budget"] == "not-a-number-yet"
+        await app.pop_screen()
+
+        fresh = _basic_modal(
+            settings,
+            app,
+            suspended_draft=ConsoleSettingsDraftSnapshot.from_mapping(
+                snapshot.to_mapping()
+            ),
+        )
+        await app.push_screen(fresh)
+        await pilot.pause()
+        assert fresh._active_view == "context"
+        assert fresh.query_one("#console-settings-context-view").display is True
+        assert fresh.query_one("#console-context-custom-budget", Input).value == (
+            "not-a-number-yet"
+        )
+        await _wait_for_focused_id(app, pilot, "console-context-custom-budget")
 
 
 async def _press_new_console_tab(console, store, pilot) -> str:

@@ -2866,6 +2866,7 @@ class ChatScreen(BaseAppScreen):
         focus_model: bool = False,
         focus_context: bool = False,
         transfer: ConsoleSettingsTransfer | None = None,
+        suspended_draft: ConsoleSettingsDraftSnapshot | None = None,
     ) -> None:
         """Open Console session settings for the active native session."""
         controller = self._ensure_console_chat_controller()
@@ -2875,12 +2876,18 @@ class ChatScreen(BaseAppScreen):
             if session_id is None:
                 return
             origin = store.capture_console_settings_origin(session_id)
-            settings = store.session_settings(session_id)
+            settings = (
+                suspended_draft.settings
+                if suspended_draft is not None
+                else store.session_settings(session_id)
+            )
             if settings is None:
                 return
             initial_draft = self._console_settings_initial_draft(
                 settings,
-                store.session_context_policy_overrides(session_id),
+                suspended_draft.context_policy_overrides
+                if suspended_draft is not None
+                else store.session_context_policy_overrides(session_id),
                 exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
             )
         else:
@@ -2936,6 +2943,7 @@ class ChatScreen(BaseAppScreen):
             default_readiness_resolver=self._console_default_readiness,
             default_durability_state=self._console_default_durability_state(),
             default_recovery_handler=self._handle_console_default_recovery,
+            suspended_draft=suspended_draft,
         )
 
         def apply_origin_result(result) -> None:
@@ -2966,6 +2974,16 @@ class ChatScreen(BaseAppScreen):
             settings_revision = store.session_settings_revision(session_id)
         except KeyError:
             return
+        # Validate provider/model before touching the single-slot return
+        # channel. The final target only substitutes the positive opaque
+        # handoff revision, so it cannot broaden this validated route.
+        ProviderSettingsNavigationTarget(
+            category="providers-models",
+            provider=request.provider,
+            model=request.model,
+            field="api_key",
+            return_revision=1,
+        )
         intent = ConversationSettingsReturnIntent(
             session_id=session_id,
             settings_revision=settings_revision,
@@ -2984,7 +3002,32 @@ class ChatScreen(BaseAppScreen):
             return_revision=handoff_revision,
         )
         self._suspended_conversation_settings = request.snapshot
-        self.post_message(NavigateToScreen(TAB_SETTINGS, target.to_context()))
+
+        def settle_navigation(succeeded: bool) -> None:
+            """Repair the source only when the existing route did not leave it."""
+            if succeeded:
+                return
+            self.app_instance.pending_handoffs.discard_pending_exact(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                handoff_revision,
+                intent,
+            )
+            if self._suspended_conversation_settings != request.snapshot:
+                return
+            self._suspended_conversation_settings = None
+            if getattr(self, "is_mounted", False):
+                self.run_worker(
+                    self._open_console_settings(suspended_draft=request.snapshot),
+                    exclusive=False,
+                )
+
+        self.post_message(
+            NavigateToScreen(
+                TAB_SETTINGS,
+                target.to_context(),
+                on_completion=settle_navigation,
+            )
+        )
 
     def _global_chat_display_name(self) -> str:
         """Return the live in-memory global chat label without touching disk."""

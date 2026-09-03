@@ -145,8 +145,11 @@ git commit -m "feat: define Conversation settings return handoff"
 **Files:**
 - Modify: `tldw_chatbook/Widgets/Console/console_settings_modal.py`
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
+- Modify: `tldw_chatbook/UI/Navigation/main_navigation.py`
+- Modify: `tldw_chatbook/app.py`
 - Test: `Tests/UI/test_console_session_settings.py`
 - Test: `Tests/State/test_screen_state_store.py`
+- Test: `Tests/UI/test_screen_navigation.py`
 
 **Interfaces:**
 - Produces: `ConsoleSettingsDraftSnapshot.to_mapping() -> dict[str, object]`
@@ -183,20 +186,20 @@ class ConsoleSettingsCredentialRequest:
     model: str | None
 ```
 
-- [ ] **Step 4: Route credential requests through ChatScreen**
+- [ ] **Step 4: Route credential requests through ChatScreen with guarded settlement**
 
-Handle the modal result variant in `_open_console_settings`: retain the suspended snapshot on `ChatScreen`, stage the typed return handoff, and post the typed Settings context. Add the snapshot key to `_serialize_native_console_state()` / `_restore_native_console_state()` with absent-key backward compatibility. Do not apply the draft as session settings during suspension.
+Handle the modal result variant in `_open_console_settings`: retain the suspended snapshot on `ChatScreen`, stage the typed return handoff, and post the typed Settings context. Extend the existing `NavigateToScreen` path with one optional, single-settlement completion callback so the source can discard the exact pending handoff and reopen/retain its draft when flush, confirmation, transition admission, startup, overlay dismissal, or target construction rejects the route. The app handler owns settlement on every terminal path; ordinary navigation remains unchanged. Add the snapshot key to `_serialize_native_console_state()` / `_restore_native_console_state()` with absent-key backward compatibility. Do not apply the draft as session settings during suspension or bypass any leave-Console guard.
 
 - [ ] **Step 5: Verify screen snapshot and modal suites**
 
-Run: `pytest Tests/State/test_screen_state_store.py Tests/UI/test_console_session_settings.py -k 'snapshot or credential or return or settings' -q`
+Run: `pytest Tests/State/test_screen_state_store.py Tests/UI/test_console_session_settings.py Tests/UI/test_screen_navigation.py -k 'snapshot or credential or return or settings or navigation_completion' -q`
 
 Expected: PASS.
 
 - [ ] **Step 6: Commit exact draft suspension**
 
 ```bash
-git add tldw_chatbook/Widgets/Console/console_settings_modal.py tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_console_session_settings.py Tests/State/test_screen_state_store.py
+git add tldw_chatbook/Widgets/Console/console_settings_modal.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/UI/Navigation/main_navigation.py tldw_chatbook/app.py Tests/UI/test_console_session_settings.py Tests/State/test_screen_state_store.py Tests/UI/test_screen_navigation.py
 git commit -m "feat: suspend Conversation settings across credential setup"
 ```
 

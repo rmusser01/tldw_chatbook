@@ -1,6 +1,6 @@
 """Main navigation bar for screen-based navigation."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 from loguru import logger
 
 from textual.app import ComposeResult
@@ -70,11 +70,29 @@ class NavigateToScreen(Message):
     """Message to request navigation to a specific screen."""
 
     def __init__(
-        self, screen_name: str, screen_context: dict[str, object] | None = None
+        self,
+        screen_name: str,
+        screen_context: dict[str, object] | None = None,
+        *,
+        on_completion: Callable[[bool], None] | None = None,
     ):
         super().__init__()
         self.screen_name = screen_name
         self.screen_context = dict(screen_context or {})
+        self._on_completion = on_completion
+        self._completion_reported = False
+
+    def report_completion(self, succeeded: bool) -> None:
+        """Settle one optional source callback after the route reaches a terminal state."""
+        if self._completion_reported:
+            return
+        self._completion_reported = True
+        if self._on_completion is None:
+            return
+        try:
+            self._on_completion(bool(succeeded))
+        except Exception:
+            logger.debug("Navigation completion callback failed.", exc_info=True)
 
 
 class NavigationButton(Button):

@@ -805,6 +805,55 @@ async def test_navigation_confirms_with_outgoing_screen_and_honors_veto(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_navigation_completion_callback_settles_once_for_guard_veto_and_success(
+    monkeypatch,
+):
+    """The existing guard path reports one source-visible terminal result."""
+    app = _build_test_app()
+    app._initial_screen_pushed = True
+    outcomes: list[bool] = []
+    switched_screens = []
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    class FakeOutgoingScreen:
+        screen_name = "library"
+        allow = False
+
+        async def confirm_navigation(self):
+            return self.allow
+
+    outgoing = FakeOutgoingScreen()
+
+    async def fake_switch_screen(screen):
+        switched_screens.append(screen)
+
+    monkeypatch.setattr(
+        app,
+        "_resolve_screen_navigation_target",
+        lambda _target: ("chat", "chat", FakeTargetScreen),
+    )
+    monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+
+    vetoed = NavigateToScreen("chat", on_completion=outcomes.append)
+    await app.handle_screen_navigation(vetoed)
+    vetoed.report_completion(True)
+    assert outcomes == [False]
+    assert switched_screens == []
+
+    outgoing.allow = True
+    succeeded = NavigateToScreen("chat", on_completion=outcomes.append)
+    await app.handle_screen_navigation(succeeded)
+    assert outcomes == [False, True]
+    assert len(switched_screens) == 1
+
+
+@pytest.mark.asyncio
 async def test_navigation_confirm_exception_warns_and_aborts_switch(monkeypatch):
     """A broken outgoing confirm_navigation must fail closed, not silently
     let navigation proceed and tear down live work nobody was asked about.

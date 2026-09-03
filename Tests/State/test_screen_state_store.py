@@ -60,6 +60,49 @@ def test_suspended_conversation_draft_snapshot_rejects_malformed_nested_state() 
     assert ConsoleSettingsDraftSnapshot.from_mapping(malformed) is None
 
 
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("version",), True),
+        (("raw_values", "console-settings-temperature"), True),
+        (("raw_values", "console-settings-streaming"), "true"),
+        (("provider_model_drafts", "openai\nunsafe"), "gpt-5"),
+        (("provider_model_drafts", "openai"), "model\nunsafe"),
+        (("provider_base_url_drafts", "openai"), "https://example.invalid/\x00"),
+        (("context_policy_overrides", "custom_budget_tokens"), True),
+        (("context_policy_overrides", "budget_mode"), 1),
+        (("context_policy_overrides", "budget_mode"), " automatic "),
+    ],
+)
+def test_suspended_conversation_draft_snapshot_fails_closed_on_unsafe_primitives(
+    path: tuple[str, ...], value: object
+) -> None:
+    """Screen-state parser accepts only its exact primitive wire types."""
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={
+            "console-settings-temperature": "0.7",
+            "console-settings-streaming": True,
+        },
+        provider_model_drafts={"openai": "gpt-5"},
+        provider_base_url_drafts={"openai": "https://example.invalid"},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id="console-settings-model-picker",
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+    malformed = snapshot.to_mapping()
+    target: object = malformed
+    for key in path[:-1]:
+        assert isinstance(target, dict)
+        target = target[key]
+    assert isinstance(target, dict)
+    target[path[-1]] = value
+
+    assert ConsoleSettingsDraftSnapshot.from_mapping(malformed) is None
+
+
 def test_native_console_state_keeps_suspended_settings_draft_process_local() -> None:
     """The screen snapshot, not a handoff or route, owns raw draft content."""
     snapshot = ConsoleSettingsDraftSnapshot(

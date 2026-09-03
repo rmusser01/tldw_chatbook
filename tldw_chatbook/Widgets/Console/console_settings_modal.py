@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field, fields, replace
+import re
 from typing import Any, Awaitable, Callable, Mapping, Protocol
 from uuid import uuid4
 
@@ -18,7 +19,10 @@ from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Button, Checkbox, Input, OptionList, Select, Static
 
-from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.Chat.provider_readiness import (
+    get_provider_readiness,
+    provider_config_key,
+)
 from tldw_chatbook.Chat.console_context_compaction import EffectiveMemoryKind
 from tldw_chatbook.Chat.console_context_policy import (
     CompactionFailureBehavior,
@@ -129,6 +133,12 @@ COMPACTION_CLOSE_WARNING = "Provider work may continue and may still be billed."
 
 
 _CONSOLE_SETTINGS_DRAFT_VERSION = 1
+_SNAPSHOT_PROVIDER_RE = re.compile(r"[a-z0-9][a-z0-9_]{0,127}\Z")
+_SNAPSHOT_SAFE_TEXT_RE = re.compile(r"[^\x00-\x1f\x7f\x80-\x9f]*\Z")
+_SNAPSHOT_RAW_TEXT_LIMIT = 4096
+_SNAPSHOT_MODEL_TEXT_LIMIT = 512
+_SNAPSHOT_URL_TEXT_LIMIT = 2048
+_SNAPSHOT_PRIVATE_TEXT_LIMIT = 100_000
 _SNAPSHOT_RAW_VALUE_IDS = frozenset(
     {
         "console-settings-provider",
@@ -227,22 +237,104 @@ _SNAPSHOT_REQUIRED_FLOAT_FIELDS = frozenset({"temperature", "top_p"})
 _SNAPSHOT_REQUIRED_STRING_FIELDS = frozenset(
     {"provider", "character_label", "source"}
 )
+_SNAPSHOT_CONTEXT_ENUM_KEYS = frozenset(
+    {
+        "budget_mode",
+        "compaction_mode",
+        "compaction_representation",
+        "failure_behavior",
+        "carry_forward_mode",
+    }
+)
+_SNAPSHOT_CONTEXT_INT_KEYS = frozenset(
+    {"custom_budget_tokens", "summary_max_tokens"}
+)
+_SNAPSHOT_CONTEXT_FLOAT_KEYS = frozenset({"trigger_ratio", "target_ratio"})
+_SNAPSHOT_CONTEXT_ENUM_TYPES = {
+    "budget_mode": ContextBudgetMode,
+    "compaction_mode": ContextCompactionMode,
+    "compaction_representation": ContextCompactionRepresentation,
+    "failure_behavior": CompactionFailureBehavior,
+    "carry_forward_mode": ContextCarryForwardMode,
+}
+
+
+def _snapshot_text(
+    value: object,
+    *,
+    limit: int,
+    allow_blank: bool = True,
+) -> bool:
+    """Validate bounded primitive text retained in the process-memory snapshot."""
+    return (
+        type(value) is str
+        and (allow_blank or bool(value))
+        and len(value) <= limit
+        and _SNAPSHOT_SAFE_TEXT_RE.fullmatch(value) is not None
+    )
+
+
+def _snapshot_provider(value: object) -> str | None:
+    """Return one already-normalized bounded provider identifier, or ``None``."""
+    if not _snapshot_text(value, limit=128, allow_blank=False):
+        return None
+    assert type(value) is str
+    normalized = provider_config_key(value)
+    if normalized != value or _SNAPSHOT_PROVIDER_RE.fullmatch(value) is None:
+        return None
+    return value
+
+
+def _snapshot_model(value: object, *, allow_none: bool = False) -> bool:
+    return (allow_none and value is None) or _snapshot_text(
+        value, limit=_SNAPSHOT_MODEL_TEXT_LIMIT, allow_blank=False
+    )
+
+
+def _valid_snapshot_context_overrides(source: Mapping[str, object]) -> bool:
+    """Reject config-style coercion before context enums are reconstructed."""
+    for key, value in source.items():
+        if key not in _SNAPSHOT_CONTEXT_OVERRIDE_KEYS:
+            return False
+        if value is None:
+            continue
+        if key in _SNAPSHOT_CONTEXT_ENUM_KEYS:
+            enum_type = _SNAPSHOT_CONTEXT_ENUM_TYPES[key]
+            if (
+                not _snapshot_text(value, limit=64, allow_blank=False)
+                or value not in {item.value for item in enum_type}
+            ):
+                return False
+        elif key in _SNAPSHOT_CONTEXT_INT_KEYS:
+            if type(value) is not int:
+                return False
+        elif key in _SNAPSHOT_CONTEXT_FLOAT_KEYS:
+            if type(value) is not float:
+                return False
+        else:
+            return False
+    return True
 
 
 def _copy_snapshot_string_mapping(
-    source: Mapping[str, object], *, allow_none: bool = False
+    source: Mapping[str, object],
+    *,
+    allow_none: bool = False,
+    value_limit: int = _SNAPSHOT_MODEL_TEXT_LIMIT,
+    allow_blank: bool = False,
 ) -> dict[str, str | None] | None:
     """Copy a small allowlisted provider draft mapping without generic deepcopy."""
     copied: dict[str, str | None] = {}
     for key, value in source.items():
-        if type(key) is not str or not key or key != key.strip():
+        provider = _snapshot_provider(key)
+        if provider is None:
             return None
-        if type(value) is str:
-            copied[key] = value
-        elif allow_none and value is None:
-            copied[key] = None
-        else:
+        if not (
+            (allow_none and value is None)
+            or _snapshot_text(value, limit=value_limit, allow_blank=allow_blank)
+        ):
             return None
+        copied[provider] = value  # type: ignore[assignment]
     return copied
 
 
@@ -250,7 +342,14 @@ def _valid_snapshot_settings_mapping(source: Mapping[str, object]) -> bool:
     """Validate the primitive session-settings shape before reconstructing it."""
     for name, value in source.items():
         if name in _SNAPSHOT_OPTIONAL_STRING_FIELDS:
-            if value is not None and type(value) is not str:
+            limit = (
+                _SNAPSHOT_PRIVATE_TEXT_LIMIT
+                if name in {"system_prompt", "pinned_prefill"}
+                else _SNAPSHOT_URL_TEXT_LIMIT
+                if name == "base_url"
+                else _SNAPSHOT_MODEL_TEXT_LIMIT
+            )
+            if value is not None and not _snapshot_text(value, limit=limit):
                 return False
         elif name in _SNAPSHOT_OPTIONAL_INT_FIELDS:
             if value is not None and type(value) is not int:
@@ -262,7 +361,10 @@ def _valid_snapshot_settings_mapping(source: Mapping[str, object]) -> bool:
             if type(value) is not float:
                 return False
         elif name in _SNAPSHOT_REQUIRED_STRING_FIELDS:
-            if type(value) is not str:
+            if name == "provider":
+                if _snapshot_provider(value) is None:
+                    return False
+            elif not _snapshot_text(value, limit=_SNAPSHOT_RAW_TEXT_LIMIT):
                 return False
         elif name == "streaming":
             if type(value) is not bool:
@@ -286,10 +388,28 @@ class ConsoleSettingsDraftSnapshot:
     focus_control_id: str | None
     disclosure_state: Mapping[str, bool]
 
+    def __repr__(self) -> str:
+        """Return diagnostic metadata without exposing Console-owned content."""
+        return (
+            f"{type(self).__name__}(version={_CONSOLE_SETTINGS_DRAFT_VERSION}, "
+            f"active_view={self.active_view!r}, scroll_anchor={self.scroll_anchor}, "
+            f"focus_control_id={self.focus_control_id!r}, "
+            f"raw_value_count={len(self.raw_values)}, "
+            f"provider_draft_count={len(self.provider_model_drafts)})"
+        )
+
     def __post_init__(self) -> None:
         if type(self.settings) is not ConsoleSessionSettings:
             raise ValueError("settings draft is invalid")
+        if not _valid_snapshot_settings_mapping(
+            {name: getattr(self.settings, name) for name in _SNAPSHOT_SETTINGS_FIELDS}
+        ):
+            raise ValueError("settings draft is invalid")
         if type(self.context_policy_overrides) is not ConsoleContextPolicyOverrides:
+            raise ValueError("context policy overrides are invalid")
+        if not _valid_snapshot_context_overrides(
+            self.context_policy_overrides.to_dict()
+        ):
             raise ValueError("context policy overrides are invalid")
         if self.active_view not in {"model", "context"}:
             raise ValueError("active view is invalid")
@@ -306,13 +426,30 @@ class ConsoleSettingsDraftSnapshot:
             raise ValueError("raw modal values are invalid")
         raw_values: dict[str, str | bool] = {}
         for key, value in self.raw_values.items():
-            if type(key) is not str or type(value) not in {str, bool}:
+            if type(key) is not str:
+                raise ValueError("raw modal values are invalid")
+            if key == "console-settings-streaming":
+                if type(value) is not bool:
+                    raise ValueError("raw modal values are invalid")
+            elif key == "console-settings-provider":
+                if _snapshot_provider(value) is None:
+                    raise ValueError("raw modal values are invalid")
+            elif key == "console-settings-model-picker":
+                if not _snapshot_model(value):
+                    raise ValueError("raw modal values are invalid")
+            elif key == "console-settings-base-url":
+                if not _snapshot_text(value, limit=_SNAPSHOT_URL_TEXT_LIMIT):
+                    raise ValueError("raw modal values are invalid")
+            elif not _snapshot_text(value, limit=_SNAPSHOT_RAW_TEXT_LIMIT):
                 raise ValueError("raw modal values are invalid")
             raw_values[key] = value
         model_drafts = _copy_snapshot_string_mapping(
             self.provider_model_drafts, allow_none=True
         )
-        base_url_drafts = _copy_snapshot_string_mapping(self.provider_base_url_drafts)
+        base_url_drafts = _copy_snapshot_string_mapping(
+            self.provider_base_url_drafts,
+            value_limit=_SNAPSHOT_URL_TEXT_LIMIT,
+        )
         if model_drafts is None or base_url_drafts is None:
             raise ValueError("provider drafts are invalid")
         if not isinstance(self.disclosure_state, Mapping) or set(
@@ -366,7 +503,10 @@ class ConsoleSettingsDraftSnapshot:
         }
         if not isinstance(source, Mapping) or set(source) != required_keys:
             return None
-        if source.get("version") != _CONSOLE_SETTINGS_DRAFT_VERSION:
+        if (
+            type(source.get("version")) is not int
+            or source.get("version") != _CONSOLE_SETTINGS_DRAFT_VERSION
+        ):
             return None
         raw_settings = source.get("settings")
         raw_overrides = source.get("context_policy_overrides")
@@ -380,6 +520,7 @@ class ConsoleSettingsDraftSnapshot:
             or not _valid_snapshot_settings_mapping(raw_settings)
             or not isinstance(raw_overrides, Mapping)
             or not set(raw_overrides).issubset(_SNAPSHOT_CONTEXT_OVERRIDE_KEYS)
+            or not _valid_snapshot_context_overrides(raw_overrides)
             or not isinstance(raw_values, Mapping)
             or not isinstance(model_drafts, Mapping)
             or not isinstance(base_url_drafts, Mapping)
@@ -417,10 +558,10 @@ class ConsoleSettingsCredentialRequest:
     def __post_init__(self) -> None:
         if type(self.snapshot) is not ConsoleSettingsDraftSnapshot:
             raise ValueError("credential request snapshot is invalid")
-        provider = provider_config_key(self.provider) if type(self.provider) is str else ""
-        if not provider:
+        provider = _snapshot_provider(self.provider)
+        if provider is None:
             raise ValueError("credential request provider is invalid")
-        if self.model is not None and type(self.model) is not str:
+        if not _snapshot_model(self.model, allow_none=True):
             raise ValueError("credential request model is invalid")
         object.__setattr__(self, "provider", provider)
 
@@ -903,30 +1044,45 @@ class ConsoleSettingsModal(
         self._edited_generation_fields: set[str] = set()
         self._submit_pending = False
         self._rebase_event_guard = False
-        self._active_provider = self._settings.provider
-        self._provider_model_drafts: dict[str, str | None] = {}
-        self._set_provider_model_draft(
-            self._settings.provider,
-            self._settings.model,
+        snapshot_provider = (
+            suspended_draft.raw_values.get("console-settings-provider")
+            if suspended_draft is not None
+            else None
         )
-        self._provider_base_url_drafts: dict[str, str] = {}
+        self._active_provider = (
+            snapshot_provider
+            if _snapshot_provider(snapshot_provider) is not None
+            else self._settings.provider
+        )
+        self._provider_model_drafts: dict[str, str | None] = {}
         if suspended_draft is not None:
             self._provider_model_drafts.update(suspended_draft.provider_model_drafts)
+        if self._active_provider not in self._provider_model_drafts:
+            self._set_provider_model_draft(
+                self._active_provider,
+                self._settings.model,
+            )
+        self._provider_base_url_drafts: dict[str, str] = {}
+        if suspended_draft is not None:
             self._provider_base_url_drafts.update(
                 suspended_draft.provider_base_url_drafts
             )
         initial_base_url = self._initial_base_url_for_provider(
-            self._settings.provider,
+            self._active_provider,
             self._settings.base_url,
         )
-        if initial_base_url:
-            self._provider_base_url_drafts[self._settings.provider] = initial_base_url
+        if (
+            initial_base_url
+            and self._active_provider not in self._provider_base_url_drafts
+        ):
+            self._provider_base_url_drafts[self._active_provider] = initial_base_url
         self._endpoint_draft = self._draft.endpoint_draft or ConsoleEndpointDraft(
             value=initial_base_url or "",
-            bound_provider_config_key=provider_config_key(self._settings.provider),
+            bound_provider_config_key=provider_config_key(self._active_provider),
             dirty=False,
             checked=False,
         )
+        self._restoring_suspended_draft = False
         self._readiness_debounce_timer: Timer | None = None
         self._settings_close_guard_mode: str | None = None
         self._settings_close_guard_focus: Widget | None = None
@@ -1084,15 +1240,15 @@ class ConsoleSettingsModal(
         provider_options = self._provider_select_options()
         provider_values = {value for _, value in provider_options}
         provider_value = (
-            self._settings.provider
-            if self._settings.provider in provider_values
+            self._active_provider
+            if self._active_provider in provider_values
             else Select.NULL
         )
-        selected_model = self._model_for_provider(self._settings.provider)
-        base_url = self._base_url_for_provider(self._settings.provider)
-        uses_base_url = self._provider_uses_base_url(self._settings.provider)
+        selected_model = self._model_for_provider(self._active_provider)
+        base_url = self._base_url_for_provider(self._active_provider)
+        uses_base_url = self._provider_uses_base_url(self._active_provider)
         model_options = self._model_select_options(
-            self._settings.provider, selected_model
+            self._active_provider, selected_model
         )
         model_select_options = model_options or [
             ("No configured models", _NO_CONFIGURED_MODELS_VALUE)
@@ -1108,7 +1264,7 @@ class ConsoleSettingsModal(
             model_options,
         )
         readiness = build_console_settings_readiness(
-            self._settings, app_config=self._app_config
+            self._settings_for_active_provider(), app_config=self._app_config
         )
 
         with Vertical(id="console-settings-modal"):
@@ -1130,6 +1286,13 @@ class ConsoleSettingsModal(
                 classes="console-settings-modal-row",
                 markup=False,
             )
+            credential_action = Button(
+                "Configure credential…",
+                id="console-settings-configure-credential",
+                tooltip="Open F9 Settings > Providers & Models to configure this API key",
+            )
+            credential_action.display = self._missing_credential_recovery_available()
+            yield credential_action
             yield Static(
                 self._scope_copy(),
                 id="console-settings-scope",
@@ -1900,31 +2063,38 @@ class ConsoleSettingsModal(
         self, snapshot: ConsoleSettingsDraftSnapshot
     ) -> None:
         """Rehydrate raw, possibly invalid modal values after composition."""
-        for control_id, value in snapshot.raw_values.items():
-            if control_id == "console-settings-streaming":
-                continue
-            if control_id == "console-settings-model-picker":
-                self.query_one(f"#{control_id}", ModelSearchPicker).set_model_value(
-                    value if type(value) is str else None
+        self._restoring_suspended_draft = True
+        try:
+            for control_id, value in snapshot.raw_values.items():
+                if control_id == "console-settings-streaming":
+                    continue
+                if control_id == "console-settings-model-picker":
+                    self.query_one(f"#{control_id}", ModelSearchPicker).set_model_value(
+                        value if type(value) is str else None
+                    )
+                    continue
+                try:
+                    control = self.query_one(f"#{control_id}")
+                except NoMatches:
+                    continue
+                if isinstance(control, Input) and type(value) is str:
+                    control.value = value
+                elif isinstance(control, Select) and type(value) is str:
+                    control.value = value
+            self._active_provider = self._select_value_text(
+                self.query_one("#console-settings-provider", Select).value
+            )
+            self._streaming_draft = bool(
+                snapshot.raw_values.get(
+                    "console-settings-streaming", self._streaming_draft
                 )
-                continue
-            try:
-                control = self.query_one(f"#{control_id}")
-            except NoMatches:
-                continue
-            if isinstance(control, Input) and type(value) is str:
-                control.value = value
-            elif isinstance(control, Select) and type(value) is str:
-                control.value = value
-        self._active_provider = self._select_value_text(
-            self.query_one("#console-settings-provider", Select).value
-        )
-        self._streaming_draft = bool(
-            snapshot.raw_values.get("console-settings-streaming", self._streaming_draft)
-        )
-        self.query_one("#console-settings-streaming", Button).label = (
-            self._streaming_toggle_label()
-        )
+            )
+            self.query_one("#console-settings-streaming", Button).label = (
+                self._streaming_toggle_label()
+            )
+        finally:
+            self._restoring_suspended_draft = False
+        self._synchronize_restored_provider_state()
         self.call_after_refresh(self._restore_suspended_scroll_and_focus, snapshot)
 
     def _restore_suspended_scroll_and_focus(
@@ -1936,12 +2106,69 @@ class ConsoleSettingsModal(
         control_id = snapshot.focus_control_id
         if control_id is None:
             return
-        try:
-            control = self.query_one(f"#{control_id}")
-        except NoMatches:
+        if control_id == "console-settings-model-picker":
+            try:
+                picker = self.query_one(f"#{control_id}", ModelSearchPicker)
+                if picker.display and not picker.disabled:
+                    picker.focus_input()
+                    return
+            except (NoMatches, QueryError):
+                pass
+        else:
+            try:
+                control = self.query_one(f"#{control_id}")
+                if control.display and not control.disabled and control.can_focus:
+                    control.focus()
+                    return
+            except (NoMatches, QueryError):
+                pass
+        self._focus_connection_fallback()
+
+    def _focus_connection_fallback(self) -> None:
+        """Focus a live Connection control when an old logical target is unavailable."""
+        for selector, widget_type in (
+            ("#console-settings-provider", Select),
+            ("#console-settings-model-picker", ModelSearchPicker),
+        ):
+            try:
+                control = self.query_one(selector, widget_type)
+            except (NoMatches, QueryError):
+                continue
+            if not control.display or control.disabled:
+                continue
+            if isinstance(control, ModelSearchPicker):
+                control.focus_input()
+            elif control.can_focus:
+                control.focus()
+            else:
+                continue
             return
-        if control.display and not control.disabled and control.can_focus:
-            control.focus()
+
+    def _settings_for_active_provider(self) -> ConsoleSessionSettings:
+        """Project the current provider's raw model/endpoint into readiness only."""
+        return replace(
+            self._settings,
+            provider=self._active_provider,
+            model=self._model_for_provider(self._active_provider),
+            base_url=self._base_url_for_provider(self._active_provider),
+        )
+
+    def _missing_credential_recovery_available(self) -> bool:
+        """Whether canonical Settings owns the current highest-priority blocker."""
+        return (
+            get_provider_readiness(self._active_provider, self._app_config).reason
+            == "Missing API key"
+        )
+
+    def _synchronize_restored_provider_state(self) -> None:
+        """Refresh dependent controls exactly once after suppressed rehydration."""
+        provider = self._active_provider
+        self._sync_model_controls(provider, self._model_for_provider(provider))
+        self._sync_base_url_control(provider, self._base_url_for_provider(provider))
+        self._sync_model_discover_controls(provider)
+        self._sync_provider_choice_placeholders()
+        self._sync_readiness_display()
+        self._sync_visual_representation_availability()
 
     def capture_suspended_draft(self) -> ConsoleSettingsDraftSnapshot:
         """Capture the raw modal state before a credential-setup handoff."""
@@ -2434,6 +2661,13 @@ class ConsoleSettingsModal(
         event.stop()
         self._show_settings_view("context")
         self.query_one("#console-context-budget-mode", Select).focus()
+
+    @on(Button.Pressed, "#console-settings-configure-credential")
+    def _configure_credential(self, event: Button.Pressed) -> None:
+        """Dismiss through the typed, secret-free credential recovery result."""
+        event.stop()
+        if self._missing_credential_recovery_available():
+            self.dismiss(self.credential_request())
 
     # Textual 8 composes same-named sync/async MRO message handlers; this is not
     # an ordinary OO override of the mixin hook.
@@ -3326,10 +3560,12 @@ class ConsoleSettingsModal(
         them; the next Save re-validates. Runs alongside the field-specific
         handlers below (it does not stop the event).
         """
-        self._clear_validation_error_summary()
+        if not self._restoring_suspended_draft:
+            self._clear_validation_error_summary()
         if (
             isinstance(event, Input.Changed)
             and not self._updating_controls
+            and not self._restoring_suspended_draft
             and event.input.id in _GENERATION_FIELD_BY_INPUT_ID
         ):
             self._edited_generation_fields.add(
@@ -3509,6 +3745,8 @@ class ConsoleSettingsModal(
 
     @on(Select.Changed, "#console-settings-provider")
     def _provider_changed(self, event: Select.Changed) -> None:
+        if self._restoring_suspended_draft:
+            return
         provider = self._select_value_text(event.value)
         if (
             self._updating_controls
@@ -3535,6 +3773,8 @@ class ConsoleSettingsModal(
 
     @on(Select.Changed, "#console-settings-model-select")
     def _model_select_changed(self, event: Select.Changed) -> None:
+        if self._restoring_suspended_draft:
+            return
         model_id = normalize_console_model_value(self._select_value_text(event.value))
         # ``set_options`` queues a transient blank event before the concrete
         # replacement value. By dispatch time the Select already exposes the
@@ -3573,6 +3813,8 @@ class ConsoleSettingsModal(
         does a model-capability lookup -- neither should run on every
         keystroke (task-15476).
         """
+        if self._restoring_suspended_draft:
+            return
         picker = self.query_one("#console-settings-model-picker", ModelSearchPicker)
         if picker.custom_mode:
             picker.set_custom_value(event.value)
@@ -3611,6 +3853,8 @@ class ConsoleSettingsModal(
     @on(ModelSearchPicker.ModelSelected)
     def _model_picker_selected(self, event: ModelSearchPicker.ModelSelected) -> None:
         event.stop()
+        if self._restoring_suspended_draft:
+            return
         if (
             self._draft_rebaser is not None
             and not self._updating_controls
@@ -3618,7 +3862,6 @@ class ConsoleSettingsModal(
             and event.model_id != self._draft.settings.model
         ):
             self._rebase_to(self._active_provider, event.model_id)
-            return
         self._set_provider_model_draft(self._active_provider, event.model_id)
         self._sync_model_controls(self._active_provider, event.model_id)
         self._sync_readiness_display()
@@ -3629,6 +3872,8 @@ class ConsoleSettingsModal(
         self, event: ModelSearchPicker.ModelValueChanged
     ) -> None:
         event.stop()
+        if self._restoring_suspended_draft:
+            return
         if event.custom:
             self._schedule_readiness_sync()
             return
@@ -3645,7 +3890,6 @@ class ConsoleSettingsModal(
             and event.model_id != self._draft.settings.model
         ):
             self._rebase_to(self._active_provider, event.model_id)
-            return
         self._set_provider_model_draft(self._active_provider, event.model_id)
         self._sync_readiness_display()
         self._sync_visual_representation_availability()
@@ -3799,6 +4043,12 @@ class ConsoleSettingsModal(
         self.query_one("#console-settings-readiness", Static).update(
             self._readiness_detail(readiness.detail)
         )
+        try:
+            self.query_one(
+                "#console-settings-configure-credential", Button
+            ).display = self._missing_credential_recovery_available()
+        except (NoMatches, QueryError):
+            pass
         self._sync_provider_model_section_emphasis()
 
     def _sync_provider_model_section_emphasis(self) -> None:
