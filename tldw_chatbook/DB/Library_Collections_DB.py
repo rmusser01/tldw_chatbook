@@ -438,10 +438,10 @@ class LibraryCollectionsDB(BaseDB):
     # task-28240 (schema v4): Library review sets -- an ordered, pinned snapshot
     # of local media ids + an absolute cursor + per-item done marks + a
     # completion stamp, so reviewing a set of items is a first-class resumable
-    # object. No CREATE INDEX (the "one active set" invariant is enforced
-    # transactionally in ReviewSetService, and the PK covers set_id-prefixed
-    # reads over a capped, small set). Applied idempotently like the capture
-    # DDL. See backlog/docs/design-library-review-sets.md.
+    # object. Applied idempotently like the capture DDL (new CREATE TABLEs, not
+    # ALTER migrations -- so inline here, not a migrations/*.sql artifact, which
+    # is reserved for column-add migrations). See
+    # backlog/docs/design-library-review-sets.md.
     _REVIEW_SET_SCHEMA_DDL = (
         """
         CREATE TABLE IF NOT EXISTS review_sets (
@@ -469,6 +469,15 @@ class LibraryCollectionsDB(BaseDB):
                 REFERENCES review_sets(set_id)
                 ON DELETE CASCADE
         )
+        """,
+        # Enforces the "at most one active set" invariant in the schema itself
+        # (task-28241 review) -- a partial UNIQUE index over the single active
+        # row, defence-in-depth beneath the service's transactional guard. It
+        # also exactly matches get_active_review_set's WHERE clause.
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS review_sets_one_active
+            ON review_sets(active)
+            WHERE active = 1 AND deleted_at IS NULL
         """,
     )
 

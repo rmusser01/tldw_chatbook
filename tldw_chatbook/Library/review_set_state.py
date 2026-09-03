@@ -88,12 +88,33 @@ class ReviewProgress:
 def _live_items(
     items: tuple[ReviewSetItem, ...], is_live: IsLive
 ) -> list[ReviewSetItem]:
-    """Return the live items in ascending position order."""
+    """Return the live items in ascending position order.
+
+    ``is_live`` is evaluated exactly once per item here; callers that need both
+    the cursor resolved and the cursor advanced work off this single snapshot
+    (via :func:`_resolve_within`) so a liveness value that changes mid-call can
+    never desync the two.
+    """
     return [
         item
         for item in sorted(items, key=lambda entry: entry.position)
         if is_live(item.backing_media_id)
     ]
+
+
+def _resolve_within(live_positions: list[int], cursor: int) -> int:
+    """Resolve ``cursor`` against an already-computed live-position snapshot.
+
+    Pure and snapshot-local (no ``is_live`` re-evaluation): a live cursor is
+    kept, a tombstoned cursor resolves to the next live position ahead, else
+    the nearest live position behind; an empty snapshot returns ``cursor``.
+    """
+    if not live_positions:
+        return cursor
+    if cursor in live_positions:
+        return cursor
+    ahead = [position for position in live_positions if position > cursor]
+    return ahead[0] if ahead else live_positions[-1]
 
 
 def resolve_cursor(
@@ -114,15 +135,9 @@ def resolve_cursor(
     Returns:
         A live position, or ``cursor`` when the set has no live items.
     """
-    live_positions = [item.position for item in _live_items(items, is_live)]
-    if not live_positions:
-        return cursor
-    if cursor in live_positions:
-        return cursor
-    ahead = [position for position in live_positions if position > cursor]
-    if ahead:
-        return ahead[0]
-    return live_positions[-1]
+    return _resolve_within(
+        [item.position for item in _live_items(items, is_live)], cursor
+    )
 
 
 def advance_cursor(
@@ -134,6 +149,10 @@ def advance_cursor(
     cursor clamps at the first and last live items (advancing past an end stays
     put). The starting cursor is resolved first, so advancing off a tombstone
     behaves like advancing from the nearest live item.
+
+    The live snapshot is taken once and both the resolve and the step run
+    against it, so ``current`` is always present in it -- a liveness value that
+    flips mid-call cannot raise (task-28241 review).
 
     Args:
         items: The set's pinned items.
@@ -147,7 +166,7 @@ def advance_cursor(
     live_positions = [item.position for item in _live_items(items, is_live)]
     if not live_positions:
         return cursor
-    current = resolve_cursor(items, cursor, is_live)
+    current = _resolve_within(live_positions, cursor)
     current_index = live_positions.index(current)
     new_index = current_index + (1 if step > 0 else -1 if step < 0 else 0)
     new_index = max(0, min(new_index, len(live_positions) - 1))
@@ -158,6 +177,9 @@ def review_progress(
     items: tuple[ReviewSetItem, ...], cursor: int, is_live: IsLive
 ) -> ReviewProgress:
     """Compute the live progress readout for ``cursor``.
+
+    The live snapshot is taken once and the cursor is resolved within it, so
+    the ordinal and the totals always agree (task-28241 review).
 
     Args:
         items: The set's pinned items.
@@ -172,14 +194,22 @@ def review_progress(
     reviewed = sum(1 for item in live if item.done)
     if total == 0:
         return ReviewProgress(index=0, total=0, reviewed=0)
-    resolved = resolve_cursor(items, cursor, is_live)
     positions = [item.position for item in live]
+    resolved = _resolve_within(positions, cursor)
     index = positions.index(resolved) + 1 if resolved in positions else 1
     return ReviewProgress(index=index, total=total, reviewed=reviewed)
 
 
 def is_empty(items: tuple[ReviewSetItem, ...], is_live: IsLive) -> bool:
-    """True when the set has no live items (every pinned item is a tombstone)."""
+    """True when the set has no live items (every pinned item is a tombstone).
+
+    Args:
+        items: The set's pinned items.
+        is_live: Liveness predicate.
+
+    Returns:
+        ``True`` when every pinned item is a tombstone.
+    """
     return not _live_items(items, is_live)
 
 
@@ -188,6 +218,13 @@ def is_complete(items: tuple[ReviewSetItem, ...], is_live: IsLive) -> bool:
 
     An empty (all-tombstoned) set is NOT complete -- it is empty (see
     :func:`is_empty`).
+
+    Args:
+        items: The set's pinned items.
+        is_live: Liveness predicate.
+
+    Returns:
+        ``True`` when at least one item is live and all live items are done.
     """
     live = _live_items(items, is_live)
     return bool(live) and all(item.done for item in live)

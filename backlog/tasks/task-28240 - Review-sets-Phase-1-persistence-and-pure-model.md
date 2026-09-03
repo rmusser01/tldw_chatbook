@@ -4,7 +4,7 @@ title: 'Review sets - Phase 1: persistence and pure model'
 status: Done
 assignee: []
 created_date: '2026-09-02 22:27'
-updated_date: '2026-09-02 22:43'
+updated_date: '2026-09-03 00:38'
 labels:
   - library
   - media-ux
@@ -35,5 +35,5 @@ Foundation for Library review sets (design: backlog/docs/design-library-review-s
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Phase 1 shipped. (1) Schema v4 in Library_Collections_DB (bumped _CURRENT_SCHEMA_VERSION 3->4; _REVIEW_SET_SCHEMA_DDL applied idempotently in _initialize_schema): review_sets + review_set_items. NO CREATE INDEX -- the one-active invariant is enforced transactionally in the service (deactivate-all then activate in one transaction), which keeps the change out of the index-plan-pin census. (2) Pure model Library/review_set_state.py: ReviewSet/ReviewSetItem/ReviewProgress + tombstone-aware advance_cursor/resolve_cursor/review_progress/is_complete/is_empty over an injected is_live predicate (cursor is absolute, progress/completion over LIVE items). (3) ReviewSetService Library/review_set_service.py: create(dedupe+pin+activate)/get/list/get_active/advance(persist)/set_cursor/mark_item_done/refresh_completion/activate/reopen/dismiss. Tombstone detection is a runtime is_live resolve (separate DB files, no FK possible). Tests: Tests/Library/test_review_set_state.py (14) + test_review_set_service.py (11), all green; updated the collections migration/service tests for v4 (schema_version 3->4, future-schema test uses 5). Preflight + all collections suites green (the one round_trip_public_ids failure is PRE-EXISTING on dev, confirmed by reverting). Files: DB/Library_Collections_DB.py, Library/review_set_state.py, Library/review_set_service.py.
+Phase 1 shipped + hardened after Qodo review on PR #2323. Schema v4 in Library_Collections_DB: review_sets + review_set_items + a partial UNIQUE index review_sets_one_active (active=1 AND deleted_at IS NULL) that enforces the one-active invariant in the schema AND matches get_active_review_set's WHERE clause (census row added, pre-convention). Pure model Library/review_set_state.py: tombstone-aware advance/resolve/progress/complete over an injected is_live, computed on a SINGLE live snapshot (no double-evaluation crash). Service Library/review_set_service.py: create (validates origin allow-list + non-empty name + non-empty items) / get / list(limit) / get_active / advance (atomic read+write) / set_cursor / mark_item_done / refresh_completion (atomic) / activate (guards a missing/dismissed id so it never clears the active set) / reopen / dismiss. Reads share one snapshot via _read_review_set. Tests in :memory: (Tests/Library/test_review_set_state.py + test_review_set_service.py). Files: DB/Library_Collections_DB.py, Library/review_set_state.py, Library/review_set_service.py, scripts/index_plan_pin_census.tsv.
 <!-- SECTION:NOTES:END -->

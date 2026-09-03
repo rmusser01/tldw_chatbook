@@ -2,11 +2,11 @@
 
 The impure seam over the pure model in ``review_set_state``: it owns the
 ``review_sets`` / ``review_set_items`` tables (schema v4 of
-``Library_Collections_DB``) and enforces the "one active set" invariant
-transactionally -- there is deliberately no partial unique index (see the DB
-module). Tombstone-aware navigation is delegated to the pure functions; the
-caller injects an ``is_live`` predicate (a resolve against the Media DB) so this
-layer never imports the Media DB.
+``Library_Collections_DB``) and upholds the "one active set" invariant
+transactionally (deactivate-then-activate), with the schema's partial UNIQUE
+index as the backstop. Tombstone-aware navigation is delegated to the pure
+functions; the caller injects an ``is_live`` predicate (a resolve against the
+Media DB) so this layer never imports the Media DB.
 
 See backlog/docs/design-library-review-sets.md.
 """
@@ -36,6 +36,12 @@ def _utc_now() -> str:
         .isoformat()
         .replace("+00:00", "Z")
     )
+
+
+#: The provenance tags a review set may carry (task-28241 review: validated).
+VALID_ORIGINS = frozenset({"browse", "selection", "read_later"})
+_LIST_LIMIT_DEFAULT = 200
+_LIST_LIMIT_MAX = 1000
 
 
 class ReviewSetService:
@@ -77,14 +83,28 @@ class ReviewSetService:
         invariant. The new set opens at cursor 0.
 
         Args:
-            name: Human label for the set.
-            origin: Provenance tag (``'browse'`` | ``'selection'`` |
-                ``'read_later'``).
-            items: Ordered ``(backing_media_id, title_snapshot)`` pairs.
+            name: Human label for the set. Must be non-empty after stripping.
+            origin: Provenance tag; one of :data:`VALID_ORIGINS`.
+            items: Ordered ``(backing_media_id, title_snapshot)`` pairs. Must
+                contain at least one distinct item.
 
         Returns:
             The new set's id.
+
+        Raises:
+            ValueError: If ``origin`` is not an allowed tag, ``name`` is blank,
+                or no distinct items are supplied (an empty set can neither be
+                navigated nor completed, so it is never created or activated).
         """
+        origin_tag = str(origin).strip()
+        if origin_tag not in VALID_ORIGINS:
+            raise ValueError(
+                f"origin must be one of {sorted(VALID_ORIGINS)}, got {origin!r}"
+            )
+        label = str(name).strip()
+        if not label:
+            raise ValueError("a review set needs a non-empty name")
+
         pinned: list[tuple[int, str]] = []
         seen: set[int] = set()
         for backing_media_id, title in items:
@@ -92,6 +112,8 @@ class ReviewSetService:
                 continue
             seen.add(backing_media_id)
             pinned.append((int(backing_media_id), str(title)))
+        if not pinned:
+            raise ValueError("a review set needs at least one item")
 
         set_id = self._id_factory()
         timestamp = self._now()
@@ -102,7 +124,7 @@ class ReviewSetService:
                 "set_id, name, origin, cursor, active, completed_at, "
                 "created_at, updated_at, deleted_at) "
                 "VALUES(?, ?, ?, 0, 1, NULL, ?, ?, NULL)",
-                (set_id, name, origin, timestamp, timestamp),
+                (set_id, label, origin_tag, timestamp, timestamp),
             )
             conn.executemany(
                 "INSERT INTO review_set_items("
@@ -118,38 +140,61 @@ class ReviewSetService:
     # -- reads ----------------------------------------------------------------
 
     def get_review_set(self, set_id: str) -> ReviewSet | None:
-        """Return the (non-dismissed) set and its items, or ``None``."""
+        """Return the (non-dismissed) set and its items, or ``None``.
+
+        Args:
+            set_id: The set to load.
+
+        Returns:
+            The :class:`ReviewSet`, or ``None`` when it is unknown or dismissed.
+        """
         with self._db.read_transaction() as conn:
-            row = conn.execute(
-                "SELECT * FROM review_sets "
-                "WHERE set_id = ? AND deleted_at IS NULL",
-                (set_id,),
-            ).fetchone()
-            if row is None:
-                return None
-            item_rows = conn.execute(
-                "SELECT * FROM review_set_items WHERE set_id = ? ORDER BY position",
-                (set_id,),
-            ).fetchall()
-        return self._to_review_set(row, item_rows)
+            return self._read_review_set(conn, set_id)
 
     def get_active_review_set(self) -> ReviewSet | None:
-        """Return the one active set, or ``None`` when none is active."""
-        with self._db.connection() as conn:
+        """Return the one active set, or ``None`` when none is active.
+
+        The active lookup and the set load share one read snapshot so they
+        cannot disagree if state changes concurrently (task-28241 review).
+
+        Returns:
+            The active :class:`ReviewSet`, or ``None``.
+        """
+        with self._db.read_transaction() as conn:
             row = conn.execute(
                 "SELECT set_id FROM review_sets "
                 "WHERE active = 1 AND deleted_at IS NULL",
             ).fetchone()
-        return self.get_review_set(row["set_id"]) if row is not None else None
+            return (
+                self._read_review_set(conn, row["set_id"])
+                if row is not None
+                else None
+            )
 
-    def list_review_sets(self) -> tuple[ReviewSet, ...]:
-        """Return every non-dismissed set, newest activity first."""
-        with self._db.connection() as conn:
+    def list_review_sets(
+        self, limit: int = _LIST_LIMIT_DEFAULT
+    ) -> tuple[ReviewSet, ...]:
+        """Return non-dismissed sets, newest activity first, bounded by ``limit``.
+
+        Args:
+            limit: Maximum sets to return; clamped to ``[1, 1000]`` so the
+                result and its per-set loading cannot grow without bound.
+
+        Returns:
+            Up to ``limit`` :class:`ReviewSet` objects, ordered by most-recent
+            activity.
+        """
+        bounded = max(1, min(int(limit), _LIST_LIMIT_MAX))
+        with self._db.read_transaction() as conn:
             rows = conn.execute(
                 "SELECT set_id FROM review_sets "
-                "WHERE deleted_at IS NULL ORDER BY updated_at DESC, set_id",
+                "WHERE deleted_at IS NULL ORDER BY updated_at DESC, set_id "
+                "LIMIT ?",
+                (bounded,),
             ).fetchall()
-        loaded = (self.get_review_set(row["set_id"]) for row in rows)
+            loaded = [
+                self._read_review_set(conn, row["set_id"]) for row in rows
+            ]
         return tuple(review_set for review_set in loaded if review_set is not None)
 
     # -- navigation + marks ---------------------------------------------------
@@ -168,23 +213,40 @@ class ReviewSetService:
         Returns:
             The new absolute cursor position.
         """
-        review_set = self.get_review_set(set_id)
-        if review_set is None:
-            return 0
-        new_cursor = advance_cursor(
-            review_set.items, review_set.cursor, step, is_live
-        )
-        self._set_cursor(set_id, new_cursor)
+        timestamp = self._now()
+        with self._db.transaction() as conn:
+            review_set = self._read_review_set(conn, set_id)
+            if review_set is None:
+                return 0
+            new_cursor = advance_cursor(
+                review_set.items, review_set.cursor, step, is_live
+            )
+            conn.execute(
+                "UPDATE review_sets SET cursor = ?, updated_at = ? "
+                "WHERE set_id = ?",
+                (int(new_cursor), timestamp, set_id),
+            )
         return new_cursor
 
     def set_cursor(self, set_id: str, cursor: int) -> None:
-        """Persist an absolute cursor position (used by picker jumps)."""
+        """Persist an absolute cursor position (used by picker jumps).
+
+        Args:
+            set_id: The set to reposition.
+            cursor: The new absolute cursor position.
+        """
         self._set_cursor(set_id, int(cursor))
 
     def mark_item_done(
         self, set_id: str, backing_media_id: int, done: bool
     ) -> None:
-        """Set or clear an item's done mark by its backing media id."""
+        """Set or clear an item's done mark by its backing media id.
+
+        Args:
+            set_id: The set that owns the item.
+            backing_media_id: The item's backing media id.
+            done: ``True`` to mark reviewed, ``False`` to clear the mark.
+        """
         timestamp = self._now()
         with self._db.transaction() as conn:
             conn.execute(
@@ -212,12 +274,15 @@ class ReviewSetService:
         Returns:
             ``True`` when the set is now complete.
         """
-        review_set = self.get_review_set(set_id)
-        if review_set is None:
-            return False
-        complete = is_complete(review_set.items, is_live)
         timestamp = self._now()
         with self._db.transaction() as conn:
+            # Read and write in ONE transaction so a concurrent mark cannot
+            # commit between the completion check and the stamp (task-28241
+            # review).
+            review_set = self._read_review_set(conn, set_id)
+            if review_set is None:
+                return False
+            complete = is_complete(review_set.items, is_live)
             if complete and review_set.completed_at is None:
                 conn.execute(
                     "UPDATE review_sets SET completed_at = ?, updated_at = ? "
@@ -235,18 +300,38 @@ class ReviewSetService:
     # -- lifecycle ------------------------------------------------------------
 
     def activate(self, set_id: str) -> None:
-        """Make ``set_id`` the single active set (deactivating any other)."""
+        """Make ``set_id`` the single active set (deactivating any other).
+
+        A missing or dismissed id is a no-op -- the current active set is left
+        untouched rather than cleared (task-28241 review). The existence check
+        and the activation share one transaction, so the previous active set is
+        only deactivated once the new target is known to exist.
+
+        Args:
+            set_id: The set to activate.
+        """
         timestamp = self._now()
         with self._db.transaction() as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM review_sets "
+                "WHERE set_id = ? AND deleted_at IS NULL",
+                (set_id,),
+            ).fetchone()
+            if exists is None:
+                return
             self._deactivate_all(conn, timestamp)
             conn.execute(
                 "UPDATE review_sets SET active = 1, updated_at = ? "
-                "WHERE set_id = ? AND deleted_at IS NULL",
+                "WHERE set_id = ?",
                 (timestamp, set_id),
             )
 
     def reopen(self, set_id: str) -> None:
-        """Clear a set's completion stamp, keeping its done marks."""
+        """Clear a set's completion stamp, keeping its done marks.
+
+        Args:
+            set_id: The completed set to reopen.
+        """
         timestamp = self._now()
         with self._db.transaction() as conn:
             conn.execute(
@@ -256,7 +341,11 @@ class ReviewSetService:
             )
 
     def dismiss(self, set_id: str) -> None:
-        """Soft-delete a set and deactivate it."""
+        """Soft-delete a set and deactivate it.
+
+        Args:
+            set_id: The set to dismiss.
+        """
         timestamp = self._now()
         with self._db.transaction() as conn:
             conn.execute(
@@ -266,6 +355,26 @@ class ReviewSetService:
             )
 
     # -- internals ------------------------------------------------------------
+
+    def _read_review_set(
+        self, conn: sqlite3.Connection, set_id: str
+    ) -> ReviewSet | None:
+        """Load a set and its items on a given connection (no own transaction).
+
+        Shared by every read and by the atomic read-then-write paths, so a
+        set's header and its items always come from one snapshot/transaction.
+        """
+        row = conn.execute(
+            "SELECT * FROM review_sets WHERE set_id = ? AND deleted_at IS NULL",
+            (set_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        item_rows = conn.execute(
+            "SELECT * FROM review_set_items WHERE set_id = ? ORDER BY position",
+            (set_id,),
+        ).fetchall()
+        return self._to_review_set(row, item_rows)
 
     def _deactivate_all(self, conn: sqlite3.Connection, timestamp: str) -> None:
         conn.execute(
