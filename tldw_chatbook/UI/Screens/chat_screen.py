@@ -7207,19 +7207,30 @@ class ChatScreen(BaseAppScreen):
         """
         store = self._console_chat_store
         resume_pending = self._console_ordered_resume_pending()
+        # task-28029: `_workspace` is a wiring-set instance attribute
+        # (``build_console_controllers``), yet this helper runs on views
+        # that reach the store BEFORE wiring -- bare ``__new__`` screens in
+        # the state-restore tests, and the early-attach path
+        # ``_bind_view_hooks`` documents. No workspace controller means no
+        # view-scoped context: keep the runtime's safe global default (the
+        # same context an explicit resume holds), exactly as the
+        # ``resume_pending`` branch already does.
+        workspace = getattr(self, "_workspace", None)
+        workspace_context = (
+            workspace._current_console_workspace_context()
+            if workspace is not None
+            else None
+        )
         if store is None:
             store = self._console_runtime().ensure_chat_store(
                 workspace_context=(
-                    None
-                    if resume_pending
-                    else self._workspace._current_console_workspace_context()
+                    None if resume_pending else workspace_context
                 ),
                 on_scope_flushed=self._on_console_scope_flushed,
             )
         elif store.active_session_id is None and not resume_pending:
-            store.set_workspace_context(
-                self._workspace._current_console_workspace_context()
-            )
+            if workspace_context is not None:
+                store.set_workspace_context(workspace_context)
         return store
 
     def _ensure_console_agent_bridge(self) -> Any:
