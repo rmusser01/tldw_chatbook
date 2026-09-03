@@ -196,6 +196,13 @@ from tldw_chatbook.Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Chat.stream_stall_watchdog import (
+    DEFAULT_STALL_TIMEOUT_SECONDS,
+    StreamStallError,
+    record_session_stall,
+    reset_session_stalls,
+    watch_content_stalls,
+)
 from tldw_chatbook.config import (
     DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
     MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
@@ -2578,6 +2585,26 @@ class ConsoleAgentTraceRequestFactory:
         )
 
 
+def _stall_timeout_seconds() -> float:
+    """Content-stall ceiling for streamed turns (TASK-26003).
+
+    Reads ``[chat_defaults] stream_stall_timeout_seconds``; non-positive disables the
+    watchdog. Read per turn so a config edit takes effect without a restart.
+    """
+    from tldw_chatbook.config import get_cli_setting
+
+    try:
+        return float(
+            get_cli_setting(
+                "chat_defaults",
+                "stream_stall_timeout_seconds",
+                DEFAULT_STALL_TIMEOUT_SECONDS,
+            )
+        )
+    except (TypeError, ValueError):
+        return DEFAULT_STALL_TIMEOUT_SECONDS
+
+
 class _StreamingModelAdapter:
     """chat_call-compatible adapter that streams every PRIMARY turn live.
 
@@ -2959,7 +2986,7 @@ class _StreamingModelAdapter:
                     getattr(self._resolution, "may_emit_thinking", False)
                 ),
             )
-            async for chunk in self._gateway.stream_chat(
+            async for chunk in watch_content_stalls(self._gateway.stream_chat(
                 self._resolution,
                 dispatch_messages,
                 route=route,
@@ -2967,7 +2994,7 @@ class _StreamingModelAdapter:
                 route_chain_id=route_chain_id,
                 capture_mode=self._capture_mode,
                 **stream_kwargs,
-            ):
+            ), _stall_timeout_seconds(), provider=self._resolution.provider):
                 if terminal_metadata is not None:
                     raise ValueError("Provider terminal metadata must be final.")
                 if isinstance(
@@ -3039,6 +3066,9 @@ class _StreamingModelAdapter:
         # TURN's loop can no longer strand a child mid-call -- the case the
         # timeout above was the last line of defence against.
         future = asyncio.run_coroutine_threadsafe(_consume(), self._submit_loop)
+        _stall_session_id = self._store.session_id_for_message(
+            self._assistant_message_id
+        )
         try:
             future.result(timeout=_CHAT_CALL_TIMEOUT_SECONDS)
         except FuturesTimeoutError:
@@ -3046,6 +3076,26 @@ class _StreamingModelAdapter:
             raise TimeoutError(
                 f"provider turn did not complete within {_CHAT_CALL_TIMEOUT_SECONDS}s"
             ) from None
+        except StreamStallError:
+            # AC#3: a content stall is reported distinctly from a network error
+            # and from a user cancel. AC#4: repeated stalls against the same
+            # provider in a session surface a warning instead of silent retries.
+            provider_label = self._resolution.provider
+            if record_session_stall(_stall_session_id, provider_label):
+                logger.warning(
+                    "provider stream stalled repeatedly this session "
+                    "(provider={}); surfacing rather than retrying silently",
+                    provider_label,
+                )
+            else:
+                logger.warning(
+                    "provider stream stalled: no content within the stall window "
+                    "(provider={})",
+                    provider_label,
+                )
+            raise
+        # A productive turn clears this session's stall streak (AC#4).
+        reset_session_stalls(_stall_session_id, self._resolution.provider)
         _visible, tool_call = gate.result()
         if tool_call is not None and not native_calls and not is_subagent:
             self._thinking_capture.observe_tool()
