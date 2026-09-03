@@ -64,6 +64,18 @@ from ....UI.Screens.scheduling.results_tab import (
 )
 from ....UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
 from ....Widgets.confirmation_dialog import ConfirmationDialog
+# schedules-redesign PR-1, Task 4: `automation_execution_target_label`/
+# `automation_name_cell` moved to `definition_detail.py` (that leaf
+# module's own "Model"/"Runs on" row formatters need them and importing
+# them back from here would be circular) -- re-exported via this import
+# so the DataTable render call site below and the pre-existing
+# `test_execution_target_label_matrix` test (which imports
+# `automation_execution_target_label` from THIS module) keep working.
+from .definition_detail import (
+    DefinitionDetail,
+    automation_execution_target_label,
+    automation_name_cell,
+)
 from .forms.automation_definition_form import AutomationDefinitionForm
 from .forms.new_task_choice_modal import NewTaskChoiceModal
 from .forms.reminder_form import ReminderForm
@@ -138,76 +150,6 @@ _NOTIFICATION_OBSERVER_MAX_RECONNECTS = 5
 #: a rare outer-level restart). Interrupted immediately by unmount via
 #: `cancel_event`, never a blind sleep.
 _NOTIFICATION_OBSERVER_RESTART_DELAY_SECONDS = 5.0
-
-
-def automation_execution_target_label(definition: dict[str, Any]) -> str:
-    """Render one definition's per-task execution target (ADR-077 AC#7).
-
-    ``input.provider``/``input.model`` ride the definition payload and the
-    server executor honors them. The column shows what was PINNED here:
-    when neither key is set the label is ``auto`` -- the definition pins
-    nothing, and the server resolves the run target from its own
-    automation-config executor defaults (``[Scheduled_Tasks_Automation]
-    executor_provider``/``executor_model``) falling back to the server
-    default. Those layers live in server config, not the payload, so
-    ``auto`` is the honest client-side rendering, not a claim about which
-    server layer actually won.
-
-    Args:
-        definition: One row from the server's definition list, as the raw
-            dict the scheduling server client returns.
-
-    Returns:
-        A short cell label: ``provider/model``, either part alone, or
-        ``auto`` when neither is set.
-    """
-    source = definition.get("input") if isinstance(definition.get("input"), dict) else {}
-    provider = str(source.get("provider") or "").strip()
-    model = str(source.get("model") or "").strip()
-    if provider and model:
-        return f"{provider}/{model}"
-    if provider:
-        return provider
-    if model:
-        return model
-    return "auto"
-
-
-def automation_name_cell(definition: dict[str, Any]) -> str:
-    """Name cell for the merged local+server Automations list (task-5 fix round).
-
-    The tab now mixes local-owned rows into what used to be a server-only
-    list, so every row needs a visible owner distinction or a local save
-    reads as indistinguishable from a server one. A prefix on the existing
-    Name cell is the smallest honest rendering -- no new column, no CSS
-    changes -- since the table's own `key=` already disambiguates rows for
-    everything that acts on them; this prefix is purely for the human
-    reading the table.
-
-    Args:
-        definition: One merged row (local DB dict or server API dict --
-            both carry `owner_id` and `name`, confirmed against the real
-            server fixture `automation_definition_list.json`).
-
-    Returns:
-        `"[This device] <name>"` for a local row, `"[<server id>] <name>"`
-        for a server-scoped one, and `"[<server id> · pending sync]
-        <name>"` for one authored offline that has not reached the server
-        yet (`pending_sync`, stamped by `_load_local_automations`) -- that
-        row is only on this device, and saying "server" flat would claim a
-        definition the server has never heard of (final review I5).
-    """
-    from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
-
-    owner_id = str(definition.get("owner_id") or "local")
-    name = str(definition.get("name") or definition.get("id") or "")
-    if is_server_scoped_owner(owner_id):
-        label = owner_id.split(":", 1)[1] if ":" in owner_id else owner_id
-        if definition.get("pending_sync"):
-            label = f"{label} · pending sync"
-    else:
-        label = "This device"
-    return f"[{label}] {name}"
 
 
 def _cancel_toast_text(name: str) -> str:
@@ -429,6 +371,14 @@ class SchedulesWorkbench(BaseAppScreen):
                                 id="scheduling-automations-table", cursor_type="row"
                             )
                             yield Static("", id="scheduling-automations-notice")
+                        # schedules-redesign PR-1, Task 4: the definitions
+                        # detail pane -- the first per-row detail widget the
+                        # Automations tab has had (see redesign-pr1-survey.md
+                        # section 1's "no per-row detail widget" finding).
+                        # Third pane alongside list|history, matching the
+                        # Queue tab's list|detail|inspector idiom.
+                        with Vertical(id="scheduling-automations-detail-pane"):
+                            yield DefinitionDetail(id="scheduling-automation-detail")
                         with Vertical(id="scheduling-automation-history-pane"):
                             yield Static(
                                 "Run history",
@@ -1869,6 +1819,9 @@ class SchedulesWorkbench(BaseAppScreen):
             self._clear_automation_history(
                 "Run history needs a connected server."
             )
+            self.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            ).set_definition(None)
             return
 
         # task-15476 discipline: a rebuild must reconcile the selection by
@@ -1932,6 +1885,9 @@ class SchedulesWorkbench(BaseAppScreen):
         else:
             self._selected_automation_id = None
             self._clear_automation_history("Select an automation to see its history.")
+            self.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            ).set_definition(None)
 
         notice_text = self._automations_notice_text(
             local_items, server_items, server_available, total_server, server_error
@@ -2170,11 +2126,76 @@ class SchedulesWorkbench(BaseAppScreen):
             else "No recorded events for this automation yet.",
         )
 
+    def _request_automation_detail(self, definition_id: str) -> None:
+        """Schedule the definitions detail pane's DB reads through their
+        own exclusive worker group (schedules-redesign PR-1, Task 4): the
+        pane's counts are local-only sqlite reads, taken off the event
+        loop the same way `_load_local_automations` already reads
+        `service.db.*` from inside a worker coroutine."""
+        # run_worker takes no worker arguments in Textual 8.x -- bind the id
+        # in a closure (same shape as _request_automation_history's _load).
+        async def _load() -> None:
+            await self._load_automation_detail(definition_id)
+
+        self.run_worker(
+            _load,
+            exclusive=True,
+            group="schedules-load-automation-detail",
+        )  # type: ignore[arg-type]
+
+    async def _load_automation_detail(self, definition_id: str) -> None:
+        """Paint the definitions detail pane for `definition_id`.
+
+        `DefinitionDetail.set_definition` performs no I/O itself; this
+        method fetches the Task 2 count seams off the event loop
+        (`asyncio.to_thread`) and passes the results in.
+        """
+        detail = self.query_one("#scheduling-automation-detail", DefinitionDetail)
+        definition = self._selected_automation()
+        # A newer selection may have won the race with this worker; render
+        # nothing for a stale definition id (same guard `_load_automation_
+        # history` uses).
+        if definition is None or definition_id != self._selected_automation_id:
+            return
+        service = self._scheduling_service
+        if service is None:
+            detail.set_definition(
+                definition, run_count=0, last_run=None, unread_count=0
+            )
+            return
+
+        def _read_counts() -> tuple[int, dict[str, Any] | None, int]:
+            owner_id = str(definition.get("owner_id") or "local")
+            run_count = service.db.count_automation_runs(definition_id)
+            runs = service.db.list_automation_runs(owner_id, definition_id, limit=1)
+            unread_count = service.db.count_unread_results(
+                owner_id=None, definition_id=definition_id
+            )
+            return run_count, (runs[0] if runs else None), unread_count
+
+        try:
+            run_count, last_run, unread_count = await asyncio.to_thread(_read_counts)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Failed to load automation detail counts (definition_id={})",
+                definition_id,
+            )
+            run_count, last_run, unread_count = 0, None, 0
+        if definition_id != self._selected_automation_id:
+            return
+        detail.set_definition(
+            definition,
+            run_count=run_count,
+            last_run=last_run,
+            unread_count=unread_count,
+        )
+
     @on(DataTable.RowHighlighted, "#scheduling-automations-table")
     def _on_automations_row_highlighted(
         self, event: DataTable.RowHighlighted
     ) -> None:
-        """Track the highlighted definition for Run-now and its history pane."""
+        """Track the highlighted definition for Run-now, its history pane,
+        and its detail pane (schedules-redesign PR-1, Task 4)."""
         new_id = (
             str(event.row_key.value) if event.row_key and event.row_key.value else None
         )
@@ -2183,8 +2204,12 @@ class SchedulesWorkbench(BaseAppScreen):
         self._selected_automation_id = new_id
         if new_id is None:
             self._clear_automation_history("Select an automation to see its history.")
+            self.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            ).set_definition(None)
         else:
             self._request_automation_history(new_id)
+            self._request_automation_detail(new_id)
 
     def _selected_automation(self) -> dict[str, Any] | None:
         """Return the highlighted automation definition, if any."""
@@ -2957,6 +2982,16 @@ class SchedulesWorkbench(BaseAppScreen):
         else:
             self._resize_notice = ""
         self._update_pane_notice()
+        # schedules-redesign PR-1, Task 4: the Automations tab's detail
+        # pane hides at the same width the Queue tab's own detail pane
+        # does -- same mechanism (`pane-hidden`), separate try/except so a
+        # missing pane here (e.g. before the Automations TabPane mounts)
+        # never short-circuits the Queue-pane handling above.
+        try:
+            automations_detail = self.query_one("#scheduling-automations-detail-pane")
+        except Exception:  # noqa: BLE001 - pane not mounted yet
+            return
+        automations_detail.set_class(hide_detail, "pane-hidden")
 
     def _update_pane_notice(self) -> None:
         """Compose the queue-pane notice: hidden panes, marks, glyph legend.

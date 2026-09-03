@@ -32,6 +32,7 @@ class MockSchedulingDB:
         conflicts: list | None = None,
         automation_definitions: list[dict] | None = None,
         automation_results: list[dict] | None = None,
+        automation_runs: list[dict] | None = None,
     ) -> None:
         self._sync_state = sync_state or {}
         self._conflicts = conflicts or []
@@ -45,6 +46,11 @@ class MockSchedulingDB:
         #: EVERY existing SchedulesWorkbench test built on this fake needs
         #: these even when a test never touches the Results tab.
         self._automation_results = list(automation_results or [])
+        #: schedules-redesign PR-1, Task 4: `automation_runs` rows this DB
+        #: "contains" -- the definitions detail pane's "Last run"/"Run
+        #: count" rows read these (`count_automation_runs`/
+        #: `list_automation_runs`).
+        self._automation_runs = list(automation_runs or [])
 
     def get_sync_state(self, owner_id: str):
         return dict(self._sync_state)
@@ -110,25 +116,68 @@ class MockSchedulingDB:
         return rows[offset : offset + limit]
 
     def count_automation_results(
-        self, owner_id: str | None, review_state: str | None = None
+        self,
+        owner_id: str | None,
+        review_state: str | None = None,
+        definition_id: str | None = None,
     ) -> int:
         """Stub: mirrors the real `count_automation_results` -- the "of N"
         denominator for the capped inbox listing. `_refresh_results_tab`
         calls it unconditionally, so every workbench test built on this
-        fake needs it even when it never opens the Results tab."""
+        fake needs it even when it never opens the Results tab.
+
+        `definition_id` (Task 2 seam) added for the definitions detail
+        pane's per-definition unread-count row (schedules-redesign PR-1,
+        Task 4) -- matched exactly as given, same as the real DB."""
         return len(
             [
                 row
                 for row in self._automation_results
                 if (review_state is None or row.get("review_state") == review_state)
                 and (owner_id is None or row.get("owner_id") == owner_id)
+                and (definition_id is None or row.get("definition_id") == definition_id)
             ]
         )
 
-    def count_unread_results(self, owner_id: str | None) -> int:
+    def count_unread_results(
+        self, owner_id: str | None, definition_id: str | None = None
+    ) -> int:
         """Stub: mirrors the real `count_unread_results` (Results tab
-        badge, schedules-handoff PR-6 task 3)."""
-        return self.count_automation_results(owner_id, review_state="unread")
+        badge, schedules-handoff PR-6 task 3; `definition_id` filter added
+        Task 2/used by Task 4's detail pane)."""
+        return self.count_automation_results(
+            owner_id, review_state="unread", definition_id=definition_id
+        )
+
+    def list_automation_runs(
+        self,
+        owner_id: str,
+        definition_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        """Stub: mirrors the real `list_automation_runs` (schedules-
+        redesign PR-1, Task 4's "Last run" row), newest first by
+        `created_at`."""
+        rows = [
+            dict(row)
+            for row in self._automation_runs
+            if row.get("owner_id") == owner_id
+            and (definition_id is None or row.get("definition_id") == definition_id)
+        ]
+        rows.sort(key=lambda row: row.get("created_at") or "", reverse=True)
+        return rows[offset : offset + limit]
+
+    def count_automation_runs(self, definition_id: str) -> int:
+        """Stub: mirrors the real `count_automation_runs` (schedules-
+        redesign PR-1, Task 4's "Run count" row)."""
+        return len(
+            [
+                row
+                for row in self._automation_runs
+                if row.get("definition_id") == definition_id
+            ]
+        )
 
     def upsert_automation_definitions_from_server(self, owner_id: str, items: list[dict]):
         inserted = 0

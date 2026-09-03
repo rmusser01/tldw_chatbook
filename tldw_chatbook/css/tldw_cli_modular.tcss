@@ -13663,6 +13663,33 @@ SchedulesWorkbench TabbedContent TabPane {
     border: solid $ds-grid-line;
 }
 
+/* schedules-redesign PR-1, Task 4: the Automations tab's third pane --
+ * the definitions detail widget (DefinitionDetail), the same list|detail|
+ * inspector idiom as the Queue tab's three panes above. */
+#scheduling-automations-detail-pane {
+    width: 1fr;
+    min-width: 30;
+    height: 1fr;
+    min-height: 0;
+    padding: 1;
+    border: solid $ds-grid-line;
+}
+
+#scheduling-automation-detail-empty-state {
+    color: $text-muted;
+    text-align: center;
+    padding: 3 1;
+}
+
+#scheduling-automation-detail-question {
+    height: auto;
+    padding: 1;
+    margin-bottom: 1;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $text;
+}
+
 #scheduling-automations-table {
     height: 1fr;
 }
@@ -13712,7 +13739,8 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
 /* Pane headers */
 #scheduling-list-title,
 #scheduling-task-detail-header,
-#scheduling-task-inspector-header {
+#scheduling-task-inspector-header,
+#scheduling-automation-detail-header {
     text-style: bold;
     color: $text;
     padding: 0 0 0 0;
