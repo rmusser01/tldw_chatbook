@@ -2578,6 +2578,62 @@ class ConsoleAgentTraceRequestFactory:
         )
 
 
+def _stall_timeout_seconds() -> float:
+    """Content-stall ceiling for streamed turns (TASK-26003).
+
+    Precedence follows the project rule env -> config.toml -> default:
+    ``TLDW_STREAM_STALL_TIMEOUT_SECONDS`` first, then ``[chat_defaults]
+    stream_stall_timeout_seconds``, then :data:`DEFAULT_STALL_TIMEOUT_SECONDS`.
+    A non-positive value disables the watchdog; a non-finite or unparseable
+    value falls back to the default. Read per turn so a config edit takes effect
+    without a restart.
+
+    Returns:
+        The content-idle ceiling in seconds (<= 0 disables the watchdog).
+    """
+    import math
+    import os
+
+    from tldw_chatbook.config import get_cli_setting
+    from tldw_chatbook.Chat.stream_stall_watchdog import (
+        DEFAULT_STALL_TIMEOUT_SECONDS,
+    )
+
+    raw: Any = os.environ.get("TLDW_STREAM_STALL_TIMEOUT_SECONDS")
+    if raw is None or not str(raw).strip():
+        raw = get_cli_setting(
+            "chat_defaults",
+            "stream_stall_timeout_seconds",
+            DEFAULT_STALL_TIMEOUT_SECONDS,
+        )
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_STALL_TIMEOUT_SECONDS
+    if not math.isfinite(value):
+        return DEFAULT_STALL_TIMEOUT_SECONDS
+    return value
+
+
+def record_session_stall(*args: Any, **kwargs: Any) -> bool:
+    """Deferred proxy to keep stream_stall_watchdog off the boot import graph
+    (ADR-097 ratchet) while remaining a patchable module attribute for tests."""
+    from tldw_chatbook.Chat.stream_stall_watchdog import (
+        record_session_stall as _impl,
+    )
+
+    return _impl(*args, **kwargs)
+
+
+def reset_session_stalls(*args: Any, **kwargs: Any) -> None:
+    """Deferred proxy (see record_session_stall)."""
+    from tldw_chatbook.Chat.stream_stall_watchdog import (
+        reset_session_stalls as _impl,
+    )
+
+    _impl(*args, **kwargs)
+
+
 class _StreamingModelAdapter:
     """chat_call-compatible adapter that streams every PRIMARY turn live.
 
@@ -2959,7 +3015,11 @@ class _StreamingModelAdapter:
                     getattr(self._resolution, "may_emit_thinking", False)
                 ),
             )
-            async for chunk in self._gateway.stream_chat(
+            from tldw_chatbook.Chat.stream_stall_watchdog import (
+                watch_content_stalls,
+            )
+
+            async for chunk in watch_content_stalls(self._gateway.stream_chat(
                 self._resolution,
                 dispatch_messages,
                 route=route,
@@ -2967,7 +3027,7 @@ class _StreamingModelAdapter:
                 route_chain_id=route_chain_id,
                 capture_mode=self._capture_mode,
                 **stream_kwargs,
-            ):
+            ), _stall_timeout_seconds(), provider=self._resolution.provider):
                 if terminal_metadata is not None:
                     raise ValueError("Provider terminal metadata must be final.")
                 if isinstance(
@@ -3038,7 +3098,12 @@ class _StreamingModelAdapter:
         # `child_lifeline`), so `run_reply`'s end-of-turn teardown of the
         # TURN's loop can no longer strand a child mid-call -- the case the
         # timeout above was the last line of defence against.
+        from tldw_chatbook.Chat.stream_stall_watchdog import StreamStallError
+
         future = asyncio.run_coroutine_threadsafe(_consume(), self._submit_loop)
+        _stall_session_id = self._store.session_id_for_message(
+            self._assistant_message_id
+        )
         try:
             future.result(timeout=_CHAT_CALL_TIMEOUT_SECONDS)
         except FuturesTimeoutError:
@@ -3046,6 +3111,24 @@ class _StreamingModelAdapter:
             raise TimeoutError(
                 f"provider turn did not complete within {_CHAT_CALL_TIMEOUT_SECONDS}s"
             ) from None
+        except StreamStallError:
+            # AC#3: a content stall is reported distinctly from a network error
+            # and from a user cancel. AC#4: repeated stalls against the same
+            # provider in a session surface a warning instead of silent retries.
+            provider_label = self._resolution.provider
+            repeated = record_session_stall(_stall_session_id, provider_label)
+            # A stall is terminal for the turn (StreamStallError is non-transient,
+            # so the run loop does not retry it). The threshold branch just marks
+            # a provider that keeps stalling across turns in this session (AC#4).
+            logger.warning(
+                "provider stream stalled: no content within the stall window "
+                "(provider={}, repeated_this_session={})",
+                provider_label,
+                repeated,
+            )
+            raise
+        # A productive turn clears this session's stall streak (AC#4).
+        reset_session_stalls(_stall_session_id, self._resolution.provider)
         _visible, tool_call = gate.result()
         if tool_call is not None and not native_calls and not is_subagent:
             self._thinking_capture.observe_tool()

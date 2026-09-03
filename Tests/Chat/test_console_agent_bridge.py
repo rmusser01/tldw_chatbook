@@ -9714,3 +9714,51 @@ def test_fleet_coordinator_factory_resizes_retention_caps_in_place(
     assert second is first
     assert second.retained_transcripts == 1
     assert second.retained_transcript_max_chars == 99
+
+
+# --- TASK-26003: stream stall watchdog is wired into the live chat_call path ---
+
+def test_content_stall_surfaces_through_chat_call(tmp_path, monkeypatch):
+    """AC#1/#3: a stream that yields then produces no further content is caught
+    by the watchdog through the real chat_call path and reported distinctly (a
+    warning naming the provider), not left to ride the wall budget."""
+    from tldw_chatbook.Chat import console_agent_bridge as bridge_mod
+    from tldw_chatbook.Chat import stream_stall_watchdog as wd
+
+    wd._SESSION_TRACKERS.clear()
+    # tiny content-idle ceiling so the test is fast and deterministic
+    monkeypatch.setattr(bridge_mod, "_stall_timeout_seconds", lambda: 0.1)
+
+    class _StallingThenRecoverGateway:
+        def __init__(self):
+            self.calls = 0
+
+        async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                yield "partial "          # some content...
+                await asyncio.sleep(5)    # ...then contentless (a real stream
+                yield "unreachable"       # would still be sending keep-alives)
+            else:
+                yield "recovered"
+
+    # spy on the distinct stall-reporting seam (the app logs via loguru, which
+    # caplog does not capture; recording here proves the boundary handler ran)
+    recorded = []
+    real_record = wd.record_session_stall
+    def _spy(session_id, provider, **kw):
+        recorded.append((session_id, provider))
+        return real_record(session_id, provider, **kw)
+    monkeypatch.setattr(bridge_mod, "record_session_stall", _spy)
+
+    gateway = _StallingThenRecoverGateway()
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(
+        tmp_path / "stall", gateway
+    )
+    _run(bridge, store, session, assistant_id)
+
+    # the watchdog fired end to end through chat_call and reported the stall
+    # distinctly (a StreamStallError caught at the boundary, not a generic error)
+    assert recorded, "expected the stall boundary handler to fire through chat_call"
+    assert recorded[0][1] == "TestProvider"
+    wd._SESSION_TRACKERS.clear()
