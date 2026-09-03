@@ -3715,6 +3715,78 @@ ISO_CFG = AgentConfig(
 )
 
 
+def test_isolated_child_never_inherits_shell_or_virtual_cli(db, git_repo, monkeypatch):
+    """Finding 6 (Qodo round, HIGH): worktree routing only ever covers
+    `_PATH_AUTHORITY_LOCAL_NAMES` -- `shell_exec` and `virtual_cli`
+    execute against the ORIGINAL workspace root regardless (the virtual
+    CLI binds its `WorkspaceToolExecutor` at compose time; raw shell runs
+    real commands there too), and children inherit the primary's
+    allow-list by default. An isolated child in a shell/virtual-CLI-
+    enabled session could therefore mutate the shared tree straight
+    through either tool, bypassing isolation entirely. Fail-closed fix:
+    both names are excluded from `child_allowed_tools` whenever
+    `isolation == "worktree"` -- a plain (non-isolated) sibling keeps
+    them, since only isolation withholds these two.
+
+    Captures every `AgentConfig` this turn constructs (there is exactly
+    one per spawned child, in spawn order -- the primary's own config is
+    a `dataclasses.replace`, never a fresh `AgentConfig(...)` call) to
+    read `allowed_tools` directly, independent of whether either tool
+    has a real provider registered in the catalog (irrelevant to the
+    allow-list filter itself, which is pure name-based tuple
+    composition).
+    """
+    from tldw_chatbook.Agents import agent_service as agent_service_module
+    from tldw_chatbook.Agents.raw_shell_tool_provider import RAW_SHELL_TOOL_NAME
+    from tldw_chatbook.Agents.virtual_cli_provider import VIRTUAL_CLI_TOOL_NAME
+
+    captured_configs = []
+    real_agent_config = agent_service_module.AgentConfig
+
+    def _spy_agent_config(**kwargs):
+        cfg = real_agent_config(**kwargs)
+        captured_configs.append(cfg)
+        return cfg
+
+    monkeypatch.setattr(agent_service_module, "AgentConfig", _spy_agent_config)
+
+    provider = _fs_local_provider(git_repo)
+    shell_cli_cfg = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=(RAW_SHELL_TOOL_NAME, VIRTUAL_CLI_TOOL_NAME, SPAWN_TOOL_NAME),
+        budget=RunBudget(max_steps=40, max_model_turns=40, max_subagents=4),
+    )
+    service, chat, coordinator = make_fleet_service(
+        db,
+        parent_replies=[
+            fence(SPAWN_TOOL_NAME, {"task": "iso task", "isolation": "worktree"}),
+            fence(SPAWN_TOOL_NAME, {"task": "plain task"}),
+            "spawned both",
+        ],
+        child_replies={"iso task": ["iso done"], "plain task": ["plain done"]},
+        providers=(provider,),
+    )
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=shell_cli_cfg,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    join_fleet_children(service)
+
+    child_configs = [
+        cfg for cfg in captured_configs if cfg is not shell_cli_cfg
+    ]
+    assert len(child_configs) == 2, child_configs
+    iso_config, plain_config = child_configs
+    assert RAW_SHELL_TOOL_NAME not in iso_config.allowed_tools
+    assert VIRTUAL_CLI_TOOL_NAME not in iso_config.allowed_tools
+    assert RAW_SHELL_TOOL_NAME in plain_config.allowed_tools
+    assert VIRTUAL_CLI_TOOL_NAME in plain_config.allowed_tools
+
+
 def test_isolated_spawn_writes_are_invisible_until_merge(db, git_repo):
     """AC#1 (TASK-28238 P2 T4): an isolation="worktree" child's fs_write
     lands in ITS OWN worktree, not the shared tree; a plain sibling

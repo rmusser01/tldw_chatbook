@@ -963,6 +963,81 @@ def test_resumed_worktree_isolated_child_gets_a_fresh_worktree(db, git_repo):
     )
 
 
+def test_resumed_isolated_child_never_inherits_shell_or_virtual_cli(
+    db, git_repo, monkeypatch
+):
+    """Finding 6 twin (Qodo round): the resume call site's own
+    child_allowed_tools composition (a deliberate duplicate of spawn's,
+    per this module's own "only the launch tail is shared" convention)
+    must exclude shell_exec/virtual_cli exactly like the spawn path does,
+    now that Finding 7 threads `retained.isolation` through instead of a
+    literal None.
+    """
+    from tldw_chatbook.Agents import agent_service as agent_service_module
+    from tldw_chatbook.Agents.raw_shell_tool_provider import RAW_SHELL_TOOL_NAME
+    from tldw_chatbook.Agents.virtual_cli_provider import VIRTUAL_CLI_TOOL_NAME
+
+    captured_configs = []
+    real_agent_config = agent_service_module.AgentConfig
+
+    def _spy_agent_config(**kwargs):
+        cfg = real_agent_config(**kwargs)
+        captured_configs.append(cfg)
+        return cfg
+
+    monkeypatch.setattr(agent_service_module, "AgentConfig", _spy_agent_config)
+
+    provider = _fs_local_provider(git_repo)
+    shell_cli_resume_cfg = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=(
+            RAW_SHELL_TOOL_NAME,
+            VIRTUAL_CLI_TOOL_NAME,
+            SPAWN_TOOL_NAME,
+            WAIT_AGENTS_TOOL_NAME,
+            SEND_TO_AGENT_TOOL_NAME,
+        ),
+        budget=RunBudget(max_steps=60, max_model_turns=60, max_subagents=4),
+    )
+    holder: dict = {}
+
+    def resume():
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME,
+            {"id": holder["handle_id"], "message": "keep going"},
+        )
+
+    service, chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "iso task", "isolation": "worktree"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn one answer",
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn two answer",
+        ],
+        {"iso task": ["done once", "done twice"]},
+        providers=(provider,),
+    )
+    run1, outcome1 = _run(service, config=shell_cli_resume_cfg)
+    assert outcome1.status == RUN_DONE
+    finished = _finished_child(coordinator)
+    holder["handle_id"] = finished.handle_id
+    _await_retained(coordinator, finished.handle_id)
+
+    run2, outcome2 = _run(service, config=shell_cli_resume_cfg)
+    assert outcome2.status == RUN_DONE
+
+    child_configs = [
+        cfg for cfg in captured_configs if cfg is not shell_cli_resume_cfg
+    ]
+    resumed_config = child_configs[-1]
+    assert RAW_SHELL_TOOL_NAME not in resumed_config.allowed_tools
+    assert VIRTUAL_CLI_TOOL_NAME not in resumed_config.allowed_tools
+
+
 class _AgentLessonsCatalogProvider:
     def list_catalog(self):
         return [

@@ -5191,6 +5191,26 @@ class AgentService:
                     )
                 )
             )
+            if isolation == "worktree":
+                # Finding 6 (Qodo round, TASK-28238 P2 T7): worktree
+                # routing only ever covers `_PATH_AUTHORITY_LOCAL_NAMES`
+                # -- `shell_exec` and `virtual_cli` execute against the
+                # ORIGINAL workspace root regardless (virtual CLI binds
+                # its `WorkspaceToolExecutor` at compose time; raw shell
+                # runs real commands there too). Applied AFTER the
+                # override branch above, not only inside the default
+                # composition, so an explicit `allowed_tools=` override
+                # can never reintroduce either name for an isolated
+                # child -- the exclusion is unconditional whenever
+                # isolation is requested.
+                from .raw_shell_tool_provider import RAW_SHELL_TOOL_NAME
+                from .virtual_cli_provider import VIRTUAL_CLI_TOOL_NAME
+
+                child_allowed_tools = tuple(
+                    n
+                    for n in child_allowed_tools
+                    if n not in (RAW_SHELL_TOOL_NAME, VIRTUAL_CLI_TOOL_NAME)
+                )
             child_system_prompt = get_internal_prompt("agents.subagent_system")
             child_model = config.model
             if resolved is not None:
@@ -5779,6 +5799,18 @@ class AgentService:
                     self.skill_runner is not None and self.skill_runner.is_skill_tool(n)
                 )
             )
+            if retained.isolation == "worktree":
+                # Finding 6 twin (Qodo round, TASK-28238 P2 T7): mirrors
+                # spawn's identical exclusion -- a resumed isolated
+                # child must not reinherit shell_exec/virtual_cli either.
+                from .raw_shell_tool_provider import RAW_SHELL_TOOL_NAME
+                from .virtual_cli_provider import VIRTUAL_CLI_TOOL_NAME
+
+                child_allowed_tools = tuple(
+                    n
+                    for n in child_allowed_tools
+                    if n not in (RAW_SHELL_TOOL_NAME, VIRTUAL_CLI_TOOL_NAME)
+                )
             child_system_prompt = get_internal_prompt("agents.subagent_system")
             child_model = config.model
             if resolved is not None:

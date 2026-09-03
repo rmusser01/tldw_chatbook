@@ -119,7 +119,10 @@ SPAWN_TOOL_SCHEMA = ToolSchema(
                 "description": (
                     "Run this child in an isolated git worktree; its changes "
                     "stay out of the shared tree until explicitly merged back "
-                    "with merge_agent_worktree."
+                    "with merge_agent_worktree. Worktree isolation governs "
+                    "the built-in filesystem tools; shell and virtual-CLI "
+                    "access are withheld from isolated children, and "
+                    "external (MCP) tools are outside its guarantee."
                 ),
             },
         },
