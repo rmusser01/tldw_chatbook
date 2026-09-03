@@ -229,7 +229,8 @@ them one by one, with your place and progress saved between visits.
   the saved-set picker: each row shows the set's name and live progress, with
   the active set marked `✓`. Picking a set activates it (deactivating any
   other) and lands at its saved cursor; picking a completed set reopens it.
-  **Dismiss** soft-deletes a set.
+  **Dismiss** soft-deletes a set. **Review read-later** in the same picker
+  builds a new set from your read-later queue, newest saves first.
 - Deleted media items become skipped tombstones: progress counts only items
   that still exist, and a set whose items were all removed reports "No items
   to review" instead of completing.
