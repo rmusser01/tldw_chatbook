@@ -3834,6 +3834,31 @@ async def test_prepared_tool_test_holds_captured_profile_lease_through_service(
     assert lifecycle.active_lease_count("default") == 0
 
 
+def test_profile_lease_release_failure_log_does_not_echo_exception(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    secret = "sk-lease-release-secret"
+
+    class FailingScope:
+        def __exit__(self, *_args: object) -> None:
+            raise RuntimeError(f"api_key={secret}")
+
+    handoff = mcp_workbench_module._ToolProfileLeaseHandoff(FailingScope())
+    caplog.clear()
+    sink = mcp_workbench_module.logger.add(
+        caplog.handler, level="WARNING", format="{message}"
+    )
+    try:
+        handoff.release()
+    finally:
+        mcp_workbench_module.logger.remove(sink)
+
+    rendered = "".join(caplog.messages)
+    assert "Tool profile lease release failed" in rendered
+    assert "RuntimeError" in rendered
+    assert secret not in rendered
+
+
 @pytest.mark.asyncio
 async def test_denied_prepared_tool_test_releases_captured_profile_lease() -> None:
     app = ToolTestApp()

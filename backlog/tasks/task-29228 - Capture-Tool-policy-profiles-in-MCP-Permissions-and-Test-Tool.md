@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-02 15:13'
-updated_date: '2026-09-02 20:10'
+updated_date: '2026-09-03 02:49'
 labels:
   - tool-packs
   - mcp
@@ -44,6 +44,7 @@ Make MCP Permissions and Test Tool operate on one explicitly selected local Tool
 6. Run the prescribed four-suite matrix, scoped static/diff checks, self-review, and independent review; remediate findings before closeout.
 7. Scope correction from interface preflight: include tldw_chatbook/UI/MCP_Modules/mcp_inspector.py and Tests/UI/test_mcp_inspector.py, because the inspector request types are the concrete child requests that must carry captured profile context.
 8. Review remediation: expose the application ToolPack lifecycle coordinator, render rows and profile context from one fenced identity, revalidate queued tests and persistent-approval successors exactly, fail closed on corrupt profile inventory, and preserve legacy hash-free Allow entries while keeping new writes canonical.
+9. Required-CI follow-up: add a regression that lease-release failures log only the exception type, regenerate the reviewed production diagnostic inventory after verifying all changed statements, and rerun the required fast-lane/artifact gate.
 
 ADR required: no new ADR
 ADR path: backlog/decisions/107-portable-tool-use-packs.md
@@ -76,4 +77,15 @@ tests and all 332 Workbench tests passed. The rebased Settings/profile checks ad
 33 passing UI tests, and the V1 closure checks added 76 passing Tool Pack/Console
 continuation tests. Scoped Ruff lint/format and git diff checks passed; the full
 repository suite was not run under the targeted-test policy.
+
+Required-CI follow-up: the diagnostic inventory review found that lease cleanup
+logged raw exception text. The handoff now logs only the exception type, with a
+regression proving secret-shaped exception content is absent. Statement review
+confirmed the two new control-plane warnings expose only exception types, profile
+inventory warnings expose only bounded categories/types, and re-allow uses the
+existing redaction helper. The permission-store candidate statements were
+unchanged; only their recorded scope moved from `load` to `_load_locked`. The
+reviewed inventory was regenerated and verifies exactly. All 333 Workbench tests
+and every deterministic derived-artifact checker passed. ADR-107 remains
+controlling; no new ADR or generalized lesson was required.
 <!-- SECTION:NOTES:END -->

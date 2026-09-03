@@ -140,7 +140,10 @@ class _ToolProfileLeaseHandoff:
         try:
             scope.__exit__(None, None, None)
         except Exception as exc:
-            logger.warning(f"Tool profile lease release failed: {exc}")
+            logger.warning(
+                "Tool profile lease release failed (error_type={})",
+                type(exc).__name__,
+            )
 
 
 def _target_id_from_server_key(key: str | None) -> str | None:
