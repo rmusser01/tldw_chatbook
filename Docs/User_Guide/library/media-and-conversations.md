@@ -219,6 +219,9 @@ them one by one, with your place and progress saved between visits.
   trimmed); in Select mode, **Review selected** pins just the checked items in
   list order. Creating a set activates it and opens its first item in the
   Reader.
+- **Resume on entry** — opening the media area with a set active loads its
+  current item into the Reader automatically (once per set per session;
+  Escape back to the list and re-entering shows the list).
 - **Walk** — while a set is active the Reader footer shows your place ("2 of
   14 · 1 reviewed"). `]` advances and marks the item you leave as reviewed;
   `[` goes back without marking; `m` toggles the loaded item's reviewed mark;

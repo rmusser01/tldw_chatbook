@@ -683,6 +683,106 @@ async def test_picker_worker_failure_notifies(tmp_path):
     assert any(severity == "error" for _msg, severity in fake._notices)
 
 
+def _auto_resume_fake(service, *, live_ids=None):
+    """Fake screen for the auto-resume worker (task-28245)."""
+    fake = _entry_fake(service)
+    fake._review_set_live_ids = (
+        (lambda ids: {int(i) for i in ids})
+        if live_ids is None
+        else (lambda ids: set(live_ids))
+    )
+
+    async def run_call(call, *args, isolate_in_worker=False, **kwargs):
+        result = call(*args, **kwargs)
+        return await result if hasattr(result, "__await__") else result
+
+    fake._run_library_service_call = run_call
+    fake._library_selected_row_id = "browse-media"
+    fake._library_media_view = "list"
+    fake.is_current = True
+    for name in (
+        "_auto_resume_review_set_worker",
+        "_resolve_active_review_set_landing",
+    ):
+        setattr(fake, name, MethodType(getattr(LibraryScreen, name), fake))
+    return fake
+
+
+@pytest.mark.asyncio
+async def test_auto_resume_opens_the_active_sets_cursor_item_once(tmp_path):
+    # task-28245 AC#1: entering the media area with an active set loads its
+    # cursor item without a keypress -- but only ONCE per set per screen
+    # session, so Escape-to-list + re-entry shows the list, not a yank loop.
+    service = _service(tmp_path)
+    set_id = service.create_review_set(
+        "X", origin="browse", items=[(10, "A"), (11, "B")]
+    )
+    service.set_cursor(set_id, 1)
+    fake = _auto_resume_fake(service)
+
+    await fake._auto_resume_review_set_worker()
+    assert fake._opened == ["local:media:11"]
+
+    await fake._auto_resume_review_set_worker()
+    assert fake._opened == ["local:media:11"]  # once per set
+
+
+def test_auto_resume_runs_in_its_own_worker_group():
+    """Auto-resume must not share the exclusive creation group (Qodo #2342).
+
+    ``library_review_set`` is the exclusive group the entry-point build
+    workers run in; if auto-resume joined it, clicking the Media rail while
+    "Review these" was still paging would CANCEL the set creation.
+    """
+
+    async def noop():
+        return None
+
+    recorded: dict = {}
+
+    def run_worker(coro, **kwargs):
+        recorded.update(kwargs)
+        coro.close()
+
+    fake = SimpleNamespace(
+        run_worker=run_worker, _auto_resume_review_set_worker=noop
+    )
+    LibraryScreen._maybe_auto_resume_review_set(fake)
+
+    assert recorded["group"] != "library_review_set"
+    assert recorded["exclusive"] is True  # still debounces its own re-entries
+
+
+@pytest.mark.asyncio
+async def test_auto_resume_is_a_no_op_without_an_active_set(tmp_path):
+    fake = _auto_resume_fake(_service(tmp_path))
+    await fake._auto_resume_review_set_worker()
+    assert fake._opened == [] and fake._notices == []
+
+
+@pytest.mark.asyncio
+async def test_auto_resume_aborts_when_the_user_moved_away(tmp_path):
+    # task-28245 AC#3: if the initial-tab switch (or the user) yanked the
+    # screen off the media list before the resolve finished, do not open.
+    service = _service(tmp_path)
+    service.create_review_set("X", origin="browse", items=[(10, "A")])
+    fake = _auto_resume_fake(service)
+    fake._library_media_view = "viewer"
+
+    await fake._auto_resume_review_set_worker()
+    assert fake._opened == []
+
+
+@pytest.mark.asyncio
+async def test_auto_resume_skips_an_all_tombstoned_set_quietly(tmp_path):
+    service = _service(tmp_path)
+    service.create_review_set("X", origin="browse", items=[(10, "A")])
+    fake = _auto_resume_fake(service, live_ids=set())
+
+    await fake._auto_resume_review_set_worker()
+    assert fake._opened == [] and fake._notices == []  # convenience, no nag
+
+
 def test_review_these_name_from_scope():
     assert (
         LibraryScreen._review_these_name(

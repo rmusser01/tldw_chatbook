@@ -10793,6 +10793,12 @@ class LibraryScreen(BaseAppScreen):
                 focus_identity=None,
             )
             self._request_library_media_facets()
+            # task-28245: NO auto-resume kick here, deliberately. The mount
+            # leg runs during boot, and the worker's lazy review-set imports
+            # raced the _ui_ready module census on slow runners (977 > 972,
+            # flaky Perf Guard). The rail-select seam is the explicit
+            # user gesture that resumes a set (AC#3's cold-start concern is
+            # structurally avoided there).
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
             and self._library_media_view == "trash"
@@ -26440,6 +26446,9 @@ class LibraryScreen(BaseAppScreen):
                 focus_identity="#library-media-row-0",
             )
             self._request_library_media_facets()
+            # task-28245: entering the media area with an active review set
+            # resumes it at its cursor without a keypress (once per set).
+            self._maybe_auto_resume_review_set()
         # task-2856 AC1: a rail-row press landing on one of the four list
         # canvases focuses its primary list's first row -- the entry-point
         # half of the same seam ``_exit_library_skill_editor_guarded`` /
@@ -42402,6 +42411,90 @@ class LibraryScreen(BaseAppScreen):
             # subsequent resume back to the stale cursor (Qodo #2337).
             service.set_cursor(set_id, resolved)
         return landing.backing_media_id
+
+    # -- auto-resume on media entry (task-28245) ------------------------------
+
+    def _maybe_auto_resume_review_set(self) -> None:
+        """Kick the once-per-set auto-resume of an active review set.
+
+        Called ONLY from the rail-select seam (an explicit user gesture) --
+        never from the mount leg, whose boot-time timing made the worker's
+        lazy imports race the _ui_ready module census (flaky Perf Guard).
+        The worker still re-checks the surface right before opening, so an
+        entry that gets yanked away aborts cleanly.
+
+        Its OWN exclusive group, not ``library_review_set`` -- joining the
+        entry-point builders' group would CANCEL an in-flight "Review these"
+        build when the user clicks the Media rail mid-build (Qodo #2342).
+        """
+        self.run_worker(
+            self._auto_resume_review_set_worker(),
+            group="library_review_set_resume",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _auto_resume_review_set_worker(self) -> None:
+        """Open the active set's cursor item in the Reader, once per set.
+
+        AC#1: entering the media area with an active set loads its cursor
+        item without a keypress. Once per set per screen session -- Escape
+        back to the list plus re-entry shows the list, never a yank loop.
+        AC#3: the final still-on-the-media-list + current-screen gates make
+        a cold-start yank abort without opening (and without burning the
+        once-per-set chance). Auto-resume is a convenience: any failure is
+        silent, never a notice or a crash.
+        """
+        try:
+            landing = await self._run_library_service_call(
+                self._resolve_active_review_set_landing, isolate_in_worker=True
+            )
+            if landing is None:
+                return
+            set_id, backing_id = landing
+            if (
+                self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
+                or self._library_media_view != "list"
+                or not getattr(self, "is_current", False)
+            ):
+                return
+            resumed: set[str] = getattr(self, "_review_set_auto_resumed", set())
+            if set_id in resumed:
+                return
+            resumed.add(set_id)
+            self._review_set_auto_resumed = resumed
+            self._open_library_media_viewer(f"local:media:{backing_id}")
+        except Exception:
+            return
+
+    def _resolve_active_review_set_landing(self) -> tuple[str, int] | None:
+        """Resolve the active set's live cursor item (runs off the loop).
+
+        Returns:
+            ``(set_id, backing_media_id)`` for the item the Reader should
+            resume at, or ``None`` when no set is active or every pinned
+            item is a tombstone.
+        """
+        from tldw_chatbook.Library.review_set_state import resolve_cursor
+
+        service = self._review_set_service()
+        if service is None:
+            return None
+        review_set = service.get_active_review_set()
+        if review_set is None:
+            return None
+        live_ids = self._review_set_live_ids(
+            item.backing_media_id for item in review_set.items
+        )
+        resolved = resolve_cursor(
+            review_set.items,
+            review_set.cursor,
+            lambda candidate: candidate in live_ids,
+        )
+        landing = {item.position: item for item in review_set.items}.get(resolved)
+        if landing is None or landing.backing_media_id not in live_ids:
+            return None
+        return review_set.set_id, landing.backing_media_id
 
     def _focus_library_media_items_pane(self) -> None:
         """Focus the Items pane at its most useful control (task-28004).
