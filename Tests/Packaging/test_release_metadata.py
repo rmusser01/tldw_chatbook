@@ -1,16 +1,30 @@
 from __future__ import annotations
 
 import ast
+import re
 import tomllib
+import urllib.error
 from pathlib import Path
 
 import pytest
 
 from Packaging.common.dist_path import resolve_dist_dir
 from Packaging.common import version as packaging_version
+from Packaging import check_pypi_release
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+class _PypiJsonResponse:
+    def __enter__(self) -> "_PypiJsonResponse":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def read(self, _size: int) -> bytes:
+        return b"{"
 
 
 def _package_version_metadata() -> tuple[str, tuple[int, ...]]:
@@ -85,6 +99,109 @@ def test_distribution_output_path_rejects_symlink_escape(tmp_path: Path) -> None
         resolve_dist_dir("linked-external/dist", repo_root)
 
 
+def test_pypi_release_exists_returns_true_for_existing_version() -> None:
+    captured: dict[str, object] = {}
+
+    def fake_urlopen(url: str, timeout: int) -> _PypiJsonResponse:
+        captured["url"] = url
+        captured["timeout"] = timeout
+        return _PypiJsonResponse()
+
+    assert check_pypi_release.release_exists(
+        "tldw-chatbook",
+        "1.2.3",
+        base_url="https://example.test/pypi/",
+        urlopen=fake_urlopen,
+    )
+    assert captured == {
+        "url": "https://example.test/pypi/tldw-chatbook/1.2.3/json",
+        "timeout": 30,
+    }
+
+
+def test_pypi_release_exists_returns_false_for_missing_version() -> None:
+    def fake_urlopen(url: str, timeout: int) -> object:
+        raise urllib.error.HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
+
+    assert not check_pypi_release.release_exists(
+        "tldw-chatbook",
+        "9.9.9",
+        urlopen=fake_urlopen,
+    )
+
+
+def test_pypi_release_exists_reraises_unexpected_http_errors() -> None:
+    def fake_urlopen(url: str, timeout: int) -> object:
+        raise urllib.error.HTTPError(url, 503, "Unavailable", hdrs=None, fp=None)
+
+    with pytest.raises(urllib.error.HTTPError):
+        check_pypi_release.release_exists(
+            "tldw-chatbook",
+            "1.2.3",
+            urlopen=fake_urlopen,
+        )
+
+
+def test_github_output_path_is_validated_against_runner_temp(tmp_path: Path) -> None:
+    runner_temp = tmp_path / "runner-temp"
+    runner_temp.mkdir()
+    output_path = runner_temp / "_runner_file_commands" / "set_output"
+    output_path.parent.mkdir()
+    output_path.touch()
+    outside_path = tmp_path / "outside_output"
+    outside_path.touch()
+
+    check_pypi_release.write_github_output(
+        "release_exists",
+        "false",
+        output_path=output_path,
+        runner_temp=runner_temp,
+    )
+    assert output_path.read_text() == "release_exists=false\n"
+
+    with pytest.raises(ValueError):
+        check_pypi_release.write_github_output(
+            "release_exists",
+            "false",
+            output_path=outside_path,
+            runner_temp=runner_temp,
+        )
+
+
+def test_check_pypi_release_cli_uses_workflow_arguments_and_emits_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_urlopen(url: str, timeout: int) -> _PypiJsonResponse:
+        captured["url"] = url
+        captured["timeout"] = timeout
+        return _PypiJsonResponse()
+
+    output_path = tmp_path / "_runner_file_commands" / "set_output"
+    output_path.parent.mkdir()
+    output_path.touch()
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output_path))
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+
+    assert (
+        check_pypi_release.main(
+            ["1.2.3", "--base-url", "https://example.test/pypi"],
+            urlopen=fake_urlopen,
+        )
+        == 0
+    )
+
+    assert captured == {
+        "url": "https://example.test/pypi/tldw-chatbook/1.2.3/json",
+        "timeout": 30,
+    }
+    assert output_path.read_text() == "release_exists=true\n"
+    assert "release_exists=true" in capsys.readouterr().out
+
+
 def test_testpypi_publish_requires_protected_dev_ref() -> None:
     workflow = (REPO_ROOT / ".github" / "workflows" / "publish-pypi.yml").read_text()
 
@@ -92,3 +209,81 @@ def test_testpypi_publish_requires_protected_dev_ref() -> None:
         "if: github.event_name == 'workflow_dispatch' && "
         "github.ref == 'refs/heads/dev' && github.ref_protected"
     ) in workflow
+
+
+def _publish_workflow_text() -> str:
+    return (REPO_ROOT / ".github" / "workflows" / "publish-pypi.yml").read_text()
+
+
+def _workflow_job_block(workflow: str, job_name: str) -> str:
+    match = re.search(
+        rf"^  {re.escape(job_name)}:\n(?P<body>.*?)(?=^  [\w-]+:\n|\Z)",
+        workflow,
+        re.M | re.S,
+    )
+    assert match is not None, f"{job_name} job not found"
+    return match.group("body")
+
+
+def test_production_pypi_publish_requires_protected_main_push() -> None:
+    workflow = _publish_workflow_text()
+    trigger_block = workflow.split("\npermissions:", maxsplit=1)[0]
+    publish_job = _workflow_job_block(workflow, "publish-pypi")
+
+    assert "push:\n    branches:\n      - main" in trigger_block
+    assert "tags:" not in trigger_block
+    assert "github.event_name == 'push'" in publish_job
+    assert "github.ref == 'refs/heads/main'" in publish_job
+    assert "github.ref_protected" in publish_job
+    assert "refs/tags" not in publish_job
+    assert "refs/heads/dev" not in publish_job
+
+
+def test_production_pypi_publish_checks_version_before_upload() -> None:
+    workflow = _publish_workflow_text()
+    check_job = _workflow_job_block(workflow, "check_pypi_release")
+    publish_job = _workflow_job_block(workflow, "publish-pypi")
+
+    assert 'run: python Packaging/check_pypi_release.py "$RELEASE_VERSION"' in check_job
+    assert "Install output path validation dependencies" in check_job
+    assert "python -m pip install loguru psutil" in check_job
+    assert "needs: [build, check_pypi_release]" in publish_job
+    assert "needs.check_pypi_release.outputs.release_exists == 'false'" in publish_job
+
+
+def test_release_workflow_serializes_same_ref_runs() -> None:
+    workflow = _publish_workflow_text()
+
+    assert (
+        "concurrency:\n"
+        "  group: ${{ github.workflow }}-${{ github.ref }}\n"
+        "  cancel-in-progress: false"
+    ) in workflow
+
+
+def test_release_workflow_uses_validated_github_output_writes() -> None:
+    workflow = _publish_workflow_text()
+    build_job = _workflow_job_block(workflow, "build")
+
+    assert "version: ${{ steps.release-version.outputs.version }}" in build_job
+    assert "from Packaging.check_pypi_release import write_github_output" in build_job
+    assert 'write_github_output("version", project_version)' in build_job
+    assert "GITHUB_OUTPUT" not in workflow
+
+
+def test_release_instructions_do_not_publish_production_pypi_from_tags() -> None:
+    checked_paths = (
+        REPO_ROOT / "Packaging" / "PYPI_README.md",
+        REPO_ROOT / "Packaging" / "PYPI_RELEASE.md",
+        REPO_ROOT / "Packaging" / "build_release.sh",
+    )
+    forbidden_lines = (
+        "Protected `v*` tags publish to PyPI",
+        "PyPI job only runs for protected matching version tags",
+        "Publish production PyPI from a protected v",
+    )
+
+    for path in checked_paths:
+        text = path.read_text()
+        for forbidden_line in forbidden_lines:
+            assert forbidden_line not in text
