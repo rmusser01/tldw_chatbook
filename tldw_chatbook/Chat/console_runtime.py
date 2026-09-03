@@ -125,6 +125,7 @@ import inspect
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
+import time
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 from uuid import uuid4
 
@@ -159,6 +160,29 @@ _VIEW_RUNTIME_FALLBACK_ATTR = "_console_runtime_fallback"
 # delay: legacy normalization is idle maintenance, never readiness work.
 LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS = 5.0
 LEGACY_TRACE_MAINTENANCE_RETRY_DELAY_SECONDS = 1.0
+TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS = 60.0
+TRACE_PHYSICAL_MAINTENANCE_RETRYABLE_REASONS = frozenset(
+    {
+        "provider_active",
+        "activity_threshold",
+        "maintenance_busy",
+        "retry_backoff",
+        "connections_busy",
+        "active_transaction",
+        "wal_checkpoint_failed",
+        "lease_lost",
+        "insufficient_disk",
+        "integrity_check_failed",
+        "interrupted",
+        "cancelled",
+        "vacuum_failed",
+        "sqlite_failure",
+        "compaction_failure",
+        "database_threshold",
+        "freelist_threshold",
+        "freelist_ratio_threshold",
+    }
+)
 
 
 class _LazyTraceCompatibilityMetrics:
@@ -991,6 +1015,10 @@ class ConsoleRuntime:
                 normalizer=normalizer_factory(),
                 provider_active=provider_active,
             )
+            last_provider_activity = time.monotonic()
+            last_physical_attempt = 0.0
+            last_collected_epoch: int | None = None
+            pending_gc_result: Any | None = None
             while not self._disposed:
                 try:
                     result = await asyncio.to_thread(maintenance.run_batch)
@@ -1004,7 +1032,107 @@ class ConsoleRuntime:
                     )
                     continue
                 if result.logical_complete:
-                    await asyncio.sleep(5.0)
+                    now = time.monotonic()
+                    if provider_active():
+                        last_provider_activity = now
+                        await asyncio.sleep(1.0)
+                        continue
+                    if (
+                        now - last_physical_attempt
+                        < TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS
+                    ):
+                        await asyncio.sleep(1.0)
+                        continue
+                    last_physical_attempt = now
+                    try:
+                        from tldw_chatbook.Chat.console_trace_maintenance import (
+                            PhysicalTraceCompactor,
+                            TraceGarbageCollector,
+                        )
+                        from tldw_chatbook.Chat.console_trace_models import (
+                            new_opaque_id,
+                        )
+                        from tldw_chatbook.config import (
+                            resolve_trace_compaction_policy,
+                        )
+
+                        controller = self._chat_controller
+                        pause = getattr(
+                            controller,
+                            "pause_trace_maintenance_dispatch",
+                            lambda: None,
+                        )
+                        resume = getattr(
+                            controller,
+                            "resume_trace_maintenance_dispatch",
+                            lambda: None,
+                        )
+                        app_config = getattr(self._app, "app_config", {}) or {}
+                        console_config = (
+                            app_config.get("console", {})
+                            if isinstance(app_config, Mapping)
+                            else {}
+                        )
+                        controller_idle = getattr(
+                            controller,
+                            "trace_maintenance_idle_seconds",
+                            None,
+                        )
+                        collector = TraceGarbageCollector(database)
+                        current_epoch = await asyncio.to_thread(
+                            collector.current_graph_epoch
+                        )
+                        if pending_gc_result is None:
+                            if current_epoch == last_collected_epoch:
+                                await asyncio.sleep(1.0)
+                                continue
+                            pending_gc_result = await asyncio.to_thread(
+                                collector.collect,
+                                request_id=f"auto-{new_opaque_id()}",
+                            )
+                            last_collected_epoch = int(
+                                getattr(
+                                    pending_gc_result,
+                                    "marked_epoch",
+                                    current_epoch,
+                                )
+                            )
+                        compactor = PhysicalTraceCompactor(
+                            database,
+                            policy=resolve_trace_compaction_policy(console_config),
+                            provider_active=provider_active,
+                            idle_seconds=(
+                                controller_idle
+                                if callable(controller_idle)
+                                else lambda: max(
+                                    0.0, time.monotonic() - last_provider_activity
+                                )
+                            ),
+                            pause_dispatch=pause,
+                            resume_dispatch=resume,
+                            cancel_requested=lambda: self._disposed,
+                        )
+                        outcome = await asyncio.to_thread(
+                            compactor.run_after_gc,
+                            pending_gc_result,
+                        )
+                        if outcome.reason_code == "logical_gc_unavailable":
+                            pending_gc_result = None
+                            last_collected_epoch = None
+                        elif outcome.completed or (
+                            outcome.reason_code
+                            not in TRACE_PHYSICAL_MAINTENANCE_RETRYABLE_REASONS
+                        ):
+                            pending_gc_result = None
+                    except ImportError:
+                        # Narrow test doubles may provide only the legacy worker.
+                        pass
+                    except Exception as exc:  # noqa: BLE001 - durable retry state
+                        logger.warning(
+                            "trace physical maintenance paused after {}",
+                            type(exc).__name__,
+                        )
+                    await asyncio.sleep(1.0)
                     continue
                 if not result.admitted:
                     await asyncio.sleep(1.0)

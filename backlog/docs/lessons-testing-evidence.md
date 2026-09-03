@@ -9,6 +9,57 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## SQLite progress handlers must not query their active connection
+
+**TASK-23113.11, 2026-09-02.** The first physical trace-compaction worker
+queried `page_count` and `freelist_count` on the same connection from SQLite's
+VACUUM progress handler. The small real fixture happened to pass, but a
+connection double that rejected SQL while VACUUM was active reproduced the
+re-entrant call deterministically. Capturing the content-free byte snapshot
+before installing the handler preserved progress reporting without recursively
+using a connection in the middle of a statement.
+
+**What to do.** Treat SQLite progress, authorizer, collation, and scalar-function
+callbacks as non-reentrant unless the API explicitly guarantees otherwise. Read
+needed metrics before the long statement, keep callbacks bounded and in-memory,
+and verify the behavior against a real file-backed SQLite database.
+
+## SQLite quiescence must cover result consumption and database identity
+
+**TASK-23113.11, 2026-09-02.** Review of the first physical-compaction barrier
+found two holes that transaction-only tests did not expose. A direct SELECT was
+no longer in a native transaction after `execute()` returned, even though its
+cursor still had unread rows, so the barrier could close that live connection.
+Separately, two `CharactersRAGDB` objects for the same file owned independent
+registries, allowing one object to open a handle while the other compacted.
+Real cursor and same-file-instance tests reproduced both races.
+
+**What to do.** Key process-local SQLite maintenance coordination by canonical
+database identity, not wrapper-object identity. Track synchronous operations
+and cursor result consumption through exhaustion or explicit close; acquisition
+and transaction boundaries alone are insufficient evidence that a handle is
+idle.
+
+## Periodic maintenance must deduplicate work by the state it processed
+
+**TASK-23113.11, 2026-09-02.** The initial automatic compaction loop generated a
+new opaque logical-GC request every minute after legacy normalization completed.
+Because completed GC request rows are durable idempotency records, an unchanged
+database would have accumulated a new result row on every poll. An accelerated
+runtime test observed two collections for the same graph epoch. Caching the
+processed epoch and retaining a retryable completed result reduced unchanged
+epochs to one durable collection while still retrying interrupted compaction
+and rechecking size/free-page thresholds against live SQLite metrics.
+
+**What to do.** A recurring maintenance timer is only a wake-up signal. Before
+creating a new durable request, compare the source's monotonic change token (or
+equivalent exact state identity) with the last processed token. Reuse the exact
+successful prerequisite while a downstream retry is pending, and clear it only
+after success or a genuinely terminal decision. Thresholds based on mutable
+storage metrics are retryable, not terminal.
+
+---
+
 ## POSIX availability does not prove a memory limit is enforceable
 
 **TASK-23113.10, 2026-09-01.** The custom-PII worker initially treated Python's
@@ -10808,3 +10859,20 @@ contracts. When optimizing a Textual subtree that begins hidden, keep a
 production-hierarchy first-open paint test and do not infer layout readiness from
 precomposition alone. Prefer reusing a subtree after one successful visible
 mount unless its hidden ancestors already have deterministic geometry.
+
+## SQLite cursor wrappers invalidate exact-type ownership guards
+
+**TASK-23113.11, 2026-09-02.** Quiescence tracking correctly moved the primary
+database connection onto a `sqlite3.Connection`/`sqlite3.Cursor` subclass pair,
+but Character insert and update ownership checks still required
+`type(cursor) is sqlite3.Cursor`. Fresh-profile Samira seeding therefore rejected
+the application's own tracked cursor. The ordinary character lifecycle test
+caught the failed insert directly; the warm-start module census caught its less
+obvious consequence, because every later boot retried the missing seed and kept
+three parser modules resident.
+
+**What to do.** When a database boundary intentionally supplies a standard-library
+subclass, ownership checks must accept `isinstance(cursor, sqlite3.Cursor)` and
+prove authority with connection identity and active transaction state. Exercise
+at least one real startup or domain write through the wrapped factory; isolated
+wrapper tests cannot expose an exact-type guard in a distant repository method.

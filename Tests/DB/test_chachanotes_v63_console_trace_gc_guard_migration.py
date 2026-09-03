@@ -48,8 +48,8 @@ def test_genuine_v62_reopen_installs_gc_metadata_and_fail_closed_guards(
     migrated = CharactersRAGDB(path, client_id="trace-gc-v63")
     try:
         connection = migrated.get_connection()
-        # Unpinned construction migrates to the CURRENT version (v64 added
-        # the auxiliary timed_out step after this test's v63 subject).
+        # Unpinned construction migrates to the CURRENT version; later
+        # auxiliary-attempt and compaction-status steps follow this v63 subject.
         assert (
             migrated._get_db_version(connection)
             == CharactersRAGDB._CURRENT_SCHEMA_VERSION
@@ -109,9 +109,12 @@ def test_genuine_v62_reopen_installs_gc_metadata_and_fail_closed_guards(
     reopened = CharactersRAGDB(path, client_id="trace-gc-v63-reopen")
     try:
         # The unpinned reopen now continues one step past this test's own
-        # migration (v63 -> v64 auxiliary timed_out); what this asserts is
+        # migration (v63 -> later operational ledgers); what this asserts is
         # that the genuine v62 DB migrated cleanly to the CURRENT version.
-        assert reopened._get_db_version(reopened.get_connection()) == 64
+        assert (
+            reopened._get_db_version(reopened.get_connection())
+            == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        )
         assert reopened.get_connection().execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
         reopened.close_connection()

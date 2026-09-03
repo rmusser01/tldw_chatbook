@@ -9301,9 +9301,20 @@ class SettingsScreen(BaseAppScreen):
     ) -> SettingsPrivacyPosture:
         if app_config is None:
             app_config = getattr(self.app_instance, "app_config", {}) or {}
+        trace_maintenance = None
+        database = getattr(self.app_instance, "chachanotes_db", None)
+        status_reader = getattr(database, "get_console_trace_compaction_status", None)
+        if callable(status_reader):
+            try:
+                trace_maintenance = status_reader()
+            except Exception:
+                logger.warning(
+                    "Unable to read content-free Console trace maintenance status."
+                )
         return build_settings_privacy_posture(
             app_config,
             skill_trust=self._skill_trust_posture(),
+            trace_maintenance=trace_maintenance,
         )
 
     def _privacy_posture_rows(
