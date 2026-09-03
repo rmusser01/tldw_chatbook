@@ -570,6 +570,7 @@ from ..Library_Modules.library_collections_capture_controller import (
     CollectionsCaptureControllerState,
     LibraryCollectionsCaptureController,
 )
+from ..Library_Modules.library_collections_state import LibraryCollectionsState
 from ..Library_Modules.library_conversation_reader_controller import (
     LibraryConversationReaderController,
 )
@@ -2179,6 +2180,8 @@ class LibraryScreen(BaseAppScreen):
         ) = None
         self._library_navigation_context_generation: int = 0
         self._conversations_state = LibraryConversationsState()
+        # Constructed early -- see LibraryCollectionsState's docstring.
+        self._collections_state = LibraryCollectionsState()
         self._conversation_reader_controller = LibraryConversationReaderController(
             self,
             conversations_state_accessor=lambda: self._conversations_state,
@@ -2345,29 +2348,6 @@ class LibraryScreen(BaseAppScreen):
             if collections_capture_scope is not None
             else None
         )
-        self._library_collections_capture_capabilities: CaptureCapabilities | None = None
-        self._library_collections_saved_searches: tuple[SavedCaptureSearch, ...] = ()
-        self._library_collections_saved_searches_total = 0
-        self._library_collections_active_scope = "all"
-        self._library_collections_requested_page = 1
-        self._library_collections_reader_mode: CollectionsReaderMode = "read"
-        self._library_collections_highlights: tuple[CaptureHighlight, ...] = ()
-        self._library_collections_quick_capture_open = False
-        self._library_collections_quick_capture_url = ""
-        self._library_collections_quick_capture_title = ""
-        self._library_collections_quick_capture_tags = ""
-        self._library_collections_quick_capture_note = ""
-        self._library_collections_save_outcome_unknown = False
-        self._library_collections_confirming_save_retry = False
-        self._library_collections_quick_capture_saving = False
-        self._library_collections_filters_open = False
-        self._library_collections_more_open = False
-        self._library_collections_confirming_hard_delete = False
-        self._library_collections_legacy_recovery_rows = 0
-        self._library_collections_legacy_recovery_open = False
-        self._library_collections_legacy_recovery_lines: tuple[str, ...] = ()
-        self._library_collections_action_status = ""
-        self._library_collections_action_content = ""
         self._library_collections_reader_layout = resolve_adaptive_reader_layout(
             0,
             self._library_collections_reader_preferences,
@@ -43410,3 +43390,21 @@ LibraryConversationsController._safe_text = staticmethod(LibraryScreen._safe_tex
 # overwrites a same-named property, so there is deliberately no separate
 # per-instance constructor-dependency for `_safe_text` here either).
 LibraryExportController._safe_text = staticmethod(LibraryScreen._safe_text)
+
+# --- BEGIN generated collections-state shims (delete wholesale at cleanup) ---
+# wave-2 task 5: keeps every original `_library_collections_<field>` name
+# working as a property over `self._collections_state` (single prefix,
+# no plural variant needed -- see LibraryCollectionsState's docstring).
+for _cos_field in dataclasses.fields(LibraryCollectionsState):
+    setattr(
+        LibraryScreen,
+        "_library_collections_" + _cos_field.name,
+        property(
+            lambda self, _n=_cos_field.name: getattr(self._collections_state, _n),
+            lambda self, value, _n=_cos_field.name: setattr(
+                self._collections_state, _n, value
+            ),
+        ),
+    )
+del _cos_field
+# --- END generated collections-state shims ---

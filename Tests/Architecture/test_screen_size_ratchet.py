@@ -186,7 +186,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # `Tests/Architecture/test_library_support_layer_surface.py` first (the
     # conversations exemplar's own "dead within this file is not the same
     # question as dead" lesson).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43413, 1281),
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43410, 1281),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

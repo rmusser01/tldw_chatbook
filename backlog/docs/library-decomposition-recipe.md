@@ -376,6 +376,24 @@ rediscover the same red from scratch.
   rows already describe, not a logic regression. Task 4's own field-
   retarget pass touches none of this test's assertions or the media-type
   choice-strip code path.
+- Wave-2 Task 5 (collections state PR) found 3 more, confirmed identical
+  on a `git stash -u` pristine baseline of the pre-task tree via a direct
+  node-id rerun of `-k "collection and library"` (Tests/UI + Tests/Library,
+  361 passed/3 failed on both branch and baseline):
+  `Tests/UI/test_library_shell.py::
+  test_library_starter_deep_link_opens_hidden_collection_or_note_route`
+  (`WorkerFailed: AttributeError("'types.SimpleNamespace' object has no
+  attribute 'active_authority'")` -- an unbound-fake-scope-service test
+  fixture missing a newly-added attribute the real service now carries);
+  `Tests/UI/test_library_shell.py::
+  test_library_landing_continue_receipt_accepts_only_authoritative_source_scopes[browse-collections-expected_scope4]`
+  (`state["library_continue_receipt"]` is `None` instead of the expected
+  receipt dict); `Tests/Library/test_library_collections_service.py::
+  test_get_library_collection_supported_types_round_trip_public_ids`
+  (`member["source_ref"]` is a real ref string instead of the expected
+  `None`) -- none touch a field or line this task's move edited; this
+  task's own diff is a pure field relocation plus a 2-line `_BUDGETS`
+  update.
 
 ## 8. Subsystem order (spec, "Order of work")
 
@@ -726,3 +744,223 @@ touched 13 test files and one dynamic-dispatch site shared across four
 subsystems, any one of which could plausibly have broken something the
 narrower `-k` checks don't cover. The sweep is the check that would have
 caught it if it had.
+
+## 13. The collections series, task 1 (state PR) — as landed
+
+Collections (churn 6, §8) is the second subsystem to run this recipe.
+Wave-2 task 5 (state PR, collections series 1/3) is complete; the
+controller and cleanup tasks have not yet run. This section records what
+landed and what this task's own execution added to or reconfirmed about
+the recipe above.
+
+### Cluster enumeration
+
+`ast` walk of `LibraryScreen` for method names containing "collection"
+(case-insensitive): **67 methods** (2026-09-02 snapshot, matches the
+wave-2 plan's estimate exactly). Of those, **3 are Prompts-owned**
+(`handle_library_prompts_collection`, `_apply_library_prompt_collection`,
+`_sync_library_prompt_collection_label` -- the unrelated "Prompt
+Collections" feature, confirmed by reading each body: they use
+`_library_prompt_collections_controller`/`_library_prompt_browse_controller`
+and have nothing to do with the Library Collections/captures subsystem),
+excluded per the export series' own documented substring-match trap. Of
+the remaining 64, 42 carry a distinct `@on` decorator; 41 once the one
+Prompts false-positive (`handle_library_prompts_collection`) is dropped.
+
+### Field ownership (recipe §2 script, `_library_collections` prefix)
+
+**27 `__init__`-scoped fields** (not ~28 as the wave-2 plan estimated --
+re-derived, not trusted). Unlike Export's `origin_row_id`, no field was
+missed by the `__init__`-scoped census: a full class-level `AnnAssign`
+scan found zero collections-owned class-level-only attributes. Of the 27:
+
+- **26 are exclusively-owned state** -- MOVE. All non-collection
+  `__init__`-scoped consumers found by the script are shell/plumbing
+  (`on_unmount`, `save_state`/`restore_state`, `apply_navigation_context`,
+  `_build_library_shell_input`, `_select_library_rail_row_after_source_
+  admission`, `_persist_library_reader_preference`,
+  `request_library_reader_layout_refresh`) or a generic multi-subsystem
+  dispatcher whose name happens to contain another subsystem's prefix as
+  a substring without being owned by it
+  (`_toggle_library_media_reader_pane`, which branches on
+  `_library_selected_row_id` across Collections/Conversations/Notes/
+  Media -- the same "tagging heuristic is name-based, not body-based"
+  caveat the recipe's own script output already carries). No field is
+  shared with a SECOND subsystem's OWN methods, so the ≥2-subsystems rule
+  never triggers and none is BLOCKED.
+- **1 is wiring, not state**: `_library_collections_capture_controller`
+  holds a live `LibraryCollectionsCaptureController` instance (the
+  `_conversation_reader_controller` precedent the task brief named in
+  advance). It stays a plain `LibraryScreen` attribute, constructed at
+  its original position, untouched by this move.
+
+**The saved-searches census** (the brief's flagged contested boundary,
+"collections vs the search cluster"): `_library_collections_saved_
+searches` / `_library_collections_saved_searches_total` are referenced in
+exactly 5 places, ALL inside `library_screen.py`, ALL inside
+collection-cluster methods --
+`_library_collections_capture_presentation` (reads both, for the
+render-only presentation object), `_load_library_collections_capture_
+entry` (writes both, from `scope.list_saved_searches(1)`), and
+`select_library_collection_capture_scope` (reads `saved_searches` to
+resolve a pressed saved-search scope row). A repo-wide grep confirms zero
+references anywhere outside `library_screen.py`. The `SavedCaptureSearch`
+type and `list_saved_searches` method live in `Library/collections_
+capture_models.py` and `Library/collections_capture_service.py` --
+Collections' own capture-scope service layer, not a generic "search"
+module. The "search cluster" the brief warned about is a DIFFERENT,
+unrelated feature living in the same file: the Library-wide search rail
+and its history (`handle_library_search_changed`, `_load_library_search_
+history`, `_persist_library_search_history`, `clear_library_search_
+history`, `rerun_library_search_from_history`, …) -- the top search bar's
+submit/history mechanism, conceptually adjacent (both are "search") but
+architecturally unconnected: none of those methods reference either
+saved-searches field, and Collections' saved searches are per-scope
+filter presets persisted through the capture repository, not search-bar
+history. **Verdict: MOVE, uncontested** -- the census resolves the
+brief's flagged ambiguity outright; no BLOCKED condition arose.
+
+**Total: 26 fields moved, 1 field (wiring) stayed, 0 fields BLOCKED.**
+
+### Characterization spot-check
+
+41 `@on`-bound Collections selectors checked with a per-id `grep -rn`
+across `Tests/` followed by a manual read of the surrounding lines for an
+actual `.press()`/`.click()`/direct-value-assignment/`Input.Submitted`
+interaction. **A same-line-only grep undercounts coverage**: one selector
+(`retry_library_collection_quick_capture`, `#library-collections-capture-
+retry-confirm`) looked unpressed under a same-line check but is genuinely
+covered once the press on the line AFTER its `query_one` call is read --
+the same multi-line query-then-press shape the export series' own report
+already flagged. 24 of the 41 are genuinely covered (23 direct + this
+one). The remaining **17 are genuine gaps**, pinned into `Tests/UI/
+test_library_collections_characterization.py` across 5 grouped test
+functions (mirroring this codebase's own walkthrough-style tests, which
+routinely exercise several related handlers inside one continuous Pilot
+session). No live bugs found -- all 17 are coverage gaps, not behavior
+bugs. See that file's own module docstring for the full per-selector
+accounting.
+
+**A new bypass-adjacent gotcha, not from a test but from writing new
+characterization tests against this subsystem's OWN async recompose
+shape**: pressing a button immediately after a PRIOR async transition's
+`_wait_for_condition` resolves true can race that transition's own
+trailing `_refresh_library_collections_capture_reader()` call --
+`_run_library_collections_capture_transition` schedules its SECOND
+recompose only after `await task` completes, and a condition watching
+`controller.state` can observe the state mutation before that second
+recompose has actually rebuilt the DOM. A widget fetched via
+`_wait_for_selector` immediately after such a condition resolves can be
+briefly stale, and pressing a toggle in that window can appear to silently
+no-op (the flag DOES flip, but the query for the newly-revealed content
+made in the same tick sees the pre-toggle tree). Symptom: `NoMatches` on
+a selector that "should" exist, or a 30s `_wait_for_selector` timeout on
+one that should appear instantly. Fix: a few extra `await pilot.pause()`
+calls after the setup condition, before touching DOM elements that depend
+on it -- not a code bug, a test-timing gap. Cost real debugging time in
+this task (two of five characterization tests needed this fix before they
+passed reliably); worth checking for in any future subsystem's
+characterization tests that select a row/item and then immediately act on
+its detail pane in the same test.
+
+### `LibraryCollectionsState` + shims
+
+`tldw_chatbook/UI/Library_Modules/library_collections_state.py`: a
+`@dataclass` with all 26 fields, verbatim defaults, matching the export
+precedent's single-prefix shape (`_library_collections_` for every
+field -- Collections' own subsystem name is already plural, so unlike
+Conversations no field needed a DIFFERENT prefix variant; no
+`COLLECTIONS_PLURAL_STATE_FIELDS` constant exists here). Three fields
+(`reader_preferences`, `reader_persistence_locks`, `reader_layout`) are
+entangled with other subsystems' shared init code exactly like the
+conversations exemplar's own trio and keep their original `__init__`
+assignment lines untouched.
+
+**A new deviation from the "construct at the position of the first
+removed field" default, required by entanglement ordering**:
+`reader_preferences` is entangled with a tuple-unpack shared with Media/
+Conversations/Notes/File Notes/Prompts/Skills that executes chronologically
+BEFORE Collections' other (non-entangled) fields are assigned in the
+original `__init__` -- unlike the conversations exemplar and the export
+series, where every entangled field's original line happened to sit AFTER
+the position their state object was constructed at. Constructing
+`self._collections_state` at the "first removed field" position (which
+sits after the shared tuple-unpack) would raise `AttributeError` the
+first time that unpack's `self._library_collections_reader_preferences`
+target tried to route through the not-yet-installed property into a
+not-yet-existing object. Fixed by constructing `self._collections_state =
+LibraryCollectionsState()` at the SAME early point
+`self._conversations_state` is constructed instead -- before the shared
+tuple-unpack, not at the first non-entangled field's position. This is
+still a pure, behaviorally-transparent move: every one of the 23
+non-entangled fields' defaults is a static literal (no field needed a
+constructor argument, unlike Export's computed `form` default), so
+constructing the dataclass earlier than usual has no observable
+side effect. **Any future subsystem whose entangled reader-preferences
+field is NOT the chronologically-last thing assigned before its own
+non-entangled block should check this ordering explicitly** before
+assuming "construct at the first removed field" is safe -- it is only
+safe when no entangled field's original line precedes that position.
+
+Shim: mirrors Export's single-prefix generated-property-loop shape
+exactly (`for _cos_field in dataclasses.fields(LibraryCollectionsState):
+setattr(LibraryScreen, "_library_collections_" + _cos_field.name,
+property(...))`), sentinel-wrapped, installed at module end.
+
+### Size ratchet
+
+**The stale-pin gap this task's own brief flagged (43413 pin vs 43412
+true measurement) is now closed.** `git show HEAD:...|wc -l` on the
+pre-task tree measured 43412, one below the recorded `_BUDGETS` pin of
+43413 -- a 1-line slack that had gone unnoticed since the export cleanup
+PR. This task's own net change (import +1, field-block removal -23,
+early-construction line +2, shim block +20) landed at **43410 lines,
+1281 methods** (measured fresh, post-edit) -- both below the stale pin
+AND below the true pre-task baseline, so `_BUDGETS` is lowered to
+`43410` in this same commit, closing the 1-line gap rather than carrying
+it forward. Pin trajectory:
+`43413 (stale) / 43412 (true) -> 43410` (methods unchanged at 1281 -- a
+pure field move, zero method bodies touched).
+
+### Wiring test -- TDD evidence
+
+`Tests/Architecture/test_library_collections_wiring.py` was written and
+run FIRST, before `library_collections_state.py`'s shim installation
+existed on `LibraryScreen`:
+
+```
+FAILED Tests/Architecture/test_library_collections_wiring.py::test_state_object_fields_match_the_shim_surface
+```
+
+RED confirmed (an assertion failure -- the module already existed by the
+time the test was written in this task's own execution order, but no
+shim property existed on `LibraryScreen` yet). After the screen edit
+landed:
+
+```
+Tests/Architecture/test_library_collections_wiring.py .            [100%]
+1 passed
+```
+
+GREEN. Scope matches the export series' own Task 2 precedent exactly
+(state-object fields <-> shim surface only; a controller PR in this
+series will add the full-cluster/same-name-delegator-forwarding shape
+later).
+
+### Sweep evidence — zero real branch-unique failures
+
+The full xdist paired-baseline sweep (`Tests/UI -k "library" -p
+no:randomly -q -n 8 --dist worksteal`) found 333 failed/3906 passed on
+this task's branch versus 340 failed/3894 passed on a `git stash -u`
+pristine baseline of the pre-task tree. Diffing the failure-name sets: 2
+unique to branch, 9 unique to baseline only, 331 shared. Both
+branch-unique failures
+(`test_library_prompt_history_no_change_keeps_selection_and_retry_available`,
+`test_library_starter_production_geometry_and_focus_order[size1]`) were
+confirmed pure xdist ordering/shared-state noise by a direct single-process
+rerun (individually and combined) — both pass cleanly every time, and
+neither touches Collections or shares a fixture with this task's diff.
+**Zero real regressions** — matching the export series' own Task 2 sweep
+result more closely than its Task 3/4 sweeps (which each surfaced genuine
+new bypass-shape exclusions), consistent with this task's pure
+field-relocation shape.
