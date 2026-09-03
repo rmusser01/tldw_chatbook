@@ -11665,7 +11665,7 @@ class TldwCli(
         logging.info(f"Splash screen enabled: {splash_enabled}")
         if splash_enabled:
             # Get splash screen configuration
-            splash_duration = get_cli_setting("splash_screen", "duration", 1.5)
+            splash_duration = get_cli_setting("splash_screen", "duration", 7.0)
             splash_skip = get_cli_setting("splash_screen", "skip_on_keypress", True)
             splash_progress = get_cli_setting("splash_screen", "show_progress", True)
             splash_card = get_cli_setting("splash_screen", "card_selection", "random")

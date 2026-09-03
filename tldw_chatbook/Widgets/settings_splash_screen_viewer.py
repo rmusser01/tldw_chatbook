@@ -21,7 +21,7 @@ from ..Widgets.splash_screen import SplashScreen
 
 DEFAULT_SPLASH_CONFIG: dict[str, Any] = {
     "enabled": True,
-    "duration": 2.5,
+    "duration": 7.0,
     "skip_on_keypress": True,
     "card_selection": "random",
     "show_progress": True,

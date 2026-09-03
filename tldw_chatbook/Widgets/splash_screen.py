@@ -56,7 +56,7 @@ class SplashScreen(Container):
         self,
         *,
         card_name: Optional[str] = None,
-        duration: float = 1.5,
+        duration: float = 7.0,
         skip_on_keypress: bool = True,
         show_progress: bool = True,
         reduced_motion: bool = False,
@@ -103,6 +103,8 @@ class SplashScreen(Container):
         self.fade_timer: Optional[Timer] = None
         self.auto_close_timer: Optional[Timer] = None
         self.effect_handler: Optional[Any] = None
+        self._animation_interval: float = 0.05
+        self._last_frame_content: Optional[str] = None
 
         # Select splash card
         self.card_name = card_name or self._select_card()
@@ -117,7 +119,7 @@ class SplashScreen(Container):
         """Load splash screen configuration from settings."""
         default_config = {
             "enabled": True,
-            "duration": 2.5,
+            "duration": 7.0,
             "skip_on_keypress": True,
             "card_selection": "random",
             "show_progress": True,
@@ -369,19 +371,40 @@ class SplashScreen(Container):
                 logger.debug(f"Terminal size: {width}x{height}")
 
                 # Create effect handler with card data as kwargs
+                effect_kwargs = dict(self.card_data)
+                card_reveal_duration = effect_kwargs.get("duration")
+                if (
+                    card_reveal_duration is not None
+                    and self.duration > 0
+                    and card_reveal_duration > self.duration
+                ):
+                    # A reveal longer than the splash's own lifetime would be
+                    # cut off mid-reveal when the auto-close timer fires, which
+                    # reads as the intro skipping from an early frame straight
+                    # to its end. Compress the reveal to fit the lifetime.
+                    effect_kwargs["duration"] = self.duration
                 try:
                     self.effect_handler = effect_class(
-                        self, width=width, height=height, **self.card_data
+                        self, width=width, height=height, **effect_kwargs
                     )
+                    self._animation_interval = max(
+                        float(self.card_data.get("animation_speed", 0.05)), 0.01
+                    )
+                    self._last_frame_content = None
+                    # Render frame 0 synchronously: playback must be visible
+                    # the moment the splash mounts, and a contended event loop
+                    # must not let the auto-close timer beat every frame.
+                    self._render_animation_frame()
 
                     # Start animation timer
                     self.animation_timer = self.set_interval(
-                        self.card_data.get("animation_speed", 0.05),
+                        self._animation_interval,
                         self._update_animation,
                     )
                     logger.debug(f"Animation started successfully for {effect_type}")
                 except Exception as e:
                     logger.error(f"Failed to create effect {effect_type}: {e}")
+                    self.effect_handler = None
                     self._display_static_fallback()
             else:
                 logger.warning(f"Unknown effect type: {effect_type}")
@@ -445,21 +468,44 @@ class SplashScreen(Container):
             return
         if self.effect_handler:
             try:
-                # Get next frame from effect
-                frame_content = self.effect_handler.update()
-
-                if frame_content:
-                    # Update display
-                    display = self.query_one("#splash-display", Static)
-                    display.update(frame_content, layout=False)
-
-                self.current_frame += 1
+                self._render_animation_frame()
             except Exception as e:
                 logger.error(f"Error updating animation frame: {e}")
                 # Stop animation and show static fallback
                 if self.animation_timer:
                     self.animation_timer.stop()
                 self._display_static_fallback()
+
+    def _render_animation_frame(self) -> None:
+        """Render one animation frame into the display widget.
+
+        Playback is frame-locked: the effect's clock is re-anchored so one
+        *rendered* frame advances it by exactly one animation interval.
+        Textual's interval timer permanently skips callbacks that could not
+        run while the event loop was blocked, and the effects derive their
+        progression from ``time.time() - effect.start_time`` -- so without
+        this re-anchor, startup contention (imports, first paint, terminal
+        writes) lets wall-clock time race ahead of rendered frames and
+        reveals jump forward, in the worst case from the first frame
+        straight to the final one. With it, contention merely slows the
+        animation down.
+        """
+        if self.effect_handler is None:
+            return
+        # current_frame counts already-rendered frames, so the frame about
+        # to be rendered sits (current_frame + 1) intervals into the effect.
+        self.effect_handler.start_time = (
+            time.time() - (self.current_frame + 1) * self._animation_interval
+        )
+        frame_content = self.effect_handler.update()
+        if not frame_content:
+            return
+        if frame_content != self._last_frame_content:
+            # Update display
+            display = self.query_one("#splash-display", Static)
+            display.update(frame_content)
+            self._last_frame_content = frame_content
+        self.current_frame += 1
 
     def update_progress(self, value: float, text: str = "") -> None:
         """Update progress bar and text.
@@ -503,6 +549,16 @@ class SplashScreen(Container):
         if self.skip_on_keypress and not self._skip_requested:
             event.stop()
             event.prevent_default()
+            self.request_skip()
+
+    def request_skip(self) -> None:
+        """Skip the splash in response to a user action, if allowed.
+
+        Public seam for skip triggers that are not the focused splash's own
+        key handling (``on_key`` above routes here too; idempotent via
+        ``_request_close``).
+        """
+        if self.skip_on_keypress:
             self._request_close()
 
     def _request_close(self) -> None:

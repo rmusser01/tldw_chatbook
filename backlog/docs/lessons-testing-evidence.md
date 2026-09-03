@@ -10907,3 +10907,47 @@ named-parent mismatch is an uncertain committed state, not proof the old file
 survived. Tests must inject a competing create and parent rename inside the atomic
 publication call itself—checking only the phase before it leaves the decisive race
 untested.
+## A method inserted above a decorated method steals the decorator -- and the symptom is a silently dead handler (task-28026, 2026-09-02)
+
+**What happened.** While wiring `TldwCli.on_key` (forward startup-splash
+skips), the new method was inserted directly above
+`on_splash_screen_closed` -- between the pre-existing
+`@on(SplashScreen.Closed)` decorator line and the function it decorated.
+Python happily decorated the new `on_key` instead. Textual marks decorated
+handlers with `_textual_on` metadata and then *excludes them from
+name-based dispatch*, so the "new" `on_key` had become a Closed-message
+handler that ignored its event, and no keypress ever reached it. The trap
+cost a long debugging detour because monkeypatching `TldwCli.on_key` at
+runtime (a fresh, undecorated function) made the skip *work*, while the
+identical class-defined method stayed dead -- the discrepancy was only
+explained by printing `getattr(fn, "_textual_on", None)`, which showed the
+stolen `SplashScreen.Closed` binding. A duplicated-decorator syntax error
+would have failed loudly; this fails silently at runtime.
+
+Rule: when inserting a method into a class with `@on(...)`/decorated
+handlers, check the insertion point is not between a decorator and its
+function. When a Textual event handler is inexplicably never invoked,
+print its `_textual_on` attribute before blaming dispatch order or focus --
+a non-empty value means the decorator attached to the wrong function.
+
+## Textual `set_interval` skips missed ticks, so wall-clock-paced animation jumps under load (task-28026, 2026-09-02)
+
+**What happened.** The startup splash was intermittently jumpy or skipped
+from an early frame straight to its end. Measurement (headless `run_test`
+probe with a controllable `time.sleep` blocker on the app's event loop)
+showed the mechanism: `Timer` defaults to `skip=True`, so callbacks that
+could not run while the loop was blocked are *permanently skipped* (one
+callback fires after the delay, not a catch-up burst), and the splash
+effects derive their progression from `time.time() - effect.start_time`.
+A 1.2s block right after arming made the first visible frame land at 1.22s
+of a 2.5s reveal; a block longer than the splash duration let the
+auto-close timer beat every frame. The fix re-anchors the effect clock per
+*rendered* frame (virtual elapsed = frames x interval), so contention
+slows the animation instead of skipping it ahead.
+
+Rule: anything animated by `set_interval` in this repo (splash effects,
+console background, tamagotchi, activity-log timestamps) must advance its
+state per rendered callback, never from wall-clock elapsed, or it will
+jump whenever the event loop stalls. Verify pacing behavior with a
+deliberate blocker on the loop, not by watching an idle machine where
+everything looks smooth.

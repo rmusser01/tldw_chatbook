@@ -3484,7 +3484,7 @@ openai_cache_key = false
 # Splash screen configuration for startup animations
 # See Docs/Examples/SPLASH_SCREENS_CATALOG.md for all available splash screens
 enabled = true  # Enable/disable splash screen
-duration = 1.5  # Duration in seconds to display splash screen
+duration = 7.0  # Duration in seconds to display splash screen
 skip_on_keypress = true  # Allow users to skip with any keypress
 
 # Card selection mode:
