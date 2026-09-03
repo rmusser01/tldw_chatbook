@@ -3348,7 +3348,7 @@ class ChatScreen(BaseAppScreen):
         claim: HandoffClaim[ConversationSettingsReturnIntent],
         target: ConsoleSettingsReturnTarget,
     ) -> bool:
-        """Settle A at modal ownership without releasing a failed exact ack."""
+        """Settle A at modal ownership without creating a snapshot-less retry."""
 
         acknowledged = False
         try:
@@ -3360,27 +3360,32 @@ class ChatScreen(BaseAppScreen):
             )
         status = "settled" if acknowledged else "unknown"
         if not acknowledged:
+            released = False
+            discarded = False
             try:
+                released = handoffs.release(claim)
+                if released:
+                    discarded = handoffs.discard_pending_exact(
+                        HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                        claim.revision,
+                        claim.value,
+                    )
                 status = handoffs.exact_revision_status(
                     HandoffChannel.CONVERSATION_SETTINGS_RETURN,
                     claim.revision,
                 )
-                if status == "pending" and handoffs.discard_pending_exact(
-                    HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                    claim.revision,
-                    claim.value,
-                ):
-                    status = "settled"
             except Exception:
                 logger.error(
-                    "Unable to inspect failed Conversation settings transfer "
+                    "Unable to recover failed Conversation settings transfer "
                     "acknowledgement for revision {}",
                     claim.revision,
                 )
             logger.error(
                 "Conversation settings transfer acknowledgement failed for "
-                "revision {}; exact status is {}",
+                "revision {}; release={}, discard={}, exact status={}",
                 claim.revision,
+                released,
+                discarded,
                 status,
             )
         if self._pending_conversation_settings_return_claim is claim:

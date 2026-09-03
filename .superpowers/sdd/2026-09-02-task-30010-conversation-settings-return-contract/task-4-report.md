@@ -716,3 +716,110 @@ checks preserve B throughout. The acknowledgement-failure case intentionally
 leaves an unexplained in-flight A observably in flight rather than claiming
 settlement or duplicating modal/store ownership. No controller ledger, task
 state, general lesson, schema, persistence owner, or ADR changed.
+
+## Round-7 review fix
+
+Resolved the Important acknowledgement-recovery leak without adding a store
+API, state owner, persistence change, or ADR:
+
+- The modal-transfer settlement path still attempts the exact acknowledgement
+  first. If it returns false or raises before mutation, it now releases that
+  exact claim through `PendingHandoffStore.release()`.
+- When A is still the latest revision, release requeues exact A and the transfer
+  path immediately removes only `(A.revision, A.value)` with
+  `discard_pending_exact()`. The modal remains the sole draft owner and no
+  snapshot-less retry survives.
+- When newer B is already pending, release removes A from in-flight ownership
+  without requeueing it. A's exact discard is a no-op and B retains its original
+  revision, value, and claimability.
+- When the failed acknowledgement result arrives after real store mutation has
+  already settled or superseded A, exact release returns false and the
+  value-free status check records that terminal state without touching B or a
+  different current claim.
+- Replaced the prior test that asserted the leaked `in_flight` state with
+  mounted false/exception recovery cases grounded in the real store's release,
+  replacement, settlement, and claim transitions. Existing covered-cancel,
+  pre-transfer retry, and single-shot transfer regressions remain unchanged.
+
+### Round-7 RED evidence
+
+The final new test shapes were run before the production change:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py -k 'recovers_pre_mutation_ack_failure or ack_failure_preserves_pending_replacement or false_ack_after_real_settlement_preserves_owner' -q --tb=short --show-capture=no
+4 failed, 2 passed, 339 deselected, 1 warning in 8.46s
+```
+
+The four expected failures were the pre-mutation false/exception cases with A
+alone and with B already pending: A remained `in_flight` instead of becoming
+`settled`/`superseded`. The two characterization cases passed because their
+real store mutations had already settled or superseded A; they guard the fix
+from releasing or discarding a different owner. There were no fixture or
+collection failures.
+
+### Round-7 GREEN evidence
+
+Exact acknowledgement-failure regressions:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py -k 'recovers_pre_mutation_ack_failure or ack_failure_preserves_pending_replacement or false_ack_after_real_settlement_preserves_owner' -q --tb=short --show-capture=no
+6 passed, 339 deselected, 1 warning in 7.90s
+```
+
+Acknowledgement, replacement, single-shot transfer, covered cancellation, and
+pre-transfer retry slice:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py Tests/UI/test_console_session_settings.py -k 'recovers_pre_mutation_ack_failure or ack_failure_preserves_pending_replacement or false_ack_after_real_settlement_preserves_owner or settles_at_transfer_before_status_and_keeps_replacement or covered_mount_cancellation_settles_before_unmount or pretransfer_cancellation_retains_retry or covered_cancelled_source_reopen_transfers_exact_draft_to_modal' -q --tb=short --show-capture=no
+10 passed, 625 deselected, 1 warning in 20.93s
+```
+
+Cumulative Task 4/state selection and complete handoff-store suite:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/State/test_pending_handoff_store.py Tests/State/test_screen_state_store.py Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_native_chat_flow.py Tests/UI/test_console_session_settings.py -k 'conversation_settings or provider_navigation or credential or screen_state or dirty_return_confirmation' -q --tb=short --show-capture=no
+112 passed, 1025 deselected, 1 warning in 127.44s
+
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/State/test_pending_handoff_store.py -q --tb=short --show-capture=no
+90 passed, 1 warning in 0.46s
+```
+
+The warning is the already documented Requests dependency-version warning from
+the shared root virtualenv. No full suite was run, per repository and task
+instructions.
+
+Static verification before the report update:
+
+```text
+../../.venv/bin/python -m ruff check tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_console_native_chat_flow.py
+All checks passed!
+
+../../.venv/bin/python -m py_compile tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_console_native_chat_flow.py
+exit 0
+
+git diff --check
+exit 0
+```
+
+### Round-7 files, ADR check, and self-review
+
+- `tldw_chatbook/UI/Screens/chat_screen.py`
+- `Tests/UI/test_console_native_chat_flow.py`
+- `.superpowers/sdd/2026-09-02-task-30010-conversation-settings-return-contract/task-4-report.md`
+
+ADR required: no new ADR
+
+ADR paths: `backlog/decisions/012-provider-credential-settings-boundary.md` and
+`backlog/decisions/033-application-session-state-ownership.md`
+
+Reason: this correction uses ADR-033's existing exact release/discard semantics
+at the already-approved modal ownership boundary and does not move ADR-012's
+credential owner.
+
+Self-review confirmed the recovery never inspects or logs a handoff value. A's
+exact release is the only operation that can requeue it; exact discard runs
+only after that release succeeds. B is preserved both pending and under a
+different in-flight claim. Direct acknowledgement success remains unchanged,
+covered cancellation still propagates after a single transfer callback, and
+pre-transfer cancellation still releases A for an exact retry. No controller
+ledger, task state, general lesson, schema, persistence owner, or ADR changed.
