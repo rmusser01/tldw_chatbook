@@ -48,6 +48,10 @@ from ..Navigation.pending_handoff_store import (
     ConsoleProviderIntent,
     HandoffChannel,
 )
+from ..Navigation.conversation_settings_navigation import (
+    ConversationSettingsReturnIntent,
+    ProviderSettingsNavigationTarget,
+)
 from ..Navigation.screen_state_store import ConsolePromptTargetProjection
 from .chat_screen_state import TaskResumeState
 
@@ -510,7 +514,11 @@ from ...Widgets.Console.console_speech_controls import (
     ConsoleAutoSpeakChanged,
     ConsoleHandsFreeToggleRequested,
 )
-from ...Widgets.Console.console_settings_modal import ConsoleSettingsResult
+from ...Widgets.Console.console_settings_modal import (
+    ConsoleSettingsCredentialRequest,
+    ConsoleSettingsDraftSnapshot,
+    ConsoleSettingsResult,
+)
 from ...Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
 from ...Widgets.Console.console_terminal_messages import (
     ConsoleTerminalActionRequested,
@@ -2931,9 +2939,52 @@ class ChatScreen(BaseAppScreen):
         )
 
         def apply_origin_result(result) -> None:
+            if isinstance(result, ConsoleSettingsCredentialRequest):
+                self._stage_console_settings_credential_request(
+                    result,
+                    session_id=session_id,
+                )
+                return
             self._dispatch_console_settings_submission(result)
 
         self.app.push_screen(modal, callback=apply_origin_result)
+
+    def _stage_console_settings_credential_request(
+        self,
+        request: ConsoleSettingsCredentialRequest,
+        *,
+        session_id: str,
+    ) -> None:
+        """Suspend a draft and navigate to canonical API-key configuration.
+
+        The raw modal state stays solely in this screen's native snapshot.
+        The return handoff and Settings route contain only typed restoration
+        coordinates, never prompt, prefill, endpoint, or credential content.
+        """
+        store = self._ensure_console_chat_store()
+        try:
+            settings_revision = store.session_settings_revision(session_id)
+        except KeyError:
+            return
+        intent = ConversationSettingsReturnIntent(
+            session_id=session_id,
+            settings_revision=settings_revision,
+            active_view=request.snapshot.active_view,
+            focus_control_id=request.snapshot.focus_control_id,
+        )
+        handoff_revision = self.app_instance.pending_handoffs.stage(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+            intent,
+        )
+        target = ProviderSettingsNavigationTarget(
+            category="providers-models",
+            provider=request.provider,
+            model=request.model,
+            field="api_key",
+            return_revision=handoff_revision,
+        )
+        self._suspended_conversation_settings = request.snapshot
+        self.post_message(NavigateToScreen(TAB_SETTINGS, target.to_context()))
 
     def _global_chat_display_name(self) -> str:
         """Return the live in-memory global chat label without touching disk."""
@@ -5730,6 +5781,7 @@ class ChatScreen(BaseAppScreen):
         self._console_settings_coordinated_submission_ids: deque[str] = deque(maxlen=64)
         self._handoff_consumption_in_progress = False
         self._pending_console_launch_context: Optional[ConsoleLiveWorkLaunch] = None
+        self._suspended_conversation_settings: ConsoleSettingsDraftSnapshot | None = None
         self._pending_console_launch_auto_open_inspector = False
         # PR-4/task-1: source count of the evidence the LAST send consumed,
         # kept only until the next thing happens (a new send, new staging, or
@@ -13977,6 +14029,7 @@ class ChatScreen(BaseAppScreen):
 
         pending_launch = getattr(self, "_pending_console_launch_context", None)
         sent_notice = getattr(self, "_console_evidence_sent_notice", None)
+        suspended_settings = getattr(self, "_suspended_conversation_settings", None)
 
         return {
             "version": NATIVE_CONSOLE_STATE_VERSION,
@@ -14008,6 +14061,14 @@ class ChatScreen(BaseAppScreen):
                 else None
             ),
             "console_evidence_sent_notice": sent_notice,
+            # This is the only process-memory snapshot that retains raw
+            # provider endpoint drafts, prompts, or prefills. Never derive a
+            # navigation context from it.
+            "suspended_conversation_settings": (
+                suspended_settings.to_mapping()
+                if isinstance(suspended_settings, ConsoleSettingsDraftSnapshot)
+                else None
+            ),
         }
 
     def _restore_native_console_state(self, payload: Any) -> None:
@@ -14090,6 +14151,14 @@ class ChatScreen(BaseAppScreen):
             raw_sent_notice
             if isinstance(raw_sent_notice, int)
             and not isinstance(raw_sent_notice, bool)
+            else None
+        )
+        # Legacy screen-state payloads omit this key. A malformed new payload
+        # fails closed rather than restoring loosely typed sensitive content.
+        raw_suspended_settings = payload.get("suspended_conversation_settings")
+        self._suspended_conversation_settings = (
+            ConsoleSettingsDraftSnapshot.from_mapping(raw_suspended_settings)
+            if isinstance(raw_suspended_settings, Mapping)
             else None
         )
 

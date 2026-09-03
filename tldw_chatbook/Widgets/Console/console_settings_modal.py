@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, fields, replace
 from typing import Any, Awaitable, Callable, Mapping, Protocol
 from uuid import uuid4
 
@@ -126,6 +126,303 @@ ContextCompactor = Callable[[], Awaitable[tuple[bool, str]]]
 STREAMING_TOGGLE_WIDTH = 12
 PROVIDER_CHOICE_INPUT_MAX_LENGTH = 64
 COMPACTION_CLOSE_WARNING = "Provider work may continue and may still be billed."
+
+
+_CONSOLE_SETTINGS_DRAFT_VERSION = 1
+_SNAPSHOT_RAW_VALUE_IDS = frozenset(
+    {
+        "console-settings-provider",
+        "console-settings-model-picker",
+        "console-settings-base-url",
+        "console-settings-user-display-name",
+        "console-settings-temperature",
+        "console-settings-top-p",
+        "console-settings-min-p",
+        "console-settings-top-k",
+        "console-settings-max-tokens",
+        "console-settings-seed",
+        "console-settings-presence-penalty",
+        "console-settings-frequency-penalty",
+        "console-settings-streaming",
+        "console-settings-reasoning-effort",
+        "console-settings-reasoning-summary",
+        "console-settings-verbosity",
+        "console-settings-thinking-effort",
+        "console-settings-thinking-budget-tokens",
+        "console-context-budget-mode",
+        "console-context-custom-budget",
+        "console-context-compaction-mode",
+        "console-context-compaction-representation",
+        "console-context-trigger-percent",
+        "console-context-target-percent",
+        "console-context-summary-max",
+        "console-context-failure-behavior",
+        "console-context-carry-forward",
+    }
+)
+_SNAPSHOT_FOCUS_CONTROL_IDS = frozenset(
+    {
+        "console-settings-provider",
+        "console-settings-model-picker",
+        "console-settings-model-custom",
+        "console-settings-base-url",
+        "console-settings-user-display-name",
+        "console-settings-temperature",
+        "console-settings-top-p",
+        "console-settings-min-p",
+        "console-settings-top-k",
+        "console-settings-max-tokens",
+        "console-settings-seed",
+        "console-settings-presence-penalty",
+        "console-settings-frequency-penalty",
+        "console-settings-streaming",
+        "console-settings-reasoning-effort",
+        "console-settings-reasoning-summary",
+        "console-settings-verbosity",
+        "console-settings-thinking-effort",
+        "console-settings-thinking-budget-tokens",
+        "console-settings-view-model",
+        "console-settings-view-context",
+        "console-context-budget-mode",
+        "console-context-custom-budget",
+        "console-context-compaction-mode",
+        "console-context-compaction-representation",
+        "console-context-trigger-percent",
+        "console-context-target-percent",
+        "console-context-summary-max",
+        "console-context-failure-behavior",
+        "console-context-carry-forward",
+        "console-context-compact-now",
+        "console-context-reset-current",
+        "console-context-undo-reset",
+        "console-context-reset-overrides",
+        "console-context-reset-all",
+        "console-context-confirm-reset-all",
+    }
+)
+_SNAPSHOT_DISCLOSURE_KEYS = frozenset({"advanced_generation", "connection_details"})
+_SNAPSHOT_CONTEXT_OVERRIDE_KEYS = frozenset(
+    item.name for item in fields(ConsoleContextPolicyOverrides)
+)
+_SNAPSHOT_SETTINGS_FIELDS = tuple(item.name for item in fields(ConsoleSessionSettings))
+_SNAPSHOT_OPTIONAL_STRING_FIELDS = frozenset(
+    {
+        "model",
+        "base_url",
+        "reasoning_effort",
+        "reasoning_summary",
+        "verbosity",
+        "thinking_effort",
+        "system_prompt",
+        "pinned_prefill",
+    }
+)
+_SNAPSHOT_OPTIONAL_INT_FIELDS = frozenset(
+    {"top_k", "max_tokens", "seed", "thinking_budget_tokens"}
+)
+_SNAPSHOT_OPTIONAL_FLOAT_FIELDS = frozenset(
+    {"min_p", "presence_penalty", "frequency_penalty"}
+)
+_SNAPSHOT_REQUIRED_FLOAT_FIELDS = frozenset({"temperature", "top_p"})
+_SNAPSHOT_REQUIRED_STRING_FIELDS = frozenset(
+    {"provider", "character_label", "source"}
+)
+
+
+def _copy_snapshot_string_mapping(
+    source: Mapping[str, object], *, allow_none: bool = False
+) -> dict[str, str | None] | None:
+    """Copy a small allowlisted provider draft mapping without generic deepcopy."""
+    copied: dict[str, str | None] = {}
+    for key, value in source.items():
+        if type(key) is not str or not key or key != key.strip():
+            return None
+        if type(value) is str:
+            copied[key] = value
+        elif allow_none and value is None:
+            copied[key] = None
+        else:
+            return None
+    return copied
+
+
+def _valid_snapshot_settings_mapping(source: Mapping[str, object]) -> bool:
+    """Validate the primitive session-settings shape before reconstructing it."""
+    for name, value in source.items():
+        if name in _SNAPSHOT_OPTIONAL_STRING_FIELDS:
+            if value is not None and type(value) is not str:
+                return False
+        elif name in _SNAPSHOT_OPTIONAL_INT_FIELDS:
+            if value is not None and type(value) is not int:
+                return False
+        elif name in _SNAPSHOT_OPTIONAL_FLOAT_FIELDS:
+            if value is not None and type(value) is not float:
+                return False
+        elif name in _SNAPSHOT_REQUIRED_FLOAT_FIELDS:
+            if type(value) is not float:
+                return False
+        elif name in _SNAPSHOT_REQUIRED_STRING_FIELDS:
+            if type(value) is not str:
+                return False
+        elif name == "streaming":
+            if type(value) is not bool:
+                return False
+        else:
+            return False
+    return True
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleSettingsDraftSnapshot:
+    """Versioned, process-memory-only raw Conversation settings draft."""
+
+    settings: ConsoleSessionSettings
+    context_policy_overrides: ConsoleContextPolicyOverrides
+    raw_values: Mapping[str, str | bool]
+    provider_model_drafts: Mapping[str, str | None]
+    provider_base_url_drafts: Mapping[str, str]
+    active_view: str
+    scroll_anchor: int
+    focus_control_id: str | None
+    disclosure_state: Mapping[str, bool]
+
+    def __post_init__(self) -> None:
+        if type(self.settings) is not ConsoleSessionSettings:
+            raise ValueError("settings draft is invalid")
+        if type(self.context_policy_overrides) is not ConsoleContextPolicyOverrides:
+            raise ValueError("context policy overrides are invalid")
+        if self.active_view not in {"model", "context"}:
+            raise ValueError("active view is invalid")
+        if type(self.scroll_anchor) is not int or self.scroll_anchor < 0:
+            raise ValueError("scroll anchor is invalid")
+        if (
+            self.focus_control_id is not None
+            and self.focus_control_id not in _SNAPSHOT_FOCUS_CONTROL_IDS
+        ):
+            raise ValueError("focus control is invalid")
+        if not isinstance(self.raw_values, Mapping) or not set(self.raw_values).issubset(
+            _SNAPSHOT_RAW_VALUE_IDS
+        ):
+            raise ValueError("raw modal values are invalid")
+        raw_values: dict[str, str | bool] = {}
+        for key, value in self.raw_values.items():
+            if type(key) is not str or type(value) not in {str, bool}:
+                raise ValueError("raw modal values are invalid")
+            raw_values[key] = value
+        model_drafts = _copy_snapshot_string_mapping(
+            self.provider_model_drafts, allow_none=True
+        )
+        base_url_drafts = _copy_snapshot_string_mapping(self.provider_base_url_drafts)
+        if model_drafts is None or base_url_drafts is None:
+            raise ValueError("provider drafts are invalid")
+        if not isinstance(self.disclosure_state, Mapping) or set(
+            self.disclosure_state
+        ) != _SNAPSHOT_DISCLOSURE_KEYS:
+            raise ValueError("disclosure state is invalid")
+        disclosure_state: dict[str, bool] = {}
+        for key, value in self.disclosure_state.items():
+            if type(key) is not str or type(value) is not bool:
+                raise ValueError("disclosure state is invalid")
+            disclosure_state[key] = value
+        object.__setattr__(self, "raw_values", raw_values)
+        object.__setattr__(self, "provider_model_drafts", model_drafts)
+        object.__setattr__(self, "provider_base_url_drafts", base_url_drafts)
+        object.__setattr__(self, "disclosure_state", disclosure_state)
+
+    def to_mapping(self) -> dict[str, object]:
+        """Return a structurally detached primitive mapping for screen state."""
+        settings = {
+            name: getattr(self.settings, name) for name in _SNAPSHOT_SETTINGS_FIELDS
+        }
+        return {
+            "version": _CONSOLE_SETTINGS_DRAFT_VERSION,
+            "settings": settings,
+            "context_policy_overrides": dict(self.context_policy_overrides.to_dict()),
+            "raw_values": dict(self.raw_values),
+            "provider_model_drafts": dict(self.provider_model_drafts),
+            "provider_base_url_drafts": dict(self.provider_base_url_drafts),
+            "active_view": self.active_view,
+            "scroll_anchor": self.scroll_anchor,
+            "focus_control_id": self.focus_control_id,
+            "disclosure_state": dict(self.disclosure_state),
+        }
+
+    @classmethod
+    def from_mapping(
+        cls, source: Mapping[str, object]
+    ) -> "ConsoleSettingsDraftSnapshot | None":
+        """Parse a complete snapshot mapping, refusing unknown or malformed state."""
+        required_keys = {
+            "version",
+            "settings",
+            "context_policy_overrides",
+            "raw_values",
+            "provider_model_drafts",
+            "provider_base_url_drafts",
+            "active_view",
+            "scroll_anchor",
+            "focus_control_id",
+            "disclosure_state",
+        }
+        if not isinstance(source, Mapping) or set(source) != required_keys:
+            return None
+        if source.get("version") != _CONSOLE_SETTINGS_DRAFT_VERSION:
+            return None
+        raw_settings = source.get("settings")
+        raw_overrides = source.get("context_policy_overrides")
+        raw_values = source.get("raw_values")
+        model_drafts = source.get("provider_model_drafts")
+        base_url_drafts = source.get("provider_base_url_drafts")
+        disclosure_state = source.get("disclosure_state")
+        if (
+            not isinstance(raw_settings, Mapping)
+            or set(raw_settings) != set(_SNAPSHOT_SETTINGS_FIELDS)
+            or not _valid_snapshot_settings_mapping(raw_settings)
+            or not isinstance(raw_overrides, Mapping)
+            or not set(raw_overrides).issubset(_SNAPSHOT_CONTEXT_OVERRIDE_KEYS)
+            or not isinstance(raw_values, Mapping)
+            or not isinstance(model_drafts, Mapping)
+            or not isinstance(base_url_drafts, Mapping)
+            or not isinstance(disclosure_state, Mapping)
+        ):
+            return None
+        try:
+            settings = ConsoleSessionSettings(**dict(raw_settings))
+            overrides = ConsoleContextPolicyOverrides.from_mapping(
+                dict(raw_overrides)
+            )
+            return cls(
+                settings=settings,
+                context_policy_overrides=overrides,
+                raw_values=dict(raw_values),
+                provider_model_drafts=dict(model_drafts),
+                provider_base_url_drafts=dict(base_url_drafts),
+                active_view=source["active_view"],  # type: ignore[arg-type]
+                scroll_anchor=source["scroll_anchor"],  # type: ignore[arg-type]
+                focus_control_id=source["focus_control_id"],  # type: ignore[arg-type]
+                disclosure_state=dict(disclosure_state),
+            )
+        except (ContextPolicyError, TypeError, ValueError):
+            return None
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleSettingsCredentialRequest:
+    """Modal result that asks canonical Settings to configure one credential."""
+
+    snapshot: ConsoleSettingsDraftSnapshot = field(repr=False)
+    provider: str
+    model: str | None
+
+    def __post_init__(self) -> None:
+        if type(self.snapshot) is not ConsoleSettingsDraftSnapshot:
+            raise ValueError("credential request snapshot is invalid")
+        provider = provider_config_key(self.provider) if type(self.provider) is str else ""
+        if not provider:
+            raise ValueError("credential request provider is invalid")
+        if self.model is not None and type(self.model) is not str:
+            raise ValueError("credential request model is invalid")
+        object.__setattr__(self, "provider", provider)
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,7 +627,12 @@ class ConsoleSettingsInput(Input):
 
 class ConsoleSettingsModal(
     SafeModalDismissMixin,
-    ModalScreen[ConsoleSettingsCommittedSubmission | ConsoleSettingsTransfer | None],
+    ModalScreen[
+        ConsoleSettingsCommittedSubmission
+        | ConsoleSettingsTransfer
+        | ConsoleSettingsCredentialRequest
+        | None
+    ],
 ):
     """Edit a draft of the current Console session settings."""
 
@@ -484,16 +786,34 @@ class ConsoleSettingsModal(
         default_readiness_resolver: DefaultReadinessResolver | None = None,
         default_durability_state: ConsoleDefaultDurabilityState | None = None,
         default_recovery_handler: DefaultRecoveryHandler | None = None,
+        suspended_draft: ConsoleSettingsDraftSnapshot | None = None,
     ) -> None:
         super().__init__()
         if transfer is not None:
             origin = transfer.origin
             initial_draft = transfer.draft
             settings = transfer.draft.settings
+        if (
+            suspended_draft is not None
+            and type(suspended_draft) is not ConsoleSettingsDraftSnapshot
+        ):
+            raise TypeError("suspended draft must be a ConsoleSettingsDraftSnapshot")
+        self._suspended_draft = suspended_draft
+        if suspended_draft is not None:
+            settings = suspended_draft.settings
+            user_display_name_override = suspended_draft.raw_values.get(
+                "console-settings-user-display-name", user_display_name_override
+            )
         self._origin = origin or ConsoleSettingsOrigin(
             "legacy-console-settings", None, 0
         )
         self._draft = initial_draft or self._initial_full_draft(settings)
+        if suspended_draft is not None:
+            self._draft = replace(
+                self._draft,
+                settings=settings,
+                context_policy_overrides=suspended_draft.context_policy_overrides,
+            )
         self._settings = self._draft.settings
         try:
             self._user_display_name_override = normalize_chat_display_name(
@@ -521,7 +841,11 @@ class ConsoleSettingsModal(
         )
         self._can_save = can_save
         self._focus_model = focus_model
-        self._active_view = "context" if focus_context else "model"
+        self._active_view = (
+            suspended_draft.active_view
+            if suspended_draft is not None
+            else ("context" if focus_context else "model")
+        )
         self._reset_current_memory = reset_current_memory
         self._undo_current_memory_reset = undo_current_memory_reset
         self._reset_all_memories = reset_all_memories
@@ -529,6 +853,16 @@ class ConsoleSettingsModal(
         self._memory_reset_token: tuple[str, int] | None = None
         self._confirm_reset_all = False
         self._context_overrides_reset = False
+        self._advanced_generation_disclosed = bool(
+            suspended_draft.disclosure_state["advanced_generation"]
+            if suspended_draft is not None
+            else False
+        )
+        self._connection_details_disclosed = bool(
+            suspended_draft.disclosure_state["connection_details"]
+            if suspended_draft is not None
+            else False
+        )
         self._model_prober: ModelProber = model_prober or _default_model_prober
         self._draft_rebaser = draft_rebaser
         self._live_committer = live_committer
@@ -548,7 +882,11 @@ class ConsoleSettingsModal(
         self._discovered_model_ids: dict[str, tuple[str, ...]] = {}
         streaming_field = self._draft_field("streaming")
         self._streaming_draft: bool | None = (
-            streaming_field.profile_override
+            bool(suspended_draft.raw_values.get("console-settings-streaming"))
+            if suspended_draft is not None
+            and type(suspended_draft.raw_values.get("console-settings-streaming"))
+            is bool
+            else streaming_field.profile_override
             if streaming_field is not None
             and (
                 streaming_field.profile_override is None
@@ -572,6 +910,11 @@ class ConsoleSettingsModal(
             self._settings.model,
         )
         self._provider_base_url_drafts: dict[str, str] = {}
+        if suspended_draft is not None:
+            self._provider_model_drafts.update(suspended_draft.provider_model_drafts)
+            self._provider_base_url_drafts.update(
+                suspended_draft.provider_base_url_drafts
+            )
         initial_base_url = self._initial_base_url_for_provider(
             self._settings.provider,
             self._settings.base_url,
@@ -1532,7 +1875,9 @@ class ConsoleSettingsModal(
         self._sync_default_readiness()
         self.call_after_refresh(self._reveal_default_feedback)
         self.call_after_refresh(self._finish_initial_control_sync)
-        if self._default_recovery_layout_phase is None:
+        if self._suspended_draft is not None:
+            self._restore_suspended_draft(self._suspended_draft)
+        elif self._default_recovery_layout_phase is None:
             if self._focus_model:
                 self._focus_model_control()
             elif self._active_view == "context":
@@ -1550,6 +1895,120 @@ class ConsoleSettingsModal(
         """Allow feedback reveals after the initial mount/resize callback batch."""
 
         self._initial_feedback_sync = False
+
+    def _restore_suspended_draft(
+        self, snapshot: ConsoleSettingsDraftSnapshot
+    ) -> None:
+        """Rehydrate raw, possibly invalid modal values after composition."""
+        for control_id, value in snapshot.raw_values.items():
+            if control_id == "console-settings-streaming":
+                continue
+            if control_id == "console-settings-model-picker":
+                self.query_one(f"#{control_id}", ModelSearchPicker).set_model_value(
+                    value if type(value) is str else None
+                )
+                continue
+            try:
+                control = self.query_one(f"#{control_id}")
+            except NoMatches:
+                continue
+            if isinstance(control, Input) and type(value) is str:
+                control.value = value
+            elif isinstance(control, Select) and type(value) is str:
+                control.value = value
+        self._active_provider = self._select_value_text(
+            self.query_one("#console-settings-provider", Select).value
+        )
+        self._streaming_draft = bool(
+            snapshot.raw_values.get("console-settings-streaming", self._streaming_draft)
+        )
+        self.query_one("#console-settings-streaming", Button).label = (
+            self._streaming_toggle_label()
+        )
+        self.call_after_refresh(self._restore_suspended_scroll_and_focus, snapshot)
+
+    def _restore_suspended_scroll_and_focus(
+        self, snapshot: ConsoleSettingsDraftSnapshot
+    ) -> None:
+        """Restore only a current logical focus target and the saved body anchor."""
+        body = self.query_one("#console-settings-body", ScrollableContainer)
+        body.scroll_to(y=snapshot.scroll_anchor, animate=False)
+        control_id = snapshot.focus_control_id
+        if control_id is None:
+            return
+        try:
+            control = self.query_one(f"#{control_id}")
+        except NoMatches:
+            return
+        if control.display and not control.disabled and control.can_focus:
+            control.focus()
+
+    def capture_suspended_draft(self) -> ConsoleSettingsDraftSnapshot:
+        """Capture the raw modal state before a credential-setup handoff."""
+        self._store_current_model_for_provider(self._active_provider)
+        self._store_current_base_url_for_provider(self._active_provider)
+        raw_values: dict[str, str | bool] = {}
+        for control_id in _SNAPSHOT_RAW_VALUE_IDS:
+            if control_id == "console-settings-streaming":
+                raw_values[control_id] = self._streaming_draft
+                continue
+            try:
+                control = self.query_one(f"#{control_id}")
+            except NoMatches:
+                continue
+            if control_id == "console-settings-model-picker":
+                raw_values[control_id] = self._select_value_text(
+                    getattr(control, "value", None)
+                )
+            elif isinstance(control, Input):
+                raw_values[control_id] = control.value
+            elif isinstance(control, Select):
+                raw_values[control_id] = self._select_value_text(control.value)
+        try:
+            scroll_anchor = max(
+                0, int(self.query_one("#console-settings-body", ScrollableContainer).scroll_y)
+            )
+        except (NoMatches, TypeError, ValueError):
+            scroll_anchor = 0
+        return ConsoleSettingsDraftSnapshot(
+            settings=self._settings,
+            context_policy_overrides=self._context_state.overrides,
+            raw_values=raw_values,
+            provider_model_drafts=dict(self._provider_model_drafts),
+            provider_base_url_drafts=dict(self._provider_base_url_drafts),
+            active_view=self._active_view,
+            scroll_anchor=scroll_anchor,
+            focus_control_id=self._logical_focus_control_id(),
+            disclosure_state={
+                "advanced_generation": bool(
+                    getattr(self, "_advanced_generation_disclosed", False)
+                ),
+                "connection_details": bool(
+                    getattr(self, "_connection_details_disclosed", False)
+                ),
+            },
+        )
+
+    def _logical_focus_control_id(self) -> str | None:
+        """Return the public focus target, never a hidden legacy alias."""
+        focused = self.focused or getattr(self.app, "focused", None)
+        current = focused
+        while current is not None:
+            control_id = getattr(current, "id", None)
+            if control_id in _SNAPSHOT_FOCUS_CONTROL_IDS:
+                return control_id
+            if control_id == "model-search-picker-input":
+                return "console-settings-model-picker"
+            current = getattr(current, "parent", None)
+        return None
+
+    def credential_request(self) -> ConsoleSettingsCredentialRequest:
+        """Build the modal result consumed by Console's credential recovery route."""
+        return ConsoleSettingsCredentialRequest(
+            snapshot=self.capture_suspended_draft(),
+            provider=self._active_provider,
+            model=self._current_model_value(),
+        )
 
     def on_resize(self, event: events.Resize) -> None:
         """Recompute the body fold affordance after viewport changes."""

@@ -33,6 +33,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleWorkspaceContext,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -76,6 +77,8 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
     MODEL_DISCOVER_STATUS_ID,
     PROVIDER_CHOICE_NO_EFFECT_SUFFIX,
     ConsoleSettingsInput,
+    ConsoleSettingsCredentialRequest,
+    ConsoleSettingsDraftSnapshot,
     ConsoleSettingsModal,
     ConsoleSettingsResult,
     _is_local_thinking_provider,
@@ -175,6 +178,139 @@ class StyledConsoleHarness(ConsoleHarness):
         / "css"
         / "tldw_cli_modular.tcss"
     )
+
+
+def test_suspended_draft_round_trips_raw_modal_values_and_sensitive_session_fields() -> None:
+    """Suspension keeps the modal's unvalidated values only in Console state."""
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            base_url="http://127.0.0.1:9099",
+            system_prompt="private system text",
+            pinned_prefill="private prefill text",
+        ),
+        context_policy_overrides=ConsoleContextPolicyOverrides(
+            custom_budget_tokens=2048,
+        ),
+        raw_values={
+            "console-settings-provider": "llama_cpp",
+            "console-settings-model-picker": "model-a",
+            "console-settings-base-url": "http://127.0.0.1:9099",
+            "console-settings-temperature": "0.7.2",
+            "console-settings-user-display-name": "Ada",
+            "console-context-custom-budget": "2048",
+        },
+        provider_model_drafts={"llama_cpp": "model-a", "openai": "gpt-5"},
+        provider_base_url_drafts={"llama_cpp": "http://127.0.0.1:9099"},
+        active_view="context",
+        scroll_anchor=17,
+        focus_control_id="console-context-custom-budget",
+        disclosure_state={"advanced_generation": True, "connection_details": False},
+    )
+
+    mapping = snapshot.to_mapping()
+    restored = ConsoleSettingsDraftSnapshot.from_mapping(mapping)
+
+    assert restored is not None
+    assert restored.raw_values["console-settings-temperature"] == "0.7.2"
+    assert restored.settings.system_prompt == "private system text"
+    assert restored.settings.pinned_prefill == "private prefill text"
+    assert restored.context_policy_overrides.custom_budget_tokens == 2048
+    assert restored.provider_model_drafts == {
+        "llama_cpp": "model-a",
+        "openai": "gpt-5",
+    }
+    assert restored.provider_base_url_drafts == {
+        "llama_cpp": "http://127.0.0.1:9099"
+    }
+    assert restored.active_view == "context"
+    assert restored.scroll_anchor == 17
+    assert restored.focus_control_id == "console-context-custom-budget"
+    assert restored.disclosure_state == {
+        "advanced_generation": True,
+        "connection_details": False,
+    }
+
+    mapping["raw_values"]["console-settings-temperature"] = "changed"  # type: ignore[index]
+    mapping["provider_model_drafts"]["openai"] = "changed"  # type: ignore[index]
+    assert restored.raw_values["console-settings-temperature"] == "0.7.2"
+    assert restored.provider_model_drafts["openai"] == "gpt-5"
+
+
+def test_credential_request_stages_only_a_secret_free_return_and_navigation_context() -> None:
+    """A credential deep link keeps Console-owned draft content off the route."""
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        base_url="http://127.0.0.1:9099",
+        system_prompt="private system text",
+        pinned_prefill="private prefill text",
+    )
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=settings,
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={
+            "console-settings-provider": "llama_cpp",
+            "console-settings-model-picker": "model-a",
+            "console-settings-base-url": "http://127.0.0.1:9099",
+            "console-settings-temperature": "0.7.2",
+        },
+        provider_model_drafts={"llama_cpp": "model-a"},
+        provider_base_url_drafts={"llama_cpp": "http://127.0.0.1:9099"},
+        active_view="model",
+        scroll_anchor=3,
+        focus_control_id="console-settings-model-picker",
+        disclosure_state={"advanced_generation": False, "connection_details": True},
+    )
+    request = ConsoleSettingsCredentialRequest(
+        snapshot=snapshot,
+        provider="llama_cpp",
+        model="model-a",
+    )
+    store = ConsoleChatStore()
+    session = store.create_session(settings=settings)
+    messages = []
+    screen = ChatScreen.__new__(ChatScreen)
+    screen.app_instance = SimpleNamespace(
+        pending_handoffs=chat_screen_module.PendingHandoffStore(),
+    )
+    screen._ensure_console_chat_store = lambda: store
+    screen.post_message = messages.append
+
+    ChatScreen._stage_console_settings_credential_request(
+        screen,
+        request,
+        session_id=session.id,
+    )
+
+    assert screen._suspended_conversation_settings == snapshot
+    assert store.session_settings(session.id) == settings
+    assert store.session_settings_revision(session.id) == 0
+    assert len(messages) == 1
+    navigation = messages[0]
+    settings_navigation_context = navigation.screen_context
+    claim = screen.app_instance.pending_handoffs.claim(
+        HandoffChannel.CONVERSATION_SETTINGS_RETURN
+    )
+    assert claim is not None
+    return_intent = claim.value
+    assert return_intent.session_id == session.id
+    assert return_intent.settings_revision == 0
+    assert return_intent.active_view == "model"
+    assert return_intent.focus_control_id == "console-settings-model-picker"
+    assert "private system text" not in repr(return_intent)
+    assert "private prefill text" not in repr(return_intent)
+    assert "127.0.0.1" not in repr(settings_navigation_context)
+    assert "private system text" not in repr(settings_navigation_context)
+    assert "private prefill text" not in repr(settings_navigation_context)
+    assert settings_navigation_context == {
+        "category": "providers-models",
+        "provider": "llama_cpp",
+        "model": "model-a",
+        "field": "api_key",
+        "return_revision": claim.revision,
+    }
 
 
 class FakeConsoleModelDiscoveryScope:
