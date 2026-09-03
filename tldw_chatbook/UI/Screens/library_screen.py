@@ -10793,11 +10793,12 @@ class LibraryScreen(BaseAppScreen):
                 focus_identity=None,
             )
             self._request_library_media_facets()
-            # task-28245: a screen mount that lands on the media list with an
-            # active review set resumes it at its cursor. The worker's final
-            # still-on-the-media-list + current-screen gates make a cold-start
-            # initial-tab yank abort without opening (AC#3).
-            self.call_after_refresh(self._maybe_auto_resume_review_set)
+            # task-28245: NO auto-resume kick here, deliberately. The mount
+            # leg runs during boot, and the worker's lazy review-set imports
+            # raced the _ui_ready module census on slow runners (977 > 972,
+            # flaky Perf Guard). The rail-select seam is the explicit
+            # user gesture that resumes a set (AC#3's cold-start concern is
+            # structurally avoided there).
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
             and self._library_media_view == "trash"
@@ -42416,9 +42417,11 @@ class LibraryScreen(BaseAppScreen):
     def _maybe_auto_resume_review_set(self) -> None:
         """Kick the once-per-set auto-resume of an active review set.
 
-        Called on explicit media-area entry (rail select, screen mount). The
-        worker re-checks the surface right before opening, so an entry that
-        gets yanked away (cold-start initial-tab switch) aborts cleanly.
+        Called ONLY from the rail-select seam (an explicit user gesture) --
+        never from the mount leg, whose boot-time timing made the worker's
+        lazy imports race the _ui_ready module census (flaky Perf Guard).
+        The worker still re-checks the surface right before opening, so an
+        entry that gets yanked away aborts cleanly.
 
         Its OWN exclusive group, not ``library_review_set`` -- joining the
         entry-point builders' group would CANCEL an in-flight "Review these"
