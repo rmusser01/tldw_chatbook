@@ -36,6 +36,7 @@ class ConsoleReadinessPresentation:
     action_label: str
     action_target: str
     action_tooltip: str
+    provider_row: str
     credential_row: str
     endpoint_row: str
     model_row: str
@@ -180,6 +181,7 @@ def build_console_readiness_presentation(
         action_label=action[0],
         action_target=action[1],
         action_tooltip=action[2],
+        provider_row=f"Provider: {provider}",
         credential_row=f"Credential · {credential_value}",
         endpoint_row=f"Endpoint · {endpoint_value}",
         model_row=f"Model · {model_value}",
@@ -268,6 +270,28 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
         """Return a Textual-safe settings row label."""
         return value or ""
 
+    @staticmethod
+    def _context_row_text(value: str | None) -> str:
+        """Name an absent context estimate without implying a failed estimate."""
+        text = str(value or "").strip()
+        if text.casefold() in {
+            "context: unavailable",
+            "context: unknown",
+            "unavailable",
+            "unknown",
+            "",
+        }:
+            return "Context: Not estimated"
+        return text
+
+    @staticmethod
+    def _endpoint_row_text(value: str | None) -> str:
+        """Capitalize the explicit provider-inheritance label consistently."""
+        text = str(value or "").strip()
+        if text.casefold() == "endpoint: provider default":
+            return "Endpoint: Provider default"
+        return text
+
     def _presentation(self) -> ConsoleReadinessPresentation | None:
         readiness = self.state.readiness
         if readiness is None:
@@ -287,18 +311,20 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
             (
                 (
                     "console-settings-provider-row",
-                    self._row_text(self.state.provider_row),
+                    presentation.provider_row
+                    if presentation is not None
+                    else self._row_text(self.state.provider_row),
                 ),
                 ("console-settings-model-row", self._row_text(self.state.model_row)),
                 (
                     "console-settings-context-row",
-                    self._row_text(self.state.context_row),
+                    self._context_row_text(self.state.context_row),
                 ),
                 (
                     "console-settings-endpoint-row",
                     presentation.endpoint_row
                     if presentation is not None
-                    else self._row_text(self.state.endpoint_row),
+                    else self._endpoint_row_text(self.state.endpoint_row),
                 ),
                 (
                     "console-settings-credential-row",
@@ -350,7 +376,7 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
         header.styles.max_height = CONSOLE_SETTINGS_ROW_HEIGHT
         with header:
             title = Static(
-                "Session Settings",
+                "Conversation settings",
                 id="console-settings-title",
                 classes="destination-section console-settings-title",
             )

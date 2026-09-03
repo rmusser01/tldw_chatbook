@@ -147,6 +147,9 @@ ContextCompactor = Callable[[], Awaitable[tuple[bool, str]]]
 STREAMING_TOGGLE_WIDTH = 12
 PROVIDER_CHOICE_INPUT_MAX_LENGTH = 64
 COMPACTION_CLOSE_WARNING = "Provider work may continue and may still be billed."
+CONSOLE_SETTINGS_SAVE_DEFAULT_PROGRESS_COPY = (
+    "Saving defaults… Keep this window open."
+)
 
 
 _CONSOLE_SETTINGS_DRAFT_VERSION = 1
@@ -711,15 +714,15 @@ _GENERATION_CONTROL_INPUTS: tuple[tuple[str, ConsoleGenerationControl], ...] = (
 STREAMING_ON_LABEL = "On"
 STREAMING_OFF_LABEL = "Off"
 CONSOLE_SETTINGS_MODEL_SCOPE_COPY = (
-    "Apply affects this chat. Save as model default writes this model's shown "
-    "generation profile. Make default for new chats also selects this provider "
-    "and model for eligible new chats."
+    "Use: this conversation only. Defaults: future provider conversations."
 )
 CONSOLE_SETTINGS_CONTEXT_SCOPE_COPY = (
-    "Apply affects this chat. Global context defaults are in "
-    "F9 Settings > Console behavior."
+    "Use: this conversation only. Defaults: F9 Settings > Console behavior."
 )
 CONSOLE_SETTINGS_SCOPE_COPY = CONSOLE_SETTINGS_MODEL_SCOPE_COPY
+CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY = (
+    "Could not save defaults. Nothing changed; your draft is still open."
+)
 #: Debounce for the custom-model-id `Input` -- mirrors the picker/filter
 #: family's 0.2 s shape (`console_prompt_picker_modal.py`). Each settle
 #: rebuilds a full `ConsoleSessionSettings` draft from every form field and
@@ -849,6 +852,19 @@ class ConsoleSettingsInput(Input):
     def on_blur(self) -> None:
         """Avoid trapping later Select clicks after browser text editing."""
         self.release_mouse()
+
+
+class ConsoleSettingsRecoveryButton(Button):
+    """Credential recovery action that activates only on a primary click."""
+
+    async def _on_click(self, event: events.Click) -> None:
+        """Ignore context/menu clicks while retaining keyboard activation."""
+        if event.button != 1:
+            event.stop()
+            event.prevent_default()
+        # Textual composes same-named message handlers across the MRO. Its
+        # Button handler performs the one primary-click press; calling super()
+        # here would post Button.Pressed twice.
 
 
 class ConsoleSettingsModal(
@@ -1199,6 +1215,8 @@ class ConsoleSettingsModal(
         self._compaction_wait_worker: Any | None = None
         self._compaction_provider_task: asyncio.Task[tuple[bool, str]] | None = None
         self._compaction_result_definitive = False
+        self._default_save_in_flight = False
+        self._default_save_disabled_snapshot: dict[Widget, bool] = {}
 
     @staticmethod
     def _context_state_with_draft_overrides(
@@ -1413,20 +1431,48 @@ class ConsoleSettingsModal(
         with Vertical(id="console-settings-modal"):
             yield Static("Conversation settings", classes="console-modal-header")
             with Horizontal(id="console-settings-view-tabs"):
-                yield Button(
-                    "Model and generation",
+                model_view = Button(
+                    (
+                        "Model and generation · Selected"
+                        if self._active_view == "model"
+                        else "Model and generation"
+                    ),
                     id="console-settings-view-model",
-                    variant="primary" if self._active_view == "model" else "default",
+                    classes=(
+                        "console-settings-view-active"
+                        if self._active_view == "model"
+                        else ""
+                    ),
                 )
-                yield Button(
-                    "Context and memory",
+                model_view.tooltip = (
+                    "Selected view: Model and generation"
+                    if self._active_view == "model"
+                    else "Show Model and generation"
+                )
+                yield model_view
+                context_view = Button(
+                    (
+                        "Context and memory · Selected"
+                        if self._active_view == "context"
+                        else "Context and memory"
+                    ),
                     id="console-settings-view-context",
-                    variant="primary" if self._active_view == "context" else "default",
+                    classes=(
+                        "console-settings-view-active"
+                        if self._active_view == "context"
+                        else ""
+                    ),
                 )
+                context_view.tooltip = (
+                    "Selected view: Context and memory"
+                    if self._active_view == "context"
+                    else "Show Context and memory"
+                )
+                yield context_view
             yield Static(
                 self._scope_copy(),
                 id="console-settings-scope",
-                classes="console-settings-modal-row",
+                classes="console-settings-scope",
                 markup=False,
             )
             error_summary = Static(
@@ -1477,7 +1523,7 @@ class ConsoleSettingsModal(
                             provider_adapter.display = False
                             provider_adapter.can_focus = False
                             yield provider_adapter
-                        credential_action = Button(
+                        credential_action = ConsoleSettingsRecoveryButton(
                             "Configure credential…",
                             id="console-settings-configure-credential",
                             tooltip=(
@@ -2251,6 +2297,7 @@ class ConsoleSettingsModal(
                 self._sync_visual_representation_availability()
                 self.call_after_refresh(self._focus_context_control)
         self._sync_generation_control_support()
+        self._sync_completion_actions()
         if self._suspended_draft is None and not self._focus_model and self._active_view == "model":
             self.call_after_refresh(self._focus_highest_priority_connection)
         self.call_after_refresh(self._sync_fold_hint)
@@ -2699,16 +2746,37 @@ class ConsoleSettingsModal(
             and self._default_durability_state.failure_phase is not None
         )
         show_model = self._active_view == "model" and not recovery_active
+        model_selected = self._active_view == "model"
         for section in self.query(".console-settings-model-view"):
             section.display = show_model
         self.query_one("#console-settings-context-view", Vertical).display = (
             self._active_view == "context" and not recovery_active
         )
-        self.query_one("#console-settings-view-model", Button).variant = (
-            "primary" if show_model else "default"
+        model_tab = self.query_one("#console-settings-view-model", Button)
+        context_tab = self.query_one("#console-settings-view-context", Button)
+        model_tab.label = (
+            "Model and generation · Selected"
+            if model_selected
+            else "Model and generation"
         )
-        self.query_one("#console-settings-view-context", Button).variant = (
-            "default" if show_model else "primary"
+        context_tab.label = (
+            "Context and memory"
+            if model_selected
+            else "Context and memory · Selected"
+        )
+        model_tab.variant = "primary" if model_selected else "default"
+        context_tab.variant = "default" if model_selected else "primary"
+        model_tab.set_class(model_selected, "console-settings-view-active")
+        context_tab.set_class(not model_selected, "console-settings-view-active")
+        model_tab.tooltip = (
+            "Selected view: Model and generation"
+            if model_selected
+            else "Show Model and generation"
+        )
+        context_tab.tooltip = (
+            "Show Context and memory"
+            if model_selected
+            else "Selected view: Context and memory"
         )
         self.query_one("#console-settings-scope", Static).update(self._scope_copy())
         self.query_one("#console-settings-save-default", Button).display = show_model
@@ -2724,6 +2792,11 @@ class ConsoleSettingsModal(
         if self._active_view == "context":
             return CONSOLE_SETTINGS_CONTEXT_SCOPE_COPY
         return CONSOLE_SETTINGS_MODEL_SCOPE_COPY
+
+    def _sync_completion_actions(self) -> None:
+        """Refresh completion controls using the transactional default gates."""
+
+        self._sync_default_readiness()
 
     def _sync_default_readiness(self) -> None:
         """Gate default actions on an exact model and future-chat readiness."""
@@ -3076,16 +3149,16 @@ class ConsoleSettingsModal(
     # Textual 8 composes same-named sync/async MRO message handlers; this is not
     # an ordinary OO override of the mixin hook.
     def on_click(self, event: events.Click) -> None:  # type: ignore[override]
-        """Recover select clicks redirected through focused Textual Web inputs.
+        """Recover unhandled compact-modal control clicks.
 
         Args:
-            event: Click event that may have been redirected from a focused
-                settings input.
+            event: Click that may have bypassed a button or been redirected
+                from a focused settings input.
         """
         self._open_select_from_redirected_settings_click(event)
 
     def _open_select_from_redirected_settings_click(self, event: events.Click) -> None:
-        """Recover settings controls when an input-held click lands on them.
+        """Recover settings controls when a compact-modal click reaches the screen.
 
         Args:
             event: Click event to recover when Textual Web keeps routing clicks
@@ -3094,6 +3167,21 @@ class ConsoleSettingsModal(
         captured_widget = self.app.mouse_captured
         click_origin = getattr(event, "widget", None)
         focused_widget = self.app.focused
+        # A compact, scrollable modal can route a border click to the screen
+        # after Button receives MouseDown (and focus) but before its own Click
+        # handler runs. Recover that unhandled click exactly once here. Button's
+        # normal handler stops handled Click events before they reach the screen.
+        if (
+            event.button == 1
+            and isinstance(click_origin, Button)
+            and click_origin.screen is self
+            and click_origin.display
+            and not click_origin.disabled
+        ):
+            click_origin.focus()
+            click_origin.press()
+            event.stop()
+            return
         screen_routed_click = click_origin is self and isinstance(
             focused_widget, ConsoleSettingsInput
         )
@@ -3187,6 +3275,11 @@ class ConsoleSettingsModal(
 
     def _request_settings_close(self) -> None:
         """Dismiss cleanly or reveal the one applicable side-effect guard."""
+        if self._default_save_in_flight:
+            self.query_one(
+                "#console-settings-primary-disabled-reason", Static
+            ).update(CONSOLE_SETTINGS_SAVE_DEFAULT_PROGRESS_COPY)
+            return
         guard = self.query_one("#console-settings-close-guard", Vertical)
         if guard.display:
             self._focus_settings_close_guard()
@@ -3419,6 +3512,7 @@ class ConsoleSettingsModal(
             exclusive=True,
             group="console-settings-compaction",
         )
+        self._sync_completion_actions()
 
     async def _compact_context_now_worker(self) -> None:
         """Run the supplied controller action and restore the modal controls."""
@@ -3430,10 +3524,13 @@ class ConsoleSettingsModal(
         try:
             succeeded, message = await asyncio.shield(provider_task)
         except asyncio.CancelledError:
+            if self.is_mounted:
+                self._sync_completion_actions()
             return
         self._compaction_wait_worker = None
         if not self.is_mounted:
             return
+        self._sync_completion_actions()
         self.query_one("#console-context-action-status", Static).update(message)
         button = self.query_one("#console-context-compact-now", Button)
         button.disabled = False
@@ -3463,6 +3560,8 @@ class ConsoleSettingsModal(
         if self._compaction_provider_task is task:
             self._compaction_result_definitive = True
             self._compaction_provider_task = None
+            if self.is_mounted:
+                self.call_after_refresh(self._sync_completion_actions)
 
     @on(Button.Pressed, "#console-context-undo-reset")
     async def _undo_current_branch_memory_reset(self, event: Button.Pressed) -> None:
@@ -3830,6 +3929,7 @@ class ConsoleSettingsModal(
             False: None,
         }[self._streaming_draft]
         event.button.label = self._streaming_toggle_label()
+        self._sync_completion_actions()
 
     def _streaming_toggle_label(self) -> str:
         if self._streaming_draft is None:
@@ -4574,6 +4674,7 @@ class ConsoleSettingsModal(
         except (NoMatches, QueryError):
             pass
         self._sync_provider_model_section_emphasis()
+        self._sync_completion_actions()
 
     def _sync_provider_model_section_emphasis(self) -> None:
         section = self.query_one("#console-settings-connection", Vertical)
@@ -5038,7 +5139,12 @@ class ConsoleSettingsModal(
         return "" if value is Select.NULL or value is None else str(value)
 
     def _context_label(self) -> str:
-        label = self._context_estimate.label.strip() or "unknown"
+        if (
+            self._context_estimate.used_tokens is None
+            and self._context_estimate.token_limit is None
+        ):
+            return "Not estimated"
+        label = self._context_estimate.label.strip() or "Not estimated"
         return label if "token" in label.lower() else f"{label} tokens"
 
     def _build_context_policy_overrides(self) -> ConsoleContextPolicyOverrides:

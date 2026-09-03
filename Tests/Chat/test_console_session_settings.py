@@ -2746,6 +2746,48 @@ async def test_settings_active_compaction_return_preserves_progress_and_focus() 
 
 
 @pytest.mark.asyncio
+async def test_settings_compaction_updates_completion_blocker_for_full_lifecycle() -> None:
+    """Completion is blocked as soon as compaction starts and restored when settled."""
+    app = _SettingsCloseHarness()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def compact_now() -> tuple[bool, str]:
+        entered.set()
+        await release.wait()
+        return True, "Compaction complete."
+
+    modal = _settings_close_modal(compact_now=compact_now)
+    try:
+        async with app.run_test(size=(120, 42)) as pilot:
+            await app.push_screen(modal, callback=app.capture)
+            session_action = modal.query_one("#console-settings-save", Button)
+            reason = modal.query_one(
+                "#console-settings-primary-disabled-reason", Static
+            )
+            assert session_action.disabled is False
+
+            modal.query_one("#console-context-compact-now", Button).press()
+            await asyncio.wait_for(entered.wait(), timeout=1)
+            await pilot.pause()
+
+            assert session_action.disabled is True
+            assert str(reason.renderable) == (
+                "Available when the current context operation finishes."
+            )
+
+            release.set()
+            for _ in range(20):
+                await pilot.pause(0.05)
+                if not session_action.disabled:
+                    break
+            assert session_action.disabled is False
+            assert str(reason.renderable) == ""
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
 async def test_settings_completed_compaction_retires_guard_and_stale_close_warning() -> (
     None
 ):

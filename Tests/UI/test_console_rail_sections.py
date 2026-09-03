@@ -131,6 +131,80 @@ async def test_console_rail_summary_renders_typed_operability_and_verification_e
         assert "PRIVATE" not in text
 
 
+@pytest.mark.asyncio
+async def test_console_rail_summary_uses_canonical_provider_and_honest_empty_copy():
+    """Raw provider keys and unavailable estimates must not leak into the rail."""
+    readiness = ConsoleSettingsReadiness(
+        label="Ready",
+        detail="Ready",
+        native_send_supported=True,
+        operability="ready_to_send",
+        provider_display_name="llama.cpp",
+        configuration="configured",
+        credential="not_required",
+        endpoint="not_tested",
+        model="unconfirmed",
+        generation="not_tested",
+    )
+    state = ConsoleSettingsSummaryState(
+        provider_row="Provider: llama_cpp",
+        model_row="Model: model-a",
+        context_row="Context: unavailable",
+        endpoint_row="Endpoint: provider default",
+        sampling_row="Sampling: T 0.70, P 0.95",
+        identity_row="Assistant: General",
+        readiness=readiness,
+    )
+    class _HonestCopyApp(ConsolidatedCSSApp):
+        def compose(self):
+            yield ConsoleSettingsSummary(state)
+
+    app = _HonestCopyApp()
+
+    async with app.run_test(size=(72, 22)):
+        provider = app.query_one("#console-settings-provider-row", Static)
+        context = app.query_one("#console-settings-context-row", Static)
+        endpoint = app.query_one("#console-settings-endpoint-row", Static)
+        assert str(provider.renderable) == "Provider: llama.cpp"
+        assert str(context.renderable) == "Context: Not estimated"
+        assert str(endpoint.renderable) == "Endpoint · Not tested"
+
+
+@pytest.mark.asyncio
+async def test_console_rail_summary_labels_genuine_provider_default_inheritance():
+    """An inherited endpoint must be named as a provider default, not raw copy."""
+    state = ConsoleSettingsSummaryState(
+        provider_row="Provider: OpenAI",
+        model_row="Model: gpt-5.6-terra",
+        context_row="Context: 10 / 4k",
+        endpoint_row="Endpoint: provider default",
+        sampling_row="Sampling: T 0.70, P 0.95",
+        identity_row="Assistant: General",
+    )
+
+    class _ProviderDefaultApp(ConsolidatedCSSApp):
+        def compose(self):
+            yield ConsoleSettingsSummary(state)
+
+    app = _ProviderDefaultApp()
+    async with app.run_test(size=(72, 22)) as pilot:
+        endpoint = app.query_one("#console-settings-endpoint-row", Static)
+        assert str(endpoint.renderable) == "Endpoint: Provider default"
+
+        app.query_one(ConsoleSettingsSummary).sync_state(
+            ConsoleSettingsSummaryState(
+                provider_row="Provider: Anthropic",
+                model_row="Model: claude-sonnet",
+                context_row="Context: 20 / 8k",
+                endpoint_row="Endpoint: provider default",
+                sampling_row="Sampling: T 0.50, P 0.90",
+                identity_row="Assistant: General",
+            )
+        )
+        await pilot.pause()
+        assert str(endpoint.renderable) == "Endpoint: Provider default"
+
+
 @pytest.mark.parametrize(
     ("readiness", "expected_rows"),
     (

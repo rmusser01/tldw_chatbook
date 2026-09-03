@@ -1349,7 +1349,7 @@ async def test_conversation_settings_return_unavailable_focus_falls_back_to_conn
             if isinstance(host.screen_stack[-1], ConsoleSettingsModal):
                 focused = host.focused
                 if focused is not None and focused.id in {
-                    "console-settings-provider",
+                    "console-settings-provider-picker-input",
                     "model-search-picker-input",
                 }:
                     break
@@ -1358,7 +1358,7 @@ async def test_conversation_settings_return_unavailable_focus_falls_back_to_conn
         assert isinstance(host.screen_stack[-1], ConsoleSettingsModal)
         assert host.focused is not None
         assert host.focused.id in {
-            "console-settings-provider",
+            "console-settings-provider-picker-input",
             "model-search-picker-input",
         }
 
@@ -1462,6 +1462,12 @@ async def test_conversation_settings_return_real_navigation_restores_fresh_conso
         assert returned_modal is not None
         assert returned_console is not original_console
         assert app.current_tab == "chat"
+        await _wait_for_selector(
+            returned_modal,
+            pilot,
+            "#console-settings-return-status",
+            timeout=10.0,
+        )
         return_copy = str(
             returned_modal.query_one(
                 "#console-settings-return-status", Static
@@ -11135,7 +11141,7 @@ async def test_console_workspace_conversation_resume_uses_real_local_services(tm
         inspector_text = _visible_text(console.query_one("#console-right-rail"))
         assert "Provider:" not in left_rail_text
         assert "Model:" not in left_rail_text
-        assert "Session Settings" in inspector_text
+        assert "Conversation settings" in inspector_text
         assert "Provider:" in inspector_text
         assert "Where: Real Workspace › Real saved chat" in inspector_text
         conversation_source = console.query_one(

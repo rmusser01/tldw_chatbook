@@ -314,9 +314,44 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     align-horizontal: right;
 }
 
+#console-settings-view-tabs > Button {
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+}
+
+#console-settings-view-tabs > Button.console-settings-view-active {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+}
+
+.console-settings-action-scope,
+.console-settings-disabled-reason {
+    height: auto;
+    min-height: 1;
+    content-align: right middle;
+}
+
+.console-settings-action-scope {
+    color: $ds-text-muted;
+}
+
+.console-settings-scope {
+    height: 1;
+    min-height: 1;
+    color: $ds-text-muted;
+    text-wrap: nowrap;
+    text-overflow: clip;
+}
+
+.console-settings-disabled-reason {
+    color: $ds-status-warning;
+    text-style: bold;
+}
+
 #console-settings-cancel,
 #console-settings-save {
-    width: 12;
+    width: auto;
     min-width: 12;
     height: 1;
     min-height: 1;

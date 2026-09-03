@@ -1360,8 +1360,9 @@ def build_console_settings_readiness(
     """Project one deterministic Console blocker and independent evidence."""
     if type(active_run) is not bool:
         raise ValueError("Active-run state must be boolean.")
+    canonical_provider = _canonical_chat_provider_id(settings.provider)
     identity = resolve_console_provider_identity(
-        settings.provider,
+        canonical_provider,
         handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
     )
     provider_key = identity.readiness_key
@@ -1655,7 +1656,7 @@ def build_console_settings_summary_state(
         identity_row=identity_row,
         readiness_label="",
         provider_row=f"Provider: {provider_label}",
-        endpoint_row=_format_endpoint_summary_row(settings),
+        endpoint_row=_format_endpoint_summary_row(settings, readiness),
         credential_row=_format_credential_summary_row(readiness),
         transport_row=f"Streaming: {'on' if settings.streaming else 'off'}",
         action_label=action_label,
@@ -2331,9 +2332,23 @@ def _format_context_summary_row(label: str) -> str:
     )
 
 
-def _format_endpoint_summary_row(settings: ConsoleSessionSettings) -> str:
+def _format_endpoint_summary_row(
+    settings: ConsoleSessionSettings,
+    readiness: ConsoleSettingsReadiness,
+) -> str:
+    if (
+        readiness.blocker
+        in {
+            "provider_missing",
+            "provider_unsupported",
+            "provider_configuration_invalid",
+            "endpoint_invalid",
+        }
+        or readiness.configuration_issue == "endpoint_missing"
+    ):
+        return "Endpoint: Not configured"
     endpoint = safe_endpoint_display(settings.base_url)
-    return f"Endpoint: {endpoint or 'provider default'}"
+    return f"Endpoint: {endpoint or 'Provider default'}"
 
 
 def _format_credential_summary_row(readiness: ConsoleSettingsReadiness) -> str:

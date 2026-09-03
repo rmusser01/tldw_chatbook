@@ -61,6 +61,9 @@ from tldw_chatbook.Chat.console_session_settings import (
 from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsCommittedSubmission,
 )
+from tldw_chatbook.Widgets.Console.console_context_controls import (
+    build_console_context_control_state,
+)
 from tldw_chatbook.Chat.local_server_discovery import LocalModelProbeResult
 from tldw_chatbook.config import (
     API_MODELS_BY_PROVIDER,
@@ -1876,6 +1879,68 @@ async def test_missing_credential_action_is_mounted_only_for_missing_cloud_crede
     assert len(results) == 1
     assert isinstance(results[0], ConsoleSettingsCredentialRequest)
     assert results[0].provider == "openai"
+
+
+@pytest.mark.asyncio
+async def test_compact_missing_credential_pointer_click_after_picker_focus_dismisses_once() -> (
+    None
+):
+    """A compact modal must not lose the recovery click to its scrollable body."""
+    app = ModalHarness()
+    app.app_config = {"api_settings": {"openai": {}}}
+    results: list[object] = []
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        app,
+        providers_models={"openai": ["gpt-5"]},
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await app.push_screen(modal, callback=results.append)
+        await pilot.pause()
+        modal.query_one(ModelSearchPicker).focus_input()
+        await pilot.click("#console-settings-configure-credential", button=3)
+        await pilot.pause()
+        assert results == []
+        assert app.screen is modal
+
+        await pilot.click("#console-settings-configure-credential")
+        await pilot.pause()
+
+    assert len(results) == 1
+    assert isinstance(results[0], ConsoleSettingsCredentialRequest)
+    assert results[0].provider == "openai"
+
+
+@pytest.mark.asyncio
+async def test_missing_credential_interior_pointer_click_activates_only_once(
+    monkeypatch,
+) -> None:
+    """The normal Button path ignores right click and emits one left-click result."""
+    app = ModalHarness()
+    app.app_config = {"api_settings": {"openai": {}}}
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        app,
+        providers_models={"openai": ["gpt-5"]},
+    )
+    dismissed: list[object] = []
+    monkeypatch.setattr(modal, "dismiss", dismissed.append)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        button = modal.query_one("#console-settings-configure-credential", Button)
+
+        await pilot.click(button, offset=(2, 1), button=3)
+        await pilot.pause()
+        assert dismissed == []
+
+        await pilot.click(button, offset=(2, 1))
+        await pilot.pause()
+
+    assert len(dismissed) == 1
+    assert isinstance(dismissed[0], ConsoleSettingsCredentialRequest)
 
 
 class RejectingConversationSettingsHarness(ConsoleHarness):
@@ -4277,7 +4342,7 @@ async def test_console_settings_summary_renders_rows_and_button() -> None:
         await pilot.pause()
 
         text = _visible_text(app)
-        assert "Session Settings" in text
+        assert "Conversation settings" in text
         assert "Provider: llama.cpp" in text
         assert "Model: model-a" in text
         assert "Context: 12 / 4k" in text
@@ -6175,7 +6240,7 @@ async def test_console_settings_modal_clears_setup_copy_when_dropdown_model_is_a
         readiness_copy = str(readiness.renderable)
         assert "Choose a model to enable sending." not in readiness_copy
         assert "not wired yet" not in readiness_copy
-        assert "custom is ready" in str(readiness.renderable)
+        assert "Ready to send" in str(readiness.renderable)
         assert model_select.disabled is False
         assert model_select.value == "freeform-model"
         assert (
@@ -7119,6 +7184,7 @@ async def test_console_settings_modal_allows_manual_model_when_registry_has_stal
     None
 ):
     app = ModalHarness()
+    app.app_config["api_settings"]["anthropic"] = {"api_key": "test-key"}
     settings = ConsoleSessionSettings(
         provider="anthropic", model="claude-3-haiku-20240307"
     )
@@ -7144,7 +7210,6 @@ async def test_console_settings_modal_allows_manual_model_when_registry_has_stal
         assert custom_button.display is True
 
         custom_button.press()
-        await pilot.pause()
         await pilot.pause()
 
         assert model_select.display is False
@@ -7413,12 +7478,12 @@ async def test_console_settings_modal_can_select_runtime_discovered_model_with_w
         await _visible_console_settings_button(console, pilot)
         for _ in range(40):
             summary_text = _summary_text(console)
-            if "Model: gpt-5 (Capabilities unknown)" in summary_text:
+            if "Model · Selected — not verified at this endpoint" in summary_text:
                 break
             await pilot.pause(0.05)
         else:
             raise AssertionError(
-                f"Console summary did not show discovered-model warning: {summary_text}"
+                f"Console summary did not show discovered-model provenance: {summary_text}"
             )
 
         _settings, readiness = console._active_console_settings_readiness()
@@ -10363,9 +10428,8 @@ async def test_console_settings_modal_scope_line_names_session_and_default_scope
         await pilot.pause()
         scope = app.screen.query_one("#console-settings-scope", Static)
         assert str(scope.renderable) == CONSOLE_SETTINGS_SCOPE_COPY
-        assert "this chat" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
-        assert "model default" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
-        assert "new chats" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
+        assert "conversation" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
+        assert "future provider conversations" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
         assert (
             str(app.screen.query_one("#console-settings-save-default", Button).label)
             == "Save as model default"
@@ -11395,3 +11459,577 @@ def test_console_settings_modal_discovery_uses_exact_model_count_copy() -> None:
         settings_modal_module._model_availability_copy(2, endpoint)
         == "2 models available at http://127.0.0.1:9099."
     )
+
+
+def _visible_enabled_primary_buttons(modal: ConsoleSettingsModal) -> list[Button]:
+    """Return the actions competing for primary visual hierarchy."""
+    return [
+        button
+        for button in modal.query(Button)
+        if button.display and not button.disabled and button.variant == "primary"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_ready_state_has_one_primary_action() -> None:
+    """Navigation state must not compete with the one completion action."""
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        base_url="http://127.0.0.1:9099",
+    )
+    modal = _basic_modal(settings, app)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        primary = _visible_enabled_primary_buttons(modal)
+        assert [button.id for button in primary] == ["console-settings-save"]
+        assert str(primary[0].label) == "Use for this conversation"
+        assert str(
+            modal.query_one(
+                "#console-settings-primary-disabled-reason", Static
+            ).renderable
+        ) == ""
+
+
+@pytest.mark.parametrize(
+    ("case", "settings", "expected_reason"),
+    [
+        (
+            "missing credential",
+            ConsoleSessionSettings(provider="openai", model="gpt-5.6-terra"),
+            "Add or verify the OpenAI API key to continue.",
+        ),
+        (
+            "invalid endpoint",
+            ConsoleSessionSettings(
+                provider="llama_cpp", model="model-a", base_url="ftp://127.0.0.1:9099"
+            ),
+            "Enter a valid llama.cpp Base URL to continue.",
+        ),
+        (
+            "missing model",
+            ConsoleSessionSettings(
+                provider="llama_cpp",
+                model=None,
+                base_url="http://127.0.0.1:9099",
+            ),
+            "Choose a model to continue.",
+        ),
+        (
+            "active run",
+            ConsoleSessionSettings(
+                provider="llama_cpp",
+                model="model-a",
+                base_url="http://127.0.0.1:9099",
+            ),
+            "Available when the current run finishes.",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_console_settings_modal_disabled_completion_has_persistent_reason(
+    case: str,
+    settings: ConsoleSessionSettings,
+    expected_reason: str,
+) -> None:
+    """Each readiness blocker must explain why completion is unavailable."""
+    app = ModalHarness()
+    if case == "missing credential":
+        app.app_config["api_settings"]["openai"] = {}
+    modal = _basic_modal(
+        settings,
+        app,
+        providers_models={settings.provider: [settings.model] if settings.model else []},
+        can_save=case != "active run",
+        active_run=case == "active run",
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        session_action = modal.query_one("#console-settings-save", Button)
+        reason = modal.query_one("#console-settings-primary-disabled-reason", Static)
+        assert session_action.disabled is True
+        assert str(reason.renderable) == expected_reason
+        assert reason.display is True
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_context_operation_disables_completion_with_reason() -> None:
+    """A context mutation cannot race modal completion without explanation."""
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        base_url="http://127.0.0.1:9099",
+    )
+    estimate = ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
+    context_state = replace(
+        build_console_context_control_state(settings=settings, estimate=estimate),
+        busy=True,
+    )
+    modal = _basic_modal(
+        settings,
+        app,
+        context_estimate=estimate,
+        context_state=context_state,
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        assert modal.query_one("#console-settings-save", Button).disabled is True
+        assert str(
+            modal.query_one(
+                "#console-settings-primary-disabled-reason", Static
+            ).renderable
+        ) == "Available when the current context operation finishes."
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_default_action_only_tracks_changed_persisted_fields() -> None:
+    """An unchanged default must not offer a redundant global mutation."""
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        base_url="http://127.0.0.1:9099",
+    )
+    app.app_config = {
+        "api_settings": {
+            "llama_cpp": {
+                "api_url": "http://127.0.0.1:9099",
+                "model": "model-a",
+            }
+        },
+        "console": {
+            "provider_defaults": {
+                "llama_cpp": {"temperature": 0.7, "top_p": 0.95}
+            }
+        },
+        "chat_defaults": {
+            "provider": "llama_cpp",
+            "model": "model-a",
+            "streaming": True,
+        },
+    }
+    modal = _basic_modal(settings, app)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        default_action = modal.query_one("#console-settings-save-default", Button)
+        scope = modal.query_one("#console-settings-default-scope", Static)
+        assert default_action.display is False
+        assert str(scope.renderable) == ""
+
+        modal.query_one("#console-settings-temperature", Input).value = "0.8"
+        await pilot.pause()
+
+        assert default_action.display is True
+        assert default_action.variant == "default"
+        assert str(default_action.label) == "Save as generation defaults"
+        assert str(scope.renderable) == "Used by future conversations for llama.cpp."
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_provider_default_action_names_provider_scope() -> None:
+    """Provider/model persistence must name both its action and impact scope."""
+    app = ModalHarness()
+    app.app_config["api_settings"]["llama_cpp"]["model"] = "model-a"
+    app.app_config["chat_defaults"] = {
+        "provider": "llama_cpp",
+        "model": "model-a",
+        "streaming": True,
+    }
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-b",
+        base_url="http://127.0.0.1:9099",
+    )
+    modal = _basic_modal(
+        settings,
+        app,
+        providers_models={"llama_cpp": ["model-a", "model-b"]},
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        default_action = modal.query_one("#console-settings-save-default", Button)
+        assert default_action.display is True
+        assert str(default_action.label) == "Save as provider defaults"
+        assert str(
+            modal.query_one("#console-settings-default-scope", Static).renderable
+        ) == "Used by future conversations for llama.cpp."
+        assert modal.query_one("#console-settings-default-scope", Static).display
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_unsaved_endpoint_keeps_settings_recovery() -> None:
+    """An unsaved endpoint must recover through Settings, never a generic write."""
+    app = ModalHarness()
+    app.app_config = {
+        "api_settings": {
+            "ollama": {
+                "api_url": "http://127.0.0.1:11434",
+                "model": "qwen-old",
+            }
+        },
+        "chat_defaults": {
+            "provider": "ollama",
+            "model": "qwen-old",
+            "streaming": True,
+        },
+    }
+    settings = ConsoleSessionSettings(
+        provider="ollama",
+        model="qwen-new",
+        base_url="http://127.0.0.1:22434",
+    )
+    modal = _basic_modal(
+        settings,
+        app,
+        providers_models={"ollama": ["qwen-old", "qwen-new"]},
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        session_action = modal.query_one("#console-settings-save", Button)
+        default_action = modal.query_one("#console-settings-save-default", Button)
+        assert session_action.disabled is True
+        assert session_action.variant == "primary"
+        assert default_action.display is False or default_action.disabled is True
+        assert _visible_enabled_primary_buttons(modal) == []
+        assert str(
+            modal.query_one(
+                "#console-settings-primary-disabled-reason", Static
+            ).renderable
+        ) == "Save the Ollama endpoint in Settings before using it here."
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_active_run_reason_precedes_endpoint_recovery() -> None:
+    """An active run remains the immediate blocker when endpoint recovery also exists."""
+    app = ModalHarness()
+    app.app_config = {
+        "api_settings": {
+            "ollama": {
+                "api_url": "http://127.0.0.1:11434",
+                "model": "qwen-old",
+            }
+        }
+    }
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="ollama",
+            model="qwen-new",
+            base_url="http://127.0.0.1:22434",
+        ),
+        app,
+        providers_models={"ollama": ["qwen-new"]},
+        can_save=False,
+        active_run=True,
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        assert str(
+            modal.query_one(
+                "#console-settings-primary-disabled-reason", Static
+            ).renderable
+        ) == "Available when the current run finishes."
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_exposes_selected_view_in_tab_copy_and_tooltips() -> None:
+    """Selected destination must remain legible without adding a layout row."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"), app
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        model_view = modal.query_one("#console-settings-view-model", Button)
+        context_view = modal.query_one("#console-settings-view-context", Button)
+        assert list(modal.query("#console-settings-selected-view")) == []
+        assert str(model_view.label) == "Model and generation · Selected"
+        assert str(context_view.label) == "Context and memory"
+        assert model_view.tooltip == "Selected view: Model and generation"
+        assert context_view.tooltip == "Show Context and memory"
+
+        context_view.press()
+        await pilot.pause()
+
+        assert str(model_view.label) == "Model and generation"
+        assert str(context_view.label) == "Context and memory · Selected"
+        assert model_view.tooltip == "Show Model and generation"
+        assert context_view.tooltip == "Selected view: Context and memory"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_default_save_is_single_flight_and_blocks_dismissal(
+    monkeypatch,
+) -> None:
+    """A slow defaults write freezes mutations and cannot be duplicated or dismissed."""
+    from tldw_chatbook.Widgets.Console import console_settings_modal as modal_module
+
+    entered = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    def blocking_save(_sections) -> bool:
+        nonlocal calls
+        calls += 1
+        entered.set()
+        release.wait(timeout=3)
+        return True
+
+    monkeypatch.setattr(modal_module, "save_settings_to_cli_config", blocking_save)
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp", model="model-a", temperature=0.6
+        ),
+        app,
+    )
+    try:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await app.push_screen(modal, callback=app.capture_saved_settings)
+            await pilot.pause()
+            modal.query_one("#console-settings-save-default", Button).press()
+            assert await asyncio.to_thread(entered.wait, 1)
+
+            assert modal.query_one("#console-settings-cancel", Button).disabled
+            assert modal.query_one("#console-settings-save", Button).disabled
+            assert modal.query_one("#console-settings-save-default", Button).disabled
+            assert modal.query_one("#console-settings-temperature", Input).disabled
+            assert str(
+                modal.query_one(
+                    "#console-settings-primary-disabled-reason", Static
+                ).renderable
+            ) == "Saving defaults… Keep this window open."
+            assert modal.query_one(
+                "#console-settings-primary-disabled-reason", Static
+            ).display
+
+            modal.action_dismiss()
+            modal.query_one("#console-settings-save-default", Button).press()
+            assert app.screen is modal
+            assert app.saved_result is None
+            assert calls == 1
+
+            release.set()
+            for _ in range(20):
+                await pilot.pause(0.05)
+                if app.saved_result is not None:
+                    break
+            assert app.saved_result is not None
+            assert calls == 1
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+async def test_console_settings_default_save_failure_restores_controls(
+    monkeypatch,
+) -> None:
+    """A failed defaults write restores prior controls and actionable failure copy."""
+    from tldw_chatbook.Widgets.Console import console_settings_modal as modal_module
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY,
+    )
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def failing_save(_sections) -> bool:
+        entered.set()
+        release.wait(timeout=3)
+        return False
+
+    monkeypatch.setattr(modal_module, "save_settings_to_cli_config", failing_save)
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp", model="model-a", temperature=0.6
+        ),
+        app,
+    )
+    try:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await app.push_screen(modal, callback=app.capture_saved_settings)
+            await pilot.pause()
+            modal.query_one("#console-settings-save-default", Button).press()
+            assert await asyncio.to_thread(entered.wait, 1)
+            assert modal.query_one("#console-settings-temperature", Input).disabled
+
+            release.set()
+            for _ in range(20):
+                await pilot.pause(0.05)
+                if not modal.query_one("#console-settings-cancel", Button).disabled:
+                    break
+
+            assert app.screen is modal
+            assert modal.query_one("#console-settings-cancel", Button).disabled is False
+            assert modal.query_one("#console-settings-save", Button).disabled is False
+            assert modal.query_one("#console-settings-save-default", Button).disabled is False
+            assert modal.query_one("#console-settings-temperature", Input).disabled is False
+            assert str(
+                modal.query_one("#console-settings-error", Static).renderable
+            ) == "Could not save defaults. Nothing changed; your draft is still open."
+            assert CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY == str(
+                modal.query_one("#console-settings-error", Static).renderable
+            )
+            assert str(
+                modal.query_one(
+                    "#console-settings-primary-disabled-reason", Static
+                ).renderable
+            ) == ""
+    finally:
+        release.set()
+
+
+def test_summary_builder_reports_only_genuine_provider_endpoint_inheritance() -> None:
+    """Real readiness distinguishes a usable provider default from invalid setup."""
+    estimate = ConsoleSettingsContextEstimate(None, None, "")
+    inherited = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
+    inherited_readiness = build_console_settings_readiness(
+        inherited,
+        app_config={"api_settings": {"openai": {"api_key": "test-key"}}},
+        environ={},
+    )
+    invalid = ConsoleSessionSettings(
+        provider="ollama", model="qwen", base_url="ftp://invalid-endpoint"
+    )
+    invalid_readiness = build_console_settings_readiness(
+        invalid,
+        app_config={
+            "api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}
+        },
+        environ={},
+    )
+    absent = ConsoleSessionSettings(provider="", model="model-a")
+    absent_readiness = build_console_settings_readiness(
+        absent,
+        app_config={"api_settings": {}},
+        environ={},
+    )
+
+    assert (
+        build_console_settings_summary_state(
+            inherited, estimate, inherited_readiness
+        ).endpoint_row
+        == "Endpoint: Provider default"
+    )
+    assert (
+        build_console_settings_summary_state(invalid, estimate, invalid_readiness).endpoint_row
+        == "Endpoint: Not configured"
+    )
+    assert (
+        build_console_settings_summary_state(absent, estimate, absent_readiness).endpoint_row
+        == "Endpoint: Not configured"
+    )
+
+
+@pytest.mark.asyncio
+async def test_console_settings_empty_completion_status_rows_consume_no_layout() -> None:
+    """Empty default scope and blocker copy must not reduce the body viewport."""
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        base_url="http://127.0.0.1:9099",
+    )
+    app.app_config = {
+        "api_settings": {
+            "llama_cpp": {
+                "api_url": "http://127.0.0.1:9099",
+                "model": "model-a",
+            }
+        },
+        "console": {
+            "provider_defaults": {
+                "llama_cpp": {"temperature": 0.7, "top_p": 0.95}
+            }
+        },
+        "chat_defaults": {
+            "provider": "llama_cpp",
+            "model": "model-a",
+            "streaming": True,
+        },
+    }
+    modal = _basic_modal(settings, app)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        default_scope = modal.query_one("#console-settings-default-scope", Static)
+        disabled_reason = modal.query_one(
+            "#console-settings-primary-disabled-reason", Static
+        )
+        scope = modal.query_one("#console-settings-scope", Static)
+        assert default_scope.display is False
+        assert disabled_reason.display is False
+        assert default_scope.region.height == 0
+        assert disabled_reason.region.height == 0
+        assert scope.region.height == 1
+        assert len(str(scope.renderable)) <= scope.content_region.width
+
+
+@pytest.mark.parametrize("terminal_size", [(80, 24), (100, 30), (160, 40)])
+@pytest.mark.asyncio
+async def test_console_settings_task4_geometry_keeps_connection_and_footer_usable(
+    terminal_size: tuple[int, int],
+) -> None:
+    """Task 4 labels stay complete and reachable at the supported size matrix."""
+    app = StyledModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            base_url="http://127.0.0.1:9099",
+            temperature=0.6,
+        ),
+        app,
+    )
+
+    async with app.run_test(size=terminal_size) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        frame = modal.query_one("#console-settings-modal")
+        body = modal.query_one("#console-settings-body", ScrollableContainer)
+        connection = modal.query_one("#console-settings-connection")
+        actions = modal.query_one("#console-settings-actions", Horizontal)
+        cancel = modal.query_one("#console-settings-cancel", Button)
+        defaults = modal.query_one("#console-settings-save-default", Button)
+        use = modal.query_one("#console-settings-save", Button)
+
+        assert body.container_size.height >= 1
+        assert connection.region.overlaps(body.content_region)
+        assert body.max_scroll_x == 0
+        assert actions.virtual_size.width <= actions.container_size.width
+        assert actions.region.bottom <= frame.content_region.bottom
+        assert actions.region.right <= frame.content_region.right
+        assert str(cancel.label) == "Cancel"
+        assert str(defaults.label) == "Save as provider defaults"
+        assert str(use.label) == "Use for this conversation"
+        assert defaults.region.width >= len(str(defaults.label))
+        assert use.region.width >= len(str(use.label))
