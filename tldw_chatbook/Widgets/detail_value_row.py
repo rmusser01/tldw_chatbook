@@ -4,20 +4,30 @@ schedules-redesign PR-1, Task 1 (`.superpowers/sdd/plan-2026-09-03-
 schedules-redesign-pr1/task-1-brief.md`, the approved spec's section 5 row
 grammar). A row renders one field as ``label`` (muted, left) and ``value``
 (right-aligned, ellipsized rather than wrapped when it overflows). An
-optional dimmed ``▾`` affordance glyph marks a row whose value will become
-interactive in a later PR -- it is purely decorative here, not clickable or
-focusable. A hidden error-line slot below the row is implemented and tested
+optional dimmed ``▾`` affordance glyph marks a row whose value is editable.
+A hidden error-line slot below the row is implemented and tested
 (``show_error``/``clear_error``) but unused by any PR-1 caller; PR-3 wires a
 caller to it.
 
-Three PR-3 seams are dormant in PR-1 (final review F13, fixed while the row
-had only two consumers): ``affordance`` is a settable property, not a
-construction-only flag (the glyph is always mounted and toggled with
-``display``, so flipping a row read-only<->editable never means a remount);
-``row_key`` gives the row an identity of its own to carry on whatever
-message PR-3 posts; and ``can_focus`` is a constructor flag (default
-``False``, as every PR-1 caller leaves it) so spec §12's Up/Down row
-traversal needs no subclass.
+schedules-redesign PR-3, Task 1 activates the three dormant PR-1 seams
+below: a row with ``affordance=True`` now posts ``DetailValueRow.Activated``
+on click or Enter, but only while no editor is open -- a dormant row
+(``affordance`` left at its ``False`` default, as every PR-1/PR-2 caller
+still does) stays a complete no-op, exactly as before. ``begin_edit``/
+``end_edit`` swap the read-only value ``Static`` for a caller-built editor
+widget in place (no recompose); ``begin_edit`` is a guarded no-op while an
+editor is already open, and the error slot coexists with an open editor.
+The affordance glyph also gains a live visual state -- it un-dims while the
+row (or its open editor) has focus, or on hover.
+
+Three PR-3 seams were left dormant in PR-1 (final review F13, fixed while
+the row had only two consumers) and are wired up starting with PR-3 Task 1
+above: ``affordance`` is a settable property, not a construction-only flag
+(the glyph is always mounted and toggled with ``display``, so flipping a row
+read-only<->editable never means a remount); ``row_key`` gives the row an
+identity of its own, carried on ``Activated``; and ``can_focus`` is a
+constructor flag (default ``False``, as every PR-1/PR-2 caller still leaves
+it) so spec §12's Up/Down row traversal needs no subclass.
 
 ``DetailGroup`` is a thin ``Collapsible`` subclass (the house idiom already
 used directly across this codebase -- see
@@ -52,8 +62,10 @@ after editing ``_scheduling.tcss`` and commit the regenerated
 from __future__ import annotations
 
 from rich.text import Text
+from textual import events
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Collapsible, Static
 
@@ -64,7 +76,25 @@ def _literal(value: str | Text) -> Text:
 
 
 class DetailValueRow(Vertical):
-    """One label/value detail-pane field, plus a dormant affordance and error slot."""
+    """One label/value detail-pane field, with an editable affordance and error slot."""
+
+    class Activated(Message):
+        """Posted when the row's affordance is triggered by click or Enter.
+
+        Only posted while ``affordance`` is true and no editor is
+        currently open (``begin_edit`` not yet called, or ``end_edit``
+        already closed it) -- a dormant row (``affordance`` left at its
+        ``False`` default) never posts this message, so every PR-1/PR-2
+        read-only consumer stays untouched.
+
+        Attributes:
+            row: The ``DetailValueRow`` that was activated. Carries its own
+                ``row_key`` for a handler to route on.
+        """
+
+        def __init__(self, row: "DetailValueRow") -> None:
+            self.row = row
+            super().__init__()
 
     def __init__(
         self,
@@ -86,6 +116,10 @@ class DetailValueRow(Vertical):
         self._value_static: Static | None = None
         self._error_static: Static | None = None
         self._affordance_static: Static | None = None
+        self._line: Horizontal | None = None
+        #: The open editor widget, if any (PR-3 Task 1's edit-swap API).
+        #: ``None`` means the row is showing its read-only value.
+        self._editor: Widget | None = None
         #: Stable field identity for the row itself (final-review F13.2).
         #: PR-3 addresses the ROW (open its editor, route its error) and
         #: must not reach through `static.parent.parent` to find it.
@@ -96,7 +130,9 @@ class DetailValueRow(Vertical):
         self.can_focus = can_focus
 
     def compose(self) -> ComposeResult:
-        with Horizontal(classes="detail-value-row-line"):
+        line = Horizontal(classes="detail-value-row-line")
+        self._line = line
+        with line:
             yield Static(self._label, classes="detail-value-row-label", markup=False)
             self._value_static = Static(
                 _literal(self._initial_value),
@@ -152,6 +188,70 @@ class DetailValueRow(Vertical):
         assert self._error_static is not None, "clear_error called before mount"
         self._error_static.styles.display = "none"
         self._error_static.update("")
+
+    def _on_click(self, event: events.Click) -> None:
+        """Activate on click, per PR-3 Task 1's edit-swap API (module docstring).
+
+        A dormant row (``affordance`` False) never intercepts the click --
+        it bubbles up untouched, same as before this row had a handler at
+        all. An editable row owns the click either way; it only posts
+        ``Activated`` while no editor is open yet (once one is, focus has
+        already moved to the editor and this handler will not fire).
+        """
+        if not self._affordance:
+            return
+        event.stop()
+        if self._editor is None:
+            self.post_message(self.Activated(self))
+
+    def _on_key(self, event: events.Key) -> None:
+        """Activate on Enter -- see ``_on_click``."""
+        if event.key != "enter" or not self._affordance:
+            return
+        event.stop()
+        event.prevent_default()
+        if self._editor is None:
+            self.post_message(self.Activated(self))
+
+    def begin_edit(self, editor: Widget) -> None:
+        """Swap the read-only value for ``editor``, in place, and focus it.
+
+        Hides the value ``Static`` and mounts ``editor`` where it sat, no
+        recompose. Guarded: a no-op while an editor is already open -- one
+        editor at a time. The error slot (`show_error`/`clear_error`) is
+        untouched and keeps working alongside an open editor.
+
+        Args:
+            editor: The widget to mount in the value's place -- typically a
+                ``Select`` or a small composite editor built by the caller.
+        """
+        if self._editor is not None:
+            return
+        assert self._value_static is not None and self._line is not None, (
+            "begin_edit called before mount"
+        )
+        self._editor = editor
+        self._value_static.styles.display = "none"
+        self._line.mount(editor, before=self._value_static)
+        self.call_after_refresh(editor.focus)
+
+    def end_edit(self, *, restore_focus: bool = True) -> None:
+        """Close the open editor and restore the read-only value display.
+
+        A no-op if no editor is currently open.
+
+        Args:
+            restore_focus: When ``True`` (default), give focus back to the
+                row itself once the editor is removed.
+        """
+        if self._editor is None:
+            return
+        editor, self._editor = self._editor, None
+        editor.remove()
+        assert self._value_static is not None, "end_edit called before mount"
+        self._value_static.styles.display = "block"
+        if restore_focus:
+            self.call_after_refresh(self.focus)
 
 
 class DetailGroup(Collapsible):

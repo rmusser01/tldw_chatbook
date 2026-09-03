@@ -13,6 +13,8 @@ from __future__ import annotations
 import pytest
 from rich.text import Text
 from textual.app import App, ComposeResult
+from textual.css.query import NoMatches
+from textual.widgets import Input
 from textual.widgets._collapsible import CollapsibleTitle
 
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
@@ -70,9 +72,18 @@ class _RowHarness(ConsolidatedCSSApp):
     def __init__(self, *rows: DetailValueRow) -> None:
         super().__init__()
         self._rows = rows
+        #: `DetailValueRow.Activated` rows received, in post order (PR-3
+        #: Task 1) -- Textual routes a message subclass to the handler
+        #: named after its dotted qualname (`DetailValueRow.Activated` ->
+        #: `on_detail_value_row_activated`), same convention as
+        #: `Button.Pressed` -> `on_button_pressed`.
+        self.activations: list[DetailValueRow] = []
 
     def compose(self) -> ComposeResult:
         yield from self._rows
+
+    def on_detail_value_row_activated(self, message: DetailValueRow.Activated) -> None:
+        self.activations.append(message.row)
 
 
 class _GroupHarness(ConsolidatedCSSApp):
@@ -276,3 +287,202 @@ async def test_row_carries_its_own_identity_and_focusability():
         assert keyed.can_focus is True
         keyed.focus()
         assert app.focused is keyed
+
+
+# ---------------------------------------------------------------------------
+# schedules-redesign PR-3, Task 1: activation + edit-swap API
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_click_posts_activated_when_affordance_true_and_not_editing():
+    row = DetailValueRow("Repeat", "Weekly", affordance=True, id="row")
+    app = _RowHarness(row)
+    async with app.run_test(size=(40, 5)) as pilot:
+        await pilot.click(row)
+        await pilot.pause()
+        assert app.activations == [row]
+
+
+@pytest.mark.asyncio
+async def test_enter_posts_activated_when_row_focused():
+    row = DetailValueRow(
+        "Repeat", "Weekly", affordance=True, can_focus=True, id="row"
+    )
+    app = _RowHarness(row)
+    async with app.run_test(size=(40, 5)) as pilot:
+        row.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.activations == [row]
+
+
+@pytest.mark.asyncio
+async def test_click_on_a_dormant_row_never_posts_activated():
+    """PR-1/PR-2 preservation: `affordance` left at its default `False`
+    (every current TaskDetail/DefinitionDetail row) must stay a complete
+    no-op, exactly as before this row had a click/key handler at all."""
+    row = DetailValueRow("Status", "Waiting", id="row")
+    app = _RowHarness(row)
+    async with app.run_test(size=(40, 5)) as pilot:
+        await pilot.click(row)
+        await pilot.pause()
+        assert app.activations == []
+
+
+@pytest.mark.asyncio
+async def test_enter_on_a_focusable_but_non_editable_row_never_posts_activated():
+    """`can_focus` and `affordance` are independent flags -- a row can be
+    keyboard-focusable (spec §12 traversal) without being editable; Enter
+    on it must not activate."""
+    row = DetailValueRow(
+        "Status", "Waiting", can_focus=True, id="row"
+    )
+    app = _RowHarness(row)
+    async with app.run_test(size=(40, 5)) as pilot:
+        row.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.activations == []
+
+
+@pytest.mark.asyncio
+async def test_click_while_an_editor_is_already_open_does_not_reactivate():
+    row = DetailValueRow("Repeat", "Weekly", affordance=True, id="row")
+    app = _RowHarness(row)
+    async with app.run_test(size=(40, 5)) as pilot:
+        row.begin_edit(Input(id="editor"))
+        await pilot.pause()
+
+        await pilot.click(row)
+        await pilot.pause()
+        assert app.activations == []
+
+
+@pytest.mark.asyncio
+async def test_begin_edit_hides_the_value_and_mounts_a_focused_editor():
+    row = DetailValueRow("Repeat", "Weekly", affordance=True, id="row")
+    app = _RowHarness(row)
+    async with app.run_test(size=(40, 5)) as pilot:
+        value = row.query_one(".detail-value-row-value")
+        assert value.display is True
+
+        editor = Input(id="editor")
+        row.begin_edit(editor)
+        await pilot.pause()
+
+        assert value.display is False
+        assert row.query_one("#editor") is editor
+        assert app.focused is editor
+
+
+@pytest.mark.asyncio
+async def test_end_edit_restores_the_value_and_refocuses_the_row_by_default():
+    row = DetailValueRow(
+        "Repeat", "Weekly", affordance=True, can_focus=True, id="row"
+    )
+    app = _RowHarness(row)
+    async with app.run_test(size=(40, 5)) as pilot:
+        value = row.query_one(".detail-value-row-value")
+        row.begin_edit(Input(id="editor"))
+        await pilot.pause()
+
+        row.end_edit()
+        await pilot.pause()
+
+        with pytest.raises(NoMatches):
+            row.query_one("#editor")
+        assert value.display is True
+        assert value.render_line(0).text.strip() == "Weekly"
+        assert app.focused is row
+
+
+@pytest.mark.asyncio
+async def test_end_edit_with_restore_focus_false_leaves_focus_alone():
+    row = DetailValueRow(
+        "Repeat", "Weekly", affordance=True, can_focus=True, id="row"
+    )
+    other = DetailValueRow("At", "9:00 AM", can_focus=True, id="other")
+    app = _RowHarness(row, other)
+    async with app.run_test(size=(40, 6)) as pilot:
+        row.begin_edit(Input(id="editor"))
+        await pilot.pause()
+        other.focus()
+        await pilot.pause()
+
+        row.end_edit(restore_focus=False)
+        await pilot.pause()
+
+        assert app.focused is other
+
+
+@pytest.mark.asyncio
+async def test_begin_edit_is_a_guarded_noop_while_already_editing():
+    """One editor at a time -- a second `begin_edit` while one is open must
+    not mount its editor at all."""
+    row = DetailValueRow("Repeat", "Weekly", affordance=True, id="row")
+    app = _RowHarness(row)
+    async with app.run_test(size=(40, 5)) as pilot:
+        first = Input(id="first-editor")
+        second = Input(id="second-editor")
+        row.begin_edit(first)
+        await pilot.pause()
+
+        row.begin_edit(second)
+        await pilot.pause()
+
+        assert row.query_one("#first-editor") is first
+        assert second.parent is None, "second editor must never be mounted"
+        assert app.focused is first
+
+
+@pytest.mark.asyncio
+async def test_error_line_coexists_with_an_open_editor():
+    row = DetailValueRow(
+        "Repeat", "Weekly", affordance=True, value_id="row-repeat", id="row"
+    )
+    app = _RowHarness(row)
+    async with app.run_test(size=(40, 6)) as pilot:
+        row.begin_edit(Input(id="editor"))
+        await pilot.pause()
+
+        row.show_error("Invalid cron expression")
+        await pilot.pause()
+
+        error = row.query_one("#row-repeat-error")
+        assert error.region.height > 0
+        assert "Invalid cron expression" in error.render_line(0).text
+        # The editor must still be there -- showing an error must not
+        # close it out from under the user.
+        assert row.query_one("#editor").display is True
+
+
+@pytest.mark.asyncio
+async def test_affordance_undims_to_the_value_color_when_the_row_has_focus():
+    """PR-3 Task 1's live-state CSS: PR-1's resting affordance is dimmer
+    than the value (pinned by
+    `test_affordance_glyph_is_painted_and_dimmer_than_the_value` above); a
+    focused row's affordance un-dims to (about) the value's own colour."""
+    row = DetailValueRow(
+        "Repeat", "Weekly", affordance=True, can_focus=True, id="row"
+    )
+    app = _RowHarness(row)
+    async with app.run_test(size=(40, 5)) as pilot:
+        # A focusable widget auto-focuses on app start -- blur it first so
+        # "resting" actually means unfocused, not just "before the test's
+        # own `.focus()` call".
+        row.blur()
+        await pilot.pause()
+
+        affordance = row.query_one(".detail-value-row-affordance")
+        value = row.query_one(".detail-value-row-value")
+        value_luminance = _relative_luminance(_painted_color(app, value))
+        resting_luminance = _relative_luminance(_painted_color(app, affordance))
+        assert resting_luminance < value_luminance
+
+        row.focus()
+        await pilot.pause()
+        focused_luminance = _relative_luminance(_painted_color(app, affordance))
+        assert focused_luminance == pytest.approx(value_luminance, abs=0.02)

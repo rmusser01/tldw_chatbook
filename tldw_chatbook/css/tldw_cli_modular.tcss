@@ -14063,6 +14063,18 @@ DetailValueRow .detail-value-row-affordance {
     padding: 0 0 0 1;
 }
 
+/* schedules-redesign PR-3, Task 1: the affordance's live state. `:focus-
+ * within` covers both a row focused via spec §12's Up/Down traversal AND
+ * (once `begin_edit` mounts an editor into the row) the editor itself
+ * holding focus -- `has_focus_within` counts a widget's own focus as
+ * "within itself" too, so one selector covers both. `:hover` mirrors it
+ * for mouse users. Un-dimming to the same colour as the value tells a user
+ * "Enter/click acts on this row" without a new token. */
+DetailValueRow:focus-within .detail-value-row-affordance,
+DetailValueRow:hover .detail-value-row-affordance {
+    color: $ds-text-primary;
+}
+
 DetailValueRow .detail-value-row-error {
     color: $ds-status-error-readable;
     width: 1fr;
