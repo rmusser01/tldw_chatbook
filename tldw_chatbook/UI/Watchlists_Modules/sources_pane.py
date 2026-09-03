@@ -774,7 +774,13 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         # button here and on the Inspector, toasts like "It will be
         # checked on its normal schedule."); this column was the one
         # holdout still saying "scraped".
-        table.add_columns("Name", "Type", "Status", "Last checked", "Active")
+        # redesign PR-2 Task 2 review finding 1: "Next check" restores the
+        # next-check-due visibility the Schedules Queue used to carry for
+        # watchlist sources before that projection was dropped from the
+        # unified list -- see `source_next_check_text`.
+        table.add_columns(
+            "Name", "Type", "Status", "Last checked", "Next check", "Active"
+        )
         self._populate_table(table)
         yield table
 
@@ -957,6 +963,61 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         )
 
     @staticmethod
+    def source_next_check_text(source: dict[str, Any]) -> str:
+        """What the Next check column says.
+
+        Redesign PR-2 Task 2's review (finding 1): the Schedules Queue
+        used to project every local watchlist subscription's next-check
+        time (`WatchlistProjection._compute_next_run` = `last_checked (or
+        created_at) + check_frequency`) into a queue row; Task 2 dropped
+        watchlist projections from that unified list per the locked
+        product decision that they "have their own home" -- except they
+        did not have one anywhere in Watchlists, so that removal orphaned
+        this pane's only surviving "when will this run again" signal.
+        This column restores it, computed the SAME way, rendered through
+        this pane's own `humane_timestamp` idiom (not the Queue's old
+        "(overdue Nd)" annotation -- this pane has no other row that uses
+        that vocabulary).
+
+        `check_frequency` rides `source["settings"]`
+        (`watchlist_normalizers._local_source_settings` already publishes
+        it there for a local subscription). A server-backed watchlist
+        source's normalizer never receives a check_frequency equivalent
+        (grepped: the field is Subscriptions_DB-only, no server model
+        carries it) -- those rows honestly read `"-"`, exactly as they
+        did in the now-removed Queue projection (`WatchlistProjection`
+        only ever read from the local `Subscriptions_DB`).
+
+        Args:
+            source: A normalized source dict.
+
+        Returns:
+            `humane_timestamp` of the computed next-check time, or `"-"`
+            when there is not enough data (no check_frequency, or never
+            checked and never created).
+        """
+        # Function-local import: `Scheduling.services` eagerly imports the
+        # full `SchedulingService`/`SchedulingServerClient` stack on
+        # package init (same ADR-097 "keep it off the boot census"
+        # reasoning already used throughout `schedules_workbench.py` for
+        # `scheduler.queue` imports) -- this pane should not pay that
+        # weight just to reuse two pure functions.
+        from ...Scheduling.services.watchlist_projection import _compute_next_run
+
+        settings = source.get("settings")
+        check_frequency = (
+            settings.get("check_frequency") if isinstance(settings, dict) else None
+        )
+        next_run = _compute_next_run(
+            source.get("last_checked_or_scraped_at"),
+            check_frequency,
+            source.get("created_at"),
+        )
+        if next_run is None:
+            return "-"
+        return humane_timestamp(next_run)
+
+    @staticmethod
     def _source_row_cells(
         source: dict[str, Any], highlighted: bool, checked: bool = False
     ) -> tuple[Text, ...]:
@@ -988,6 +1049,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             Text(str(source.get("source_type") or "-"), style=style),
             Text(SourcesPane.source_status_text(source), style=style),
             Text(SourcesPane.source_last_scraped_text(source), style=style),
+            Text(SourcesPane.source_next_check_text(source), style=style),
             Text("Yes" if source.get("active") else "No", style=style),
         )
 

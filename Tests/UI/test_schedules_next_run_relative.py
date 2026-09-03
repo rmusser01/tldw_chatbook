@@ -86,7 +86,7 @@ from Tests.UI.schedules_test_helpers import MockSchedulingServiceMixin
 
 
 class _Service(MockSchedulingServiceMixin):
-    async def list_tasks(self, owner_id=None):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return [
             ReminderTask(
                 id="task-1",
@@ -138,7 +138,7 @@ class _FixedTaskService(_Service):
 
     RUN_AT = datetime(2026, 8, 28, 9, 0, tzinfo=timezone.utc)
 
-    async def list_tasks(self, owner_id=None):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return [
             ReminderTask(
                 id="task-1",

@@ -427,9 +427,12 @@ class SchedulingService:
         return [self._row_to_reminder(row) for row in rows]
 
     async def list_tasks(
-        self, owner_id: str | None | EllipsisType = ...
+        self,
+        owner_id: str | None | EllipsisType = ...,
+        *,
+        include_projections: bool = True,
     ) -> list[ReminderTask | ScheduledTask]:
-        """Return reminders plus watchlist/briefing projections.
+        """Return reminders plus (optionally) watchlist/briefing projections.
 
         Args:
             owner_id: Reminder owner scope. The default (``...``, i.e. the
@@ -447,21 +450,36 @@ class SchedulingService:
                 (their underlying read has no per-owner filter at all),
                 so a ``None`` owner would fail their `ScheduledTask.
                 owner_id: str` field instead of "spanning owners".
+            include_projections: Default ``True`` preserves every existing
+                caller byte-for-byte. ``False`` skips both `list_jobs`
+                calls entirely -- redesign PR-2 Task 2's review, finding
+                2: the unified Queue's `load_tasks` immediately filters
+                every `ScheduledTask` row back out, so building AND
+                sorting them was pure waste on that path (a full
+                `Subscriptions_DB.get_all_subscriptions` scan plus a
+                comparable briefing read, on every Queue refresh). The
+                Queue passes ``include_projections=False``.
 
         Returns:
-            Reminders (in the requested owner scope) plus this device's
-            watchlist/briefing projections, sorted by ``next_run_at``
-            ascending (``None`` last).
+            Reminders (in the requested owner scope) plus, when
+            ``include_projections`` is true, this device's watchlist/
+            briefing projections -- sorted by ``next_run_at`` ascending
+            (``None`` last).
         """
         reminder_owner_id = self.owner_id if owner_id is ... else owner_id
         rows = self.db.list_reminder_tasks(owner_id=reminder_owner_id)
         tasks: list[ReminderTask | ScheduledTask] = [
             self._row_to_reminder(row) for row in rows
         ]
-        if self.watchlist_projection is not None:
-            tasks.extend(self.watchlist_projection.list_jobs(owner_id=self.owner_id))
-        if self.briefing_projection is not None:
-            tasks.extend(self.briefing_projection.list_jobs(owner_id=self.owner_id))
+        if include_projections:
+            if self.watchlist_projection is not None:
+                tasks.extend(
+                    self.watchlist_projection.list_jobs(owner_id=self.owner_id)
+                )
+            if self.briefing_projection is not None:
+                tasks.extend(
+                    self.briefing_projection.list_jobs(owner_id=self.owner_id)
+                )
         # Sort by next_run_at (None sorts last)
         tasks.sort(
             key=lambda t: t.next_run_at or datetime.max.replace(tzinfo=timezone.utc)

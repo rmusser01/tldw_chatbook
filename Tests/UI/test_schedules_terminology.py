@@ -55,7 +55,7 @@ class _MixedService(MockSchedulingServiceMixin):
     def __init__(self) -> None:
         self.created: list[dict] = []
 
-    async def list_tasks(self, owner_id=None):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return [
             ReminderTask(
                 id="task-1",

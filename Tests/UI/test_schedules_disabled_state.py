@@ -229,7 +229,7 @@ class _DisabledTaskService(MockSchedulingServiceMixin):
     def __init__(self) -> None:
         self.enabled = False
 
-    async def list_tasks(self, owner_id=None):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return [_reminder(enabled=self.enabled)]
 
     async def update_reminder(self, task_id, fields):
@@ -288,7 +288,7 @@ async def test_disabled_row_and_badge_read_disabled_and_survive_refresh():
 class _DisabledMissedService(MockSchedulingServiceMixin):
     """One disabled task whose last dispatch failed, one with a conflict."""
 
-    async def list_tasks(self, owner_id=None):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return [
             _reminder_with(
                 "task-m", "Failed backup", TaskStatus.MISSED, enabled=False

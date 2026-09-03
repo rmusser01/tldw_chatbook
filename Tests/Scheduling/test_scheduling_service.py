@@ -663,6 +663,33 @@ async def test_list_tasks_includes_both_watchlist_and_briefing_projections(db):
 
 
 @pytest.mark.asyncio
+async def test_list_tasks_include_projections_false_skips_the_projection_reads(db):
+    """redesign PR-2 Task 2 review, finding 2: the unified Queue's
+    `load_tasks` immediately discards every `ScheduledTask` row, so
+    `include_projections=False` must stop `list_tasks` from calling
+    `list_jobs` on either projection at all -- not just from returning
+    their rows. `list_jobs.assert_not_called()` is the counting-fake pin
+    the review asked for; the DEFAULT (`include_projections=True`, the
+    existing tests above) must keep calling both.
+    """
+    svc = SchedulingService(db=db, runtime_source="local")
+    await svc.create_reminder(_reminder_payload("Reminder"))
+
+    watchlist_projection = MagicMock(spec=WatchlistProjection)
+    briefing_projection = MagicMock(spec=BriefingProjection)
+    svc.watchlist_projection = watchlist_projection
+    svc.briefing_projection = briefing_projection
+
+    tasks = await svc.list_tasks(include_projections=False)
+
+    watchlist_projection.list_jobs.assert_not_called()
+    briefing_projection.list_jobs.assert_not_called()
+    assert len(tasks) == 1
+    assert isinstance(tasks[0], ReminderTask)
+    assert tasks[0].title == "Reminder"
+
+
+@pytest.mark.asyncio
 async def test_list_tasks_includes_a_cadenced_briefing_schedule_ac1(db, tmp_path):
     """AC #1: a watchlist with a non-NULL briefing_cadence_seconds shows up
     as a scheduled task on the unified list, alongside reminders and

@@ -78,7 +78,7 @@ class _OwnerSuffixService(MockSchedulingServiceMixin):
             )
         ]
 
-    async def list_tasks(self, owner_id=None):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return await self.list_reminders()
 
 
@@ -124,7 +124,7 @@ class _BracketTitleService(MockSchedulingServiceMixin):
             )
         ]
 
-    async def list_tasks(self, owner_id=None):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return await self.list_reminders()
 
 

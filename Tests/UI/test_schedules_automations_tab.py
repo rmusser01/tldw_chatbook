@@ -127,7 +127,7 @@ class AutomationsMockService(MockSchedulingServiceMixin):
             return_value={"run_id": "run-local-1", "deduped": False}
         )
 
-    async def list_tasks(self, owner_id=None):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return []
 
 

@@ -98,7 +98,7 @@ class _MixedService(MockSchedulingServiceMixin):
             ],
         )
 
-    async def list_tasks(self, owner_id=None):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return [
             _reminder(
                 "task-active", "Active reminder", next_run_at=_NOW + timedelta(hours=2)
@@ -389,3 +389,92 @@ async def test_definition_rows_expose_no_actions():
         workbench.action_toggle_enabled()
         await pilot.pause()
         assert workbench._scheduling_service.updated == []
+
+
+# ---------------------------------------------------------------------------
+# Fix round 1 (task-2 review): reminder-only refreshes must not re-fetch
+# automation definitions (finding 3), and the filter seam must narrow a
+# MIXED reminder+definition list (finding 4, the brief's own "search
+# narrows" AC item, previously untested at the integration level).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reminder_toggle_triggers_no_new_definitions_fetch():
+    """redesign PR-2 Task 2 review, finding 3: a reminder-only action
+    (`_request_tasks_refresh(refresh_definitions=False)`) must reuse the
+    definitions already in `self._all_rows` rather than re-running
+    `_load_local_automations`'s `service.db.list_automation_definitions`
+    scan. Counting fake, per the review's own suggested pin shape."""
+    service = _MixedService()
+    calls: list[tuple] = []
+    real_list_automation_definitions = service.db.list_automation_definitions
+
+    def _counting_list_automation_definitions(*args, **kwargs):
+        calls.append((args, kwargs))
+        return real_list_automation_definitions(*args, **kwargs)
+
+    service.db.list_automation_definitions = _counting_list_automation_definitions
+
+    class _CountingApp(ConsolidatedCSSApp):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.scheduling_service = service
+
+    async with _CountingApp().run_test(size=(160, 48)) as pilot:
+        workbench = await _mounted(pilot)
+        # Mount runs the FULL Queue loader (load_tasks's own definitions
+        # fetch) AND the Automations tab's own load_automations -- both
+        # call list_automation_definitions once each. That baseline is
+        # not what this test pins; only whether a reminder toggle adds
+        # to it.
+        calls_after_mount = len(calls)
+        assert calls_after_mount > 0
+
+        task = next(
+            row.source_row
+            for row in workbench._visible_rows
+            if row.kind == "reminder" and row.source_row.id == "task-active"
+        )
+        workbench._set_reminder_enabled(task, False)
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert service.updated == [("task-active", {"enabled": False})]
+        assert len(calls) == calls_after_mount, (
+            "a reminder-only refresh must not re-fetch automation definitions"
+        )
+
+
+@pytest.mark.asyncio
+async def test_search_narrows_a_mixed_reminder_and_definition_list():
+    """The brief's own named AC ("search narrows") for the mixed list --
+    the pure `filter_rows` function is exhaustively covered in Task 1's
+    suite; this pins the workbench's own wiring
+    (`_filter_text` -> `_render_table` -> `filter_rows(self._all_rows,
+    ...)`) against a set with BOTH row kinds, including a definition
+    matched only by its question/body text."""
+    async with _App().run_test(size=(160, 48)) as pilot:
+        workbench = await _mounted(pilot)
+
+        # A reminder title match narrows to just that reminder.
+        workbench._filter_text = "Active reminder"
+        workbench._render_table()
+        await pilot.pause()
+        assert _row_ids(workbench) == {"task-active"}
+
+        # A definition's question/body text (not its title) also matches
+        # -- `search_blob` is title + question/body (Task 1, ruling 5).
+        workbench._filter_text = "Question for Active definition"
+        workbench._render_table()
+        await pilot.pause()
+        assert _row_ids(workbench, "definition") == {"def-active"}
+        assert _row_ids(workbench, "reminder") == set()
+
+        # Clearing the filter restores the full (chip-narrowed) mixed set.
+        workbench._filter_text = ""
+        workbench._render_table()
+        await pilot.pause()
+        kinds = {row.kind for row in workbench._visible_rows}
+        assert kinds == {"reminder", "definition"}

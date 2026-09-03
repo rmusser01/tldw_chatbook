@@ -24,7 +24,7 @@ class _Service(MockSchedulingServiceMixin):
     def __init__(self, *, with_missed: bool = False) -> None:
         self._with_missed = with_missed
 
-    async def list_tasks(self, owner_id=None):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         tasks = [
             ReminderTask(
                 id="task-1",
@@ -171,7 +171,7 @@ class _MixedService(MockSchedulingServiceMixin):
             ]
         )
 
-    async def list_tasks(self, owner_id=None):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return [
             ReminderTask(
                 id="task-1",

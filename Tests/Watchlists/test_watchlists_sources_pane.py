@@ -1406,3 +1406,90 @@ def test_source_row_name_strips_control_characters():
     )
     assert "\x9b" not in cells[0].plain
     assert "Evil" in cells[0].plain and "31mFeed" in cells[0].plain
+
+
+# ---------------------------------------------------------------------------
+# "Next check" column (redesign PR-2 Task 2 review, finding 1): the
+# Schedules Queue used to project a watchlist subscription's next-check
+# time; Task 2 dropped watchlist projections from that unified list, which
+# orphaned the only surviving "when will this run again" signal for
+# Watchlists. This restores it in the Sources table, computed the same way
+# (`WatchlistProjection._compute_next_run`), rendered through this pane's
+# own `humane_timestamp` idiom.
+# ---------------------------------------------------------------------------
+
+
+def test_source_next_check_text_computes_from_check_frequency():
+    """last_checked + check_frequency, far enough in the past to render as
+    an absolute date (avoids a Today/Yesterday-relative flake). Compared
+    against `humane_timestamp` directly rather than a hardcoded string --
+    `humane_timestamp` renders in the VIEWER'S local zone, so a fixed
+    UTC-string expectation would be flaky across timezones."""
+    from datetime import datetime, timedelta, timezone
+
+    from tldw_chatbook.UI.Watchlists_Modules.humane_time import humane_timestamp
+
+    last_checked = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    source = {
+        "last_checked_or_scraped_at": last_checked.isoformat(),
+        "settings": {"check_frequency": 3600},  # 1 hour
+    }
+    expected = humane_timestamp(last_checked + timedelta(hours=1))
+    assert SourcesPane.source_next_check_text(source) == expected
+
+
+def test_source_next_check_text_falls_back_to_created_at_before_first_check():
+    from datetime import datetime, timedelta, timezone
+
+    from tldw_chatbook.UI.Watchlists_Modules.humane_time import humane_timestamp
+
+    created_at = datetime(2020, 6, 15, tzinfo=timezone.utc)
+    source = {
+        "created_at": created_at.isoformat(),
+        "settings": {"check_frequency": 86400},  # 1 day
+    }
+    expected = humane_timestamp(created_at + timedelta(days=1))
+    assert SourcesPane.source_next_check_text(source) == expected
+
+
+def test_source_next_check_text_is_dash_without_check_frequency():
+    """A server-backed watchlist source's normalizer never publishes a
+    check_frequency equivalent -- honest "-", the same as the removed
+    Queue projection (WatchlistProjection is local-Subscriptions_DB-only)."""
+    assert SourcesPane.source_next_check_text(
+        {"last_checked_or_scraped_at": "2020-01-01T00:00:00+00:00"}
+    ) == "-"
+    assert SourcesPane.source_next_check_text({}) == "-"
+
+
+@pytest.mark.asyncio
+async def test_sources_table_paints_a_next_check_column():
+    from datetime import datetime, timedelta, timezone
+
+    from tldw_chatbook.UI.Watchlists_Modules.humane_time import humane_timestamp
+
+    last_checked = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    expected = humane_timestamp(last_checked + timedelta(hours=1))
+
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(140, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.sources = [
+            {
+                "id": "source-1",
+                "name": "AI News RSS",
+                "source_type": "rss",
+                "status": "ok",
+                "last_checked_or_scraped_at": last_checked.isoformat(),
+                "settings": {"check_frequency": 3600},
+                "active": True,
+            }
+        ]
+        await pilot.pause()
+
+        table = pane.query_one("#sources-table", DataTable)
+        assert [
+            str(column.label) for column in table.columns.values()
+        ] == ["Name", "Type", "Status", "Last checked", "Next check", "Active"]
+        row = table.get_row_at(0)
+        assert str(row[4]) == expected

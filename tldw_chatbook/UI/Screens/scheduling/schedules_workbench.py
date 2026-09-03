@@ -887,28 +887,57 @@ class SchedulesWorkbench(BaseAppScreen):
             "schedules-workbench-compact",
         )
 
-    def _request_tasks_refresh(self) -> None:
-        """Schedule the task loader through its exclusive worker group."""
+    def _request_tasks_refresh(self, *, refresh_definitions: bool = True) -> None:
+        """Schedule the task loader through its exclusive worker group.
+
+        Args:
+            refresh_definitions: Passed through to `load_tasks`. Default
+                ``True`` preserves every call site's prior behavior (full
+                reload). Reminder-only actions (delete/edit/mark/toggle/
+                transfer/bulk-*, owner switch) pass ``False`` -- redesign
+                PR-2 Task 2 review, finding 3: none of them can change
+                which automation definitions exist, so re-running the
+                full local+server definitions fetch on each one was pure
+                waste on the hot refresh path. Mount and sync-completed/
+                failed keep the default: sync can genuinely pull/push
+                definitions, and mount has no prior snapshot to reuse.
+        """
+
+        async def _load() -> None:
+            await self.load_tasks(refresh_definitions=refresh_definitions)
+
         self.run_worker(
-            self.load_tasks,
+            _load,
             exclusive=True,
             group="schedules-load-tasks",
         )  # type: ignore[arg-type]
 
-    async def load_tasks(self) -> None:
+    def _current_definitions(self) -> list[dict[str, Any]]:
+        """The automation-definition dicts already sitting in the last-
+        built unified rows -- reused by a reminder-only refresh instead
+        of re-fetching them (redesign PR-2 Task 2 review, finding 3).
+        """
+        return [row.source_row for row in self._all_rows if row.kind == "definition"]
+
+    async def load_tasks(self, *, refresh_definitions: bool = True) -> None:
         """Fetch reminders + automation definitions and build the unified
         Queue rows (redesign PR-2, Task 2).
 
         Three listings feed Task 1's `build_unified_rows`: reminders
-        spans-owners (`SchedulingService.list_tasks(owner_id=None)`,
-        filtered to real `ReminderTask` rows -- watchlist/briefing
-        projections stay out per spec S2 locked decision 2 and Task 1's
-        own report), both definition halves (the Automations tab's
-        existing local+server merge, reused verbatim), and one
-        all-owners results listing (unread-count derivation only). The
-        results read + row build are pushed off the event loop
-        (`asyncio.to_thread`), the same "local DB read, off-thread"
-        discipline `_load_local_automations` already uses.
+        spans-owners (`SchedulingService.list_tasks(owner_id=None,
+        include_projections=False)` -- watchlist/briefing projections
+        stay out per spec S2 locked decision 2 and Task 1's own report,
+        and `include_projections=False` (Task 2 review finding 2) stops
+        `list_tasks` from building AND sorting them in the first place,
+        since this call site discarded every one of them anyway), both
+        definition halves (the Automations tab's existing local+server
+        merge, reused verbatim -- or, when ``refresh_definitions`` is
+        False, the definitions already in `self._all_rows` from the last
+        full load, review finding 3), and one all-owners results listing
+        (unread-count derivation only). The results read + row build are
+        pushed off the event loop (`asyncio.to_thread`), the same "local
+        DB read, off-thread" discipline `_load_local_automations`
+        already uses.
         """
         service = self._scheduling_service
         if service is None:
@@ -917,9 +946,17 @@ class SchedulesWorkbench(BaseAppScreen):
             return
 
         try:
-            combined = await service.list_tasks(owner_id=None)
+            combined = await service.list_tasks(
+                owner_id=None, include_projections=False
+            )
+            # Defensive, not load-bearing: `include_projections=False`
+            # already guarantees every row is a `ReminderTask`.
             reminders = [task for task in combined if isinstance(task, ReminderTask)]
-            definitions = await self._load_queue_definitions(service)
+            definitions = (
+                await self._load_queue_definitions(service)
+                if refresh_definitions
+                else self._current_definitions()
+            )
 
             def _build_rows() -> list[UnifiedRow]:
                 results = service.db.list_automation_results(
@@ -1466,7 +1503,7 @@ class SchedulesWorkbench(BaseAppScreen):
                     f"Deleted '{event.task.title}'.",
                     severity="information",
                 )
-            self._request_tasks_refresh()
+            self._request_tasks_refresh(refresh_definitions=False)
 
         self.run_worker(
             _delete_and_refresh,
@@ -1590,10 +1627,10 @@ class SchedulesWorkbench(BaseAppScreen):
                     f"Failed to start the transfer for '{task.title}'.",
                     severity="error",
                 )
-                self._request_tasks_refresh()
+                self._request_tasks_refresh(refresh_definitions=False)
                 return
             self._notify_transfer_outcome(task, direction, outcome)
-            self._request_tasks_refresh()
+            self._request_tasks_refresh(refresh_definitions=False)
 
         self.run_worker(
             _confirm_and_begin,
@@ -1651,7 +1688,7 @@ class SchedulesWorkbench(BaseAppScreen):
                     f"Failed to cancel the transfer for '{task.title}'.",
                     severity="error",
                 )
-                self._request_tasks_refresh()
+                self._request_tasks_refresh(refresh_definitions=False)
                 return
             if outcome.status == "cancelled":
                 self.app_instance.notify(
@@ -1664,7 +1701,7 @@ class SchedulesWorkbench(BaseAppScreen):
                     or f"Could not cancel the transfer for '{task.title}'.",
                     severity="warning",
                 )
-            self._request_tasks_refresh()
+            self._request_tasks_refresh(refresh_definitions=False)
 
         self.run_worker(
             _cancel_and_refresh,
@@ -1875,7 +1912,7 @@ class SchedulesWorkbench(BaseAppScreen):
                     "Failed to save the scheduled task. Check the form values and try again.",
                     severity="error",
                 )
-            self._request_tasks_refresh()
+            self._request_tasks_refresh(refresh_definitions=False)
 
         self.run_worker(
             _save_and_refresh,
@@ -2032,7 +2069,7 @@ class SchedulesWorkbench(BaseAppScreen):
                     f"Failed to run '{task.title}'.",
                     severity="error",
                 )
-            self._request_tasks_refresh()
+            self._request_tasks_refresh(refresh_definitions=False)
 
         self.run_worker(
             _run_and_refresh,
@@ -3233,7 +3270,7 @@ class SchedulesWorkbench(BaseAppScreen):
                     f"Failed to update '{task.title}'.",
                     severity="error",
                 )
-            self._request_tasks_refresh()
+            self._request_tasks_refresh(refresh_definitions=False)
 
         self.run_worker(
             _update_and_refresh,
@@ -3395,7 +3432,7 @@ class SchedulesWorkbench(BaseAppScreen):
             app_config=self.app_instance.app_config,
         )
         self._refresh_owner_select()
-        self._request_tasks_refresh()
+        self._request_tasks_refresh(refresh_definitions=False)
         self._refresh_conflicts_tab()
 
     @on(Button.Pressed, "#scheduling-clear-error")
@@ -3444,7 +3481,7 @@ class SchedulesWorkbench(BaseAppScreen):
 
     @on(ConflictsTab.ConflictResolved)
     def _on_conflict_resolved(self, event: ConflictsTab.ConflictResolved) -> None:
-        self._request_tasks_refresh()
+        self._request_tasks_refresh(refresh_definitions=False)
         self._refresh_conflicts_tab()
 
     def _refresh_conflicts_tab(self) -> None:
@@ -3603,7 +3640,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 severity="information" if not errors else "warning",
             )
             self._marked_ids.clear()
-            self._request_tasks_refresh()
+            self._request_tasks_refresh(refresh_definitions=False)
 
         self.run_worker(
             _bulk_delete,
@@ -3778,7 +3815,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 severity="information" if not errors else "warning",
             )
             self._marked_ids.clear()
-            self._request_tasks_refresh()
+            self._request_tasks_refresh(refresh_definitions=False)
 
         self.run_worker(
             _bulk_toggle,

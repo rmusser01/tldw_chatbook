@@ -90,7 +90,7 @@ class MockSchedulingService(_MockSchedulingServiceMixin):
             )
         ]
 
-    async def list_tasks(self, owner_id=None):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return await self.list_reminders()
 
     async def create_reminder(self, payload: dict, *, owner_id: str | None = None):
@@ -136,7 +136,7 @@ class MockSchedulingServiceWithWatchlist(_MockSchedulingServiceMixin):
             )
         ]
 
-    async def list_tasks(self, owner_id=None):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         reminder_tasks = await self.list_reminders()
         return reminder_tasks + [
             ScheduledTask(
@@ -462,7 +462,7 @@ class EmptyMockSchedulingService(_MockSchedulingServiceMixin):
     async def list_reminders(self):
         return []
 
-    async def list_tasks(self, owner_id=None):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return await self.list_reminders()
 
 
@@ -485,7 +485,7 @@ class DistinctMetadataMockSchedulingService(_MockSchedulingServiceMixin):
             )
         ]
 
-    async def list_tasks(self, owner_id=None):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return await self.list_reminders()
 
 
@@ -495,7 +495,7 @@ class FailingMockSchedulingService(_MockSchedulingServiceMixin):
     async def list_reminders(self):
         raise RuntimeError("service unavailable")
 
-    async def list_tasks(self, owner_id=None):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         raise RuntimeError("service unavailable")
 
 
@@ -634,7 +634,7 @@ async def test_conflict_card_shows_for_conflict_status():
                 )
             ]
 
-        async def list_tasks(self, owner_id=None):
+        async def list_tasks(self, owner_id=None, include_projections=True):
             return await self.list_reminders()
 
     class WorkbenchTestAppWithConflict(ConsolidatedCSSApp):
@@ -764,7 +764,7 @@ class ToggleFailingMockSchedulingService(_MockSchedulingServiceMixin):
             )
         ]
 
-    async def list_tasks(self, owner_id=None):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return await self.list_reminders()
 
 
@@ -816,7 +816,7 @@ class RecordingMockSchedulingService(_MockSchedulingServiceMixin):
             )
         ]
 
-    async def list_tasks(self, owner_id=None):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return await self.list_reminders()
 
     async def delete_reminder(self, task_id: str) -> None:
@@ -868,7 +868,7 @@ class ControlledRefreshSchedulingService(_MockSchedulingServiceMixin):
             next_run_at=timestamp,
         )
 
-    async def list_tasks(self, owner_id=None) -> list[ReminderTask]:
+    async def list_tasks(self, owner_id=None, include_projections=True) -> list[ReminderTask]:
         """Return the next controlled task snapshot.
 
         Returns:
