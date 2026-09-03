@@ -922,6 +922,26 @@ async def test_definition_detail_renders_every_details_and_frequency_value():
 
 
 @pytest.mark.asyncio
+async def test_definition_detail_runs_on_shows_transfer_badge_when_in_flight():
+    """'Runs on' appends the existing in-flight transfer badge text to the
+    owner label -- same wording as the reminder detail pane's own suffix
+    (mirrors `test_schedules_workbench.py`'s
+    `test_task_detail_runs_on_shows_transfer_badge_when_in_flight`; fix
+    round 1 finding 1: this case had no dedicated test)."""
+    async with _BareDefinitionDetailApp().run_test() as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(
+            _frequency_definition(transfer_state="to_server_pending")
+        )
+        await pilot.pause()
+
+        assert (
+            _detail_text(detail, "scheduling-automation-detail-runs-on")
+            == "This device (Moving to server\u2026)"
+        )
+
+
+@pytest.mark.asyncio
 async def test_definition_detail_renders_one_time_schedule_and_defaults():
     """A one-time schedule renders through the same rows; a definition
     with no `config`/`finding_policy` at all degrades to the create/edit
