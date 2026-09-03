@@ -16623,7 +16623,7 @@ class ConsoleChatStore:
         session.settings = replace(session.settings, pinned_prefill=normalized)
         if settings_changed:
             self._bump_settings_revision(session_id)
-            self._bump_payload_revision(session_id)
+        self._bump_payload_revision(session_id)
         persisted = True
         if (
             session.persisted_conversation_id is not None
