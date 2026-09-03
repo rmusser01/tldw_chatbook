@@ -41981,6 +41981,191 @@ class LibraryScreen(BaseAppScreen):
         )
         self._sync_library_media_viewer_or_recompose()
 
+    # -- review-set entry points (task-28242) --------------------------------
+
+    @on(Button.Pressed, "#library-media-review")
+    def handle_library_media_review_these(self, event: Button.Pressed) -> None:
+        """Pin the WHOLE filtered list as a review set and open it.
+
+        Args:
+            event: The "Review these" button press.
+        """
+        event.stop()
+        self.run_worker(
+            self._review_these_worker(),
+            group="library_review_set",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    @on(Button.Pressed, "#library-media-review-selected")
+    def handle_library_media_review_selected(self, event: Button.Pressed) -> None:
+        """Pin the current Select-mode selection as a review set and open it.
+
+        Args:
+            event: The "Review selected" bulk-action button press.
+        """
+        event.stop()
+        if getattr(self, "_library_media_bulk_delete_in_flight", False):
+            return
+        selection = self._library_media_row_selection
+        if not selection.count:
+            return
+        backing_ids: list[int] = []
+        for canonical_id in selection.ids:
+            try:
+                backing_ids.append(int(str(canonical_id).rsplit(":", 1)[-1]))
+            except (ValueError, TypeError):
+                continue
+        if not backing_ids:
+            return
+        self.run_worker(
+            self._review_selected_worker(tuple(backing_ids)),
+            group="library_review_set",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _review_these_worker(self) -> None:
+        """Page the whole filtered result, then create + open the set."""
+        scope = getattr(self._library_media_browse_controller, "applied_scope", None)
+        if scope is None:
+            return
+        pairs = await self._collect_review_pairs_from_scope(scope)
+        self._create_and_open_review_set(
+            self._review_these_name(scope), "browse", pairs
+        )
+
+    async def _review_selected_worker(self, backing_ids: tuple[int, ...]) -> None:
+        """Order the selected ids by the browse sort, then create + open."""
+        pairs = await self._order_selected_review_pairs(backing_ids)
+        self._create_and_open_review_set(
+            f"{len(backing_ids)} selected items", "selection", pairs
+        )
+
+    async def _collect_review_pairs_from_scope(
+        self, scope: Any
+    ) -> list[tuple[int, str]]:
+        """Page the whole filtered result into ordered (backing_id, title) pairs.
+
+        Reads the raw ``search_media`` envelope page by page (off the event
+        loop) in browse-sort order, stopping at the total, an empty page, or one
+        past the 500 cap (so ``build_pinned_items`` can flag truncation).
+        """
+        search = getattr(
+            getattr(self.app_instance, "media_reading_scope_service", None),
+            "search_media",
+            None,
+        )
+        if not callable(search):
+            return []
+        pairs: list[tuple[int, str]] = []
+        page = 1
+        page_size = scope.page_size
+        while True:
+            filters: dict[str, Any] = {"sort_by": scope.sort_by}
+            if scope.media_type:
+                filters["media_types"] = [scope.media_type]
+            payload = await self._run_library_service_call(
+                search,
+                mode="local",
+                query=scope.query,
+                limit=page_size,
+                offset=(page - 1) * page_size,
+                library_summary=True,
+                isolate_in_worker=True,
+                **filters,
+            )
+            items = payload.get("items", []) if isinstance(payload, Mapping) else []
+            for item in items:
+                pairs.append((int(item["backing_media_id"]), str(item["title"])))
+            total = int(payload.get("total", 0)) if isinstance(payload, Mapping) else 0
+            if not items or page * page_size >= total or len(pairs) > 500:
+                break
+            page += 1
+        return pairs
+
+    async def _order_selected_review_pairs(
+        self, backing_ids: tuple[int, ...]
+    ) -> list[tuple[int, str]]:
+        """Order selected backing ids by the browse sort (deterministic).
+
+        Uses ``search_media``'s ``id_allowlist`` so the selection reads in the
+        same order the user saw, regardless of which pages it spanned -- NOT the
+        unordered RowSelection set.
+        """
+        search = getattr(
+            getattr(self.app_instance, "media_reading_scope_service", None),
+            "search_media",
+            None,
+        )
+        if not callable(search):
+            return []
+        scope = getattr(self._library_media_browse_controller, "applied_scope", None)
+        sort_by = scope.sort_by if scope is not None else "last_modified_desc"
+        payload = await self._run_library_service_call(
+            search,
+            mode="local",
+            query="",
+            library_summary=True,
+            isolate_in_worker=True,
+            id_allowlist=list(backing_ids),
+            sort_by=sort_by,
+            limit=len(backing_ids),
+            offset=0,
+        )
+        items = payload.get("items", []) if isinstance(payload, Mapping) else []
+        return [(int(item["backing_media_id"]), str(item["title"])) for item in items]
+
+    @staticmethod
+    def _review_these_name(scope: Any) -> str:
+        """A human name for a browse-derived review set."""
+        if scope.query:
+            return f'Search: "{scope.query}"'
+        if scope.media_type:
+            return f"{scope.media_type} items"
+        return "All media"
+
+    def _create_and_open_review_set(
+        self, name: str, origin: str, pairs: list[tuple[int, str]]
+    ) -> None:
+        """Create the set from pinned pairs, activate it, and open it in Reader.
+
+        A no-op (with a notice) when nothing resolved; warns when the 500 cap
+        dropped items.
+
+        Args:
+            name: Human label for the set.
+            origin: ``'browse'`` or ``'selection'``.
+            pairs: Ordered ``(backing_media_id, title)`` pairs.
+        """
+        from tldw_chatbook.Library.review_set_state import build_pinned_items
+
+        items, truncated = build_pinned_items(pairs, cap=500)
+        if not items:
+            self._notify_review_set(
+                "No media items to review.", severity="warning"
+            )
+            return
+        service = self._review_set_service()
+        if service is None:
+            return
+        service.create_review_set(name, origin, items)
+        if truncated:
+            self._notify_review_set(
+                "Review set capped at the first 500 items.", severity="warning"
+            )
+        else:
+            self._notify_review_set(f"Reviewing {len(items)} items.")
+        self._open_library_media_viewer(f"local:media:{items[0][0]}")
+
+    def _notify_review_set(
+        self, message: str, *, severity: str = "information"
+    ) -> None:
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity=severity)
+
     def _focus_library_media_items_pane(self) -> None:
         """Focus the Items pane at its most useful control (task-28004).
 

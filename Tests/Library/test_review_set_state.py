@@ -13,6 +13,7 @@ from tldw_chatbook.Library.review_set_state import (
     ReviewProgress,
     ReviewSetItem,
     advance_cursor,
+    build_pinned_items,
     format_review_progress,
     is_complete,
     is_empty,
@@ -201,3 +202,33 @@ def test_format_progress_empty_set():
         format_review_progress(ReviewProgress(index=0, total=0, reviewed=0))
         == "No items to review"
     )
+
+
+# --- building the pinned item list (entry points, task-28242) ----------------
+
+
+def test_build_pinned_items_dedupes_by_id_keeping_first():
+    items, truncated = build_pinned_items([(10, "A"), (11, "B"), (10, "A-again")])
+    assert items == [(10, "A"), (11, "B")]
+    assert truncated is False
+
+
+def test_build_pinned_items_caps_and_flags_truncation():
+    items, truncated = build_pinned_items(
+        [(index, f"t{index}") for index in range(600)], cap=500
+    )
+    assert len(items) == 500
+    assert items[0] == (0, "t0") and items[-1] == (499, "t499")
+    assert truncated is True
+
+
+def test_build_pinned_items_dups_past_cap_do_not_flag_truncation():
+    pairs = [(index, f"t{index}") for index in range(500)] + [(0, "dup")] * 50
+    items, truncated = build_pinned_items(pairs, cap=500)
+    assert len(items) == 500
+    assert truncated is False  # only duplicates followed the cap, nothing dropped
+
+
+def test_build_pinned_items_coerces_types():
+    items, _ = build_pinned_items([("10", 42)])
+    assert items == [(10, "42")]

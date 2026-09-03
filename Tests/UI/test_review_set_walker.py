@@ -9,7 +9,7 @@ and the per-item actuator is recorded rather than mounting a Reader.
 from __future__ import annotations
 
 import itertools
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 from tldw_chatbook.Library.review_set_service import ReviewSetService
@@ -228,6 +228,85 @@ def test_review_set_live_ids_treats_ids_live_when_media_db_absent():
         _REVIEW_SET_LIVENESS_BATCH=LibraryScreen._REVIEW_SET_LIVENESS_BATCH,
     )
     assert LibraryScreen._review_set_live_ids(fake, [1, 2, 3]) == {1, 2, 3}
+
+
+def _entry_fake(service):
+    opened: list[str] = []
+    notices: list[tuple[str, str]] = []
+    fake = SimpleNamespace(
+        _review_set_service=lambda: service,
+        _open_library_media_viewer=lambda media_id: opened.append(media_id),
+        app_instance=SimpleNamespace(
+            notify=lambda message, severity="information": notices.append(
+                (message, severity)
+            )
+        ),
+    )
+    fake._notify_review_set = MethodType(
+        LibraryScreen._notify_review_set, fake
+    )
+    fake._opened = opened
+    fake._notices = notices
+    return fake
+
+
+def test_create_and_open_review_set_creates_activates_and_lands(tmp_path):
+    service = _service(tmp_path)
+    fake = _entry_fake(service)
+
+    LibraryScreen._create_and_open_review_set(
+        fake, "Talks", "browse", [(10, "A"), (11, "B")]
+    )
+
+    review_set = service.get_active_review_set()
+    assert review_set is not None
+    assert [item.backing_media_id for item in review_set.items] == [10, 11]
+    assert fake._opened == ["local:media:10"]  # landed on the first item
+
+
+def test_create_and_open_review_set_empty_notifies_and_makes_no_set(tmp_path):
+    service = _service(tmp_path)
+    fake = _entry_fake(service)
+
+    LibraryScreen._create_and_open_review_set(fake, "X", "browse", [])
+
+    assert service.get_active_review_set() is None
+    assert fake._opened == []
+    assert fake._notices and fake._notices[0][1] == "warning"
+
+
+def test_create_and_open_review_set_warns_on_truncation(tmp_path):
+    service = _service(tmp_path)
+    fake = _entry_fake(service)
+
+    LibraryScreen._create_and_open_review_set(
+        fake, "X", "browse", [(index, f"t{index}") for index in range(600)]
+    )
+
+    review_set = service.get_active_review_set()
+    assert len(review_set.items) == 500
+    assert any(severity == "warning" for _msg, severity in fake._notices)
+
+
+def test_review_these_name_from_scope():
+    assert (
+        LibraryScreen._review_these_name(
+            SimpleNamespace(query="cats", media_type=None)
+        )
+        == 'Search: "cats"'
+    )
+    assert (
+        LibraryScreen._review_these_name(
+            SimpleNamespace(query="", media_type="video")
+        )
+        == "video items"
+    )
+    assert (
+        LibraryScreen._review_these_name(
+            SimpleNamespace(query="", media_type=None)
+        )
+        == "All media"
+    )
 
 
 def test_review_set_active_reflects_the_service(tmp_path):

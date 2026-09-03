@@ -422,6 +422,18 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
             trash_btn.display = not select_mode
             yield trash_btn
+            # task-28242: "Review these" pins the WHOLE filtered result as an
+            # ordered review set and walks it in the Reader. A list-level
+            # action, hidden in select mode like Export/Trash.
+            review_btn = Button(
+                "Review these",
+                id="library-media-review",
+                classes="library-canvas-action",
+                compact=True,
+                tooltip="Review every item in this list, one by one.",
+            )
+            review_btn.display = not select_mode
+            yield self._gate_stale_action(review_btn, "Review these")
             # Disable only when there's nothing to select AND we're not
             # already in select mode -- in select mode the button is "Done"
             # and must always be pressable so the user can exit even if the
@@ -584,6 +596,30 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     )
                     yield self._gate_stale_action(
                         export_selected, "Export selected"
+                    )
+                    # task-28242: the third real bulk action -- "Review
+                    # selected" -- pins the selection as an ordered review set.
+                    # Sits between Export and the far-end danger Delete.
+                    review_disabled = self.canvas.selected_count == 0
+                    review_selected = Button(
+                        library_disabled_action_label(
+                            "Review selected", review_disabled
+                        ),
+                        id="library-media-review-selected",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    review_selected._library_disabled_marker_base = (
+                        "Review selected"
+                    )
+                    review_selected.disabled = review_disabled
+                    review_selected.tooltip = (
+                        "Select items to review them one by one."
+                        if review_disabled
+                        else "Review the selected items, one by one."
+                    )
+                    yield self._gate_stale_action(
+                        review_selected, "Review selected"
                     )
                     # task-2853: the second real bulk action -- "Delete
                     # selected" -- pushed to the far end (CSS margin, same
