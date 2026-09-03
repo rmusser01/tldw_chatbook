@@ -527,6 +527,69 @@ async def test_picker_worker_open_all_tombstoned_notifies_without_activating(
 
 
 @pytest.mark.asyncio
+async def test_picker_worker_read_later_builds_a_set_in_saved_order(tmp_path):
+    # task-28244: ids come from list_read_it_later_media_ids (saved_at DESC);
+    # titles come from the bounded allowlist query, whose browse-sort order is
+    # then discarded in favor of the saved order.
+    service = _service(tmp_path)
+    fake = _picker_fake(service, decision=("read_later", ""))
+    fake.app_instance.media_db = SimpleNamespace(
+        list_read_it_later_media_ids=lambda **_kwargs: [30, 10, 20]
+    )
+
+    async def search_media(**kwargs):
+        assert kwargs["id_allowlist"] == [30, 10, 20]
+        return {
+            "items": [  # browse order differs from saved order on purpose
+                {"backing_media_id": 10, "title": "A"},
+                {"backing_media_id": 20, "title": "B"},
+                {"backing_media_id": 30, "title": "C"},
+            ],
+            "total": 3,
+        }
+
+    fake.app_instance.media_reading_scope_service = SimpleNamespace(
+        search_media=search_media
+    )
+    fake._library_media_browse_controller = SimpleNamespace(applied_scope=None)
+    for name in (
+        "_order_selected_review_pairs",
+        "_review_read_later_pairs",
+        "_create_and_open_review_set",
+    ):
+        setattr(fake, name, MethodType(getattr(LibraryScreen, name), fake))
+
+    await fake._review_set_picker_worker()
+
+    review_set = service.get_active_review_set()
+    assert review_set is not None
+    assert review_set.origin == "read_later"
+    assert [item.backing_media_id for item in review_set.items] == [30, 10, 20]
+    assert fake._opened == ["local:media:30"]
+
+
+@pytest.mark.asyncio
+async def test_picker_worker_read_later_empty_notifies_without_a_set(tmp_path):
+    service = _service(tmp_path)
+    fake = _picker_fake(service, decision=("read_later", ""))
+    fake.app_instance.media_db = SimpleNamespace(
+        list_read_it_later_media_ids=lambda **_kwargs: []
+    )
+    for name in (
+        "_order_selected_review_pairs",
+        "_review_read_later_pairs",
+        "_create_and_open_review_set",
+    ):
+        setattr(fake, name, MethodType(getattr(LibraryScreen, name), fake))
+
+    await fake._review_set_picker_worker()
+
+    assert service.get_active_review_set() is None
+    assert fake._opened == []
+    assert any(severity == "warning" for _msg, severity in fake._notices)
+
+
+@pytest.mark.asyncio
 async def test_picker_worker_failure_notifies(tmp_path):
     service = _service(tmp_path)
     fake = _picker_fake(service, decision=None)
