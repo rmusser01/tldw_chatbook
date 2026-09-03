@@ -1,11 +1,11 @@
 ---
 id: TASK-31200
 title: Define the llama.cpp Lab-to-Console connection and readiness contract
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 12:46'
-updated_date: '2026-09-03 13:23'
+updated_date: '2026-09-03 13:30'
 labels:
   - llamacpp
   - lab
@@ -31,12 +31,12 @@ ADR required: yes. This task must author the governing ADR because it changes th
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The ADR chooses one canonical credential-free connection descriptor and one default/fallback policy shared by Lab launch, local discovery, Console readiness, and Console execution.
-- [ ] #2 The ADR distinguishes process reserved, process alive, API healthy, model available, Console session adopted, and saved default states, with one named authority for each transition.
-- [ ] #3 The contract defines Start on this computer, Connect to an existing server, Use in this Console session, and Make default as explicit actions; no action silently overwrites a different saved endpoint.
-- [ ] #4 The contract keeps credentials, executable paths, GGUF paths, and raw logs within their owning surface while permitting the sanitized endpoint, provider identity, model identity, and readiness evidence needed by Console.
-- [ ] #5 The ADR reconciles ADR-002, ADR-025, ADR-095, TASK-16473, TASK-16476, and TASK-26837 and records backward-compatible handling for existing llama.cpp configuration.
-- [ ] #6 The ADR includes the end-to-end state sequence, failure settlement rules, observability boundary, and verification strategy for real loopback HTTP and mounted Textual flows.
+- [x] #1 The ADR chooses one canonical credential-free connection descriptor and one default/fallback policy shared by Lab launch, local discovery, Console readiness, and Console execution.
+- [x] #2 The ADR distinguishes process reserved, process alive, API healthy, model available, Console session adopted, and saved default states, with one named authority for each transition.
+- [x] #3 The contract defines Start on this computer, Connect to an existing server, Use in this Console session, and Make default as explicit actions; no action silently overwrites a different saved endpoint.
+- [x] #4 The contract keeps credentials, executable paths, GGUF paths, and raw logs within their owning surface while permitting the sanitized endpoint, provider identity, model identity, and readiness evidence needed by Console.
+- [x] #5 The ADR reconciles ADR-002, ADR-025, ADR-095, TASK-16473, TASK-16476, and TASK-26837 and records backward-compatible handling for existing llama.cpp configuration.
+- [x] #6 The ADR includes the end-to-end state sequence, failure settlement rules, observability boundary, and verification strategy for real loopback HTTP and mounted Textual flows.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -52,3 +52,9 @@ Reason: TASK-31200 changes the provider/runtime boundary, cross-screen state own
 4. Self-review the contract against all six acceptance criteria, reject placeholders and ambiguous ownership, and verify documentation integrity without changing or testing production code.
 5. Accept ADR-114, complete TASK-31200 metadata, and commit only the ADR, index, wireframe, plan, and task record.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Accepted ADR-114 to separate llama.cpp process ownership, HTTP and model readiness, active Console adoption, and explicit provider-default persistence. Selected the absent-value loopback default at port 8080, defined the sanitized generation-fenced handoff target, preserved ADR-025 GGUF authority and ADR-095 settings ownership, and linked the verification obligations for TASK-31201 through TASK-31206. Modified the canonical ADR index, handoff wireframe, plan, and TASK-31200 metadata; no production code or tests changed.
+<!-- SECTION:NOTES:END -->

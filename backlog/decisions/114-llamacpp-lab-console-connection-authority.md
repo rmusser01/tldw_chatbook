@@ -1,6 +1,6 @@
 # ADR-114: Own llama.cpp process, readiness, Console adoption, and defaults separately
 
-Status: Proposed
+Status: Accepted
 Date: 2026-09-03
 Related Tasks: TASK-31200 through TASK-31206
 Extends: ADR-002, ADR-025, ADR-095
@@ -232,6 +232,17 @@ stop unrelated processes, alter active Console sessions, or rewrite defaults.
   metadata exclude executable/model paths, credentials, raw commands, and unbounded
   process output. They must also prove that query strings and fragments never enter
   `LlamaCppConnectionTarget` or Console conversation metadata.
+
+| Contract | Required future evidence |
+|---|---|
+| Canonical endpoint | Pure normalization/default-precedence tests in `Tests/Chat/test_provider_endpoint_contract.py` and Console settings tests |
+| Process versus readiness | Lifecycle plus real loopback HTTP tests proving live-process/not-ready and model-ready transitions |
+| Stale-result fencing | Generation replacement tests for process exit, model edit, endpoint edit, cancellation, and recomposition |
+| Console adoption | Mounted Lab-to-Console test proving exact provider/base URL/model apply without restart |
+| Persistence boundary | Regression test proving Use in Console does not write config and Make default preserves unrelated or newer fields |
+| Managed model privacy | Tests proving no filesystem path enters the descriptor, rendered authority text, app-global metadata, or Console settings |
+| Compact UX | Production-stylesheet 80x24, 100x30, and 120x40 compositor/focus tests |
+| Live qualification | Scratch-profile run against a real llama-server, with default-profile fingerprints checked before cleanup |
 
 ## Links
 
