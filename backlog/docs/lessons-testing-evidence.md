@@ -10907,7 +10907,7 @@ named-parent mismatch is an uncertain committed state, not proof the old file
 survived. Tests must inject a competing create and parent rename inside the atomic
 publication call itself—checking only the phase before it leaves the decisive race
 untested.
-## A method inserted above a decorated method steals the decorator -- and the symptom is a silently dead handler (task-28026, 2026-09-02)
+## A method inserted above a decorated method steals the decorator -- and the symptom is a silently dead handler (task-30016, 2026-09-02)
 
 **What happened.** While wiring `TldwCli.on_key` (forward startup-splash
 skips), the new method was inserted directly above
@@ -10930,7 +10930,7 @@ function. When a Textual event handler is inexplicably never invoked,
 print its `_textual_on` attribute before blaming dispatch order or focus --
 a non-empty value means the decorator attached to the wrong function.
 
-## Textual `set_interval` skips missed ticks, so wall-clock-paced animation jumps under load (task-28026, 2026-09-02)
+## Textual `set_interval` skips missed ticks, so wall-clock-paced animation jumps under load (task-30016, 2026-09-02)
 
 **What happened.** The startup splash was intermittently jumpy or skipped
 from an early frame straight to its end. Measurement (headless `run_test`

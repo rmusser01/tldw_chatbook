@@ -1,5 +1,5 @@
 ---
-id: TASK-28026
+id: TASK-30016
 title: Splash intro playback stability - frame-locked animation pacing
 status: Done
 assignee:
@@ -24,7 +24,7 @@ Startup splash animations are unstable: sometimes smooth, sometimes jumpy, somet
 - [x] #2 Animation progress is frame-locked: each rendered frame advances the effect clock by exactly one animation interval, so contention slows playback instead of jumping reveals forward
 - [x] #3 Card reveal durations longer than the configured splash duration are clamped so a reveal completes before the splash closes
 - [x] #4 Consecutive identical frames do not re-write the display widget
-- [x] #5 Regression smoke: every animated card still renders 5 consecutive frames without falling back to static (five pre-existing broken cards pinned and excluded, follow-up TASK-28028)
+- [x] #5 Regression smoke: every animated card still renders 5 consecutive frames without falling back to static (five pre-existing broken cards pinned and excluded, follow-up TASK-30017)
 - [x] #6 New playback tests plus existing splash tests pass
 - [x] #7 (added mid-task) Default splash duration is 7.0s in the widget constructor default, the app-level get_cli_setting fallback, the Settings viewer defaults, and the config.toml template; skip_on_keypress stays true in the template
 - [x] #8 (added mid-task) Any unbound keypress during the startup splash skips it (app-level forwarding; app bindings like ctrl+q unaffected), verified end to end in a full-app test
@@ -63,7 +63,20 @@ Default duration and skip:
 
 Incident worth remembering: the first version of the TldwCli.on_key insertion landed between @on(SplashScreen.Closed) and its function, silently rebinding the decorator onto on_key. A decorated handler gets _textual_on metadata and is excluded from name-based key dispatch, so the skip appeared dead in every test while working when the method was monkeypatched at runtime. Found by printing the function's _textual_on attribute. (Lesson added to backlog/docs/lessons-testing-evidence.md.)
 
-Out of scope, filed as TASK-28028: five animated cards are broken independently of the driver (cyberpunk_glitch/hypno_swirl/phonebooths emit markup Textual's Content.from_markup rejects, world_map raises AttributeError, typewriter_news returns no frames) -- roughly a 1-in-15 chance per launch of an intro that visibly does not play. They are pinned in KNOWN_BROKEN_EFFECT_CARDS in the new smoke test.
+Out of scope, filed as TASK-30017: five animated cards are broken independently of the driver (cyberpunk_glitch/hypno_swirl/phonebooths emit markup Textual's Content.from_markup rejects, world_map raises AttributeError, typewriter_news returns no frames) -- roughly a 1-in-15 chance per launch of an intro that visibly does not play. They are pinned in KNOWN_BROKEN_EFFECT_CARDS in the new smoke test.
 
 Modified/added files: tldw_chatbook/Widgets/splash_screen.py, tldw_chatbook/Widgets/settings_splash_screen_viewer.py, tldw_chatbook/app.py (on_key + duration fallback), tldw_chatbook/config.py (template), Tests/Widgets/test_splash_animation_playback.py (new), Tests/UI/test_splash_skip_on_keypress.py (new), Tests/Widgets/test_splash_screen_config_read.py (default pins). Verification: 22 splash tests green (playback x5 runs for flake check, skip x3), ruff clean, adjacent full-app startup test green.
 <!-- SECTION:NOTES:END -->
+
+
+## Renumbering provenance
+
+Originally created 2026-09-02 06:22 as TASK-28026. Dev independently minted
+another TASK-28026 (Library media viewer Analysis-tab search, created 06:46
+the same day) and merged it first, with the id baked into thirty-plus
+`task-28026:` code comments across the Library screens. The TASK-19601 rule
+says the older arrival keeps the id, but the younger one here is already
+merged and referenced throughout shipped code, so this task -- still an open
+PR -- renumbers instead to TASK-30016 rather than rewriting dev's library
+comments. Sibling follow-up task renumbered TASK-28028 -> TASK-30017 to keep
+the pair adjacent. Verified by scripts/check_backlog_task_ids.py.
