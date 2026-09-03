@@ -36,3 +36,10 @@
 # replaced by one-line delegators. Byte-for-byte canon verified two ways
 # (AST-unparse + raw-text comparison) against base commit 264314c5f.
 4cc9b6109b47d39e4622d6db9f4d1158e1d9cdd0
+
+# Wave-2 task 4: export cleanup PR (export series 3/3, closing commit). Not a
+# pure relocation in the strictest sense (receiver rewrites + a shim-block
+# deletion + one dead delegator pruned + 5 dead imports pruned), same shape
+# as the conversations exemplar's own Task 9 closing commit above -- every
+# per-line change is a mechanical receiver swap or a removal, not new logic.
+cdb43ebcc1a1e2e113ac78d0e16f2c88ac016b3f
