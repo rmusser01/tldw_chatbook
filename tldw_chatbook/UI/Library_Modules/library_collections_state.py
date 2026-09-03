@@ -7,11 +7,21 @@ series -- ``library_export_state.py`` -- is the worked example this
 mirrors, since it also needed no plural-prefix split). Every field here
 was moved verbatim out of ``LibraryScreen.__init__`` in
 ``tldw_chatbook/UI/Screens/library_screen.py`` -- same default, same type.
-``library_screen.py`` keeps every original ``_library_collections_<field>``
-attribute name alive as a generated getter/setter ``@property`` shim
-pointing at ``self._collections_state.<field>`` (see the sentinel-wrapped
-block right after the ``LibraryScreen`` class body); a later controller PR
-in this series moves the subsystem's methods here too.
+``library_screen.py`` originally kept every original
+``_library_collections_<field>`` attribute name alive as a generated
+getter/setter ``@property`` shim pointing at
+``self._collections_state.<field>`` (a sentinel-wrapped block right after
+the ``LibraryScreen`` class body). The collections cleanup PR (task 7)
+deleted that screen-side shim block entirely once the subsystem's methods
+had all moved to ``LibraryCollectionsController`` (task 6) and the
+screen's own remaining references were retargeted to call through that
+controller instead. The controller that took over the subsystem's methods
+carries its OWN generated shim block in its place -- reading/writing
+through an injected ``collections_state_accessor`` rather than a direct
+``self._collections_state`` attribute, since the controller does not hold
+the state object itself. See the controller module's own shim-block
+comment for why that block is permanent (not a cleanup-PR deletion
+target, unlike the one this class's own state PR originally shared).
 
 Every field uses the SAME ``_library_collections_`` prefix -- unlike
 Conversations (whose subsystem name is singular, "conversation", so two

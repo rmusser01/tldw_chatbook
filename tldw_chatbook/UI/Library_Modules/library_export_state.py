@@ -5,11 +5,21 @@ State PR of the Export extraction series (wave-2 task 2 of
 ``backlog/docs/library-decomposition-recipe.md``; conversations series is
 the worked example this mirrors). Every field here was moved verbatim out
 of ``LibraryScreen`` in ``tldw_chatbook/UI/Screens/library_screen.py`` --
-same default, same type. ``library_screen.py`` keeps every original
-``_library_export_<field>`` attribute name alive as a generated getter/
-setter ``@property`` shim pointing at ``self._export_state.<field>`` (see
-the sentinel-wrapped block right after the ``LibraryScreen`` class body); a
-later controller PR in this series moves the subsystem's methods here too.
+same default, same type. ``library_screen.py`` originally kept every
+original ``_library_export_<field>`` attribute name alive as a generated
+getter/setter ``@property`` shim pointing at ``self._export_state.<field>``
+(a sentinel-wrapped block right after the ``LibraryScreen`` class body).
+The export cleanup PR (task 4) deleted that screen-side shim block
+entirely once the subsystem's methods had all moved to
+``LibraryExportController`` (task 3) and the screen's own remaining
+references were retargeted to call through that controller instead. The
+controller that took over the subsystem's methods carries its OWN
+generated shim block in its place -- reading/writing through an injected
+``export_state_accessor`` rather than a direct ``self._export_state``
+attribute, since the controller does not hold the state object itself.
+See the controller module's own shim-block comment for why that block is
+permanent (not a cleanup-PR deletion target, unlike the one this class's
+own state PR originally shared).
 
 Every field uses the SAME ``_library_export_`` prefix -- unlike
 Conversations, the ownership analysis found no field needing a plural

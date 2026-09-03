@@ -457,11 +457,11 @@ days whose subjects name the subsystem (measured 2026-09-01):
 | Order | Subsystem | Churn | Notes |
 |---|---|---|---|
 | 1 | **conversations** (exemplar) — **complete** (Tasks 6–9) | 10 | 68 methods, 19 fields (2026-09-01 estimate); see §11 for the series' actual, as-landed numbers |
-| 2 | export | 3 | recipe rehearsal |
-| 2 | collections | 6 | recipe rehearsal |
-| 2 | search | 6 | recipe rehearsal |
+| 2 | **export** — **complete** (wave-2 Tasks 2–4) | 3 | 13 fields moved; 22 of 51 "export"-named method candidates moved / 29 excluded (18 other-subsystem, 2 `@work` framework-decorator self-type-assertion hazard, 9 unbound-fake-self/silent-Mock test bypasses); see §12 for the series' actual, as-landed numbers |
+| 2 | **collections** — **complete** (wave-2 Tasks 5–7) | 6 | 26 fields moved (1 wiring field stayed); 64 of 67 "collection"-named method candidates moved / 3 excluded (Prompts-owned); see §13–§15 for the series' actual, as-landed numbers |
+| 2 | **search** — **BLOCKED at the entanglement gate** (wave-2 Task 8) | 6 | 14 candidate methods census'd; 8/14 (57.1%, conservative floor 45.5%) cross-call RAG-named methods, both far past the plan's 1/3 gate — the top search bar's submit path *is* the RAG query entry point, not a sibling of it. No code touched (`library_screen.py` byte-identical to HEAD at task start). Per the wave plan's pre-committed contingency, deferred to a COMBINED search+RAG series in wave 3 (task-27021); see §16 and `.superpowers/sdd/2026-09-02-library-decomposition-wave2-cold-trio/task-8-report.md` for the full census |
 | 3 | skills | 15 | |
-| 3 | RAG / onboarding plumbing | 16 | |
+| 3 | RAG / onboarding plumbing | 16 | search (above) merges into this pool for wave 3 (task-27021) — see §16 |
 | 3 | ingest | 23 | |
 | 4 | prompts | 41 | |
 | 4 | media | 55 | |
@@ -1480,3 +1480,238 @@ All commands run from `.worktrees/library-decomp-foundation`,
    calling their delegators) and conversations' 18-of-61 (30%, a genuinely
    split Reader/Browse controller pair with less internal self-calling),
    is now a third data point for this same inverse relationship.
+
+## 16. Wave-2 close — summary
+
+Wave-2 (`.superpowers/sdd/2026-09-02-library-decomposition-wave2-cold-trio`,
+branch `refactor/library-decomp-wave2-cold-trio`) is closed: the census
+anti-slack guard (Task 1), the export series (Tasks 2–4, §12), and the
+collections series (Tasks 5–7, §13–§15) are complete; the search series
+(Tasks 8–9) is BLOCKED at the entanglement gate by design, deferred to a
+combined search+RAG wave-3 series (task-27021). This section is the
+wave-level pin trajectory, the full verification battery, and the wave's
+own lessons — read this before starting wave 3.
+
+### Pin trajectory — full wave-2 chain
+
+Re-derived from `git log` (the `_BUDGETS["tldw_chatbook/UI/Screens/
+library_screen.py"]` value at each commit, not carried over from any
+report) and cross-checked against the ratchet file's own inline comment
+history:
+
+| Task | PR | Commit | `_BUDGETS` after |
+|---|---|---|---|
+| — | (foundation tip, wave-2 start) | `2b20ebbb9` | 43965 / 1282 |
+| 1 | Census anti-slack guard | `477704580` | 43965 / 1282 (unchanged — guard added to the recompose ratchet file, not this one) |
+| 2 | Export state | `f4e8acecf` | 43930 / 1282 |
+| 3 | Export controller | `4cc9b6109` | 43432 / 1282 |
+| 4 | Export cleanup (series complete) | `cdb43ebcc` | 43413 / 1281 |
+| 5 | Collections state | `bca923b4c` | 43410 / 1281 |
+| 6 | Collections controller | `09d238f50` | 42486 / 1281 |
+| 7 | Collections cleanup (series complete) | `39a976321` | **42411 / 1267 (wave-2 final)** |
+| 8 | Search census — BLOCKED | (report only) | unchanged, 42411 / 1267 (zero code touched) |
+| 9 | Search cleanup | — | MOOT, no move occurred |
+
+Full chain: `43965/1282 → 43930/1282 → 43432/1282 → 43413/1281 →
+43410/1281 → 42486/1281 → 42411/1267 (final)`. Net wave-2 shrink: 1554
+lines, 15 methods — all 15 fewer methods are pruned dead delegators (1
+export + 14 collections), not moved bodies (a pure move is always
+net-zero methods on the screen: N bodies out, N one-line delegators in).
+Task 10's own fresh `_measure()` (ast-walked line count + `LibraryScreen`
+method count, matching the ratchet's own semantics exactly, not `wc -l`)
+gives **42411 lines / 1267 methods** — an EXACT match to the recorded pin,
+zero drift, nothing to lower.
+
+### Subsystem outcomes (§8 table, detailed)
+
+- **Export — complete** (Tasks 2–4, §12): 13 fields moved to
+  `LibraryExportState`; 22 of 51 "export"-named method candidates moved to
+  `LibraryExportController` (18 other-subsystem, 2 `@work`
+  framework-decorator self-type-assertion hazard, 9 unbound-fake-self/
+  silent-Mock test bypasses excluded); 1 of 22 screen delegators pruned at
+  cleanup.
+- **Collections — complete** (Tasks 5–7, §13–§15): 26 fields moved to
+  `LibraryCollectionsState` (1 field, `_library_collections_capture_
+  controller`, stays screen-side as wiring, not state); 64 of 67
+  "collection"-named method candidates moved to
+  `LibraryCollectionsController` (3 Prompts-owned excluded, zero
+  test-bypass exclusions — the first controller PR in this recipe's
+  rehearsal with none); 14 of 64 screen delegators pruned at cleanup.
+  The brief's flagged `_library_collections_saved_searches*` boundary
+  resolved uncontested (all 5 references collections-internal; the "search
+  cluster" the brief warned about is the unrelated top-search-bar feature
+  — see §13).
+- **Search — BLOCKED at the entanglement gate** (Task 8, no code touched):
+  14 candidate methods census'd (23 raw "search"-named matches minus 3
+  Prompts-owned and 6 Media-owned). Cross-call census against the 39-strong
+  RAG-named method set: **8/14 (57.1%)** entangled under the direct
+  reading, **5/11 (45.5%)** under the most conservative possible reading
+  (stripping the 3 already-RAG-tagged candidates first) — both far past
+  the wave plan's 1/3 (33.3%) gate. The top search bar's submit handler
+  (`handle_library_search_submitted`) and its "rerun from history" action
+  both call `_start_library_rag_query` directly: the search bar's own
+  submit path *is* the RAG query entry point, not a sibling of it — the
+  entanglement is structural, not coincidental. Per the wave plan's
+  pre-committed contingency, search+RAG becomes ONE combined series in
+  wave 3 (task-27021, filed at wave close). Full census:
+  `.superpowers/sdd/2026-09-02-library-decomposition-wave2-cold-trio/
+  task-8-report.md`.
+
+### Verification battery (Task 10, this close)
+
+All commands run from `.worktrees/library-decomp-foundation`,
+`.venv/bin/python`, `-p no:randomly`.
+
+- **Wiring suites** (3 files exist for this recipe today — `
+  test_library_collections_wiring.py`, `test_library_export_wiring.py`,
+  `test_library_conversations_wiring.py`; no search wiring suite exists
+  since Task 8 never moved anything): **16 passed** (4 + 5 + 7 — the
+  conversations file gained a 7th test since §15's own count of 6, ordinary
+  suite growth, not a regression).
+- **Characterization files** (collections + export + conversations): **14
+  passed** (5 + 5 + 4), matching §15's own count exactly.
+- **Both size-ratchet guards, full suite**
+  (`Tests/Architecture/test_screen_size_ratchet.py`): **3 passed, 2
+  failed** — exactly the two documented pre-existing `chat_screen.py` rows
+  (`test_screen_does_not_grow_past_its_budget[chat_screen.py]`,
+  `test_task_22507_4_does_not_worsen_chat_screen_base`), no others.
+- **Recompose census suite** (`Tests/UI/test_library_recompose_ratchet.py`,
+  home of Task 1's anti-slack guard): **6 passed**.
+- **Support-layer surface**
+  (`Tests/Architecture/test_library_support_layer_surface.py`): **8
+  passed**.
+- **Preflight** (`./scripts/preflight.sh`): all six checks green (CSS
+  bundle, profile-owned-path census, diagnostic inventory, backlog task
+  ids, chachanotes table allowlist, index plan pins).
+
+### Full xdist paired-baseline sweep — sequential, per §7's own lesson (below)
+
+Branch = this task's own tree (HEAD `1e466ffac` + this close's doc-only
+edits, which touch no test or production-logic file). Baseline = a
+path-scoped `git checkout 2b20ebbb9 -- tldw_chatbook Tests` overlay of the
+foundation tip (wave-2's own start commit), run, then restored via
+`git checkout HEAD -- tldw_chatbook Tests` (verified `_measure()` back to
+42411/1267 and `git status` clean afterward) — the multi-commit-back
+equivalent of the per-task `git stash -u` technique, since this
+comparison spans the WHOLE wave rather than one task's uncommitted diff.
+Run SEQUENTIALLY, not concurrently, per Task 6/7's own forward note (§15):
+
+| | Failed | Passed | Wall time |
+|---|---|---|---|
+| Branch (`1e466ffac` + close) | 335 | 3904 | 1261.02s (21:01) |
+| Baseline (`2b20ebbb9`) | 343 | 3895 | 1252.31s (20:52) |
+
+Diffing the two failure-name sets: **5 branch-unique**, 13 baseline-unique,
+330 shared. All 5 branch-unique names —
+`test_library_media_reader_no_change_sync_t22208.py::
+test_no_change_traversal_builds_no_preview_and_copies_no_content`,
+`test_library_prompts_canvas.py::
+test_library_prompt_history_stale_conflict_reload_refreshes_and_can_retry`,
+`test_library_prompts_canvas.py::
+test_library_prompts_stale_search_cannot_restore_an_old_filter_caret`,
+`test_library_shell.py::
+test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back`,
+`test_library_shell.py::test_library_shell_note_id_deeplink_opens_note_editor`
+— re-run single-process, combined: **all 5 pass cleanly**. None touches
+Export or Collections code, this wave's diff, or a fixture this wave's
+diff shares (Media reader, Prompts canvas, Notes shell). **Zero real
+regressions** across the whole wave.
+
+### Probe run
+
+```
+.venv/bin/python Helper_Scripts/library_click_probe.py
+```
+
+| interaction | settle (ms) | max gap (ms) | recompose | full-update | mounts | nodes |
+|---|---|---|---|---|---|---|
+| media (switch-in) | 485 | 155 | 0 | 2 | 163 | 113 |
+| media (re-click same) | 328 | 54 | 0 | 2 | 79 | 113 |
+| media (re-click same, 2nd) | 329 | 56 | 0 | 2 | 79 | 113 |
+| notes (switch) | 413 | 195 | 0 | 1 | 110 | 110 |
+| notes (re-click same) | 264 | 56 | 0 | 1 | 38 | 110 |
+| media (switch-back) | 467 | 156 | 0 | 1 | 165 | 113 |
+| notes (switch, 2nd) | 356 | 131 | 0 | 1 | 110 | 110 |
+| media (switch-back, 2nd) | 411 | 94 | 0 | 1 | 165 | 113 |
+
+**No prior recorded run of this probe exists anywhere in this repo's docs
+or SDD ledgers to diff against** — §9 calls for a before/after pair around
+each controller-move PR, but neither Task 3 (export controller) nor Task 6
+(collections controller) captured one; this is genuinely the first time
+this script's output has been written down. Recorded here as the wave-2
+close baseline for whoever runs the next controller-move PR. Consistent
+with expectations either way: this probe exercises ONLY the Media/Notes
+rail-switch path (the foundation-era freeze §8's Phase C note references,
+139–380 ms), which neither the export nor the collections series touches
+— every row still shows the pre-Phase-C main-thread cost the design doc
+already documents, not a new regression from this wave's moves.
+
+### Lessons
+
+1. **The byte-for-byte canon (§1) extends to comments, and "I carried this
+   verbatim" is a claim, not a default.** Task 2's export state-PR move
+   retyped/paraphrased three `library_export_state.py` field comments
+   instead of copy-pasting them from base `477704580` — an 8-line header
+   comment explaining `_library_export_counts`/`_library_export_form`
+   semantics was dropped entirely (with the `__init__` call-site comment
+   then falsely claiming the detail "lives" in the state module),
+   `run_id`'s comment silently renamed three field names to their new bare
+   forms, and `cancel_event`'s comment dropped its trailing sentence. The
+   task's own self-review had asserted byte-for-byte comment carry
+   *without diffing against the base commit to check*. Review caught it;
+   fixed in `264314c5f` by restoring all three verbatim (plus a fourth,
+   self-caught defect on `origin_row_id`) and verifying with an automated
+   normalized-substring comparison against `git show <base>:...`, not
+   eyeballing. Generalizes: a "verbatim" claim about anything moved — body
+   or comment — needs the same evidence discipline as a test-passing
+   claim: diff against the base commit, don't trust memory of having typed
+   it carefully.
+2. **A cleanup-PR's test census should grep the WHOLE `Tests/` tree, not
+   just the directories the recipe's own prose names — a lesson that
+   recurred even after being drawn once already.** §12 already drew this
+   lesson for a controller-PR battery (export's 9 unbound-fake-self
+   exclusions, 4 of them outside `Tests/UI/`); Task 7's collections
+   cleanup PR drew it AGAIN, one layer over: its own brief named
+   `Tests/UI/` and `Tests/Library/` as the retarget scope (already the
+   widened set §12 recommended), and a repo-wide grep anyway found a
+   THIRD, unnamed location — `Tests/Live/test_library_collections_capture_
+   walkthrough.py`, a non-network-gated, ordinarily-collected walkthrough
+   file with 22 real consumers of the flat field names on a real `screen`
+   instance. Left unretargeted, these would have broken silently the
+   instant the shim was deleted, invisible to any check scoped to the two
+   named directories. Generalizes: "the recipe says `Tests/UI` and
+   `Tests/Library`" is not the same claim as "nothing outside those two
+   directories references this name" — grep the whole tree, every time,
+   regardless of how authoritative the stated scope looks.
+3. **Sequential, not concurrent, paired-baseline sweeps — concurrency
+   amplifies flakiness at a worse-than-1:1 investigation cost.** Task 6's
+   controller-PR sweep ran the branch and pristine-baseline xdist
+   invocations CONCURRENTLY (two 8-worker processes sharing one machine)
+   to save wall-clock time. Both runs landed well above this recipe's
+   historical ~330–340 backdrop (349 failed/3890 passed branch vs
+   344/3895 baseline) with 12 branch-unique names — several times the
+   export/collections-state series' own 2-to-9-ish norm. Confirming all 12
+   as noise (11 passed cleanly on re-run; the 1 that reproduced also
+   reproduced identically on the pristine baseline under the same
+   combined-invocation conditions) cost real investigation time a cleaner
+   run would not have needed. Task 7's own cleanup-PR sweep, run
+   SEQUENTIALLY per this forward note, landed inside the historical range
+   (333f/3906p branch vs 337f/3902p baseline, 4 branch-unique, all
+   confirmed noise on the first single-process re-run) — and this close's
+   own sequential sweep (335f/3904p vs 343f/3895p, 5 branch-unique, all
+   confirmed noise) reconfirms the same pattern a third time. Run the two
+   full sweeps sequentially whenever machine time allows.
+4. **The RED-commit criterion's actual wording is structural (screen
+   untouched, tests red at parent), not literal (which files the commit
+   touches).** The recipe's controller-PR step (§1) calls for a wiring-test
+   RED commit ahead of the controller move; an earlier, stricter reading
+   treated this as "the RED commit contains ONLY the failing test, zero
+   production code." Task 6 encountered this twice and stated the ruling
+   this recipe now carries forward: the RED commit must leave the SCREEN
+   untouched and its delegation tests failing at the parent — the
+   controller module MAY ship in the same commit, since nothing on the
+   screen delegates to it yet. What matters is that a real RED exists in
+   git history (not a same-commit red+green), not which files happen to be
+   present in that commit. Cost if this reading is wrong: slightly weaker
+   RED purity; the criterion that actually matters — screen untouched,
+   tests red at the parent commit — is preserved either way.
