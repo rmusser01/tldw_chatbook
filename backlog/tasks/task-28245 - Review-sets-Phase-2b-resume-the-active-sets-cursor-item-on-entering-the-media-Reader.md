@@ -3,11 +3,11 @@ id: TASK-28245
 title: >-
   Review sets - Phase 2b: resume the active set's cursor item on entering the
   media Reader
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-03 01:47'
-updated_date: '2026-09-03 05:59'
+updated_date: '2026-09-03 07:38'
 labels:
   - library
   - media-ux
@@ -24,9 +24,9 @@ Split from task-28241 AC#4. The walker (AC1-3) resumes the SET STATE automatical
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Opening the media Reader with an active set loads the set's cursor item automatically (no keypress needed)
-- [ ] #2 Per-item scroll resume (ReadingProgress) still restores within the loaded item
-- [ ] #3 Does not fire during cold-start tab switching or fight the initial-tab navigation
+- [x] #1 Opening the media Reader with an active set loads the set's cursor item automatically (no keypress needed)
+- [x] #2 Per-item scroll resume (ReadingProgress) still restores within the loaded item
+- [x] #3 Does not fire during cold-start tab switching or fight the initial-tab navigation
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -37,3 +37,9 @@ Split from task-28241 AC#4. The walker (AC1-3) resumes the SET STATE automatical
 3. AC#2: loading goes through _open_library_media_viewer = same path as a row press, ReadingProgress untouched
 4. AC#3: worker's final still-on-media-list + is_current gates make a cold-start yank abort; live tmux verify incl. restart
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Shipped in PR #2342 (dev e364bf662). _auto_resume_review_set_worker resolves the active set's live cursor off-loop and opens via _open_library_media_viewer (same path as a row press, so ReadingProgress restore untouched - AC#2); once per set per screen session (guard burned only when the open happens). ONE hook only: the rail-select seam's media branch - the mount-leg kick was added then deliberately REMOVED because its boot-time timing made the worker's lazy imports race the _ui_ready module census (flaky Perf Guard 977>972); the rail gesture cannot race boot, which also settles AC#3 structurally. Auto-resume runs in its own exclusive worker group (library_review_set_resume) after Qodo caught the shared group cancelling in-flight set creation. Live-verified: restart -> click Media -> auto-loads cursor item at '2 of 3 · 1 reviewed'; Escape -> away -> re-entry shows the list.
+<!-- SECTION:NOTES:END -->
