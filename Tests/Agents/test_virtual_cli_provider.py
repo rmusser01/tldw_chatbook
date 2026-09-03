@@ -579,6 +579,78 @@ def test_permission_is_rechecked_after_review(tmp_path):
     assert not result.ok and result.outcome == "blocked"
 
 
+def test_console_virtual_cli_callbacks_capture_the_exact_named_profile(tmp_path):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    class RecordingService:
+        def __init__(self):
+            self.calls = []
+
+        def get_kill_switch(self):
+            return False
+
+        def gate_tool_test_for_profile(self, hub, profile_id):
+            self.calls.append(("gate", hub.server_key, hub.name, profile_id))
+            return ASK
+
+        def gate_tool_test(self, hub):
+            self.calls.append(("gate", hub.server_key, hub.name, "default"))
+            return ASK
+
+        def is_session_approved(
+            self, server_key, tool_name, *, profile_id="default"
+        ):
+            self.calls.append(("read", server_key, tool_name, profile_id))
+            return False
+
+        def approve_for_session(
+            self, server_key, tool_name, *, profile_id="default"
+        ):
+            self.calls.append(("session", server_key, tool_name, profile_id))
+
+        def set_tool_state(
+            self,
+            server_key,
+            tool_name,
+            state,
+            *,
+            tool,
+            profile_id="default",
+        ):
+            self.calls.append(
+                ("persistent", server_key, tool_name, state, profile_id)
+            )
+
+        def record_tool_decision(self, *args, **kwargs):
+            return None
+
+    service = RecordingService()
+    controller = object.__new__(ConsoleChatController)
+    controller.app = SimpleNamespace(unified_mcp_service=service)
+    context = SimpleNamespace(
+        tool_configuration={"local_tools_enabled": True},
+        tool_policy_profile_id="research",
+    )
+
+    provider, _review = controller._compose_virtual_cli_provider(
+        turn_context=context, project_root=tmp_path
+    )
+    hub = provider.hub_tool_for("ls")
+    provider._resolve_state(hub)
+    provider._session_approved(hub)
+    provider._persist(hub, "approve_session")
+    provider._persist(hub, "always_allow")
+
+    assert service.calls == [
+        ("gate", VIRTUAL_CLI_SERVER_KEY, "ls", "research"),
+        ("read", VIRTUAL_CLI_SERVER_KEY, "ls", "research"),
+        ("session", VIRTUAL_CLI_SERVER_KEY, "ls", "research"),
+        ("persistent", VIRTUAL_CLI_SERVER_KEY, "ls", "allow", "research"),
+    ]
+
+
 @pytest.mark.parametrize(
     ("callback_name", "callback_kwarg", "event_label"),
     [

@@ -147,6 +147,125 @@ def test_app_import_does_not_load_legacy_feature_windows(tmp_path: Path) -> None
     assert payload["loaded"] == []
 
 
+def test_tool_pack_facade_export_is_lazy(tmp_path: Path) -> None:
+    """Package symbols must not pull service owners in until first access."""
+
+    result = _run_isolated_python(
+        tmp_path,
+        """
+        import json
+        import sys
+
+        import tldw_chatbook.Tool_Packs as tool_packs
+
+        before = "tldw_chatbook.Tool_Packs.service" in sys.modules
+        facade = tool_packs.ToolPackService
+        after = "tldw_chatbook.Tool_Packs.service" in sys.modules
+        print(json.dumps({"before": before, "after": after, "name": facade.__name__}))
+        """,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "before": False,
+        "after": True,
+        "name": "ToolPackService",
+    }
+
+
+def test_tool_pack_implementation_imports_only_in_deferred_worker(
+    tmp_path: Path,
+) -> None:
+    """App import stays cheap; the post-ready worker owns composition and I/O."""
+
+    result = _run_isolated_python(
+        tmp_path,
+        """
+        import json
+        import sys
+        from pathlib import Path
+        from types import SimpleNamespace
+
+        import tldw_chatbook.app as app_module
+        from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+        from tldw_chatbook.Workspaces.registry_service import DeferredWorkspaceToolProfileGuard
+
+        guarded = (
+            "tldw_chatbook.Tool_Packs.service",
+            "tldw_chatbook.Tool_Packs.export",
+            "tldw_chatbook.Tool_Packs.publication",
+            "tldw_chatbook.Tool_Packs.importer",
+            "tldw_chatbook.Tool_Packs.activation",
+            "tldw_chatbook.Tool_Packs.receipt_store",
+            "tldw_chatbook.Tool_Packs.removal",
+        )
+        before = [name for name in guarded if name in sys.modules]
+        root = Path(__import__("os").environ["XDG_DATA_HOME"])
+        app_module.get_user_data_dir = lambda: root
+
+        class Registry:
+            def __init__(self, guard): self.guard = guard
+            def list_workspaces(self, *, include_archived=False): return ()
+            def get_workspace(self, workspace_id): return None
+            def attach_tool_profile_guard(self, guard): self.guard = guard
+            @property
+            def tool_profile_guard(self): return self.guard
+
+        bootstrap = DeferredWorkspaceToolProfileGuard()
+        registry = Registry(bootstrap)
+        fake = SimpleNamespace(
+            unified_mcp_service=SimpleNamespace(
+                permission_store=MCPPermissionStore(root / "permissions.json")
+            ),
+            local_mcp_control_service=object(),
+            workspace_registry_service=registry,
+            _tool_pack_guard_bootstrap=bootstrap,
+            tool_pack_service=None,
+            tool_pack_service_unavailable_reason="starting",
+            tool_pack_receipt_reconciliation_unavailable_reason="not_run",
+        )
+        fake.call_from_thread = lambda callback, *args: callback(*args)
+        fake._mark_tool_pack_service_unavailable = lambda category: (
+            app_module.TldwCli._mark_tool_pack_service_unavailable(fake, category)
+        )
+        fake._attach_tool_pack_service = lambda service, owner, guard_bootstrap: (
+            app_module.TldwCli._attach_tool_pack_service(
+                fake, service, owner, guard_bootstrap
+            )
+        )
+        fake._record_tool_pack_receipt_reconciliation = lambda service, category: (
+            app_module.TldwCli._record_tool_pack_receipt_reconciliation(
+                fake, service, category
+            )
+        )
+
+        app_module.TldwCli._compose_tool_pack_service_off_thread(fake)
+        after = [name for name in guarded if name in sys.modules]
+        print(json.dumps({
+            "before": before,
+            "after": after,
+            "attached": fake.tool_pack_service is not None and registry.guard is not None,
+            "root": str(fake.tool_pack_service.receipt_root),
+        }))
+        """,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["before"] == []
+    assert payload["after"] == [
+        "tldw_chatbook.Tool_Packs.service",
+        "tldw_chatbook.Tool_Packs.export",
+        "tldw_chatbook.Tool_Packs.publication",
+        "tldw_chatbook.Tool_Packs.importer",
+        "tldw_chatbook.Tool_Packs.activation",
+        "tldw_chatbook.Tool_Packs.receipt_store",
+        "tldw_chatbook.Tool_Packs.removal",
+    ]
+    assert payload["attached"] is True
+    assert payload["root"] == str(tmp_path / "data" / "tool_pack_receipts")
+
+
 @pytest.mark.parametrize(("enabled", "expected_tasks"), [(False, 0), (True, 1)])
 def test_citation_artifact_reconciliation_is_deferred_and_policy_gated(
     enabled: bool,
@@ -188,7 +307,8 @@ def test_citation_artifact_reconciliation_is_deferred_and_policy_gated(
     # whole method instead of the policy gate this test is about -- and breaks
     # every time an unrelated step is added.
     citation_tasks = [
-        name for _, name in scheduled
+        name
+        for _, name in scheduled
         if name == "deferred_citation_artifact_reconciliation"
     ]
     assert len(citation_tasks) == expected_tasks
@@ -226,8 +346,7 @@ def test_legacy_citation_migration_is_deferred_and_policy_gated(
     TldwCli._schedule_deferred_startup_work(fake_app)
 
     migration_tasks = [
-        name for _, name in scheduled
-        if name == "deferred_legacy_citation_migration"
+        name for _, name in scheduled if name == "deferred_legacy_citation_migration"
     ]
     assert len(migration_tasks) == expected_tasks
 

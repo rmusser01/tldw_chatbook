@@ -188,15 +188,17 @@ async def test_console_capture_controls_are_reachable_at_80x24() -> None:
         screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR)
         await pilot.pause()
 
-        detail = screen.query_one("#settings-console-exchange-capture-detail")
         enabled = screen.query_one("#settings-console-exchange-capture-enabled")
+        pii = screen.query_one("#settings-console-trace-pii-redaction")
+        viewer = screen.query_one("#settings-console-trace-viewer-profile")
         status = screen.query_one("#settings-console-exchange-capture-status")
         scroll = screen.query_one("#settings-detail-pane-body")
-        scroll.scroll_to_widget(detail, animate=False)
+        scroll.scroll_to_widget(status, animate=False)
         await pilot.pause()
 
-        assert detail.region.height > 0
         assert enabled.region.height > 0
+        assert pii.region.height > 0
+        assert viewer.region.height > 0
         assert status.region.height > 0
 
 

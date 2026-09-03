@@ -3312,6 +3312,29 @@ class ConsoleChatStore:
         if recovery is None or recovery.assistant_message_id != message.id:
             return False
         if not recovery.in_flight:
+            # A live temporary turn can fail a final preflight after local
+            # acceptance but before the provider-entry callback claims it.
+            # There is no external dispatch to recover in that exact state,
+            # so retire the process-local checkpoint and let the terminal
+            # message projection stand. Restored/user-action recoveries and
+            # every durable checkpoint remain fail-closed below.
+            with self._preparation_lock:
+                current = self._dispatch_recoveries_by_session.get(session_id)
+                if (
+                    current is recovery
+                    and current.kind
+                    is ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED
+                    and current.runtime_active
+                    and not current.recovery_needed
+                    and current.checkpoint is not None
+                    and current.checkpoint.state
+                    is ConsoleDispatchCheckpointState.ACCEPTED
+                ):
+                    self._dispatch_recoveries_by_session.pop(session_id, None)
+                    self._dispatch_recovery_message_baselines.pop(session_id, None)
+                    self._dispatch_recovery_generation_tokens.pop(session_id, None)
+                    self._dispatch_recovery_queue_hydration_pending.discard(session_id)
+                    return True
             raise ConsoleDispatchSettlementError(
                 "Dispatch terminal settlement previously failed."
             )

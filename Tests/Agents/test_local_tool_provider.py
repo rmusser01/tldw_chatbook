@@ -2166,6 +2166,75 @@ def test_callback_approve_session_persists(tmp_path):
     assert persisted == [("fs_list", "approve_session")]
 
 
+def test_console_local_callbacks_capture_the_exact_named_profile(tmp_path):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    class RecordingService:
+        def __init__(self):
+            self.calls = []
+
+        def get_kill_switch(self):
+            return False
+
+        def gate_tool_test_for_profile(self, hub, profile_id):
+            self.calls.append(("gate", hub.server_key, hub.name, profile_id))
+            return ASK
+
+        def is_session_approved(
+            self, server_key, tool_name, *, profile_id="default"
+        ):
+            self.calls.append(("read", server_key, tool_name, profile_id))
+            return False
+
+        def approve_for_session(
+            self, server_key, tool_name, *, profile_id="default"
+        ):
+            self.calls.append(("session", server_key, tool_name, profile_id))
+
+        def set_tool_state(
+            self,
+            server_key,
+            tool_name,
+            state,
+            *,
+            tool,
+            profile_id="default",
+        ):
+            self.calls.append(
+                ("persistent", server_key, tool_name, state, profile_id)
+            )
+
+        def record_tool_decision(self, *args, **kwargs):
+            return None
+
+    service = RecordingService()
+    controller = object.__new__(ConsoleChatController)
+    controller.app = SimpleNamespace(unified_mcp_service=service)
+    context = SimpleNamespace(
+        tool_configuration={"local_tools_enabled": True},
+        tool_policy_profile_id="research",
+        persona_policy_rules=None,
+    )
+
+    provider, _review = controller._compose_local_provider(
+        turn_context=context, project_root=tmp_path
+    )
+    hub = provider.hub_tool_for("fs_list")
+    provider._resolve_state(hub)
+    provider._is_session_approved_safe(hub)
+    provider._persist_approval_safe(hub, "approve_session")
+    provider._persist_approval_safe(hub, "always_allow")
+
+    assert service.calls == [
+        ("gate", "local:__local__", "fs_list", "research"),
+        ("read", "local:__local__", "fs_list", "research"),
+        ("session", "local:__local__", "fs_list", "research"),
+        ("persistent", "local:__local__", "fs_list", "allow", "research"),
+    ]
+
+
 def test_persist_failure_does_not_block_execution(tmp_path):
     (tmp_path / "a.txt").write_text("a")
 

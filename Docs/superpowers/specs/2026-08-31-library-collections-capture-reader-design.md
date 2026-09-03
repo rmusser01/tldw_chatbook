@@ -6,7 +6,7 @@ Status: Approved
 
 Task: TASK-18919
 
-ADR: [ADR-107](../../../backlog/decisions/107-collections-capture-authority-and-legacy-boundary.md)
+ADR: [ADR-113](../../../backlog/decisions/113-collections-capture-authority-and-legacy-boundary.md)
 
 Related: [Library adaptive reader design](2026-08-24-library-destinations-adaptive-reader-design.md), [ADR-067](../../../backlog/decisions/067-library-top-level-pagination-contracts.md), [ADR-086](../../../backlog/decisions/086-library-adaptive-reader-shell.md)
 
@@ -613,6 +613,6 @@ The plan must include the required ADR block:
 
 ```text
 ADR required: yes
-ADR path: backlog/decisions/107-collections-capture-authority-and-legacy-boundary.md
+ADR path: backlog/decisions/113-collections-capture-authority-and-legacy-boundary.md
 Reason: TASK-18919 changes durable Collections storage, source authority, migration, service, and legacy-data boundaries.
 ```

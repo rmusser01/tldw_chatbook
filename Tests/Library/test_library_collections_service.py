@@ -272,7 +272,6 @@ SUPPORTED_MEMBER_SOURCE_TYPES = (
     "prompt",
     "skill",
     "conversation",
-    "collection",
 )
 
 

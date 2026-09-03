@@ -79,6 +79,7 @@ class _FakeService:
         self._kill = kill
         self._session = set(session)
         self.session_approved = []
+        self.session_reads = []
 
     @property
     def loads(self):
@@ -87,11 +88,12 @@ class _FakeService:
     def get_kill_switch(self):
         return self._kill
 
-    def is_session_approved(self, server_key, tool_name):
+    def is_session_approved(self, server_key, tool_name, *, profile_id="default"):
+        self.session_reads.append((server_key, tool_name, profile_id))
         return tool_name in self._session
 
-    def approve_for_session(self, server_key, tool_name):
-        self.session_approved.append(tool_name)
+    def approve_for_session(self, server_key, tool_name, *, profile_id="default"):
+        self.session_approved.append((tool_name, profile_id))
         self._session.add(tool_name)
 
 
@@ -111,10 +113,10 @@ class _ServiceWithoutStore:
     def get_kill_switch(self):
         return False
 
-    def is_session_approved(self, server_key, tool_name):
+    def is_session_approved(self, server_key, tool_name, *, profile_id="default"):
         return False
 
-    def approve_for_session(self, server_key, tool_name):
+    def approve_for_session(self, server_key, tool_name, *, profile_id="default"):
         pass
 
 
@@ -161,7 +163,33 @@ def test_approve_session_records_a_session_approval():
     gate.begin_turn(RUN)
     gate.stamp(RUN, "write_thing", "approve_session")
     assert gate.check(_Mutating(), RUN) is None
-    assert svc.session_approved == ["write_thing"]
+    assert svc.session_approved == [("write_thing", "default")]
+
+
+def test_named_profile_is_used_for_resolution_and_session_approval():
+    payload = {
+        "profiles": {
+            "default": {
+                "servers": {"agent:builtin": {"default": "allow"}},
+            },
+            "research": {
+                "servers": {"agent:builtin": {"default": "ask"}},
+            },
+        }
+    }
+    svc = _FakeService(payload=payload)
+    gate = BuiltinToolGate(svc, profile_id="research")
+
+    state = gate.resolve(CalculatorTool())
+    gate.stamp(RUN, "calculator", "approve_session")
+    approved = gate.is_session_approved("calculator")
+
+    assert state.state == "ask"
+    assert svc.session_approved == [("calculator", "research")]
+    assert svc.session_reads == [
+        ("agent:builtin", "calculator", "research")
+    ]
+    assert approved is True
 
 
 def test_no_service_still_gates_mutating_tools():

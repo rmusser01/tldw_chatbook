@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+from contextlib import contextmanager
 from contextvars import ContextVar
 import functools
 import hashlib
@@ -15,7 +16,7 @@ import stat
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import Enum
@@ -2827,8 +2828,39 @@ def _compose_profile_tool_provider(
     )
 
 
+@contextmanager
+def _captured_tool_profile_lease(
+    controller: object,
+    turn_context: object,
+) -> Iterator[None]:
+    """Hold an attached lifecycle lease for one captured Console turn."""
+    profile_id = getattr(turn_context, "tool_policy_profile_id", "default")
+    lifecycle = getattr(controller, "tool_profile_lifecycle", None)
+    lease = getattr(lifecycle, "lease", None)
+    if not callable(lease):
+        yield
+        return
+    with lease(profile_id):
+        yield
+
+
+def _lease_captured_tool_profile(method: Callable[..., Any]):
+    """Apply the captured-profile lease to one whole Console run method."""
+
+    @functools.wraps(method)
+    async def wrapped(self, *args, **kwargs):
+        turn_context = kwargs.get("turn_context")
+        with _captured_tool_profile_lease(self, turn_context):
+            return await method(self, *args, **kwargs)
+
+    return wrapped
+
+
 class ConsoleChatController:
     """Coordinate native Console chat state between store and provider gateway."""
+
+    #: Shared guidance cap for summary and impersonation transcript inputs.
+    _SUMMARY_SPAN_TOKEN_BUDGET = 12000
 
     #: TASK-21145 (UAT H-3): "Validating provider." must always reach a
     #: terminal state — the UAT run sat on it 30s+ with no error, no retry,
@@ -5466,25 +5498,26 @@ class ConsoleChatController:
         )
         recovery_task = asyncio.current_task()
         try:
-            await self._run_agent_reply(
-                resolution=resolution,
-                provider_messages=self._provider_messages_for_session(
-                    session_id,
-                    before_message_id=message.id,
-                    annotate_ids=bool(prior_sidecar),
+            with _captured_tool_profile_lease(self, turn_context):
+                await self._run_agent_reply(
+                    resolution=resolution,
+                    provider_messages=self._provider_messages_for_session(
+                        session_id,
+                        before_message_id=message.id,
+                        annotate_ids=bool(prior_sidecar),
+                        turn_context=turn_context,
+                    ),
+                    assistant_message_id=message.id,
+                    prepare_retry=False,
+                    variant_mode=False,
+                    restore_provider_continuation=checkpoint,
+                    restore_provider_target=target,
+                    expand_provider_continuation=translator,
+                    resume_provider_continuation=True,
+                    continuation_sidecar=prior_sidecar,
+                    continuation_history_target=prior_target,
                     turn_context=turn_context,
-                ),
-                assistant_message_id=message.id,
-                prepare_retry=False,
-                variant_mode=False,
-                restore_provider_continuation=checkpoint,
-                restore_provider_target=target,
-                expand_provider_continuation=translator,
-                resume_provider_continuation=True,
-                continuation_sidecar=prior_sidecar,
-                continuation_history_target=prior_target,
-                turn_context=turn_context,
-            )
+                )
         finally:
             if (
                 self._active_stream_tasks.get(session_id) is recovery_task
@@ -12132,13 +12165,14 @@ class ConsoleChatController:
         # profile seam. A None/absent context, or the "default" profile,
         # omits the keyword entirely -- the call shape (and behavior) stays
         # byte-identical for every legacy caller and signature-exact double.
+        profile_id = (
+            turn_context.tool_policy_profile_id
+            if turn_context is not None
+            else "default"
+        )
         mcp_profile_kwargs: dict[str, Any] = {}
-        if (
-            turn_context is not None
-            and turn_context.tool_policy_profile_id != "default"
-        ):
-            named_profile_id = turn_context.tool_policy_profile_id
-            mcp_profile_kwargs["profile_id_provider"] = lambda: named_profile_id
+        if profile_id != "default":
+            mcp_profile_kwargs["profile_id_provider"] = lambda: profile_id
         # Persona require_confirmation floor (final review): thread THIS
         # run's parsed persona policy into the MCP provider's invoke-time
         # gates, mirroring the local provider's `_resolve_state` layering.
@@ -12164,7 +12198,7 @@ class ConsoleChatController:
             **mcp_profile_kwargs,
         )
         builtin_gate = build_builtin_gate(
-            getattr(self.app, "unified_mcp_service", None)
+            getattr(self.app, "unified_mcp_service", None), profile_id=profile_id
         )
         if admitted_roots is None:
             session = next(
@@ -12287,6 +12321,15 @@ class ConsoleChatController:
         if kill_switch:
             return None, None
 
+        profile_id = (
+            turn_context.tool_policy_profile_id
+            if turn_context is not None
+            else "default"
+        )
+        profile_kwargs = (
+            {} if profile_id == "default" else {"profile_id": profile_id}
+        )
+
         bound_request_approvals = functools.partial(
             self.request_mcp_approvals, session_id=session_id
         )
@@ -12305,11 +12348,19 @@ class ConsoleChatController:
 
         def _persist_approval(hub: "HubTool", decision: str) -> None:
             if decision == "approve_session":
-                service.approve_for_session(hub.server_key, hub.name)
+                service.approve_for_session(
+                    hub.server_key, hub.name, **profile_kwargs
+                )
             elif decision == "always_allow":
                 # set_tool_state computes definition_hash(hub.description,
                 # hub.input_schema) itself -- required for the rug-pull guard.
-                service.set_tool_state(hub.server_key, hub.name, "allow", tool=hub)
+                service.set_tool_state(
+                    hub.server_key,
+                    hub.name,
+                    "allow",
+                    tool=hub,
+                    **profile_kwargs,
+                )
 
         def _record_decision(hub: "HubTool", decision: str) -> None:
             # Same audit path MCPToolProvider._record_decision_safe uses;
@@ -12396,11 +12447,6 @@ class ConsoleChatController:
         # exactly as before, so signature-exact service doubles stay valid);
         # (2) the persona floor then lowers allow->ask for tools whose rules
         # demand confirmation. No path here can raise a state or add a tool.
-        profile_id = (
-            turn_context.tool_policy_profile_id
-            if turn_context is not None
-            else "default"
-        )
         # Lazy import (boot budget, ADR-097): per-run provider gate only.
         from tldw_chatbook.Agents.persona_policy import (
             parse_persona_policy_from_rules,
@@ -12438,7 +12484,7 @@ class ConsoleChatController:
             kill_switch=_kill_switch,
             approval_callback=bound_request_approvals,
             is_session_approved=lambda hub: service.is_session_approved(
-                hub.server_key, hub.name
+                hub.server_key, hub.name, **profile_kwargs
             ),
             persist_approval=_persist_approval,
             record_decision=_record_decision,
@@ -12485,6 +12531,20 @@ class ConsoleChatController:
         except Exception:  # noqa: BLE001 -- unreadable security state fails closed
             return None, None
 
+        profile_id = (
+            turn_context.tool_policy_profile_id
+            if turn_context is not None
+            else "default"
+        )
+        profile_kwargs = (
+            {} if profile_id == "default" else {"profile_id": profile_id}
+        )
+
+        def resolve_state(hub: "HubTool") -> Any:
+            if profile_id == "default":
+                return service.gate_tool_test(hub)
+            return service.gate_tool_test_for_profile(hub, profile_id)
+
         if project_root is None:
             snapshot = turn_context.scratch_space if turn_context is not None else None
             if snapshot is None:
@@ -12510,9 +12570,17 @@ class ConsoleChatController:
 
         def persist(hub: "HubTool", decision: str) -> None:
             if decision == "approve_session":
-                service.approve_for_session(hub.server_key, hub.name)
+                service.approve_for_session(
+                    hub.server_key, hub.name, **profile_kwargs
+                )
             elif decision == "always_allow":
-                service.set_tool_state(hub.server_key, hub.name, "allow", tool=hub)
+                service.set_tool_state(
+                    hub.server_key,
+                    hub.name,
+                    "allow",
+                    tool=hub,
+                    **profile_kwargs,
+                )
 
         def record(hub: "HubTool", decision: str) -> None:
             service.record_tool_decision(
@@ -12526,14 +12594,14 @@ class ConsoleChatController:
 
         provider = VirtualCliProvider(
             workspace_root=root,
-            resolve_state=service.gate_tool_test,
+            resolve_state=resolve_state,
             local_tools_enabled=lambda: coerce_bool_setting(
                 configured, LOCAL_TOOLS_DEFAULT_ENABLED
             ),
             kill_switch=lambda: bool(service.get_kill_switch()),
             approval_callback=bound_request,
             is_session_approved=lambda hub: service.is_session_approved(
-                hub.server_key, hub.name
+                hub.server_key, hub.name, **profile_kwargs
             ),
             persist_approval=persist,
             record_decision=record,
@@ -12581,6 +12649,17 @@ class ConsoleChatController:
         except Exception:
             return None, None
 
+        profile_id = (
+            turn_context.tool_policy_profile_id
+            if turn_context is not None
+            else "default"
+        )
+
+        def resolve_state(hub: "HubTool") -> Any:
+            if profile_id == "default":
+                return service.gate_tool_test(hub)
+            return service.gate_tool_test_for_profile(hub, profile_id)
+
         if project_root is not None:
             initial_directory = project_root
         else:
@@ -12607,7 +12686,7 @@ class ConsoleChatController:
             runtime=runtime,
             console_session_id=session_id,
             initial_directory=lambda: initial_directory,
-            resolve_state=service.gate_tool_test,
+            resolve_state=resolve_state,
             local_tools_enabled=lambda: local_enabled,
             kill_switch=kill_switch,
             progress_sink=(
@@ -14443,8 +14522,9 @@ class ConsoleChatController:
 
         On stream FAILURE, the new sibling node itself becomes a ``failed``
         node and remains stored/retryable via ``retry_message``, while the
-        original anchor becomes the active leaf again. The anchor is a
-        completely separate node and was never touched.
+        original branch becomes active again with the transcript-only failure
+        row appended beneath its anchor. The anchor is a completely separate
+        node and was never touched.
 
         Args:
             message_id: Identifier of the assistant message to regenerate.
@@ -14560,7 +14640,25 @@ class ConsoleChatController:
         except KeyError:
             persisted_sibling = None
         if persisted_sibling is not None and persisted_sibling.status == "failed":
+            active_messages = self.store.messages_for_session(session_id)
+            failure_row = active_messages[-1] if active_messages else None
+            if (
+                failure_row is not None
+                and failure_row.role is ConsoleMessageRole.SYSTEM
+                and failure_row.content == result.visible_copy
+            ):
+                # Provider failure rows are transcript-only. Re-home the row
+                # from beneath the failed sibling onto the restored original
+                # branch so the failure remains visible without keeping the
+                # failed replacement in model history.
+                self.store.delete_message(failure_row.id)
             self.store.set_active_leaf(session_id, message_id)
+            if (
+                failure_row is not None
+                and failure_row.role is ConsoleMessageRole.SYSTEM
+                and failure_row.content == result.visible_copy
+            ):
+                self._append_failure_system_row(session_id, result.visible_copy)
         replacement_event_id = (
             f"message:{persisted_sibling.persisted_message_id}"
             if persisted_sibling is not None
@@ -19475,13 +19573,14 @@ class ConsoleChatController:
         )
         return provider_messages, result
 
+    @_lease_captured_tool_profile
     async def _stream_assistant_response(
         self,
         *,
         resolution: Any,
         provider_messages: list[dict[str, str]],
         assistant_message_id: str,
-        route: ConsoleRequestRoute,
+        route: ConsoleRequestRoute = ConsoleRequestRoute.FRESH,
         prepare_retry: bool = False,
         variant_mode: bool = False,
         prefill: str | None = None,
@@ -20892,7 +20991,8 @@ class ConsoleChatController:
                 status="failed",
             )
             try:
-                settle_thinking("failed")
+                if not thinking_capture.snapshot().terminal:
+                    settle_thinking("failed")
                 if not prepare_retry or retry_prepared:
                     self.store.mark_message_failed(assistant_message_id)
                 else:

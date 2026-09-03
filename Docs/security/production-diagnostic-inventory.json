@@ -1405,8 +1405,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 20,
-      "diagnostic_digest": "292cdf7d969cd5c2a78f",
+      "call_count": 22,
+      "diagnostic_digest": "9231b88520d9a120dd5d",
       "owner": "TASK-492",
       "path": "tldw_chatbook/MCP/unified_control_plane_service.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -2644,8 +2644,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 42,
-      "diagnostic_digest": "c17cde3334e3f73ad91a",
+      "call_count": 44,
+      "diagnostic_digest": "76b6720710dcc7b9ce0d",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -8073,7 +8073,7 @@
           "path_expressions": [
             "self.path"
           ],
-          "scope": "MCPPermissionStore.load",
+          "scope": "MCPPermissionStore._load_locked",
           "status": "legacy_unreviewed"
         },
         {
@@ -8082,7 +8082,7 @@
           "path_expressions": [
             "self.path"
           ],
-          "scope": "MCPPermissionStore.load",
+          "scope": "MCPPermissionStore._load_locked",
           "status": "legacy_unreviewed"
         }
       ],
@@ -11270,7 +11270,7 @@
     "owner_files": 564,
     "path_privacy_candidate_calls": 714,
     "persistent_sink_files": 10,
-    "task_492_calls": 1335,
-    "task_494_calls": 7554
+    "task_492_calls": 1337,
+    "task_494_calls": 7556
   }
 }

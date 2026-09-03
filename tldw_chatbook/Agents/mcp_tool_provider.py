@@ -922,7 +922,11 @@ class MCPToolProvider:
 
     def _is_session_approved_safe(self, tool: HubTool) -> bool:
         try:
-            return bool(self._service.is_session_approved(tool.server_key, tool.name))
+            return bool(
+                self._service.is_session_approved(
+                    tool.server_key, tool.name, **self._profile_kwargs()
+                )
+            )
         except Exception as exc:  # noqa: BLE001 -- a read failure must not deny silently-wrongly
             logger.warning(
                 f"MCPToolProvider: is_session_approved failed for {tool.server_key}/{tool.name}: {exc}"
@@ -956,7 +960,9 @@ class MCPToolProvider:
         if verdict == "approve_session":
             already_approved = self._is_session_approved_safe(tool)
             self._safe_side_effect(
-                lambda: self._service.approve_for_session(tool.server_key, tool.name),
+                lambda: self._service.approve_for_session(
+                    tool.server_key, tool.name, **self._profile_kwargs()
+                ),
                 tool,
                 what="approve_for_session",
             )

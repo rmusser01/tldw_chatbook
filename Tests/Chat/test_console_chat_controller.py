@@ -97,6 +97,7 @@ from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.Tool_Packs.binding import ToolProfileLifecycleCoordinator
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
@@ -242,6 +243,70 @@ class CharacterEmoteStreamingGateway(StreamingGateway):
         self.messages_seen = messages
         for chunk in self.chunks:
             yield chunk
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raises", [False, True])
+async def test_console_holds_captured_tool_profile_lease_through_run_outcome(
+    raises: bool,
+) -> None:
+    store = ConsoleChatStore()
+    session = store.create_session(title="Lease test")
+    assistant, context = _begin_controller_disclosure(store, session.id)
+    context = ConsoleTurnExecutionContext(
+        configuration=replace(
+            context.configuration,
+            tool_policy_profile_id="research",
+        ),
+        library_authority=context.library_authority,
+        resolved_destination=context.resolved_destination,
+    )
+    lifecycle = ToolProfileLifecycleCoordinator()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=StreamingGateway(),
+    )
+    controller.tool_profile_lifecycle = lifecycle
+    expected = object()
+
+    async def run_inner(**_kwargs):
+        assert lifecycle.active_lease_count("research") == 1
+        assert lifecycle.active_lease_count("default") == 0
+        if raises:
+            raise RuntimeError("run failed")
+        return expected
+
+    controller._stream_assistant_response_inner = run_inner
+    arguments = {
+        "resolution": object(),
+        "provider_messages": [],
+        "assistant_message_id": assistant.id,
+        "route": ConsoleRequestRoute.FRESH,
+        "turn_context": context,
+    }
+
+    if raises:
+        with pytest.raises(RuntimeError, match="run failed"):
+            await controller._stream_assistant_response(**arguments)
+    else:
+        assert await controller._stream_assistant_response(**arguments) is expected
+
+    assert lifecycle.active_lease_count("research") == 0
+
+
+def test_console_captured_profile_lease_scope_supports_recovery_runs() -> None:
+    lifecycle = ToolProfileLifecycleCoordinator()
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(),
+        provider_gateway=StreamingGateway(),
+    )
+    controller.tool_profile_lifecycle = lifecycle
+    turn_context = SimpleNamespace(tool_policy_profile_id="research")
+
+    with controller_module._captured_tool_profile_lease(controller, turn_context):
+        assert lifecycle.active_lease_count("research") == 1
+
+    assert lifecycle.active_lease_count("research") == 0
 
 
 def _activate_character_emote_pack(
@@ -589,6 +654,32 @@ class FakePersistence:
             }
         )
         return True
+
+    def replace_assistant_generation_projection(
+        self,
+        *,
+        message_id,
+        content,
+        thinking_blocks_json,
+        provider_continuation_json,
+        assistant_generation_state,
+        usage_json,
+        expected_version=None,
+    ):
+        committed_version = (expected_version or 0) + 1
+        self.updated_messages.append(
+            {
+                "message_id": message_id,
+                "content": content,
+                "image_data": None,
+                "image_mime_type": None,
+                "thinking_blocks_json": thinking_blocks_json,
+                "provider_continuation_json": provider_continuation_json,
+                "assistant_generation_state": assistant_generation_state,
+                "usage_json": usage_json,
+            }
+        )
+        return committed_version
 
 
 def _roleplay_controller_fixture() -> tuple[
@@ -3740,16 +3831,28 @@ class _FakeSessionApprovalService:
     double's own bookkeeping."""
 
     def __init__(self) -> None:
-        self._approved: set[tuple[str, str]] = set()
+        self._approved: set[tuple[str, str, str]] = set()
 
     def get_kill_switch(self) -> bool:
         return False
 
-    def approve_for_session(self, server_key: str, tool_name: str) -> None:
-        self._approved.add((server_key, tool_name))
+    def approve_for_session(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        profile_id: str = "default",
+    ) -> None:
+        self._approved.add((profile_id, server_key, tool_name))
 
-    def is_session_approved(self, server_key: str, tool_name: str) -> bool:
-        return (server_key, tool_name) in self._approved
+    def is_session_approved(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        profile_id: str = "default",
+    ) -> bool:
+        return (profile_id, server_key, tool_name) in self._approved
 
 
 class _FakeMutatingRiskyTool:
@@ -5024,6 +5127,7 @@ async def test_provider_switch_race_blocks_active_continuation_before_dispatch(
     )
     assert controller.run_state_for(session.id).status is ConsoleRunStatus.BLOCKED
     assert gateway.provider_calls == 0
+    assert store.dispatch_recovery_for_session(session.id) is None
     assert "ACTIVE-SWITCH-PRIVATE-CANARY" not in repr(result)
 
 
@@ -7142,6 +7246,111 @@ async def test_compose_mcp_provider_excludes_console_shadowed_builtin_names():
         "mcp__tldw_chatbook__chat_with_llm",
         "mcp__docs__library_list_media",
     }
+
+
+def test_mcp_provider_session_and_persistent_paths_use_named_profile():
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+    class RecordingService:
+        def __init__(self):
+            self.calls = []
+
+        def is_session_approved(
+            self, server_key, tool_name, *, profile_id="default"
+        ):
+            self.calls.append(("read", server_key, tool_name, profile_id))
+            return False
+
+        def approve_for_session(
+            self, server_key, tool_name, *, profile_id="default"
+        ):
+            self.calls.append(("session", server_key, tool_name, profile_id))
+
+        def set_tool_state(
+            self,
+            server_key,
+            tool_name,
+            state,
+            *,
+            tool,
+            profile_id="default",
+        ):
+            self.calls.append(
+                ("persistent", server_key, tool_name, state, profile_id)
+            )
+
+    loop = asyncio.new_event_loop()
+    try:
+        service = RecordingService()
+        provider = controller_module.MCPToolProvider(
+            service=service,
+            main_loop=loop,
+            profile_id_provider=lambda: "research",
+        )
+        tool = HubTool(
+            server_key="local:docs",
+            server_label="Docs",
+            source="local",
+            name="search",
+            description="Search docs",
+            input_schema={"type": "object"},
+            tags=(),
+            stale=False,
+            executable=True,
+        )
+        provider._execute = lambda *_args, **_kwargs: SimpleNamespace(ok=True)
+
+        provider._is_session_approved_safe(tool)
+        provider._apply_verdict("approve_session", tool, {})
+        provider._apply_verdict("always_allow", tool, {})
+
+        assert service.calls == [
+            ("read", "local:docs", "search", "research"),
+            ("read", "local:docs", "search", "research"),
+            ("session", "local:docs", "search", "research"),
+            ("persistent", "local:docs", "search", "allow", "research"),
+        ]
+    finally:
+        loop.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_provider_composition_captures_one_named_profile_for_mcp_and_builtin(
+    monkeypatch,
+):
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    controller.app = SimpleNamespace(unified_mcp_service=object())
+    captured = {}
+
+    async def compose_mcp(*_args, **kwargs):
+        captured["mcp"] = kwargs["profile_id_provider"]()
+        return None
+
+    def compose_local(*_args, **_kwargs):
+        return None, None
+
+    def build_gate(_service, *, profile_id="default"):
+        captured["builtin"] = profile_id
+        return SimpleNamespace()
+
+    monkeypatch.setattr(controller, "_compose_mcp_provider", compose_mcp)
+    monkeypatch.setattr(controller, "_compose_local_provider", compose_local)
+    monkeypatch.setattr(controller_module, "build_builtin_gate", build_gate)
+    context = SimpleNamespace(
+        tool_policy_profile_id="research",
+        persona_policy_rules=None,
+    )
+
+    await controller._compose_agent_request_providers(
+        session_id="session-1",
+        project_selection=None,
+        project_authority_guard=None,
+        turn_context=context,
+        admitted_roots=(),
+    )
+
+    assert captured == {"mcp": "research", "builtin": "research"}
 
 
 # -----------------------------------------------------------------------------

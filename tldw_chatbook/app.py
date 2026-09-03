@@ -703,6 +703,7 @@ from tldw_chatbook.Web_Scraping_Interop import (  # noqa: E402
 )
 from tldw_chatbook.Workspaces import (  # noqa: E402
     ChangeReviewConsentService,
+    DeferredWorkspaceToolProfileGuard,
     LocalWorkspaceRegistryService,
 )
 # NOTE (boot budget, ADR-097): `Workspaces.agent_provisioning` is imported
@@ -7871,6 +7872,15 @@ class TldwCli(
         self._tts_initialization_task: asyncio.Task | None = None
         self._stts_initialization_task: asyncio.Task | None = None
         self._deferred_startup_tasks: set[asyncio.Task] = set()
+        # Portable Tool Packs are unavailable until first Tool Profiles use
+        # composes every authority owner and attaches one complete guard.
+        self.tool_pack_service: Any | None = None
+        self.tool_pack_service_unavailable_reason: str | None = "not_ready"
+        self.tool_pack_receipt_reconciliation_unavailable_reason: str | None = (
+            "not_run"
+        )
+        self._tool_pack_wiring_started = False
+        self._tool_pack_composition_worker: Worker | None = None
         self._screen_preimport_thread: threading.Thread | None = None
         # task-21110: the splash-overlapped warm-up of the INITIAL route's
         # module. Separate from `_screen_preimport_thread` (the whole-registry
@@ -9260,6 +9270,139 @@ class TldwCli(
                 type(exc).__name__,
             )
 
+    def _deferred_wire_tool_pack_service(self) -> Worker | None:
+        """Schedule one complete Tool Pack composition on first feature use."""
+        if not getattr(self, "_ui_ready", False) or getattr(
+            self, "tool_pack_service", None
+        ) is not None:
+            return
+        if getattr(self, "_tool_pack_wiring_started", False):
+            return getattr(self, "_tool_pack_composition_worker", None)
+        self._tool_pack_wiring_started = True
+        self.tool_pack_service_unavailable_reason = "starting"
+        try:
+            worker = self.run_worker(
+                self._compose_tool_pack_service_off_thread,
+                name="deferred_tool_pack_service_composition",
+                group="tool-pack-service-composition",
+                thread=True,
+                exclusive=True,
+                exit_on_error=False,
+            )
+            self._tool_pack_composition_worker = worker
+            return worker
+        except Exception:
+            self._tool_pack_wiring_started = False
+            self.tool_pack_service_unavailable_reason = "composition_unavailable"
+            return None
+
+    def _compose_tool_pack_service_off_thread(self) -> None:
+        """Compose, activate, then reconcile away from the Textual event loop."""
+        try:
+            unified = getattr(self, "unified_mcp_service", None)
+            local_control = getattr(self, "local_mcp_control_service", None)
+            registry = getattr(self, "workspace_registry_service", None)
+            bootstrap = getattr(self, "_tool_pack_guard_bootstrap", None)
+            permission_store = getattr(unified, "permission_store", None)
+            if (
+                permission_store is None
+                or local_control is None
+                or registry is None
+                or type(bootstrap) is not DeferredWorkspaceToolProfileGuard
+                or getattr(registry, "tool_profile_guard", None) is not bootstrap
+            ):
+                self.call_from_thread(
+                    self._mark_tool_pack_service_unavailable,
+                    "prerequisites_unavailable",
+                )
+                return
+
+            # Deferred imports are intentional: service composition pulls in
+            # archive, receipt, import, activation, and removal owners.
+            from tldw_chatbook.MCP.local_server_tools import (
+                resolve_server_workspace_root,
+            )
+            from tldw_chatbook.Tool_Packs.catalog_snapshot import (
+                PermissionInventoryRegistry,
+            )
+            from tldw_chatbook.Tool_Packs.service import ToolPackService
+
+            inventory = PermissionInventoryRegistry.v1(
+                local_control,
+                fallback_root=resolve_server_workspace_root(),
+            )
+            service = ToolPackService.compose(
+                permission_store=permission_store,
+                inventory=inventory,
+                workspace_registry=registry,
+                receipt_root=get_user_data_dir() / "tool_pack_receipts",
+            )
+            attached = self.call_from_thread(
+                self._attach_tool_pack_service,
+                service,
+                registry,
+                bootstrap,
+            )
+            if attached is not True:
+                return
+            recovery = service.reconcile_receipts()
+            self.call_from_thread(
+                self._record_tool_pack_receipt_reconciliation,
+                service,
+                recovery.unavailable_category,
+            )
+        except Exception:
+            self.call_from_thread(
+                self._mark_tool_pack_service_unavailable,
+                "composition_unavailable",
+            )
+
+    def _attach_tool_pack_service(
+        self,
+        service: object,
+        registry: object,
+        bootstrap: object,
+    ) -> bool:
+        """Atomically activate one complete guard for the captured registry."""
+        if getattr(self, "tool_pack_service", None) is not None:
+            return False
+        if (
+            getattr(self, "workspace_registry_service", None) is not registry
+            or getattr(self, "_tool_pack_guard_bootstrap", None) is not bootstrap
+            or type(bootstrap) is not DeferredWorkspaceToolProfileGuard
+            or getattr(registry, "tool_profile_guard", None) is not bootstrap
+        ):
+            self._mark_tool_pack_service_unavailable("prerequisites_unavailable")
+            return False
+        try:
+            guard = service.binding_guard  # type: ignore[attr-defined]
+            if bootstrap.activate(guard) is not True:
+                raise RuntimeError("Tool Pack guard was already active")
+            if bootstrap.active_guard is not guard:
+                raise RuntimeError("Tool Pack guard activation was not atomic")
+        except Exception:
+            self._mark_tool_pack_service_unavailable("composition_unavailable")
+            return False
+        self.tool_pack_service = service
+        self.tool_pack_service_unavailable_reason = None
+        self.tool_pack_receipt_reconciliation_unavailable_reason = "pending"
+        return True
+
+    def _record_tool_pack_receipt_reconciliation(
+        self, service: object, unavailable_category: str | None
+    ) -> None:
+        """Record recovery only for the service that still owns authority."""
+        if getattr(self, "tool_pack_service", None) is service:
+            self.tool_pack_receipt_reconciliation_unavailable_reason = (
+                unavailable_category
+            )
+
+    def _mark_tool_pack_service_unavailable(self, category: str) -> None:
+        """Expose one stable unavailable category without diagnostic detail."""
+        if getattr(self, "tool_pack_service", None) is None:
+            self._tool_pack_wiring_started = False
+            self.tool_pack_service_unavailable_reason = category
+
     def _deferred_wire_notes_sync_services(self) -> None:
         """Compose Notes organization Sync after the first interactive frame."""
 
@@ -9632,6 +9775,7 @@ class TldwCli(
 
     def _wire_workspace_registry_services(self) -> None:
         self.change_review_consent_service = None
+        self._tool_pack_guard_bootstrap = None
         try:
             self.local_workspace_db = WorkspaceDB(
                 get_workspaces_db_path(),
@@ -9639,6 +9783,10 @@ class TldwCli(
             )
             self.workspace_registry_service = LocalWorkspaceRegistryService(
                 self.local_workspace_db,
+            )
+            self._tool_pack_guard_bootstrap = DeferredWorkspaceToolProfileGuard()
+            self.workspace_registry_service.attach_tool_profile_guard(
+                self._tool_pack_guard_bootstrap
             )
             self.workspace_registry_service.ensure_default_workspace()
             self.change_review_consent_service = ChangeReviewConsentService(
@@ -9653,6 +9801,7 @@ class TldwCli(
             )
             self.local_workspace_db = None
             self.workspace_registry_service = None
+            self._tool_pack_guard_bootstrap = None
 
     def _wire_research_source_association(self) -> None:
         """Compose durable post-ingest association services."""

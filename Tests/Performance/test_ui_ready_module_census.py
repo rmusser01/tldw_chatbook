@@ -114,6 +114,9 @@ ABSENT_AT_READY_PREFIXES = (
     # interview coordinator, and agent tools must not delay the first frame.
     "tldw_chatbook.Personal_Context",
     "tldw_chatbook.RAG_Search.simplified",
+    # TASK-29227 / ADR-107: portable Tool Pack policy composition and receipt
+    # recovery are Tool Profiles interaction work, not first-paint work.
+    "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
     "tldw_chatbook.UI.Screens.trajectory_screen",

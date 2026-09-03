@@ -1,4 +1,4 @@
-# ADR-107: Separate Collections capture authority from Media and legacy containers
+# ADR-113: Separate Collections capture authority from Media and legacy containers
 
 Status: Accepted
 
