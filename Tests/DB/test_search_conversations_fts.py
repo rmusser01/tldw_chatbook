@@ -368,7 +368,9 @@ class TestCoherentConversationPages:
         rows, total, _ = db.search_conversations_page(
             "Roleplay Tavern",
             scope_type="all",
-            query_workspace_ids=("ws-roleplay",),
+            query_terms=("Roleplay", "Tavern"),
+            query_workspace_ids_by_term=(("ws-roleplay",), ("ws-roleplay",)),
+            query_include_global_scope_by_term=(False, False),
             limit=20,
             offset=0,
         )

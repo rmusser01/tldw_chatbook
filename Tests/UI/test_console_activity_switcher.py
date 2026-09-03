@@ -214,6 +214,9 @@ async def test_history_uses_one_all_local_bounded_page_with_explicit_targets():
         {
             "query": "release",
             "scope_type": "all",
+            "query_terms": ("release",),
+            "query_workspace_ids_by_term": ((),),
+            "query_include_global_scope_by_term": (False,),
             "limit": 50,
             "offset": 0,
         }
@@ -270,6 +273,9 @@ async def test_history_workspace_filter_resolves_labels_before_storage_search():
             "query": "portrait",
             "scope_type": "all",
             "workspace_ids": ("workspace-roleplay",),
+            "query_terms": ("portrait",),
+            "query_workspace_ids_by_term": ((),),
+            "query_include_global_scope_by_term": (False,),
             "limit": 50,
             "offset": 0,
         }
@@ -347,6 +353,9 @@ async def test_history_multiword_workspace_filter_preserves_preceding_title_text
             "query": "portrait",
             "scope_type": "all",
             "workspace_ids": ("workspace-roleplay",),
+            "query_terms": ("portrait",),
+            "query_workspace_ids_by_term": ((),),
+            "query_include_global_scope_by_term": (False,),
             "limit": 50,
             "offset": 0,
         }
@@ -358,6 +367,13 @@ async def test_history_plain_workspace_and_unicode_text_search_end_to_end(histor
     roleplay_id = history_db.add_conversation(
         {
             "title": "An unrelated landscape",
+            "scope_type": "workspace",
+            "workspace_id": "workspace-roleplay",
+        }
+    )
+    mixed_metadata_id = history_db.add_conversation(
+        {
+            "title": "Portrait scene",
             "scope_type": "workspace",
             "workspace_id": "workspace-roleplay",
         }
@@ -389,6 +405,9 @@ async def test_history_plain_workspace_and_unicode_text_search_end_to_end(histor
     workspace_page = await controller.load_console_session_switcher_history(
         query="Roleplay Tavern", offset=0, limit=50
     )
+    mixed_page = await controller.load_console_session_switcher_history(
+        query="portrait roleplay", offset=0, limit=50
+    )
     title_page = await controller.load_console_session_switcher_history(
         query="Straße release", offset=0, limit=50
     )
@@ -396,7 +415,13 @@ async def test_history_plain_workspace_and_unicode_text_search_end_to_end(histor
         query="Straße evidence", offset=0, limit=50
     )
 
-    assert [entry.conversation_id for entry in workspace_page.entries] == [roleplay_id]
+    assert {entry.conversation_id for entry in workspace_page.entries} == {
+        roleplay_id,
+        mixed_metadata_id,
+    }
+    assert [entry.conversation_id for entry in mixed_page.entries] == [
+        mixed_metadata_id
+    ]
     assert [entry.conversation_id for entry in title_page.entries] == [unicode_title_id]
     assert [entry.conversation_id for entry in message_page.entries] == [
         unicode_message_id

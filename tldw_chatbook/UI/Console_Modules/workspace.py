@@ -2860,21 +2860,18 @@ class ConsoleWorkspaceController:
             if include_global_scope:
                 kwargs["include_global_scope"] = True
         if text_terms:
-            query_workspace_ids = tuple(
-                workspace_id
-                for workspace_id, label in labels.items()
-                if all(
-                    term.casefold() in str(label or "").casefold()
-                    for term in text_terms
+            kwargs["query_terms"] = tuple(text_terms)
+            kwargs["query_workspace_ids_by_term"] = tuple(
+                tuple(
+                    workspace_id
+                    for workspace_id, label in labels.items()
+                    if term.casefold() in str(label or "").casefold()
                 )
+                for term in text_terms
             )
-            query_include_global_scope = all(
+            kwargs["query_include_global_scope_by_term"] = tuple(
                 term.casefold() in "chats" for term in text_terms
             )
-            if query_workspace_ids:
-                kwargs["query_workspace_ids"] = query_workspace_ids
-            if query_include_global_scope:
-                kwargs["query_include_global_scope"] = True
         if include_mode:
             kwargs["mode"] = "local"
         try:

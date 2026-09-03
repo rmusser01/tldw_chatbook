@@ -10701,15 +10701,14 @@ UPDATE db_schema_version
         workspace_id: Optional[str] = None,
         workspace_ids: Optional[Sequence[str]] = None,
         include_global_scope: bool = False,
-        query_workspace_ids: Optional[Sequence[str]] = None,
-        query_include_global_scope: bool = False,
+        query_terms: Optional[Sequence[str]] = None,
+        query_workspace_ids_by_term: Optional[Sequence[Sequence[str]]] = None,
+        query_include_global_scope_by_term: Optional[Sequence[bool]] = None,
     ) -> Tuple[str, List[Any]]:
         clauses: List[str] = []
         params: List[Any] = []
         if not isinstance(include_global_scope, bool):
             raise InputError("include_global_scope must be a boolean.")
-        if not isinstance(query_include_global_scope, bool):
-            raise InputError("query_include_global_scope must be a boolean.")
 
         def normalize_workspace_ids(
             values: Optional[Sequence[str]], field_name: str
@@ -10729,9 +10728,68 @@ UPDATE db_schema_version
         normalized_workspace_ids = normalize_workspace_ids(
             workspace_ids, "workspace_ids"
         )
-        normalized_query_workspace_ids = normalize_workspace_ids(
-            query_workspace_ids, "query_workspace_ids"
-        )
+        normalized_query_terms: Optional[Tuple[str, ...]] = None
+        normalized_query_workspace_ids_by_term: Tuple[Tuple[str, ...], ...] = ()
+        normalized_query_global_scopes: Tuple[bool, ...] = ()
+        if query_terms is not None:
+            if isinstance(query_terms, (str, bytes)):
+                raise InputError("query_terms must be a sequence of text terms.")
+            normalized_query_terms = tuple(
+                term.strip()
+                for term in query_terms
+                if isinstance(term, str) and term.strip()
+            )
+            if len(normalized_query_terms) != len(query_terms):
+                raise InputError("query_terms must contain only non-empty text.")
+            if not normalized_query_terms or len(normalized_query_terms) > 256:
+                raise InputError("query_terms must contain between 1 and 256 terms.")
+            if query_workspace_ids_by_term is None:
+                normalized_query_workspace_ids_by_term = tuple(
+                    () for _ in normalized_query_terms
+                )
+            else:
+                if isinstance(query_workspace_ids_by_term, (str, bytes)):
+                    raise InputError(
+                        "query_workspace_ids_by_term must be a sequence."
+                    )
+                normalized_query_workspace_ids_by_term = tuple(
+                    normalize_workspace_ids(values, "query workspace ids") or ()
+                    for values in query_workspace_ids_by_term
+                )
+                if len(normalized_query_workspace_ids_by_term) != len(
+                    normalized_query_terms
+                ):
+                    raise InputError(
+                        "query_workspace_ids_by_term must align with query_terms."
+                    )
+            if query_include_global_scope_by_term is None:
+                normalized_query_global_scopes = tuple(
+                    False for _ in normalized_query_terms
+                )
+            else:
+                if isinstance(query_include_global_scope_by_term, (str, bytes)):
+                    raise InputError(
+                        "query_include_global_scope_by_term must be a sequence."
+                    )
+                normalized_query_global_scopes = tuple(
+                    query_include_global_scope_by_term
+                )
+                if len(normalized_query_global_scopes) != len(normalized_query_terms):
+                    raise InputError(
+                        "query_include_global_scope_by_term must align with query_terms."
+                    )
+                if any(
+                    not isinstance(value, bool)
+                    for value in normalized_query_global_scopes
+                ):
+                    raise InputError(
+                        "query_include_global_scope_by_term must contain booleans."
+                    )
+        elif (
+            query_workspace_ids_by_term is not None
+            or query_include_global_scope_by_term is not None
+        ):
+            raise InputError("per-term workspace unions require query_terms.")
         if str(scope_type or "").strip().lower() == CONVERSATION_SCOPE_ALL:
             # "all" spans global- and workspace-scoped conversations in one
             # page/count (the Library Browse ▸ Conversations snapshot seam);
@@ -10745,8 +10803,8 @@ UPDATE db_schema_version
             if (
                 normalized_workspace_ids is not None
                 or include_global_scope
-                or normalized_query_workspace_ids is not None
-                or query_include_global_scope
+                or any(normalized_query_workspace_ids_by_term)
+                or any(normalized_query_global_scopes)
             ):
                 raise InputError(
                     "workspace union filters require scope_type='all'."
@@ -10816,7 +10874,36 @@ UPDATE db_schema_version
             params.append(normalized_topic_label)
 
         normalized_query = self._normalize_nullable_text(query)
-        if normalized_query is not None:
+        if normalized_query_terms is not None:
+            for index, term in enumerate(normalized_query_terms):
+                query_clauses = [
+                    "title LIKE ?",
+                    "EXISTS ("
+                    "SELECT 1 FROM messages_fts fts "
+                    "JOIN messages m ON fts.rowid = m.rowid "
+                    "WHERE m.conversation_id = conversations.id "
+                    "AND m.deleted = 0 "
+                    "AND fts.messages_fts MATCH ?"
+                    ")",
+                ]
+                params.extend(
+                    [f"%{term}%", self._fts_prefix_match_expression(term)]
+                )
+                if len(normalized_query_terms) == 1:
+                    query_clauses.append("id = ?")
+                    params.append(term)
+                if normalized_query_global_scopes[index]:
+                    query_clauses.append("scope_type = 'global'")
+                workspace_term_ids = normalized_query_workspace_ids_by_term[index]
+                if workspace_term_ids:
+                    query_clauses.append(
+                        "workspace_id IN (SELECT value FROM json_each(?))"
+                    )
+                    params.append(
+                        json.dumps(workspace_term_ids, separators=(",", ":"))
+                    )
+                clauses.append(f"({' OR '.join(query_clauses)})")
+        elif normalized_query is not None:
             # Message-content matching goes through messages_fts (kept in
             # sync by triggers -- see schema ~line 326) instead of a
             # correlated leading-wildcard substring scan against the raw
@@ -10841,20 +10928,7 @@ UPDATE db_schema_version
             like_query = f"%{normalized_query}%"
             fts_query = self._fts_prefix_match_expression(normalized_query)
             params.extend([like_query, normalized_query, fts_query])
-            if query_include_global_scope:
-                query_clauses.append("scope_type = 'global'")
-            if normalized_query_workspace_ids:
-                query_clauses.append(
-                    "workspace_id IN (SELECT value FROM json_each(?))"
-                )
-                params.append(
-                    json.dumps(
-                        normalized_query_workspace_ids, separators=(",", ":")
-                    )
-                )
             clauses.append(f"({' OR '.join(query_clauses)})")
-        elif normalized_query_workspace_ids is not None or query_include_global_scope:
-            raise InputError("query workspace unions require a non-empty query.")
 
         where_clause = " AND ".join(clauses) if clauses else "1 = 1"
         return where_clause, params
@@ -10892,8 +10966,9 @@ UPDATE db_schema_version
         workspace_id: Optional[str] = None,
         workspace_ids: Optional[Sequence[str]] = None,
         include_global_scope: bool = False,
-        query_workspace_ids: Optional[Sequence[str]] = None,
-        query_include_global_scope: bool = False,
+        query_terms: Optional[Sequence[str]] = None,
+        query_workspace_ids_by_term: Optional[Sequence[Sequence[str]]] = None,
+        query_include_global_scope_by_term: Optional[Sequence[bool]] = None,
         limit: int = 50,
         offset: int = 0,
         **_: Any,
@@ -10912,8 +10987,9 @@ UPDATE db_schema_version
             workspace_id=workspace_id,
             workspace_ids=workspace_ids,
             include_global_scope=include_global_scope,
-            query_workspace_ids=query_workspace_ids,
-            query_include_global_scope=query_include_global_scope,
+            query_terms=query_terms,
+            query_workspace_ids_by_term=query_workspace_ids_by_term,
+            query_include_global_scope_by_term=query_include_global_scope_by_term,
         )
         count_query = (
             f"SELECT COUNT(*) as total FROM conversations WHERE {where_clause}"
