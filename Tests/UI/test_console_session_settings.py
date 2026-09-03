@@ -24,6 +24,7 @@ from textual.widgets import Button, Input, OptionList, Select, Static, TextArea
 
 import tldw_chatbook.UI.Console_Modules.session as session_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+import tldw_chatbook.Widgets.Console.console_settings_modal as settings_modal_module
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -350,6 +351,22 @@ class ModalHarness(ConsolidatedCSSApp):
             )
         self.saved_result = result
         self.saved_settings = result.settings if result is not None else None
+
+
+def _typed_ready_unverified_readiness() -> ConsoleSettingsReadiness:
+    return ConsoleSettingsReadiness(
+        label="LEGACY LABEL MUST NOT DRIVE UI",
+        detail="PRIVATE legacy detail https://secret.invalid/token",
+        native_send_supported=True,
+        operability="ready_to_send",
+        provider_display_name="OpenAI",
+        configuration="configured",
+        credential="present_unverified",
+        credential_source="stored",
+        endpoint="not_tested",
+        model="unconfirmed",
+        generation="not_tested",
+    )
 
 
 class StyledModalHarness(ModalHarness):
@@ -4685,6 +4702,11 @@ def test_summary_state_exposes_safe_credential_source() -> None:
             label="Ready",
             detail="OpenAI is ready. API key found via env:OPENAI_API_KEY.",
             native_send_supported=True,
+            operability="ready_to_send",
+            configuration="configured",
+            credential="present_unverified",
+            credential_source="environment",
+            model="unconfirmed",
         ),
     )
     config_state = build_console_settings_summary_state(
@@ -4696,14 +4718,16 @@ def test_summary_state_exposes_safe_credential_source() -> None:
             label="Ready",
             detail="Anthropic is ready. API key found via config:api_settings.anthropic.api_key.",
             native_send_supported=True,
+            operability="ready_to_send",
+            configuration="configured",
+            credential="present_unverified",
+            credential_source="stored",
+            model="unconfirmed",
         ),
     )
 
-    assert env_state.credential_row == "Credential: env OPENAI_API_KEY"
-    assert (
-        config_state.credential_row
-        == "Credential: config api_settings.anthropic.api_key"
-    )
+    assert env_state.credential_row == "Credential: environment variable (not verified)"
+    assert config_state.credential_row == "Credential: local config (not verified)"
 
 
 def test_summary_state_handles_empty_credential_source_names() -> None:
@@ -4717,6 +4741,11 @@ def test_summary_state_handles_empty_credential_source_names() -> None:
             label="Ready",
             detail="OpenAI is ready. API key found via env:   .",
             native_send_supported=True,
+            operability="ready_to_send",
+            configuration="configured",
+            credential="present_unverified",
+            credential_source="environment",
+            model="unconfirmed",
         ),
     )
     config_state = build_console_settings_summary_state(
@@ -4728,11 +4757,16 @@ def test_summary_state_handles_empty_credential_source_names() -> None:
             label="Ready",
             detail="Anthropic is ready. API key found via config:   .",
             native_send_supported=True,
+            operability="ready_to_send",
+            configuration="configured",
+            credential="present_unverified",
+            credential_source="stored",
+            model="unconfirmed",
         ),
     )
 
-    assert env_state.credential_row == "Credential: env"
-    assert config_state.credential_row == "Credential: config"
+    assert env_state.credential_row == "Credential: environment variable (not verified)"
+    assert config_state.credential_row == "Credential: local config (not verified)"
 
 
 def test_summary_state_ignores_warning_lines_after_credential_source() -> None:
@@ -4749,10 +4783,15 @@ def test_summary_state_ignores_warning_lines_after_credential_source() -> None:
                 "Model warning: selected model may not support native tools."
             ),
             native_send_supported=True,
+            operability="ready_to_send",
+            configuration="configured",
+            credential="present_unverified",
+            credential_source="environment",
+            model="unconfirmed",
         ),
     )
 
-    assert state.credential_row == "Credential: env OPENAI_API_KEY"
+    assert state.credential_row == "Credential: environment variable (not verified)"
 
 
 def test_summary_state_appends_optional_sampling_fields_only_when_set() -> None:
@@ -5044,6 +5083,42 @@ async def test_console_settings_modal_escape_dismisses_none() -> None:
         await pilot.press("escape")
 
     assert app.saved_settings is None
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_renders_typed_operability_and_verification_evidence(
+    monkeypatch,
+) -> None:
+    readiness = _typed_ready_unverified_readiness()
+    monkeypatch.setattr(
+        settings_modal_module,
+        "build_console_settings_readiness",
+        lambda *_args, **_kwargs: readiness,
+    )
+    app = ModalHarness()
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=ConsoleSessionSettings(provider="openai", model="gpt-4.1"),
+                app_config=app.app_config,
+                providers_models={"openai": ["gpt-4.1"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+        rendered = str(
+            app.screen.query_one("#console-settings-readiness", Static).renderable
+        )
+
+    assert "Ready to send — credential not verified" in rendered
+    assert "Credential · Present — not verified (local config)" in rendered
+    assert "Endpoint · Not tested" in rendered
+    assert "Model · Selected — not verified at this endpoint" in rendered
+    assert "Generation · Not tested" in rendered
+    assert "LEGACY LABEL" not in rendered
+    assert "PRIVATE legacy detail" not in rendered
 
 
 @pytest.mark.asyncio
@@ -5774,9 +5849,8 @@ async def test_console_settings_modal_focus_mode_uses_ready_copy_when_model_sele
         provider_model_section = app.screen.query_one(
             "#console-settings-provider-model-section"
         )
-        assert (
-            str(readiness.renderable) == "llama_cpp is ready. No API key is required."
-        )
+        assert "Ready to send" in str(readiness.renderable)
+        assert "Credential · Not required" in str(readiness.renderable)
         assert (
             provider_model_section.has_class("console-settings-primary-section")
             is False
@@ -5822,7 +5896,7 @@ async def test_console_settings_modal_clears_setup_copy_when_dropdown_model_is_a
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_setup_copy_preserves_blocking_readiness_detail() -> (
+async def test_console_settings_modal_setup_copy_uses_typed_blocker_precedence() -> (
     None
 ):
     app = ModalHarness()
@@ -5848,8 +5922,8 @@ async def test_console_settings_modal_setup_copy_preserves_blocking_readiness_de
 
         readiness = app.screen.query_one("#console-settings-readiness", Static)
         readiness_copy = str(readiness.renderable)
-        assert "Choose a model to enable sending." in readiness_copy
-        assert "Provider blocked: invalid llama.cpp base URL." in readiness_copy
+        assert "Not ready — invalid base URL" in readiness_copy
+        assert "Model · Missing" in readiness_copy
 
 
 @pytest.mark.asyncio
@@ -6811,7 +6885,7 @@ async def test_console_settings_modal_refreshes_readiness_after_returning_to_mod
 
         assert model_input.value == ""
         assert picker.value is None
-        assert "Choose a model to enable sending." in str(readiness.renderable)
+        assert "Not ready — choose a model" in str(readiness.renderable)
         assert (
             provider_model_section.has_class("console-settings-primary-section") is True
         )
@@ -6822,9 +6896,8 @@ async def test_console_settings_modal_refreshes_readiness_after_returning_to_mod
         model_select = app.screen.query_one("#console-settings-model-select", Select)
         assert model_select.display is True
         assert model_select.value == "model-a"
-        assert (
-            str(readiness.renderable) == "llama_cpp is ready. No API key is required."
-        )
+        assert "Ready to send" in str(readiness.renderable)
+        assert "Credential · Not required" in str(readiness.renderable)
         assert (
             provider_model_section.has_class("console-settings-primary-section")
             is False
@@ -9028,10 +9101,10 @@ async def test_console_send_blocker_uses_saved_unsupported_session_provider() ->
                 break
             await pilot.pause(0.05)
 
-        assert (
-            "Provider blocked: 'wip_provider' is not available in Console yet."
-            in _screen_visible_text(console)
+        assert console._console_send_blocked_reason() == (
+            "Console send blocked: Finish provider setup before sending."
         )
+        assert "wip_provider" not in console._console_send_blocked_reason()
 
 
 @pytest.mark.asyncio
@@ -9071,9 +9144,8 @@ async def test_console_missing_model_opens_console_settings_from_summary() -> No
         provider_model_section = modal_screen.query_one(
             "#console-settings-provider-model-section"
         )
-        assert (
-            str(readiness.renderable) == "llama_cpp is ready. No API key is required."
-        )
+        assert "Ready to send" in str(readiness.renderable)
+        assert "Credential · Not required" in str(readiness.renderable)
         assert (
             provider_model_section.has_class("console-settings-primary-section")
             is False

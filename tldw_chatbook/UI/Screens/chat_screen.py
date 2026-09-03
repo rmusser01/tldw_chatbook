@@ -372,7 +372,6 @@ from ...Chat.local_server_discovery import (
     discover_local_servers,
 )
 from ...Chat.chat_handoff_models import ChatHandoffPayload
-from ...Chat.provider_catalog import provider_display_name
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
 from ...Chat.console_ephemeral import ACTION_SAVE_CHAT, blocked_reason
 from ...Chat.console_live_work import (
@@ -509,6 +508,9 @@ from ...Widgets.Console import (
 )
 from ...Widgets.Console.console_transcript import (
     derive_console_memory_banner_presentation,
+)
+from ...Widgets.Console.console_settings_summary import (
+    build_console_readiness_presentation,
 )
 from ...Widgets.Console.console_control_bar import (
     ConsoleAutoSpeakRetryRequested,
@@ -7533,7 +7535,7 @@ class ChatScreen(BaseAppScreen):
             r"max_tokens (\d+)", summary_state.sampling_row or ""
         )
         max_tokens_value = max_tokens_match.group(1) if max_tokens_match else "—"
-        readiness = (summary_state.readiness_label or "").strip()
+        readiness = summary_state.readiness
 
         try:
             self.query_one(
@@ -7559,8 +7561,10 @@ class ChatScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             pass
         else:
-            if readiness and readiness != "Ready":
-                recovery.update(readiness)
+            if readiness is not None and readiness.operability == "not_ready":
+                recovery.update(
+                    build_console_readiness_presentation(readiness).primary_label
+                )
                 recovery.styles.display = "block"
             else:
                 recovery.styles.display = "none"
@@ -7867,20 +7871,8 @@ class ChatScreen(BaseAppScreen):
         readiness = build_console_settings_readiness(
             effective_settings,
             app_config=self._provider_readiness_app_config(),
+            active_run=self._console_run_active(),
         )
-        if not _has_selected_text(selected_model):
-            if not readiness.native_send_supported:
-                # Provider is the real first blocker (FR-05): surface its
-                # readiness instead of the model sentinel so the setup card
-                # steps and the recovery action resolve the same first
-                # incomplete step. The "Missing model" sentinel below now
-                # strictly means provider-ready + model-missing.
-                return effective_settings, readiness
-            return effective_settings, ConsoleSettingsReadiness(
-                label="Missing model",
-                detail="Select a model before sending.",
-                native_send_supported=False,
-            )
         model_warning = self._console_model_capability_warning(
             effective_settings.provider,
             selected_model,
@@ -12000,12 +11992,8 @@ class ChatScreen(BaseAppScreen):
         explicit_provider_ready = getattr(
             self.app_instance, "console_provider_ready", None
         )
-        provider_readiness = get_provider_readiness(
-            (settings.provider if settings is not None else None) or provider_display,
-            self._provider_readiness_app_config(),
-        )
         provider_runtime_ready = (
-            settings_readiness.native_send_supported
+            settings_readiness.operability == "ready_to_send"
             and explicit_provider_ready is not False
         )
         model_selected = _has_selected_text(model)
@@ -12017,9 +12005,9 @@ class ChatScreen(BaseAppScreen):
                 if provider_runtime_ready and not model_selected
                 else "Select a provider and model before sending."
                 if explicit_provider_ready is False
-                else provider_readiness.user_message
-                if provider_readiness.reason == "Missing API key"
-                else settings_readiness.detail
+                else build_console_readiness_presentation(
+                    settings_readiness
+                ).detail
             )
         can_save_chatbook = self._console_can_save_chatbook_flag(pending_launch)
         evidence_state = build_console_evidence_display_state(pending_launch)
@@ -12751,31 +12739,10 @@ class ChatScreen(BaseAppScreen):
 
     def _console_provider_blocker_copy(self) -> str:
         """Return concise Console recovery copy for provider/model setup gaps."""
-        provider, _model, settings = self._active_console_provider_model_display()
-        session_provider = str(getattr(settings, "provider", "") or "").strip()
-        if not session_provider and settings is None:
-            # Tolerate missing session settings: fall back to the display
-            # provider rather than reporting no provider at all.
-            session_provider = provider_config_key(provider)
-        if not session_provider:
-            return "Provider setup needed: choose a provider"
-
-        _effective_settings, settings_readiness = (
-            self._active_console_settings_readiness()
-        )
-        if settings_readiness.native_send_supported:
+        _settings, readiness = self._active_console_settings_readiness()
+        if readiness.operability == "ready_to_send":
             return ""
-        if settings_readiness.label == "Missing model":
-            # Provider is send-ready; the model is the only remaining gap.
-            return "Provider setup needed: choose a model"
-        provider_readiness = get_provider_readiness(
-            session_provider or provider,
-            self._provider_readiness_app_config(),
-        )
-        if provider_readiness.reason == "Missing API key":
-            display_name = provider_display_name(provider_config_key(provider))
-            return f"Provider setup needed: {display_name} missing API key"
-        return f"Provider setup needed: {settings_readiness.detail}"
+        return build_console_readiness_presentation(readiness).detail
 
     @staticmethod
     def _console_empty_recovery_action_copy(
@@ -12785,137 +12752,54 @@ class ChatScreen(BaseAppScreen):
         provider_action_tooltip: str = "",
     ) -> tuple[str, str]:
         """Return empty-state provider recovery button label and tooltip."""
-        blocker = blocker_copy.strip().lower()
         if provider_action_label:
             return provider_action_label, provider_action_tooltip.strip()
-        if "choose a provider" in blocker:
-            return "Choose provider", "Choose a provider for this Console session"
-        if "choose a model" in blocker:
-            return "Choose model", "Choose a model for this Console session"
-        if "api key" in blocker:
-            return (
-                CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
-                "Configure API and API key before sending",
-            )
-        if "endpoint" in blocker:
-            return (
-                "Configure endpoint",
-                "Configure the provider endpoint before sending",
-            )
-        if blocker:
+        if blocker_copy.strip():
             return "Review settings", "Review Console provider settings before sending"
         return "Choose model", "Choose the provider and model for this Console session."
 
     def _console_setup_blocked_reason(self) -> str:
         """Return setup-specific send blocker copy for the native composer."""
-        blocker = self._console_provider_blocker_copy().strip().lower()
-        if not blocker:
+        _settings, readiness = self._active_console_settings_readiness()
+        if readiness.operability == "ready_to_send":
             return ""
-        if blocker == "provider setup needed: choose a model":
+        if readiness.recovery_action == "select_model":
             return "Choose a model in Console Settings before sending."
-        if "missing api key" in blocker:
+        if readiness.recovery_action == "configure_credential":
             return "Add API key in Settings > Providers & Models before sending."
-        if "save the endpoint in settings" in blocker:
+        if readiness.recovery_action == "save_endpoint":
             return "Save provider endpoint in Settings > Providers & Models before sending."
+        if readiness.recovery_action == "wait_for_active_run":
+            return "Wait for the current run to finish before sending."
         return "Finish provider setup before sending."
 
     def _console_provider_recovery_field(self) -> str:
         """Return the Settings Providers & Models field targeted by recovery."""
-        provider, _model, settings = self._active_console_provider_model_display()
-        session_provider = str(getattr(settings, "provider", "") or "").strip()
-        if not session_provider and settings is None:
-            # Tolerate missing session settings: fall back to the display
-            # provider rather than reporting no provider at all.
-            session_provider = provider_config_key(provider)
-        if not session_provider:
-            return ""
-
-        _effective_settings, settings_readiness = (
-            self._active_console_settings_readiness()
-        )
-        if settings_readiness.native_send_supported:
-            return ""
-        if settings_readiness.label == "Missing model":
-            # Choosing a model is a Console Settings action, not a Providers
-            # & Models field fix.
-            return ""
-
-        provider_readiness = get_provider_readiness(
-            session_provider or provider,
-            self._provider_readiness_app_config(),
-        )
-        if provider_readiness.reason == "Missing API key":
+        _settings, readiness = self._active_console_settings_readiness()
+        if readiness.recovery_action == "configure_credential":
             return "api_key"
-        if settings_readiness.label in {"Endpoint not saved", "Invalid URL"}:
+        if readiness.recovery_action in {"configure_endpoint", "save_endpoint"}:
             return "endpoint"
         return ""
 
     def _console_provider_recovery_action(self) -> tuple[str, str, str]:
         """Return the label, target, and tooltip for Console provider recovery."""
-        provider, _model, settings = self._active_console_provider_model_display()
-        session_provider = str(getattr(settings, "provider", "") or "").strip()
-        if not session_provider and settings is None:
-            # Tolerate missing session settings: fall back to the display
-            # provider rather than reporting no provider at all.
-            session_provider = provider_config_key(provider)
-        if not session_provider:
-            return (
-                "Choose provider",
-                "console",
-                "Choose a provider for this Console session",
-            )
-
-        _effective_settings, settings_readiness = (
-            self._active_console_settings_readiness()
-        )
-        if settings_readiness.native_send_supported:
+        _settings, readiness = self._active_console_settings_readiness()
+        if readiness.operability == "ready_to_send":
             return ("Open Settings", "hidden", "Open provider settings")
-        if settings_readiness.label == "Missing model":
-            return (
-                "Choose model",
-                "console",
-                "Choose a model for this Console session",
-            )
-
-        provider_readiness = get_provider_readiness(
-            session_provider or provider,
-            self._provider_readiness_app_config(),
-        )
-        display_name = provider_display_name(provider_config_key(provider))
-        if provider_readiness.reason == "Missing API key":
-            return (
-                CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
-                "settings",
-                f"Configure {display_name} API and API key in Settings",
-            )
-        if settings_readiness.label in {"Endpoint not saved", "Invalid URL"}:
-            return (
-                "Configure endpoint",
-                "settings",
-                f"Save the {display_name} endpoint in Settings",
-            )
-        if settings_readiness.label == "Unknown":
-            return (
-                "Choose provider",
-                "console",
-                "Choose a supported provider for this Console session",
-            )
-        return ("Review settings", "console", "Review this Console session's settings")
+        presentation = build_console_readiness_presentation(readiness)
+        label = presentation.action_label
+        if readiness.recovery_action == "configure_credential":
+            label = CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
+        return label, presentation.action_target, presentation.action_tooltip
 
     def _build_console_setup_card_state(self) -> ConsoleSetupCardState:
         """Build the empty-transcript onboarding state from current readiness."""
-        settings, _display_readiness = self._active_console_settings_readiness()
-        # The card steps must reflect raw provider readiness (FR-05): the
-        # screen-level readiness collapses provider-ready + model-missing to a
-        # "Missing model" sentinel, which would wrongly re-activate step 1.
-        readiness = build_console_settings_readiness(
-            settings,
-            app_config=self._provider_readiness_app_config(),
-        )
+        settings, readiness = self._active_console_settings_readiness()
         has_model = _has_selected_text(getattr(settings, "model", None))
         return build_console_setup_card_state(
             readiness=readiness,
-            provider_label=str(getattr(settings, "provider", "") or "Provider"),
+            provider_label=readiness.provider_display_name or "Provider",
             has_model=has_model,
             first_send_completed=self._console_first_send_completed(),
             has_messages=self._message._active_console_transcript_has_messages(),
@@ -16491,8 +16375,24 @@ class ChatScreen(BaseAppScreen):
                     "Review source authority before sending."
                 )
         _readiness_settings, readiness = self._active_console_settings_readiness()
-        if not readiness.native_send_supported:
-            return f"Console send blocked: {readiness.detail}"
+        if readiness.operability == "not_ready":
+            if readiness.recovery_action == "configure_credential":
+                provider = readiness.provider_display_name or "this provider"
+                return (
+                    f"Console send blocked: Add an API key for {provider} before "
+                    "sending."
+                )
+            if readiness.recovery_action == "select_model":
+                return "Console send blocked: Select a model before sending."
+            if readiness.recovery_action == "save_endpoint":
+                return "Console send blocked: Save the provider endpoint before sending."
+            if readiness.recovery_action == "configure_endpoint":
+                return "Console send blocked: Enter a valid provider endpoint before sending."
+            if readiness.recovery_action == "retry_connection":
+                return "Console send blocked: Retry the provider connection before sending."
+            if readiness.recovery_action == "wait_for_active_run":
+                return "Console send blocked: Wait for the current run to finish."
+            return "Console send blocked: Finish provider setup before sending."
         attachment_reason = self._console_attachment_blocked_reason()
         if attachment_reason:
             return attachment_reason

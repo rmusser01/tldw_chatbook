@@ -763,6 +763,7 @@ class ConsoleSettingsSummaryState:
     transport_row: str = ""
     action_label: str = "Configure"
     action_tooltip: str = "Configure Console settings"
+    readiness: ConsoleSettingsReadiness | None = None
 
 
 def _summary_row_value(row: str) -> str:
@@ -1591,16 +1592,16 @@ def build_console_settings_summary_state(
     provider_label = _string_value(settings.provider) or "Unknown"
     model_value = _string_value(settings.model)
     readiness_label = _string_value(readiness.label) or ""
-    model_is_missing = not model_value and readiness_label == "Missing model"
+    model_is_missing = not model_value and readiness.blocker == "model_missing"
     model_label = model_value or ("Missing" if model_is_missing else "Default")
     readiness_suffix = (
         ""
-        if readiness_label in {"", "Ready"} or model_is_missing
+        if readiness.operability == "ready_to_send" or model_is_missing
         else f" ({readiness_label})"
     )
     action_label = "Configure"
     action_tooltip = "Configure Console settings"
-    if model_is_missing:
+    if readiness.recovery_action == "select_model":
         action_label = "Choose Model"
         action_tooltip = "Choose a model for this Console session"
 
@@ -1665,6 +1666,7 @@ def build_console_settings_summary_state(
         transport_row=f"Streaming: {'on' if settings.streaming else 'off'}",
         action_label=action_label,
         action_tooltip=action_tooltip,
+        readiness=readiness,
     )
 
 
@@ -2341,31 +2343,15 @@ def _format_endpoint_summary_row(settings: ConsoleSessionSettings) -> str:
 
 
 def _format_credential_summary_row(readiness: ConsoleSettingsReadiness) -> str:
-    label = (_string_value(readiness.label) or "").lower()
-    detail = _string_value(readiness.detail) or ""
-    detail_lower = detail.lower()
-    if label == "missing key" or "missing api key" in detail_lower:
+    if readiness.credential == "missing":
         return "Credential: missing"
-    if "no api key is required" in detail_lower:
+    if readiness.credential == "not_required":
         return "Credential: not required"
-    source_marker = "api key found via "
-    source_index = detail_lower.find(source_marker)
-    if source_index >= 0:
-        source_tail = detail[source_index + len(source_marker) :]
-        source_line = source_tail.splitlines()[0] if source_tail else ""
-        source = source_line.strip().rstrip(".").strip()
-        source_lower = source.lower()
-        if source_lower.startswith("env:"):
-            env_name = source[len("env:") :].strip()
-            return f"Credential: env {env_name}" if env_name else "Credential: env"
-        if source_lower.startswith("config:"):
-            config_name = source[len("config:") :].strip()
-            return (
-                f"Credential: config {config_name}"
-                if config_name
-                else "Credential: config"
-            )
-        return f"Credential: {source or 'ready'}"
-    if "api key found" in detail_lower:
-        return "Credential: ready"
-    return "Credential: check setup"
+    if readiness.credential == "authenticated":
+        return "Credential: authenticated"
+    source = {
+        "stored": "local config",
+        "environment": "environment variable",
+        "draft": "unsaved draft",
+    }.get(readiness.credential_source, "present")
+    return f"Credential: {source} (not verified)"

@@ -57,6 +57,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_SESSION_SETTINGS_SOURCES,
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
+    ConsoleSettingsReadiness,
     DEFAULT_LLAMACPP_BASE_URL,
     URL_BASED_PROVIDER_KEYS,
     build_console_model_options,
@@ -109,6 +110,7 @@ from .console_context_controls import (
     build_console_context_control_state,
     format_context_tokens,
 )
+from .console_settings_summary import build_console_readiness_presentation
 from rich.markup import escape as escape_markup
 
 
@@ -1361,7 +1363,7 @@ class ConsoleSettingsModal(
                     variant="primary" if self._active_view == "context" else "default",
                 )
             yield Static(
-                self._readiness_detail(readiness.detail),
+                self._readiness_copy(readiness),
                 id="console-settings-readiness",
                 classes="console-settings-modal-row",
                 markup=False,
@@ -1371,7 +1373,9 @@ class ConsoleSettingsModal(
                 id="console-settings-configure-credential",
                 tooltip="Open F9 Settings > Providers & Models to configure this API key",
             )
-            credential_action.display = self._missing_credential_recovery_available()
+            credential_action.display = self._missing_credential_recovery_available(
+                readiness
+            )
             yield credential_action
             yield Static(
                 self._scope_copy(),
@@ -2250,12 +2254,15 @@ class ConsoleSettingsModal(
             base_url=self._base_url_for_provider(self._active_provider),
         )
 
-    def _missing_credential_recovery_available(self) -> bool:
+    def _missing_credential_recovery_available(
+        self, readiness: ConsoleSettingsReadiness | None = None
+    ) -> bool:
         """Whether canonical Settings owns the current highest-priority blocker."""
-        return (
-            get_provider_readiness(self._active_provider, self._app_config).reason
-            == "Missing API key"
-        )
+        if readiness is None:
+            readiness = build_console_settings_readiness(
+                self._settings_for_active_provider(), app_config=self._app_config
+            )
+        return readiness.recovery_action == "configure_credential"
 
     def _synchronize_restored_provider_state(self) -> None:
         """Refresh dependent controls exactly once after suppressed rehydration."""
@@ -2904,19 +2911,19 @@ class ConsoleSettingsModal(
     def _is_model_setup_mode(self) -> bool:
         return self._focus_model and not self._has_selected_model()
 
-    def _readiness_detail(self, default_detail: str) -> str:
-        if self._is_model_setup_mode():
-            guidance = "Choose a model to enable sending."
-            detail = default_detail.strip()
-            if detail and not self._is_ready_readiness_detail(detail):
-                return f"{guidance}\n{detail}"
-            return guidance
-        return default_detail
-
     @staticmethod
-    def _is_ready_readiness_detail(detail: str) -> bool:
-        normalized = detail.strip().lower()
-        return normalized in {"", "ready."} or " is ready" in normalized
+    def _readiness_copy(readiness: ConsoleSettingsReadiness) -> str:
+        presentation = build_console_readiness_presentation(readiness)
+        return "\n".join(
+            (
+                presentation.primary_label,
+                presentation.detail,
+                presentation.credential_row,
+                presentation.endpoint_row,
+                presentation.model_row,
+                presentation.generation_row,
+            )
+        )
 
     def _provider_model_section_classes(self) -> str:
         classes = "console-settings-modal-section console-settings-model-view"
@@ -4212,12 +4219,12 @@ class ConsoleSettingsModal(
         draft = self._build_draft()
         readiness = build_console_settings_readiness(draft, app_config=self._app_config)
         self.query_one("#console-settings-readiness", Static).update(
-            self._readiness_detail(readiness.detail)
+            self._readiness_copy(readiness)
         )
         try:
             self.query_one(
                 "#console-settings-configure-credential", Button
-            ).display = self._missing_credential_recovery_available()
+            ).display = self._missing_credential_recovery_available(readiness)
         except (NoMatches, QueryError):
             pass
         self._sync_provider_model_section_emphasis()

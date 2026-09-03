@@ -24,6 +24,7 @@ from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverri
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsReadiness,
+    ConsoleSettingsSummaryState,
 )
 from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsCommittedSubmission,
@@ -37,6 +38,10 @@ from tldw_chatbook.Chat.console_settings_apply import (
 )
 from tldw_chatbook.Widgets.Console.console_model_popover import (
     ConsoleModelPopover,
+)
+from tldw_chatbook.Widgets.Console.console_settings_summary import (
+    ConsoleSettingsSummary,
+    build_console_readiness_presentation,
 )
 from tldw_chatbook.Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
@@ -72,6 +77,137 @@ class _HeaderApp(ConsolidatedCSSApp):
             open=False,
             id="header-under-test",
         )
+
+
+def _typed_unreachable_readiness() -> ConsoleSettingsReadiness:
+    return ConsoleSettingsReadiness(
+        label="READY legacy poison",
+        detail="PRIVATE http://127.0.0.1:9876 exception",
+        native_send_supported=False,
+        operability="not_ready",
+        blocker="endpoint_unreachable",
+        recovery_action="retry_connection",
+        provider_display_name="Ollama",
+        configuration="configured",
+        credential="not_required",
+        endpoint="unreachable",
+        endpoint_category="timeout",
+        model="unconfirmed",
+        generation="failed",
+        generation_category="timeout",
+    )
+
+
+class _ReadinessSummaryApp(ConsolidatedCSSApp):
+    def compose(self):
+        yield ConsoleSettingsSummary(
+            ConsoleSettingsSummaryState(
+                provider_row="Provider: Ollama",
+                model_row="Model: llama3",
+                context_row="Context: unavailable",
+                sampling_row="Sampling: T 0.70, P 0.95",
+                identity_row="Assistant: General",
+                readiness_label="READY legacy poison",
+                readiness=_typed_unreachable_readiness(),
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_rail_summary_renders_typed_operability_and_verification_evidence():
+    app = _ReadinessSummaryApp()
+    async with app.run_test(size=(72, 22)) as pilot:
+        await pilot.pause()
+        text = "\n".join(
+            str(getattr(item.renderable, "plain", item.renderable))
+            for item in app.query(Static)
+        )
+        assert "Not ready — endpoint unreachable" in text
+        assert "Endpoint · Unreachable — timed out" in text
+        assert "Generation · Failed — timed out" in text
+        assert "Retry connection" in str(
+            app.query_one("#console-settings-open", Button).label
+        )
+        assert "PRIVATE" not in text
+
+
+@pytest.mark.parametrize(
+    ("readiness", "expected_rows"),
+    (
+        (
+            ConsoleSettingsReadiness(
+                "ignored",
+                "ignored",
+                True,
+                operability="ready_to_send",
+                provider_display_name="OpenAI",
+                configuration="configured",
+                credential="authenticated",
+                credential_source="stored",
+                endpoint="reachable",
+                model="confirmed",
+                generation="succeeded",
+            ),
+            (
+                "Credential · Authenticated",
+                "Endpoint · Reachable",
+                "Model · Confirmed",
+                "Generation · Succeeded",
+            ),
+        ),
+        (
+            ConsoleSettingsReadiness(
+                "ignored",
+                "ignored",
+                True,
+                operability="ready_to_send",
+                provider_display_name="Ollama",
+                configuration="configured",
+                credential="not_required",
+                endpoint="model_listing_unavailable",
+                model="unconfirmed",
+                generation="not_tested",
+            ),
+            (
+                "Credential · Not required",
+                "Endpoint · Reachable — model listing unavailable",
+                "Model · Listing unavailable",
+                "Generation · Not tested",
+            ),
+        ),
+        (
+            ConsoleSettingsReadiness(
+                "ignored",
+                "ignored",
+                True,
+                operability="ready_to_send",
+                provider_display_name="Ollama",
+                configuration="configured",
+                credential="not_required",
+                endpoint="changed_since_test",
+                model="unconfirmed",
+                generation="changed_since_test",
+            ),
+            (
+                "Credential · Not required",
+                "Endpoint · Changed since test",
+                "Model · Changed since test",
+                "Generation · Changed since test",
+            ),
+        ),
+    ),
+)
+def test_console_verification_evidence_rows_are_independent_of_operability(
+    readiness,
+    expected_rows,
+) -> None:
+    presentation = build_console_readiness_presentation(readiness)
+    assert (
+        presentation.credential_row,
+        presentation.endpoint_row,
+        presentation.model_row,
+        presentation.generation_row,
+    ) == expected_rows
 
 
 @pytest.mark.asyncio

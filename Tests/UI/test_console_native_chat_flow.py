@@ -72,7 +72,10 @@ from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
-from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    ConsoleSettingsReadiness,
+)
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
@@ -1314,7 +1317,7 @@ async def test_conversation_settings_return_missing_environment_credential_stays
         return_copy = str(
             modal.query_one("#console-settings-return-status", Static).renderable
         )
-        assert "Missing API key" in readiness_copy
+        assert "OpenAI missing API key" in readiness_copy
         assert f"Export {missing_name}, then relaunch Chatbook" in return_copy
 
 
@@ -12748,6 +12751,64 @@ async def test_pending_image_on_vision_model_does_not_block(monkeypatch):
         store.set_pending_attachment(session.id, _staged_image_attachment())
 
         assert console._console_attachment_blocked_reason() == ""
+
+
+def test_console_readiness_copy_uses_typed_blocker_and_recovery_across_surfaces(
+    monkeypatch,
+) -> None:
+    readiness = ConsoleSettingsReadiness(
+        label="READY legacy poison",
+        detail="PRIVATE https://secret.invalid/key exception",
+        native_send_supported=False,
+        operability="not_ready",
+        blocker="credential_missing",
+        recovery_action="configure_credential",
+        provider_display_name="OpenAI",
+        configuration="incomplete",
+        configuration_issue="credential_missing",
+        credential="missing",
+        credential_source="none",
+        endpoint="not_tested",
+        model="unconfirmed",
+        generation="not_tested",
+    )
+    screen = ChatScreen(_build_test_app())
+    settings = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
+    monkeypatch.setattr(
+        screen,
+        "_active_console_settings_readiness",
+        lambda: (settings, readiness),
+    )
+    monkeypatch.setattr(
+        screen,
+        "_active_console_provider_model_display",
+        lambda: ("OpenAI", "gpt-4.1", settings),
+    )
+
+    assert screen._console_provider_blocker_copy() == (
+        "Provider setup needed: OpenAI missing API key"
+    )
+    assert screen._console_provider_recovery_action() == (
+        CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
+        "settings",
+        "Configure OpenAI API and API key in Settings",
+    )
+    assert screen._console_provider_recovery_field() == "api_key"
+    assert screen._console_setup_blocked_reason() == (
+        "Add API key in Settings > Providers & Models before sending."
+    )
+    assert screen._console_send_blocked_reason() == (
+        "Console send blocked: Add an API key for OpenAI before sending."
+    )
+    surface_copy = "\n".join(
+        (
+            screen._console_provider_blocker_copy(),
+            screen._console_setup_blocked_reason(),
+            screen._console_send_blocked_reason(),
+        )
+    )
+    assert "READY legacy poison" not in surface_copy
+    assert "PRIVATE" not in surface_copy
 
 
 @pytest.mark.asyncio
