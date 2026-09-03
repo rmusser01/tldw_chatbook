@@ -1,5 +1,5 @@
 ---
-id: TASK-30017
+id: TASK-31001
 title: Fix five splash effect cards that render nothing or Textual-invalid markup
 status: To Do
 assignee:
@@ -25,6 +25,8 @@ Verified 2026-09-01 while fixing splash playback stability (task-30016): five an
 
 ## Renumbering provenance
 
-Originally created as TASK-28028; renumbered to TASK-30017 alongside
+Second collision: the renumbered ids 30016/30017 were themselves minted on dev (Server-capture backlog batch) while this PR was open. Final ids 31000/31001 sit far beyond dev's allocation frontier (concurrent `backlog task create` sessions mint at local max+1) so an open PR cannot keep racing the frontier.
+
+Originally created as TASK-28028; renumbered to TASK-31001 alongside
 TASK-30016 (see its Renumbering provenance section) after dev independently
 minted a colliding TASK-28026 and merged it first.

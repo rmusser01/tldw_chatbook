@@ -1,4 +1,4 @@
-"""Playback-stability tests for the splash animation driver (task-30016).
+"""Playback-stability tests for the splash animation driver (task-31000).
 
 The splash animation is driven by Textual ``set_interval`` callbacks while the
 effects inside ``Utils/Splash_Screens`` derive their progression from
