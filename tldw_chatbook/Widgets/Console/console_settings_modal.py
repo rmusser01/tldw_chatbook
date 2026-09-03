@@ -4495,7 +4495,7 @@ class ConsoleSettingsModal(
         if provider and self._provider_uses_base_url(provider):
             self._provider_base_url_drafts[provider] = self.query_one(
                 "#console-settings-base-url", Input
-            ).value.strip()
+            ).value
 
     def _model_for_provider(self, provider: str) -> str | None:
         if provider in self._provider_model_drafts:

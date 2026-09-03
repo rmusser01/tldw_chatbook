@@ -1709,6 +1709,81 @@ async def test_mounted_suspended_draft_rehydrates_raw_provider_drafts_and_focus(
 
 
 @pytest.mark.asyncio
+async def test_mounted_suspended_draft_preserves_active_raw_base_url_whitespace() -> (
+    None
+):
+    """Credential suspension cannot normalize an invalid active endpoint draft."""
+    app = ModalHarness()
+    app.app_config = {
+        "api_settings": {
+            "llama_cpp": {"api_url": "http://canonical-llama.invalid:8080"},
+            "vllm": {"api_url": "http://canonical-vllm.invalid:8000"},
+        }
+    }
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="llama-model",
+        base_url="http://canonical-llama.invalid:8080",
+    )
+    raw_active_endpoint = "  http://draft.invalid:9090  "
+    other_provider_endpoint = "http://draft-vllm.invalid:8001"
+    providers_models = {
+        "llama_cpp": ["llama-model"],
+        "vllm": ["vllm-model"],
+    }
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        original = _basic_modal(
+            settings,
+            app,
+            providers_models=providers_models,
+        )
+        await app.push_screen(original)
+        await pilot.pause()
+        provider_select = original.query_one("#console-settings-provider", Select)
+        provider_select.value = "vllm"
+        await pilot.pause()
+        original.query_one("#console-settings-base-url", Input).value = (
+            other_provider_endpoint
+        )
+        provider_select.value = "llama_cpp"
+        await pilot.pause()
+        original.query_one("#console-settings-base-url", Input).value = (
+            raw_active_endpoint
+        )
+
+        snapshot = original.capture_suspended_draft()
+        assert snapshot.raw_values["console-settings-base-url"] == raw_active_endpoint
+        assert snapshot.settings.base_url == "http://canonical-llama.invalid:8080"
+        await app.pop_screen()
+
+        restored = ConsoleSettingsDraftSnapshot.from_mapping(snapshot.to_mapping())
+        assert restored is not None
+        fresh = _basic_modal(
+            settings,
+            app,
+            providers_models=providers_models,
+            suspended_draft=restored,
+        )
+        await app.push_screen(fresh)
+        await pilot.pause()
+
+        fresh_base_url = fresh.query_one("#console-settings-base-url", Input)
+        fresh_provider = fresh.query_one("#console-settings-provider", Select)
+        assert fresh_base_url.value == raw_active_endpoint
+        assert fresh.capture_suspended_draft().provider_base_url_drafts == {
+            "llama_cpp": raw_active_endpoint,
+            "vllm": other_provider_endpoint,
+        }
+        fresh_provider.value = "vllm"
+        await pilot.pause()
+        assert fresh_base_url.value == other_provider_endpoint
+        fresh_provider.value = "llama_cpp"
+        await pilot.pause()
+        assert fresh_base_url.value == raw_active_endpoint
+
+
+@pytest.mark.asyncio
 async def test_mounted_suspended_draft_rehydrates_blank_connection_and_private_formatting() -> None:
     """Mounted recovery leaves incomplete editable fields and private whitespace intact."""
     app = ModalHarness()
