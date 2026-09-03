@@ -89,6 +89,7 @@ from ...Chat.provider_setup_persistence import (
 from ...Chat.provider_test_evidence import (
     ProviderDraftIdentity,
     ProviderProbeResult,
+    ProviderTestEvidence,
     ProviderTestEvidenceStore,
 )
 from ...Chat.console_provider_support import (
@@ -2575,10 +2576,10 @@ class SettingsScreen(BaseAppScreen):
     # the InternalPromptsPanel.Modified idiom.
     theme_editor_modified = reactive(False)
 
-    #: TASK-366: sentinel copies for the provider Test result row.
-    _PROVIDER_TEST_NOT_RUN_COPY = "Provider test has not run."
+    #: TASK-366: sentinel copies for the provider configuration-check result row.
+    _PROVIDER_TEST_NOT_RUN_COPY = "Configuration check has not run."
     _PROVIDER_TEST_STALE_COPY = (
-        "Provider settings changed since the last test — re-run Test Provider."
+        "Provider settings changed since the last check — re-run Configuration check."
     )
 
     def __init__(self, app_instance, *, personal_context_service=None, **kwargs):
@@ -10727,12 +10728,18 @@ class SettingsScreen(BaseAppScreen):
 
     def _provider_return_continuation_copy(self) -> str:
         if self._provider_return_outcome is ConversationSettingsReturnOutcome.CREDENTIAL_SAVED:
-            return "Credential saved. Return to Conversation settings to check readiness."
+            return (
+                "Credential saved. Return to Conversation settings to check "
+                "readiness; provider acceptance is not yet verified."
+            )
         if (
             self._provider_return_outcome
             is ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED
         ):
-            return "Provider settings saved. Return to Conversation settings to check readiness."
+            return (
+                "Provider settings saved. Return to Conversation settings to check "
+                "readiness; generation is not yet verified."
+            )
         return "Provider settings handoff is inactive."
 
     def _provider_can_return_without_saving(self) -> bool:
@@ -12992,9 +12999,78 @@ class SettingsScreen(BaseAppScreen):
         readiness = get_provider_readiness(
             provider, self._provider_test_staged_config(provider)
         )
-        return self._build_provider_readiness_findings(
+        detail, summary, passed = self._build_provider_readiness_findings(
             provider, model, readiness, draft_endpoint=draft_endpoint, dirty=dirty
         )
+        identity = self._provider_current_draft_identity()
+        evidence = (
+            self._provider_evidence_store().evidence_for(identity)
+            if identity is not None
+            else None
+        )
+        if evidence is not None:
+            detail = f"{detail} | {self._provider_exact_evidence_copy(evidence, model)}"
+        return detail, summary, passed
+
+    @staticmethod
+    def _provider_exact_evidence_copy(
+        evidence: ProviderTestEvidence,
+        selected_model: str,
+    ) -> str:
+        """Render bounded facts for one already identity-matched evidence value."""
+
+        endpoint_category = SettingsScreen._provider_endpoint_category_copy(
+            evidence.category
+        )
+        generation_category = {
+            "authentication": "authentication",
+            "rate_limit": "rate limit",
+            "bad_request": "bad request",
+            "timeout": "timeout",
+            "connection_error": "connection error",
+            "provider_error": "provider error",
+        }.get(evidence.generation_category or "", "provider error")
+
+        endpoint_copy = {
+            "not_tested": "model listing not tested",
+            "testing": "model listing checking",
+            "reachable": "model listing reached",
+            "unreachable": f"model listing failed ({endpoint_category})",
+            "model_listing_unavailable": "model listing unavailable",
+        }[evidence.endpoint]
+        model_copy = "model unconfirmed"
+        if selected_model and selected_model in evidence.model_ids:
+            model_copy = "selected model confirmed"
+        credential_copy = {
+            "not_required": "credential not required",
+            "missing": "credential missing",
+            "present_unverified": "credential present, not verified",
+            "authenticated": "credential authenticated by generation",
+        }[evidence.credential]
+        generation_copy = {
+            "not_tested": "generation not tested",
+            "testing": "generation checking",
+            "succeeded": "generation succeeded",
+            "failed": f"generation failed ({generation_category})",
+            "changed_since_test": "generation evidence stale",
+        }[evidence.generation]
+        return " | ".join(
+            (credential_copy, endpoint_copy, model_copy, generation_copy)
+        )
+
+    @staticmethod
+    def _provider_endpoint_category_copy(category: str | None) -> str:
+        """Return fixed user-facing copy for a bounded endpoint failure category."""
+
+        return {
+            "timeout": "timeout",
+            "connection_refused": "connection refused",
+            "unauthorized": "unauthorized",
+            "forbidden": "forbidden",
+            "http_status": "HTTP status error",
+            "invalid_payload": "invalid response",
+            "connection_error": "connection error",
+        }.get(category or "", "connection error")
 
     def _build_provider_readiness_findings(
         self,
@@ -13023,16 +13099,25 @@ class SettingsScreen(BaseAppScreen):
         provider_key = provider_config_key(provider)
         passed = bool(readiness.ready and model)
         display_name = self._provider_display_name(provider) if provider else "Provider"
-        # TASK-366: lead with ONE verdict consistent with the status line below.
+        # TASK-366: lead with ONE verdict consistent with the configuration line.
         # A config-ready provider with no default model is still blocked, so it
-        # must not read "<provider> is ready" next to "status=blocked".
+        # must not read "<provider> is ready" next to "configuration=blocked".
         if readiness.ready and not model:
             verdict_message = (
                 f"{display_name} is configured, but no default model is set."
             )
+        elif readiness.ready and readiness.requires_api_key:
+            verdict_message = (
+                f"{display_name} configuration is complete. Credential is present; "
+                "provider acceptance has not been tested."
+            )
+        elif readiness.ready:
+            verdict_message = (
+                f"{display_name} configuration is complete. No API key is required."
+            )
         else:
             verdict_message = readiness.user_message
-        findings: list[str] = ["Provider test", verdict_message]
+        findings: list[str] = ["Configuration check", verdict_message]
 
         if not model:
             findings.append("model=missing")
@@ -13081,17 +13166,23 @@ class SettingsScreen(BaseAppScreen):
             endpoint_summary = f"{endpoint_summary} (draft)"
         findings.append(endpoint_summary)
 
-        findings.append(f"status={'ready' if passed else 'blocked'}")
+        findings.append(f"configuration={'complete' if passed else 'blocked'}")
 
         # task-185: the toast must state the outcome, not just "finished".
         if passed:
-            summary = f"Provider test passed: {display_name} is ready; model {model}."
+            summary = (
+                f"Configuration check complete: {display_name} is configured; "
+                f"model {model}. Live generation has not been tested."
+            )
         elif not readiness.ready:
-            summary = f"Provider test failed: {readiness.user_message}"
+            summary = f"Configuration check blocked: {readiness.user_message}"
             if not model:
                 summary += " Also set a default model."
         else:
-            summary = f"Provider test failed: {display_name} is ready but no default model is set."
+            summary = (
+                f"Configuration check blocked: {display_name} is configured but "
+                "no default model is set."
+            )
         if api_key_relabelled:
             detail = " | ".join(
                 finding
@@ -13154,7 +13245,7 @@ class SettingsScreen(BaseAppScreen):
                 and self._provider_evidence_store().cancel_probe(token)
             )
             if cancelled_current:
-                self._provider_test_result = "Provider test cancelled; run again."
+                self._provider_test_result = "Configuration check cancelled; run again."
                 self._update_provider_test_result()
             raise
         except Exception:  # noqa: BLE001 - probe failures must settle as bounded UI state.
@@ -13223,18 +13314,43 @@ class SettingsScreen(BaseAppScreen):
         """
         if type(outcome) is not SettingsEndpointProbeOutcome:
             outcome = self._provider_probe_connection_error_outcome()
+        probe_result = self._provider_probe_result_from_outcome(outcome)
         if identity is not None and token is not None:
-            probe_result = self._provider_probe_result_from_outcome(outcome)
             if not self._provider_evidence_store().settle(token, probe_result):
                 return
-        self._provider_test_result = redact_secret_text(
-            f"{detail} | endpoint {outcome.summary}"
-        )
+            evidence = self._provider_evidence_store().evidence_for(identity)
+            if evidence is not None:
+                try:
+                    selected_model = self.query_one(
+                        "#settings-model-value", Input
+                    ).value.strip()
+                except QueryError:
+                    selected_model = ""
+                detail = (
+                    f"{detail} | "
+                    f"{self._provider_exact_evidence_copy(evidence, selected_model)}"
+                )
+        self._provider_test_result = redact_secret_text(detail)
         self._update_provider_test_result()
-        combined = f"{summary.rstrip('.')}; endpoint {outcome.summary}."
+        if probe_result.endpoint == "reachable":
+            combined = (
+                f"{summary.rstrip('.')}; model-listing evidence updated; "
+                "generation not tested."
+            )
+        elif probe_result.endpoint == "model_listing_unavailable":
+            combined = (
+                "Configuration valid; model listing unavailable; "
+                "chat endpoint and generation not tested."
+            )
+        else:
+            category = self._provider_endpoint_category_copy(outcome.category)
+            combined = (
+                f"Configuration valid; model-listing check failed ({category}); "
+                "generation not tested."
+            )
         self.app.notify(
             redact_secret_text(combined),
-            severity="information" if outcome.reachable else "warning",
+            severity="information" if probe_result.endpoint == "reachable" else "warning",
         )
 
     def _update_provider_test_result(self) -> None:
@@ -26305,7 +26421,9 @@ class SettingsScreen(BaseAppScreen):
             if probe_base_url:
                 # task-191: readiness passed for a URL-based provider; run a
                 # short live probe in a worker and fold it into the toast.
-                self._provider_test_result = f"{detail} | endpoint probe: checking"
+                self._provider_test_result = (
+                    f"{detail} | model listing checking | generation not tested"
+                )
                 self._update_provider_test_result()
                 identity = self._provider_current_draft_identity()
                 token = None

@@ -742,6 +742,77 @@ def test_findings_show_draft_endpoint_tagged():
     assert "8080" not in detail
 
 
+def test_local_configuration_check_never_claims_live_verification():
+    app_config = {"api_settings": {"openai": {"api_key": "fake-test-key"}}}
+    screen = _bare_settings_screen(app_config)
+    readiness = get_provider_readiness("openai", app_config, environ={})
+
+    detail, summary, passed = screen._build_provider_readiness_findings(
+        "openai", "gpt-4o", readiness, draft_endpoint="", dirty=set()
+    )
+
+    assert passed is True
+    assert detail.startswith("Configuration check |")
+    assert "passed" not in summary.casefold()
+    assert "verified" not in summary.casefold()
+    assert "live generation has not been tested" in summary.casefold()
+
+
+def test_exact_evidence_copy_keeps_listing_and_generation_independent():
+    identity = _semantic_identity(
+        "https://example.test/v1/models",
+        provider_key="openai",
+        credential_source="stored",
+    )
+    evidence = ProviderTestEvidence(
+        identity,
+        "reachable",
+        ("gpt-4o",),
+        credential="present_unverified",
+        generation="not_tested",
+    )
+
+    copy = SettingsScreen._provider_exact_evidence_copy(evidence, "gpt-4o")
+
+    assert "credential present, not verified" in copy
+    assert "model listing reached" in copy
+    assert "selected model confirmed" in copy
+    assert "generation not tested" in copy
+    assert "generation succeeded" not in copy
+
+
+@pytest.mark.parametrize(
+    ("category", "expected"),
+    (
+        ("connection_refused", "connection refused"),
+        ("timeout", "timeout"),
+        ("unauthorized", "unauthorized"),
+    ),
+)
+def test_exact_evidence_copy_distinguishes_endpoint_failure_categories(
+    category,
+    expected,
+):
+    identity = _semantic_identity("https://example.test/v1/models")
+    evidence = ProviderTestEvidence(
+        identity,
+        "unreachable",
+        (),
+        category=category,
+    )
+
+    copy = SettingsScreen._provider_exact_evidence_copy(evidence, "model-a")
+
+    assert f"model listing failed ({expected})" in copy
+
+
+def test_provider_edit_stale_copy_requires_a_new_configuration_check():
+    copy = SettingsScreen._PROVIDER_TEST_STALE_COPY
+
+    assert "changed since the last check" in copy
+    assert "re-run Configuration check" in copy
+
+
 def test_findings_relabel_draft_api_key_source_and_hide_value():
     app_config = {"api_settings": {"openai": {"api_key": "fake-draft-key-not-real"}}}
     screen = _bare_settings_screen(app_config)
@@ -816,7 +887,7 @@ def test_findings_no_draft_has_no_tags():
 
 def test_findings_avoid_ready_claim_when_blocked_on_missing_model():
     """TASK-366: a config-ready provider with no default model must not read
-    'is ready' next to 'status=blocked' — the detail leads with one verdict
+    'is ready' next to 'configuration=blocked' — the detail leads with one verdict
     consistent with the final status line, and still explains the block."""
     app_config = {"api_settings": {"openai": {"api_key": "placeholder-not-a-real-key"}}}
     screen = _bare_settings_screen(app_config)
@@ -829,13 +900,13 @@ def test_findings_avoid_ready_claim_when_blocked_on_missing_model():
     )
 
     assert passed is False
-    assert "status=blocked" in detail
+    assert "configuration=blocked" in detail
     assert "is ready" not in detail  # no contradictory ready claim
     assert "model" in detail.lower()  # verdict still explains the block
 
 
-def test_findings_keep_ready_verdict_when_passing():
-    """TASK-366 guard: a genuine pass must still read 'ready' / status=ready."""
+def test_findings_keep_configuration_only_verdict_when_passing():
+    """A local pass describes configuration without claiming provider readiness."""
     app_config = {"api_settings": {"openai": {"api_key": "placeholder-not-a-real-key"}}}
     screen = _bare_settings_screen(app_config)
     readiness = get_provider_readiness("OpenAI", app_config, environ={})
@@ -846,8 +917,11 @@ def test_findings_keep_ready_verdict_when_passing():
     )
 
     assert passed is True
-    assert "status=ready" in detail
-    assert "ready" in summary.lower()
+    assert "configuration=complete" in detail
+    assert "is ready" not in detail
+    assert "status=ready" not in detail
+    assert "configured" in summary.lower()
+    assert "live generation has not been tested" in summary.lower()
 
 
 def test_mark_provider_test_result_stale_invalidates_prior_verdict():
@@ -856,7 +930,8 @@ def test_mark_provider_test_result_stale_invalidates_prior_verdict():
     No-op when nothing has run or it is already stale."""
     screen = _bare_settings_screen({})
     screen._provider_test_result = (
-        "Provider test | llama.cpp is ready | model=llama-3 | status=ready"
+        "Configuration check | llama.cpp configuration is complete | "
+        "model=llama-3 | configuration=complete"
     )
 
     screen._mark_provider_test_result_stale()
@@ -1210,7 +1285,7 @@ async def test_test_provider_button_click_runs_the_check():
         screen = _active_destination_screen(host)
 
         # Sanity: the test has not run yet (mount-time default copy only).
-        assert _provider_test_result_text(screen) == "Provider test has not run."
+        assert _provider_test_result_text(screen) == "Configuration check has not run."
 
         with patch(
             "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
@@ -1219,11 +1294,11 @@ async def test_test_provider_button_click_runs_the_check():
             await _click_scrolled_settings_button(
                 screen, pilot, "#settings-test-provider"
             )
-            await _wait_for_settings_text(screen, pilot, "endpoint reachable")
+            await _wait_for_settings_text(screen, pilot, "model listing reached")
 
         result_text = _provider_test_result_text(screen)
-        assert "Provider test" in result_text
-        assert result_text != "Provider test has not run."
+        assert "Configuration check" in result_text
+        assert result_text != "Configuration check has not run."
 
 
 @pytest.mark.asyncio
@@ -1265,9 +1340,9 @@ async def test_test_provider_button_runs_with_provider_input_focused():
             await _click_scrolled_settings_button(
                 screen, pilot, "#settings-test-provider"
             )
-            await _wait_for_settings_text(screen, pilot, "endpoint reachable")
+            await _wait_for_settings_text(screen, pilot, "model listing reached")
 
-        assert "Provider test" in _provider_test_result_text(screen)
+        assert "Configuration check" in _provider_test_result_text(screen)
 
 
 @pytest.mark.asyncio
@@ -1310,7 +1385,7 @@ async def test_t_hotkey_does_not_run_test_while_input_focused():
         assert screen._settings_text_entry_has_focus() is True
 
         before = _provider_test_result_text(screen)
-        assert before == "Provider test has not run."
+        assert before == "Configuration check has not run."
 
         # 1. Real keypress: consumed by the focused Input, never reaches the
         # 't' binding at all.
@@ -1440,8 +1515,8 @@ async def test_test_provider_result_shows_draft_endpoint():
         await pilot.pause()
 
         await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
-        await _wait_for_settings_text(screen, pilot, "Provider test")
+        await _wait_for_settings_text(screen, pilot, "Configuration check")
 
         detail = _provider_test_result_text(screen)
         assert "http://localhost:9099 (draft)" in detail
-        assert "status=blocked" in detail  # no model set -> readiness never "passes"
+        assert "configuration=blocked" in detail

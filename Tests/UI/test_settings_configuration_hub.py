@@ -3673,7 +3673,7 @@ async def test_settings_provider_test_toast_states_failure_reason(monkeypatch):
 
         assert toasts, "provider test produced no toast"
         message, kwargs = toasts[-1]
-        assert message.startswith("Provider test failed:")
+        assert message.startswith("Configuration check blocked:")
         assert "Missing API key" in message
         assert kwargs.get("severity") == "warning"
 
@@ -3710,7 +3710,10 @@ async def test_settings_provider_test_toast_states_success():
 
         assert toasts, "provider test produced no toast"
         message, kwargs = toasts[-1]
-        assert message == "Provider test passed: OpenAI is ready; model gpt-4o."
+        assert message == (
+            "Configuration check complete: OpenAI is configured; model gpt-4o. "
+            "Live generation has not been tested."
+        )
         assert kwargs.get("severity") == "information"
 
 
@@ -4448,11 +4451,13 @@ async def test_settings_provider_test_toast_folds_in_reachable_endpoint_probe(
         ]
         message, kwargs = toasts[-1]
         assert message == (
-            "Provider test passed: Ollama is ready; model llama3; "
-            "endpoint reachable (3 models)."
+            "Configuration check complete: Ollama is configured; model llama3. "
+            "Live generation has not been tested; model-listing evidence updated; "
+            "generation not tested."
         )
         assert kwargs.get("severity") == "information"
-        assert "endpoint reachable (3 models)" in screen._provider_test_result
+        assert "model listing reached" in screen._provider_test_result
+        assert "generation not tested" in screen._provider_test_result
 
 
 @pytest.mark.asyncio
@@ -4465,6 +4470,7 @@ async def test_settings_provider_test_toast_reports_unreachable_endpoint(monkeyp
         return SettingsEndpointProbeOutcome(
             reachable=False,
             summary="unreachable: connection refused",
+            category="connection_refused",
         )
 
     monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
@@ -4484,13 +4490,55 @@ async def test_settings_provider_test_toast_reports_unreachable_endpoint(monkeyp
 
         message, kwargs = toasts[-1]
         assert message == (
-            "Provider test passed: Ollama is ready; model llama3; "
-            "endpoint unreachable: connection refused."
+            "Configuration valid; model-listing check failed (connection refused); "
+            "generation not tested."
         )
         assert kwargs.get("severity") == "warning"
         assert (
-            "endpoint unreachable: connection refused" in screen._provider_test_result
+            "model listing failed (connection refused)" in screen._provider_test_result
         )
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_test_does_not_treat_missing_models_route_as_chat_failure(
+    monkeypatch,
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "Ollama", "model": "llama3"}
+    app.app_config["api_settings"] = {
+        "ollama": {"api_url": "http://127.0.0.1:11434"}
+    }
+
+    async def fake_probe(base_url, **kwargs):
+        return SettingsEndpointProbeOutcome(
+            state="model_listing_unavailable",
+            category="http_status",
+            summary="Model listing unavailable; chat endpoint not tested",
+        )
+
+    monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        toasts = []
+        host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+
+        screen.action_settings_test_category()
+
+        deadline = time.monotonic() + 4.0
+        while time.monotonic() < deadline and not toasts:
+            await pilot.pause(0.01)
+
+        message, kwargs = toasts[-1]
+        assert message == (
+            "Configuration valid; model listing unavailable; "
+            "chat endpoint and generation not tested."
+        )
+        assert kwargs.get("severity") == "warning"
+        assert "model listing unavailable" in screen._provider_test_result
+        assert "model listing failed" not in screen._provider_test_result
 
 
 @pytest.mark.asyncio
@@ -4519,7 +4567,10 @@ async def test_settings_provider_test_skips_probe_for_cloud_providers(monkeypatc
 
         assert probe_calls == []
         message, kwargs = toasts[-1]
-        assert message == "Provider test passed: OpenAI is ready; model gpt-4.1."
+        assert message == (
+            "Configuration check complete: OpenAI is configured; model gpt-4.1. "
+            "Live generation has not been tested."
+        )
         assert kwargs.get("severity") == "information"
 
 
@@ -4549,7 +4600,7 @@ async def test_settings_provider_test_failure_skips_endpoint_probe(monkeypatch):
 
         assert probe_calls == []
         message, kwargs = toasts[-1]
-        assert message.startswith("Provider test failed:")
+        assert message.startswith("Configuration check blocked:")
         assert kwargs.get("severity") == "warning"
 
 
@@ -7525,17 +7576,26 @@ async def test_provider_navigation_conflict_discard_explicitly_applies_staged_ta
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("changed_selector", "changed_value", "expected_outcome"),
+    (
+        "changed_selector",
+        "changed_value",
+        "expected_outcome",
+        "expected_continuation_copy",
+    ),
     (
         (
             "#settings-provider-api-key",
             "DUMMY-OPENAI-RETURN-KEY",
             ConversationSettingsReturnOutcome.CREDENTIAL_SAVED,
+            "Credential saved. Return to Conversation settings to check readiness; "
+            "provider acceptance is not yet verified.",
         ),
         (
             "#settings-provider-endpoint-value",
             "https://api.openai.example/v1",
             ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED,
+            "Provider settings saved. Return to Conversation settings to check "
+            "readiness; generation is not yet verified.",
         ),
     ),
 )
@@ -7544,6 +7604,7 @@ async def test_conversation_settings_return_save_shows_typed_continuation(
     changed_selector,
     changed_value,
     expected_outcome,
+    expected_continuation_copy,
 ):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
@@ -7567,6 +7628,7 @@ async def test_conversation_settings_return_save_shows_typed_continuation(
         assert mutations
         continuation = screen.query_one("#settings-provider-return-continuation")
         assert continuation.display is True
+        assert expected_continuation_copy in _visible_text(screen)
         assert screen.query_one("#settings-provider-return", Button).label == (
             "Return to Conversation settings"
         )
@@ -8444,10 +8506,10 @@ async def test_settings_provider_test_redacts_secrets(monkeypatch):
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
-        await _wait_for_settings_text(screen, pilot, "Provider test")
+        await _wait_for_settings_text(screen, pilot, "Configuration check")
         text = _visible_text(screen)
 
-        assert "Provider test" in text
+        assert "Configuration check" in text
         assert "OPENAI_API_KEY=<redacted>" in text
         assert "sk-" not in text
 
@@ -9952,7 +10014,7 @@ async def test_settings_provider_test_blocks_unknown_provider():
         text = _visible_text(screen)
 
         assert "Unknown provider" in text
-        assert "status=blocked" in text
+        assert "configuration=blocked" in text
 
 
 @pytest.mark.asyncio
@@ -10253,11 +10315,12 @@ async def test_settings_provider_test_does_not_depend_on_console_sampling_defaul
         ).value = "not-a-number"
 
         await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
-        await _wait_for_settings_text(screen, pilot, "Provider test")
+        await _wait_for_settings_text(screen, pilot, "Configuration check")
         text = _visible_text(screen)
 
-        assert "Provider test" in text
-        assert "status=ready" in text
+        assert "Configuration check" in text
+        assert "configuration=complete" in text
+        assert "is ready" not in text
 
 
 def test_settings_provider_catalog_entries_do_not_import_chat_functions(monkeypatch):
