@@ -147,6 +147,41 @@ def test_confirm_timeout_denies(make_controller):
     assert elapsed < 2.5
 
 
+def test_cancelled_round_fails_closed_even_if_allow_lands_late(
+    make_controller, monkeypatch
+):
+    """Finding 5 (Qodo round): a cancel/deadline break must return
+    allow=False WITHOUT consulting the shared `decision` dict -- a click
+    that lands in it after the loop has already given up on the session
+    must never be honored (mirrors request_skill_script_confirm's
+    post-wait guard, without cloning its external-revoker machinery: no
+    external revoker exists for this primary-only round).
+
+    Threads the race deterministically: the session reads "cancelled"
+    from the very first poll onward, so the loop breaks on its first
+    check. Before that break, this test writes allow=True directly into
+    the round's shared decision box WITHOUT setting the event -- exactly
+    what a click racing the cancellation would leave behind, and the
+    only way `decision` could ever disagree with the fail-closed answer.
+    """
+    controller = make_controller()
+    monkeypatch.setattr(controller, "_is_session_cancelled", lambda *a, **k: True)
+    result: dict[str, Any] = {}
+
+    def worker():
+        result["decision"] = controller.request_worktree_merge_confirm(
+            {"handle_id": "h1"}
+        )
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    _wait_until(lambda: bool(controller.pending_worktree_merge_ids()))
+    request_id = controller.pending_worktree_merge_ids()[0]
+    controller._pending_worktree_merge_rounds[request_id]["decision"]["allow"] = True
+    thread.join(timeout=5)
+    assert result["decision"] == {"allow": False}
+
+
 def test_confirm_payload_carries_handle_mode_branch_diffstat_and_request_id(
     make_controller,
 ):

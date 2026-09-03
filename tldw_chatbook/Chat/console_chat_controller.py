@@ -13871,6 +13871,7 @@ class ConsoleChatController:
             elif is_head:
                 self._marshal_pending_worktree_merge(card_payload)
             # ADR-067: mark the owning run as waiting on a human decision.
+            resolved_via_event = False
             with use_human_input_wait(owning_run_id):
                 while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
                     if self._is_session_cancelled(
@@ -13881,6 +13882,21 @@ class ConsoleChatController:
                         break
                     if deadline is not None and time.monotonic() >= deadline:
                         break
+                else:
+                    resolved_via_event = True
+            # Qodo PR #2355 finding 5: a cancel/deadline BREAK must fail
+            # closed WITHOUT consulting `decision` at all --
+            # `resolve_pending_worktree_merge` can still write into that
+            # shared box after this loop has already given up on the
+            # session, and reading it unconditionally could honor an
+            # Allow click that lands microseconds too late. Mirrors
+            # `request_skill_script_confirm`'s identical post-wait guard,
+            # minus its external-revoker `was_revoked` machinery -- no
+            # external revoker exists for this primary-only round (same
+            # as `request_skill_install_confirm`'s rationale: no
+            # sub-agent can ever arm one of these).
+            if not resolved_via_event:
+                return {"allow": False}
             return {"allow": bool(decision.get("allow", False))}
         finally:
             with self._pending_worktree_merge_lock:
