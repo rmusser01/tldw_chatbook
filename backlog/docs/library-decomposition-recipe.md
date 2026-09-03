@@ -1747,3 +1747,208 @@ already documents, not a new regression from this wave's moves.
    AST re-census compared against the frozen tuple, failing when the two
    diverge) that no task in wave 2 was scoped to build; a candidate for
    wave 3 or a dedicated follow-up task.
+
+## 17. Controller-file size governance (task-31203 AC#4)
+
+The wave-2 final review named a real gap: the screens this program
+decomposes FROM (`chat_screen.py`, `library_screen.py`) are governed by
+`Tests/Architecture/test_screen_size_ratchet.py`, but the controller files
+it decomposes INTO — `UI/Library_Modules/*_controller.py` — had no size
+governance at all. By wave-2 close two of them (`library_collections_
+controller.py` at 1,689 lines, `library_conversations_controller.py` at
+1,738) were already screen-scale, and wave 3 (this plan) plus six more
+subsystems after it will add more. Wave-3 Task 1 closes this gap. The
+guard lives in `Tests/Architecture/test_library_modules_size_ratchet.py`
+(a new sibling file, not a change to the screen ratchet — the two
+enforce genuinely different shapes; see below).
+
+### The decision: option (a), exact per-file `_BUDGETS` rows, discovered by glob
+
+Three options were on the table (wave-3 plan, Task 1):
+
+- **(a) `_BUDGETS`-style exact rows per controller**, re-pinned at each
+  sanctioned landing, mirroring the screen ratchet's own flow.
+- **(b) A single aggregate `Library_Modules` budget** (one number for the
+  whole directory's controller-file total).
+- **(c) A looser per-file ceiling with slack tolerance** (no exact pin,
+  just "don't exceed N", with N chosen generously).
+
+**Chosen: (a), with one addition beyond the screen ratchet's own
+design — glob-based discovery of ungoverned files, not just a hand-kept
+dict.** Reasoning:
+
+- **(b) rejected**: an aggregate budget cannot localize which controller
+  grew, so a review sees "the total went up" with no signal about
+  whether that is subsystem X's sanctioned move or subsystem Y's creep —
+  exactly the ambiguity per-file governance exists to remove. It also
+  means every subsystem's PR touches the same shared number, which
+  multiplies merge-conflict surface across ~10 eventual controllers
+  landing on overlapping timelines (this wave's own Global Constraints
+  already budget for "dev races" on the screen's single row; an
+  aggregate would multiply that contention across every concurrent
+  controller PR, not just the screen's).
+- **(c) rejected**: a generous fixed tolerance either has to be loose
+  enough to survive a large sanctioned move (in which case it does
+  nothing to catch creep between moves, the actual failure mode this
+  task exists to close) or tight enough to catch creep (in which case it
+  fails on every sanctioned move exactly like a naive "only ever go
+  down" ratchet would, per the wave-3 plan's own stated design tension).
+  There is no single tolerance value that serves both purposes across
+  controllers ranging from ~280 to ~2,000+ lines.
+- **(a) chosen**: an exact per-file pin, re-measured and re-set in the
+  same commit as every sanctioned move — identical in spirit to how
+  `_BUDGETS["tldw_chatbook/UI/Screens/library_screen.py"]` has already
+  been re-pinned five times across the conversations/export/collections
+  exemplar series (§11, §12, §15) — localizes every review to exactly
+  the one file that changed, costs one dict entry per new controller (a
+  maintenance cost linear in subsystem count, not compounding), and
+  reuses a mechanism the program has already exercised repeatedly rather
+  than inventing a second one.
+
+**The one deliberate improvement over the screen ratchet's own model**:
+the screen ratchet's `_BUDGETS` is a hand-maintained dict with nothing
+that notices a new screen file needing a row — which is exactly how
+`library_screen.py` went ungoverned for the month it tripled in size
+before this program's own foundation task added its row. The new test
+instead globs `UI/Library_Modules/*_controller.py` at collection time
+(`test_every_controller_file_has_a_budget_row`) and fails, by name, the
+instant a file matching that pattern has no `_BUDGETS` row. Wave 3's own
+search+RAG controller(s) — not yet created as of this task — are
+therefore **born governed**: nothing needs to remember to edit the guard
+test when they land; the glob finds them and the failure message names
+exactly which row to add, at what expression to measure it with.
+
+### Resolving the byte-for-byte-canon tension: same two-check model as the screen ratchet, not a stricter one
+
+The wave-3 plan states the tension precisely: a sanctioned move commit
+inflates its destination controller BY DESIGN (the byte-for-byte canon,
+§1, moves method bodies verbatim), so a ratchet that only permits a
+number to go down would fail every subsystem's own controller-PR the
+moment it lands. Re-reading how the screen ratchet is actually operated
+in practice (not just its docstring's "may only ever go DOWN" framing)
+resolves this: §16 records the screen's own `_BUDGETS` row being RAISED
+twice during the wave-2 final-review fix wave, each time with a dated
+justification comment explaining the increase. The screen ratchet's real
+enforcement is therefore two checks, not one hard one-way rule:
+
+1. A **ceiling** the file may not silently exceed (`test_controller_
+   does_not_grow_past_its_budget` here; `test_screen_does_not_grow_
+   past_its_budget` there) — this is what stops silent creep.
+2. An **anti-slack** bound (`test_budget_is_not_left_slack_after_a_
+   move` here; `test_budget_is_not_left_slack_after_a_wave` there) —
+   this is what stops a ceiling raised "for headroom" from just sitting
+   there unused, and forces the pin to track reality.
+
+Neither check can tell "sanctioned move" from "creep" by itself — no
+test can read intent — but together they make BOTH cases visible in
+code review: a sanctioned move's PR diff shows the `_BUDGETS` row moving
+up next to the method bodies that justify it (reviewable, exactly the
+recipe's own re-pin-in-the-same-commit rule, §6); creep shows up as a
+ceiling breach with no corresponding row edit in the diff, or a row
+edited with no move to justify it. This is the same model the screen
+ratchet already uses successfully — Task 1 did not need a stricter or
+different mechanism, only to apply the existing one to a new file set.
+
+### Re-pin-at-move flow (identical to §6, restated for controllers)
+
+1. Land the sanctioned move (state PR, controller PR, or cleanup PR per
+   §1's series).
+2. Re-measure the affected controller file(s):
+   `len(path.read_text(encoding="utf-8").splitlines())` — the exact
+   expression `test_library_modules_size_ratchet.py`'s own `_measure`
+   uses.
+3. Set the `_BUDGETS` row to that exact number, in the SAME commit,
+   with a one-line dated comment (mirroring the screen ratchet's comment
+   trail immediately above its own `_BUDGETS`) — never deferred to a
+   follow-up, per §6's rebase-then-measure rule, which applies here
+   unchanged.
+
+### Why line count only — no method-count column, unlike the screen ratchet
+
+The screen ratchet tracks both line count and method count because a
+single class (`ChatScreen`/`LibraryScreen`) filling its whole file can be
+made shorter by *compressing* bodies without actually reducing
+responsibility — line count alone cannot catch that on a one-class file.
+Controller files under `Library_Modules/` are not shaped that way: the
+byte-for-byte canon's constructor-dependency-binding pattern (§1)
+deliberately produces small immutable helper classes alongside the
+primary controller/coordinator in the SAME file — Protocol ports,
+request "fences," result "receipts," outcome snapshots (e.g.
+`CaptureRequestFence`/`CaptureArchiveReceipt` in `library_collections_
+capture_controller.py`; the `*Port` protocols in `library_notes_sync_
+controller.py`). There is also no reliable filename→class-name
+convention the way the screen ratchet has: `library_skill_import_
+controller.py`'s primary class is `LibrarySkillImportCoordinator`, not
+`...Controller`. Picking "the" dominant class per file would therefore
+need either a hand-maintained override table (reintroducing the
+non-self-defending problem this design otherwise avoids) or summing
+methods across every class in the file (which would count the
+helper-class proliferation the canon itself encourages as if it were
+controller-responsibility growth — punishing a pattern the recipe
+recommends). File line count has neither problem and is the exact axis
+the wave's own design tension is stated in, so it is the only metric
+this guard tracks. A future controller file that happens to be a single
+dominant class with no helper types could add a method-count column for
+that row specifically without disturbing this reasoning for the rest —
+none of the twelve rows pinned at this task's landing qualify.
+
+### Measured rows at landing (task-31203 AC#4, 2026-09-03)
+
+All twelve current `*_controller.py` files under `UI/Library_Modules/`,
+pinned at their exact measured line count (zero slack against the
+50-line anti-slack tolerance):
+
+| Controller file | Lines |
+|---|---|
+| `library_collections_capture_controller.py` | 699 |
+| `library_collections_controller.py` | 1,689 |
+| `library_conversation_reader_controller.py` | 943 |
+| `library_conversations_controller.py` | 1,738 |
+| `library_export_controller.py` | 1,307 |
+| `library_media_browse_controller.py` | 371 |
+| `library_media_trash_browse_controller.py` | 319 |
+| `library_note_import_controller.py` | 587 |
+| `library_notes_sync_controller.py` | 2,023 |
+| `library_prompt_browse_controller.py` | 281 |
+| `library_skill_import_controller.py` | 760 |
+| `library_skills_browse_controller.py` | 413 |
+
+Scope note: this glob covers `*_controller.py` only, per the wave-3
+plan's own framing of the gap (the wave-2 review named controller files
+by example). `Library_Modules/`'s state files (`library_*_state.py`) and
+other support modules (`canvas_sync.py`, `screen_helpers.py`, etc.) are
+out of scope for this task — a candidate for a follow-up if the same
+ungoverned-growth pattern shows up there, but not asserted here since
+AC#4 scoped the review's own concern to controllers by name.
+
+### Mutation evidence (both directions, plus the self-defending property)
+
+All four fired correctly, verified interactively before the real
+`_BUDGETS` values were committed (see task-1-report.md in this wave's
+SDD ledger for full command output):
+
+1. **Unlisted existing file** (a row deleted from `_BUDGETS` for a file
+   that still exists on disk): `test_every_controller_file_has_a_budget_
+   row` failed, naming exactly that one path; the file's own ceiling/
+   slack parametrizations disappeared with it (25 → 22 passed, 1
+   failed) since pytest parametrizes over `sorted(_BUDGETS)`.
+2. **Genuinely new file** (a throwaway `_mutation_test_scratch_
+   controller.py` dropped into `Library_Modules/`, matching the glob):
+   same test failed, naming the new file; all 24 real rows' tests still
+   passed unaffected. This is the property the screen ratchet's own
+   hand-kept dict does not have.
+3. **Growth trip**: one row's budget lowered 13 lines below its real
+   measurement → `test_controller_does_not_grow_past_its_budget` failed
+   for that row only, reporting "+13" and the guidance block; all other
+   rows unaffected.
+4. **Anti-slack trip**: one row's budget raised 51 lines above its real
+   measurement (one over the 50-line tolerance) → `test_budget_is_not_
+   left_slack_after_a_move` failed for that row only, reporting the
+   exact slack and the fix ("Set it to 281"); at exactly 50 lines over
+   (the tolerance boundary) the same check passes, confirmed separately.
+
+Every mutation was reverted immediately after capturing its failure
+output; the file's final committed state is a clean, zero-diff
+round-trip back to the real measured values — `test_library_modules_
+size_ratchet.py` itself was never left in a mutated state between
+commits.
