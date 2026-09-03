@@ -24,13 +24,18 @@ from __future__ import annotations
 
 import threading
 import time
+from types import SimpleNamespace
 from typing import Any, Callable
 
 import pytest
 
 import tldw_chatbook.Chat.console_agent_bridge as console_agent_bridge_module
 from tldw_chatbook.Agents.agent_service import AgentService as _RealAgentService
-from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+from tldw_chatbook.Chat.console_agent_bridge import (
+    ConsoleAgentBridge,
+    build_console_first_request_plan,
+)
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -234,6 +239,66 @@ def test_stale_request_id_is_dropped(make_controller):
     assert result["decision"] == {"allow": True}
 
 
+# -- Schema disclosure gating: build_console_first_request_plan -----------
+#
+# TASK-28238 phase 2 Task 7 fix round 2. merge_agent_worktree/discard_
+# agent_worktree disclosure is gated on `worktree_merge_enabled`, not the
+# bare `fleet_active`/`fleet_max_live>1` predicate alone (see the identical
+# gate in `agent_service.build_first_request_schema_plan`). Style mirrors
+# `Tests/Chat/test_console_personal_context_snapshot.py`'s kwargs-dict
+# `_plan` helper.
+
+
+def _console_plan(*, worktree_merge_enabled: bool | None = None, fleet_max_live=1):
+    kwargs = dict(
+        shared_registry=ToolCatalogRegistry(),
+        shared_allowed_tools=(),
+        context={},
+        skills_present=False,
+        mcp_provider=None,
+        builtin_gate=None,
+        local_provider=None,
+        library_provider=None,
+        library_authority=None,
+        workspace_id=None,
+        ephemeral=False,
+        diff_sink=None,
+        scratch_root=None,
+        scratch_lease=None,
+        resolution=SimpleNamespace(model="model-a", execution_key="openai"),
+        fallback_model="model-a",
+        session_system_prompt="BASE",
+        native_tools=True,
+        turn_skill_bindings=(),
+        turn_bundle_block="",
+        install_skill_enabled=False,
+        run_skill_script_enabled=False,
+        agent_messages=[{"role": "user", "content": "hi"}],
+        fleet_max_live=fleet_max_live,
+    )
+    if worktree_merge_enabled is not None:
+        kwargs["worktree_merge_enabled"] = worktree_merge_enabled
+    return build_console_first_request_plan(**kwargs)
+
+
+def test_console_plan_discloses_worktree_merge_schemas_when_enabled():
+    plan = _console_plan(worktree_merge_enabled=True, fleet_max_live=2)
+    names = [schema.name for schema in plan.schemas.runtime_schemas]
+    assert "merge_agent_worktree" in names
+    assert "discard_agent_worktree" in names
+
+
+def test_console_plan_omits_worktree_merge_schemas_when_flag_is_omitted():
+    """Default (flag not passed) must match the pre-fix-round-2 behavior
+    for every caller that hasn't been taught about the confirm surface --
+    fleet-active still, merge/discard absent."""
+    plan = _console_plan(fleet_max_live=2)
+    names = [schema.name for schema in plan.schemas.runtime_schemas]
+    assert "wait_agents" in names  # fleet is active -- sanity check
+    assert "merge_agent_worktree" not in names
+    assert "discard_agent_worktree" not in names
+
+
 # -- Bridge wiring: run_reply -> AgentService.run_turn ---------------------
 
 
@@ -315,3 +380,86 @@ def test_bridge_forwards_none_when_omitted(tmp_path, monkeypatch):
         tmp_path, monkeypatch, request_worktree_merge_confirm=None
     )
     assert captured.get("request_worktree_merge_confirm") is None
+
+
+# -- Bridge wiring: run_reply -> build_console_first_request_plan ---------
+
+
+def _capture_first_request_plan_kwargs(
+    tmp_path,
+    monkeypatch,
+    *,
+    request_worktree_merge_confirm: Callable[[dict], dict] | None,
+) -> dict[str, Any]:
+    """Build a real `ConsoleAgentBridge` and run one plain-text turn to
+    capture the exact kwargs `run_reply` hands to
+    `build_console_first_request_plan`, by wrapping the real module-level
+    function (never a reimplementation of it) -- pins the ONE new
+    production line from Task 7 fix round 2
+    (`worktree_merge_enabled=request_worktree_merge_confirm is not None`).
+    Mirrors `_capture_run_turn_kwargs` above, applied to the earlier
+    plan-building call instead of `AgentService.run_turn`.
+    """
+
+    class _ChunkGateway:
+        async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+            yield "ok"
+
+    captured: dict[str, Any] = {}
+    real_build_plan = console_agent_bridge_module.build_console_first_request_plan
+
+    def _capturing_build_plan(**kwargs):
+        captured.update(kwargs)
+        return real_build_plan(**kwargs)
+
+    monkeypatch.setattr(
+        console_agent_bridge_module,
+        "build_console_first_request_plan",
+        _capturing_build_plan,
+    )
+
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = persisted_console_store()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway()
+    )
+    kwargs: dict[str, Any] = dict(
+        conversation_id="conv-worktree-confirm-plan",
+        session_id=session.id,
+        resolution=object(),
+        assistant_message_id=assistant.id,
+        model="test-model",
+        session_system_prompt="",
+        agent_messages=[{"role": "user", "content": "hi"}],
+        should_cancel=lambda: False,
+    )
+    if request_worktree_merge_confirm is not None:
+        kwargs["request_worktree_merge_confirm"] = request_worktree_merge_confirm
+    bridge.run_reply(**kwargs)
+    return captured
+
+
+def test_bridge_enables_worktree_merge_disclosure_when_confirm_is_wired(
+    tmp_path, monkeypatch
+):
+    def confirm(payload: dict[str, Any]) -> dict[str, bool]:
+        return {"allow": True}
+
+    captured = _capture_first_request_plan_kwargs(
+        tmp_path, monkeypatch, request_worktree_merge_confirm=confirm
+    )
+    assert captured.get("worktree_merge_enabled") is True
+
+
+def test_bridge_disables_worktree_merge_disclosure_when_confirm_is_absent(
+    tmp_path, monkeypatch
+):
+    captured = _capture_first_request_plan_kwargs(
+        tmp_path, monkeypatch, request_worktree_merge_confirm=None
+    )
+    assert captured.get("worktree_merge_enabled") is False
