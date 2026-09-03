@@ -51,3 +51,11 @@ cdb43ebcc1a1e2e113ac78d0e16f2c88ac016b3f
 # verified by an AST extract-and-compare script against base commit
 # bca923b4c.
 09d238f5039ae415260a9e818f9f7bd06c17a7ec
+
+# Wave-2 task 7: collections cleanup PR (collections series 3/3, closing
+# commit). Not a pure relocation in the strictest sense (receiver rewrites +
+# a shim-block deletion + 14 dead delegators pruned + 10 dead imports
+# pruned), same shape as the export series' own Task 4 closing commit above
+# -- every per-line change is a mechanical receiver swap or a removal, not
+# new logic.
+39a9763215eab9b8a832e45e4ebb7e85893d8b60
