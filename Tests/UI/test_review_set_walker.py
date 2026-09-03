@@ -182,6 +182,30 @@ def test_check_action_enables_walk_keys_whenever_a_set_is_active(tmp_path):
     )
 
 
+def test_check_action_fails_closed_when_storage_errors(tmp_path):
+    """A storage error in the binding gate degrades to browse, never crashes.
+
+    Qodo #2346: check_action runs on every key resolution and footer render,
+    so an exception here would crash-loop the screen. The gate fails closed
+    (browse adjacency), and the explicit gesture paths carry the notices.
+    """
+
+    class _Boom:
+        def get_active_review_set(self):
+            raise RuntimeError("db gone")
+
+    fake = SimpleNamespace(
+        _library_media_item_traversal_active=lambda: True,
+        _review_set_service=lambda: _Boom(),
+        _library_media_adjacent_row=lambda direction: None,
+    )
+    fake._review_set_active = MethodType(LibraryScreen._review_set_active, fake)
+
+    assert (
+        LibraryScreen.check_action(fake, "library_media_next_item", ()) is False
+    )
+
+
 def test_walk_final_forward_syncs_the_footer_and_notifies_completion(tmp_path):
     """The completion gesture refreshes the chrome and gets a real moment.
 
@@ -365,6 +389,9 @@ def _entry_fake(service):
     )
     fake._notify_review_set = MethodType(
         LibraryScreen._notify_review_set, fake
+    )
+    fake._REVIEW_SET_STORAGE_UNAVAILABLE = (
+        LibraryScreen._REVIEW_SET_STORAGE_UNAVAILABLE
     )
     fake._opened = opened
     fake._notices = notices

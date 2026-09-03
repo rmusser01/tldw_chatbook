@@ -41868,6 +41868,7 @@ class LibraryScreen(BaseAppScreen):
         try:
             return self._walk_active_review_set_unguarded(service, direction)
         except Exception:
+            logger.opt(exception=True).warning("review-set walk failed")
             self._notify_review_set(
                 "Couldn't walk the review set — storage error.",
                 severity="error",
@@ -41979,9 +41980,23 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def _review_set_active(self) -> bool:
-        """True when a review set is active (drives the Reader footer + gating)."""
+        """True when a review set is active (drives the Reader footer + gating).
+
+        Fails CLOSED on a storage error (Qodo #2346): this runs on every key
+        resolution and footer render, so raising here would crash-loop the
+        screen and a notice here would toast-storm. The keys degrade to
+        browse traversal; the explicit gesture paths carry the notices.
+        """
         service = self._review_set_service()
-        return service is not None and service.get_active_review_set() is not None
+        if service is None:
+            return False
+        try:
+            return service.get_active_review_set() is not None
+        except Exception:
+            logger.opt(exception=True).warning(
+                "review-set active-check failed; gating fails closed"
+            )
+            return False
 
     def action_library_media_exit_review(self) -> None:
         """Exit review mode: deactivate the active set, keeping it resumable.
@@ -42001,6 +42016,7 @@ class LibraryScreen(BaseAppScreen):
                 return
             service.deactivate_active()
         except Exception:
+            logger.opt(exception=True).warning("review-set exit failed")
             self._notify_review_set(
                 "Couldn't exit review — storage error.", severity="error"
             )
@@ -42025,6 +42041,7 @@ class LibraryScreen(BaseAppScreen):
         try:
             self._toggle_reviewed_unguarded(service)
         except Exception:
+            logger.opt(exception=True).warning("review-set toggle failed")
             self._notify_review_set(
                 "Couldn't update the reviewed mark — storage error.",
                 severity="error",
@@ -42262,7 +42279,7 @@ class LibraryScreen(BaseAppScreen):
             # task-30042: the items resolved but there is nowhere to pin
             # them -- say so instead of silently discarding the gesture.
             self._notify_review_set(
-                "Review-set storage is unavailable.", severity="error"
+                self._REVIEW_SET_STORAGE_UNAVAILABLE, severity="error"
             )
             return
         service.create_review_set(name, origin, items)
@@ -42274,6 +42291,8 @@ class LibraryScreen(BaseAppScreen):
         else:
             self._notify_review_set(f"Reviewing {len(items)} items.")
         self._open_library_media_viewer(f"local:media:{items[0][0]}")
+
+    _REVIEW_SET_STORAGE_UNAVAILABLE = "Review-set storage is unavailable."
 
     def _notify_review_set(
         self, message: str, *, severity: str = "information"
@@ -42313,7 +42332,7 @@ class LibraryScreen(BaseAppScreen):
                 # task-30042: a dead button is indistinguishable from the
                 # feature not existing -- the press always responds.
                 self._notify_review_set(
-                    "Review-set storage is unavailable.", severity="error"
+                    self._REVIEW_SET_STORAGE_UNAVAILABLE, severity="error"
                 )
                 return
             rows = await self._run_library_service_call(
@@ -42517,7 +42536,7 @@ class LibraryScreen(BaseAppScreen):
                 if not getattr(self, "_review_set_storage_warned", False):
                     self._review_set_storage_warned = True
                     self._notify_review_set(
-                        "Review-set storage is unavailable.",
+                        self._REVIEW_SET_STORAGE_UNAVAILABLE,
                         severity="warning",
                     )
                 return
@@ -42542,6 +42561,7 @@ class LibraryScreen(BaseAppScreen):
         except Exception:
             # task-30042: resuming failed on a real error -- surface it; the
             # user has an active set they can no longer see.
+            logger.opt(exception=True).warning("review-set auto-resume failed")
             self._notify_review_set(
                 "Couldn't resume the review set — storage error.",
                 severity="error",
