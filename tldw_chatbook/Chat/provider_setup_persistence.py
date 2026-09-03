@@ -1211,7 +1211,11 @@ def _provider_setup_observations(
     configured_env_var = _existing_environment_name(
         provider_settings.get(environment_key)
     )
-    credential_routing = f"{configured_source}\0{configured_env_var or ''}"
+    credential_routing = (
+        configured_source
+        if configured_source == "stored"
+        else f"{configured_source}\0{configured_env_var or ''}"
+    )
     if (
         credential_value is not None
         and credential_source is not None

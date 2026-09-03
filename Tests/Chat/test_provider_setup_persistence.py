@@ -264,6 +264,7 @@ def test_provider_setup_postcondition_projects_exact_atomic_mutation():
                 "custom": {
                     "api_url": "https://after.example/v1/chat/completions",
                     "api_key": "postcondition-key-b",
+                    "credential_source": "stored",
                     "model": "after-model",
                 }
             },
