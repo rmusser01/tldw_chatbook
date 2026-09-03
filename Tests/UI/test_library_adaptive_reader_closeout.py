@@ -65,8 +65,14 @@ DESTINATION_CONTRACT = {
         "#library-row-browse-collections",
         "#library-collections-reader-shell",
         "#library-collections-row-1",
-        "_library_collections_reader_preferences",
-        "_library_collections_reader_layout",
+        # Task 7: collections' own reader_preferences/reader_layout fields
+        # moved to ``screen._collections_state.<field>`` -- same extra hop
+        # as conversations' own entry below. Every call site reads these
+        # two contract entries through ``operator.attrgetter`` instead of
+        # plain ``getattr``, so it stays a passthrough for the other four,
+        # not-yet-extracted, destinations' flat attribute names.
+        "_collections_state.reader_preferences",
+        "_collections_state.reader_layout",
     ),
     "conversations": (
         "#library-row-browse-conversations",
@@ -77,8 +83,8 @@ DESTINATION_CONTRACT = {
         # extra hop a bare ``getattr(screen, name)`` can't express. Every
         # call site below reads these two contract entries through
         # ``operator.attrgetter`` instead of plain ``getattr`` so it stays
-        # a passthrough for the other five, not-yet-extracted,
-        # destinations' flat attribute names.
+        # a passthrough for the other four, not-yet-extracted, destinations'
+        # flat attribute names.
         "_conversations_state.reader_preferences",
         "_conversations_state.reader_layout",
     ),
@@ -563,7 +569,7 @@ def _destination_state(screen, destination: str) -> tuple[object, ...]:
         semantic = (
             state.selected_identity,
             state.loaded_detail.capture.identity if state.loaded_detail else None,
-            screen._library_collections_reader_mode,
+            screen._collections_state.reader_mode,
         )
     elif destination == "conversations":
         semantic = (
@@ -634,7 +640,7 @@ def _durable_live_oracle(
                 if state.loaded_detail is not None
                 else None
             ),
-            "mode": screen._library_collections_reader_mode,
+            "mode": screen._collections_state.reader_mode,
         }
     elif destination == "conversations":
         state = screen._conversations_state.reader_state
@@ -1098,7 +1104,7 @@ async def _exercise_closeout_single_app_route_cycle(
                     screen.query_one("#library-collections-mode-info", Button).press()
                     await _wait_for_condition(
                         pilot,
-                        lambda: screen._library_collections_reader_mode == "info",
+                        lambda: screen._collections_state.reader_mode == "info",
                         message="Collections Info mode did not settle",
                     )
                 elif destination == "notes":

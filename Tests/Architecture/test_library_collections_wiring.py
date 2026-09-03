@@ -1,17 +1,24 @@
 """Collections extraction series: the state object and controller are screen-wired.
 
-Wave-2 Task 5 (state PR -- collections series 1/3) and Task 6 (controller
-PR -- collections series 2/3; recipe:
-backlog/docs/library-decomposition-recipe.md §13; export series precedent:
-Tests/Architecture/test_library_export_wiring.py). Task 5's
-`test_state_object_fields_match_the_shim_surface` pins that every
-LibraryCollectionsState field has a matching generated property shim on
-LibraryScreen under the `_library_collections_<field>` name -- the single
-prefix every Collections field uses (unlike Conversations, no field needed
-a different prefix variant). Task 6 adds the full-cluster/same-name-
-delegator-forwarding shape, mirroring the export wiring test's own
-Task 3-era additions exactly (minus a `_safe_text` binding test -- no
-moved Collections body calls `self._safe_text(...)`).
+Wave-2 Task 5 (state PR -- collections series 1/3), Task 6 (controller PR --
+collections series 2/3), and Task 7 (cleanup PR -- collections series 3/3;
+recipe: backlog/docs/library-decomposition-recipe.md §13/§14; export series
+precedent: Tests/Architecture/test_library_export_wiring.py). Task 5's
+`test_state_object_fields_match_the_shim_surface` (which pinned that every
+LibraryCollectionsState field had a matching generated property shim on
+LibraryScreen under the `_library_collections_<field>` name) is GONE as of
+Task 7: the screen's generated shim block was deleted wholesale in cleanup
+(`self._collections_state` is a real `LibraryCollectionsState` instance now,
+not a shimmed screen attribute), so there is nothing left on `LibraryScreen`
+for that assertion to check -- exactly the conversations exemplar's own
+Task 9 precedent and the export series' own Task 4 precedent.
+`test_collections_controller_exposes_every_state_field` below already
+covers the equivalent job on the controller side and needed no change.
+Task 6's full-cluster controller-ownership and same-name-delegator-
+forwarding checks are unchanged in shape; Task 7 adds the
+`_COLLECTIONS_CLUSTER_SCREEN_DELEGATOR_PRUNED` skip/absence-assertion pair
+to `test_screen_delegates_collections_handlers`, mirroring
+`_EXPORT_CLUSTER_SCREEN_DELEGATOR_PRUNED` in the export wiring test.
 """
 from __future__ import annotations
 
@@ -24,19 +31,6 @@ import pytest
 from tldw_chatbook.UI.Library_Modules.library_collections_state import (
     LibraryCollectionsState,
 )
-
-
-@pytest.mark.unit
-def test_state_object_fields_match_the_shim_surface() -> None:
-    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
-
-    field_names = {f.name for f in dataclasses.fields(LibraryCollectionsState)}
-    assert field_names, "state object is empty"
-    for name in field_names:
-        shim = getattr(LibraryScreen, "_library_collections_" + name, None)
-        assert isinstance(shim, property), (
-            f"no screen shim property found for state field {name!r}"
-        )
 
 
 #: Every method Task 6 moved into `LibraryCollectionsController`, under its
@@ -119,6 +113,45 @@ _COLLECTIONS_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "confirm_library_collection_capture_hard_delete",
 )
 
+#: Task 7 cleanup: these 14 names have ZERO references anywhere except
+#: their own one-line screen delegator (checked via a repo-wide census
+#: across `tldw_chatbook/` and `Tests/`, including `Tests/Live/`) -- every
+#: call is either the controller's own internal `self.<name>()` (moved-
+#: body-internal) or this wiring test's own shape-check list; nothing
+#: outside the controller ever called `screen.<name>()`. Their screen
+#: delegators were deleted as dead weight; the names remain in
+#: `_COLLECTIONS_CLUSTER_METHOD_NAMES` above (the controller still
+#: genuinely owns and uses each one) but are excluded from the delegation-
+#: forwarding check below, same shape as the export series' own
+#: `_EXPORT_CLUSTER_SCREEN_DELEGATOR_PRUNED` (Task 4, 1 name) and the
+#: conversations exemplar's `_READER_CLUSTER_SCREEN_DELEGATOR_PRUNED`/
+#: `_BROWSE_CLUSTER_SCREEN_DELEGATOR_PRUNED` (Task 9, 9 names each, 18
+#: total across its two controllers). Collections' entire 64-method
+#: cluster moved onto ONE controller in one PR (task 6) with zero
+#: method-level test-bypass exclusions, so there was no round-2/round-3
+#: screen-resident sibling left to call any of these 14 back the way
+#: export's own 11 exclusions kept 21 of its 22 delegators alive -- a much
+#: larger prune fraction (14 of 64) than export's 1 of 22, closer to (but
+#: still smaller than) conversations' 18 of 61.
+_COLLECTIONS_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
+    {
+        "_library_collections_capture_request",
+        "_ensure_library_collections_capture_controller",
+        "_notify_library_collections_warning",
+        "_capture_library_collection_quick_capture_draft",
+        "_reset_library_collection_quick_capture_draft",
+        "_submit_library_collection_quick_capture",
+        "_library_collection_capture_filter_request",
+        "_apply_library_collection_capture_request",
+        "_page_library_collection_captures",
+        "_update_selected_library_collection_capture",
+        "_library_collection_loaded_capture",
+        "_library_collection_capture_is_current",
+        "_load_library_collection_capture_highlights",
+        "_run_library_collection_capture_content_action",
+    }
+)
+
 #: The 1 name above that is a `@staticmethod` on `LibraryScreen`. Its
 #: delegator forwards straight to the module-level `LibraryCollectionsController`
 #: CLASS (per the conversations/export wiring tests' "static-method
@@ -158,6 +191,12 @@ def test_screen_delegates_collections_handlers() -> None:
     Mirrors `test_screen_delegates_export_handlers`: a same-name forwarding
     check, not a loose "the controller is referenced somewhere" substring
     check.
+
+    Skips `_COLLECTIONS_CLUSTER_SCREEN_DELEGATOR_PRUNED` (Task 7 deleted
+    those 14 screen delegators as dead weight -- zero external references)
+    and instead asserts each such name is genuinely ABSENT from
+    `LibraryScreen`, so a future accidental re-add would fail loudly here
+    rather than silently reintroducing dead code.
     """
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
     from tldw_chatbook.UI.Library_Modules.library_collections_controller import (
@@ -166,6 +205,13 @@ def test_screen_delegates_collections_handlers() -> None:
 
     not_delegators = []
     for name in _COLLECTIONS_CLUSTER_METHOD_NAMES:
+        if name in _COLLECTIONS_CLUSTER_SCREEN_DELEGATOR_PRUNED:
+            assert getattr(LibraryScreen, name, None) is None, (
+                f"{name!r} was pruned from the screen (task 7) but is back -- "
+                "either wire it as a delegator again or drop it from "
+                "_COLLECTIONS_CLUSTER_SCREEN_DELEGATOR_PRUNED"
+            )
+            continue
         method = getattr(LibraryScreen, name, None)
         if method is None:
             not_delegators.append(f"{name!r} (missing entirely)")

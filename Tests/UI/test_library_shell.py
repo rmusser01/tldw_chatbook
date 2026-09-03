@@ -25434,7 +25434,7 @@ def test_library_landing_continue_receipt_accepts_only_authoritative_source_scop
             SkillBrowseScope(query="python", sort="status", page=2),
         )
     elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
-        screen._library_collections_requested_page = 1
+        screen._collections_state.requested_page = 1
     else:
         screen._library_rag_query = "retrieval"
         screen._library_rag_searched_query = "retrieval"

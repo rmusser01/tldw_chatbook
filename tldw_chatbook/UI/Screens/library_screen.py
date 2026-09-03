@@ -86,17 +86,7 @@ from ...Library.export_progress import (
     ExportProgressThrottle,
     format_export_progress_line,
 )
-from ...Library.collections_capture_models import (
-    CAPTURE_SORTS,
-    CaptureCapabilities,
-    CaptureHighlight,
-    CaptureIdentity,
-    CapturePageRequest,
-    CaptureSaveRequest,
-    CollectionsCaptureError,
-    ExternalNoteReference,
-    SavedCaptureSearch,
-)
+from ...Library.collections_capture_models import CaptureIdentity
 from ...Library.library_content_evidence import (
     LibraryContentEvidence,
     LibraryEvidenceStatus,
@@ -449,7 +439,6 @@ from ...Widgets.workbench_focus import (
 from ...Widgets.Library import (
     AdaptiveReaderShellResized,
     CollectionsCaptureReaderPresentation,
-    CollectionsReaderMode,
     LIBRARY_SKILLS_FILTER_ID,
     LIBRARY_SKILLS_PAGE_NEXT_ID,
     LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
@@ -567,7 +556,6 @@ from ..Library_Modules.library_media_trash_browse_controller import (
     MediaTrashMutationClaim,
 )
 from ..Library_Modules.library_collections_capture_controller import (
-    CollectionsCaptureControllerState,
     LibraryCollectionsCaptureController,
 )
 from ..Library_Modules.library_collections_controller import (
@@ -853,15 +841,15 @@ def _assign_library_reader_preferences_attribute(
     destination (media, collections, conversations, notes, notes_files,
     prompts, skills) through a ``{destination: attribute_name}`` dict, read
     with plain ``getattr``/``operator.attrgetter`` and written with plain
-    ``setattr``. Every destination except conversations still keeps its
-    reader-preferences object as a flat screen attribute, so a bare
+    ``setattr``. Every destination except conversations and collections still
+    keeps its reader-preferences object as a flat screen attribute, so a bare
     attribute-name string has always been enough. Conversations' own
     ``reader_preferences`` field moved to ``self._conversations_state.reader_preferences``
     (Task 6/9) -- one extra hop the generic dispatch's plain ``setattr``
     cannot express. This resolves the last (dotted) segment's owner via
     ``operator.attrgetter`` and assigns onto it, and is a no-op passthrough
     (``setattr(owner, attribute, value)``) for every other, undotted,
-    destination -- so the six not-yet-extracted subsystems are unaffected.
+    destination -- so the five not-yet-extracted subsystems are unaffected.
     Future subsystem extractions hit this exact same shape; this helper is
     meant to keep serving them, not to be re-derived per subsystem.
 
@@ -874,6 +862,12 @@ def _assign_library_reader_preferences_attribute(
     flat screen attributes, so the same generic dotted-vs-flat passthrough
     this docstring already describes serves that dispatcher too, without a
     second near-identical helper.
+
+    Third use, added by Task 7 (Collections cleanup): the same two dicts'
+    ``"collections"`` entry moved from the flat ``_library_collections_
+    reader_preferences`` name to ``self._collections_state.reader_preferences``
+    (Task 5/7) -- exactly the same dotted-vs-flat shape Conversations already
+    established, requiring no change to this helper's own logic.
     """
     head, _, tail = attribute.rpartition(".")
     target = operator.attrgetter(head)(owner) if head else owner
@@ -2352,7 +2346,7 @@ class LibraryScreen(BaseAppScreen):
         (
             self._library_reader_shared_preferences,
             self._library_media_reader_preferences,
-            self._library_collections_reader_preferences,
+            self._collections_state.reader_preferences,
             self._conversations_state.reader_preferences,
             self._library_notes_reader_preferences,
             self._library_file_notes_reader_preferences,
@@ -2369,9 +2363,9 @@ class LibraryScreen(BaseAppScreen):
             if collections_capture_scope is not None
             else None
         )
-        self._library_collections_reader_layout = resolve_adaptive_reader_layout(
+        self._collections_state.reader_layout = resolve_adaptive_reader_layout(
             0,
-            self._library_collections_reader_preferences,
+            self._collections_state.reader_preferences,
             LIBRARY_COLLECTIONS_READER_PROFILE,
         )
         self._library_notes_reader_layout: AdaptiveReaderEffectiveLayout = (
@@ -2426,7 +2420,7 @@ class LibraryScreen(BaseAppScreen):
         }
         self._library_reader_durable_preferences = {
             "library": self._conversations_state.reader_preferences.library_open,
-            "collections_items": self._library_collections_reader_preferences.items_open,
+            "collections_items": self._collections_state.reader_preferences.items_open,
             "conversations_items": self._conversations_state.reader_preferences.items_open,
             "notes_items": self._library_notes_reader_preferences.items_open,
             "notes_file_items": self._library_file_notes_reader_preferences.items_open,
@@ -2437,7 +2431,7 @@ class LibraryScreen(BaseAppScreen):
             "library": library_pane_persistence_lock,
             "items": asyncio.Lock(),
         }
-        self._library_collections_reader_persistence_locks = {
+        self._collections_state.reader_persistence_locks = {
             "library": library_pane_persistence_lock,
             "items": asyncio.Lock(),
         }
@@ -7016,7 +7010,7 @@ class LibraryScreen(BaseAppScreen):
         """Replace one pane choice, sharing only the Library-pane preference."""
         attributes = {
             "media": "_library_media_reader_preferences",
-            "collections": "_library_collections_reader_preferences",
+            "collections": "_collections_state.reader_preferences",
             "conversations": "_conversations_state.reader_preferences",
             "notes": "_library_notes_reader_preferences",
             "notes_files": "_library_file_notes_reader_preferences",
@@ -7160,7 +7154,7 @@ class LibraryScreen(BaseAppScreen):
         authority = self._library_reader_persistence_key(destination, pane)
         preferences_attribute = {
             "media": "_library_media_reader_preferences",
-            "collections": "_library_collections_reader_preferences",
+            "collections": "_collections_state.reader_preferences",
             "conversations": "_conversations_state.reader_preferences",
             "notes": "_library_notes_reader_preferences",
             "notes_files": "_library_file_notes_reader_preferences",
@@ -7169,7 +7163,7 @@ class LibraryScreen(BaseAppScreen):
         }[destination]
         locks = {
             "media": self._library_media_reader_persistence_locks,
-            "collections": self._library_collections_reader_persistence_locks,
+            "collections": self._collections_state.reader_persistence_locks,
             "conversations": self._conversations_state.reader_persistence_locks,
             "notes": self._library_notes_reader_persistence_locks,
             "notes_files": self._library_file_notes_reader_persistence_locks,
@@ -7489,7 +7483,7 @@ class LibraryScreen(BaseAppScreen):
         (
             self._library_reader_shared_preferences,
             self._library_media_reader_preferences,
-            self._library_collections_reader_preferences,
+            self._collections_state.reader_preferences,
             self._conversations_state.reader_preferences,
             self._library_notes_reader_preferences,
             self._library_file_notes_reader_preferences,
@@ -7498,7 +7492,7 @@ class LibraryScreen(BaseAppScreen):
         ) = self._load_library_reader_preference_snapshot()
         current_values = {
             "library": self._library_reader_shared_preferences.library_open,
-            "collections_items": self._library_collections_reader_preferences.items_open,
+            "collections_items": self._collections_state.reader_preferences.items_open,
             "conversations_items": self._conversations_state.reader_preferences.items_open,
             "media_items": self._library_media_reader_preferences.items_open,
             "notes_items": self._library_notes_reader_preferences.items_open,
@@ -7591,7 +7585,7 @@ class LibraryScreen(BaseAppScreen):
         """Apply and persist one manual preferred pane choice."""
         event.stop()
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
-            layout = self._library_collections_reader_layout
+            layout = self._collections_state.reader_layout
             opening = not (
                 layout.library_open if event.pane == "library" else layout.items_open
             )
@@ -10022,7 +10016,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_skills_browse_controller.invalidate(restored_skills_scope)
         self._library_skills_sort = restored_skills_scope.sort
         self._library_skills_filter = restored_skills_scope.query
-        self._library_collections_requested_page = (
+        self._collections_state.requested_page = (
             self._restore_library_collections_page(state)
         )
         selected_prompt_id = state.get("selected_prompt_id")
@@ -10091,7 +10085,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_skills_view = "list"
                 self._selected_skill_name = ""
             elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
-                self._library_collections_requested_page = scope.get("page", 1)
+                self._collections_state.requested_page = scope.get("page", 1)
             elif row_id == LIBRARY_ROW_BROWSE_SEARCH:
                 self._library_rag_query = scope["query"]
                 self._library_rag_mode = scope["mode"]
@@ -14404,7 +14398,7 @@ class LibraryScreen(BaseAppScreen):
                     library=rail,
                     items=items_host,
                     work=work,
-                    layout=self._library_collections_reader_layout,
+                    layout=self._collections_state.reader_layout,
                     id_prefix="library-collections",
                     library_label="Library",
                     items_label="Items",
@@ -40105,33 +40099,17 @@ class LibraryScreen(BaseAppScreen):
         return self._conversations_controller.handle_library_conversations_next(event)
 
 
-    def _library_collections_capture_request(
-        self,
-        *,
-        page: int | None = None,
-        search: str | None = None,
-    ) -> CapturePageRequest | None:
-        return self._collections_controller._library_collections_capture_request(page=page, search=search)
-
     def _refresh_library_collections_capture_reader(self) -> None:
         return self._collections_controller._refresh_library_collections_capture_reader()
 
     async def _load_library_collections_capture_entry(self) -> None:
         return await self._collections_controller._load_library_collections_capture_entry()
 
-    def _ensure_library_collections_capture_controller(
-        self,
-    ) -> LibraryCollectionsCaptureController | None:
-        return self._collections_controller._ensure_library_collections_capture_controller()
-
     async def _run_library_collections_capture_transition(
         self,
         operation: Awaitable[bool],
     ) -> bool:
         return await self._collections_controller._run_library_collections_capture_transition(operation)
-
-    def _notify_library_collections_warning(self, message: str) -> None:
-        return self._collections_controller._notify_library_collections_warning(message)
 
     @on(Button.Pressed, ".library-collections-item-row")
     async def select_library_collection_capture(self, event: Button.Pressed) -> None:
@@ -40161,9 +40139,6 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         return self._collections_controller.toggle_library_collection_quick_capture(event)
 
-    def _capture_library_collection_quick_capture_draft(self) -> None:
-        return self._collections_controller._capture_library_collection_quick_capture_draft()
-
     @on(
         Input.Changed,
         "#library-collections-capture-url, #library-collections-capture-title, "
@@ -40179,9 +40154,6 @@ class LibraryScreen(BaseAppScreen):
         self, event: TextArea.Changed
     ) -> None:
         return self._collections_controller.retain_library_collection_quick_capture_note(event)
-
-    def _reset_library_collection_quick_capture_draft(self) -> None:
-        return self._collections_controller._reset_library_collection_quick_capture_draft()
 
     @on(Button.Pressed, "#library-collections-capture-cancel")
     def cancel_library_collection_quick_capture(
@@ -40213,24 +40185,11 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         return await self._collections_controller.refresh_library_collection_quick_capture(event)
 
-    async def _submit_library_collection_quick_capture(self) -> None:
-        return await self._collections_controller._submit_library_collection_quick_capture()
-
     @on(Button.Pressed, "#library-collections-filters")
     def toggle_library_collection_capture_filters(
         self, event: Button.Pressed
     ) -> None:
         return self._collections_controller.toggle_library_collection_capture_filters(event)
-
-    def _library_collection_capture_filter_request(
-        self, *, clear: bool = False
-    ) -> CapturePageRequest | None:
-        return self._collections_controller._library_collection_capture_filter_request(clear=clear)
-
-    async def _apply_library_collection_capture_request(
-        self, request: CapturePageRequest
-    ) -> None:
-        return await self._collections_controller._apply_library_collection_capture_request(request)
 
     @on(Button.Pressed, "#library-collections-filters-apply")
     async def apply_library_collection_capture_filters(
@@ -40518,9 +40477,6 @@ class LibraryScreen(BaseAppScreen):
             self.call_after_refresh(self._reveal_library_rag_results)
         self._execute_library_rag_search(request)
 
-    async def _page_library_collection_captures(self, delta: int) -> None:
-        return await self._collections_controller._page_library_collection_captures(delta)
-
     @on(Button.Pressed, "#library-collections-page-previous")
     async def previous_library_collection_captures(
         self, event: Button.Pressed
@@ -40584,23 +40540,6 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         return await self._collections_controller._export_library_collection_legacy_recovery(selected_path)
 
-    async def _update_selected_library_collection_capture(
-        self,
-        changes: Mapping[str, Any],
-    ) -> bool:
-        return await self._collections_controller._update_selected_library_collection_capture(changes)
-
-    def _library_collection_loaded_capture(self):
-        return self._collections_controller._library_collection_loaded_capture()
-
-    def _library_collection_capture_is_current(
-        self, identity: CaptureIdentity
-    ) -> bool:
-        return self._collections_controller._library_collection_capture_is_current(identity)
-
-    async def _load_library_collection_capture_highlights(self) -> None:
-        return await self._collections_controller._load_library_collection_capture_highlights()
-
     @on(Button.Pressed, "#library-collections-highlight-save")
     async def save_library_collection_capture_highlight(
         self, event: Button.Pressed
@@ -40630,11 +40569,6 @@ class LibraryScreen(BaseAppScreen):
         self, event: Button.Pressed
     ) -> None:
         return await self._collections_controller.unlink_library_collection_capture_note(event)
-
-    async def _run_library_collection_capture_content_action(
-        self, action: str
-    ) -> None:
-        return await self._collections_controller._run_library_collection_capture_content_action(action)
 
     @on(Button.Pressed, "#library-collections-summarize")
     async def summarize_library_collection_capture(
@@ -42467,20 +42401,11 @@ LibraryConversationsController._safe_text = staticmethod(LibraryScreen._safe_tex
 # per-instance constructor-dependency for `_safe_text` here either).
 LibraryExportController._safe_text = staticmethod(LibraryScreen._safe_text)
 
-# --- BEGIN generated collections-state shims (delete wholesale at cleanup) ---
-# wave-2 task 5: keeps every original `_library_collections_<field>` name
-# working as a property over `self._collections_state` (single prefix,
-# no plural variant needed -- see LibraryCollectionsState's docstring).
-for _cos_field in dataclasses.fields(LibraryCollectionsState):
-    setattr(
-        LibraryScreen,
-        "_library_collections_" + _cos_field.name,
-        property(
-            lambda self, _n=_cos_field.name: getattr(self._collections_state, _n),
-            lambda self, value, _n=_cos_field.name: setattr(
-                self._collections_state, _n, value
-            ),
-        ),
-    )
-del _cos_field
-# --- END generated collections-state shims ---
+# wave-2 task 7 (collections cleanup, collections series 3/3) deleted the
+# generated collections-state shim block that used to live here (wave-2
+# task 5): every remaining screen-side `_library_collections_<field>`
+# reference was retargeted to `self._collections_state.<field>` and every
+# test attribute path/dynamic-dispatch string was retargeted to match, so
+# nothing on `LibraryScreen` needs the flat property names anymore -- see
+# `LibraryCollectionsController`'s own generated shim loop (installed by
+# task 6) for where the SAME shape now lives permanently, one layer down.

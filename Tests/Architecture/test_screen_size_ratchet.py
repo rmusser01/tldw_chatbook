@@ -194,10 +194,23 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # <name>(...)` class-forward for the cluster's single staticmethod,
     # `_restore_library_collections_page`) -- a pure move, so the method
     # count is unchanged (64 `FunctionDef`s out, 64 one-line delegators
-    # in). Fresh post-move measurement: 42486 lines, 1281 methods --
-    # lowered in this same commit per recipe §6 (never deferred to a
-    # later task).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 42486, 1281),
+    # in). Measured 42486 lines, 1281 methods at that point.
+    # Wave-2 task 7 (collections cleanup, collections series 3/3): the
+    # generated collections-state shim block deleted wholesale, every
+    # remaining screen-side `_library_collections_<field>` reference
+    # retargeted to `self._collections_state.<field>` (14 literal sites +
+    # 2 dynamic-dispatch dict-of-name-strings entries shared with
+    # Conversations/Export's own precedent), and 14 of the 64 screen
+    # delegators pruned (repo-wide census across `tldw_chatbook/` and
+    # `Tests/`, including `Tests/Live/`: zero references anywhere outside
+    # their own one-line body) -- a much larger prune fraction than the
+    # export series' 1-of-22 because task 6 found zero method-level
+    # test-bypass exclusions, so Collections' whole 64-method cluster
+    # moved onto ONE controller with no screen-resident sibling left to
+    # call any of them back. Fresh post-cleanup measurement: 42411 lines,
+    # 1267 methods (1281 - 14 pruned `FunctionDef`s, exactly) -- lowered
+    # in this same commit per recipe §6 (never deferred to a later task).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 42411, 1267),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

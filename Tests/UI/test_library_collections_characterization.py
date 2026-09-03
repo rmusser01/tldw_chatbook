@@ -107,13 +107,13 @@ blanket finding for its own 31 private helpers.
 
 Every test below drives the screen only through DOM queries/presses/value
 assignments and public screen attributes -- originally the pre-extraction
-``_library_collections_*`` names, kept resolving identically by the state
-PR's generated property shim through a future controller PR, and
-retargeted to ``screen._collections_state.<field>`` by that series'
-eventual cleanup PR once the shim is deleted (recipe §1's "Test retarget"
-step: assertions unchanged byte-for-byte, only the receiver path moved).
-The pinned BEHAVIOR these tests characterize is unaffected by that
-retarget.
+``_library_collections_*`` names, which resolved identically through the
+state PR's generated property shim across the controller PR, and were
+retargeted to ``screen._collections_state.<field>`` by wave-2 task 7
+(collections series 3/3, cleanup PR) once that shim was deleted (recipe
+§1's "Test retarget" step: assertions unchanged byte-for-byte, only the
+receiver path moved). The pinned BEHAVIOR these tests characterize was
+unaffected by that retarget.
 """
 
 from __future__ import annotations
@@ -177,10 +177,10 @@ async def test_capture_filters_toggle_apply_clear_sort_and_free_text_reach_the_s
         assert controller is not None
 
         # toggle_library_collection_capture_filters: opens the disclosure.
-        assert screen._library_collections_filters_open is False
+        assert screen._collections_state.filters_open is False
         screen.query_one("#library-collections-filters", Button).press()
         await pilot.pause()
-        assert screen._library_collections_filters_open is True
+        assert screen._collections_state.filters_open is True
         await _wait_for_selector(screen, pilot, "#library-collections-filters-apply")
 
         # apply_library_collection_capture_filters: a domain filter narrows
@@ -296,7 +296,7 @@ async def test_item_row_press_and_scope_row_press_reach_the_capture_controller()
         await _wait_for_condition(
             pilot,
             lambda: bool(
-                screen._library_collections_active_scope == "reading"
+                screen._collections_state.active_scope == "reading"
                 and controller.state.requested_scope is not None
                 and controller.state.requested_scope.statuses == ("reading",)
             ),
@@ -508,7 +508,7 @@ async def test_detail_action_buttons_favorite_mark_read_open_original_highlight_
         highlight_save_button.press()
         await _wait_for_condition(
             pilot,
-            lambda: len(screen._library_collections_highlights) == 1,
+            lambda: len(screen._collections_state.highlights) == 1,
             message="Highlight setup did not persist.",
         )
         for _ in range(3):
@@ -521,7 +521,7 @@ async def test_detail_action_buttons_favorite_mark_read_open_original_highlight_
         delete_button.press()
         await _wait_for_condition(
             pilot,
-            lambda: len(screen._library_collections_highlights) == 0,
+            lambda: len(screen._collections_state.highlights) == 0,
             message="Highlight-delete press never reached the scope service.",
         )
         for _ in range(3):
@@ -618,7 +618,7 @@ async def test_quick_capture_refresh_hard_delete_cancel_and_legacy_recovery_clos
         save_button.press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_collections_save_outcome_unknown is True,
+            lambda: screen._collections_state.save_outcome_unknown is True,
             message="Uncertain-save setup never settled.",
         )
         refresh_button = await _wait_for_selector(
@@ -627,7 +627,7 @@ async def test_quick_capture_refresh_hard_delete_cancel_and_legacy_recovery_clos
         refresh_button.press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_collections_action_status
+            lambda: screen._collections_state.action_status
             == "Capture list refreshed. Confirm whether the URL is present before retrying.",
             message="Quick-capture refresh never reached the capture controller.",
         )
@@ -660,7 +660,7 @@ async def test_quick_capture_refresh_hard_delete_cancel_and_legacy_recovery_clos
         hard_delete_button.press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_collections_confirming_hard_delete is True,
+            lambda: screen._collections_state.confirming_hard_delete is True,
             message="Hard-delete arm never opened its confirmation.",
         )
         hard_delete_cancel_button = await _wait_for_selector(
@@ -668,7 +668,7 @@ async def test_quick_capture_refresh_hard_delete_cancel_and_legacy_recovery_clos
         )
         hard_delete_cancel_button.press()
         await pilot.pause()
-        assert screen._library_collections_confirming_hard_delete is False
+        assert screen._collections_state.confirming_hard_delete is False
         assert controller.state.loaded_detail is not None
         assert controller.state.loaded_detail.capture.identity == outcome.capture.identity
 
@@ -683,12 +683,12 @@ async def test_quick_capture_refresh_hard_delete_cancel_and_legacy_recovery_clos
         await _wait_for_selector(
             screen, pilot, "#library-collections-legacy-recovery-content"
         )
-        assert screen._library_collections_legacy_recovery_open is True
-        assert screen._library_collections_legacy_recovery_lines
+        assert screen._collections_state.legacy_recovery_open is True
+        assert screen._collections_state.legacy_recovery_lines
         legacy_close_button = await _wait_for_selector(
             screen, pilot, "#library-collections-legacy-recovery-close"
         )
         legacy_close_button.press()
         await pilot.pause()
-        assert screen._library_collections_legacy_recovery_open is False
-        assert screen._library_collections_legacy_recovery_lines == ()
+        assert screen._collections_state.legacy_recovery_open is False
+        assert screen._collections_state.legacy_recovery_lines == ()
