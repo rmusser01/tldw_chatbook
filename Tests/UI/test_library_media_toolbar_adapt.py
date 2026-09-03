@@ -185,3 +185,34 @@ async def test_confirm_copy_wraps_inside_the_pane():
         canvas = app.query_one("#library-media-canvas", LibraryMediaCanvas)
         assert copy.region.width <= canvas.region.width
         assert copy.region.height >= 2  # the safety sentence wrapped, not clipped
+
+
+@pytest.mark.asyncio
+async def test_long_type_values_are_capped_in_the_chooser_label():
+    """A long stored media type must not re-overflow the chooser row.
+
+    Qodo #2350: type values are data; "type: presentation" + "sort: Title
+    A-Z" exceeded the pane's ~34 usable cells. The LABEL caps the value
+    (full value stays in the tooltip and in the chooser strip itself).
+    """
+    state = _browse_state()
+    import dataclasses
+
+    state = dataclasses.replace(
+        state,
+        type_options=(None, "presentation-deck"),
+        active_type="presentation-deck",
+    )
+    app = _CanvasApp(state)
+    async with app.run_test(size=(40, 34)) as pilot:
+        await pilot.pause()
+        type_button = app.query_one("#library-media-type-filter", Button)
+        label = str(type_button.label)
+        assert "presentation-deck" not in label  # capped in the label...
+        assert label.endswith("…")
+        assert "presentation-deck" in str(type_button.tooltip)  # ...not the tooltip
+        canvas = app.query_one("#library-media-canvas", LibraryMediaCanvas)
+        right = canvas.region.x + canvas.region.width
+        sort_button = app.query_one("#library-media-sort", Button)
+        for button in (type_button, sort_button):
+            assert button.region.x + button.region.width <= right

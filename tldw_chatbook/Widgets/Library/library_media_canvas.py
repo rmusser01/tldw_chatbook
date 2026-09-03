@@ -102,6 +102,20 @@ class LibraryMediaRowScroll(VerticalScroll):
         self.post_message(LibraryMediaRowGeometryChanged(self, geometry))
 
 
+def _capped_choice_value(value: str, cap: int = 8) -> str:
+    """Bound a data-derived chooser value for its opener label (task-30043).
+
+    Args:
+        value: The stored value (e.g. a media type).
+        cap: Maximum characters to show before an ellipsis.
+
+    Returns:
+        The value, or its first ``cap - 1`` characters plus ``…``.
+    """
+    value = str(value)
+    return value if len(value) <= cap else value[: cap - 1] + "…"
+
+
 def _media_row_label_rest(
     title: str,
     secondary: str,
@@ -505,11 +519,14 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         type_filter = Button(
             # task-14902: a chooser-opener, no longer a cycler -- press
             # opens the direct-pick strip below instead of advancing.
+            # Qodo #2350: the VALUE is data and can be long; the label caps
+            # it so the chooser row's budget holds (the tooltip and the
+            # chooser strip itself carry the full value).
             library_choice_label(
                 "type",
                 "All types"
                 if self.canvas.active_type is None
-                else self.canvas.active_type,
+                else _capped_choice_value(self.canvas.active_type),
             ),
             id="library-media-type-filter",
             classes="library-canvas-action",
