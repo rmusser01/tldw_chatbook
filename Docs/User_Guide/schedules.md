@@ -368,15 +368,6 @@ device" automation shows up here immediately (the tab refreshes after
 every save). With no server connected the tab shows local automations
 alone instead of an empty list.
 
-> **Known gap (live verification, 2026-09-02).** The `[<server id>]` half
-> of that prefix does not reach the screen: the table's text formatter
-> reads a leading `[http…]` as styling markup and drops it, so a server
-> row shows its name with no prefix while local rows still show
-> `[This device]`. The pane's count line underneath ("1 automation on the
-> server. 1 on this device.") stays correct and is the reliable reading.
-> Ownership *routing* is unaffected — **r** does dispatch a server
-> automation on the server, and **m** does move it here.
-
 Press **r** on a highlighted definition to run it immediately — a real
 dispatch, not a preview, routed by that row's own owner. A local
 automation runs through the same claim/spawn machinery the scheduler's
@@ -466,14 +457,10 @@ refuses honestly ("…this action requires a server connection") rather
 than silently queuing something that might already be stale by the time
 it would send.
 
-> **Known gap (live verification, 2026-09-02).** That same "requires a
-> server connection" wording is currently used for *every* server-side
-> refusal that is not a policy denial — including a definite one like
-> "this definition is archived", which the server reports as
-> non-retryable. So a connected session can be told to check its network
-> when the real reason is something the server already explained. If the
-> action refuses while everything else on the screen is syncing normally,
-> the connection is not the problem; check the automation's lifecycle.
+A definite server-side refusal shows the server's own reason (for
+example "the server has archived this automation") rather than the
+connection message — only genuine connectivity failures mention the
+network.
 
 ## Execution timeouts
 
@@ -514,10 +501,12 @@ archives its copy → armed → local run-now), a reminder round-trip whose
 `link_type`/`link_id` are visible server-side, and the past-`run_at`
 question: **the server accepts such a transfer and parks the task
 disabled** (`status: "disabled"`, `enabled: false`, no catch-up run),
-which this screen mirrors as a Disabled row. The two "Known gap"
-callouts above are what round 2 found. Full record:
-`.superpowers/sdd/plan-2026-09-02-schedules-handoff-pr6/task-6-report.md`
-and `live-fix-report.md` beside it.
+which this screen mirrors as a Disabled row. The two rendering/copy
+gaps round 2 found (a swallowed owner prefix; the archived-refusal
+wording) were fixed in the same branch and are pinned by rendered-cell
+tests, though those two specific fixes were not re-driven against a
+live server. The full live record lives in the TASK-18940 progress log
+(`backlog/tasks/`).
 Supersedes the same-day PR-6 task
 4 stamp: the Queue tab's own "(server: \<id\>)" owner suffix, hidden at
 compact width; and the Results tab's automatic refresh on a server

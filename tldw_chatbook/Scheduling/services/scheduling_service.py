@@ -51,6 +51,7 @@ from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjec
 from tldw_chatbook.Scheduling.services.server_client import (
     SchedulingServerClient,
     ServerClientError,
+    ServerClientNotFoundError,
     ServerClientPolicyError,
     ServerClientValidationError,
     ServerUnavailableError,
@@ -1517,6 +1518,18 @@ class SchedulingService:
                 response = await self.server_client.reopen_automation_definition(
                     server_id
                 )
+        except ServerClientNotFoundError:
+            # 404 sits in its own class (not a ValidationError subclass),
+            # so the definitive-refusal catch below would miss it and the
+            # connectivity branch would blame the network (final-review
+            # finding 3). A vanished server row is just as definitive.
+            return ResolveOutcome(
+                status="error",
+                reason=(
+                    f"Could not {action_desc}: the server no longer has "
+                    "this automation."
+                ),
+            )
         except ServerClientValidationError as exc:
             # Every DEFINITIVE refusal, not just the pre-network policy
             # one (`ServerClientPolicyError` is a subclass, so widening

@@ -3305,3 +3305,30 @@ def test_set_transfer_state_refused_cas_records_no_mutation(db):
     assert armed is False
     assert db.get_reminder_task(reminder_id)["transfer_state"] == "to_server_sent"
     assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_server_row_gone_reports_definitive_reason(db):
+    """A 404 from the server (row deleted server-side) is a DEFINITIVE
+    refusal, not a connectivity problem -- final-review finding 3: the
+    NotFound class isn't a ValidationError subclass, so without its own
+    branch the connectivity wording would blame the network."""
+    from tldw_chatbook.Scheduling.services.server_client import (
+        ServerClientNotFoundError,
+    )
+
+    client = AsyncMock()
+    client.mark_automation_definition_solved.side_effect = ServerClientNotFoundError(
+        "definition not found"
+    )
+    svc = SchedulingService(db=db, server_client=client, runtime_source="server:1")
+    definition_id = _make_definition(
+        db, owner_id="server:1", server_id="srv-def-404", resolution_state="open"
+    )
+
+    outcome = await svc.resolve_definition(definition_id, solved=True)
+
+    assert outcome.status == "error"
+    assert "no longer has this automation" in outcome.reason
+    assert "server connection" not in outcome.reason
+    assert db.get_automation_definition(definition_id)["resolution_state"] == "open"
