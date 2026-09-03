@@ -69,6 +69,13 @@ reports both the total selected count and how many are hidden by filters.
 These shortcuts appear in Help and the command palette only while the Sources
 table owns focus.
 
+The table's **Next check** column shows when a local subscription's next
+scheduled check falls due (its last check, or creation time if it has
+never been checked, plus its check frequency) — this is where that
+signal lives; the Schedules screen's Queue no longer projects watchlist
+checks into its own list. A server-backed source has no check-frequency
+equivalent to compute from, so this column reads "-" for those rows.
+
 ## Checking a source while a check is already running
 
 One check of a given page runs at a time. If you press **Check now** for a
