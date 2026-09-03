@@ -1881,6 +1881,14 @@ async def test_conversation_settings_return_covered_mount_cancellation_settles_b
         )
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
+        prior_session = store.create_session(
+            title="Conversation C active before return",
+            settings=ConsoleSessionSettings(
+                provider="llama_cpp",
+                model="conversation-c-model",
+            ),
+        )
+        assert store.active_session_id == prior_session.id
         snapshot = _conversation_settings_return_snapshot()
         console._suspended_conversation_settings = snapshot
         console._suspended_conversation_settings_token = 145
@@ -1956,6 +1964,7 @@ async def test_conversation_settings_return_covered_mount_cancellation_settles_b
             assert covered_modal.disabled is True
             assert status_after_cancel == "pending"
             return
+        assert store.active_session_id == session.id
         assert console._suspended_conversation_settings is None
         assert covered_modal.capture_suspended_draft().settings.model == (
             snapshot.settings.model
@@ -1987,6 +1996,83 @@ async def test_conversation_settings_return_covered_mount_cancellation_settles_b
         assert not any(
             "Conversation settings return was stale" in notice for notice in notices
         )
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_posttransfer_cancellation_keeps_target_session(
+    monkeypatch,
+):
+    """A settled modal transfer keeps target A active when cancellation propagates."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    transfer_cancelled = asyncio.Event()
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        target_session = store.ensure_session()
+        prior_session = store.create_session(
+            title="Conversation C active before return",
+            settings=ConsoleSessionSettings(
+                provider="llama_cpp",
+                model="conversation-c-model",
+            ),
+        )
+        assert store.active_session_id == prior_session.id
+        snapshot = _conversation_settings_return_snapshot()
+        console._suspended_conversation_settings = snapshot
+        console._suspended_conversation_settings_token = 147
+        target = _stage_console_settings_return(
+            app,
+            session_id=target_session.id,
+            settings_revision=store.session_settings_revision(target_session.id),
+            snapshot=snapshot,
+        )
+
+        async def cancel_after_transfer(
+            _request_token,
+            *,
+            session_id,
+            settings_revision,
+            _on_transfer_committed=None,
+        ):
+            assert session_id == target_session.id
+            assert settings_revision == target.settings_revision
+            assert _on_transfer_committed is not None
+            assert _on_transfer_committed() is True
+            console._suspended_conversation_settings = None
+            console._suspended_conversation_settings_token = None
+            transfer_cancelled.set()
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(
+            console,
+            "_reopen_suspended_console_settings",
+            cancel_after_transfer,
+        )
+        console.apply_navigation_context(target.to_context())
+        await wait_for_signal(
+            transfer_cancelled,
+            what="post-transfer Conversation settings cancellation",
+        )
+        for _ in range(80):
+            if not console._conversation_settings_return_restore_in_progress:
+                break
+            await pilot.pause(0.05)
+
+        assert store.active_session_id == target_session.id
+        assert (
+            app.pending_handoffs.exact_revision_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                target.return_revision,
+            )
+            == "settled"
+        )
+        assert console._pending_conversation_settings_return_target is None
+        assert console._suspended_conversation_settings is None
 
 
 @pytest.mark.asyncio

@@ -1109,3 +1109,64 @@ exit 0
 Only `Tests/UI/test_console_native_chat_flow.py` changed outside this report and
 the progress ledger. No full suite was run. ADR required: no; this is test-only
 synchronization at the existing mounted-widget boundary.
+
+## Round-11 review fix
+
+Resolved the post-transfer session-ownership finding with one rollback guard.
+The shared prior-session repair helper now returns immediately once the exact
+modal transfer has committed. Cancellation therefore still propagates, but it
+cannot reactivate previously selected conversation C after target A's handoff
+is settled and A's restored modal owns the draft. Before transfer commit, the
+existing session ID plus activation-epoch fence is unchanged. The same guard
+also protects the defensive generic-exception cleanup path.
+
+The real covered-overlay journey now creates return target A, activates a
+second conversation C, covers the mounted Conversation settings modal with a
+newer overlay, and verifies that successful transfer/cancellation leaves A
+active and modal-authoritative. A focused boundary regression makes the
+post-transfer cancellation deterministic and proved the old rollback branch
+reactivated C. No separate generic-exception regression was added: the real
+reopen boundary converts covered post-transfer ordinary exceptions into a
+successful ownership result, while the shared helper guard already covers the
+defensive outer exception path.
+
+### Round-11 RED evidence
+
+After correcting a test-authoring placement error before accepting evidence,
+the final pre-production selection reported:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py -k 'posttransfer_cancellation_keeps_target_session or covered_mount_cancellation_settles_before_unmount' -q --tb=short --show-capture=no
+1 failed, 2 passed, 342 deselected, 1 warning in 22.17s
+```
+
+The expected failure observed conversation C active after the handoff had
+already reached `settled`; the assertion required target conversation A. Both
+real covered-overlay parameter cases completed without a harness failure.
+
+### Round-11 GREEN evidence
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py -k 'posttransfer_cancellation_keeps_target_session or covered_mount_cancellation_settles_before_unmount' -q --tb=short --show-capture=no
+3 passed, 342 deselected, 1 warning in 21.58s
+
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/State/test_pending_handoff_store.py Tests/UI/test_console_native_chat_flow.py Tests/UI/test_console_session_settings.py -k 'settle_transferred_claim or posttransfer_cancellation_keeps_target_session or covered_mount_cancellation_settles_before_unmount or pretransfer_cancellation_retains_retry or atomic_failure_retains_retry_without_modal_owner or status_fault_blocks_replacement_until_retry or settles_at_transfer_before_status_and_keeps_replacement or success_preserves_replacement_staged_during_restore or transient_cleanup_preserves_new_session_selection or covered_cancelled_source_reopen_transfers_exact_draft_to_modal' -q --tb=short --show-capture=no
+18 passed, 713 deselected, 1 warning in 32.17s
+
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/State/test_pending_handoff_store.py Tests/State/test_screen_state_store.py Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_native_chat_flow.py Tests/UI/test_console_session_settings.py -k 'conversation_settings or provider_navigation or credential or screen_state or dirty_return_confirmation' -q --tb=short --show-capture=no
+112 passed, 1031 deselected, 1 warning in 136.35s
+
+../../.venv/bin/python -m ruff check tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_console_native_chat_flow.py
+All checks passed!
+
+../../.venv/bin/python -m py_compile tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_console_native_chat_flow.py
+exit 0
+
+git diff --check
+exit 0
+```
+
+The sole warning is the established Requests dependency-version warning. No
+full suite was run. ADR required: no new ADR; this fix preserves ADR-033's
+existing exact transfer and session-ownership boundaries and does not change
+ADR-012's credential owner.

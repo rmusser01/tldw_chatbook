@@ -3475,7 +3475,8 @@ class ChatScreen(BaseAppScreen):
             """Undo only this worker's exact active-session transition."""
 
             if (
-                not switched_session
+                transfer_committed
+                or not switched_session
                 or prior_active_session_id is None
                 or selected_active_session_epoch is None
             ):
