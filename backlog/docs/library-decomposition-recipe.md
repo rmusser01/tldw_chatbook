@@ -394,6 +394,37 @@ rediscover the same red from scratch.
   `None`) -- none touch a field or line this task's move edited; this
   task's own diff is a pure field relocation plus a 2-line `_BUDGETS`
   update.
+- Wave-2 Task 6 (collections controller PR) reconfirmed the same 3
+  Task-5 failures identical via the narrow `-k "collection and library"`
+  check (Tests/UI + Tests/Library), plus a 4th, flip-flopping name not
+  attributable to either tree: `Tests/UI/test_library_prompt_
+  collections.py::test_library_screen_membership_load_retry_and_apply_
+  retry_are_distinct` failed on the PRISTINE baseline run but not the
+  branch run of that same narrow check (360p/4f baseline vs 361p/3f
+  branch) -- a Prompts "Prompt Collections" test (the unrelated feature
+  this task's own 3 excluded methods belong to), confirmed pure noise by
+  a second, independent reproduction in the full xdist sweep's own
+  branch-unique set. **New forward note: running the branch and baseline
+  full xdist sweeps CONCURRENTLY (two 8-worker invocations sharing one
+  machine) measurably amplifies flakiness beyond this recipe's historical
+  ~330-340 backdrop** -- this task's own concurrent run measured 349
+  failed/3890 passed (branch) vs 344 failed/3895 passed (baseline), both
+  above the documented range, with 12 branch-unique and 7 baseline-unique
+  names (vs the export/collections-state series' own 2-and-9-ish norms).
+  11 of the 12 branch-unique names passed cleanly on a single-process
+  combined re-run; the 1 that reproduced,
+  `Tests/UI/test_library_media_reader_traversal_t22207.py::
+  test_one_megabyte_markdown_document_is_not_reparsed_per_keystroke`,
+  passed in TRUE isolation and reproduced identically on the PRISTINE
+  baseline under the SAME combined-invocation conditions (a shared-state/
+  ordering sensitivity to which OTHER tests ran earlier in the process,
+  not to which code version is loaded) -- confirmed pre-existing, not a
+  regression, and not Collections-related (Media reader cluster; this
+  task's diff touches zero Media-reader code). **Future tasks should
+  prefer running the branch and baseline full sweeps SEQUENTIALLY, not
+  concurrently, when machine time allows** -- the concurrent shortcut
+  used here to save wall-clock time cost real investigation effort this
+  task's own report accounts for in full.
 
 ## 8. Subsystem order (spec, "Order of work")
 
@@ -964,3 +995,67 @@ neither touches Collections or shares a fixture with this task's diff.
 result more closely than its Task 3/4 sweeps (which each surfaced genuine
 new bypass-shape exclusions), consistent with this task's pure
 field-relocation shape.
+
+## 14. The collections series, task 2 (controller PR) — as landed
+
+Wave-2 task 6 (collections controller PR, collections series 2/3) is
+complete. Full derivation, cluster table, and byte-for-byte/free-name
+verification method are in `task-6-report.md`; this section records the
+headline numbers and the one new finding for the next subsystem.
+
+**64 of the 67 "collection"-named candidates move, uncontested** (3 are
+Prompts-owned, reconfirmed from task 5's own field-level exclusion). This
+is the first controller PR in this recipe's rehearsal with **zero method-
+level exclusions** — no `@work` hazard, no class-level or instance-
+attribute monkeypatch, no unbound-fake-self/silent-Mock call, found for
+ANY of the 64 by a script-driven sweep of the whole `Tests/` tree (not a
+sample). Contrast export (29 of 51 excluded) and see §12/§13 for why:
+Collections' cluster is small, cohesive, and entirely mediated through one
+pre-existing headless engine (`LibraryCollectionsCaptureController`) that
+tests exercise through full-harness Pilot sessions rather than unbound
+`SimpleNamespace` unit calls.
+
+**The brief's own "browse-controller-delegation exclusion" instruction
+named a file that does not exist.** `library_collections_browse_
+controller.py` is not a real module; the only pre-existing Collections
+controller is `library_collections_capture_controller.py` (a headless
+orchestration engine, not a screen-delegation target). A guard test,
+`Tests/UI/test_product_maturity_phase39_library_collections.py::
+test_collections_route_has_no_generic_container_controller_or_panel`,
+asserts the STRING `"LibraryCollectionsBrowseController"` (a retired
+container-based design) never appears in `library_screen.py` — this is a
+naming-retirement guard, not a live controller. The new controller is
+named `LibraryCollectionsController` (matching the state-PR's
+`LibraryCollectionsState` and the export series' own naming), which does
+not collide with the guard. **Any future subsystem's controller-PR brief
+should verify a named "existing controller to check delegation against"
+actually exists (`find`/`grep` for the literal filename) before trusting
+the brief's own naming** — this one was a stale/confused reference, caught
+only by reading the actual guard test instead of assuming the file was
+just not yet explored.
+
+Pin trajectory (`_BUDGETS["tldw_chatbook/UI/Screens/library_screen.py"]`):
+`43410/1281 -> 42486/1281` (methods unchanged — pure move, 64
+`FunctionDef`s out, 64 one-line delegators in).
+
+**Byte-for-byte verification by TOOLING, not manual diff-reading**: this
+task extracted each of the 64 method's exact source segments with an
+`ast`-driven script (using the ORIGINAL file's own line offsets, never
+hand-retyped), assembled the new controller module from that extracted
+text plus a hand-written header/footer, then re-verified with a SECOND
+script that re-parsed both the pre-move screen file and the finished
+controller module and asserted byte-for-byte identity per method. For a
+move this size (64 methods, ~1300 lines), this generalizes past the
+"read every body once" discipline earlier tasks used: **write the
+extraction and the verification as scripts, not as a sequence of manual
+Read/Edit operations**, for any future subsystem whose cluster exceeds
+~40-50 methods.
+
+**Sweep evidence — concurrent branch/baseline xdist runs amplify
+flakiness measurably; see §7's updated documented-failures entry for the
+full numbers and per-test disposition.** Zero real regressions confirmed,
+but the concurrent-run shortcut (both full sweeps launched at once to
+save wall-clock time) cost real investigation effort re-running 12
+branch-unique names individually/combined and, for the one that
+reproduced, against the pristine baseline too. **Future tasks should run
+the two full sweeps sequentially when time allows.**

@@ -186,7 +186,18 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # `Tests/Architecture/test_library_support_layer_surface.py` first (the
     # conversations exemplar's own "dead within this file is not the same
     # question as dead" lesson).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43410, 1281),
+    # Wave-2 task 6 (collections controller PR, collections series 2/3):
+    # 64 method bodies moved into `LibraryCollectionsController`
+    # (`UI/Library_Modules/library_collections_controller.py`), each
+    # replaced by a one-line screen delegator (63 `self._collections_
+    # controller.<name>(...)` forwards + 1 `LibraryCollectionsController.
+    # <name>(...)` class-forward for the cluster's single staticmethod,
+    # `_restore_library_collections_page`) -- a pure move, so the method
+    # count is unchanged (64 `FunctionDef`s out, 64 one-line delegators
+    # in). Fresh post-move measurement: 42486 lines, 1281 methods --
+    # lowered in this same commit per recipe §6 (never deferred to a
+    # later task).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 42486, 1281),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide
