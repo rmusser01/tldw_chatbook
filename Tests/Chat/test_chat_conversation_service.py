@@ -589,6 +589,26 @@ def test_list_conversations_passes_global_scope_union_to_database():
     assert search_call[2]["include_global_scope"] is True
 
 
+def test_list_conversations_passes_query_workspace_union_to_database():
+    db = FakeDB(conversations_page_rows=[])
+    service = ChatConversationService(db)
+
+    service.list_conversations(
+        query="Roleplay Tavern",
+        scope_type="all",
+        query_workspace_ids=("ws-roleplay",),
+        query_include_global_scope=False,
+        limit=50,
+        offset=0,
+    )
+
+    search_call = [call for call in db.calls if call[0] == "search_conversations_page"][
+        -1
+    ]
+    assert search_call[2]["query_workspace_ids"] == ("ws-roleplay",)
+    assert search_call[2]["query_include_global_scope"] is False
+
+
 def test_list_conversations_retains_the_exact_ordinary_page_envelope():
     db = FakeDB(
         conversations_page_rows=[

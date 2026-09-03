@@ -110,11 +110,21 @@ class ConsoleSwitcherHistoryPage:
 
 
 @dataclass(frozen=True)
+class ConsoleSwitcherHistoryTerm:
+    """One ordered literal or workspace term in a History query."""
+
+    value: str
+    kind: Literal["text", "workspace"]
+
+
+@dataclass(frozen=True)
 class ConsoleSwitcherHistoryQuery:
     """Storage-facing plan for one semantic History query."""
 
     text_query: str
+    text_terms: tuple[str, ...] = ()
     workspace_terms: tuple[str, ...] = ()
+    ordered_terms: tuple[ConsoleSwitcherHistoryTerm, ...] = ()
     can_match: bool = True
 
 
@@ -927,8 +937,30 @@ def plan_console_history_query(query: str) -> ConsoleSwitcherHistoryQuery:
     Returns:
         A storage text query, workspace-label terms, and matchability flag.
     """
+    raw_tokens = str(query or "").strip().split()
+    tokens: list[str] = []
+    index = 0
+    phrase_aliases = (
+        (("needs", "attention"), "is:waiting"),
+        (("waiting", "on", "me"), "is:waiting"),
+        (("new", "results"), "is:new"),
+    )
+    while index < len(raw_tokens):
+        matched_alias = False
+        for phrase, replacement in phrase_aliases:
+            candidate = raw_tokens[index : index + len(phrase)]
+            if tuple(item.casefold() for item in candidate) == phrase:
+                tokens.append(replacement)
+                index += len(phrase)
+                matched_alias = True
+                break
+        if not matched_alias:
+            tokens.append(raw_tokens[index])
+            index += 1
+
     text_terms: list[str] = []
     workspace_terms: list[str] = []
+    ordered_terms: list[ConsoleSwitcherHistoryTerm] = []
     history_false_terms = {
         "waiting",
         "working",
@@ -948,25 +980,30 @@ def plan_console_history_query(query: str) -> ConsoleSwitcherHistoryQuery:
         "validating",
         "retrying",
     }
-    for token in _normalized_active_query(query):
-        if token.startswith("workspace:"):
+    for token in tokens:
+        normalized_token = token.casefold()
+        if normalized_token.startswith("workspace:"):
             value = token.partition(":")[2]
             if not value:
                 return ConsoleSwitcherHistoryQuery("", can_match=False)
             workspace_terms.append(value)
+            ordered_terms.append(ConsoleSwitcherHistoryTerm(value, "workspace"))
             continue
-        if token.startswith("is:"):
-            if token == "is:saved":
+        if normalized_token.startswith("is:"):
+            if normalized_token == "is:saved":
                 continue
             return ConsoleSwitcherHistoryQuery("", can_match=False)
-        if token == "saved":
+        if normalized_token == "saved":
             continue
-        if token in history_false_terms:
+        if normalized_token in history_false_terms:
             return ConsoleSwitcherHistoryQuery("", can_match=False)
         text_terms.append(token)
+        ordered_terms.append(ConsoleSwitcherHistoryTerm(token, "text"))
     return ConsoleSwitcherHistoryQuery(
         " ".join(text_terms),
+        text_terms=tuple(text_terms),
         workspace_terms=tuple(workspace_terms),
+        ordered_terms=tuple(ordered_terms),
     )
 
 

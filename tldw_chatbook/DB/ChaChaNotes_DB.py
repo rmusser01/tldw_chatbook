@@ -10701,20 +10701,37 @@ UPDATE db_schema_version
         workspace_id: Optional[str] = None,
         workspace_ids: Optional[Sequence[str]] = None,
         include_global_scope: bool = False,
+        query_workspace_ids: Optional[Sequence[str]] = None,
+        query_include_global_scope: bool = False,
     ) -> Tuple[str, List[Any]]:
         clauses: List[str] = []
         params: List[Any] = []
-        normalized_workspace_ids: Optional[Tuple[str, ...]] = None
-        if workspace_ids is not None:
-            if isinstance(workspace_ids, (str, bytes)):
-                raise InputError("workspace_ids must be a sequence of ids.")
-            normalized_workspace_ids = tuple(
+        if not isinstance(include_global_scope, bool):
+            raise InputError("include_global_scope must be a boolean.")
+        if not isinstance(query_include_global_scope, bool):
+            raise InputError("query_include_global_scope must be a boolean.")
+
+        def normalize_workspace_ids(
+            values: Optional[Sequence[str]], field_name: str
+        ) -> Optional[Tuple[str, ...]]:
+            if values is None:
+                return None
+            if isinstance(values, (str, bytes)):
+                raise InputError(f"{field_name} must be a sequence of ids.")
+            return tuple(
                 dict.fromkeys(
                     normalized
-                    for value in workspace_ids
+                    for value in values
                     if (normalized := self._normalize_nullable_text(value)) is not None
                 )
             )
+
+        normalized_workspace_ids = normalize_workspace_ids(
+            workspace_ids, "workspace_ids"
+        )
+        normalized_query_workspace_ids = normalize_workspace_ids(
+            query_workspace_ids, "query_workspace_ids"
+        )
         if str(scope_type or "").strip().lower() == CONVERSATION_SCOPE_ALL:
             # "all" spans global- and workspace-scoped conversations in one
             # page/count (the Library Browse ▸ Conversations snapshot seam);
@@ -10725,9 +10742,14 @@ UPDATE db_schema_version
                 )
             normalized_workspace_id = None
         else:
-            if normalized_workspace_ids is not None or include_global_scope:
+            if (
+                normalized_workspace_ids is not None
+                or include_global_scope
+                or normalized_query_workspace_ids is not None
+                or query_include_global_scope
+            ):
                 raise InputError(
-                    "workspace_ids and include_global_scope require scope_type='all'."
+                    "workspace union filters require scope_type='all'."
                 )
             normalized_scope, normalized_workspace_id = self._normalize_scope(
                 scope_type, workspace_id
@@ -10755,9 +10777,12 @@ UPDATE db_schema_version
             if include_global_scope:
                 workspace_scope_clauses.append("scope_type = 'global'")
             if normalized_workspace_ids:
-                placeholders = ", ".join("?" for _ in normalized_workspace_ids)
-                workspace_scope_clauses.append(f"workspace_id IN ({placeholders})")
-                params.extend(normalized_workspace_ids)
+                workspace_scope_clauses.append(
+                    "workspace_id IN (SELECT value FROM json_each(?))"
+                )
+                params.append(
+                    json.dumps(normalized_workspace_ids, separators=(",", ":"))
+                )
             clauses.append(
                 f"({' OR '.join(workspace_scope_clauses)})"
                 if workspace_scope_clauses
@@ -10799,8 +10824,7 @@ UPDATE db_schema_version
             # every candidate conversation's messages per call (task-249 /
             # performance audit finding A4). Title and id= matching are
             # unchanged.
-            clauses.append(
-                "("
+            query_clauses = [
                 "title LIKE ? OR id = ? OR EXISTS ("
                 "SELECT 1 FROM messages_fts fts "
                 "JOIN messages m ON fts.rowid = m.rowid "
@@ -10812,11 +10836,25 @@ UPDATE db_schema_version
                 # (verified against the test suite); both forms are
                 # documented FTS5.
                 "AND fts.messages_fts MATCH ?"
-                "))"
-            )
+                ")"
+            ]
             like_query = f"%{normalized_query}%"
             fts_query = self._fts_prefix_match_expression(normalized_query)
             params.extend([like_query, normalized_query, fts_query])
+            if query_include_global_scope:
+                query_clauses.append("scope_type = 'global'")
+            if normalized_query_workspace_ids:
+                query_clauses.append(
+                    "workspace_id IN (SELECT value FROM json_each(?))"
+                )
+                params.append(
+                    json.dumps(
+                        normalized_query_workspace_ids, separators=(",", ":")
+                    )
+                )
+            clauses.append(f"({' OR '.join(query_clauses)})")
+        elif normalized_query_workspace_ids is not None or query_include_global_scope:
+            raise InputError("query workspace unions require a non-empty query.")
 
         where_clause = " AND ".join(clauses) if clauses else "1 = 1"
         return where_clause, params
@@ -10854,6 +10892,8 @@ UPDATE db_schema_version
         workspace_id: Optional[str] = None,
         workspace_ids: Optional[Sequence[str]] = None,
         include_global_scope: bool = False,
+        query_workspace_ids: Optional[Sequence[str]] = None,
+        query_include_global_scope: bool = False,
         limit: int = 50,
         offset: int = 0,
         **_: Any,
@@ -10872,6 +10912,8 @@ UPDATE db_schema_version
             workspace_id=workspace_id,
             workspace_ids=workspace_ids,
             include_global_scope=include_global_scope,
+            query_workspace_ids=query_workspace_ids,
+            query_include_global_scope=query_include_global_scope,
         )
         count_query = (
             f"SELECT COUNT(*) as total FROM conversations WHERE {where_clause}"

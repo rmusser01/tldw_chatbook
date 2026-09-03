@@ -322,6 +322,60 @@ class TestCoherentConversationPages:
         assert {row["id"] for row in rows} == {default_id, global_id}
         assert total == 2
 
+    def test_workspace_filters_use_bounded_json_parameter_for_large_id_sets(self, db):
+        target_id = db.add_conversation(
+            {
+                "title": "Target",
+                "scope_type": "workspace",
+                "workspace_id": "ws-target",
+            }
+        )
+        workspace_ids = tuple(
+            [f"ws-{index}" for index in range(1_200)]
+            + ["", "ws-target", "ws-target"]
+        )
+
+        where_clause, params = db._conversation_search_filter(
+            None,
+            scope_type="all",
+            workspace_ids=workspace_ids,
+        )
+
+        rows, total, _ = db.search_conversations_page(
+            None,
+            scope_type="all",
+            workspace_ids=workspace_ids,
+            limit=20,
+            offset=0,
+        )
+
+        assert "json_each(?)" in where_clause
+        assert len(params) == 1
+        assert [row["id"] for row in rows] == [target_id]
+        assert total == 1
+
+    def test_text_search_can_union_workspace_label_matches(self, db):
+        workspace_id = db.add_conversation(
+            {
+                "title": "Unrelated title",
+                "scope_type": "workspace",
+                "workspace_id": "ws-roleplay",
+            }
+        )
+        title_id = db.add_conversation({"title": "Roleplay Tavern checklist"})
+        db.add_conversation({"title": "Unrelated global"})
+
+        rows, total, _ = db.search_conversations_page(
+            "Roleplay Tavern",
+            scope_type="all",
+            query_workspace_ids=("ws-roleplay",),
+            limit=20,
+            offset=0,
+        )
+
+        assert {row["id"] for row in rows} == {workspace_id, title_id}
+        assert total == 2
+
     @pytest.mark.parametrize("mutation", ["insert", "delete"])
     def test_count_and_rows_share_one_wal_snapshot(self, tmp_path, mutation):
         counted = threading.Event()

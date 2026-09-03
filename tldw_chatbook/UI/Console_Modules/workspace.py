@@ -2802,24 +2802,56 @@ class ConsoleWorkspaceController:
             return ConsoleSwitcherHistoryPage(
                 (), bounded_offset, bounded_limit, 0, "History is unavailable."
             )
+        labels = self._console_browser_workspace_labels()
+        consumed_text_indexes: set[int] = set()
+        workspace_terms: list[str] = []
+        for index, term in enumerate(query_plan.ordered_terms):
+            if term.kind != "workspace":
+                continue
+            phrase_terms = [term.value]
+            following_index = index + 1
+            while (
+                following_index < len(query_plan.ordered_terms)
+                and query_plan.ordered_terms[following_index].kind == "text"
+            ):
+                following_term = query_plan.ordered_terms[following_index].value
+                extended_terms = (*phrase_terms, following_term)
+                if not any(
+                    all(
+                        value.casefold() in str(label or "").casefold()
+                        for value in extended_terms
+                    )
+                    for label in labels.values()
+                ):
+                    break
+                phrase_terms.append(following_term)
+                consumed_text_indexes.add(following_index)
+                following_index += 1
+            workspace_terms.extend(phrase_terms)
+        text_terms = [
+            term.value
+            for index, term in enumerate(query_plan.ordered_terms)
+            if term.kind == "text" and index not in consumed_text_indexes
+        ]
+
+        text_query = " ".join(text_terms)
         kwargs: dict[str, Any] = {
-            "query": query_plan.text_query,
+            "query": text_query,
             "scope_type": "all",
             "limit": bounded_limit,
             "offset": bounded_offset,
         }
-        if query_plan.workspace_terms:
-            labels = self._console_browser_workspace_labels()
+        if workspace_terms:
             workspace_ids = tuple(
                 workspace_id
                 for workspace_id, label in labels.items()
                 if all(
                     term in str(label or "").casefold()
-                    for term in query_plan.workspace_terms
+                    for term in (item.casefold() for item in workspace_terms)
                 )
             )
             include_global_scope = all(
-                term in "chats" for term in query_plan.workspace_terms
+                term.casefold() in "chats" for term in workspace_terms
             )
             if not workspace_ids and not include_global_scope:
                 return ConsoleSwitcherHistoryPage((), bounded_offset, bounded_limit, 0)
@@ -2827,6 +2859,22 @@ class ConsoleWorkspaceController:
                 kwargs["workspace_ids"] = workspace_ids
             if include_global_scope:
                 kwargs["include_global_scope"] = True
+        if text_terms:
+            query_workspace_ids = tuple(
+                workspace_id
+                for workspace_id, label in labels.items()
+                if all(
+                    term.casefold() in str(label or "").casefold()
+                    for term in text_terms
+                )
+            )
+            query_include_global_scope = all(
+                term.casefold() in "chats" for term in text_terms
+            )
+            if query_workspace_ids:
+                kwargs["query_workspace_ids"] = query_workspace_ids
+            if query_include_global_scope:
+                kwargs["query_include_global_scope"] = True
         if include_mode:
             kwargs["mode"] = "local"
         try:
