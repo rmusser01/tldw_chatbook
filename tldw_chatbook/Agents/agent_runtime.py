@@ -35,9 +35,11 @@ from tldw_chatbook.model_capabilities import (
 # a string annotation on `LoopDeps.fallback`.
 from .agent_models import (
     CHECK_AGENTS_TOOL_NAME,
+    DISCARD_AGENT_WORKTREE_TOOL_NAME,
     FENCE_TOOL_RESULT_PREFIX,
     FIND_TOOLS_NAME,
     INSTALL_SKILL_TOOL_NAME,
+    MERGE_AGENT_WORKTREE_TOOL_NAME,
     PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
     LOAD_TOOLS_NAME,
     LOOP_DETECTION_N,
@@ -512,6 +514,18 @@ class LoopDeps:
     # child of this run"; `check_agents` takes nothing.
     wait_agents: Callable[[list[str] | None], ToolResult] | None = None
     check_agents: Callable[[], ToolResult] | None = None
+    # merge_agent_worktree / discard_agent_worktree: TASK-28238 phase 2
+    # Task 5, the headless half of landing/discarding a worktree-isolated
+    # child's work (Task 4's `isolation="worktree"` spawn). Wired under
+    # the SAME `fleet_active` predicate as wait_agents/check_agents above
+    # (a worktree only ever exists for a fleet-launched child) and
+    # dispatched IN-LOOP beside them for the identical reason: both
+    # closures gate on a user confirm callable and (for merge) run git,
+    # neither of which belongs behind invoke_tool's per-call daemon-thread
+    # timeout wrapper. `None` (the default) means the run is not wired for
+    # them and a call by either name falls through to deps.invoke_tool.
+    merge_agent_worktree: Callable[[str, str], ToolResult] | None = None
+    discard_agent_worktree: Callable[[str], ToolResult] | None = None
     # send_to_agent: fleet steering, the SUPERVISOR producer (PR3b Task 2,
     # spec SS6) for the per-child mailbox drain_mailbox below consumes.
     # Wired under the exact `fleet_active` predicate as the two fields
@@ -2409,6 +2423,24 @@ def run_agent_loop(
                         )
                     else:
                         result = deps.send_to_agent(target, message)
+                elif (
+                    call.name == MERGE_AGENT_WORKTREE_TOOL_NAME
+                    and deps.merge_agent_worktree is not None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    raw_mode = call.args.get("mode")
+                    mode = str(raw_mode) if raw_mode else "apply"
+                    result = deps.merge_agent_worktree(
+                        str(call.args.get("handle_id", "")), mode
+                    )
+                elif (
+                    call.name == DISCARD_AGENT_WORKTREE_TOOL_NAME
+                    and deps.discard_agent_worktree is not None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    result = deps.discard_agent_worktree(
+                        str(call.args.get("handle_id", ""))
+                    )
                 elif call.name == FIND_TOOLS_NAME:
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     entries = deps.find_tools(str(call.args.get("query", "")))

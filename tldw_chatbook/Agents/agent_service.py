@@ -159,9 +159,11 @@ from .project_instruction_runtime import (
 )
 from .tool_catalog import (
     CHECK_AGENTS_SCHEMA,
+    DISCARD_AGENT_WORKTREE_SCHEMA,
     FIND_TOOLS_SCHEMA,
     build_find_tools_schema,
     INSTALL_SKILL_TOOL_SCHEMA,
+    MERGE_AGENT_WORKTREE_SCHEMA,
     PREPARE_MANAGED_SKILL_PROMOTION_TOOL_SCHEMA,
     LOAD_TOOLS_SCHEMA,
     RUN_LOG_SLICE_TOOL_SCHEMA,
@@ -700,7 +702,16 @@ def build_first_request_schema_plan(
             runtime.append(build_spawn_schema(agent_definitions or ()))
         if fleet_active and agent_kind == AGENT_KIND_PRIMARY:
             runtime.extend(
-                (WAIT_AGENTS_SCHEMA, CHECK_AGENTS_SCHEMA, SEND_TO_AGENT_SCHEMA)
+                (
+                    WAIT_AGENTS_SCHEMA,
+                    CHECK_AGENTS_SCHEMA,
+                    SEND_TO_AGENT_SCHEMA,
+                    # TASK-28238 phase 2 Task 5: merge/discard for a
+                    # worktree-isolated child, pinned under the identical
+                    # predicate as the three fleet schemas above.
+                    MERGE_AGENT_WORKTREE_SCHEMA,
+                    DISCARD_AGENT_WORKTREE_SCHEMA,
+                )
             )
         if offer_find_load:
             # TASK-26007: the deferred surface NAMES what exists -- the
@@ -4112,6 +4123,14 @@ class AgentService:
         continuation_owner_key: str | None = None,
         chain_id: str = "primary",
         first_request_schema_plan: FirstRequestSchemaPlan | None = None,
+        # TASK-28238 phase 2 Task 5: the run-entry approval surface for
+        # merge_agent_worktree/discard_agent_worktree. Only ever meaningful
+        # for the PRIMARY call (run_turn passes it through; child calls at
+        # `_launch_fleet_child`/inline-spawn never do -- a depth-1 child
+        # has no worktree tools wired regardless, see `fleet_active`).
+        # `None` (the default) means both tools fail closed with "no
+        # approval surface is available in this session".
+        request_worktree_merge_confirm: "Callable[[dict], dict] | None" = None,
     ) -> tuple[str, RunOutcome]:
         # PR3a-1 Task 3 -- THE WRITER THIS RUN RECORDS THROUGH, resolved
         # ONCE, here, and closed over by every log closure below instead of
@@ -5435,6 +5454,128 @@ class AgentService:
                 )
                 lines.extend(_line(handle) for handle in others)
             return ToolResult(ok=True, content="\n".join(lines))
+
+        # TASK-28238 phase 2 Task 5: merge_agent_worktree/
+        # discard_agent_worktree, the headless half of landing/discarding
+        # a worktree-isolated child's work (Task 4's spawn_subagent
+        # isolation="worktree"). Both fail closed: unknown handle, a
+        # still-running child, or no confirm surface all refuse before
+        # touching anything; a user denial refuses too. Resolved ONCE
+        # here (mirroring `_admit_agent_worktree`'s own resolution) rather
+        # than per call -- the local provider's workspace root does not
+        # change mid-run.
+        from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+
+        _worktree_owner = self.registry.resolve_owner_for_name("fs_read")
+        _worktree_provider = _worktree_owner[1] if _worktree_owner is not None else None
+        worktree_repo_root = (
+            _worktree_provider.workspace_root
+            if isinstance(_worktree_provider, LocalToolProvider)
+            else None
+        )
+
+        def _worktree_handle_terminal(handle_id: str) -> bool:
+            handle = fleet.get(handle_id) if fleet is not None else None
+            return handle is not None and handle.status in TERMINAL_RUN_STATUSES
+
+        def merge_agent_worktree_tool(handle_id: str, mode: str = "apply") -> ToolResult:
+            wt = self._agent_worktrees.get(str(handle_id))
+            if wt is None:
+                return ToolResult(
+                    ok=False, error=f"no agent worktree for handle {handle_id!r}"
+                )
+            if not _worktree_handle_terminal(str(handle_id)):
+                return ToolResult(
+                    ok=False,
+                    error="child is still running; wait for it to finish before merging",
+                )
+            if request_worktree_merge_confirm is None:
+                return ToolResult(
+                    ok=False,
+                    error=(
+                        "merge requires user confirmation, and no approval "
+                        "surface is available in this session"
+                    ),
+                )
+            if worktree_repo_root is None:
+                return ToolResult(
+                    ok=False,
+                    error="no local filesystem provider is reachable for this run",
+                )
+            # Preview only -- never mutate before the user consents.
+            decision = request_worktree_merge_confirm(
+                {
+                    "handle_id": handle_id,
+                    "mode": mode,
+                    "branch": wt.branch,
+                    "worktree": str(wt.worktree_path),
+                }
+            )
+            # ponytail: decision contract is {"allow": bool} pending Task
+            # 6's real confirm-card shape; reconcile there if it differs.
+            if not decision.get("allow", False):
+                return ToolResult(ok=False, error="The user declined the worktree merge.")
+            from tldw_chatbook.Agents.agent_worktree import merge_agent_worktree_changes
+
+            outcome = merge_agent_worktree_changes(worktree_repo_root, wt, mode=mode)
+            if hasattr(outcome, "reason_code"):
+                return ToolResult(ok=False, error=f"[{outcome.reason_code}] {outcome.message}")
+            landed = (
+                "as UNCOMMITTED changes (review and commit them)"
+                if outcome.commit_sha is None
+                else f"as merge commit {outcome.commit_sha[:9]}"
+            )
+            return ToolResult(
+                ok=True, content=f"Merged agent worktree {landed}.\n{outcome.diffstat}"
+            )
+
+        def discard_agent_worktree_tool(handle_id: str) -> ToolResult:
+            wt = self._agent_worktrees.get(str(handle_id))
+            if wt is None:
+                return ToolResult(
+                    ok=False, error=f"no agent worktree for handle {handle_id!r}"
+                )
+            if not _worktree_handle_terminal(str(handle_id)):
+                return ToolResult(
+                    ok=False,
+                    error="child is still running; wait for it to finish before discarding",
+                )
+            # Discard destroys the child's work -- same confirm gate as
+            # merge, never optional.
+            if request_worktree_merge_confirm is None:
+                return ToolResult(
+                    ok=False,
+                    error=(
+                        "discard requires user confirmation, and no approval "
+                        "surface is available in this session"
+                    ),
+                )
+            if worktree_repo_root is None:
+                return ToolResult(
+                    ok=False,
+                    error="no local filesystem provider is reachable for this run",
+                )
+            decision = request_worktree_merge_confirm(
+                {
+                    "handle_id": handle_id,
+                    "action": "discard",
+                    "branch": wt.branch,
+                    "worktree": str(wt.worktree_path),
+                }
+            )
+            if not decision.get("allow", False):
+                return ToolResult(
+                    ok=False, error="The user declined discarding the worktree."
+                )
+            from tldw_chatbook.Agents import agent_worktree as _agent_worktree_mod
+
+            refusal = _agent_worktree_mod.discard_agent_worktree(worktree_repo_root, wt)
+            if refusal is not None:
+                return ToolResult(ok=False, error=f"[{refusal.reason_code}] {refusal.message}")
+            del self._agent_worktrees[str(handle_id)]
+            return ToolResult(
+                ok=True, content=f"Discarded agent worktree on branch {wt.branch}."
+            )
 
         def _resume_retained_child(
             retained, steer_text: str, spawn_step_index: int | None
@@ -6785,6 +6926,11 @@ class AgentService:
             # one it was not told about).
             wait_agents=wait_agents if fleet_active else None,
             check_agents=check_agents if fleet_active else None,
+            # TASK-28238 phase 2 Task 5: merge/discard for a worktree-
+            # isolated child, wired under the identical predicate -- a
+            # worktree only ever exists for a fleet-launched child.
+            merge_agent_worktree=merge_agent_worktree_tool if fleet_active else None,
+            discard_agent_worktree=discard_agent_worktree_tool if fleet_active else None,
             # PR3b Task 2: the steering producer, under the same predicate.
             send_to_agent=send_to_agent if fleet_active else None,
             send_to_agent_at_step=(
@@ -6957,6 +7103,7 @@ class AgentService:
         continuation_target: ContinuationRestoreTarget | None = None,
         continuation_owner_key: str | None = None,
         first_request_schema_plan: FirstRequestSchemaPlan | None = None,
+        request_worktree_merge_confirm: "Callable[[dict], dict] | None" = None,
     ) -> tuple[str, RunOutcome]:
         """Run one primary-agent turn (and any sub-agents it spawns).
 
@@ -7008,6 +7155,14 @@ class AgentService:
             first_request_schema_plan: Frozen, exact-message schema-disclosure
                 decision prepared by the Console bridge. When omitted, the
                 service computes the same plan from ``messages`` and ``config``.
+            request_worktree_merge_confirm: TASK-28238 phase 2 Task 5 --
+                the approval surface merge_agent_worktree/
+                discard_agent_worktree call before mutating anything.
+                Takes a dict describing the proposed action (handle id,
+                mode, branch, worktree path) and returns a decision dict;
+                ``{"allow": True}`` proceeds, anything else refuses.
+                ``None`` (the default) means neither tool has an approval
+                surface in this session, so both fail closed.
 
         Returns:
             A ``(run_id, outcome)`` tuple: the new primary run's id and its
@@ -7201,6 +7356,7 @@ class AgentService:
             continuation_owner_key=continuation_owner_key,
             chain_id="primary",
             first_request_schema_plan=first_request_schema_plan,
+            request_worktree_merge_confirm=request_worktree_merge_confirm,
         )
         # Settle the children that must not outlive this turn. Must happen
         # BEFORE the manifest is written and the writer closed below: a
