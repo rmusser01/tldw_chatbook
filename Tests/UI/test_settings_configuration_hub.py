@@ -1,6 +1,7 @@
 import asyncio
 import threading
 import inspect
+import logging
 import re
 import time
 import builtins
@@ -7516,6 +7517,78 @@ async def test_conversation_settings_return_save_shows_typed_continuation(
         assert returned is not None
         assert returned.outcome is expected_outcome
         assert returned.session_id == intent.session_id
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_keeps_mounted_credential_out_of_transfer_surfaces(
+    monkeypatch,
+    caplog: pytest.LogCaptureFixture,
+):
+    """The Settings-owned masked key never enters return UI or coordination data."""
+    credential = "TASK30010-mounted-api-key-sentinel-7ce14b"
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    intent, target = _stage_conversation_settings_return_intent(app)
+    mutations = _capture_provider_settings_mutations(monkeypatch)
+    host = ConversationReturnSettingsHarness(app)
+
+    from loguru import logger as loguru_logger
+
+    caplog.set_level(logging.DEBUG)
+    loguru_messages: list[str] = []
+    sink_id = loguru_logger.add(
+        lambda message: loguru_messages.append(str(message)),
+        level="DEBUG",
+    )
+    try:
+        async with host.run_test(size=(180, 50)) as pilot:
+            await _settle_settings_mount_storm(pilot)
+            screen = _active_destination_screen(host)
+            incoming_context = target.to_context()
+            screen.apply_navigation_context(incoming_context)
+            await _wait_for_selector(screen, pilot, "#settings-provider-api-key")
+
+            api_key = screen.query_one("#settings-provider-api-key", Input)
+            assert api_key.password is True
+            api_key.value = credential
+            screen.handle_provider_api_key_changed(Input.Changed(api_key, credential))
+            await pilot.pause()
+
+            rendered_output = _visible_text(screen) + " " + str(api_key.render())
+            assert credential not in rendered_output
+
+            claim = app.pending_handoffs.claim(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN
+            )
+            assert claim is not None
+            assert credential not in repr(claim)
+            assert credential not in repr(claim.value)
+            assert credential not in repr(claim.value.to_context())
+            assert app.pending_handoffs.release(claim) is True
+
+            screen.action_settings_save_category(allow_text_entry_focus=True)
+            await pilot.pause()
+            assert mutations
+            assert mutations[-1][0]["api_settings.openai"]["api_key"] == credential
+
+            continuation = screen.save_state()["provider_return_continuation"]
+            assert credential not in repr(continuation)
+            assert credential not in repr(incoming_context)
+
+            screen.query_one("#settings-provider-return", Button).press()
+            await pilot.pause()
+            return_context = host.navigation_messages[0].screen_context
+            assert credential not in repr(return_context)
+            returned = ConsoleSettingsReturnTarget.from_context(return_context)
+            assert returned is not None
+            assert returned.session_id == intent.session_id
+    finally:
+        loguru_logger.remove(sink_id)
+
+    captured_diagnostics = caplog.text + "".join(loguru_messages)
+    assert credential not in captured_diagnostics
 
 
 @pytest.mark.asyncio

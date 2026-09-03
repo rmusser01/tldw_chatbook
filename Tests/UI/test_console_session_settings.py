@@ -1,5 +1,6 @@
 import asyncio
 import gc
+import logging
 import threading
 import weakref
 from copy import deepcopy
@@ -69,6 +70,7 @@ from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
     ChatScreen,
 )
+from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.Widgets.Console import (
     console_settings_summary as settings_summary_module,
 )
@@ -533,14 +535,18 @@ def test_credential_request_rejects_values_the_navigation_target_would_reject() 
         )
 
 
-def test_credential_request_stages_only_a_secret_free_return_and_navigation_context() -> None:
+def test_credential_request_stages_only_a_secret_free_return_and_navigation_context(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """A credential deep link keeps Console-owned draft content off the route."""
+    system_prompt = "TASK30010-private-system-prompt"
+    pinned_prefill = "TASK30010-private-pinned-prefill"
     settings = ConsoleSessionSettings(
         provider="llama_cpp",
         model="model-a",
         base_url="http://127.0.0.1:9099",
-        system_prompt="private system text",
-        pinned_prefill="private prefill text",
+        system_prompt=system_prompt,
+        pinned_prefill=pinned_prefill,
     )
     snapshot = ConsoleSettingsDraftSnapshot(
         settings=settings,
@@ -570,14 +576,48 @@ def test_credential_request_stages_only_a_secret_free_return_and_navigation_cont
     screen.app_instance = SimpleNamespace(
         pending_handoffs=chat_screen_module.PendingHandoffStore(),
     )
+    screen._console_runtime_ref = SimpleNamespace(
+        chat_store=store,
+        set_chat_store=lambda value: setattr(
+            screen._console_runtime_ref, "chat_store", value
+        ),
+    )
     screen._ensure_console_chat_store = lambda: store
     screen.post_message = messages.append
 
-    ChatScreen._stage_console_settings_credential_request(
-        screen,
-        request,
-        session_id=session.id,
+    screen._session = SimpleNamespace(_console_visible_draft_session_id=None)
+    image_state = SimpleNamespace(
+        prune=lambda _ids: None,
+        serialize=lambda: {},
     )
+    screen._stash_console_pending_attachments = lambda _store: None
+    screen._console_visible_draft_session_id = None
+    screen._console_composer_or_none = lambda: None
+    screen._ensure_console_image_view = lambda: (image_state, SimpleNamespace())
+    screen._task_resume_state = TaskResumeState()
+    screen._console_library_rag_source_types = ("media", "notes", "conversations")
+    screen._pending_console_launch_context = None
+    screen._console_evidence_sent_notice = None
+    screen._message = SimpleNamespace()
+
+    from loguru import logger as loguru_logger
+
+    caplog.set_level(logging.DEBUG)
+    loguru_messages: list[str] = []
+    sink_id = loguru_logger.add(
+        lambda message: loguru_messages.append(str(message)),
+        level="DEBUG",
+    )
+
+    try:
+        ChatScreen._stage_console_settings_credential_request(
+            screen,
+            request,
+            session_id=session.id,
+        )
+        serialized_console = screen._serialize_native_console_state()
+    finally:
+        loguru_logger.remove(sink_id)
 
     assert screen._suspended_conversation_settings == snapshot
     assert store.session_settings(session.id) == settings
@@ -594,11 +634,13 @@ def test_credential_request_stages_only_a_secret_free_return_and_navigation_cont
     assert return_intent.settings_revision == 0
     assert return_intent.active_view == "model"
     assert return_intent.focus_control_id == "console-settings-model-picker"
-    assert "private system text" not in repr(return_intent)
-    assert "private prefill text" not in repr(return_intent)
+    assert system_prompt not in repr(return_intent)
+    assert pinned_prefill not in repr(return_intent)
+    assert system_prompt not in repr(return_intent.to_context())
+    assert pinned_prefill not in repr(return_intent.to_context())
     assert "127.0.0.1" not in repr(settings_navigation_context)
-    assert "private system text" not in repr(settings_navigation_context)
-    assert "private prefill text" not in repr(settings_navigation_context)
+    assert system_prompt not in repr(settings_navigation_context)
+    assert pinned_prefill not in repr(settings_navigation_context)
     assert settings_navigation_context == {
         "category": "providers-models",
         "provider": "llama_cpp",
@@ -606,6 +648,21 @@ def test_credential_request_stages_only_a_secret_free_return_and_navigation_cont
         "field": "api_key",
         "return_revision": claim.revision,
     }
+    assert serialized_console is not None
+    suspended = serialized_console["suspended_conversation_settings"]
+    assert suspended["settings"]["system_prompt"] == system_prompt
+    assert suspended["settings"]["pinned_prefill"] == pinned_prefill
+    assert "api_key" not in repr(serialized_console)
+    transfer_coordinates = {
+        key: value
+        for key, value in serialized_console.items()
+        if key != "suspended_conversation_settings"
+    }
+    assert system_prompt not in repr(transfer_coordinates)
+    assert pinned_prefill not in repr(transfer_coordinates)
+    captured_diagnostics = caplog.text + "".join(loguru_messages)
+    assert system_prompt not in captured_diagnostics
+    assert pinned_prefill not in captured_diagnostics
 
 
 def test_credential_route_staging_is_atomic_when_navigation_target_is_invalid(

@@ -113,6 +113,28 @@ def test_conversation_settings_return_handoff_replaces_and_detaches() -> None:
     assert claim.revision == 2
     assert claim.value == second
     assert claim.value is not second
+    assert tuple(item.name for item in fields(claim.value)) == (
+        "session_id",
+        "settings_revision",
+        "active_view",
+        "focus_control_id",
+    )
+    assert not hasattr(claim.value, "__dict__")
+    for private_field in (
+        "api_key",
+        "headers",
+        "base_url",
+        "system_prompt",
+        "pinned_prefill",
+        "transcript",
+    ):
+        assert not hasattr(claim.value, private_field)
+    assert claim.value.to_context() == {
+        "session_id": "session-2",
+        "settings_revision": 5,
+        "active_view": "context",
+        "focus_control_id": None,
+    }
     assert store.acknowledge(claim) is True
 
 
