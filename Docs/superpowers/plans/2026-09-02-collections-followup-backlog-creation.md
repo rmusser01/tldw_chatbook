@@ -6,7 +6,7 @@
 
 **Architecture:** The Server records own additive, versioned capability contracts; Chatbook records remain fail-closed and reference the exact Server task identities without cross-repository Backlog dependencies. A Chatbook tracking parent groups the three management workflows, while the legacy lifecycle remains a decision-only ADR task. Task IDs are allocated only after rebasing both filing branches on their latest `origin/dev` state.
 
-**Tech Stack:** Backlog.md CLI, Markdown, Git
+**Tech Stack:** Backlog MCP, Backlog.md CLI, Markdown, Git
 
 ---
 
@@ -14,7 +14,9 @@
 
 - Approved design: `Docs/superpowers/specs/2026-09-01-collections-followup-backlog-design.md`
 - Chatbook foundation: `TASK-18919` and `backlog/decisions/107-collections-capture-authority-and-legacy-boundary.md`
-- Filing rule: create every record with the Backlog.md CLI; do not edit generated task files manually.
+- Filing rule: use the official Backlog MCP for Server records whenever it is callable, with the
+  Backlog.md CLI only as the Server fallback. Use Chatbook's documented Backlog.md CLI workflow for
+  Chatbook records. Do not edit generated task files manually.
 
 ## Task 1: Freeze the reviewed design and refresh repository bases
 
@@ -33,7 +35,8 @@
 
 ## Backlog CLI 1.44 safe filing sequence
 
-Use this sequence for every Server and Chatbook record:
+Use this sequence for every Chatbook record and only as the Server fallback when Backlog MCP is not
+callable:
 
 1. Create the record without a priority. Pass labels exactly once as one comma-separated value,
    `-l "label-a,label-b,label-c"`, and pass only the first acceptance criterion with one `--ac`.
@@ -51,23 +54,28 @@ the read-back counts rather than by assuming how repeated CLI flags are parsed.
 
 **Files:**
 
-- Create through Backlog.md CLI: `tldw_server2/backlog/tasks/task-<allocated> - Add atomic revision-guarded hard delete for Reading items.md`
-- Create through Backlog.md CLI: `tldw_server2/backlog/tasks/task-<allocated> - Add coherent scoped tag and domain aggregates for Reading items.md`
-- Create through Backlog.md CLI: `tldw_server2/backlog/tasks/task-<allocated> - Establish safe Collections output-template ownership and deletion.md`
-- Create through Backlog.md CLI: `tldw_server2/backlog/tasks/task-<allocated> - Attest bounded Reading digest schedule and output management.md`
-- Create through Backlog.md CLI: `tldw_server2/backlog/tasks/task-<allocated> - Add complete restart-safe Reading export jobs.md`
-- Create through Backlog.md CLI: `tldw_server2/backlog/tasks/task-<allocated> - Add Server-native Reading export re-import.md`
+- Create through Backlog interface/MCP: `tldw_server2/backlog/tasks/task-<allocated> - Add atomic revision-guarded hard delete for Reading items.md`
+- Create through Backlog interface/MCP: `tldw_server2/backlog/tasks/task-<allocated> - Add coherent scoped tag and domain aggregates for Reading items.md`
+- Create through Backlog interface/MCP: `tldw_server2/backlog/tasks/task-<allocated> - Establish safe Collections output-template ownership and deletion.md`
+- Create through Backlog interface/MCP: `tldw_server2/backlog/tasks/task-<allocated> - Attest bounded Reading digest schedule and output management.md`
+- Create through Backlog interface/MCP: `tldw_server2/backlog/tasks/task-<allocated> - Add complete restart-safe Reading export jobs.md`
+- Create through Backlog interface/MCP: `tldw_server2/backlog/tasks/task-<allocated> - Add Server-native Reading export re-import.md`
 
-1. Check the available tools for the official Backlog MCP workflow required by the Server repository. If no dedicated Backlog MCP tool is callable, record that result and use the documented Backlog.md CLI fallback.
+1. Use the official Backlog MCP `task_create`, `task_edit`, and `task_view` tools when callable. If
+   those tools are unavailable at execution time, record that result and use the documented
+   Backlog.md CLI fallback only for Server filing.
 2. Create S1 through S5b in the design's order with status `To Do`, the corresponding description,
-   and exact labels from the filing table, following the safe filing sequence above: no priority on
-   create, one comma-separated `-l` value, and only the first acceptance criterion on create.
-3. Set each priority with a separate `backlog task edit <id> --priority <level>` command and append
-   one remaining criterion per `backlog task edit <id> --ac <criterion>` call. Read back and verify
-   the exact criterion counts: S1=6, S2=5, S3=5, S4=6, S5a=6, and S5b=6.
+   and exact priority and labels from the filing table through the selected Server interface.
+3. With Backlog MCP, pass the acceptance criteria as an array and read every record back with
+   `task_view` to verify exact counts. Only for the CLI fallback, use the safe sequence above: omit
+   priority on create, pass labels once as one comma-separated `-l` value, include only the first
+   criterion on create, set priority separately, and append one criterion per edit. Verify counts
+   are S1=6, S2=5, S3=5, S4=6, S5a=6, and S5b=6.
 4. Add stable textual references to `tldw_chatbook:TASK-18919` and the Chatbook design path in each description.
-5. Capture each CLI-assigned task ID immediately; make S5b depend on the actual S5a ID and do not add dependencies among the other Server tasks.
-6. Inspect every generated record with `backlog task <id> --plain`; verify title, description, acceptance criteria, labels, priority, status, and dependency.
+5. Capture each interface-assigned task ID immediately; make S5b depend on the actual S5a ID and do not add dependencies among the other Server tasks.
+6. Inspect every generated record with Backlog MCP `task_view`, or with
+   `backlog task <id> --plain` after a CLI fallback; verify title, description, acceptance criteria,
+   labels, priority, status, and dependency.
 7. Repeat the all-remote-ref/all-worktree occupied-ID and normalized-title census. If any provisional ID or title collides, renumber/recreate it before commit using the repository's documented owner rule.
 8. Run the repository's task-ID/metadata checks when present, run `git diff --check`, inspect the complete Server diff, and commit only the six generated records and any Backlog CLI index metadata.
 
@@ -103,7 +111,9 @@ the read-back counts rather than by assuming how repeated CLI flags are parsed.
 
 ## Task 4: Cross-repository closeout verification
 
-1. Re-read all thirteen records from the CLI and compare them against the approved design's filing table and acceptance criteria.
+1. Re-read the six Server records with Backlog MCP `task_view` when MCP was used, or the CLI plain
+   view after a fallback, and re-read the seven Chatbook records with `backlog task <id> --plain`.
+   Compare all thirteen against the approved design's filing table and acceptance criteria.
 2. Verify every Chatbook capability task names the correct allocated Server task, S5b depends only on S5a, the three C3 children have the correct parent, and no record references an uncreated future ID.
 3. Repeat the occupied-ID and normalized-title census against every current remote ref and registered worktree in both repositories. Record that the IDs remain provisional until this same check is run immediately before merge.
 4. Confirm both worktrees are clean after their commits and report the two branch names, thirteen task IDs/titles, dependency graph, and any intentionally deferred implementation planning.
@@ -113,7 +123,9 @@ the read-back counts rather than by assuming how repeated CLI flags are parsed.
 
 - `git diff --check` passes in both filing worktrees before commit.
 - Repository-provided Backlog duplicate-ID/metadata checks pass where available, and the broader remote-ref/worktree census finds no conflicting provisional ID or normalized title.
-- `backlog task <id> --plain` shows all thirteen tasks as `To Do`, unassigned, and without implementation plans.
+- Backlog MCP `task_view` (or CLI plain view after a Server fallback) shows the six Server records,
+  and `backlog task <id> --plain` shows the seven Chatbook records, as `To Do`, unassigned, and
+  without implementation plans.
 - The Server branch contains exactly six new capability task records; the Chatbook branch contains exactly seven new follow-up records plus the reviewed design and this plan.
 
 ## ADR check
