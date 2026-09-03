@@ -404,7 +404,7 @@ class DefinitionDetail(Vertical):
     the DB-derived counts/last-run already fetched off the event loop.
     """
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
         self._question_static: Static | None = None
         self._runs_on_row: DetailValueRow | None = None
@@ -421,6 +421,11 @@ class DefinitionDetail(Vertical):
         self._unread_row: DetailValueRow | None = None
 
     def compose(self) -> ComposeResult:
+        """Compose the empty pane skeleton (populated by `set_definition`).
+
+        Returns:
+            The static children; value rows are mounted per definition.
+        """
         yield Static(
             "Definition Detail",
             id="scheduling-automation-detail-header",
@@ -530,6 +535,15 @@ class DefinitionDetail(Vertical):
         no I/O of its own. `history_error` says that fetch FAILED, so the
         History rows say so rather than painting a zero the read never
         proved (final review F14).
+
+        Args:
+            definition: The definition row dict, or ``None`` for the empty
+                state.
+            run_count: Pre-fetched local run count for the History group.
+            last_run: Pre-fetched most-recent local run row, if any.
+            unread_count: Pre-fetched unread-results count.
+            history_error: True when the history fetch failed -- the rows
+                render "couldn't load" copy instead of unproven zeros.
         """
         empty_state = self.query_one(
             "#scheduling-automation-detail-empty-state", Static

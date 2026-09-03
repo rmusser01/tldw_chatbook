@@ -54,6 +54,7 @@ from __future__ import annotations
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.widget import Widget
 from textual.widgets import Collapsible, Static
 
 
@@ -174,5 +175,5 @@ class DetailGroup(Collapsible):
     way).
     """
 
-    def __init__(self, *children, title: str, collapsed: bool = False, **kwargs) -> None:
+    def __init__(self, *children: Widget, title: str, collapsed: bool = False, **kwargs: object) -> None:
         super().__init__(*children, title=title, collapsed=collapsed, **kwargs)
