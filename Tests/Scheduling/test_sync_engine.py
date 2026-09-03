@@ -1680,6 +1680,55 @@ async def test_sync_now_replays_definition_archive(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_sync_now_pull_skips_stale_lifecycle_echo_pushed_same_cycle(tmp_path):
+    """PR-3 task 2, guard layer 2 end-to-end: the definitions push phase
+    (which replays the pending `pause`) runs, then deletes the mutation,
+    BEFORE the definitions pull phase runs in the same `sync_now` call.
+    If the pull's page still echoes the pre-pause lifecycle (server
+    write/read-path lag), guard 1 alone can't see it -- the mutation is
+    already gone. `skip_lifecycle_server_ids`, threaded from the push
+    phase's return value, is what stops the pull from reverting the
+    pause that was just pushed THIS cycle."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Daily digest", server_id="srv-def-1"
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {"action": "pause", "server_definition_id": "srv-def-1"},
+    )
+    server_client = _empty_reminders_client()
+    server_client.pause_automation_definition.return_value = {
+        "id": "srv-def-1",
+        "family": "recurring_question",
+        "name": "Daily digest",
+        "lifecycle": "paused",
+    }
+    # The same cycle's definitions-list page still echoes the PRE-pause
+    # state.
+    server_client.list_automation_definitions.return_value = _definition_page(
+        [
+            {
+                "id": "srv-def-1",
+                "family": "recurring_question",
+                "name": "Daily digest (renamed)",
+                "lifecycle": "configured",
+            }
+        ]
+    )
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    row = db.get_automation_definition(local_id)
+    assert row["lifecycle"] == "paused"  # not reverted by the same-cycle stale echo
+    assert row["name"] == "Daily digest (renamed)"  # every other field still server-wins
+
+
+@pytest.mark.asyncio
 async def test_sync_now_definition_lifecycle_not_found_clears_without_sync_error(
     tmp_path, captured_logs
 ):

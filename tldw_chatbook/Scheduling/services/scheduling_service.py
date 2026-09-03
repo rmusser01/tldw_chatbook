@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 
 from croniter import croniter
 from loguru import logger
+from pydantic import ValidationError
 
 # ADR-097 boot ratchet: automation_health loads on first use. A thin module-
 # level proxy (not a plain deferred import) keeps `compute_local_health`
@@ -198,6 +199,32 @@ class ResolveOutcome:
 
     status: str
     reason: str | None = None
+
+
+@dataclass(slots=True)
+class ReminderEditOutcome:
+    """Result of `SchedulingService.edit_reminder_fields` (PR-3 task 3's
+    reminder row editors).
+
+    Gives the reminder side the same ``{field, code, message}`` validation
+    surface `save_definition` already gives the definition side (survey
+    §2's asymmetry: `update_reminder` alone raises a bare, uncaught
+    `pydantic.ValidationError` on a bad schedule/timezone value and
+    returns `None` -- with no per-field detail -- on a locked row).
+
+    Attributes:
+        status: ``"saved"`` (persisted, via `update_reminder`) or
+            ``"error"`` (nothing written -- an unknown row, a locked
+            row, or a validation failure).
+        errors: Field-addressed validation errors (``{"field", "code",
+            "message"}``), populated for ``"error"``. A locked or unknown
+            row addresses the pseudo-field ``"_row"``.
+        task: The updated `ReminderTask`, populated only for ``"saved"``.
+    """
+
+    status: str
+    errors: list[dict[str, Any]] = _dataclass_field(default_factory=list)
+    task: ReminderTask | None = None
 
 
 def _seam_failure_warning(exc: Exception) -> dict[str, str]:
@@ -581,6 +608,144 @@ class SchedulingService:
         row = self.db.get_reminder_task(task_id)
         assert row is not None
         return self._row_to_reminder(row)
+
+    async def edit_reminder_fields(
+        self, task_id: str, payload: dict[str, Any]
+    ) -> ReminderEditOutcome:
+        """Validate and persist a single-row reminder edit (PR-3 task 3).
+
+        Wraps `update_reminder` with the create form's own schedule
+        validators (`ReminderForm`'s `parse_forgiving_datetime`/
+        `_is_valid_zone`, plus `croniter.is_valid` for cron) -- reused
+        rather than re-derived, so a Repeat/At/Timezone row editor gets
+        the same forgiving-local-datetime and known-zone behavior the
+        create form gives, and the same errors when it doesn't parse.
+        `update_reminder` alone does none of this: an invalid `cron`/
+        `timezone` would silently persist (the `ReminderTask` model
+        never validates their contents), and an invalid `run_at`/
+        `schedule_kind` combination raises a bare `pydantic.
+        ValidationError` with no field-addressed detail for a row editor
+        to render.
+
+        Args:
+            task_id: The local reminder row to update.
+            payload: The one or few fields the row editor is changing --
+                same partial shape `update_reminder` already accepts.
+
+        Returns:
+            A `ReminderEditOutcome`. ``status="error"`` covers: an
+            unknown ``task_id``, a locked (in-transfer) row (`errors`
+            addresses the pseudo-field ``"_row"``, per
+            `transfer_lock_reason`), or a bad schedule/timezone value
+            (`errors` addresses the offending field). ``status="saved"``
+            means `update_reminder` was called -- threading the ROW's
+            OWN owner, not `self.owner_id` (PR-2's Queue lists reminders
+            across owners, so the row under a cursor is not necessarily
+            the service's active owner -- same rationale as
+            `delete_reminder`'s) -- and returned the updated task.
+        """
+        from tldw_chatbook.Scheduling.automation_validation import field_error
+
+        row = self.db.get_reminder_task(task_id)
+        if row is None:
+            return ReminderEditOutcome(
+                status="error",
+                errors=[field_error("_row", "not_found", f"Reminder {task_id} was not found.")],
+            )
+
+        locked = self.transfer_lock_reason(row)
+        if locked is not None:
+            return ReminderEditOutcome(
+                status="error",
+                errors=[field_error("_row", "transfer_in_progress", locked)],
+            )
+
+        # Deferred (ADR-097 boot ratchet): `ReminderForm` pulls in the
+        # whole Textual widget stack at module import time. By the time a
+        # row edit reaches this method the UI is already running and
+        # Textual is already loaded, so this costs nothing here -- it
+        # would cost boot time if hoisted to module level, same reasoning
+        # as the `automation_validation`/`automation_preview` imports
+        # elsewhere in this file.
+        from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import (
+            _is_valid_zone,
+            parse_forgiving_datetime,
+        )
+
+        errors: list[dict[str, Any]] = []
+        cleaned = dict(payload)
+        if "run_at" in cleaned and isinstance(cleaned["run_at"], str):
+            parsed, _assumed_local = parse_forgiving_datetime(cleaned["run_at"])
+            if parsed is None:
+                errors.append(
+                    field_error(
+                        "run_at",
+                        "invalid_datetime",
+                        "Run At must be a date and time like 2026-08-28 09:00.",
+                    )
+                )
+            else:
+                cleaned["run_at"] = parsed
+        if "cron" in cleaned and cleaned["cron"] is not None:
+            if not croniter.is_valid(cleaned["cron"]):
+                errors.append(
+                    field_error("cron", "invalid_cron", "Cron expression is invalid.")
+                )
+        if "timezone" in cleaned and cleaned["timezone"] is not None:
+            new_zone = cleaned["timezone"]
+            # Same stored-zone round-trip carve-out as the create form
+            # (reminder_form.py's `_save`): a zone already on the row must
+            # keep validating even if this machine's tzdata can't resolve
+            # it -- only a genuinely NEW zone value is checked.
+            if new_zone != row.get("timezone") and not _is_valid_zone(new_zone):
+                errors.append(
+                    field_error(
+                        "timezone", "invalid_timezone", f"Unknown timezone: {new_zone}"
+                    )
+                )
+
+        if errors:
+            return ReminderEditOutcome(status="error", errors=errors)
+
+        try:
+            task = await self.update_reminder(
+                task_id, cleaned, owner_id=row.get("owner_id")
+            )
+        except ValidationError as exc:
+            # Belt-and-suspenders: a schedule_kind/run_at/cron combination
+            # the checks above don't cover (e.g. a one_time edit that
+            # leaves run_at unset) still routes through `ReminderTask`'s
+            # own model validation inside `update_reminder` -- catch that
+            # surface here too so it never escapes as a raw exception.
+            return ReminderEditOutcome(
+                status="error",
+                errors=[
+                    field_error(
+                        ".".join(str(part) for part in err["loc"]) or "_row",
+                        str(err["type"]),
+                        str(err["msg"]),
+                    )
+                    for err in exc.errors()
+                ],
+            )
+
+        if task is None:
+            # `update_reminder` refuses (returns None) if the row was
+            # deleted or newly locked between the check above and this
+            # call -- a narrow race, not a validation failure.
+            return ReminderEditOutcome(
+                status="error",
+                errors=[
+                    field_error(
+                        "_row",
+                        "update_refused",
+                        "This reminder could not be updated -- it may have "
+                        "just been deleted or locked by a transfer.",
+                    )
+                ],
+            )
+
+        return ReminderEditOutcome(status="saved", task=task)
 
     async def delete_reminder(
         self, task_id: str, *, owner_id: str | None = None

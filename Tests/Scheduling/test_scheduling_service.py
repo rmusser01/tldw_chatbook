@@ -2939,6 +2939,150 @@ async def test_update_reminder_refused_while_transferring(db):
     assert db.get_reminder_task(reminder_id)["title"] == "Original"
 
 
+# ----------------------------------------------------------------------
+# edit_reminder_fields (redesign PR-3 task 2's reminder validation bridge)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_fields_invalid_cron_returns_field_error(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    reminder_id = _make_reminder(
+        db, schedule_kind="recurring", run_at=None, cron="0 9 * * *", timezone="UTC"
+    )
+
+    outcome = await svc.edit_reminder_fields(reminder_id, {"cron": "not a cron"})
+
+    assert outcome.status == "error"
+    assert outcome.errors == [
+        {
+            "field": "cron",
+            "code": "invalid_cron",
+            "message": "Cron expression is invalid.",
+        }
+    ]
+    assert db.get_reminder_task(reminder_id)["cron"] == "0 9 * * *"
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_fields_invalid_timezone_returns_field_error(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    reminder_id = _make_reminder(
+        db, schedule_kind="recurring", run_at=None, cron="0 9 * * *", timezone="UTC"
+    )
+
+    outcome = await svc.edit_reminder_fields(
+        reminder_id, {"timezone": "Not/A_Real_Zone"}
+    )
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["field"] == "timezone"
+    assert outcome.errors[0]["code"] == "invalid_timezone"
+    assert db.get_reminder_task(reminder_id)["timezone"] == "UTC"
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_fields_invalid_run_at_returns_field_error(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    reminder_id = _make_reminder(db, schedule_kind="one_time", run_at="2030-01-01T00:00:00+00:00")
+
+    outcome = await svc.edit_reminder_fields(reminder_id, {"run_at": "not a date"})
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["field"] == "run_at"
+    assert outcome.errors[0]["code"] == "invalid_datetime"
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_fields_valid_run_at_accepts_forgiving_local_format(db):
+    """Reuses `reminder_form.parse_forgiving_datetime` -- a naive,
+    space-separated datetime (not full ISO-8601) must parse and persist,
+    same as the create form accepts."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    reminder_id = _make_reminder(db, schedule_kind="one_time", run_at="2030-01-01T00:00:00+00:00")
+
+    outcome = await svc.edit_reminder_fields(reminder_id, {"run_at": "2031-06-15 09:30"})
+
+    assert outcome.status == "saved"
+    assert outcome.task is not None
+    assert (outcome.task.run_at.year, outcome.task.run_at.month, outcome.task.run_at.day) == (
+        2031,
+        6,
+        15,
+    )
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_fields_bad_schedule_kind_returns_field_error_not_raw_exception(db):
+    """Belt-and-suspenders: a bad value the pre-checks above don't cover
+    (schedule_kind isn't cron/run_at/timezone) still routes through
+    `ReminderTask`'s own model validation inside `update_reminder` -- the
+    bridge must catch that `pydantic.ValidationError` and translate it,
+    never let it escape."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    reminder_id = _make_reminder(db)
+
+    outcome = await svc.edit_reminder_fields(reminder_id, {"schedule_kind": "bogus"})
+
+    assert outcome.status == "error"
+    assert outcome.errors
+    assert outcome.errors[0]["field"] == "schedule_kind"
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_fields_locked_row_returns_row_error(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    reminder_id = _make_reminder(db, title="Original")
+    db.set_transfer_state(
+        "reminder_task", reminder_id, "to_server_pending", expected=(None,)
+    )
+
+    outcome = await svc.edit_reminder_fields(reminder_id, {"title": "Edited"})
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["field"] == "_row"
+    assert outcome.errors[0]["code"] == "transfer_in_progress"
+    assert db.get_reminder_task(reminder_id)["title"] == "Original"
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_fields_unknown_task_id_returns_row_not_found(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    outcome = await svc.edit_reminder_fields("does-not-exist", {"title": "Edited"})
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["field"] == "_row"
+    assert outcome.errors[0]["code"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_fields_valid_edit_threads_the_rows_owner(db):
+    """PR-2 row-owner discipline: the row's OWN `owner_id` is threaded to
+    `update_reminder`, not the service's active `owner_id` -- the unified
+    list can show a row that belongs to a different owner than the
+    service's current one (same rationale as `delete_reminder`'s)."""
+    offline_client = AsyncMock()
+    offline_client.notifications_service = object()
+    offline_client.update_reminder.side_effect = ServerUnavailableError("offline")
+
+    svc = SchedulingService(db=db, server_client=offline_client, runtime_source="local")
+    reminder_id = _make_reminder(db, owner_id="server:1", server_id="srv-1")
+
+    outcome = await svc.edit_reminder_fields(reminder_id, {"title": "Renamed"})
+
+    assert outcome.status == "saved"
+    assert outcome.task is not None
+    assert outcome.task.title == "Renamed"
+    assert svc.owner_id == "local"  # never flipped
+    offline_client.update_reminder.assert_awaited_once()
+
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 1
+    assert pending[0]["payload"]["action"] == "update"
+    assert db.get_pending_mutations("local", primitive="reminder_task") == []
+
+
 @pytest.mark.asyncio
 async def test_delete_reminder_refused_while_transferring(db):
     """I7: deleting a dormant release copy discards the only row the

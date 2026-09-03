@@ -2662,6 +2662,22 @@ class ScheduledTasksDB(BaseDB):
     #: value -- see sync_engine.py's `_RESULT_REVIEW_PRIMITIVE`).
     _RESULT_REVIEW_PRIMITIVE = "automation_result_review"
 
+    #: Primitive name pending `automation_definition` mutations are
+    #: stored under -- matches `SchedulingService._DEFINITION_PRIMITIVE`/
+    #: `SyncEngine._DEFINITION_PRIMITIVE` (duplicated per-module, same
+    #: precedent as `_RESULT_REVIEW_PRIMITIVE` above). This ONE primitive
+    #: covers `save_definition`'s edit path, the transfer machine, AND
+    #: lifecycle mutations -- see `_DEFINITION_LIFECYCLE_ACTIONS` below
+    #: for how the lifecycle pull-guard tells them apart.
+    _DEFINITION_PRIMITIVE = "automation_definition"
+
+    #: `payload["action"]` values that identify a pending
+    #: `automation_definition` mutation as a LIFECYCLE change specifically
+    #: (as opposed to an edit or transfer mutation sharing the same
+    #: primitive) -- matches `SchedulingService._LIFECYCLE_ACTIONS`'s keys
+    #: and the verbs `SyncEngine._push_definition_lifecycle` replays.
+    _DEFINITION_LIFECYCLE_ACTIONS = frozenset({"pause", "resume", "archive"})
+
     #: Result columns that may be copied verbatim from a server item on
     #: insert, beyond id/server_id/owner_id (handled separately).
     _AUTOMATION_RESULT_INSERT_FIELDS = _AUTOMATION_RESULT_COLUMNS | {
@@ -2677,17 +2693,52 @@ class ScheduledTasksDB(BaseDB):
     }
 
     def upsert_automation_definitions_from_server(
-        self, owner_id: str, items: list[dict[str, Any]]
+        self,
+        owner_id: str,
+        items: list[dict[str, Any]],
+        *,
+        skip_lifecycle_server_ids: frozenset[str] = frozenset(),
     ) -> dict[str, int]:
         """Server-wins mirror of automation definitions pulled from the server.
 
         Matches local rows by ``(owner_id, server_id)``. Absent -> insert a
         new mirror row (server ``id`` becomes local ``server_id``; local
         ``id`` is a fresh UUID). Present -> every server-carried field is
-        written EXCEPT ``transfer_state``: a server payload must never
-        clear a local transfer marker (spec-2026-08-31-schedules-handoff-
-        parity.md §6 parked finding). Archived lifecycle mirrors like any
-        other field -- rows are never deleted here.
+        written EXCEPT ``transfer_state`` (unconditional -- spec-2026-08-
+        31-schedules-handoff-parity.md §6 parked finding: a server payload
+        must never clear a local transfer marker) and, conditionally,
+        ``lifecycle``. Rows are never deleted here (an archived lifecycle
+        mirrors like any other field, when not withheld below).
+
+        ``lifecycle`` pull-guard (redesign PR-3 ruling 4), two layers --
+        SURGICAL: only ``lifecycle`` is ever withheld, every other field
+        on the row still writes server-wins. Mirrors
+        `upsert_automation_results_from_server`'s two-layer TOCTOU/same-
+        cycle guard (see that method's docstring for the full rationale)
+        but scoped to one field instead of a fixed field allowlist,
+        because `automation_definition` is a much busier primitive: it
+        also carries `save_definition`'s edit-path mutations and the
+        transfer machine's, so a bare "any pending mutation for this row"
+        check would wrongly freeze `lifecycle` during an unrelated
+        pending edit or transfer. `_definition_lifecycle_guard_active`
+        (below) is what tells a lifecycle mutation apart from those --
+        it inspects `payload["action"]` against
+        `_DEFINITION_LIFECYCLE_ACTIONS`.
+
+        1. Pending-mutation guard: a per-row `pending_mutations` SELECT
+           run inside THIS write transaction, immediately before that
+           row's own UPDATE -- an unpushed local `pause`/`resume`/
+           `archive` outranks the mirror until `SyncEngine`'s lifecycle
+           replay (which runs before this pull in `sync_now`) has pushed
+           it.
+        2. Pushed-this-cycle guard: `server_id in
+           skip_lifecycle_server_ids`, a `frozenset[str]` threaded in
+           from `SyncEngine._replay_definition_mutations` with ids it
+           already pushed THIS sync cycle -- their pending mutation is
+           already gone by the time this pull runs, so guard 1 can't see
+           them; without this second layer a same-cycle definitions page
+           that still echoes the pre-transition lifecycle (server write/
+           read-path lag) would revert the change that was just pushed.
 
         Returns:
             ``{"inserted": n, "updated": n}``.
@@ -2743,6 +2794,17 @@ class ScheduledTasksDB(BaseDB):
                 else:
                     if not fields:
                         continue
+                    if "lifecycle" in fields and self._definition_lifecycle_guard_active(
+                        conn,
+                        owner_id,
+                        existing["id"],
+                        server_id,
+                        skip_lifecycle_server_ids,
+                    ):
+                        fields = dict(fields)
+                        del fields["lifecycle"]
+                        if not fields:
+                            continue
                     serialized = self._serialize_definition_fields(fields)
                     self._validate_sql_identifiers(list(serialized.keys()))
                     updates = ", ".join(f"{key} = ?" for key in serialized)
@@ -2752,6 +2814,42 @@ class ScheduledTasksDB(BaseDB):
                     )
                     updated += 1
         return {"inserted": inserted, "updated": updated}
+
+    def _definition_lifecycle_guard_active(
+        self,
+        conn: sqlite3.Connection,
+        owner_id: str,
+        existing_id: str,
+        server_id: str,
+        skip_lifecycle_server_ids: frozenset[str],
+    ) -> bool:
+        """True when this row's server-wins update must withhold ``lifecycle``.
+
+        See `upsert_automation_definitions_from_server`'s docstring for
+        the full two-layer design; this is guard 1 (pending-mutation) and
+        guard 2 (pushed-this-cycle) combined into the one per-row check
+        its caller needs.
+        """
+        if server_id in skip_lifecycle_server_ids:
+            return True
+        row = conn.execute(
+            """
+            SELECT payload FROM pending_mutations
+            WHERE local_id = ? AND primitive = ? AND owner_id = ?
+            LIMIT 1
+            """,
+            (existing_id, self._DEFINITION_PRIMITIVE, owner_id),
+        ).fetchone()
+        if row is None:
+            return False
+        try:
+            payload = json.loads(row["payload"])
+        except (TypeError, ValueError):
+            return False
+        return (
+            isinstance(payload, dict)
+            and payload.get("action") in self._DEFINITION_LIFECYCLE_ACTIONS
+        )
 
     def _serialize_definition_fields(self, fields: dict[str, Any]) -> dict[str, Any]:
         """Apply the same JSON/datetime conversion `update_automation_definition` uses.
