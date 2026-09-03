@@ -420,7 +420,28 @@ rediscover the same red from scratch.
   ordering sensitivity to which OTHER tests ran earlier in the process,
   not to which code version is loaded) -- confirmed pre-existing, not a
   regression, and not Collections-related (Media reader cluster; this
-  task's diff touches zero Media-reader code). **Future tasks should
+  task's diff touches zero Media-reader code).
+  **Correction (fix round 1, post-review): one of the 11 that passed
+  cleanly, `Tests/UI/test_library_adaptive_reader_closeout.py::
+  test_closeout_single_app_route_cycle`, is NOT unrelated to Collections
+  -- its own `DESTINATION_CONTRACT` includes a `"collections"` entry and
+  the test cycles every destination, which for "collections" traverses
+  the shared reader-shell dispatcher calling two of this task's own moved
+  methods (`_sync_library_collections_reader_layout_from_shell`,
+  `_mirror_library_collections_reader_preference`).** It was re-verified
+  with the strongest available method for a single test: temporarily
+  `git checkout bca923b4c -- tldw_chatbook` inside the task's own
+  worktree (confirmed via `git diff --stat` that only `library_screen.py`
+  changed, i.e. a clean pre-controller-move state), the test run in true
+  isolation there, then `git checkout HEAD -- tldw_chatbook` restored
+  (confirmed `git status` clean after) -- **passes identically at HEAD
+  and at base**, closing the question directly rather than by the flawed
+  "the test's name doesn't mention Collections" inference the task's own
+  first-draft report used. Any future subsystem's sweep-triage should
+  check a failing/flaky test's OWN fixture/contract content (not just its
+  name or file) before asserting it is unrelated to the subsystem being
+  moved -- a destination-cycling test like this one will touch every
+  subsystem's own dispatchers by design. **Future tasks should
   prefer running the branch and baseline full sweeps SEQUENTIALLY, not
   concurrently, when machine time allows** -- the concurrent shortcut
   used here to save wall-clock time cost real investigation effort this
@@ -1050,6 +1071,25 @@ move this size (64 methods, ~1300 lines), this generalizes past the
 extraction and the verification as scripts, not as a sequence of manual
 Read/Edit operations**, for any future subsystem whose cluster exceeds
 ~40-50 methods.
+
+**Correction (fix round 1, post-review) -- a dynamic-dispatch census gap,
+new sub-shape**: this task's own module docstring and report originally
+claimed a clean dynamic-dispatch sweep (no `getattr`/`setattr` call using
+an f-string or dict-literal argument touches a Collections name, beyond
+the one pre-existing reader-preferences hit §12 already documents). That
+census script only matched a dict-literal/f-string passed DIRECTLY as the
+call's own argument. It missed a two-step shape that DOES exist inside
+this task's own moved cluster: `retain_library_collection_quick_capture_
+input` builds a small DOM-id-keyed dict, `.get()`s a NAME into a local
+variable, then calls `setattr(self, attribute, event.value)` with that
+variable on a later line. **Safe by construction** (the three dispatched
+names are among the 26 fields with a full `property(get, set)` shim, not
+read-only), but the census's own claim of completeness was wrong until
+corrected in review. **Any future subsystem's dynamic-dispatch census
+should also grep for a `dict.get(...)` result assigned to a variable that
+later flows into `setattr`/`getattr` within the same function** -- not
+just a literal argument passed directly to the call -- to avoid
+re-missing this shape.
 
 **Sweep evidence — concurrent branch/baseline xdist runs amplify
 flakiness measurably; see §7's updated documented-failures entry for the
