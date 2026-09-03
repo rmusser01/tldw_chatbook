@@ -10,6 +10,7 @@ Typed results, no logging (results carry the information).
 
 from __future__ import annotations
 
+import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -103,6 +104,21 @@ def create_agent_worktree(repo_root: Path, run_id: str) -> AgentWorktree | Workt
             "worktree_create_failed", f"git worktree add failed: {err.strip()[:200]}"
         )
     return AgentWorktree(run_id=run_id, worktree_path=dest, branch=branch, base_sha=base_sha)
+
+
+def _worktree_root_identity(path: Path) -> tuple[tuple[str, int, int, int], ...]:
+    """Ancestor-chain identity for an admitted worktree root.
+
+    Mirrors `console_chat_controller._capture_project_root_identity`'s
+    `os.lstat` walk, minus its symlink-rejection `None` returns -- the
+    admitted-root authority only needs a non-empty tuple, not a veto.
+    """
+    root = Path(path).resolve()
+    identities: list[tuple[str, int, int, int]] = []
+    for component in (*reversed(root.parents), root):
+        value = os.lstat(component)
+        identities.append((str(component), value.st_dev, value.st_ino, value.st_mode))
+    return tuple(identities)
 
 
 def discard_agent_worktree(repo_root: Path, wt: AgentWorktree) -> WorktreeRefusal | None:

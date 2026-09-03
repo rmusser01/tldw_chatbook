@@ -110,7 +110,16 @@ SPAWN_TOOL_SCHEMA = ToolSchema(
             "task": {
                 "type": "string",
                 "description": "Complete, self-contained task description.",
-            }
+            },
+            "isolation": {
+                "type": "string",
+                "enum": ["worktree"],
+                "description": (
+                    "Run this child in an isolated git worktree; its changes "
+                    "stay out of the shared tree until explicitly merged back "
+                    "with merge_agent_worktree."
+                ),
+            },
         },
         "required": ["task"],
     },
@@ -140,6 +149,7 @@ def build_spawn_schema(definitions: Sequence[AgentDefinition]) -> ToolSchema:
             # Shallow-copied so no future consumer of the built schema can
             # mutate the module-global SPAWN_TOOL_SCHEMA through this alias.
             "task": dict(SPAWN_TOOL_SCHEMA.parameters["properties"]["task"]),
+            "isolation": dict(SPAWN_TOOL_SCHEMA.parameters["properties"]["isolation"]),
             "agent": {
                 "type": "string",
                 "enum": [d.name for d in definitions],

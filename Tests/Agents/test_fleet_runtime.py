@@ -22,6 +22,7 @@ flipping the default made nine other suites need it too.
 """
 
 import json
+import subprocess
 import threading
 import time
 from collections import Counter
@@ -3656,3 +3657,142 @@ def test_autowake_ships_on_by_default():
     is auto-wake ON -- asserted, not assumed."""
     assert agent_service.DEFAULT_AUTOWAKE_ENABLED is True
     assert agent_service.AUTOWAKE_ENABLED_KEY == "autowake_enabled"
+
+
+# -- TASK-28238 phase 2 T4: spawn_subagent isolation="worktree" -----------
+
+
+def _git(cwd, *args):
+    return subprocess.run(
+        ["git", *args], cwd=cwd, capture_output=True, text=True, check=True
+    ).stdout
+
+
+@pytest.fixture()
+def git_repo(tmp_path):
+    """A real git repo with one committed file -- the shared workspace
+    root a `LocalToolProvider` and `create_agent_worktree` both need."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    _git(root, "init", "-b", "main")
+    _git(root, "config", "user.email", "t@t")
+    _git(root, "config", "user.name", "t")
+    (root / "seed.txt").write_text("base\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-m", "base")
+    return root
+
+
+def _fs_local_provider(root):
+    """A `LocalToolProvider` over `root` with real fs_read/fs_write specs
+    (a real `WorkspaceToolExecutor`, not the noop double above -- this
+    provider's writes must actually hit disk) and zero-round-trip
+    execution, so a scripted child can call fs_write with no approval
+    plumbing.
+    """
+    from tldw_chatbook.Tools.workspace_tool_executor import WorkspaceToolExecutor
+
+    executor = WorkspaceToolExecutor(root)
+    specs = [
+        spec
+        for spec in _default_specs(root, workspace_executor=executor)
+        if spec.name in {"fs_read", "fs_write"}
+    ]
+    return LocalToolProvider(
+        workspace_root=root,
+        specs=specs,
+        resolve_state=lambda hub: EffectiveToolState(state="allow", origin="test"),
+    )
+
+
+ISO_CFG = AgentConfig(
+    model="test-model",
+    system_prompt="You are helpful.",
+    allowed_tools=("fs_write", SPAWN_TOOL_NAME),
+    budget=RunBudget(max_steps=40, max_model_turns=40, max_subagents=4),
+)
+
+
+def test_isolated_spawn_writes_are_invisible_until_merge(db, git_repo):
+    """AC#1 (TASK-28238 P2 T4): an isolation="worktree" child's fs_write
+    lands in ITS OWN worktree, not the shared tree; a plain sibling
+    spawned in the same turn still writes the shared tree.
+    """
+    provider = _fs_local_provider(git_repo)
+    service, chat, coordinator = make_fleet_service(
+        db,
+        parent_replies=[
+            fence(SPAWN_TOOL_NAME, {"task": "iso task", "isolation": "worktree"}),
+            fence(SPAWN_TOOL_NAME, {"task": "plain task"}),
+            "spawned both",
+        ],
+        child_replies={
+            "iso task": [
+                fence("fs_write", {"path": "iso.txt", "content": "isolated\n"}),
+                "wrote iso",
+            ],
+            "plain task": [
+                fence("fs_write", {"path": "plain.txt", "content": "shared\n"}),
+                "wrote plain",
+            ],
+        },
+        providers=(provider,),
+    )
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=ISO_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    join_fleet_children(service)
+
+    # The plain sibling wrote the SHARED tree.
+    assert (git_repo / "plain.txt").read_text() == "shared\n"
+    # The isolated child's write never reached the shared tree.
+    assert not (git_repo / "iso.txt").exists()
+
+    handles_by_task = {h.task: h for h in coordinator.snapshot()}
+    iso_handle = handles_by_task["iso task"]
+    assert iso_handle.handle_id in service._agent_worktrees, (
+        "the isolated child's worktree must be tracked for later merge/discard"
+    )
+    wt = service._agent_worktrees[iso_handle.handle_id]
+    # ... and it DID land, in the child's own worktree.
+    assert (wt.worktree_path / "iso.txt").read_text() == "isolated\n"
+    # Retirement (this task's scope) un-admits the provider root but never
+    # deletes the worktree itself -- merge/discard is a later task's job.
+    assert wt.worktree_path.is_dir()
+
+
+def test_isolated_spawn_refuses_on_non_git_workspace(db, tmp_path):
+    """AC#2 (TASK-28238 P2 T4): isolation="worktree" against a workspace
+    root that is not a git repo is an honest refusal naming the reason,
+    with no live handle left reserved -- never a silent fall-through to
+    sharing the tree.
+    """
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    provider = _fs_local_provider(plain)
+    service, chat, coordinator = make_fleet_service(
+        db,
+        parent_replies=[
+            fence(SPAWN_TOOL_NAME, {"task": "iso task", "isolation": "worktree"}),
+            "done",
+        ],
+        providers=(provider,),
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=ISO_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    results = _tool_results(db.get_run(run_id), SPAWN_TOOL_NAME)
+    assert results and all(
+        "worktree isolation refused" in r and "not_a_git_repo" in r for r in results
+    ), results
+    # No handle survives the refusal -- the reserved slot was unwound.
+    assert coordinator.live_count() == 0
+    assert service._agent_worktrees == {}

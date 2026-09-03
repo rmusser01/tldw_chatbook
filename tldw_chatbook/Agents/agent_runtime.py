@@ -566,7 +566,9 @@ class LoopDeps:
     # Optional production-only causal dispatch seams. Appended after every
     # legacy field so positional LoopDeps callers retain their exact slots.
     invoke_tool_at_step: Callable[[ToolCall, int, str], ToolResult] | None = None
-    spawn_at_step: Callable[[str, int, str | None], ToolResult] | None = None
+    spawn_at_step: (
+        Callable[[str, int, str | None, str | None], ToolResult] | None
+    ) = None
     send_to_agent_at_step: Callable[[str, str, int], ToolResult] | None = None
     drain_mailbox_with_causes: (
         Callable[[], list[tuple[str, str, str | None]]] | None
@@ -2280,6 +2282,11 @@ def run_agent_loop(
                         # 'None'" refusal instead of taking the no-agent
                         # path.
                         agent_name = str(call.args.get("agent") or "").strip()
+                        # Same `or ""` guard as `agent_name`: schema-valid
+                        # values are only "worktree" or absent, but a
+                        # stray JSON `null` must not become the truthy
+                        # string "None".
+                        isolation = str(call.args.get("isolation") or "").strip() or None
                         if not task:
                             # G4: an empty task is refused with no budget
                             # consumption and no STEP_SPAWN.
@@ -2303,12 +2310,32 @@ def run_agent_loop(
                             )
                             if deps.spawn_at_step is not None:
                                 result = deps.spawn_at_step(
-                                    task, spawn_step.index, agent_name or None
+                                    task,
+                                    spawn_step.index,
+                                    agent_name or None,
+                                    isolation,
                                 )
                             elif agent_name:
-                                result = deps.spawn(task, agent=agent_name)
+                                # `isolation=` is passed only when set: many
+                                # unit tests build a bare `LoopDeps` with a
+                                # narrow single/double-arg `spawn` double
+                                # (no `spawn_at_step`, no `**kwargs`) that
+                                # never exercises isolation -- an
+                                # unconditional kwarg would break every one
+                                # of them for a feature they never opt into.
+                                result = (
+                                    deps.spawn(
+                                        task, agent=agent_name, isolation=isolation
+                                    )
+                                    if isolation
+                                    else deps.spawn(task, agent=agent_name)
+                                )
                             else:
-                                result = deps.spawn(task)
+                                result = (
+                                    deps.spawn(task, isolation=isolation)
+                                    if isolation
+                                    else deps.spawn(task)
+                                )
                             # Named-agent resolution (fleet spec §4) gave
                             # deps.spawn a NEW failure mode this loop-level
                             # check does not pre-screen: deps.spawn can now
