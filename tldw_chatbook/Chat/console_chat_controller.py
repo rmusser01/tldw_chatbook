@@ -22133,15 +22133,21 @@ class ConsoleChatController:
                     if self.set_pending_skill_script is not None
                     else None
                 ),
-                # TASK-28238 phase 2 Task 6: same "advertised must equal
-                # usable" gate as `request_skill_script_confirm` above --
-                # `merge_agent_worktree`/`discard_agent_worktree` stay
-                # advertised whenever the fleet is active regardless (Task
-                # 5's choice; they refuse per-call instead of disappearing),
-                # but passing `None` here when no UI sink is wired lets
-                # `AgentService`'s own "no approval surface is available in
-                # this session" refusal fire directly rather than routing
-                # through `request_worktree_merge_confirm`'s no-UI guard to
+                # TASK-28238 phase 2 Task 6/Task 7: same "advertised must
+                # equal usable" gate as `request_skill_script_confirm`
+                # above. Task 5 originally advertised
+                # `merge_agent_worktree`/`discard_agent_worktree` whenever
+                # the fleet was active regardless, refusing per-call
+                # instead of disappearing -- the Task 7 ruling replaced
+                # that: `build_console_first_request_plan` now discloses
+                # the pair only when a confirm surface is wired
+                # (`worktree_merge_enabled=request_worktree_merge_confirm
+                # is not None`), so passing `None` here when no UI sink is
+                # wired both hides the tools from disclosure and (belt-
+                # and-braces) lets `AgentService`'s own "no approval
+                # surface is available in this session" refusal fire
+                # directly rather than routing through
+                # `request_worktree_merge_confirm`'s no-UI guard to
                 # produce a less accurate "declined" message.
                 request_worktree_merge_confirm=(
                     functools.partial(
