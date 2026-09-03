@@ -281,8 +281,13 @@ def merge_agent_worktree_changes(
     # there, so diff/merge can't see the work until it lands on the branch.
     # A failure here must not fall through to "nothing_to_merge" -- that
     # would silently strand the child's work (lost on discard, no trail).
-    code, out, _err = _git(wt.worktree_path, "status", "--porcelain")
-    if code == 0 and out.strip():
+    code, out, err = _git(wt.worktree_path, "status", "--porcelain")
+    if code != 0:
+        return WorktreeRefusal(
+            "worktree_commit_failed",
+            f"could not read agent worktree state: {err.strip()[:200]}",
+        )
+    if out.strip():
         add_code, _add_out, add_err = _git(wt.worktree_path, "add", "-A")
         if add_code != 0:
             return WorktreeRefusal(

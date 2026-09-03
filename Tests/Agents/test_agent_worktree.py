@@ -305,6 +305,34 @@ def test_auto_commit_failure_is_refusal_not_silent_nothing_to_merge(repo, monkey
     discard_agent_worktree(repo, wt)
 
 
+def test_status_read_failure_is_a_refusal_not_nothing_to_merge(repo, monkeypatch):
+    """Finding 8 (Qodo round, Medium): the comment already says a status
+    failure must not fall through to "nothing_to_merge" (that would
+    silently strand the child's work -- lost on discard, no trail) --
+    but the code only ever branched on `code == 0 and out.strip()`, so a
+    nonzero status read fell through exactly as the comment warns
+    against, since `out.strip()` on the ignored garbage output reads
+    falsy too.
+    """
+    from tldw_chatbook.Agents import agent_worktree as mod
+
+    wt = create_agent_worktree(repo, "run-statfail1")
+    (wt.worktree_path / "a.txt").write_text("child change\n")
+    real_git = mod._git
+
+    def fake_git(repo_root, *args):
+        if args[:2] == ("status", "--porcelain"):
+            return 128, "", "fatal: not a git repository (simulated)"
+        return real_git(repo_root, *args)
+
+    monkeypatch.setattr(mod, "_git", fake_git)
+    refusal = merge_agent_worktree_changes(repo, wt, mode="apply")
+    assert isinstance(refusal, WorktreeRefusal)
+    assert refusal.reason_code == "worktree_commit_failed"
+    assert refusal.reason_code != "nothing_to_merge"
+    discard_agent_worktree(repo, wt)
+
+
 # -- TASK-28238 phase 2 T6: preview_agent_worktree_diffstat ----------------
 #
 # The confirm card must show a diffstat before the user consents to a
