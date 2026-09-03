@@ -92,6 +92,18 @@ per-run entry cap borrowing the `_MAX_PROMOTION_PROPOSALS_PER_RUN` pattern
 `current_run_id()` is always `""` and entries would otherwise accumulate for
 the server lifetime. A size cap, not an eviction subsystem.
 
+Qodo round #2: an empty run_id is EXCLUDED from the ledger entirely, not just
+capped — `build_server_local_provider` serves MANY independent MCP clients,
+all with `current_run_id() == ""`; keying them into the shared `""` bucket
+above would let one client's successful write refresh the stamp another
+client read, masking that client's own stale overwrite (the exact failure
+per-run keying exists to prevent, just reintroduced one level up). No run
+identity therefore means no guard state at all — record, injection, pre-check,
+and post-write update are all no-ops for `run_id == ""` — matching pre-feature
+behavior for those callers. The per-run cap above now protects only real
+fleet-run buckets, since the one bucket that could grow unboundedly for the
+life of the process is never populated.
+
 ### Check (on write/edit/patch)
 At EXECUTION time (after any approval card — the file can change between
 approval and execution too). Insertion point: `_invoke_allowed`, after the gate

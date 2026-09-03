@@ -44,12 +44,21 @@ class ReadStamp:
 
     @classmethod
     def absent(cls) -> "ReadStamp":
-        """A stamp recording that the path did not exist when read."""
+        """A stamp recording that the path did not exist when read.
+
+        Returns:
+            A ``ReadStamp`` with ``sha256=None`` and ``size=0``.
+        """
         return cls(sha256=None, size=0)
 
     @property
     def is_absent(self) -> bool:
-        """True when this stamp recorded a missing file."""
+        """True when this stamp recorded a missing file.
+
+        Returns:
+            ``True`` if this stamp recorded absence (``sha256 is None``),
+            ``False`` for a present-file stamp.
+        """
         return self.sha256 is None
 
 
@@ -80,21 +89,49 @@ class ReadLedger:
     def record_present(
         self, run_id: str, canonical_path: str, sha256: str, size: int
     ) -> None:
-        """Record that ``run_id`` read a present file with this content hash."""
+        """Record that ``run_id`` read a present file with this content hash.
+
+        Args:
+            run_id: The run whose read this is.
+            canonical_path: ``canonical_ledger_key`` output for the path.
+            sha256: Whole-file content hash observed.
+            size: File size in bytes observed.
+        """
         self._put(run_id, canonical_path, ReadStamp(sha256=sha256, size=int(size)))
 
     def record_absent(self, run_id: str, canonical_path: str) -> None:
-        """Record that ``run_id`` observed the path missing."""
+        """Record that ``run_id`` observed the path missing.
+
+        Args:
+            run_id: The run whose read this is.
+            canonical_path: ``canonical_ledger_key`` output for the path.
+        """
         self._put(run_id, canonical_path, ReadStamp.absent())
 
     def update_written(
         self, run_id: str, canonical_path: str, sha256: str, size: int
     ) -> None:
-        """Record the content ``run_id`` itself just wrote (same as a fresh read)."""
+        """Record the content ``run_id`` itself just wrote (same as a fresh read).
+
+        Args:
+            run_id: The run that performed the write.
+            canonical_path: ``canonical_ledger_key`` output for the path.
+            sha256: Hash of the content actually written.
+            size: Size in bytes of the content actually written.
+        """
         self.record_present(run_id, canonical_path, sha256, size)
 
     def stamp_for(self, run_id: str, canonical_path: str) -> ReadStamp | None:
-        """Return what ``run_id`` last saw at the path, or None if never read."""
+        """Return what ``run_id`` last saw at the path, or None if never read.
+
+        Args:
+            run_id: The run whose ledger to consult.
+            canonical_path: ``canonical_ledger_key`` output for the path.
+
+        Returns:
+            The recorded ``ReadStamp``, or ``None`` if this run has never
+            recorded an entry for the path.
+        """
         with self._lock:
             entries = self._by_run.get(str(run_id))
             if entries is None:

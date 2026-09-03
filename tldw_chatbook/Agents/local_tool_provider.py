@@ -1583,7 +1583,12 @@ class LocalToolProvider:
                     )
                     if stale_guard is not None:
                         dispatch_args = stale_guard[0]
-                elif name in {"fs_edit", "fs_patch"}:
+                elif name in {"fs_edit", "fs_patch"} and clean_args.get(
+                    "dry_run"
+                ) is not True:
+                    # A preview never writes, so there is no clobber risk
+                    # for the pre-check to guard against (fs_write's own
+                    # injection already skips on dry_run the same way).
                     _stale = self._stale_targets_for(
                         name,
                         clean_args,
@@ -1955,6 +1960,16 @@ class LocalToolProvider:
             return  # refused path: not an observation
         key = canonical_ledger_key(resolved)
         run_id = current_run_id()
+        if not run_id:
+            # Qodo #2: the process-lived MCP server provider
+            # (MCP/local_server_tools.py build_server_local_provider) serves
+            # MANY independent clients, all with an empty run_id -- keying
+            # them into one shared "" bucket would let client B's write
+            # refresh the stamp client A read, masking A's own stale
+            # overwrite (the exact failure per-run keying exists to
+            # prevent). No run identity -> no guard state, matching
+            # pre-feature behavior for these callers.
+            return
         try:
             present = resolved.is_file()
         except OSError:
@@ -1997,6 +2012,8 @@ class LocalToolProvider:
             resolve_workspace_path,
         )
 
+        if not current_run_id():
+            return None
         if args.get("dry_run") is True:
             return None
         if "expected_sha256" in args or "expected_absent" in args:
@@ -2032,6 +2049,8 @@ class LocalToolProvider:
         )
 
         run_id = current_run_id()
+        if not run_id:
+            return []
         try:
             base = Path(root).resolve()
         except OSError:
@@ -2091,6 +2110,8 @@ class LocalToolProvider:
         if args.get("dry_run") is True:
             return
         run_id = current_run_id()
+        if not run_id:
+            return
         base = Path(root).resolve()
         if name == "fs_write":
             raw = args.get("path")

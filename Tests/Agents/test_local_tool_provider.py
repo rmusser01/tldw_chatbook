@@ -4174,3 +4174,76 @@ def test_fs_write_dry_run_previews_even_with_stale_stamp(tmp_path):
     assert "Stale write refused" not in str(result.content)
     # nothing written
     assert target.read_text() == "B's version\n"
+
+
+# --- Qodo round (PR #2341): empty run_id disables the ledger ---
+
+
+def test_fs_read_without_run_binding_records_nothing(tmp_path):
+    """An empty run_id (current_run_id() == "") means no run identity --
+    the process-lived MCP server provider serves MANY independent clients
+    that would otherwise all share the SAME "" bucket, so one client's
+    write would refresh the stamp another client read. No identity ->
+    nothing recorded. ``use_run_id("")`` reproduces that condition (the
+    module's autouse ``_dispatching_run`` fixture otherwise always binds a
+    real run id, so an inner ``use_run_id("")`` is how this module gets to
+    "no run identity" rather than by never binding at all).
+    """
+    target = tmp_path / "a.txt"
+    target.write_text("line1\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id(""):
+        result = provider.invoke("local:fs_read", {"path": "a.txt"})
+    assert result.ok
+    assert provider._read_ledger._by_run == {}
+
+
+def test_write_without_run_binding_is_not_guarded(tmp_path):
+    """With no run identity bound, a read-then-peer-write-then-write
+    sequence is NOT guarded -- pre-feature behavior for callers with no
+    run identity (e.g. the MCP server provider)."""
+    target = tmp_path / "shared.txt"
+    target.write_text("original\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id(""):
+        assert provider.invoke("local:fs_read", {"path": "shared.txt"}).ok
+    with use_run_id("run-b"):
+        assert provider.invoke(
+            "local:fs_write", {"path": "shared.txt", "content": "B's version\n"}
+        ).ok
+    with use_run_id(""):
+        result = provider.invoke(
+            "local:fs_write", {"path": "shared.txt", "content": "unguarded\n"}
+        )
+    assert result.ok, str(result.error)
+    assert target.read_text() == "unguarded\n"
+
+
+# --- Qodo round (PR #2341): dry-run previews bypass the pre-check ---
+
+
+def test_fs_patch_dry_run_previews_even_with_stale_stamp(tmp_path):
+    """fs_patch's dry_run must preview, not stale-refuse -- a preview never
+    writes, so there is no clobber risk for the pre-check to guard against
+    (fs_write's own injection already skips on dry_run; the fs_edit/fs_patch
+    pre-check must skip the same way). The diff's own context matches the
+    CURRENT disk content ("beta"), not the stale ledger stamp ("alpha"), so
+    a failure here can only come from the pre-check, not a genuine
+    diff/content mismatch.
+    """
+    target = tmp_path / "stale.txt"
+    target.write_text("alpha\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        assert provider.invoke("local:fs_read", {"path": "stale.txt"}).ok
+    with use_run_id("run-b"):
+        assert provider.invoke(
+            "local:fs_write", {"path": "stale.txt", "content": "beta\n"}
+        ).ok
+    diff = "--- a/stale.txt\n+++ b/stale.txt\n@@ -1 +1 @@\n-beta\n+beta2\n"
+    with use_run_id("run-a"):
+        result = provider.invoke("local:fs_patch", {"diff": diff, "dry_run": True})
+    assert result.ok, str(result.error)
+    assert "Stale write refused" not in str(result.content)
+    # disk untouched by the preview
+    assert target.read_text() == "beta\n"
