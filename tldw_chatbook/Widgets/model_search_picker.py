@@ -345,12 +345,20 @@ class ModelSearchPicker(Widget):
         self,
         provider: str,
         model_ids: tuple[str, ...] | list[str],
+        *,
+        notify: bool = True,
     ) -> None:
         """Merge models returned by an explicit endpoint probe into the picker.
 
         Manual discovery in Console settings probes the user's unsaved base URL,
         so those results are not yet present in the application catalog service.
         Keep them as a provider-scoped overlay without reloading the endpoint.
+
+        Args:
+            provider: Provider whose overlay is changing.
+            model_ids: Discovered model identifiers.
+            notify: Post a parent-facing provenance refresh message. The modal
+                disables this only for its own derived overlay updates.
         """
         cache_key = provider_config_key(provider)
         normalized_ids: list[str] = []
@@ -365,7 +373,7 @@ class ModelSearchPicker(Widget):
         input_widget = self.query_one("#model-search-picker-input", Input)
         if input_widget.has_focus and not self._custom_mode:
             self._render_matches(input_widget.value, show_empty_query=True)
-        if self._uses_provenance_options():
+        if notify and self._uses_provenance_options():
             self.post_message(self.ProvenanceOptionsChanged(provider))
 
     def provenance_for_model(
@@ -407,6 +415,8 @@ class ModelSearchPicker(Widget):
         self,
         provider: str,
         options: Sequence[ResolvedProviderModelOption],
+        *,
+        notify: bool = True,
     ) -> None:
         """Replace one provider's results with source-aware model choices.
 
@@ -414,6 +424,12 @@ class ModelSearchPicker(Widget):
         original flat result list. Model IDs are normalized and deduplicated,
         while the complete typed option remains available for grouping and
         selection provenance.
+
+        Args:
+            provider: Provider whose source-aware options are changing.
+            options: Complete typed model projection.
+            notify: Post a parent-facing refresh message. The modal disables
+                this only while applying its own derived provenance overlay.
         """
         cache_key = provider_config_key(provider)
         normalized_options: list[ResolvedProviderModelOption] = []
@@ -441,7 +457,8 @@ class ModelSearchPicker(Widget):
         input_widget = self.query_one("#model-search-picker-input", Input)
         if input_widget.has_focus and not self._custom_mode:
             self._render_matches(input_widget.value, show_empty_query=True)
-        self.post_message(self.ProvenanceOptionsChanged(provider))
+        if notify:
+            self.post_message(self.ProvenanceOptionsChanged(provider))
 
     def toggle_custom_mode(self) -> None:
         """Toggle the explicit custom-ID escape hatch."""

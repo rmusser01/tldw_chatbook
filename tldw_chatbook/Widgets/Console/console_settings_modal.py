@@ -61,6 +61,9 @@ from tldw_chatbook.Chat.local_server_discovery import (
     probe_models_endpoint,
 )
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
+from tldw_chatbook.Chat.provider_endpoint_contract import (
+    canonical_connection_identity,
+)
 from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_SESSION_SETTINGS_SOURCES,
@@ -112,7 +115,10 @@ from tldw_chatbook.UI.character_display_text import sanitize_character_display_l
 from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
     ProviderSettingsNavigationTarget,
 )
-from tldw_chatbook.UI.Screens.provider_model_resolution import ConsoleModelProvenance
+from tldw_chatbook.UI.Screens.provider_model_resolution import (
+    ConsoleModelProvenance,
+    ResolvedProviderModelOption,
+)
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.model_capabilities import is_vision_capable
 from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
@@ -135,6 +141,9 @@ MODEL_DISCOVER_BUTTON_ID = "console-settings-model-discover"
 MODEL_DISCOVER_STATUS_ID = "console-settings-model-discover-status"
 MODEL_DISCOVER_BUTTON_LABEL = "Discover models"
 MODEL_DISCOVER_BUTTON_WIDTH = 19
+MODEL_DISCOVER_SCOPE_COPY = (
+    "List models from this endpoint; this does not test generation."
+)
 _NO_CONFIGURED_MODELS_VALUE = "__no_configured_models__"
 MODEL_DISCOVER_MISSING_URL_COPY = "Enter a base URL to discover models."
 MODEL_DISCOVER_INVALID_URL_COPY = (
@@ -674,6 +683,23 @@ class ConsoleSettingsResult:
     thinking_history_policy: ThinkingHistoryPolicy | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ConsoleModelDiscoveryIdentity:
+    """One model-list request bound to the exact mutable modal draft."""
+
+    provider_key: str
+    connection_identity: tuple[str, str] = field(repr=False)
+    draft_generation: int
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleUnverifiedModelDecision:
+    """Explicit permission to retain one omitted model for one exact draft."""
+
+    identity: ConsoleModelDiscoveryIdentity
+    model_id: str
+
+
 _PROVIDER_CHOICE_CONTROLS: tuple[
     tuple[str, str, ConsoleGenerationControl], ...
 ] = (
@@ -819,12 +845,13 @@ def _model_availability_copy(
     selected_model: str | None = None,
 ) -> str:
     """Return exact zero, singular, or plural discovery copy."""
+    # Retained for compatibility; neither value belongs in bounded success copy.
+    del display, selected_model
     if count == 0:
-        return f"No models available at {display}."
+        return "No models reported"
     if count == 1:
-        suffix = f"; selected {selected_model}" if selected_model else ""
-        return f"1 model available at {display}{suffix}."
-    return f"{count} models available at {display}."
+        return "1 model listed"
+    return f"{count} models listed"
 
 
 class ConsoleSettingsInput(Input):
@@ -1155,6 +1182,15 @@ class ConsoleSettingsModal(
         self._default_recovery_layout_phase: ConsoleDefaultSavePhase | None = None
         self._discovered_model_ids: dict[str, tuple[str, ...]] = {}
         streaming_field = self._draft_field("streaming")
+        self._model_discovery_generation = 0
+        self._current_model_discovery_identity: (
+            ConsoleModelDiscoveryIdentity | None
+        ) = None
+        self._current_discovered_model_ids: tuple[str, ...] = ()
+        self._unverified_model_decision: ConsoleUnverifiedModelDecision | None = None
+        self._base_provenance_options: dict[
+            str, tuple[ResolvedProviderModelOption, ...]
+        ] = {}
         self._streaming_draft: bool | None = (
             bool(suspended_draft.raw_values.get("console-settings-streaming"))
             if suspended_draft is not None
@@ -1226,6 +1262,14 @@ class ConsoleSettingsModal(
         self._compaction_result_definitive = False
         self._default_save_in_flight = False
         self._default_save_disabled_snapshot: dict[Widget, bool] = {}
+        self._last_model_discovery_draft_key = (
+            provider_config_key(self._active_provider),
+            canonical_connection_identity(
+                self._active_provider,
+                self._base_url_for_provider(self._active_provider),
+            ),
+            self._model_for_provider(self._active_provider),
+        )
 
     @staticmethod
     def _context_state_with_draft_overrides(
@@ -1624,14 +1668,27 @@ class ConsoleSettingsModal(
                                 disabled=not supports_discovery,
                             )
                             model_discover.tooltip = (
-                                "Lists models reported by this endpoint; does not test "
-                                "generation."
+                                MODEL_DISCOVER_SCOPE_COPY
                             )
                             model_discover.styles.width = MODEL_DISCOVER_BUTTON_WIDTH
                             model_discover.styles.min_width = MODEL_DISCOVER_BUTTON_WIDTH
                             model_discover.styles.max_width = MODEL_DISCOVER_BUTTON_WIDTH
                             model_discover.display = supports_discovery
                             yield model_discover
+                            keep_unverified = Button(
+                                "Keep unverified model",
+                                id="console-settings-keep-unverified-model",
+                            )
+                            keep_unverified.display = False
+                            yield keep_unverified
+                        discovery_scope = Static(
+                            MODEL_DISCOVER_SCOPE_COPY,
+                            id="console-settings-model-discover-scope",
+                            classes="console-settings-field-help",
+                            markup=False,
+                        )
+                        discovery_scope.display = supports_discovery
+                        yield discovery_scope
                         discover_status = Static(
                             "",
                             id=MODEL_DISCOVER_STATUS_ID,
@@ -4378,6 +4435,7 @@ class ConsoleSettingsModal(
         if self._draft_rebaser is not None:
             self._rebase_to(provider, None)
             return
+        self._invalidate_model_discovery_for_provider(self._active_provider)
         self._store_current_model_for_provider(self._active_provider)
         self._store_current_base_url_for_provider(self._active_provider)
         model = self._model_for_provider(provider)
@@ -4385,6 +4443,7 @@ class ConsoleSettingsModal(
         self._active_provider = provider
         self._sync_model_controls(provider, model)
         self._sync_base_url_control(provider, base_url)
+        self._advance_model_discovery_generation()
         self._sync_model_discover_controls(provider)
         self._sync_provider_choice_placeholders()
         self._sync_generation_control_support()
@@ -4412,6 +4471,7 @@ class ConsoleSettingsModal(
         self.query_one(
             "#console-settings-model-picker", ModelSearchPicker
         ).set_model_value(model_id)
+        self._advance_model_generation_preserving_current_listing()
         if (
             not self._updating_controls
             and not self._rebase_event_guard
@@ -4442,6 +4502,7 @@ class ConsoleSettingsModal(
         picker = self.query_one("#console-settings-model-picker", ModelSearchPicker)
         if picker.custom_mode:
             picker.set_custom_value(event.value)
+            self._advance_model_generation_preserving_current_listing()
             self._sync_model_provenance_copy()
         self._schedule_readiness_sync()
 
@@ -4489,7 +4550,13 @@ class ConsoleSettingsModal(
         ):
             self._rebase_to(self._active_provider, event.model_id)
         self._set_provider_model_draft(self._active_provider, event.model_id)
-        self._sync_model_controls(self._active_provider, event.model_id)
+        self._advance_model_generation_preserving_current_listing()
+        with self.prevent(
+            Select.Changed,
+            Input.Changed,
+            ModelSearchPicker.ModelValueChanged,
+        ):
+            self._sync_model_controls(self._active_provider, event.model_id)
         self._sync_readiness_display()
         self._sync_visual_representation_availability()
         self._sync_generation_control_support()
@@ -4519,6 +4586,7 @@ class ConsoleSettingsModal(
         ):
             self._rebase_to(self._active_provider, event.model_id)
         self._set_provider_model_draft(self._active_provider, event.model_id)
+        self._advance_model_generation_preserving_current_listing()
         self._sync_readiness_display()
         self._sync_visual_representation_availability()
         self._sync_generation_control_support()
@@ -4533,7 +4601,29 @@ class ConsoleSettingsModal(
             self._active_provider
         ):
             return
+        picker = self.query_one(
+            "#console-settings-model-picker", ModelSearchPicker
+        )
+        provider_key = provider_config_key(event.provider)
+        current_options = tuple(
+            option
+            for option in picker._provider_options()
+            if isinstance(option, ResolvedProviderModelOption)
+        )
+        if not any(
+            option.source == "manual_discovery_exact" for option in current_options
+        ):
+            self._base_provenance_options[provider_key] = current_options
+            if self._current_model_discovery_matches_current_draft():
+                self._promote_current_discovery_options()
         self._sync_model_provenance_copy()
+
+    @on(Input.Changed, "#console-settings-base-url")
+    def _base_url_changed(self, _event: Input.Changed) -> None:
+        """Invalidate request evidence as soon as canonical endpoint input changes."""
+        if self._restoring_suspended_draft:
+            return
+        self._advance_model_discovery_generation()
 
     @on(Select.Changed, "#console-context-compaction-representation")
     def _compaction_representation_changed(self, _event: Select.Changed) -> None:
@@ -4564,6 +4654,202 @@ class ConsoleSettingsModal(
         """Return whether the provider serves an OpenAI-compatible model list."""
         return provider_config_key(provider) in URL_BASED_PROVIDER_KEYS
 
+    def _current_draft_discovery_identity(
+        self,
+    ) -> ConsoleModelDiscoveryIdentity | None:
+        """Return the canonical identity of the current mounted draft."""
+        provider_key = provider_config_key(self._active_provider)
+        connection_identity = canonical_connection_identity(
+            provider_key,
+            self._current_base_url_value(self._active_provider),
+        )
+        if connection_identity is None:
+            return None
+        return ConsoleModelDiscoveryIdentity(
+            provider_key=provider_key,
+            connection_identity=connection_identity,
+            draft_generation=self._model_discovery_generation,
+        )
+
+    def _begin_model_discovery_identity(
+        self,
+        provider: str,
+        base_url: str,
+    ) -> ConsoleModelDiscoveryIdentity:
+        """Advance and capture one exact request nonce for a validated endpoint."""
+        provider_key = provider_config_key(provider)
+        connection_identity = canonical_connection_identity(provider_key, base_url)
+        if connection_identity is None:
+            raise ValueError("model discovery requires a valid endpoint")
+        self._advance_model_discovery_generation(clear_status=False, force=True)
+        return ConsoleModelDiscoveryIdentity(
+            provider_key=provider_key,
+            connection_identity=connection_identity,
+            draft_generation=self._model_discovery_generation,
+        )
+
+    def _advance_model_discovery_generation(
+        self,
+        *,
+        clear_status: bool = True,
+        force: bool = False,
+    ) -> bool:
+        """Invalidate all evidence and approval attached to the former draft."""
+        draft_key = (
+            provider_config_key(self._active_provider),
+            canonical_connection_identity(
+                self._active_provider,
+                self._current_base_url_value(self._active_provider),
+            ),
+            self._current_model_value(),
+        )
+        if not force and draft_key == self._last_model_discovery_draft_key:
+            return False
+        self._last_model_discovery_draft_key = draft_key
+        self._model_discovery_generation += 1
+        self._unverified_model_decision = None
+        self._current_model_discovery_identity = None
+        self._current_discovered_model_ids = ()
+        self._invalidate_model_discovery_for_provider(self._active_provider)
+        if clear_status:
+            self._set_model_discover_status("")
+        self._sync_completion_actions()
+        return True
+
+    def _advance_model_generation_preserving_current_listing(self) -> None:
+        """Rebind endpoint-list evidence across a model-only draft transition."""
+        preserve_listing = self._current_model_discovery_matches_current_draft()
+        listed_model_ids = self._current_discovered_model_ids
+        changed = self._advance_model_discovery_generation(
+            clear_status=not preserve_listing
+        )
+        if not changed or not preserve_listing:
+            return
+        rebound = self._current_draft_discovery_identity()
+        if rebound is None:
+            return
+        self._current_model_discovery_identity = rebound
+        self._current_discovered_model_ids = listed_model_ids
+        self._promote_current_discovery_options()
+
+    def _invalidate_model_discovery_for_provider(self, provider: str) -> None:
+        """Remove exact-probe overlays without disturbing another provider."""
+        provider_key = provider_config_key(provider)
+        self._discovered_model_ids.pop(provider, None)
+        try:
+            picker = self.query_one(
+                "#console-settings-model-picker", ModelSearchPicker
+            )
+        except (NoMatches, QueryError):
+            return
+        picker.set_discovered_models(provider, [], notify=False)
+        baseline = self._base_provenance_options.get(provider_key)
+        if baseline is not None:
+            picker.set_provenance_options(provider, baseline, notify=False)
+
+    def _current_model_discovery_matches_current_draft(self) -> bool:
+        identity = self._current_model_discovery_identity
+        return identity is not None and identity == self._current_draft_discovery_identity()
+
+    def _promote_current_discovery_options(self) -> None:
+        """Project exact current listing results as served-now picker rows."""
+        if not self._current_model_discovery_matches_current_draft():
+            return
+        provider_key = provider_config_key(self._active_provider)
+        picker = self.query_one(
+            "#console-settings-model-picker", ModelSearchPicker
+        )
+        baseline = self._base_provenance_options.get(provider_key)
+        if baseline is None:
+            baseline = tuple(
+                option
+                for option in picker._provider_options()
+                if isinstance(option, ResolvedProviderModelOption)
+                and option.source != "manual_discovery_exact"
+            )
+            self._base_provenance_options[provider_key] = baseline
+        discovered = set(self._current_discovered_model_ids)
+        promoted: list[ResolvedProviderModelOption] = []
+        seen: set[str] = set()
+        for option in baseline:
+            if option.model_id in discovered:
+                option = replace(
+                    option,
+                    source="manual_discovery_exact",
+                    provenance=ConsoleModelProvenance.SERVED_NOW,
+                    verified_for_connection=True,
+                )
+            promoted.append(option)
+            seen.add(option.model_id)
+        for model_id in self._current_discovered_model_ids:
+            if model_id in seen:
+                continue
+            promoted.append(
+                ResolvedProviderModelOption(
+                    label=model_id,
+                    model_id=model_id,
+                    source="manual_discovery_exact",
+                    capability_status="unknown",
+                    persisted=False,
+                    provenance=ConsoleModelProvenance.SERVED_NOW,
+                    verified_for_connection=True,
+                )
+            )
+        picker.set_discovered_models(
+            self._active_provider,
+            [],
+            notify=False,
+        )
+        picker.set_provenance_options(
+            self._active_provider,
+            promoted,
+            notify=False,
+        )
+
+    def _unverified_model_decision_for_current_draft(
+        self,
+    ) -> ConsoleUnverifiedModelDecision | None:
+        identity = self._current_draft_discovery_identity()
+        model_id = self._current_model_value()
+        if identity is None or model_id is None:
+            return None
+        return ConsoleUnverifiedModelDecision(identity=identity, model_id=model_id)
+
+    def _selected_model_requires_confirmation(self) -> bool:
+        """Return whether a current successful listing omitted the selected ID."""
+        if not self._current_model_discovery_matches_current_draft():
+            return False
+        model_id = self._current_model_value()
+        if model_id is None or model_id in self._current_discovered_model_ids:
+            return False
+        return self._unverified_model_decision != (
+            self._unverified_model_decision_for_current_draft()
+        )
+
+    @on(Button.Pressed, "#console-settings-keep-unverified-model")
+    def _keep_unverified_model_pressed(self, event: Button.Pressed) -> None:
+        """Record the explicit exception for only the current identity/model."""
+        event.stop()
+        if event.button.disabled:
+            return
+        if not self._selected_model_requires_confirmation():
+            return
+        self._unverified_model_decision = (
+            self._unverified_model_decision_for_current_draft()
+        )
+        self._sync_completion_actions()
+        self.call_after_refresh(self._focus_after_unverified_model_decision)
+
+    def _focus_after_unverified_model_decision(self) -> None:
+        """Never leave keyboard focus attached to the newly hidden action."""
+        primary = self.query_one("#console-settings-save", Button)
+        if self._is_effectively_focusable(primary):
+            primary.focus()
+            return
+        cancel = self.query_one("#console-settings-cancel", Button)
+        if self._is_effectively_focusable(cancel):
+            cancel.focus()
+
     @on(Button.Pressed, f"#{MODEL_DISCOVER_BUTTON_ID}")
     def _model_discover_pressed(self, event: Button.Pressed) -> None:
         """Probe the current base-URL draft for its served model list."""
@@ -4583,94 +4869,142 @@ class ConsoleSettingsModal(
         if normalized_probe_url is None or not validate_url(normalized_probe_url):
             self._set_model_discover_status(MODEL_DISCOVER_INVALID_URL_COPY)
             return
-        event.button.disabled = True
-        self._set_model_discover_status(f"Contacting {endpoint_display(base_url)}…")
+        identity = self._begin_model_discovery_identity(provider, base_url)
+        self._set_model_discover_status(
+            f"Listing models from {endpoint_display(base_url)}; "
+            "this does not test generation."
+        )
         self.run_worker(
-            self._run_model_discovery(provider, base_url),
-            exclusive=True,
+            self._run_model_discovery(identity, base_url),
+            exclusive=False,
             group="console-settings-model-discovery",
         )
 
-    async def _run_model_discovery(self, provider: str, base_url: str) -> None:
+    async def _run_model_discovery(
+        self,
+        identity: ConsoleModelDiscoveryIdentity,
+        base_url: str,
+    ) -> None:
         """Run the model probe off the draft URL and apply the outcome.
 
         Args:
-            provider: Provider draft value at press time.
+            identity: Exact provider/endpoint/generation captured at press time.
             base_url: Base-URL draft at press time.
         """
         try:
-            result = await self._model_prober(base_url, provider_config_key(provider))
+            result = await self._model_prober(base_url, identity.provider_key)
         except Exception:
             result = LocalModelProbeResult(
                 ok=False,
                 base_url=base_url,
                 detail=f"No models endpoint at {endpoint_display(base_url)}.",
             )
-        self._apply_model_discovery_result(provider, result)
+        self._apply_model_discovery_result(identity, result)
 
     def _apply_model_discovery_result(
         self,
-        provider: str,
+        identity: ConsoleModelDiscoveryIdentity | str,
         result: LocalModelProbeResult,
     ) -> None:
         """Surface a probe outcome: model Select on success, honest copy otherwise.
 
         Args:
-            provider: Provider the probe was started for; results for a
-                provider the user has since switched away from are dropped.
+            identity: Exact request identity. A legacy provider string is
+                accepted only as an explicitly unfenced compatibility input
+                and can never create served-now evidence.
             result: Probe outcome from the discovery module.
         """
         try:
             discover = self.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
         except (NoMatches, QueryError):
             return
+        fenced = isinstance(identity, ConsoleModelDiscoveryIdentity)
+        if fenced:
+            if identity != self._current_draft_discovery_identity():
+                return
+            if (
+                canonical_connection_identity(
+                    identity.provider_key,
+                    result.base_url,
+                )
+                != identity.connection_identity
+            ):
+                return
+            provider = self._active_provider
+        else:
+            provider = identity
+        if provider_config_key(provider) != provider_config_key(self._active_provider):
+            return
         discover.disabled = not self._provider_supports_model_discovery(
             self._active_provider
         )
-        if provider != self._active_provider:
-            self._set_model_discover_status("")
-            return
         display = endpoint_display(result.base_url)
         if not result.ok:
             self._set_model_discover_status(
-                result.detail or f"No models endpoint at {display}."
+                f"Could not list models from {display}."
             )
             return
-        if not result.model_ids:
-            self._set_model_discover_status(_model_availability_copy(0, display))
-            return
-        self._discovered_model_ids[provider] = tuple(result.model_ids)
-        picker = self.query_one("#console-settings-model-picker", ModelSearchPicker)
-        picker.set_discovered_models(provider, list(result.model_ids))
-        count = len(result.model_ids)
+        model_ids = tuple(dict.fromkeys(result.model_ids))
+        self._discovered_model_ids[provider] = model_ids
+        picker = self.query_one(
+            "#console-settings-model-picker", ModelSearchPicker
+        )
+        if not fenced:
+            picker.set_discovered_models(provider, list(model_ids))
+        count = len(model_ids)
         # With exactly one model there is nothing to choose, so choose it. The
         # previous behaviour kept whatever was already selected -- which is how
         # a TTS model stayed active against a chat endpoint after a successful
         # discovery, with only a status line hinting anything had changed.
-        selected_model = self._current_model_value()
+        previous_model = self._current_model_value()
+        selected_model = previous_model
         if count == 1:
-            selected_model = result.model_ids[0]
-        self._sync_model_controls(provider, selected_model)
-        if count == 1:
-            # ``_sync_model_controls`` schedules the picker refresh. Commit the
-            # sole discovered model synchronously as well so the support/readiness
-            # projections below cannot observe the previous model in this turn.
+            selected_model = model_ids[0]
+        elif count > 1 and selected_model is None:
+            selected_model = model_ids[0]
+        with self.prevent(
+            Select.Changed,
+            Input.Changed,
+            ModelSearchPicker.ModelValueChanged,
+        ):
+            self._sync_model_controls(provider, selected_model)
+        if selected_model is not None and selected_model != previous_model:
+            # ``_sync_model_controls`` schedules the picker refresh. Commit an
+            # automatic selection synchronously so generation fencing observes
+            # the actual post-listing model in this same turn.
             picker.set_model_value(selected_model)
             self._set_provider_model_draft(provider, selected_model)
+        current_model = self._current_model_value()
+        if fenced and current_model != previous_model:
+            self._advance_model_discovery_generation(clear_status=False)
+            identity = self._current_draft_discovery_identity() or identity
+        if count == 1:
             self._set_model_discover_status(
                 _model_availability_copy(
                     1,
                     display,
-                    selected_model=result.model_ids[0],
+                    selected_model=model_ids[0],
                 )
             )
         else:
             self._set_model_discover_status(
                 _model_availability_copy(count, display)
             )
+        if fenced:
+            # A sole-result auto-selection is an internal model transition. Bind
+            # the successful list to the post-selection generation so subsequent
+            # user edits still invalidate it exactly.
+            rebound = self._current_draft_discovery_identity()
+            if rebound is not None:
+                identity = rebound
+            self._current_model_discovery_identity = identity
+            self._current_discovered_model_ids = model_ids
+            self._promote_current_discovery_options()
         self._sync_readiness_display()
         self._sync_generation_control_support()
         self._sync_model_provenance_copy()
+        self._sync_completion_actions()
+        self.call_after_refresh(self._sync_completion_actions)
 
     def _set_model_discover_status(self, text: str) -> None:
         """Update the inline discovery status line, hiding it when blank."""
@@ -4690,6 +5024,15 @@ class ConsoleSettingsModal(
             return
         discover.display = supports_discovery
         discover.disabled = not supports_discovery
+        try:
+            scope = self.query_one(
+                "#console-settings-model-discover-scope", Static
+            )
+        except (NoMatches, QueryError):
+            pass
+        else:
+            scope.update(MODEL_DISCOVER_SCOPE_COPY)
+            scope.display = supports_discovery
         self._set_model_discover_status("")
 
     def _sync_readiness_display(self) -> None:

@@ -97,9 +97,11 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
     PROVIDER_CHOICE_NO_EFFECT_SUFFIX,
     ConsoleSettingsInput,
     ConsoleSettingsCredentialRequest,
+    ConsoleModelDiscoveryIdentity,
     ConsoleSettingsDraftSnapshot,
     ConsoleSettingsModal,
     ConsoleSettingsResult,
+    ConsoleUnverifiedModelDecision,
     _settings_screen_region,
 )
 from tldw_chatbook.Widgets.Console.console_provider_picker import (
@@ -7254,8 +7256,13 @@ async def test_console_settings_modal_uses_shared_picker_and_saves_search_result
         search_input.value = "gpt-5"
         await pilot.pause()
         results = picker.query_one("#model-search-picker-results", OptionList)
-        option = results.get_option_at_index(0)
-        results.post_message(OptionList.OptionSelected(results, option, 0))
+        option_id = "model-provenance-option-0"
+        option = results.get_option(option_id)
+        option_index = results.get_option_index(option_id)
+        assert option.disabled is False
+        results.post_message(
+            OptionList.OptionSelected(results, option, option_index)
+        )
         await pilot.pause()
         await pilot.click("#console-settings-save")
 
@@ -10825,7 +10832,7 @@ async def test_console_settings_modal_discover_models_success_swaps_input_for_se
 
         app.screen.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button).press()
         await _wait_for_discover_status(
-            app, pilot, "2 models available at http://127.0.0.1:9099."
+            app, pilot, "2 models listed"
         )
 
         assert prober.calls == [("http://127.0.0.1:9099", "llama_cpp")]
@@ -10838,6 +10845,15 @@ async def test_console_settings_modal_discover_models_success_swaps_input_for_se
         model_custom = app.screen.query_one("#console-settings-model-custom", Button)
         assert model_custom.display is True
         assert model_custom.disabled is False
+        assert app.screen._current_model_value() == "srv-a"
+        assert app.screen._selected_model_requires_confirmation() is False
+        readiness = build_console_settings_readiness(
+            app.screen._build_draft(),
+            app_config=app.app_config,
+            active_run=False,
+        )
+        assert (readiness.operability, readiness.blocker) == ("ready_to_send", None)
+        assert app.screen.query_one("#console-settings-save", Button).disabled is False
 
         await pilot.click("#console-settings-save")
 
@@ -10873,10 +10889,13 @@ async def test_console_settings_modal_discover_models_failure_shows_inline_copy(
         await pilot.pause()
 
         discover = app.screen.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        assert discover.tooltip == settings_modal_module.MODEL_DISCOVER_SCOPE_COPY
         discover.press()
         await _wait_for_discover_status(
-            app, pilot, "No models endpoint at http://127.0.0.1:9099."
+            app, pilot, "Could not list models from http://127.0.0.1:9099."
         )
+        status = app.screen.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static)
+        assert "No models endpoint" not in str(status.renderable)
 
         # Honest inline line, button usable again, manual entry still works.
         assert discover.disabled is False
@@ -11446,7 +11465,7 @@ def test_console_settings_modal_discovery_uses_exact_model_count_copy() -> None:
 
     assert (
         settings_modal_module._model_availability_copy(0, endpoint)
-        == "No models available at http://127.0.0.1:9099."
+        == "No models reported"
     )
     assert (
         settings_modal_module._model_availability_copy(
@@ -11454,12 +11473,522 @@ def test_console_settings_modal_discovery_uses_exact_model_count_copy() -> None:
             endpoint,
             selected_model="only-model",
         )
-        == "1 model available at http://127.0.0.1:9099; selected only-model."
+        == "1 model listed"
     )
     assert (
         settings_modal_module._model_availability_copy(2, endpoint)
-        == "2 models available at http://127.0.0.1:9099."
+        == "2 models listed"
     )
+
+
+def test_console_discovery_identity_and_unverified_decision_are_exact_values() -> None:
+    """Confirmation carries the provider, canonical endpoint, generation, and model."""
+    identity = ConsoleModelDiscoveryIdentity(
+        provider_key="llama_cpp",
+        connection_identity=("llama_cpp", "http://127.0.0.1:9099"),
+        draft_generation=7,
+    )
+
+    assert ConsoleUnverifiedModelDecision(
+        identity=identity,
+        model_id="custom-model",
+    ) != ConsoleUnverifiedModelDecision(
+        identity=replace(identity, draft_generation=8),
+        model_id="custom-model",
+    )
+    assert ConsoleUnverifiedModelDecision(
+        identity=identity,
+        model_id="custom-model",
+    ) != ConsoleUnverifiedModelDecision(
+        identity=identity,
+        model_id="other-model",
+    )
+    assert "http://127.0.0.1:9099" not in repr(identity)
+
+
+@pytest.mark.asyncio
+async def test_console_discovery_identity_is_canonical_and_each_request_is_monotonic() -> None:
+    """Equivalent endpoint spellings compare canonically; rapid probes remain distinct."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="draft-model",
+            base_url="HTTP://LOCALHOST:80/v1/",
+        ),
+        app,
+        providers_models={"llama_cpp": ["draft-model"]},
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        first = modal._begin_model_discovery_identity(
+            "llama_cpp", "HTTP://LOCALHOST:80/v1/"
+        )
+        second = modal._begin_model_discovery_identity(
+            "llama_cpp", "http://localhost"
+        )
+
+        assert first.connection_identity == ("llama_cpp", "http://localhost")
+        assert second.connection_identity == first.connection_identity
+        assert second.draft_generation == first.draft_generation + 1
+
+        endpoint = modal.query_one("#console-settings-base-url", Input)
+        endpoint.value = "http://localhost/"
+        await pilot.pause()
+        assert modal._model_discovery_generation == second.draft_generation
+
+        endpoint.value = "http://localhost:81"
+        await pilot.pause()
+        assert modal._model_discovery_generation == second.draft_generation + 1
+
+
+@pytest.mark.asyncio
+async def test_stale_discovery_results_never_clear_or_overwrite_newer_state() -> None:
+    """Provider, endpoint, and rapid-request races all fail closed."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="draft-model",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        providers_models={
+            "llama_cpp": ["draft-model"],
+            "vllm": ["vllm-model"],
+        },
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        old = modal._begin_model_discovery_identity(
+            "llama_cpp", "http://127.0.0.1:9099"
+        )
+        newer = modal._begin_model_discovery_identity(
+            "llama_cpp", "http://127.0.0.1:9099"
+        )
+        modal._apply_model_discovery_result(
+            newer,
+            LocalModelProbeResult(
+                ok=True,
+                base_url="http://127.0.0.1:9099",
+                model_ids=("new-model", "new-model-2"),
+            ),
+        )
+        modal._apply_model_discovery_result(
+            old,
+            LocalModelProbeResult(
+                ok=True,
+                base_url="http://127.0.0.1:9099",
+                model_ids=("old-model",),
+            ),
+        )
+        status = modal.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static)
+        assert str(status.renderable) == "2 models listed"
+        assert modal._current_model_discovery_identity == newer
+
+        endpoint = modal.query_one("#console-settings-base-url", Input)
+        endpoint.value = "http://127.0.0.1:9100"
+        await pilot.pause()
+        modal._apply_model_discovery_result(
+            newer,
+            LocalModelProbeResult(
+                ok=True,
+                base_url="http://127.0.0.1:9099",
+                model_ids=("endpoint-stale",),
+            ),
+        )
+        assert modal._current_model_discovery_identity is None
+
+        prior_copy = str(status.renderable)
+        modal._switch_provider("vllm")
+        await pilot.pause(0.1)
+        modal._switch_provider("llama_cpp")
+        await pilot.pause(0.1)
+        endpoint.value = "http://127.0.0.1:9099"
+        await pilot.pause()
+        modal._apply_model_discovery_result(
+            newer,
+            LocalModelProbeResult(
+                ok=False,
+                base_url="http://127.0.0.1:9099",
+                detail="private upstream detail",
+            ),
+        )
+        await pilot.pause()
+        assert str(status.renderable) == prior_copy
+
+
+@pytest.mark.asyncio
+async def test_zero_model_discovery_requires_confirmation_for_existing_selection() -> None:
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="custom-model",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        providers_models={"llama_cpp": ["custom-model"]},
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        identity = modal._begin_model_discovery_identity(
+            "llama_cpp", "http://127.0.0.1:9099"
+        )
+        modal._apply_model_discovery_result(
+            identity,
+            LocalModelProbeResult(
+                ok=True,
+                base_url="http://127.0.0.1:9099",
+                model_ids=(),
+            ),
+        )
+        await pilot.pause()
+
+        assert str(
+            modal.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static).renderable
+        ) == "No models reported"
+        assert modal._selected_model_requires_confirmation() is True
+        assert modal.query_one(
+            "#console-settings-keep-unverified-model", Button
+        ).display is True
+
+
+@pytest.mark.asyncio
+async def test_zero_result_provenance_events_settle_and_accept_later_catalog_refresh() -> None:
+    """A marker-free empty listing must not recursively classify its own overlay."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="custom-model",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        providers_models={"llama_cpp": ["custom-model"]},
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        for _ in range(40):
+            if "llama_cpp" in modal._base_provenance_options:
+                break
+            await pilot.pause(0.01)
+        for _ in range(3):
+            await pilot.pause()
+        promote_calls = 0
+        original_promote = modal._promote_current_discovery_options
+
+        def counted_promote() -> None:
+            nonlocal promote_calls
+            promote_calls += 1
+            # Bound the red-case feedback cycle so the regression fails quickly.
+            if promote_calls <= 5:
+                original_promote()
+
+        modal._promote_current_discovery_options = counted_promote
+        identity = modal._begin_model_discovery_identity(
+            "llama_cpp", "http://127.0.0.1:9099"
+        )
+        modal._apply_model_discovery_result(
+            identity,
+            LocalModelProbeResult(
+                ok=True,
+                base_url="http://127.0.0.1:9099",
+                model_ids=(),
+            ),
+        )
+        for _ in range(5):
+            await pilot.pause()
+
+        assert 1 <= promote_calls <= 2
+        settled_calls = promote_calls
+        for _ in range(5):
+            await pilot.pause()
+        assert promote_calls == settled_calls
+
+        refreshed = provider_model_resolution.ResolvedProviderModelOption(
+            label="catalog-new",
+            model_id="catalog-new",
+            source="saved",
+            capability_status="known",
+            persisted=True,
+            provenance=provider_model_resolution.ConsoleModelProvenance.SAVED_FALLBACK,
+        )
+        modal.query_one(ModelSearchPicker).set_provenance_options(
+            "llama_cpp", (refreshed,)
+        )
+        await pilot.pause()
+
+        assert promote_calls == settled_calls + 1
+        assert [
+            option.model_id
+            for option in modal._base_provenance_options["llama_cpp"]
+        ] == ["catalog-new"]
+
+
+@pytest.mark.asyncio
+async def test_unverified_model_requires_exact_secondary_confirmation() -> None:
+    """A successful list that omits the selected model cannot silently complete."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="custom-model",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        providers_models={"llama_cpp": ["custom-model"]},
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        identity = modal._begin_model_discovery_identity(
+            "llama_cpp", "http://127.0.0.1:9099"
+        )
+        modal._apply_model_discovery_result(
+            identity,
+            LocalModelProbeResult(
+                ok=True,
+                base_url="http://127.0.0.1:9099",
+                model_ids=("served-a", "served-b"),
+            ),
+        )
+        await pilot.pause()
+
+        keep = modal.query_one("#console-settings-keep-unverified-model", Button)
+        use = modal.query_one("#console-settings-save", Button)
+        assert keep.display is True
+        assert keep.disabled is False
+        assert use.disabled is True
+
+        keep.focus()
+        await pilot.pause()
+        assert keep.has_focus is True
+        keep.press()
+        await pilot.pause()
+        assert modal._unverified_model_decision == ConsoleUnverifiedModelDecision(
+            identity=identity,
+            model_id="custom-model",
+        )
+        assert keep.display is False
+        assert use.disabled is False
+        assert use.has_focus is True
+
+        picker = modal.query_one(ModelSearchPicker)
+        picker.set_custom_value("changed-model")
+        modal._model_picker_value_changed(
+            ModelSearchPicker.ModelValueChanged("changed-model", custom=True)
+        )
+        await pilot.pause()
+        assert modal._unverified_model_decision is None
+        assert modal._current_model_discovery_identity == (
+            modal._current_draft_discovery_identity()
+        )
+        assert keep.display is True
+        assert use.disabled is True
+
+        keep.focus()
+        keep.press()
+        await pilot.pause()
+        assert modal._unverified_model_decision == ConsoleUnverifiedModelDecision(
+            identity=modal._current_draft_discovery_identity(),
+            model_id="changed-model",
+        )
+        assert keep.display is False
+        assert use.disabled is False
+        assert use.has_focus is True
+
+
+@pytest.mark.parametrize(
+    "modal_guard",
+    ({"active_run": True}, {"can_save": False}),
+)
+@pytest.mark.asyncio
+async def test_unverified_confirmation_respects_completion_guards(modal_guard) -> None:
+    """A guarded modal cannot record an exception or redirect to disabled primary."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="custom-model",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        providers_models={"llama_cpp": ["custom-model"]},
+        **modal_guard,
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        identity = modal._begin_model_discovery_identity(
+            "llama_cpp", "http://127.0.0.1:9099"
+        )
+        modal._apply_model_discovery_result(
+            identity,
+            LocalModelProbeResult(
+                ok=True,
+                base_url="http://127.0.0.1:9099",
+                model_ids=("served-a", "served-b"),
+            ),
+        )
+        await pilot.pause()
+
+        keep = modal.query_one("#console-settings-keep-unverified-model", Button)
+        use = modal.query_one("#console-settings-save", Button)
+        assert keep.display is True
+        assert keep.disabled is True
+        keep.press()
+        await pilot.pause()
+        assert modal._unverified_model_decision is None
+        assert use.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_exact_identity_discovery_promotes_models_to_served_now_without_generation_claim() -> None:
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="old-model",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        providers_models={"llama_cpp": ["old-model", "served-model"]},
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        identity = modal._begin_model_discovery_identity(
+            "llama_cpp", "http://127.0.0.1:9099"
+        )
+        before_generation = modal._model_discovery_generation
+        modal._apply_model_discovery_result(
+            identity,
+            LocalModelProbeResult(
+                ok=True,
+                base_url="http://127.0.0.1:9099",
+                model_ids=("served-model",),
+            ),
+        )
+        await pilot.pause()
+
+        picker = modal.query_one(ModelSearchPicker)
+        assert modal._current_model_value() == "served-model"
+        assert modal._model_discovery_generation == before_generation + 1
+        assert modal._current_model_discovery_identity == (
+            modal._current_draft_discovery_identity()
+        )
+        assert picker.provenance_for_model(
+            "served-model", provider="llama_cpp"
+        ) == settings_modal_module.ConsoleModelProvenance.SERVED_NOW
+        provenance = modal.query_one("#console-settings-model-provenance", Static)
+        assert str(provenance.renderable) == "Served by this endpoint now"
+        assert "generation" not in str(provenance.renderable).lower()
+
+
+@pytest.mark.asyncio
+async def test_discovery_scope_is_visible_before_activation_and_persists_after_result() -> None:
+    """The list-only scope must not be hidden in hover-only tooltip text."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="served-model",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        providers_models={"llama_cpp": ["served-model"], "openai": ["gpt-4.1"]},
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        scope = modal.query_one("#console-settings-model-discover-scope", Static)
+        assert scope.display is True
+        assert str(scope.renderable) == settings_modal_module.MODEL_DISCOVER_SCOPE_COPY
+
+        identity = modal._begin_model_discovery_identity(
+            "llama_cpp", "http://127.0.0.1:9099"
+        )
+        modal._apply_model_discovery_result(
+            identity,
+            LocalModelProbeResult(
+                ok=True,
+                base_url="http://127.0.0.1:9099",
+                model_ids=("served-model",),
+            ),
+        )
+        await pilot.pause()
+        assert str(scope.renderable) == settings_modal_module.MODEL_DISCOVER_SCOPE_COPY
+        assert str(
+            modal.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static).renderable
+        ) == "1 model listed"
+
+        modal._switch_provider("openai")
+        await pilot.pause(0.1)
+        assert scope.display is False
+
+
+@pytest.mark.asyncio
+async def test_selecting_served_now_row_rebinds_listing_to_new_model_generation() -> None:
+    """Choosing another listed row retains exact listing evidence and provenance."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="served-a",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        providers_models={"llama_cpp": ["served-a", "served-b"]},
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        identity = modal._begin_model_discovery_identity(
+            "llama_cpp", "http://127.0.0.1:9099"
+        )
+        modal._apply_model_discovery_result(
+            identity,
+            LocalModelProbeResult(
+                ok=True,
+                base_url="http://127.0.0.1:9099",
+                model_ids=("served-a", "served-b"),
+            ),
+        )
+        await pilot.pause()
+        before_generation = modal._model_discovery_generation
+        status = modal.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static)
+        assert str(status.renderable) == "2 models listed"
+        picker = modal.query_one(ModelSearchPicker)
+        picker.set_model_value("served-b")
+        modal._model_picker_selected(ModelSearchPicker.ModelSelected("served-b"))
+        await pilot.pause()
+
+        assert modal._model_discovery_generation > before_generation
+        assert modal._current_model_discovery_identity == (
+            modal._current_draft_discovery_identity()
+        )
+        assert modal._current_discovered_model_ids == ("served-a", "served-b")
+        assert str(status.renderable) == "2 models listed"
+        assert picker.provenance_for_model(
+            "served-b", provider="llama_cpp"
+        ) == settings_modal_module.ConsoleModelProvenance.SERVED_NOW
+        assert modal._selected_model_requires_confirmation() is False
 
 
 @pytest.mark.asyncio
