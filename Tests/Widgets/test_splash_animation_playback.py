@@ -257,3 +257,72 @@ async def test_every_animated_card_renders_consecutive_frames():
                 splash.close()
                 await splash.remove()
     assert not failures, failures
+
+
+async def test_delta_clocked_effect_progress_depends_only_on_rendered_frames():
+    """terminal_boot treats start_time as a per-frame delta anchor.
+
+    Its typing delays and pauses must advance by exactly one interval per
+    rendered frame. With the driver re-anchoring it like an absolute-elapsed
+    effect, the delta computed each frame grew as
+    (current_frame + 1) * interval and the boot sequence accelerated
+    (Qodo review of PR #2329).
+    """
+    from textual.widgets import Static
+
+    def _display_text_for(app: _SplashHostApp) -> str:
+        renderable = app.splash.query_one("#splash-display", Static).renderable
+        return str(renderable) if renderable is not None else ""
+
+    async def _three_frames(with_wall_time_gap: bool) -> str:
+        app = _SplashHostApp(
+            {"card_name": "terminal_boot", "duration": 30.0, "show_progress": False}
+        )
+        async with app.run_test():
+            splash = app.splash
+            await _await_effect_ready(splash)
+            splash.animation_timer.stop()
+            splash._update_animation()
+            if with_wall_time_gap:
+                await asyncio.sleep(0.5)
+            splash._update_animation()
+            splash._update_animation()
+            return _display_text_for(app)
+
+    back_to_back = await _three_frames(with_wall_time_gap=False)
+    with_gap = await _three_frames(with_wall_time_gap=True)
+    assert with_gap == back_to_back, (
+        "terminal_boot advanced differently when wall time passed between "
+        "rendered frames; its per-frame deltas are not frame-locked"
+    )
+
+    # The compounding form of the bug: with the driver re-anchoring like an
+    # absolute-elapsed effect, the delta the effect computes on rendered
+    # frame N is N * interval -- frame 50 would get a 1.5s "inter-frame"
+    # delta and blast through its typing delays. Spy the delta the effect
+    # actually experiences and pin that it never grows with frame index.
+    app = _SplashHostApp(
+        {"card_name": "terminal_boot", "duration": 30.0, "show_progress": False}
+    )
+    async with app.run_test():
+        splash = app.splash
+        await _await_effect_ready(splash)
+        effect = splash.effect_handler
+        interval = splash._animation_interval
+        splash.animation_timer.stop()
+        deltas = []
+        original_update = effect.update
+
+        def spying_update():
+            deltas.append(time.time() - effect.start_time)
+            return original_update()
+
+        effect.update = spying_update
+        for _ in range(8):
+            splash._update_animation()
+        assert deltas, "no frames rendered"
+        assert max(deltas) < 2 * interval, (
+            f"per-frame deltas grow with frame index (max {max(deltas):.4f}s "
+            f"vs interval {interval:.4f}s); terminal_boot would accelerate: "
+            f"{[round(d, 4) for d in deltas]}"
+        )

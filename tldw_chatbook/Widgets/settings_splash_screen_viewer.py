@@ -14,6 +14,7 @@ from textual.reactive import reactive
 from textual.widgets import Button, Checkbox, Input, OptionList, Select, Static
 from textual.widgets.option_list import Option
 
+from ..Constants import DEFAULT_SPLASH_DURATION_SECONDS
 from ..config import get_cli_setting, save_setting_to_cli_config
 from ..Utils.Splash_Screens.card_definitions import get_all_card_definitions
 from ..Widgets.splash_screen import SplashScreen
@@ -21,7 +22,7 @@ from ..Widgets.splash_screen import SplashScreen
 
 DEFAULT_SPLASH_CONFIG: dict[str, Any] = {
     "enabled": True,
-    "duration": 7.0,
+    "duration": DEFAULT_SPLASH_DURATION_SECONDS,
     "skip_on_keypress": True,
     "card_selection": "random",
     "show_progress": True,

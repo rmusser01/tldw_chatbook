@@ -16,6 +16,7 @@ from textual.message import Message
 
 from loguru import logger
 
+from ..Constants import DEFAULT_SPLASH_DURATION_SECONDS
 from ..config import get_cli_setting
 
 # Import the registration system and load all effects
@@ -56,7 +57,7 @@ class SplashScreen(Container):
         self,
         *,
         card_name: Optional[str] = None,
-        duration: float = 7.0,
+        duration: float = DEFAULT_SPLASH_DURATION_SECONDS,
         skip_on_keypress: bool = True,
         show_progress: bool = True,
         reduced_motion: bool = False,
@@ -119,7 +120,7 @@ class SplashScreen(Container):
         """Load splash screen configuration from settings."""
         default_config = {
             "enabled": True,
-            "duration": 7.0,
+            "duration": DEFAULT_SPLASH_DURATION_SECONDS,
             "skip_on_keypress": True,
             "card_selection": "random",
             "show_progress": True,
@@ -494,16 +495,27 @@ class SplashScreen(Container):
             return
         # current_frame counts already-rendered frames, so the frame about
         # to be rendered sits (current_frame + 1) intervals into the effect.
-        self.effect_handler.start_time = (
-            time.time() - (self.current_frame + 1) * self._animation_interval
-        )
+        # Delta-clocked effects (FRAME_DELTA_CLOCK) instead read start_time
+        # as their previous-frame timestamp and reset it inside update(), so
+        # they get a constant one-interval delta per rendered frame -- an
+        # increasingly old anchor would compound their per-frame deltas and
+        # accelerate them (Qodo review of PR #2329).
+        if getattr(self.effect_handler, "FRAME_DELTA_CLOCK", False):
+            self.effect_handler.start_time = time.time() - self._animation_interval
+        else:
+            self.effect_handler.start_time = (
+                time.time() - (self.current_frame + 1) * self._animation_interval
+            )
         frame_content = self.effect_handler.update()
         if not frame_content:
             return
         if frame_content != self._last_frame_content:
-            # Update display
+            # Update display. layout=False: splash frames repaint the same
+            # fixed-size display region, and a layout pass per frame was
+            # 10-100 whole-screen reflows per second during startup
+            # (TASK-21595's regression test pins this).
             display = self.query_one("#splash-display", Static)
-            display.update(frame_content)
+            display.update(frame_content, layout=False)
             self._last_frame_content = frame_content
         self.current_frame += 1
 
