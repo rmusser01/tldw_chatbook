@@ -40,6 +40,12 @@ from tldw_chatbook.Constants import (
     CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_conversation_hydration import (
+    ConsoleGenerationSettingsHydration,
+)
+from tldw_chatbook.Chat.console_generation_settings_metadata import (
+    ConsoleGenerationSettingsReadStatus,
+)
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from Tests.UI.background_signals import (
     await_background_task,
@@ -264,9 +270,10 @@ async def test_workspace_files_availability_snapshot_never_blocks_context_build(
     await screen.workers[0][0]
     assert controller._workspace_files_availability_by_id == {"ws-a": True}
     assert sync_calls == ["sync"]
-    assert controller._build_console_workspace_context_state().workspace_files_available_by_id == {
-        "ws-a": True
-    }
+    assert (
+        controller._build_console_workspace_context_state().workspace_files_available_by_id
+        == {"ws-a": True}
+    )
 
 
 @pytest.mark.asyncio
@@ -300,9 +307,10 @@ async def test_workspace_files_availability_snapshot_discards_stale_generation(
     controller = _availability_controller(
         monkeypatch, _Registry(), screen, records, sync_calls
     )
-    assert controller._build_console_workspace_context_state().workspace_files_available_by_id == {
-        "ws-a": False
-    }
+    assert (
+        controller._build_console_workspace_context_state().workspace_files_available_by_id
+        == {"ws-a": False}
+    )
     for _ in range(100):
         if first_entered.is_set():
             break
@@ -310,9 +318,10 @@ async def test_workspace_files_availability_snapshot_discards_stale_generation(
     assert first_entered.is_set(), "first availability generation did not start"
 
     records[0] = [SimpleNamespace(workspace_id="ws-b")]
-    assert controller._build_console_workspace_context_state().workspace_files_available_by_id == {
-        "ws-b": False
-    }
+    assert (
+        controller._build_console_workspace_context_state().workspace_files_available_by_id
+        == {"ws-b": False}
+    )
     first_release.set()
     for _ in range(100):
         if second_entered.is_set():
@@ -323,9 +332,10 @@ async def test_workspace_files_availability_snapshot_discards_stale_generation(
     await screen.workers[0][0]
 
     assert controller._workspace_files_availability_by_id == {"ws-b": True}
-    assert controller._build_console_workspace_context_state().workspace_files_available_by_id == {
-        "ws-b": True
-    }
+    assert (
+        controller._build_console_workspace_context_state().workspace_files_available_by_id
+        == {"ws-b": True}
+    )
     assert sync_calls == ["sync"]
 
 
@@ -536,8 +546,12 @@ async def test_workspace_files_push_failure_leaves_no_ledger_or_claim():
     app = SimpleNamespace(workspace_registry_service=object(), notify=_noop)
     controller = _workspace_controller(app_instance=app)
     controller._resolve_workspace_files_visit = lambda workspace_id: SimpleNamespace(  # type: ignore[method-assign]
-        workspace_id=workspace_id, workspace_name="A", active_workspace_id="A",
-        active_workspace_name="A", bindings=(), had_bindings=True,
+        workspace_id=workspace_id,
+        workspace_name="A",
+        active_workspace_id="A",
+        active_workspace_name="A",
+        bindings=(),
+        had_bindings=True,
     )
     controller.open_workspace_files_modal = lambda **_kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
         RuntimeError("push failed")
@@ -553,11 +567,18 @@ async def test_workspace_files_push_failure_leaves_no_ledger_or_claim():
 async def test_workspace_files_no_folder_blocks_but_stale_available_request_opens_recovery():
     notices: list[str] = []
     opened: list[dict[str, object]] = []
-    app = SimpleNamespace(workspace_registry_service=object(), notify=lambda text, **_kw: notices.append(text))
+    app = SimpleNamespace(
+        workspace_registry_service=object(),
+        notify=lambda text, **_kw: notices.append(text),
+    )
     controller = _workspace_controller(app_instance=app)
     controller._resolve_workspace_files_visit = lambda workspace_id: SimpleNamespace(  # type: ignore[method-assign]
-        workspace_id=workspace_id, workspace_name="A", active_workspace_id="A",
-        active_workspace_name="A", bindings=(), had_bindings=False,
+        workspace_id=workspace_id,
+        workspace_name="A",
+        active_workspace_id="A",
+        active_workspace_name="A",
+        bindings=(),
+        had_bindings=False,
     )
     controller.open_workspace_files_modal = lambda **kwargs: (  # type: ignore[method-assign]
         opened.append(kwargs) or SimpleNamespace(is_mounted=True)
@@ -577,7 +598,9 @@ async def test_workspace_files_no_folder_blocks_but_stale_available_request_open
     assert len(opened) == 2
 
 
-def test_workspace_files_resolution_preserves_ro_and_rw_binding_access_labels(monkeypatch):
+def test_workspace_files_resolution_preserves_ro_and_rw_binding_access_labels(
+    monkeypatch,
+):
     """The inspector must show the captured folder mode, even when unavailable."""
     workspace = SimpleNamespace(workspace_id="ws-a", name="A", archived=False)
     bindings = (
@@ -615,7 +638,9 @@ def test_workspace_files_resolution_preserves_ro_and_rw_binding_access_labels(mo
     resolution = controller._resolve_workspace_files_visit("ws-a")
 
     assert resolution is not None
-    assert [(binding.access_label, binding.available) for binding in resolution.bindings] == [
+    assert [
+        (binding.access_label, binding.available) for binding in resolution.bindings
+    ] == [
         ("Read-only", False),
         ("Read/write", True),
     ]
@@ -631,15 +656,21 @@ async def test_workspace_files_minimum_refusal_does_not_resolve_or_claim() -> No
         screen=screen,
         app_instance=SimpleNamespace(
             workspace_registry_service=object(),
-            notify=lambda text, **kwargs: notices.append((text, kwargs.get("severity"))),
+            notify=lambda text, **kwargs: notices.append(
+                (text, kwargs.get("severity"))
+            ),
         ),
     )
     calls: list[str] = []
-    controller._resolve_workspace_files_visit = lambda workspace_id: calls.append(workspace_id)  # type: ignore[method-assign]
+    controller._resolve_workspace_files_visit = lambda workspace_id: calls.append(
+        workspace_id
+    )  # type: ignore[method-assign]
 
     await controller.request_workspace_files("ws-a")
 
-    assert notices == [("Workspace Files needs at least 80 × 24 terminal cells.", "warning")]
+    assert notices == [
+        ("Workspace Files needs at least 80 × 24 terminal cells.", "warning")
+    ]
     assert calls == []
     assert screen.workers == []
     assert controller._workspace_files_admission_claim is None
@@ -1028,8 +1059,7 @@ def test_browser_row_cap_expands_to_fill_measured_rail_height():
         controller._current_console_workspace_context().active_workspace_id or ""
     )
     controller._console_conversation_browser_rows = tuple(
-        _browser_row(f"chat-{i}", f"Chat {i}", workspace_id=None)
-        for i in range(40)
+        _browser_row(f"chat-{i}", f"Chat {i}", workspace_id=None) for i in range(40)
     )
 
     state = controller._with_console_conversation_browser_state(_workspace_state())
@@ -2743,6 +2773,8 @@ def test_active_flat_search_overlays_current_star_selection_and_run_marker() -> 
         True,
     )
     assert controller._flat_conversation_search.rows == (stale,)
+
+
 def test_workspace_files_owner_seam_only_constructs_and_pushes_the_pinned_modal():
     """Task 2's truthful launch seam cannot activate or retarget Console state."""
     pushed: list[ConsoleWorkspaceFilesModal] = []
@@ -2750,9 +2782,7 @@ def test_workspace_files_owner_seam_only_constructs_and_pushes_the_pinned_modal(
     screen.app = SimpleNamespace(push_screen=lambda modal: pushed.append(modal))
     controller = _workspace_controller(screen=screen)
     inspector = object()
-    bindings = (
-        WorkspaceFilesBinding("binding-1", "Folder", None, available=False),
-    )
+    bindings = (WorkspaceFilesBinding("binding-1", "Folder", None, available=False),)
     attention = WorkspaceFilesAttention("One generic attention flag.")
     before = (
         controller._console_conversation_browser_query,
@@ -2857,6 +2887,7 @@ def test_workspace_state_build_never_lists_persisted_conversations_inline():
     assert screen.workers[0][1] == {
         "group": "console-persisted-browser-cache",
         "exclusive": True,
+        "name": "_refresh_console_persisted_rows_cache",
     }
 
 
@@ -3724,21 +3755,23 @@ def _atomic_resume_controller(
         native_session_rows_accessor=lambda state: state,
         current_chat_controller_accessor=lambda: chat_controller,
         ensure_chat_controller=lambda: chat_controller,
-        session_settings_for_resume_accessor=lambda _conversation: prior_settings,
+        session_settings_for_resume_accessor=lambda _conversation: (
+            ConsoleGenerationSettingsHydration(
+                settings=prior_settings,
+                durable_snapshot=None,
+                metadata_status=ConsoleGenerationSettingsReadStatus.ABSENT,
+            )
+        ),
         inject_resume_agent_markers_accessor=inject_markers,
         resolve_effective_scope_state=resolve_scope,
         sync_native_console_chat_ui=sync_ui,
     )
-    controller._refresh_console_conversation_browser_after_selection = (
-        refresh_browser
-    )
+    controller._refresh_console_conversation_browser_after_selection = refresh_browser
     return controller, store, prior, prior_settings, durable, notifications
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "failure_boundary", ("marker", "scope", "ui", "browser")
-)
+@pytest.mark.parametrize("failure_boundary", ("marker", "scope", "ui", "browser"))
 async def test_open_saved_conversation_atomic_rollback_on_presentation_failure(
     failure_boundary,
 ):
@@ -3773,9 +3806,7 @@ async def test_open_saved_conversation_atomic_rollback_on_presentation_failure(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "failure_boundary", ("marker", "scope", "ui", "browser")
-)
+@pytest.mark.parametrize("failure_boundary", ("marker", "scope", "ui", "browser"))
 async def test_open_saved_conversation_cancellation_rolls_back_and_propagates(
     failure_boundary,
 ):
@@ -3840,9 +3871,7 @@ async def test_open_already_live_session_sync_failure_is_atomic(
     assert target.draft == "target draft"
     assert durable.mutations == []
     assert notifications == (
-        []
-        if propagates
-        else [(RESUME_FAILURE_COPY, "error", {"timeout": 15})]
+        [] if propagates else [(RESUME_FAILURE_COPY, "error", {"timeout": 15})]
     )
 
 
@@ -3859,17 +3888,13 @@ def test_resume_match_prefers_active_then_creation_order():
     )
 
     assert (
-        controller._console_session_id_for_workspace_conversation(
-            "shared-conversation"
-        )
+        controller._console_session_id_for_workspace_conversation("shared-conversation")
         == first.id
     )
 
     store.switch_session(second.id)
     assert (
-        controller._console_session_id_for_workspace_conversation(
-            "shared-conversation"
-        )
+        controller._console_session_id_for_workspace_conversation("shared-conversation")
         == second.id
     )
     assert other in store.sessions()
@@ -3898,16 +3923,10 @@ async def test_id_only_public_opener_keeps_active_matching_duplicate():
         status="open session",
         updated_label="now",
     )
-    controller._find_console_browser_row = (
-        lambda *_args, **_kwargs: deduped_first_row
-    )
-    controller._session_id_for_browser_row_fn = (
-        lambda row: row.native_session_id
-    )
+    controller._find_console_browser_row = lambda *_args, **_kwargs: deduped_first_row
+    controller._session_id_for_browser_row_fn = lambda row: row.native_session_id
 
-    result = await controller.open_console_workspace_conversation(
-        "shared-conversation"
-    )
+    result = await controller.open_console_workspace_conversation("shared-conversation")
 
     assert result is True
     assert store.active_session_id == active.id
@@ -4020,9 +4039,7 @@ async def test_mounted_failed_open_repaints_prior_and_forces_composer(
             content="Exact prior transcript",
         )
         await console._sync_native_console_chat_ui()
-        await _wait_for_selector(
-            console, pilot, f"#console-message-{prior_message.id}"
-        )
+        await _wait_for_selector(console, pilot, f"#console-message-{prior_message.id}")
         console._stop_console_transcript_sync_timer()
         transcript = console.query_one("#console-native-transcript")
         transcript.focus()
@@ -4064,10 +4081,8 @@ async def test_mounted_failed_open_repaints_prior_and_forces_composer(
             )
 
         notifications: list[tuple[str, str, dict]] = []
-        app.notify = (
-            lambda message, severity="information", **kwargs: notifications.append(
-                (message, severity, kwargs)
-            )
+        app.notify = lambda message, severity="information", **kwargs: (
+            notifications.append((message, severity, kwargs))
         )
 
         outcome = await console._workspace.open_console_workspace_conversation(
@@ -4131,9 +4146,7 @@ async def test_browser_row_resume_failure_preserves_prior_workspace_context(
     )
     registry = _AtomicWorkspaceRegistry()
     controller.app_instance.workspace_registry_service = registry
-    prior_context = ConsoleWorkspaceContext(
-        active_workspace_id="workspace-prior"
-    )
+    prior_context = ConsoleWorkspaceContext(active_workspace_id="workspace-prior")
     store.set_workspace_context(prior_context)
     row = _cross_workspace_browser_row()
     controller._find_console_browser_row = lambda *_args, **_kwargs: row
@@ -4143,6 +4156,7 @@ async def test_browser_row_resume_failure_preserves_prior_workspace_context(
             get_conversation_tree=lambda *_args, **_kwargs: {}
         )
     else:
+
         def fail_load(*_args, **_kwargs):
             raise RuntimeError("service failed")
 
@@ -4265,8 +4279,8 @@ async def test_resume_retry_is_scheduled_only_after_successful_composer_focus():
         _atomic_resume_controller()
     )
     events: list[str] = []
-    controller._focus_composer_if_needed_fn = (
-        lambda *, force: events.append(f"focus:{force}")
+    controller._focus_composer_if_needed_fn = lambda *, force: events.append(
+        f"focus:{force}"
     )
     controller._wake_retry_poke_fn = lambda: events.append("retry")
 
@@ -4388,9 +4402,7 @@ async def test_rail_height_drives_adaptive_cap_through_the_mounted_ui(tmp_path):
 
     async with host.run_test(size=(140, 160)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(
-            console, pilot, "#console-workspace-context"
-        )
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
 
         # The screen measures the mounted rail body and the budget grows
         # past the historical 20-line ceiling on this tall terminal.
@@ -4402,8 +4414,10 @@ async def test_rail_height_drives_adaptive_cap_through_the_mounted_ui(tmp_path):
         # Both peer list sections' ceilings follow the shared budget.
         await _wait_until(
             pilot,
-            lambda: _mounted_section_budgets(console)
-            == {"workspace": expected_budget, "conversations": expected_budget},
+            lambda: (
+                _mounted_section_budgets(console)
+                == {"workspace": expected_budget, "conversations": expected_budget}
+            ),
             detail=f"adaptive section ceilings == {expected_budget}",
         )
 
@@ -4421,12 +4435,15 @@ async def test_rail_height_drives_adaptive_cap_through_the_mounted_ui(tmp_path):
 
         await _wait_until(
             pilot,
-            lambda: _mounted_chats_row_count()
-            > CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
+            lambda: (
+                _mounted_chats_row_count()
+                > CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT
+            ),
             detail="mounted Chats rows exceed the 12-row default",
         )
-        assert _mounted_chats_row_count() == console_conversation_browser_group_row_limit(
-            measured
+        assert (
+            _mounted_chats_row_count()
+            == console_conversation_browser_group_row_limit(measured)
         )
 
         # Shrinking the terminal re-syncs the whole chain: the measured
@@ -4444,11 +4461,13 @@ async def test_rail_height_drives_adaptive_cap_through_the_mounted_ui(tmp_path):
         expected_small_budget = console_rail_section_height_budget(small_measured)
         await _wait_until(
             pilot,
-            lambda: _mounted_section_budgets(console)
-            == {
-                "workspace": expected_small_budget,
-                "conversations": expected_small_budget,
-            },
+            lambda: (
+                _mounted_section_budgets(console)
+                == {
+                    "workspace": expected_small_budget,
+                    "conversations": expected_small_budget,
+                }
+            ),
             detail=f"section ceilings shrink to {expected_small_budget}",
         )
         # A 30-line terminal is below every growth step: the historical

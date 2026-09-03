@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from enum import Enum
 from typing import Any, Iterable, Literal, Sequence
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserInputRow,
@@ -107,6 +107,53 @@ class ConsoleSwitcherHistoryPage:
     @property
     def has_more(self) -> bool:
         return self.offset + len(self.entries) < self.total
+
+
+@dataclass(frozen=True)
+class ConsoleSwitcherHistoryTerm:
+    """One ordered literal or workspace term in a History query."""
+
+    value: str
+    kind: Literal["text", "workspace"]
+
+
+@dataclass(frozen=True)
+class ConsoleSwitcherHistoryQuery:
+    """Storage-facing plan for one semantic History query."""
+
+    text_query: str
+    text_terms: tuple[str, ...] = ()
+    workspace_terms: tuple[str, ...] = ()
+    ordered_terms: tuple[ConsoleSwitcherHistoryTerm, ...] = ()
+    can_match: bool = True
+
+
+class _ConsoleHistoryTimezoneConfig(BaseModel):
+    """Strict configuration boundary for an optional explicit IANA timezone."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    configured_name: str | None = Field(default=None, max_length=255)
+
+    @field_validator("configured_name", mode="before")
+    @classmethod
+    def _normalize_configured_name(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("configured_name must be text or None")
+        return value.strip() or None
+
+    @field_validator("configured_name")
+    @classmethod
+    def _require_known_iana_zone(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            ZoneInfo(value)
+        except (KeyError, ValueError):
+            raise ValueError("configured_name must identify an IANA timezone") from None
+        return value
 
 
 @dataclass(frozen=True)
@@ -903,6 +950,91 @@ def _normalized_active_query(query: str) -> list[str]:
     return [token for token in normalized.split() if token]
 
 
+def plan_console_history_query(query: str) -> ConsoleSwitcherHistoryQuery:
+    """Translate switcher semantics into bounded persisted-history filters.
+
+    History contains saved destinations only. Semantic tokens that describe
+    that invariant are consumed before title/message search; tokens describing
+    live or unavailable activity cannot match. Workspace terms remain separate
+    because their labels live in the Console workspace registry, not the
+    conversation FTS index.
+
+    Args:
+        query: User-entered switcher query.
+
+    Returns:
+        A storage text query, workspace-label terms, and matchability flag.
+    """
+    raw_tokens = str(query or "").strip().split()
+    tokens: list[str] = []
+    index = 0
+    phrase_aliases = (
+        (("needs", "attention"), "is:waiting"),
+        (("waiting", "on", "me"), "is:waiting"),
+        (("new", "results"), "is:new"),
+    )
+    while index < len(raw_tokens):
+        matched_alias = False
+        for phrase, replacement in phrase_aliases:
+            candidate = raw_tokens[index : index + len(phrase)]
+            if tuple(item.casefold() for item in candidate) == phrase:
+                tokens.append(replacement)
+                index += len(phrase)
+                matched_alias = True
+                break
+        if not matched_alias:
+            tokens.append(raw_tokens[index])
+            index += 1
+
+    text_terms: list[str] = []
+    workspace_terms: list[str] = []
+    ordered_terms: list[ConsoleSwitcherHistoryTerm] = []
+    history_false_terms = {
+        "waiting",
+        "working",
+        "new",
+        "current",
+        "open",
+        "unavailable",
+        "running",
+        "queued",
+        "failed",
+        "finished",
+        "cancelled",
+        "approval",
+        "paused",
+        "stuck",
+        "stopped",
+        "validating",
+        "retrying",
+    }
+    for token in tokens:
+        normalized_token = token.casefold()
+        if normalized_token.startswith("workspace:"):
+            value = token.partition(":")[2]
+            if not value:
+                return ConsoleSwitcherHistoryQuery("", can_match=False)
+            workspace_terms.append(value)
+            ordered_terms.append(ConsoleSwitcherHistoryTerm(value, "workspace"))
+            continue
+        if normalized_token.startswith("is:"):
+            if normalized_token == "is:saved":
+                continue
+            return ConsoleSwitcherHistoryQuery("", can_match=False)
+        if normalized_token == "saved":
+            continue
+        if normalized_token in history_false_terms:
+            return ConsoleSwitcherHistoryQuery("", can_match=False)
+        text_terms.append(token)
+        ordered_terms.append(ConsoleSwitcherHistoryTerm(token, "text"))
+    return ConsoleSwitcherHistoryQuery(
+        " ".join(text_terms),
+        text_terms=tuple(text_terms),
+        workspace_terms=tuple(workspace_terms),
+        ordered_terms=tuple(ordered_terms),
+    )
+
+
 def _active_result_predicates(
     result: ConsoleSwitcherActiveResult,
 ) -> dict[str, bool]:
@@ -991,11 +1123,39 @@ def filter_console_active_results(
     return tuple(result for result in results if matches(result))
 
 
+def resolve_console_history_timezone(
+    configured_name: object,
+    *,
+    system_timezone: tzinfo | None = None,
+) -> tzinfo | None:
+    """Resolve an explicit IANA zone or delegate to host-local rules.
+
+    Args:
+        configured_name: Optional configured IANA timezone name. Invalid,
+            oversized, or non-text values use the system fallback.
+        system_timezone: Explicit host timezone used by tests; ``None`` lets
+            ``datetime.astimezone`` apply the host's rules per instant.
+
+    Returns:
+        The validated explicit IANA timezone, or ``system_timezone`` when no
+        valid explicit configuration is present.
+    """
+    try:
+        config = _ConsoleHistoryTimezoneConfig.model_validate(
+            {"configured_name": configured_name}
+        )
+    except ValidationError:
+        return system_timezone
+    if config.configured_name is None:
+        return system_timezone
+    return ZoneInfo(config.configured_name)
+
+
 def console_history_section(
     value: str | datetime | None,
     *,
     now: datetime,
-    local_timezone: ZoneInfo,
+    local_timezone: tzinfo | None,
 ) -> str:
     """Return the local-calendar section for one persisted timestamp."""
     instant = _parse_instant(value)
@@ -1016,7 +1176,7 @@ def group_console_history_entries(
     entries: Iterable[ConsoleSwitcherEntry],
     *,
     now: datetime,
-    local_timezone: ZoneInfo,
+    local_timezone: tzinfo | None,
 ) -> tuple[ConsoleSwitcherEntry, ...]:
     """Apply pure fixed-order local-calendar sections to a bounded page."""
     order = {"Today": 0, "Yesterday": 1, "Previous 7 days": 2, "Older": 3}
