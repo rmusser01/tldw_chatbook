@@ -4723,15 +4723,24 @@ def test_summary_state_keeps_missing_model_row_compact() -> None:
             used_tokens=None, token_limit=None, label="unknown"
         ),
         ConsoleSettingsReadiness(
-            label="Missing model",
-            detail="Select a model before sending.",
+            label="READY legacy poison",
+            detail="PRIVATE legacy detail poison",
             native_send_supported=False,
+            operability="not_ready",
+            blocker="model_missing",
+            recovery_action="select_model",
+            provider_display_name="llama.cpp",
+            configuration="configured",
+            credential="not_required",
+            endpoint="not_tested",
+            model="missing",
+            generation="not_tested",
         ),
     )
 
-    assert state.provider_row == "Provider: llama_cpp"
+    assert state.provider_row == "Provider: llama.cpp"
     assert state.model_row == "Model: Missing"
-    assert state.readiness_label == "Missing model"
+    assert state.readiness_label == ""
     assert state.action_label == "Choose Model"
     assert state.action_tooltip == "Choose a model for this Console session"
 
