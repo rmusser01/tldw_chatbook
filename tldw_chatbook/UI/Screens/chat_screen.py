@@ -2937,6 +2937,7 @@ class ChatScreen(BaseAppScreen):
             active_provider,
             current_model=active_model,
         )
+        active_run = self._console_run_active()
         modal = ConsoleSettingsModal(
             settings=settings,
             origin=origin,
@@ -2948,7 +2949,11 @@ class ChatScreen(BaseAppScreen):
             providers_models=providers_models,
             context_estimate=context_estimate,
             context_state=context_state,
-            can_save=controller.run_state_for(session_id).is_send_allowed,
+            can_save=(
+                controller.run_state_for(session_id).is_send_allowed
+                and not active_run
+            ),
+            active_run=active_run,
             focus_model=focus_model,
             focus_context=focus_context,
             reset_current_memory=lambda: controller.reset_active_context_memory(
@@ -11983,7 +11988,7 @@ class ChatScreen(BaseAppScreen):
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
     ) -> ConsoleInspectorState:
-        provider_display, model, settings = (
+        _provider_display, model, _settings = (
             self._active_console_provider_model_display()
         )
         _effective_settings, settings_readiness = (
@@ -12030,7 +12035,7 @@ class ChatScreen(BaseAppScreen):
                 if run_failed
                 else ""
             ),
-            provider_label=provider_display,
+            provider_label=settings_readiness.provider_display_name or "Provider",
             model_label=model,
             provider_ready=provider_ready,
             provider_recovery=provider_recovery,

@@ -45,6 +45,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSettingsContextEstimate,
     ConsoleSettingsReadiness,
     ConsoleSettingsSummaryState,
+    build_console_settings_readiness,
     build_console_settings_summary_state,
     build_default_console_session_settings,
     validate_console_session_settings,
@@ -1210,6 +1211,7 @@ async def test_covered_cancelled_source_reopen_transfers_exact_draft_to_modal(
     screen._active_console_context_control_state = lambda **_kwargs: None
     screen._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
     screen._global_chat_display_name = lambda: "Ada"
+    screen._console_run_active = lambda: False
 
     async def provider_models(*_args, **_kwargs):
         return {"openai": ["gpt-5"]}
@@ -1378,6 +1380,7 @@ async def test_open_console_settings_real_callback_stages_typed_credential_route
     screen._active_console_context_control_state = lambda **_kwargs: None
     screen._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
     screen._global_chat_display_name = lambda: "Ada"
+    screen._console_run_active = lambda: False
 
     async def provider_models(*_args, **_kwargs):
         return {"openai": ["gpt-5"]}
@@ -1432,6 +1435,7 @@ async def test_open_console_settings_returns_false_when_mount_awaitable_fails(
         "api_settings": {"openai": {}}
     }
     screen._global_chat_display_name = lambda: "Ada"
+    screen._console_run_active = lambda: False
 
     async def provider_models(*_args, **_kwargs):
         return {"openai": ["gpt-5"]}
@@ -1500,6 +1504,7 @@ async def test_open_console_settings_unwinds_exact_modal_after_mutating_failed_m
     screen._active_console_context_control_state = lambda **_kwargs: None
     screen._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
     screen._global_chat_display_name = lambda: "Ada"
+    screen._console_run_active = lambda: False
 
     async def provider_models(*_args, **_kwargs):
         return {"openai": ["gpt-5"]}
@@ -1549,6 +1554,7 @@ async def test_open_console_settings_propagates_mount_cancellation(monkeypatch) 
         "api_settings": {"openai": {}}
     }
     screen._global_chat_display_name = lambda: "Ada"
+    screen._console_run_active = lambda: False
 
     async def provider_models(*_args, **_kwargs):
         return {"openai": ["gpt-5"]}
@@ -1620,6 +1626,7 @@ async def test_suspended_open_uses_active_raw_provider_for_initial_discovery(
         "api_settings": {"openai": {}, "vllm": {}}
     }
     screen._global_chat_display_name = lambda: "Ada"
+    screen._console_run_active = lambda: False
 
     async def provider_models(provider, *, current_model):
         discovery_inputs.append((provider, current_model))
@@ -4400,7 +4407,45 @@ def test_pending_launch_inspector_auto_open_docstring_is_google_style() -> None:
     assert "Returns:" in docstring
 
 
-def test_summary_state_appends_non_ready_readiness_to_model_row() -> None:
+@pytest.mark.asyncio
+async def test_summary_builder_mounted_rail_uses_typed_copy_and_provider_name() -> None:
+    settings = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
+    readiness = build_console_settings_readiness(
+        settings,
+        app_config={
+            "api_settings": {
+                "openai": {"api_key_env_var": "ABSENT_SUMMARY_TEST_KEY"}
+            }
+        },
+        environ={},
+    )
+    readiness = replace(readiness, label="READY legacy poison")
+    state = build_console_settings_summary_state(
+        settings,
+        ConsoleSettingsContextEstimate(
+            used_tokens=12, token_limit=4096, label="12 / 4k"
+        ),
+        readiness,
+    )
+
+    assert state.provider_row == "Provider: OpenAI"
+    assert state.model_row == "Model: gpt-4.1"
+    assert state.readiness_label == ""
+
+    app = SummaryHarness(state)
+    async with app.run_test(size=(80, 20)) as pilot:
+        await pilot.pause()
+        painted = "\n".join(
+            strip.text for strip in app.screen._compositor.render_strips()
+        )
+
+        assert "Provider: OpenAI" in painted
+        assert "Not ready — OpenAI missing API key" in painted
+        assert "READY legacy poison" not in painted
+        assert "Provider: openai" not in painted
+
+
+def test_summary_state_omits_legacy_readiness_from_visible_rows() -> None:
     state = build_console_settings_summary_state(
         ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
         ConsoleSettingsContextEstimate(
@@ -4411,9 +4456,9 @@ def test_summary_state_appends_non_ready_readiness_to_model_row() -> None:
         ),
     )
 
-    assert state.provider_row == "Provider: llama_cpp"
-    assert state.model_row == "Model: model-a (WIP)"
-    assert state.readiness_label == "WIP"
+    assert state.provider_row == "Provider: Provider"
+    assert state.model_row == "Model: model-a"
+    assert state.readiness_label == ""
 
 
 def test_default_console_session_settings_prefers_provider_model_profile() -> None:
@@ -7504,7 +7549,7 @@ async def test_console_settings_modal_save_updates_active_summary_only() -> None
         await _visible_console_settings_button(console, pilot)
 
         summary_text = _summary_text(console)
-        assert "Provider: openai" in summary_text
+        assert "Provider: OpenAI" in summary_text
         assert "Model: gpt-4.1" in summary_text
         assert store.session_settings(second_id).provider == "openai"
         assert store.session_settings(first.id).provider == "llama_cpp"
@@ -7514,7 +7559,7 @@ async def test_console_settings_modal_save_updates_active_summary_only() -> None
         await _visible_console_settings_button(console, pilot)
 
         summary_text = _summary_text(console)
-        assert "Provider: llama_cpp" in summary_text
+        assert "Provider: llama.cpp" in summary_text
         assert "Model: model-a" in summary_text
 
 
@@ -9011,6 +9056,22 @@ async def test_console_settings_modal_save_disabled_during_active_run() -> None:
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
 
         assert modal_screen.query_one("#console-settings-save", Button).disabled is True
+        readiness_copy = str(
+            modal_screen.query_one("#console-settings-readiness", Static).renderable
+        )
+        assert "Not ready — current run is active" in readiness_copy
+        assert "Ready to send" not in readiness_copy
+
+        controller._set_run_state(ConsoleRunState(ConsoleRunStatus.IDLE, "Ready."))
+        await pilot.pause()
+
+        # The modal owns one opening-time snapshot: ChatScreen has no mounted-
+        # modal update seam. Keep status and Save consistently blocked until
+        # the user closes and reopens after the run transition.
+        assert modal_screen.query_one("#console-settings-save", Button).disabled is True
+        assert "Not ready — current run is active" in str(
+            modal_screen.query_one("#console-settings-readiness", Static).renderable
+        )
 
 
 @pytest.mark.asyncio
@@ -9270,10 +9331,15 @@ def test_console_readiness_uses_saved_session_settings_over_stale_global_provide
     control_state = screen._build_console_control_state(None)
     inspector_state = screen._build_console_inspector_state(None)
     provider_row = next(row for row in inspector_state.rows if row.label == "Provider")
+    run_recipe_row = next(
+        row for row in inspector_state.rows if row.label == "Run recipe"
+    )
 
     assert screen._console_provider_blocker_copy() == ""
     assert control_state.provider_label == "Provider: llama_cpp"
     assert control_state.model_label == "Model: local-model"
+    assert "llama.cpp / local-model" in run_recipe_row.value
+    assert "llama_cpp" not in run_recipe_row.value
     assert provider_row.value == "ready"
     assert provider_row.recovery == ""
 
@@ -9324,7 +9390,7 @@ def test_console_saved_openai_with_key_shows_ready_readiness() -> None:
     provider_row = next(row for row in inspector_state.rows if row.label == "Provider")
     blocker_copy = screen._console_provider_blocker_copy()
 
-    assert summary_state.readiness_label == "Ready"
+    assert summary_state.readiness_label == ""
     assert provider_row.value == "ready"
     assert provider_row.recovery == ""
     assert blocker_copy == ""
@@ -9591,8 +9657,8 @@ def test_console_saved_llamacpp_missing_model_summary_is_not_ready_without_fallb
 
     summary_state = screen._build_console_settings_summary_state()
 
-    assert summary_state.readiness_label != "Ready"
-    assert summary_state.provider_row == "Provider: llama_cpp"
+    assert summary_state.readiness_label == ""
+    assert summary_state.provider_row == "Provider: llama.cpp"
     assert summary_state.model_row == "Model: Missing"
     assert (
         screen._console_send_blocked_reason()
@@ -9622,7 +9688,7 @@ def test_console_saved_llamacpp_missing_model_summary_ready_with_configured_fall
 
     summary_state = screen._build_console_settings_summary_state()
 
-    assert summary_state.readiness_label == "Ready"
+    assert summary_state.readiness_label == ""
     assert "Select a model before sending" not in summary_state.model_row
 
 

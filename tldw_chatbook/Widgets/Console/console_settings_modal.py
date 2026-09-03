@@ -991,6 +991,7 @@ class ConsoleSettingsModal(
         context_estimate: ConsoleSettingsContextEstimate,
         context_state: ConsoleContextControlState | None = None,
         can_save: bool,
+        active_run: bool = False,
         focus_model: bool = False,
         focus_context: bool = False,
         reset_current_memory: CurrentMemoryResetter | None = None,
@@ -1061,6 +1062,7 @@ class ConsoleSettingsModal(
                 suspended_draft.context_policy_overrides
             )
         self._can_save = can_save
+        self._active_run = active_run
         self._focus_model = focus_model
         self._active_view = (
             suspended_draft.active_view
@@ -1346,7 +1348,9 @@ class ConsoleSettingsModal(
             model_options,
         )
         readiness = build_console_settings_readiness(
-            self._settings_for_active_provider(), app_config=self._app_config
+            self._settings_for_active_provider(),
+            app_config=self._app_config,
+            active_run=self._active_run,
         )
 
         with Vertical(id="console-settings-modal"):
@@ -2260,7 +2264,9 @@ class ConsoleSettingsModal(
         """Whether canonical Settings owns the current highest-priority blocker."""
         if readiness is None:
             readiness = build_console_settings_readiness(
-                self._settings_for_active_provider(), app_config=self._app_config
+                self._settings_for_active_provider(),
+                app_config=self._app_config,
+                active_run=self._active_run,
             )
         return readiness.recovery_action == "configure_credential"
 
@@ -4217,7 +4223,11 @@ class ConsoleSettingsModal(
 
     def _sync_readiness_display(self) -> None:
         draft = self._build_draft()
-        readiness = build_console_settings_readiness(draft, app_config=self._app_config)
+        readiness = build_console_settings_readiness(
+            draft,
+            app_config=self._app_config,
+            active_run=self._active_run,
+        )
         self.query_one("#console-settings-readiness", Static).update(
             self._readiness_copy(readiness)
         )

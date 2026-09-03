@@ -1589,16 +1589,10 @@ def build_console_settings_summary_state(
     readiness: ConsoleSettingsReadiness,
 ) -> ConsoleSettingsSummaryState:
     """Build compact display rows for the Console settings summary widget."""
-    provider_label = _string_value(settings.provider) or "Unknown"
+    provider_label = _string_value(readiness.provider_display_name) or "Provider"
     model_value = _string_value(settings.model)
-    readiness_label = _string_value(readiness.label) or ""
     model_is_missing = not model_value and readiness.blocker == "model_missing"
     model_label = model_value or ("Missing" if model_is_missing else "Default")
-    readiness_suffix = (
-        ""
-        if readiness.operability == "ready_to_send" or model_is_missing
-        else f" ({readiness_label})"
-    )
     action_label = "Configure"
     action_tooltip = "Configure Console settings"
     if readiness.recovery_action == "select_model":
@@ -1655,11 +1649,11 @@ def build_console_settings_summary_state(
     )
 
     return ConsoleSettingsSummaryState(
-        model_row=f"Model: {model_label}{readiness_suffix}",
+        model_row=f"Model: {model_label}",
         context_row=_format_context_summary_row(context_estimate.label),
         sampling_row=f"Sampling: {', '.join(sampling_parts)}",
         identity_row=identity_row,
-        readiness_label=readiness_label,
+        readiness_label="",
         provider_row=f"Provider: {provider_label}",
         endpoint_row=_format_endpoint_summary_row(settings),
         credential_row=_format_credential_summary_row(readiness),
