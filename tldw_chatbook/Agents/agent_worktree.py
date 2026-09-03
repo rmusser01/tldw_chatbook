@@ -91,7 +91,12 @@ def create_agent_worktree(repo_root: Path, run_id: str) -> AgentWorktree | Workt
     base_sha = out.strip()
     branch = f"{_BRANCH_PREFIX}{run_id}"
     dest = _worktrees_base() / f"agent-{run_id[:8]}"
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return WorktreeRefusal(
+            "worktree_create_failed", f"cannot create worktree base: {exc}"
+        )
     code, out, err = _git(repo_root, "worktree", "add", str(dest), "-b", branch, "HEAD")
     if code != 0:
         return WorktreeRefusal(

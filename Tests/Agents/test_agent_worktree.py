@@ -80,3 +80,15 @@ def test_prune_removes_only_dead_runs(repo):
     assert live.worktree_path.exists()
     assert not dead.worktree_path.exists()
     discard_agent_worktree(repo, live)
+
+
+def test_create_refuses_when_worktree_base_unwritable(tmp_path, repo, monkeypatch):
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory\n")
+    monkeypatch.setattr(
+        "tldw_chatbook.Agents.agent_worktree._worktrees_base",
+        lambda: blocker / "sub",
+    )
+    result = create_agent_worktree(repo, "run-blocked1")
+    assert isinstance(result, WorktreeRefusal)
+    assert result.reason_code == "worktree_create_failed"
