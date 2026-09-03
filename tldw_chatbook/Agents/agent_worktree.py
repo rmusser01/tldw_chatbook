@@ -116,6 +116,94 @@ def discard_agent_worktree(repo_root: Path, wt: AgentWorktree) -> WorktreeRefusa
     return None
 
 
+@dataclass(frozen=True)
+class MergeOutcome:
+    """A successful merge-back."""
+
+    mode: str
+    diffstat: str
+    commit_sha: str | None
+
+
+def _apply_patch(repo_root: Path, patch: str, *, check_only: bool) -> WorktreeRefusal | None:
+    """git-apply the patch text (via a temp file, so this stays on `_git`); a
+    refusal naming files on failure, None on success.
+    """
+    with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as fh:
+        fh.write(patch)
+        patch_path = fh.name
+    try:
+        args = ("apply", *(("--check",) if check_only else ()), patch_path)
+        code, _out, err = _git(repo_root, *args)
+    finally:
+        Path(patch_path).unlink(missing_ok=True)
+    if code == 0:
+        return None
+    failed = ", ".join(
+        line.split(":", 2)[-1].strip()
+        for line in err.splitlines()
+        if "patch failed" in line or "already exists" in line or "error:" in line
+    ) or err.strip()[:200]
+    return WorktreeRefusal("apply_conflict", f"patch does not apply cleanly: {failed}")
+
+
+def merge_agent_worktree_changes(
+    repo_root: Path, wt: AgentWorktree, mode: str = "apply"
+) -> MergeOutcome | WorktreeRefusal:
+    """Land the child's changes in the shared tree. Explicit, atomic, typed.
+
+    Args:
+        repo_root: The shared workspace root.
+        wt: The child's worktree record.
+        mode: ``"apply"`` (check-then-apply; lands UNCOMMITTED) or ``"merge"``
+            (a real ``--no-ff`` merge commit).
+
+    Returns:
+        A MergeOutcome, or a refusal (``nothing_to_merge`` / ``apply_conflict``
+        / ``merge_conflict`` naming the conflicting files / ``invalid_mode``).
+    """
+    if mode not in ("apply", "merge"):
+        return WorktreeRefusal("invalid_mode", f"unknown merge mode: {mode!r}")
+    # The child only edits files in its worktree -- nothing commits them
+    # there, so diff/merge can't see the work until it lands on the branch.
+    code, out, _err = _git(wt.worktree_path, "status", "--porcelain")
+    if code == 0 and out.strip():
+        _git(wt.worktree_path, "add", "-A")
+        _git(wt.worktree_path, "commit", "-m", f"agent work ({wt.run_id[:8]})")
+    code, out, _err = _git(repo_root, "diff", "--stat", f"{wt.base_sha}..{wt.branch}")
+    diffstat = out.strip()
+    if code != 0 or not diffstat:
+        return WorktreeRefusal(
+            "nothing_to_merge", "the agent worktree has no changes past its base"
+        )
+    if mode == "apply":
+        code, patch, err = _git(repo_root, "diff", "--binary", f"{wt.base_sha}..{wt.branch}")
+        if code != 0:
+            return WorktreeRefusal("apply_conflict", f"diff failed: {err.strip()[:200]}")
+        refusal = _apply_patch(repo_root, patch, check_only=True)
+        if refusal is not None:
+            return refusal
+        refusal = _apply_patch(repo_root, patch, check_only=False)
+        if refusal is not None:
+            return refusal
+        return MergeOutcome(mode="apply", diffstat=diffstat, commit_sha=None)
+    # mode == "merge"
+    code, _out, err = _git(
+        repo_root, "merge", "--no-ff", wt.branch, "-m", f"Merge agent worktree {wt.run_id[:8]}"
+    )
+    if code != 0:
+        _code, files, _err2 = _git(repo_root, "diff", "--name-only", "--diff-filter=U")
+        _git(repo_root, "merge", "--abort")
+        names = files.strip() or err.strip()[:200]
+        return WorktreeRefusal(
+            "merge_conflict", f"merge conflicts; resolve manually: {names}"
+        )
+    code, head, _err3 = _git(repo_root, "rev-parse", "HEAD")
+    return MergeOutcome(
+        mode="merge", diffstat=diffstat, commit_sha=head.strip() if code == 0 else None
+    )
+
+
 def prune_stale_agent_worktrees(repo_root: Path, live_run_ids: set[str]) -> int:
     """Remove agent worktrees whose run is no longer live. Returns count removed."""
     code, out, _err = _git(repo_root, "worktree", "list", "--porcelain")

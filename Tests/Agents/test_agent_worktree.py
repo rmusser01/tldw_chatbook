@@ -92,3 +92,75 @@ def test_create_refuses_when_worktree_base_unwritable(tmp_path, repo, monkeypatc
     result = create_agent_worktree(repo, "run-blocked1")
     assert isinstance(result, WorktreeRefusal)
     assert result.reason_code == "worktree_create_failed"
+
+
+from tldw_chatbook.Agents.agent_worktree import (  # noqa: E402
+    MergeOutcome,
+    merge_agent_worktree_changes,
+)
+
+
+def test_apply_mode_lands_uncommitted_diff(repo):
+    wt = create_agent_worktree(repo, "run-apply001")
+    (wt.worktree_path / "a.txt").write_text("child version\n")
+    (wt.worktree_path / "new.txt").write_text("brand new\n")
+    outcome = merge_agent_worktree_changes(repo, wt, mode="apply")
+    assert isinstance(outcome, MergeOutcome), getattr(outcome, "message", outcome)
+    assert outcome.commit_sha is None
+    assert (repo / "a.txt").read_text() == "child version\n"
+    assert (repo / "new.txt").read_text() == "brand new\n"
+    # uncommitted: the shared tree is dirty, no new commit on HEAD
+    status = _git(repo, "status", "--porcelain")
+    assert " a.txt" in status or "M a.txt" in status.replace("  ", " ")
+    assert "a.txt" in outcome.diffstat
+    discard_agent_worktree(repo, wt)
+
+
+def test_merge_mode_creates_merge_commit(repo):
+    wt = create_agent_worktree(repo, "run-merge001")
+    (wt.worktree_path / "a.txt").write_text("merged version\n")
+    before = _git(repo, "rev-parse", "HEAD").strip()
+    outcome = merge_agent_worktree_changes(repo, wt, mode="merge")
+    assert isinstance(outcome, MergeOutcome), getattr(outcome, "message", outcome)
+    after = _git(repo, "rev-parse", "HEAD").strip()
+    assert outcome.commit_sha == after != before
+    assert (repo / "a.txt").read_text() == "merged version\n"
+    parents = _git(repo, "log", "-1", "--format=%P").split()
+    assert len(parents) == 2  # a real --no-ff merge commit
+    discard_agent_worktree(repo, wt)
+
+
+def test_apply_conflict_refuses_atomically_naming_file(repo):
+    wt = create_agent_worktree(repo, "run-conflict1")
+    (wt.worktree_path / "a.txt").write_text("child side\n")
+    (repo / "a.txt").write_text("user side\n")  # conflicting shared-tree change
+    refusal = merge_agent_worktree_changes(repo, wt, mode="apply")
+    assert isinstance(refusal, WorktreeRefusal)
+    assert refusal.reason_code == "apply_conflict"
+    assert "a.txt" in refusal.message
+    assert (repo / "a.txt").read_text() == "user side\n"  # untouched
+    discard_agent_worktree(repo, wt)
+
+
+def test_merge_conflict_aborts_and_names_file(repo):
+    wt = create_agent_worktree(repo, "run-conflict2")
+    (wt.worktree_path / "a.txt").write_text("child side\n")
+    (repo / "a.txt").write_text("user side committed\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "user change")
+    before = _git(repo, "rev-parse", "HEAD").strip()
+    refusal = merge_agent_worktree_changes(repo, wt, mode="merge")
+    assert isinstance(refusal, WorktreeRefusal)
+    assert refusal.reason_code == "merge_conflict"
+    assert "a.txt" in refusal.message
+    assert _git(repo, "rev-parse", "HEAD").strip() == before  # aborted cleanly
+    assert "user side committed" in (repo / "a.txt").read_text()
+    discard_agent_worktree(repo, wt)
+
+
+def test_clean_worktree_is_nothing_to_merge(repo):
+    wt = create_agent_worktree(repo, "run-noop0001")
+    refusal = merge_agent_worktree_changes(repo, wt, mode="apply")
+    assert isinstance(refusal, WorktreeRefusal)
+    assert refusal.reason_code == "nothing_to_merge"
+    discard_agent_worktree(repo, wt)
