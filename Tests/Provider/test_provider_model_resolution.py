@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from tldw_chatbook.UI.Screens import provider_model_resolution
 from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
     SELECTOR_MERGE_CAP,
 )
@@ -10,6 +11,7 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
 )
 from tldw_chatbook.UI.Screens.provider_model_resolution import (
     MODEL_CAPABILITY_UNKNOWN_WARNING,
+    ResolvedProviderModelOption,
     resolve_effective_provider_model,
     resolve_provider_model_options,
 )
@@ -115,6 +117,113 @@ async def test_model_options_merge_explicit_saved_models_and_catalog_scope() -> 
     runtime = options[1]
     assert runtime.source == "runtime_discovered"
     assert runtime.warning == MODEL_CAPABILITY_UNKNOWN_WARNING
+
+
+@pytest.mark.asyncio
+async def test_cloud_catalog_provenance_is_stable_across_entry_sources() -> None:
+    scope = CatalogScopeFixture(
+        (
+            _entry(
+                "cached-current",
+                source="persisted_discovered",
+                capability_status="known",
+                persisted=True,
+            ),
+            _entry("runtime-current", source="runtime_discovered"),
+        )
+    )
+
+    options = await resolve_provider_model_options(
+        {"OpenAI": ["cached-current"]},
+        scope,
+        provider="OpenAI",
+    )
+
+    assert hasattr(provider_model_resolution, "ConsoleModelProvenance")
+    provenance = provider_model_resolution.ConsoleModelProvenance
+    assert [option.model_id for option in options] == [
+        "cached-current",
+        "runtime-current",
+    ]
+    assert [option.provenance for option in options] == [
+        provenance.CURRENT_CATALOG,
+        provenance.CURRENT_CATALOG,
+    ]
+    assert all(option.verified_for_connection is False for option in options)
+    assert all(option.provenance is not provenance.SERVED_NOW for option in options)
+
+
+@pytest.mark.asyncio
+async def test_saved_model_provenance_remains_a_fallback_without_catalog() -> None:
+    options = await resolve_provider_model_options(
+        {"llama_cpp": ["saved-local"]},
+        None,
+        provider="llama_cpp",
+    )
+
+    assert hasattr(provider_model_resolution, "ConsoleModelProvenance")
+    provenance = provider_model_resolution.ConsoleModelProvenance
+    assert [(option.model_id, option.provenance) for option in options] == [
+        ("saved-local", provenance.SAVED_FALLBACK),
+    ]
+    assert options[0].verified_for_connection is False
+
+
+@pytest.mark.asyncio
+async def test_non_cloud_discovery_provenance_stays_custom_and_unverified() -> None:
+    options = await resolve_provider_model_options(
+        {},
+        CatalogScopeFixture(
+            (
+                _entry(
+                    "local-runtime",
+                    source="runtime_discovered",
+                    provider="llama_cpp",
+                ),
+            )
+        ),
+        provider="llama_cpp",
+    )
+
+    provenance = provider_model_resolution.ConsoleModelProvenance
+    assert [(option.model_id, option.provenance) for option in options] == [
+        ("local-runtime", provenance.CUSTOM_UNVERIFIED),
+    ]
+    assert options[0].verified_for_connection is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["llama_cpp", "OpenAI"])
+async def test_transient_current_model_provenance_is_not_a_saved_fallback(
+    provider: str,
+) -> None:
+    options = await resolve_provider_model_options(
+        {provider: ["saved-real"]},
+        None,
+        provider=provider,
+        current_model="typed-custom",
+    )
+
+    provenance = provider_model_resolution.ConsoleModelProvenance
+    assert [option.model_id for option in options] == ["typed-custom", "saved-real"]
+    assert options[0].provenance is provenance.CUSTOM_UNVERIFIED
+    assert options[0].verified_for_connection is False
+    assert options[1].provenance is provenance.SAVED_FALLBACK
+
+
+def test_provenance_defaults_keep_legacy_options_unverified() -> None:
+    option = ResolvedProviderModelOption(
+        label="legacy",
+        model_id="legacy",
+        source="legacy",
+        capability_status="unknown",
+        persisted=False,
+    )
+
+    assert hasattr(provider_model_resolution, "ConsoleModelProvenance")
+    provenance = provider_model_resolution.ConsoleModelProvenance
+    assert option.provenance is provenance.CUSTOM_UNVERIFIED
+    assert option.verified_for_connection is False
 
 
 @pytest.mark.asyncio
