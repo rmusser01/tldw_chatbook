@@ -96,6 +96,14 @@ Ownership is split as follows:
 | Active-session adoption | Console | Whether the current Console session adopted the verified target |
 | Durable provider endpoint/defaults | Settings/config | Configuration read by restart resolution |
 
+For a managed-artifact launch, this decision preserves ADR-025's exact process-lease
+lifetime. The artifact lease is acquired before spawn, transferred atomically to the
+exact process claim, and retained until that claim proves its exact process dead. A
+cancellation request or UI stop completion is not permission to release the lease
+early. A stubborn process retains both its claim and lease, and a stale generation
+cannot detach or release either. Lease release occurs only through identity-matched
+claim settlement after confirmed process death.
+
 The Lab never collapses these owners into one running flag. Runtime state can advance
 from `unclaimed` through `reserved` and `process_alive` while connection state remains
 `unchecked` or `checking`. Only current-generation health and exact-model evidence can
@@ -159,7 +167,8 @@ durable change remains an explicit Settings action under ADR-002 and this decisi
 The UI may show only the canonical credential-free endpoint, endpoint-reported model
 ID, coarse lifecycle state, and a bounded failure category. App-global state and
 logs must not retain raw executable or model paths, credentials, raw command
-arguments, or unbounded process output.
+arguments, or unbounded process output. Query strings and fragments never enter
+`LlamaCppConnectionTarget` or Console conversation metadata.
 
 TASK-31206 may add bounded, sanitized diagnostics within Lab. Those diagnostics
 remain Lab-local and do not enter `LlamaCppConnectionTarget`, Console conversation
@@ -209,6 +218,10 @@ stop unrelated processes, alter active Console sessions, or rewrite defaults.
 - Probe settlement tests must invalidate evidence after cancellation, process death,
   target edit, model change, screen recomposition, or a newer
   `verification_generation`.
+- Managed-artifact lifecycle tests must prove lease acquisition before spawn, atomic
+  transfer to the exact process claim, retention until that claim proves the exact
+  process dead, retention for a stubborn process, and rejection of cancellation, UI
+  stop completion, or stale-generation attempts to release the lease early.
 - Adoption tests must prove **Use in Console** is session-only, does not call the
   detected-server persistence path, preserves a different configured endpoint, omits
   `base_url` from conversation metadata, and refreshes readiness in process.
@@ -217,7 +230,8 @@ stop unrelated processes, alter active Console sessions, or rewrite defaults.
   restart, while preserving TASK-16473, TASK-16476, and TASK-26837 protections.
 - Privacy tests must prove the descriptor, app-global state, logs, and Console
   metadata exclude executable/model paths, credentials, raw commands, and unbounded
-  process output.
+  process output. They must also prove that query strings and fragments never enter
+  `LlamaCppConnectionTarget` or Console conversation metadata.
 
 ## Links
 
