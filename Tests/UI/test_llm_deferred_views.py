@@ -1,18 +1,24 @@
-"""task-2900: Lab ▸ Models defers its five heavy hidden views past first paint.
+"""Lab ▸ Models mounts provider bodies lazily and caches first-used views.
 
-Same pattern as task-2725 (Roleplay): the ollama view and the four library
-views (curated, installed, external, remote) arrive
-`display: none` behind the CSS `-active` mechanism anyway; mounting them
-after first paint takes their CSS-application cost off the click→paint
-critical path. `watch_active_view` already tolerates absent views.
+All eleven stable shells exist so navigation and CSS remain predictable, but
+only the initial llama.cpp body composes on arrival. Every other body mounts
+on first selection and stays cached to preserve in-progress form state.
 """
 
 from __future__ import annotations
 
+import asyncio
+import time
+from types import SimpleNamespace
+
 import pytest
+from textual.widgets import Input, Static
 
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
-from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
+from tldw_chatbook.UI.LLM_Management_Window import (
+    LLMManagementWindow,
+    OllamaServiceView,
+)
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
 from Tests.UI.app_factory import _build_test_app
 
@@ -56,61 +62,150 @@ def _no_splash(monkeypatch):
     monkeypatch.setattr("tldw_chatbook.app.get_cli_setting", fake_get_cli_setting)
 
 
-async def test_first_paint_excludes_the_deferred_views(monkeypatch):
-    """First paint has exactly the six eager views and five deferred views."""
-    scheduled: list[object] = []
-
-    def hold_after_refresh(self, callback, *args, **kwargs):
-        scheduled.append(callback)
-
-    monkeypatch.setattr(
-        LLMManagementWindow,
-        "call_after_refresh",
-        hold_after_refresh,
-    )
-
+async def test_initial_load_populates_only_llamacpp_body():
+    """The default pane is usable before any inactive pane body is mounted."""
     app = _build_test_app()
     async with app.run_test(size=(235, 52)) as pilot:
         await pilot.pause()
         screen = LLMScreen(app)
         await app.push_screen(screen)
-        await pilot.pause()
-
-        window = screen.query_one(LLMManagementWindow)
-        mounted_ids = _mounted_view_ids(window)
-        mapped_ids = set(window.view_mapping.values())
-
-        assert [callback.__name__ for callback in scheduled] == [
-            "_finish_deferred_mount"
-        ]
-        assert mounted_ids == tuple(sorted(_FIRST_PAINT_VIEW_IDS))
-        assert mapped_ids - set(mounted_ids) == set(_DEFERRED_VIEW_IDS)
-        assert len(mapped_ids) == len(_ALL_VIEW_IDS) == 11
-
-
-async def test_load_mounts_every_view_with_llamacpp_active():
-    """After the real deferred mount, all eleven views exist, exactly one is
-    active (the initial llama-cpp), and the deferred ones stay CSS-hidden."""
-    app = _build_test_app()
-    async with app.run_test(size=(235, 52)) as pilot:
-        await pilot.pause()
-        screen = LLMScreen(app)
-        await app.push_screen(screen)
-        for _ in range(6):
+        for _ in range(8):
             await pilot.pause()
 
         window = screen.query_one(LLMManagementWindow)
-        mounted_ids = _mounted_view_ids(window)
-        assert mounted_ids == tuple(sorted(_ALL_VIEW_IDS))
-        assert len(mounted_ids) == len(_ALL_VIEW_IDS) == 11
+        assert _mounted_view_ids(window) == tuple(sorted(_ALL_VIEW_IDS))
         assert set(window.view_mapping.values()) == set(_ALL_VIEW_IDS)
+        assert window.active_view == "llama-cpp"
+        assert screen.query_one("#llm-view-llama-cpp").has_class("-active")
+        assert screen.query_one("#llamacpp-start-server-button").is_mounted
 
-        active = [
-            view_id
-            for view_id in _ALL_VIEW_IDS
-            if screen.query_one(f"#{view_id}").has_class("-active")
+        inactive_body_selectors = (
+            "#ollama-exec-path",
+            "#llamafile-start-server-button",
+            "#vllm-start-server-button",
+            "#onnx-start-server-button",
+            "#transformers-models-dir-path",
+            "#mlx-start-server-button",
+            "#curated-models-view",
+            "#installed-models-view",
+            "#external-models-view",
+            "#remote-models-view",
+        )
+        assert all(not list(screen.query(selector)) for selector in inactive_body_selectors)
+
+
+async def test_first_selection_mounts_and_caches_only_requested_view():
+    """First use populates one pane; revisiting reuses that pane's state."""
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        screen = LLMScreen(app)
+        await app.push_screen(screen)
+        for _ in range(8):
+            await pilot.pause()
+
+        window = screen.query_one(LLMManagementWindow)
+        llama_exec = screen.query_one("#llamacpp-exec-path", Input)
+        llama_exec.value = "/tmp/keep-this-value"
+
+        window.active_view = "ollama"
+        for _ in range(8):
+            await pilot.pause()
+
+        ollama_exec = screen.query_one("#ollama-exec-path", Input)
+        ollama_exec.value = "/tmp/keep-ollama-value"
+        assert not list(screen.query("#remote-models-view"))
+
+        window.active_view = "llama-cpp"
+        await pilot.pause()
+        assert screen.query_one("#llamacpp-exec-path", Input) is llama_exec
+        assert llama_exec.value == "/tmp/keep-this-value"
+
+        window.active_view = "ollama"
+        await pilot.pause()
+        assert screen.query_one("#ollama-exec-path", Input) is ollama_exec
+        assert ollama_exec.value == "/tmp/keep-ollama-value"
+
+
+async def test_failed_server_mount_retains_body_for_retry():
+    """A transient mount failure must not consume the deferred server body."""
+
+    window = LLMManagementWindow.__new__(LLMManagementWindow)
+    body = (SimpleNamespace(is_mounted=False),)
+    window._lazy_server_bodies = {"llamafile": body}
+    window._populated_views = set()
+    window.view_mapping = {"llamafile": "llm-view-llamafile"}
+    window.call_after_refresh = lambda *_args: None
+
+    class FlakyPane:
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        async def mount_all(self, widgets) -> None:
+            self.attempts += 1
+            if self.attempts == 1:
+                raise RuntimeError("transient mount failure")
+            assert tuple(widgets) == body
+
+    pane = FlakyPane()
+    window.query_one = lambda _selector: pane
+
+    with pytest.raises(RuntimeError, match="transient mount failure"):
+        await window._mount_deferred_views("llamafile")
+
+    assert window._lazy_server_bodies["llamafile"] == body
+    assert "llamafile" not in window._populated_views
+
+    await window._mount_deferred_views("llamafile")
+
+    assert "llamafile" not in window._lazy_server_bodies
+    assert "llamafile" in window._populated_views
+
+
+@pytest.mark.parametrize(
+    ("view_name", "populated", "populating", "expected_schedules"),
+    (
+        ("missing", set(), set(), 0),
+        ("remote", {"remote"}, set(), 0),
+        ("remote", set(), {"remote"}, 0),
+        ("remote", set(), set(), 1),
+    ),
+)
+async def test_population_scheduler_guards_duplicate_and_invalid_requests(
+    view_name,
+    populated,
+    populating,
+    expected_schedules,
+):
+    """Only one valid, not-yet-started pane population may be scheduled."""
+
+    window = LLMManagementWindow.__new__(LLMManagementWindow)
+    window.view_mapping = {"remote": "llm-view-remote"}
+    window._populated_views = set(populated)
+    window._populating_views = set(populating)
+    scheduled = []
+
+    def schedule(awaitable, **kwargs):
+        scheduled.append(kwargs)
+        awaitable.close()
+
+    window.run_worker = schedule
+
+    window.ensure_view_populated(view_name)
+
+    assert len(scheduled) == expected_schedules
+    if expected_schedules:
+        assert view_name in window._populating_views
+    else:
+        assert window._populating_views == set(populating)
+    if scheduled:
+        assert scheduled == [
+            {
+                "group": "llm-view-mount-remote",
+                "exclusive": True,
+                "exit_on_error": False,
+            }
         ]
-        assert active == ["llm-view-llama-cpp"]
 
 
 async def test_ollama_view_activates_and_renders_after_deferral():
@@ -138,3 +233,42 @@ async def test_ollama_view_activates_and_renders_after_deferral():
         assert any("Requires: Ollama" in text for text in prereq), (
             f"prereq line missing from extracted view: {prereq}"
         )
+
+
+async def test_inactive_view_compose_cannot_stall_models_navigation(monkeypatch):
+    """An expensive inactive pane must not block the event loop on arrival."""
+
+    def blocking_ollama_compose(self):
+        time.sleep(0.35)
+        yield Static("deliberately slow inactive pane")
+
+    monkeypatch.setattr(OllamaServiceView, "compose", blocking_ollama_compose)
+
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        gaps: list[float] = []
+        running = True
+
+        async def heartbeat() -> None:
+            loop = asyncio.get_running_loop()
+            previous = loop.time()
+            while running:
+                await asyncio.sleep(0.005)
+                now = loop.time()
+                gaps.append(now - previous)
+                previous = now
+
+        heartbeat_task = asyncio.create_task(heartbeat())
+        await asyncio.sleep(0)
+        screen = LLMScreen(app)
+        await app.push_screen(screen)
+        for _ in range(8):
+            await pilot.pause()
+        await asyncio.sleep(0.05)
+        running = False
+        await heartbeat_task
+
+        assert screen.query_one("#llamacpp-start-server-button").is_mounted
+        assert gaps
+        assert max(gaps) < 0.25, f"event loop stalled for {max(gaps):.3f}s"

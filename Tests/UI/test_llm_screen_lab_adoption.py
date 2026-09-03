@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 
+import asyncio
 import threading
 import time
 from datetime import datetime
@@ -26,6 +27,9 @@ from tldw_chatbook.Model_Artifacts.machine_memory import (
 from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
 from Tests.UI.app_factory import _build_test_app
+
+_MODELS_MOUNT_POLL_ATTEMPTS = 200
+_MODELS_MOUNT_POLL_SECONDS = 0.01
 
 
 @pytest.fixture(autouse=True)
@@ -57,9 +61,28 @@ def _deterministic_models_mount(monkeypatch):
     )
 
 
-async def _models_screen(pilot_app):
+async def _models_screen(pilot_app, *, populate_all: bool = True):
+    """Mount Models with the legacy all-view fixture unless testing laziness."""
+
     screen = LLMScreen(pilot_app)
     await pilot_app.push_screen(screen)
+    if populate_all:
+        for _ in range(_MODELS_MOUNT_POLL_ATTEMPTS):
+            windows = list(screen.query(LLMManagementWindow))
+            if windows:
+                break
+            await asyncio.sleep(_MODELS_MOUNT_POLL_SECONDS)
+        window = windows[0]
+        for _ in range(_MODELS_MOUNT_POLL_ATTEMPTS):
+            if all(
+                list(window.query(f"#{view_id}"))
+                for view_id in window.view_mapping.values()
+            ):
+                break
+            await asyncio.sleep(_MODELS_MOUNT_POLL_SECONDS)
+        for view_name in window.view_mapping:
+            if view_name != "llama-cpp":
+                await window._mount_deferred_views(view_name)
     return screen
 
 
@@ -341,6 +364,8 @@ async def test_injected_memory_clocks_survive_failed_refresh_and_real_recompose(
             machine_memory_monotonic_clock=lambda: observed_monotonic,
         )
         await app.push_screen(screen)
+        assert await _wait_for(lambda: bool(screen.query(LLMManagementWindow)), pilot)
+        screen.query_one(LLMManagementWindow).active_view = "remote"
         assert await _wait_for(lambda: bool(screen.query(RemoteView)), pilot)
         accepted = _machine_snapshot(total_gib=32)
         screen._machine_memory_generation = 1
@@ -363,8 +388,16 @@ async def test_injected_memory_clocks_survive_failed_refresh_and_real_recompose(
         assert screen._machine_memory_observed_label == "09:41"
         assert screen._machine_memory_observed_monotonic == observed_monotonic
 
+        old_window = screen.query_one(LLMManagementWindow)
         old_remote = screen.query_one(RemoteView)
         await screen.recompose()
+        assert await _wait_for(
+            lambda: bool(screen.query(LLMManagementWindow))
+            and screen.query_one(LLMManagementWindow) is not old_window,
+            pilot,
+            attempts=500,
+        )
+        screen.query_one(LLMManagementWindow).active_view = "remote"
         assert await _wait_for(
             lambda: (
                 bool(screen.query(RemoteView))
@@ -1507,7 +1540,15 @@ async def test_remote_memory_scenarios_survive_recompose_at_80_columns():
             await assert_painted(install, parent, pilot, app)
 
             old_remote = remote
+            old_window = screen.query_one(LLMManagementWindow)
             await screen.recompose()
+            assert await _wait_for(
+                lambda: bool(screen.query(LLMManagementWindow))
+                and screen.query_one(LLMManagementWindow) is not old_window,
+                pilot,
+                attempts=500,
+            )
+            screen.query_one(LLMManagementWindow).active_view = "remote"
             assert await _wait_for(
                 lambda: (
                     bool(screen.query(RemoteView))
@@ -1745,10 +1786,15 @@ async def test_model_install_progress_survives_switch_to_installed():
 
     app = _app()
     async with app.run_test(size=(120, 40)) as pilot:
-        screen = await _models_screen(app)
+        screen = await _models_screen(app, populate_all=False)
         await pilot.pause()
         await pilot.pause()
         window = screen.query_one(LLMManagementWindow)
+        window.active_view = "installed"
+        assert await _wait_for(
+            lambda: bool(window.query("#model-install-progress-phase")),
+            pilot,
+        )
         installed = window.query_one(InstalledView)
         installed.ensure_loaded = MagicMock()
         reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
@@ -1888,10 +1934,12 @@ async def test_curated_install_progress_survives_a_screen_level_recompose(monkey
 
     app = _app()
     async with app.run_test(size=(120, 40)) as pilot:
-        screen = await _models_screen(app)
+        screen = await _models_screen(app, populate_all=False)
         for _ in range(5):
             await pilot.pause()
         window = screen.query_one(LLMManagementWindow)
+        window.active_view = "curated"
+        assert await _wait_for(lambda: bool(window.query(CuratedView)), pilot)
         curated = window.query_one(CuratedView)
 
         # Mimics _confirm_curated_install's own setup (bypasses real
@@ -3625,10 +3673,12 @@ async def test_remote_install_progress_survives_a_screen_level_recompose(monkeyp
 
     app = _app()
     async with app.run_test(size=(120, 40)) as pilot:
-        screen = await _models_screen(app)
+        screen = await _models_screen(app, populate_all=False)
         for _ in range(5):
             await pilot.pause()
         window = screen.query_one(LLMManagementWindow)
+        window.active_view = "remote"
+        assert await _wait_for(lambda: bool(window.query(RemoteView)), pilot)
         remote = window.query_one(RemoteView)
 
         # Match the selected-model context the real RemoteView posts with
@@ -3756,6 +3806,17 @@ async def test_remote_context_survives_recompose_before_the_first_progress_tick(
             lambda: (
                 bool(screen.query(RemoteView))
                 and screen.query_one(RemoteView) is not old_remote
+                and all(
+                    marker
+                    in "\n".join(
+                        str(item.renderable)
+                        for item in screen.query_one(RemoteView).query(Static)
+                    )
+                    for marker in (
+                        resolved.repository,
+                        candidate.files[0].upstream_path,
+                    )
+                )
             ),
             pilot,
         )
@@ -4800,6 +4861,44 @@ def test_open_installed_switches_and_reveals_exact_reference_without_activation(
 
 
 @pytest.mark.asyncio
+async def test_open_installed_preserves_reference_until_first_lazy_mount(
+    monkeypatch,
+):
+    """First-use Installed navigation must replay the exact requested root."""
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    reference = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    revealed = []
+    original_reveal = InstalledView.reveal_reference
+
+    def capture_reveal(self, requested):
+        revealed.append(requested)
+        return original_reveal(self, requested)
+
+    monkeypatch.setattr(InstalledView, "reveal_reference", capture_reveal)
+    app = _app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await _models_screen(app, populate_all=False)
+        for _ in range(8):
+            await pilot.pause()
+        window = screen.query_one(LLMManagementWindow)
+        assert not list(window.query("#installed-models-view"))
+
+        screen._remote_open_installed_requested(
+            RemoteView.OpenInstalledRequested(reference)
+        )
+        for _ in range(8):
+            await pilot.pause()
+
+        assert revealed == [reference]
+        assert window.active_view == "installed"
+        assert window.query_one("#installed-models-view", InstalledView).is_mounted
+
+
+@pytest.mark.asyncio
 async def test_open_installed_exact_row_focus_wins_real_window_switch(
     tmp_path,
 ):
@@ -5423,11 +5522,14 @@ async def test_external_rail_mounts_through_the_existing_deferred_view_pattern()
     app = _app()
     app._parakeet_source_service = _FakeExternalSourceService()
     async with app.run_test(size=(120, 40)) as pilot:
-        screen = await _models_screen(app)
+        screen = await _models_screen(app, populate_all=False)
+        await pilot.pause()
+        await pilot.pause()
+        window = screen.query_one(LLMManagementWindow)
+        window.active_view = "external"
         assert await _wait_for(
             lambda: bool(screen.query("#external-models-view")), pilot
         )
-        window = screen.query_one(LLMManagementWindow)
         assert window.query_one("#external-models-view", ExternalModelView)
 
         external_row = next(
@@ -6571,12 +6673,15 @@ async def test_model_library_view_switch_restores_keyboard_focus_at_80x24(
     app = _app()
 
     async with app.run_test(size=(80, 24)) as pilot:
-        screen = await _models_screen(app)
+        screen = await _models_screen(app, populate_all=False)
+        await pilot.pause()
+        await pilot.pause()
+        window = screen.query_one(LLMManagementWindow)
+        window.active_view = "installed"
         assert await _wait_for(
-            lambda: bool(screen.query("#installed-models-view")),
+            lambda: bool(screen.query("#installed-models-repair")),
             pilot,
         )
-        window = screen.query_one(LLMManagementWindow)
 
         window.active_view = "installed"
         await pilot.pause()
