@@ -18,7 +18,7 @@ machine by default.
 
 ## Alpha status
 
-tldw_chatbook is **Alpha** software. The current package version is `0.1.8.0`.
+tldw_chatbook is **Alpha** software. The current package version is `0.1.8.1`.
 The core application is usable, but the project is moving quickly: interfaces
 can change, advanced integrations vary in maturity, and older data may
 occasionally need migration or recovery.
