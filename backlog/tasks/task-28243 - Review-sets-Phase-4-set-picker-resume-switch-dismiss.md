@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-09-02 22:29'
-updated_date: '2026-09-03 04:48'
+updated_date: '2026-09-03 04:57'
 labels:
   - library
   - media-ux
@@ -23,9 +23,9 @@ A lightweight picker to resume, switch between, or dismiss saved review sets (de
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A picker opened from the media list lists saved sets with name + progress (X of M, reviewed N); selecting one activates it and loads at its cursor
-- [ ] #2 The picker can dismiss (soft-delete) a set and reopen a completed one; activating a set deactivates the previously active one (one-active invariant)
-- [ ] #3 Reuses the Library choice-strip / picker idioms; no new rail row required for v1
+- [x] #1 A picker opened from the media list lists saved sets with name + progress (X of M, reviewed N); selecting one activates it and loads at its cursor
+- [x] #2 The picker can dismiss (soft-delete) a set and reopen a completed one; activating a set deactivates the previously active one (one-active invariant)
+- [x] #3 Reuses the Library choice-strip / picker idioms; no new rail row required for v1
 <!-- AC:END -->
 
 ## Implementation Plan
