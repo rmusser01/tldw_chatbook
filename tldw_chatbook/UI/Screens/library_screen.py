@@ -42253,6 +42253,10 @@ class LibraryScreen(BaseAppScreen):
                     service.dismiss, set_id, isolate_in_worker=True
                 )
                 self._notify_review_set("Review set dismissed.")
+                # Dismissing the ACTIVE set must drop the Reader's set chrome
+                # -- without this the footer kept advertising "] next in set"
+                # after the set was gone (live-verified 2026-09-02).
+                self._sync_library_media_viewer_or_recompose()
                 return
             if action != "open":
                 return

@@ -2398,6 +2398,18 @@
     }
 
 
+/* ===== WIDGET: LibraryReviewSetPickerDialog (Widgets/Library/library_review_set_picker.py) ===== */
+
+    LibraryReviewSetPickerDialog { align: center middle; }
+    LibraryReviewSetPickerDialog > Vertical {
+        width: 72; max-height: 80%; height: auto; padding: 1 2;
+        border: tall $accent; background: $surface;
+    }
+
+
+
+
+
 /* ===== WIDGET: ModelInstallProgress (Widgets/ModelArtifacts/install_progress.py) ===== */
 
     ModelInstallProgress {

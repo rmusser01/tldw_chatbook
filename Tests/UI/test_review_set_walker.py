@@ -411,6 +411,9 @@ def _picker_fake(service, *, decision, live_ids=None):
 
     fake._push_review_set_picker = push
     fake._pushed = pushed
+    syncs: list[bool] = []
+    fake._sync_library_media_viewer_or_recompose = lambda: syncs.append(True)
+    fake._syncs = syncs
     for name in (
         "_review_set_picker_worker",
         "_collect_review_set_picker_rows",
@@ -469,6 +472,10 @@ async def test_picker_worker_dismiss_soft_deletes_without_opening(tmp_path):
     assert service.list_review_sets() == ()
     assert fake._opened == []
     assert fake._notices  # the dismissal is confirmed
+    # Dismissing the ACTIVE set must refresh the Reader chrome -- the footer
+    # kept advertising "] next in set · 1 of 3" after a live dismissal
+    # (live-verified 2026-09-02).
+    assert fake._syncs == [True]
 
 
 @pytest.mark.asyncio

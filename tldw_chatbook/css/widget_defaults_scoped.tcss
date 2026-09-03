@@ -2843,6 +2843,15 @@
     LibraryNoteFolderTargetDialog #library-note-folder-target-actions { height: auto; align-horizontal: right; }
 
 
+/* ===== WIDGET: LibraryReviewSetPickerDialog (Widgets/Library/library_review_set_picker.py) ===== */
+
+
+
+    LibraryReviewSetPickerDialog .library-review-set-row { height: auto; }
+    LibraryReviewSetPickerDialog .library-review-set-open { width: 1fr; }
+    LibraryReviewSetPickerDialog #library-review-set-picker-actions { height: auto; align-horizontal: right; }
+
+
 /* ===== WIDGET: PersonaProfileEditorWidget (Widgets/Persona_Widgets/persona_profile_editor_widget.py) ===== */
 
 
