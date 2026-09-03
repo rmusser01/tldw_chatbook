@@ -9,9 +9,10 @@ import pytest
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from textual.containers import Horizontal
 from textual.widgets import Button, DataTable, Input, Select, Static
+from textual.widgets._collapsible import CollapsibleTitle
 
 from tldw_chatbook.Scheduling.events import (
     DeleteTaskRequested,
@@ -237,9 +238,7 @@ async def test_task_detail_renders_selected_task():
 
         detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
         title = detail.query_one("#scheduling-task-detail-title", Static)
-        kind = detail.query_one("#scheduling-task-detail-type", Static)
         status_badge = detail.query_one("#scheduling-task-status-badge", Static)
-        schedule = detail.query_one("#scheduling-task-detail-schedule", Static)
         next_run = detail.query_one("#scheduling-task-detail-next-run", Static)
         enable_button = detail.query_one("#scheduling-enable-task", Button)
         disable_button = detail.query_one("#scheduling-disable-task", Button)
@@ -247,14 +246,128 @@ async def test_task_detail_renders_selected_task():
         follow_button = detail.query_one("#schedules-follow-in-console", Button)
 
         assert "Test" in title.visual.plain
-        assert "One-time" in kind.visual.plain
         assert "Waiting" in status_badge.visual.plain
-        assert "One-time at" in schedule.visual.plain
         assert "UTC" in next_run.visual.plain
         assert enable_button.label.plain == "Enable"
         assert disable_button.label.plain == "Disable"
         assert delete_button.label.plain == "Delete"
         assert follow_button.label.plain == "Follow 'Test' in Console"
+
+        # schedules-redesign PR-1, task 3: the old combined Type/Schedule
+        # rows are hidden for a reminder now (they only remain visible for
+        # a `ScheduledTask` projection); the same "One-time"/"One-time at"
+        # facts render through the new Frequency group's Repeat/At rows
+        # instead -- painted-output assertions, not stored-attribute ones
+        # (last program's lesson), since a hidden widget's stored text
+        # would pass even if nothing were actually on screen.
+        legacy_fields = detail.query_one("#scheduling-task-detail-legacy-fields")
+        groups = detail.query_one("#scheduling-task-detail-groups")
+        assert legacy_fields.display is False
+        assert groups.display is True
+        repeat_value = detail.query_one("#scheduling-detail-repeat", Static)
+        at_value = detail.query_one("#scheduling-detail-at", Static)
+        assert "One-time" in repeat_value.render_line(0).text
+        assert "One-time at" in at_value.render_line(0).text
+
+
+class _BareTaskDetailApp(ConsolidatedCSSApp):
+    """Bare app mounting one `TaskDetail` (schedules-redesign PR-1, task 3),
+    matching `test_schedules_missed_notice.py`'s `_DetailHarnessApp`
+    pattern. `CSS_PATH` is pinned to the app bundle (not just the screen
+    sheets `ConsolidatedCSSApp` loads by default) so `DetailValueRow`/
+    `DetailGroup`'s real `css/features/_scheduling.tcss` styling resolves
+    -- Task 1's own harness precedent (`test_detail_value_row.py`).
+    """
+
+    CSS_PATH = str(BUNDLED_STYLESHEET)
+
+    def compose(self):
+        yield TaskDetail()
+
+
+def _frequency_reminder(**kwargs) -> ReminderTask:
+    """A representative recurring reminder covering every §5 Frequency/
+    Details/History value: weekly cadence, a non-UTC timezone, and a
+    recorded last dispatch."""
+    defaults = dict(
+        id="task-freq",
+        title="Weekly digest",
+        schedule_kind=ScheduleKind.RECURRING,
+        cron="0 9 * * 1",
+        timezone="America/New_York",
+        last_run_at=datetime(2026, 8, 24, 9, 0, tzinfo=timezone.utc),
+        last_status=TaskStatus.COMPLETED,
+    )
+    defaults.update(kwargs)
+    return ReminderTask(**defaults)
+
+
+@pytest.mark.asyncio
+async def test_task_detail_groups_render_every_frequency_and_details_value():
+    """Every §5 reminder-column value paints through the new grouped rows
+    for a representative recurring reminder (task-3 brief AC)."""
+    async with _BareTaskDetailApp().run_test() as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder())
+        await pilot.pause()
+
+        def _text(widget_id: str) -> str:
+            return detail.query_one(f"#{widget_id}", Static).render_line(0).text.strip()
+
+        assert _text("scheduling-detail-runs-on") == "local"
+        assert _text("scheduling-detail-repeat") == "Recurring"
+        assert _text("scheduling-detail-at") == "Weekly on Monday at 09:00 America/New_York"
+        assert _text("scheduling-detail-timezone") == "America/New_York"
+        assert _text("scheduling-detail-notifications") == "Inbox + toast"
+
+        # The History group starts collapsed (spec §5); expand it to read
+        # the painted "Last fire" value.
+        history_group = detail.query_one("#scheduling-detail-group-history")
+        assert history_group.collapsed is True
+        history_group.collapsed = False
+        await pilot.pause()
+        assert _text("scheduling-detail-last-fire") == "2026-08-24 09:00 UTC — Completed"
+        assert _text("scheduling-detail-history-link") == "See below"
+
+
+@pytest.mark.asyncio
+async def test_task_detail_history_group_starts_collapsed_and_expands_on_click():
+    """The collapsed History group hides its rows; a real click on its
+    title expands it and repaints them (task-3 brief AC)."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder())
+        await pilot.pause()
+
+        history_group = detail.query_one("#scheduling-detail-group-history")
+        last_fire_row = detail.query_one("#scheduling-detail-last-fire", Static)
+        assert history_group.collapsed is True
+        assert last_fire_row.region.height == 0
+
+        await pilot.click(history_group.query_one(CollapsibleTitle))
+        await pilot.pause()
+        assert history_group.collapsed is False
+        assert last_fire_row.region.height > 0
+        assert "Completed" in last_fire_row.render_line(0).text
+
+        await pilot.click(history_group.query_one(CollapsibleTitle))
+        await pilot.pause()
+        assert history_group.collapsed is True
+        assert last_fire_row.region.height == 0
+
+
+@pytest.mark.asyncio
+async def test_task_detail_runs_on_shows_transfer_badge_when_in_flight():
+    """'Runs on' appends the existing in-flight transfer badge text to the
+    owner label, same wording as the queue row's transfer suffix
+    (task-3 brief: 'the existing badge text joins the value')."""
+    async with _BareTaskDetailApp().run_test() as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder(transfer_state="to_server_pending"))
+        await pilot.pause()
+
+        runs_on = detail.query_one("#scheduling-detail-runs-on", Static)
+        assert runs_on.render_line(0).text.strip() == "local (Moving to server…)"
 
 
 @pytest.mark.asyncio
