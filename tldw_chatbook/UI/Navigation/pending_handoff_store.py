@@ -22,6 +22,7 @@ from .audio_cpp_model_handoff import (
     AudioCppModelLibraryRequest,
     AudioCppModelLibraryResult,
 )
+from .conversation_settings_navigation import ConversationSettingsReturnIntent
 from ..Screens.study_scope_models import (
     STUDY_INITIAL_SECTIONS,
     STUDY_ORIGINS,
@@ -108,6 +109,7 @@ class HandoffChannel(StrEnum):
     ACP_SESSION_TARGET = "acp_session_target"
     AUDIO_CPP_MODEL_LIBRARY_REQUEST = "audio_cpp_model_library_request"
     AUDIO_CPP_MODEL_LIBRARY_RESULT = "audio_cpp_model_library_result"
+    CONVERSATION_SETTINGS_RETURN = "conversation_settings_return"
 
 
 class HandoffValueError(ValueError):
@@ -467,6 +469,15 @@ class PendingHandoffStore:
                 provider=value.provider,
                 model=value.model,
                 config_revision=value.config_revision,
+            )
+        if channel is HandoffChannel.CONVERSATION_SETTINGS_RETURN:
+            if not isinstance(value, ConversationSettingsReturnIntent):
+                raise TypeError("Conversation settings return handoff must be typed")
+            return ConversationSettingsReturnIntent(
+                session_id=value.session_id,
+                settings_revision=value.settings_revision,
+                active_view=value.active_view,
+                focus_control_id=value.focus_control_id,
             )
         if channel is HandoffChannel.STUDY_SCOPE:
             if not isinstance(value, StudyScopeContext):
