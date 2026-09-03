@@ -823,3 +823,113 @@ different in-flight claim. Direct acknowledgement success remains unchanged,
 covered cancellation still propagates after a single transfer callback, and
 pre-transfer cancellation still releases A for an exact retry. No controller
 ledger, task state, general lesson, schema, persistence owner, or ADR changed.
+
+## Round-8 review fix
+
+Resolved the Important exceptional recovery gap by separating modal-owned
+terminal cleanup from snapshot-backed restoration retry:
+
+- Successful modal transfer now moves the exact typed return claim into a
+  process-local terminal-cleanup obligation before clearing the restoration
+  target. The modal remains the only draft owner; the cleanup claim is never
+  serialized into native Console state.
+- One bounded cleanup pass attempts exact acknowledgement, inspects the exact
+  revision, releases only the same in-flight claim when necessary, and
+  exact-discards only the same pending revision/value. It clears the obligation
+  solely after an exact mutation succeeds or the store proves the revision is
+  settled or superseded.
+- A failed or indeterminate release/discard retains the typed claim obligation.
+  Existing consume scheduling, mount, resume, and unmount each make one
+  event-driven attempt; no timer loop or arbitrary retry spin was added.
+- Transferred work is removed from the ordinary restoration claim slot, so
+  cancellation/finally/unmount cannot normally release A back into a
+  snapshot-less retry. Pre-transfer cancellation retains its existing release
+  behavior.
+- Added real-store mounted regressions for a one-shot pre-mutation release
+  exception, a one-shot discard exception after release, and a persistent
+  release exception through resume/unmount. They prove B stays pending,
+  claimable, and schedulable; A eventually reaches a terminal state after
+  one-shot faults; persistent failure remains observable without a restore
+  target or serialized claim; and no second restoration occurs without a
+  snapshot.
+
+### Round-8 RED evidence
+
+The three final regression shapes were run before production changes:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py -k 'release_exception_retains_terminal_cleanup_until_resume or discard_exception_retries_without_restoring_snapshot or persistent_release_exception_retains_cleanup_on_unmount' -q --tb=short --show-capture=no
+3 failed, 345 deselected, 1 warning in 5.05s
+```
+
+Each mounted journey reached the restored modal and failed on the same missing
+behavior: the local cleanup obligation was `None` after release/discard raised.
+There were no fixture or collection failures.
+
+### Round-8 GREEN evidence
+
+Exact exceptional cleanup regressions:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py -k 'release_exception_retains_terminal_cleanup_until_resume or discard_exception_retries_without_restoring_snapshot or persistent_release_exception_retains_cleanup_on_unmount' -q --tb=short --show-capture=no
+3 passed, 345 deselected, 1 warning in 5.50s
+```
+
+Focused acknowledgement, transfer, cancellation, replacement, transient, and
+unmount coverage:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py Tests/UI/test_console_session_settings.py -k 'release_exception_retains_terminal_cleanup_until_resume or discard_exception_retries_without_restoring_snapshot or persistent_release_exception_retains_cleanup_on_unmount or recovers_pre_mutation_ack_failure or ack_failure_preserves_pending_replacement or false_ack_after_real_settlement_preserves_owner or settles_at_transfer_before_status_and_keeps_replacement or covered_mount_cancellation_settles_before_unmount or pretransfer_cancellation_retains_retry or real_router_unmount_after_transfer_does_not_replay_stale_handoff or success_preserves_replacement_staged_during_restore or releases_transient_modal_mount_failure or unmount_releases_acquired_exact_claim or rapid_unmount_before_consumer_keeps_handoff_pending or covered_cancelled_source_reopen_transfers_exact_draft_to_modal' -q --tb=short --show-capture=no
+18 passed, 620 deselected, 1 warning in 58.06s
+```
+
+Cumulative Task 4/state selection and complete handoff-store suite:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/State/test_pending_handoff_store.py Tests/State/test_screen_state_store.py Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_native_chat_flow.py Tests/UI/test_console_session_settings.py -k 'conversation_settings or provider_navigation or credential or screen_state or dirty_return_confirmation' -q --tb=short --show-capture=no
+115 passed, 1025 deselected, 1 warning in 131.68s
+
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/State/test_pending_handoff_store.py -q --tb=short --show-capture=no
+90 passed, 1 warning in 0.46s
+```
+
+The warning is the already documented Requests dependency-version warning from
+the shared root virtualenv. No full suite was run, per repository and task
+instructions.
+
+Static verification:
+
+```text
+../../.venv/bin/python -m ruff check tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_console_native_chat_flow.py
+All checks passed!
+
+../../.venv/bin/python -m py_compile tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_console_native_chat_flow.py
+exit 0
+
+git diff --check
+exit 0
+```
+
+### Round-8 files, ADR check, and self-review
+
+- `tldw_chatbook/UI/Screens/chat_screen.py`
+- `Tests/UI/test_console_native_chat_flow.py`
+- `.superpowers/sdd/2026-09-02-task-30010-conversation-settings-return-contract/task-4-report.md`
+
+ADR required: no new ADR
+
+ADR paths: `backlog/decisions/012-provider-credential-settings-boundary.md` and
+`backlog/decisions/033-application-session-state-ownership.md`
+
+Reason: this correction retains ADR-033's exact typed claim only until its
+already-required terminal settlement is proven, without changing the store,
+credential owner, persistence boundary, or return payload.
+
+Self-review confirmed each event-driven attempt invokes every applicable store
+mutation at most once. A newer pending or claimed B is never acknowledged,
+released, discarded, or identity-cleared by A. Persistent faults retain the
+opaque typed claim on the old screen while screen serialization contains only
+JSON-safe ordinary state and no cleanup object. Covered cancellation still
+propagates after modal transfer, and the pre-transfer claim path remains the
+only path that normal unmount release can requeue. No controller ledger, task
+state, general lesson, schema, store API, persistence owner, or ADR changed.
