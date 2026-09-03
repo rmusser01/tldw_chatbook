@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field, fields, replace
+from enum import StrEnum
 import re
 from typing import Any, Awaitable, Callable, Mapping, Protocol
 from uuid import uuid4
@@ -64,6 +65,7 @@ from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Chat.provider_endpoint_contract import (
     canonical_connection_identity,
 )
+from tldw_chatbook.Chat.provider_setup_persistence import canonical_provider_key
 from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_SESSION_SETTINGS_SOURCES,
@@ -159,6 +161,9 @@ PROVIDER_CHOICE_INPUT_MAX_LENGTH = 64
 COMPACTION_CLOSE_WARNING = "Provider work may continue and may still be billed."
 CONSOLE_SETTINGS_SAVE_DEFAULT_PROGRESS_COPY = (
     "Saving defaults… Keep this window open."
+)
+CONSOLE_SETTINGS_SAVE_ENDPOINT_PROGRESS_COPY = (
+    "Saving endpoint… Keep this window open."
 )
 _MODEL_PROVENANCE_COPY = {
     ConsoleModelProvenance.SERVED_NOW: "Served by this endpoint now",
@@ -684,6 +689,71 @@ class ConsoleSettingsResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ConsoleSettingsPersistAndApply:
+    """Validated endpoint setup request owned and executed by ``ChatScreen``."""
+
+    settings: ConsoleSettingsResult = field(repr=False)
+    provider: str
+    model: str
+    endpoint: str = field(repr=False)
+    expected_settings_revision: int
+
+    def __post_init__(self) -> None:
+        if type(self.settings) is not ConsoleSettingsResult:
+            raise ValueError("Conversation settings result is invalid.")
+        try:
+            provider = canonical_provider_key(self.provider)
+            nested_provider = canonical_provider_key(self.settings.settings.provider)
+        except ValueError as exc:
+            raise ValueError("Provider is invalid.") from exc
+        model = normalize_console_model_value(self.model)
+        nested_model = normalize_console_model_value(self.settings.settings.model)
+        endpoint = self.endpoint.strip() if type(self.endpoint) is str else ""
+        if not provider:
+            raise ValueError("Provider is invalid.")
+        if not model:
+            raise ValueError("Model is invalid.")
+        if not endpoint or not validate_url(endpoint):
+            raise ValueError("Endpoint is invalid.")
+        outer_connection = canonical_connection_identity(provider, endpoint)
+        nested_connection = canonical_connection_identity(
+            nested_provider,
+            self.settings.settings.base_url,
+        )
+        if (
+            provider != nested_provider
+            or model != nested_model
+            or outer_connection is None
+            or outer_connection != nested_connection
+        ):
+            raise ValueError("Provider setup request does not match its settings.")
+        if (
+            type(self.expected_settings_revision) is not int
+            or self.expected_settings_revision < 0
+        ):
+            raise ValueError("Settings revision is invalid.")
+        object.__setattr__(self, "provider", provider)
+        object.__setattr__(self, "model", model)
+        object.__setattr__(self, "endpoint", endpoint)
+
+
+class ConsoleSettingsPersistAndApplyStatus(StrEnum):
+    """Sanitized settlement returned by the Console-owned persistence path."""
+
+    APPLIED = "applied"
+    NOT_SAVED = "not_saved"
+    SAVED_NOT_APPLIED = "saved_not_applied"
+    SAVED_APPLY_UNCERTAIN = "saved_apply_uncertain"
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleSettingsReloadRequest:
+    """Request a fresh modal bound to the current conversation revision."""
+
+    draft: ConsoleSettingsDraftSnapshot = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
 class ConsoleModelDiscoveryIdentity:
     """One model-list request bound to the exact mutable modal draft."""
 
@@ -757,6 +827,17 @@ CONSOLE_SETTINGS_CONTEXT_SCOPE_COPY = (
 CONSOLE_SETTINGS_SCOPE_COPY = CONSOLE_SETTINGS_MODEL_SCOPE_COPY
 CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY = (
     "Could not save defaults. Nothing changed; your draft is still open."
+)
+CONSOLE_SETTINGS_SAVE_ENDPOINT_FAILED_COPY = (
+    "Could not save the endpoint. Nothing was applied to this conversation."
+)
+CONSOLE_SETTINGS_ENDPOINT_SAVED_NOT_APPLIED_COPY = (
+    "Endpoint saved, but it was not applied to this conversation. "
+    "Review the retained draft before trying again."
+)
+CONSOLE_SETTINGS_ENDPOINT_SAVED_APPLY_UNCERTAIN_COPY = (
+    "Endpoint saved, but this conversation may have been partially updated. "
+    "Refresh and review the draft before continuing."
 )
 #: Debounce for the custom-model-id `Input` -- mirrors the picker/filter
 #: family's 0.2 s shape (`console_prompt_picker_modal.py`). Each settle
@@ -909,6 +990,7 @@ class ConsoleSettingsModal(
         ConsoleSettingsCommittedSubmission
         | ConsoleSettingsTransfer
         | ConsoleSettingsCredentialRequest
+        | ConsoleSettingsReloadRequest
         | None
     ],
 ):
@@ -1066,6 +1148,12 @@ class ConsoleSettingsModal(
         default_durability_state: ConsoleDefaultDurabilityState | None = None,
         default_recovery_handler: DefaultRecoveryHandler | None = None,
         suspended_draft: ConsoleSettingsDraftSnapshot | None = None,
+        expected_settings_revision: int = 0,
+        persist_and_apply: Callable[
+            [ConsoleSettingsPersistAndApply],
+            Awaitable[ConsoleSettingsPersistAndApplyStatus],
+        ]
+        | None = None,
     ) -> None:
         super().__init__()
         if transfer is not None:
@@ -1124,6 +1212,12 @@ class ConsoleSettingsModal(
             )
         self._can_save = can_save
         self._active_run = active_run
+        if type(expected_settings_revision) is not int or expected_settings_revision < 0:
+            raise ValueError("expected settings revision is invalid")
+        if persist_and_apply is not None and not callable(persist_and_apply):
+            raise TypeError("persist_and_apply must be callable")
+        self._expected_settings_revision = expected_settings_revision
+        self._persist_and_apply = persist_and_apply
         self._focus_model = focus_model
         self._active_view = (
             suspended_draft.active_view
@@ -1261,6 +1355,8 @@ class ConsoleSettingsModal(
         self._compaction_provider_task: asyncio.Task[tuple[bool, str]] | None = None
         self._compaction_result_definitive = False
         self._default_save_in_flight = False
+        self._default_save_kind = "defaults"
+        self._provider_setup_requires_reload = False
         self._default_save_disabled_snapshot: dict[Widget, bool] = {}
         self._last_model_discovery_draft_key = (
             provider_config_key(self._active_provider),
@@ -2302,6 +2398,13 @@ class ConsoleSettingsModal(
             ):
                 with Horizontal(classes="console-settings-action-group"):
                     yield Button("Cancel", id="console-settings-cancel")
+                    reload_current = Button(
+                        "Refresh and review draft",
+                        id="console-settings-reload-current",
+                        variant="primary",
+                    )
+                    reload_current.display = False
+                    yield reload_current
                     save_default = Button(
                         "Save as model default",
                         id="console-settings-save-default",
@@ -2879,6 +2982,10 @@ class ConsoleSettingsModal(
         try:
             save_button = self.query_one("#console-settings-save-default", Button)
             make_button = self.query_one("#console-settings-make-default", Button)
+            apply_button = self.query_one("#console-settings-save", Button)
+            keep_unverified = self.query_one(
+                "#console-settings-keep-unverified-model", Button
+            )
             block = self.query_one("#console-settings-new-chat-default-block", Static)
         except (NoMatches, QueryError):
             return
@@ -2904,12 +3011,26 @@ class ConsoleSettingsModal(
             copy = f"Unavailable: {readiness.detail}"
         else:
             copy = ""
+        needs_endpoint_persistence = readiness.blocker == "endpoint_not_saved"
+        needs_unverified_confirmation = self._selected_model_requires_confirmation()
         recovery_active = (
             self._default_durability_state.recovery_intent is not None
             and self._default_durability_state.failure_phase is not None
         )
-        save_button.disabled = not settings.model or not self._can_save
+        save_button.label = (
+            "Save endpoint & use model"
+            if needs_endpoint_persistence
+            else "Save as model default"
+        )
+        save_button.variant = "primary" if needs_endpoint_persistence else "default"
+        save_button.disabled = (
+            not settings.model or not self._can_save or needs_unverified_confirmation
+        )
         make_button.disabled = bool(copy) or not self._can_save
+        apply_button.display = not needs_endpoint_persistence
+        apply_button.disabled = not self._can_save or needs_unverified_confirmation
+        keep_unverified.display = needs_unverified_confirmation
+        keep_unverified.disabled = not self._can_save
         block.update(copy)
         block.display = (
             bool(copy) and self._active_view == "model" and not recovery_active
@@ -3353,7 +3474,11 @@ class ConsoleSettingsModal(
         if self._default_save_in_flight:
             self.query_one(
                 "#console-settings-primary-disabled-reason", Static
-            ).update(CONSOLE_SETTINGS_SAVE_DEFAULT_PROGRESS_COPY)
+            ).update(
+                CONSOLE_SETTINGS_SAVE_ENDPOINT_PROGRESS_COPY
+                if self._default_save_kind == "endpoint"
+                else CONSOLE_SETTINGS_SAVE_DEFAULT_PROGRESS_COPY
+            )
             return
         guard = self.query_one("#console-settings-close-guard", Vertical)
         if guard.display:
@@ -3438,6 +3563,16 @@ class ConsoleSettingsModal(
         event.stop()
         await self.request_safe_cancel(source="button")
 
+    @on(Button.Pressed, "#console-settings-reload-current")
+    def _reload_current_settings(self, event: Button.Pressed) -> None:
+        """Reopen the retained draft against current canonical session state."""
+        event.stop()
+        if self._default_save_in_flight or not self._provider_setup_requires_reload:
+            return
+        self.dismiss_safe_once(
+            ConsoleSettingsReloadRequest(self.capture_suspended_draft())
+        )
+
     @on(Button.Pressed, "#console-settings-close-undo")
     async def _close_after_undo(self, event: Button.Pressed) -> None:
         event.stop()
@@ -3499,6 +3634,14 @@ class ConsoleSettingsModal(
     @on(Button.Pressed, "#console-settings-save-default")
     def _save_as_default(self, event: Button.Pressed) -> None:
         event.stop()
+        settings = self._build_draft()
+        readiness = build_console_settings_readiness(
+            settings,
+            app_config=self._app_config,
+            active_run=self._active_run,
+        )
+        if readiness.blocker == "endpoint_not_saved" and self._endpoint_can_be_checked():
+            self.query_one("#console-settings-save-endpoint", Checkbox).value = True
         self._submit(ConsoleSettingsAction.SAVE_MODEL_DEFAULT)
 
     @on(Button.Pressed, "#console-settings-make-default")
@@ -4842,10 +4985,14 @@ class ConsoleSettingsModal(
 
     def _focus_after_unverified_model_decision(self) -> None:
         """Never leave keyboard focus attached to the newly hidden action."""
-        primary = self.query_one("#console-settings-save", Button)
-        if self._is_effectively_focusable(primary):
-            primary.focus()
-            return
+        for selector in (
+            "#console-settings-save",
+            "#console-settings-save-default",
+        ):
+            primary = self.query_one(selector, Button)
+            if self._is_effectively_focusable(primary) and primary.variant == "primary":
+                primary.focus()
+                return
         cancel = self.query_one("#console-settings-cancel", Button)
         if self._is_effectively_focusable(cancel):
             cancel.focus()

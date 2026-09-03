@@ -1199,6 +1199,19 @@ def _provider_setup_observations(
         provider_settings,
         environ=os.environ,
     )
+    configured_source_value = provider_settings.get("credential_source")
+    configured_source = (
+        configured_source_value.strip().lower()
+        if type(configured_source_value) is str
+        and configured_source_value.strip().lower()
+        in {"none", "stored", "environment"}
+        else "none"
+    )
+    _, environment_key = ownership.credential_keys
+    configured_env_var = _existing_environment_name(
+        provider_settings.get(environment_key)
+    )
+    credential_routing = f"{configured_source}\0{configured_env_var or ''}"
     if (
         credential_value is not None
         and credential_source is not None
@@ -1206,7 +1219,7 @@ def _provider_setup_observations(
     ):
         credential = _ProviderCredentialObservation(
             "stored",
-            f"stored\0{credential_value}",
+            f"stored\0{credential_routing}\0{credential_value}",
         )
     elif (
         credential_value is not None
@@ -1215,10 +1228,13 @@ def _provider_setup_observations(
     ):
         credential = _ProviderCredentialObservation(
             "environment",
-            f"environment\0{env_var or ''}\0{credential_value}",
+            f"environment\0{credential_routing}\0{env_var or ''}\0{credential_value}",
         )
     else:
-        credential = _ProviderCredentialObservation("none", "none")
+        credential = _ProviderCredentialObservation(
+            "none",
+            f"none\0{credential_routing}",
+        )
     return (
         route_identity,
         routing_state,

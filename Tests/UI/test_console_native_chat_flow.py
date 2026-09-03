@@ -4,6 +4,7 @@ from copy import deepcopy
 import inspect
 import json
 import re
+import threading
 from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -79,7 +80,7 @@ from tldw_chatbook.Chat.console_session_settings import (
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
-from tldw_chatbook.config import ConfigMutationResult
+from tldw_chatbook.config import AtomicConfigSnapshot, ConfigMutationResult
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
     ConsoleSettingsReturnTarget,
@@ -127,10 +128,240 @@ from tldw_chatbook.Widgets.Console.console_workspace_details import (
 from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
 from tldw_chatbook import config as config_module
 from Tests.console_provider_doubles import provider_resolution, with_destination
+from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
 
 
 DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
 _ASYNC_SETTLE_TIMEOUT = 10.0
+
+
+@pytest.mark.asyncio
+async def test_console_endpoint_save_order_through_mounted_modal(
+    monkeypatch,
+) -> None:
+    """The mounted Conversation flow writes, reloads, then applies and closes."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "ollama",
+        "model": "qwen-old",
+    }
+    app.app_config["api_settings"] = {
+        "ollama": {
+            "api_url": "http://127.0.0.1:11434",
+            "model": "qwen-old",
+            "credential_source": "none",
+        }
+    }
+    app.chat_api_provider_value = "ollama"
+    app.chat_api_model_value = "qwen-old"
+    host = ConsoleHarness(app)
+    entered = threading.Event()
+    release = threading.Event()
+    events: list[str] = []
+    before = AtomicConfigSnapshot(
+        21,
+        {
+            "api_settings": deepcopy(app.app_config["api_settings"]),
+            "chat_defaults": deepcopy(app.app_config["chat_defaults"]),
+        },
+    )
+    after = {
+        "api_settings": {
+            "ollama": {
+                "api_url": "http://127.0.0.1:22434",
+                "model": "qwen-new",
+                "credential_source": "none",
+            }
+        },
+        "chat_defaults": {"provider": "ollama", "model": "qwen-new"},
+    }
+    monkeypatch.setattr(
+        chat_screen_module,
+        "get_atomic_config_snapshot",
+        lambda: before,
+    )
+
+    def persist(_mutation):
+        events.append("write")
+        entered.set()
+        release.wait(timeout=3)
+        return ConfigMutationResult(True, True, None)
+
+    def reload_config(*, force_reload=False):
+        assert force_reload is True
+        events.append("reload")
+        return after
+
+    monkeypatch.setattr(chat_screen_module, "persist_provider_setup", persist)
+    monkeypatch.setattr(chat_screen_module, "load_settings", reload_config)
+
+    try:
+        async with host.run_test(size=(160, 48)) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-native-composer")
+            store = console._ensure_console_chat_store()
+            session = store.ensure_session()
+            original = ConsoleSessionSettings(
+                provider="ollama",
+                model="qwen-old",
+                base_url="http://127.0.0.1:11434",
+            )
+            store.replace_session_settings(session.id, original)
+
+            assert await console._open_console_settings() is True
+            modal = host.screen_stack[-1]
+            assert isinstance(modal, ConsoleSettingsModal)
+            modal.query_one("#console-settings-base-url", Input).value = (
+                "http://127.0.0.1:22434"
+            )
+            modal.query_one(ModelSearchPicker).set_model_value("qwen-new")
+            await pilot.pause(0.3)
+            action = modal.query_one("#console-settings-save-default", Button)
+            assert str(action.label) == "Save endpoint & use model"
+
+            action.press()
+            assert await asyncio.to_thread(entered.wait, 1)
+            assert store.session_settings(session.id) == original
+
+            release.set()
+            for _ in range(40):
+                await pilot.pause(0.05)
+                if host.screen_stack[-1] is console:
+                    break
+
+            assert host.screen_stack[-1] is console
+            assert store.session_settings(session.id).model == "qwen-new"
+            assert store.session_settings(session.id).base_url == (
+                "http://127.0.0.1:22434"
+            )
+            assert events == ["write", "reload"]
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+async def test_console_saved_endpoint_race_reloads_current_session_without_overwrite(
+    monkeypatch,
+) -> None:
+    """Post-write conflict retains review, then reopens from current session state."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "ollama",
+        "model": "qwen-old",
+    }
+    app.app_config["api_settings"] = {
+        "ollama": {
+            "api_url": "http://127.0.0.1:11434",
+            "model": "qwen-old",
+            "credential_source": "none",
+        }
+    }
+    app.chat_api_provider_value = "ollama"
+    app.chat_api_model_value = "qwen-old"
+    host = ConsoleHarness(app)
+    entered = threading.Event()
+    release = threading.Event()
+    snapshot = AtomicConfigSnapshot(
+        8,
+        {
+            "api_settings": deepcopy(app.app_config["api_settings"]),
+            "chat_defaults": deepcopy(app.app_config["chat_defaults"]),
+        },
+    )
+    monkeypatch.setattr(
+        chat_screen_module, "get_atomic_config_snapshot", lambda: snapshot
+    )
+    readiness_config = {"value": deepcopy(snapshot.values)}
+
+    def persist(_mutation):
+        entered.set()
+        release.wait(timeout=3)
+        return ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(chat_screen_module, "persist_provider_setup", persist)
+    def reload_config(*, force_reload=False):
+        if not force_reload:
+            return readiness_config["value"]
+        fresh = {
+            "api_settings": {
+                "ollama": {
+                    "api_url": "http://127.0.0.1:22434",
+                    "model": "qwen-new",
+                    "credential_source": "none",
+                }
+            },
+            "chat_defaults": {"provider": "ollama", "model": "qwen-new"},
+        }
+        readiness_config["value"] = fresh
+        return fresh
+
+    monkeypatch.setattr(chat_screen_module, "load_settings", reload_config)
+
+    try:
+        async with host.run_test(size=(160, 48)) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-native-composer")
+            console._provider_readiness_app_config = lambda: deepcopy(
+                readiness_config["value"]
+            )
+            store = console._ensure_console_chat_store()
+            session = store.ensure_session()
+            original = ConsoleSessionSettings(
+                provider="ollama",
+                model="qwen-old",
+                base_url="http://127.0.0.1:11434",
+            )
+            store.replace_session_settings(session.id, original)
+            assert await console._open_console_settings() is True
+            first_modal = host.screen_stack[-1]
+            first_modal.query_one(
+                "#console-settings-base-url", Input
+            ).value = "http://127.0.0.1:22434"
+            first_modal.query_one(ModelSearchPicker).set_model_value("qwen-new")
+            await pilot.pause(0.3)
+            endpoint_action = first_modal.query_one(
+                "#console-settings-save-default", Button
+            )
+            assert str(endpoint_action.label) == "Save endpoint & use model"
+            endpoint_action.press()
+            assert await asyncio.to_thread(entered.wait, 1)
+            raced = replace(original, temperature=0.2)
+            store.replace_session_settings(session.id, raced)
+            release.set()
+            for _ in range(30):
+                await pilot.pause(0.05)
+                if first_modal.query_one(
+                    "#console-settings-reload-current", Button
+                ).display:
+                    break
+
+            assert first_modal.query_one(
+                "#console-settings-model-picker", ModelSearchPicker
+            ).value == "qwen-new"
+            assert store.session_settings(session.id) == raced
+            first_modal.query_one(
+                "#console-settings-reload-current", Button
+            ).press()
+            for _ in range(40):
+                await pilot.pause(0.05)
+                if (
+                    isinstance(host.screen_stack[-1], ConsoleSettingsModal)
+                    and host.screen_stack[-1] is not first_modal
+                ):
+                    break
+
+            reopened = host.screen_stack[-1]
+            assert isinstance(reopened, ConsoleSettingsModal)
+            assert reopened is not first_modal
+            assert reopened.query_one(
+                "#console-settings-model-picker", ModelSearchPicker
+            ).value == "qwen-new"
+            assert reopened.query_one(
+                "#console-settings-base-url", Input
+            ).value == "http://127.0.0.1:22434"
+            assert store.session_settings(session.id) == raced
+    finally:
+        release.set()
 
 
 def _conversation_settings_return_snapshot(

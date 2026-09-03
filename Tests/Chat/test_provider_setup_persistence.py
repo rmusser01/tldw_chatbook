@@ -55,6 +55,83 @@ def _bind_atomic_expectation(
     return guard, expected_state
 
 
+def test_console_endpoint_save_uses_bound_provider_setup_transaction(monkeypatch):
+    """Console's endpoint action inherits the provider writer's atomic CAS guard."""
+    snapshot = config_module.AtomicConfigSnapshot(
+        4,
+        {
+            "api_settings": {
+                "ollama": {
+                    "api_url": "http://127.0.0.1:11434",
+                    "model": "qwen-old",
+                    "credential_source": "none",
+                }
+            },
+            "chat_defaults": {"provider": "ollama", "model": "qwen-old"},
+        },
+    )
+    draft = _draft(
+        provider="ollama",
+        model="qwen-new",
+        endpoint="http://127.0.0.1:22434",
+    )
+    mutation = build_provider_setup_mutation(draft, snapshot.values)
+    identity = persistence_module.ProviderSetupWriteIdentity(
+        provider_key="ollama",
+        connection_identity=persistence_module.canonical_connection_identity(
+            "ollama", "http://127.0.0.1:22434"
+        ),
+        credential_source="none",
+        credential_revision=0,
+        model_id="qwen-new",
+        model_provenance="manual",
+    )
+    guard = persistence_module.ProviderSetupWriteGuard()
+    expectation = guard.arm(identity)
+    expected_state = persistence_module.bind_provider_setup_precondition(
+        persistence_module.capture_provider_setup_precondition(
+            snapshot,
+            provider="ollama",
+        ),
+        identity=identity,
+    )
+    persistence_module.bind_provider_setup_write_expectation(
+        mutation,
+        guard=guard,
+        expectation=expectation,
+        expected_state=expected_state,
+    )
+    calls = 0
+
+    def writer(*_args, locked_snapshot_precondition=None, **_kwargs):
+        nonlocal calls
+        calls += 1
+        assert locked_snapshot_precondition(snapshot)
+        return ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(
+        persistence_module,
+        "apply_settings_mutation_to_cli_config",
+        writer,
+    )
+
+    result = persist_provider_setup(mutation)
+
+    assert result.fully_applied is True
+    assert calls == 1
+    assert mutation.section_values["api_settings.ollama"] == {
+        "model": "qwen-new",
+        # Ollama's provider owner stores the exact chat-completions route,
+        # while its canonical connection identity remains the server root.
+        "api_url": "http://127.0.0.1:22434/v1/chat/completions",
+        "credential_source": "none",
+    }
+    assert mutation.section_values["chat_defaults"] == {
+        "provider": "ollama",
+        "model": "qwen-new",
+    }
+
+
 def test_provider_setup_precondition_rebinds_original_locked_state():
     original = config_module.AtomicConfigSnapshot(
         7,
@@ -895,7 +972,7 @@ def test_credential_source_is_persisted_for_each_authoritative_auth_decision():
     ] == "environment"
 
 
-def test_unset_environment_declaration_does_not_change_none_credential_identity(
+def test_unset_environment_declaration_changes_credential_routing_identity(
     monkeypatch,
 ):
     monkeypatch.delenv("CUSTOM_API_KEY", raising=False)
@@ -938,10 +1015,64 @@ def test_unset_environment_declaration_does_not_change_none_credential_identity(
         identity=identity,
     )
 
-    assert expected._matches_snapshot(sparse) is True
+    assert expected._matches_snapshot(sparse) is False
 
     monkeypatch.setenv("CUSTOM_API_KEY", "appeared-environment-canary")
     assert expected._matches_snapshot(original) is False
+
+
+def test_unset_environment_variable_name_change_fails_provider_setup_cas(
+    monkeypatch,
+):
+    """An unset ENV_A -> ENV_B config race must not evade the provider CAS."""
+    monkeypatch.delenv("CUSTOM_ENV_A", raising=False)
+    monkeypatch.delenv("CUSTOM_ENV_B", raising=False)
+    original = config_module.AtomicConfigSnapshot(
+        1,
+        {
+            "api_settings": {
+                "custom": {
+                    "api_url": "https://keyless.example.test/v1/chat/completions",
+                    "credential_source": "environment",
+                    "api_key_env_var": "CUSTOM_ENV_A",
+                }
+            }
+        },
+    )
+    raced = config_module.AtomicConfigSnapshot(
+        2,
+        {
+            "api_settings": {
+                "custom": {
+                    "api_url": "https://keyless.example.test/v1/chat/completions",
+                    "credential_source": "environment",
+                    "api_key_env_var": "CUSTOM_ENV_B",
+                }
+            }
+        },
+    )
+    identity = persistence_module.ProviderSetupWriteIdentity(
+        provider_key="custom",
+        connection_identity=persistence_module.canonical_connection_identity(
+            "custom", "https://keyless.example.test/v1/chat/completions"
+        ),
+        credential_source="environment",
+        credential_revision=0,
+        model_id="manual-model",
+        model_provenance="manual",
+    )
+    expected = persistence_module.bind_provider_setup_precondition(
+        persistence_module.capture_provider_setup_precondition(
+            original,
+            provider="custom",
+        ),
+        identity=identity,
+    )
+
+    assert expected._matches_snapshot(original) is True
+    assert expected._matches_snapshot(raced) is False
+    assert "CUSTOM_ENV_A" not in repr(expected)
+    assert "CUSTOM_ENV_B" not in repr(expected)
 
 
 def test_present_environment_rotation_changes_credential_identity(monkeypatch):
