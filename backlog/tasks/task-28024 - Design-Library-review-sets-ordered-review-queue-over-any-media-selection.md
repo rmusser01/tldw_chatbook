@@ -1,9 +1,10 @@
 ---
 id: TASK-28024
 title: 'Design - Library review sets: ordered review queue over any media selection'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-02 04:23'
+updated_date: '2026-09-02 22:27'
 labels:
   - library
   - media-ux
@@ -25,7 +26,13 @@ Foundations confirmed on dev tip 2026-09-02, which the review-set design should 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A written design covers data model, set lifecycle, entry points, viewer behavior, and the edge cases above
-- [ ] #2 The design is explicitly approved by the user before implementation tasks are filed
-- [ ] #3 The design states how it builds on or supersedes task-28005 and task-28009
+- [x] #1 A written design covers data model, set lifecycle, entry points, viewer behavior, and the edge cases above
+- [x] #2 The design is explicitly approved by the user before implementation tasks are filed
+- [x] #3 The design states how it builds on or supersedes task-28005 and task-28009
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+APPROVED by user 2026-09-02 (with recommendations A-F). Spec: backlog/docs/design-library-review-sets.md, including a critical review pass (spec Section 11) that caught 7 issues re-verified against code: cross-DB no-FK (tombstone = runtime resolve), Review-selected ordering undefined (RowSelection unordered/cross-page -> deterministic sort-order query), whole-result cap 500 + off-loop + non-atomic, active-set pointer in DB not config (partial unique index), cursor-vs-progress under tombstones, mark-done edges, all-tombstoned=empty. Decisions locked: A whole-result cap 500 (overflow=pin-first-500+warn), B auto-mark-on-forward-advance+toggle, C one active set, D new v4 tables in Library_Collections_DB, E read-later source = optional phase 5, F snapshot-only v1 (no prune). Implementation filed as tasks 28241-28245 (5-phase plan from spec Section 10).
+<!-- SECTION:NOTES:END -->
