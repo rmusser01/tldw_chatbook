@@ -66,30 +66,31 @@ installed-distribution contract from ADR-032.
   reads the root `pyproject.toml` without importing release helpers, and the
   Windows NSIS installer fails unless `Packaging/windows/build_windows.py`
   provides `PRODUCT_VERSION`.
-- Fixed a release-blocking package-data gap caught by the installed-wheel gate:
-  the v40-to-v41 and v41-to-v42 ChaChaNotes runtime SQL migrations are now
-  packaged and required by `Packaging/check_manifest.py` and the installed
-  distribution regression.
-- Updated `backlog/docs/lessons-testing-evidence.md` with the repeated
-  migration-package-data incident.
+- Kept the current `dev` migration packaging hardening: ChaChaNotes SQL
+  migrations ship via `migrations/*.sql`, while `Packaging/check_manifest.py`
+  and the installed-distribution regression derive the required migration set
+  from source/runtime reads instead of hand-maintained lists.
+- Reused the existing `backlog/docs/lessons-testing-evidence.md` packaging
+  lesson that now covers the TASK-21506 migration-package-data incident.
 
 Verification:
 
 - Red metadata test first failed on stale `Packaging.common.version.VERSION`
   (`0.1.6.2` vs `0.1.8.0`); after the fix,
-  `/private/tmp/tldw-chatbook-pypi-runner-21506/bin/python -m pytest Tests/Packaging/test_release_metadata.py -q`
-  passed: 2 passed in 0.72s.
-- Fresh build into `/private/tmp/tldw-chatbook-pypi-dist-21506-fixed.Hay9eV`
-  succeeded; `twine check` passed for the sdist and wheel; `Packaging/check_manifest.py`
-  validated both artifacts.
+  `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Packaging/test_release_metadata.py -q`
+  passed on the clean `dev`-based branch: 2 passed, 1 environment warning in
+  1.08s.
+- `PYTHON=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python Packaging/build_dist.sh`
+  passed on the clean `dev`-based branch, building
+  `tldw_chatbook-0.1.8.0.tar.gz` and
+  `tldw_chatbook-0.1.8.0-py3-none-any.whl`; `twine check` passed for both
+  artifacts and `Packaging/check_manifest.py` validated both artifacts.
 - Installed-distribution regression in an outside-checkout Python 3.12 runner
-  first failed on the missing v40-to-v41 migration; after packaging both new
-  migrations,
-  `/private/tmp/tldw-chatbook-pypi-runner-21506/bin/python -m pytest Tests/Packaging/test_installed_distribution.py -m integration -q -p no:cacheprovider`
-  passed: 41 passed in 127.11s.
-- `PYTHON=/private/tmp/tldw-chatbook-pypi-runner-21506/bin/python Packaging/build_dist.sh`
-  passed end to end with the default ignored `dist/` output, including
-  `twine check` and `Packaging/check_manifest.py`.
+  first failed on the missing v40-to-v41 migration; after rebasing onto current
+  `dev`'s generalized migration packaging and artifact-derived checks,
+  `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Packaging/test_installed_distribution.py -m integration -q -p no:cacheprovider`
+  passed on the clean `dev`-based branch: 163 passed, 1 environment warning in
+  558.64s after rebasing onto current `dev`.
 - `DIST_DIR=/private/tmp/tldw-should-refuse Packaging/build_dist.sh` failed
   closed with `Refusing DIST_DIR outside repository root`, confirming the
   cleanup script no longer deletes arbitrary external artifact directories.

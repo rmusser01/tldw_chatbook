@@ -1,46 +1,50 @@
-#!/bin/bash
-# Build script for tldw_chatbook PyPI distribution
+#!/usr/bin/env bash
+# Build a fresh tldw_chatbook PyPI distribution.
 
-set -e  # Exit on error
+set -euo pipefail
 
-echo "🚀 Building tldw_chatbook distribution..."
+PYTHON="${PYTHON:-python}"
+DIST_DIR="${DIST_DIR:-dist}"
 
-# Navigate to project root
 cd "$(dirname "$0")/.."
 
-# Clean Python artifacts
-echo "🧹 Cleaning Python artifacts..."
-find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-find . -name "*.pyc" -o -name "*.pyo" -exec rm -f {} + 2>/dev/null || true
-find . -name ".DS_Store" -exec rm -f {} + 2>/dev/null || true
+REPO_ROOT="$(pwd -P)"
 
-# Clean previous builds
-echo "🧹 Cleaning previous builds..."
-rm -rf dist/ build/ *.egg-info
+if [[ -z "$DIST_DIR" || "$DIST_DIR" == "." || "$DIST_DIR" == "/" ]]; then
+    echo "Refusing unsafe DIST_DIR: ${DIST_DIR:-<empty>}" >&2
+    exit 1
+fi
 
-# Build source distribution and wheel
-echo "🔨 Building source and wheel distributions..."
-python -m build
+if [[ "$DIST_DIR" = /* || "$DIST_DIR" == ".." || "$DIST_DIR" == ../* || "$DIST_DIR" == */.. || "$DIST_DIR" == */../* ]]; then
+    echo "Refusing DIST_DIR outside repository root: $DIST_DIR" >&2
+    echo "Use python -m build directly for external artifact directories." >&2
+    exit 1
+fi
 
-# Check the distributions
-echo "✅ Checking distributions with twine..."
-python -m twine check dist/*
+DIST_DIR_REAL="${REPO_ROOT}/${DIST_DIR#./}"
 
-# Verify manifest
-echo "📋 Verifying distribution contents..."
-python Packaging/check_manifest.py
+echo "Building tldw_chatbook distribution into ${DIST_DIR_REAL}..."
 
-echo ""
-echo "✨ Build complete!"
-echo ""
-echo "📦 Distribution files created in ./dist/"
-ls -la dist/
-echo ""
-echo "📤 To upload to TestPyPI (for testing):"
-echo "  python -m twine upload --repository testpypi dist/*"
-echo ""
-echo "📤 To upload to PyPI (production):"
-echo "  python -m twine upload dist/*"
-echo ""
-echo "🧪 To test installation from wheel:"
-echo "  pip install dist/tldw_chatbook-*.whl"
+"$PYTHON" -c "import build, setuptools, twine, wheel" || {
+    echo "Install release tools with: $PYTHON -m pip install 'setuptools>=77.0' build twine wheel" >&2
+    exit 1
+}
+
+rm -rf "$DIST_DIR_REAL" build ./*.egg-info
+mkdir -p "$DIST_DIR_REAL"
+
+echo "Building source and wheel distributions..."
+"$PYTHON" -m build --sdist --wheel --no-isolation --outdir "$DIST_DIR_REAL"
+
+echo "Checking package metadata..."
+"$PYTHON" -m twine check "$DIST_DIR_REAL"/*
+
+echo "Verifying distribution contents..."
+"$PYTHON" Packaging/check_manifest.py "$DIST_DIR_REAL"
+
+echo
+echo "Build complete. Distribution files:"
+ls -la "$DIST_DIR_REAL"
+echo
+echo "Installed-wheel regression:"
+echo "  $PYTHON -m pytest Tests/Packaging/test_installed_distribution.py -m integration -q -p no:cacheprovider"

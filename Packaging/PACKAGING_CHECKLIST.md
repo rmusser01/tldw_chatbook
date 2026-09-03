@@ -8,6 +8,8 @@ must start from a fresh output directory; do not treat an existing checkout
 
 - [x] `pyproject.toml` is the source of truth for dependencies and entry points.
 - [x] `tldw-cli` and `tldw-serve` are declared in `[project.scripts]`.
+- [x] `Packaging/common/version.py` derives its release version from
+  `pyproject.toml`.
 - [x] `[tool.setuptools.package-data]` explicitly owns wheel runtime data.
 - [x] `include-package-data = false` keeps sdist-only files out of wheels.
 - [x] Asset directories that grow are matched by pattern, never enumerated.
@@ -57,9 +59,12 @@ fails closed: from the `.sql` files in the checkout beside it, and from the
 `.sql` names the artifact's own `ChaChaNotes_DB.py` opens. It names every
 missing script, not just the first.
 
-Run the isolated installed-wheel regression:
+Run the focused release metadata gate and installed-wheel regression:
 
 ```bash
+python -m pytest \
+  Tests/Packaging/test_release_metadata.py \
+  -q
 python -m pytest \
   Tests/Packaging/test_installed_distribution.py \
   -m integration -q -p no:cacheprovider
