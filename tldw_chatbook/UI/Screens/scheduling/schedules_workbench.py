@@ -308,6 +308,16 @@ class SchedulesWorkbench(BaseAppScreen):
         self._visible_tasks: list[ReminderTask] = []
         self._all_rows: list[UnifiedRow] = []
         self._visible_rows: list[UnifiedRow] = []
+        # redesign PR-2, Task 2 review round 2: any Automations-tab
+        # mutation of a definition (create/edit save, run-now, transfer
+        # begin/cancel -- everything that funnels through
+        # `_request_automations_refresh`) sets this; a reminder-only
+        # refresh (`refresh_definitions=False`) upgrades to a full one
+        # and clears it, and switching TO the Queue tab while stale does
+        # the same. Without this, the Queue's cached definition rows
+        # could go stale for the whole session -- reminder-only actions
+        # deliberately stopped self-healing it (finding 3's own fix).
+        self._definitions_stale = False
         self._chip: Chip = "all"
         self._filter_text = ""
         self._filter_debounce_timer: Timer | None = None
@@ -919,6 +929,14 @@ class SchedulesWorkbench(BaseAppScreen):
         """
         return [row.source_row for row in self._all_rows if row.kind == "definition"]
 
+    @on(TabbedContent.TabActivated, pane="#scheduling-queue-tab")
+    def _on_queue_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        """Arriving on the Queue tab while definitions are stale (review
+        round 2) upgrades the next refresh to a full one, rather than
+        waiting for a reminder action to (maybe never) trigger one."""
+        if self._definitions_stale:
+            self._request_tasks_refresh()
+
     async def load_tasks(self, *, refresh_definitions: bool = True) -> None:
         """Fetch reminders + automation definitions and build the unified
         Queue rows (redesign PR-2, Task 2).
@@ -932,12 +950,18 @@ class SchedulesWorkbench(BaseAppScreen):
         since this call site discarded every one of them anyway), both
         definition halves (the Automations tab's existing local+server
         merge, reused verbatim -- or, when ``refresh_definitions`` is
-        False, the definitions already in `self._all_rows` from the last
-        full load, review finding 3), and one all-owners results listing
-        (unread-count derivation only). The results read + row build are
-        pushed off the event loop (`asyncio.to_thread`), the same "local
-        DB read, off-thread" discipline `_load_local_automations`
-        already uses.
+        False AND nothing marked the cache stale, the definitions
+        already in `self._all_rows` from the last full load, review
+        finding 3), and one all-owners results listing (unread-count
+        derivation only). The results read + row build are pushed off
+        the event loop (`asyncio.to_thread`), the same "local DB read,
+        off-thread" discipline `_load_local_automations` already uses.
+
+        `self._definitions_stale` (review round 2): an Automations-tab
+        mutation upgrades the NEXT call here to a full definitions fetch
+        even when the caller only asked for `refresh_definitions=False`
+        -- a reminder-only refresh must not keep painting a definitions
+        snapshot a since-edited/transferred/run automation has outgrown.
         """
         service = self._scheduling_service
         if service is None:
@@ -952,11 +976,14 @@ class SchedulesWorkbench(BaseAppScreen):
             # Defensive, not load-bearing: `include_projections=False`
             # already guarantees every row is a `ReminderTask`.
             reminders = [task for task in combined if isinstance(task, ReminderTask)]
+            do_full_definitions_fetch = refresh_definitions or self._definitions_stale
             definitions = (
                 await self._load_queue_definitions(service)
-                if refresh_definitions
+                if do_full_definitions_fetch
                 else self._current_definitions()
             )
+            if do_full_definitions_fetch:
+                self._definitions_stale = False
 
             def _build_rows() -> list[UnifiedRow]:
                 results = service.db.list_automation_results(
@@ -1842,6 +1869,9 @@ class SchedulesWorkbench(BaseAppScreen):
         """
         if outcome is None:
             return
+        # redesign PR-2 Task 2 review round 2: a real definition save --
+        # the Queue's cached definitions rows may now be outdated.
+        self._definitions_stale = True
         status = getattr(outcome, "status", None)
         verb = "updated" if was_edit else "created"
         if status == "saved":
@@ -2078,7 +2108,21 @@ class SchedulesWorkbench(BaseAppScreen):
         )  # type: ignore[arg-type]
 
     def _request_automations_refresh(self) -> None:
-        """Schedule the automations loader through its exclusive worker group."""
+        """Schedule the automations loader through its exclusive worker group.
+
+        NOTE: this alone must NOT set `self._definitions_stale` -- it is
+        also called at mount and from sync-completed/failed
+        (`schedules-load-automations` fires concurrently with the
+        Queue's own mount-time full refresh), and doing so here caused a
+        real regression (round 2 fix-round-1 draft): the Queue tab's
+        `TabbedContent.TabActivated` fires for the INITIAL default-active
+        tab too, so a stale flag set by mount's own automations refresh
+        was immediately consumed by the tab-activation handler, forcing
+        a SECOND full Queue reload on every mount. Staleness is instead
+        marked at each genuine mutation call site (create/edit save,
+        run-now, transfer begin/cancel) -- see their own `self.
+        _definitions_stale = True` lines.
+        """
         self.run_worker(
             self.load_automations,
             exclusive=True,
@@ -2662,6 +2706,9 @@ class SchedulesWorkbench(BaseAppScreen):
             self.app_instance.notify(
                 f"'{name}' ran now{deduped}.", severity="information"
             )
+            # redesign PR-2 Task 2 review round 2: a real local run --
+            # the Queue's cached definitions rows may now be outdated.
+            self._definitions_stale = True
             self._request_automations_refresh()
 
         self.run_worker(
@@ -2949,6 +2996,13 @@ class SchedulesWorkbench(BaseAppScreen):
             return
 
         async def _resolve_and_begin() -> None:
+            # redesign PR-2 Task 2 review round 2: a genuine user-
+            # triggered transfer attempt (m/M/y) -- the Queue's cached
+            # definitions rows may now be outdated regardless of which
+            # branch below this lands on (refused/pending/not_found all
+            # still touch the local mirror row via `_resolve_local_
+            # definition_id`).
+            self._definitions_stale = True
             local_id = await self._resolve_local_definition_id(service, definition)
             if local_id is None:
                 self.app_instance.notify(
@@ -3051,6 +3105,10 @@ class SchedulesWorkbench(BaseAppScreen):
             return
 
         async def _resolve_and_cancel() -> None:
+            # redesign PR-2 Task 2 review round 2: a genuine user-
+            # triggered cancel (k) -- see `_resolve_and_begin`'s matching
+            # comment for why this is marked unconditionally.
+            self._definitions_stale = True
             local_id = await self._resolve_local_definition_id(service, definition)
             if local_id is None:
                 self.app_instance.notify(

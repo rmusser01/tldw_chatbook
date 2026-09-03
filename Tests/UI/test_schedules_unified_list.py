@@ -12,9 +12,11 @@ the workbench's wiring, not re-proving Task 1's own math.
 """
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
-from textual.widgets import Button, DataTable, Static
+from textual.widgets import Button, DataTable, Static, TabbedContent
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.schedules_test_helpers import MockSchedulingDB, MockSchedulingServiceMixin
@@ -478,3 +480,142 @@ async def test_search_narrows_a_mixed_reminder_and_definition_list():
         await pilot.pause()
         kinds = {row.kind for row in workbench._visible_rows}
         assert kinds == {"reminder", "definition"}
+
+
+# ---------------------------------------------------------------------------
+# Fix round 2 (task-2 review addendum): an Automations-tab definition
+# mutation must not leave the Queue's cached definitions stale for the
+# rest of the session -- a reminder-only refresh upgrades to one full
+# fetch, and so does switching to the Queue tab while stale.
+# ---------------------------------------------------------------------------
+
+
+def _counting_definitions_service() -> tuple[_MixedService, list]:
+    """A `_MixedService` whose `db.list_automation_definitions` records
+    every call, for the staleness pins below."""
+    service = _MixedService()
+    calls: list[tuple] = []
+    real = service.db.list_automation_definitions
+
+    def _counting(*args, **kwargs):
+        calls.append((args, kwargs))
+        return real(*args, **kwargs)
+
+    service.db.list_automation_definitions = _counting
+    return service, calls
+
+
+@pytest.mark.asyncio
+async def test_automations_edit_save_then_reminder_toggle_refetches_once():
+    """redesign PR-2 Task 2 review round 2: an Automations-tab edit-save
+    marks the Queue's definitions cache stale; the NEXT reminder-only
+    refresh must upgrade to exactly one full definitions fetch -- not
+    zero (stale would go unnoticed) and not more than one."""
+    service, calls = _counting_definitions_service()
+
+    class _CountingApp(ConsolidatedCSSApp):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.scheduling_service = service
+
+    async with _CountingApp().run_test(size=(160, 48)) as pilot:
+        workbench = await _mounted(pilot)
+
+        workbench._on_automation_form_result(
+            SimpleNamespace(status="saved"), was_edit=True
+        )
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert workbench._definitions_stale is True
+        calls_after_save = len(calls)
+
+        task = next(
+            row.source_row
+            for row in workbench._visible_rows
+            if row.kind == "reminder" and row.source_row.id == "task-active"
+        )
+        workbench._set_reminder_enabled(task, False)
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench._definitions_stale is False
+        assert len(calls) == calls_after_save + 1, (
+            "a stale-triggered upgrade must fetch definitions exactly once"
+        )
+
+
+@pytest.mark.asyncio
+async def test_automations_run_now_then_tab_switch_to_queue_refreshes():
+    """An Automations-tab run-now marks the cache stale; switching to
+    the Queue tab while stale upgrades the next refresh to a full one,
+    even with no reminder action in between."""
+    service, calls = _counting_definitions_service()
+    service.run_automation_now = AsyncMock(
+        return_value={"run_id": "run-1", "deduped": False}
+    )
+
+    class _CountingApp(ConsolidatedCSSApp):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.scheduling_service = service
+
+    async with _CountingApp().run_test(size=(160, 48)) as pilot:
+        workbench = await _mounted(pilot)
+        definition = next(
+            row.source_row
+            for row in workbench._visible_rows
+            if row.kind == "definition" and row.source_row["id"] == "def-active"
+        )
+        workbench._run_automation_now(definition)
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert workbench._definitions_stale is True
+        calls_after_run = len(calls)
+
+        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
+        tabs.active = "scheduling-automations-tab"
+        await pilot.pause()
+        tabs.active = "scheduling-queue-tab"
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench._definitions_stale is False
+        assert len(calls) == calls_after_run + 1, (
+            "arriving on the Queue tab while stale must fetch definitions"
+            " exactly once"
+        )
+
+
+@pytest.mark.asyncio
+async def test_no_mutation_reminder_toggle_still_skips_the_refetch():
+    """Round-1 pin, re-asserted here explicitly: with no Automations
+    mutation in play, `_definitions_stale` never gets set, so a
+    reminder-only refresh still reuses the cached definitions."""
+    service, calls = _counting_definitions_service()
+
+    class _CountingApp(ConsolidatedCSSApp):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.scheduling_service = service
+
+    async with _CountingApp().run_test(size=(160, 48)) as pilot:
+        workbench = await _mounted(pilot)
+        assert workbench._definitions_stale is False
+        calls_after_mount = len(calls)
+
+        task = next(
+            row.source_row
+            for row in workbench._visible_rows
+            if row.kind == "reminder" and row.source_row.id == "task-active"
+        )
+        workbench._set_reminder_enabled(task, False)
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench._definitions_stale is False
+        assert len(calls) == calls_after_mount
