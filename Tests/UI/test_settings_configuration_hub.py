@@ -1,5 +1,6 @@
 import asyncio
 import threading
+import hashlib
 import inspect
 import logging
 import re
@@ -301,6 +302,55 @@ async def test_console_capture_settings_ignores_retired_detail_for_disclosure(
             pii_redaction_enabled=False,
             viewer_profile="safe",
         )
+
+
+def _assert_private_values_absent(
+    surface: object,
+    private_values: tuple[str, ...],
+    *,
+    surface_label: str,
+) -> None:
+    """Fail without echoing a private value or inspected surface."""
+    rendered = surface if isinstance(surface, str) else repr(surface)
+    if any(value in rendered for value in private_values):
+        pytest.fail(
+            f"private value leaked through {surface_label}",
+            pytrace=False,
+        )
+
+
+def _assert_private_value_matches_opaquely(
+    actual: object,
+    expected: str,
+    *,
+    surface_label: str,
+) -> None:
+    """Compare private text by one-way digest and keep failures value-free."""
+    if not isinstance(actual, str):
+        pytest.fail(
+            f"private value missing from {surface_label}",
+            pytrace=False,
+        )
+    actual_digest = hashlib.sha256(actual.encode("utf-8")).digest()
+    expected_digest = hashlib.sha256(expected.encode("utf-8")).digest()
+    if actual_digest != expected_digest:
+        pytest.fail(
+            f"private value mismatch in {surface_label}",
+            pytrace=False,
+        )
+
+
+def _assert_log_capture_is_live_and_private_free(
+    *,
+    saw_safe_marker: bool,
+    saw_private_value: bool,
+    surface_label: str,
+) -> None:
+    """Assert a logger capture without retaining or rendering its messages."""
+    if not saw_safe_marker:
+        pytest.fail(f"safe marker missing from {surface_label}", pytrace=False)
+    if saw_private_value:
+        pytest.fail(f"private value leaked through {surface_label}", pytrace=False)
 
 
 def _capture_provider_settings_mutations(monkeypatch):
@@ -7537,11 +7587,13 @@ async def test_conversation_settings_return_keeps_mounted_credential_out_of_tran
     from loguru import logger as loguru_logger
 
     caplog.set_level(logging.DEBUG)
+    python_marker = "TASK30010-settings-python-capture-live"
+    loguru_marker = "TASK30010-settings-loguru-capture-live"
+    private_values = (credential,)
     loguru_messages: list[str] = []
-    sink_id = loguru_logger.add(
-        lambda message: loguru_messages.append(str(message)),
-        level="DEBUG",
-    )
+    python_capture = (False, False)
+    loguru_capture = (False, False)
+    sink_id = loguru_logger.add(loguru_messages.append, level="DEBUG")
     try:
         async with host.run_test(size=(180, 50)) as pilot:
             await _settle_settings_mount_storm(pilot)
@@ -7556,39 +7608,99 @@ async def test_conversation_settings_return_keeps_mounted_credential_out_of_tran
             screen.handle_provider_api_key_changed(Input.Changed(api_key, credential))
             await pilot.pause()
 
-            rendered_output = _visible_text(screen) + " " + str(api_key.render())
-            assert credential not in rendered_output
+            _assert_private_values_absent(
+                str(api_key.render()),
+                private_values,
+                surface_label="masked API-key field render",
+            )
+            frame = host.export_screenshot()
+            assert "Providers" in frame
+            _assert_private_values_absent(
+                frame,
+                private_values,
+                surface_label="mounted Settings compositor frame",
+            )
 
             claim = app.pending_handoffs.claim(
                 HandoffChannel.CONVERSATION_SETTINGS_RETURN
             )
             assert claim is not None
-            assert credential not in repr(claim)
-            assert credential not in repr(claim.value)
-            assert credential not in repr(claim.value.to_context())
+            _assert_private_values_absent(
+                claim,
+                private_values,
+                surface_label="return handoff claim",
+            )
+            _assert_private_values_absent(
+                claim.value,
+                private_values,
+                surface_label="return handoff value",
+            )
+            _assert_private_values_absent(
+                claim.value.to_context(),
+                private_values,
+                surface_label="return handoff context",
+            )
             assert app.pending_handoffs.release(claim) is True
 
             screen.action_settings_save_category(allow_text_entry_focus=True)
             await pilot.pause()
             assert mutations
-            assert mutations[-1][0]["api_settings.openai"]["api_key"] == credential
+            _assert_private_value_matches_opaquely(
+                mutations[-1][0]["api_settings.openai"]["api_key"],
+                credential,
+                surface_label="isolated Settings credential persistence",
+            )
 
             continuation = screen.save_state()["provider_return_continuation"]
-            assert credential not in repr(continuation)
-            assert credential not in repr(incoming_context)
+            _assert_private_values_absent(
+                continuation,
+                private_values,
+                surface_label="Settings continuation state",
+            )
+            _assert_private_values_absent(
+                incoming_context,
+                private_values,
+                surface_label="incoming Settings navigation context",
+            )
 
             screen.query_one("#settings-provider-return", Button).press()
             await pilot.pause()
             return_context = host.navigation_messages[0].screen_context
-            assert credential not in repr(return_context)
+            _assert_private_values_absent(
+                return_context,
+                private_values,
+                surface_label="outgoing Console return context",
+            )
             returned = ConsoleSettingsReturnTarget.from_context(return_context)
             assert returned is not None
             assert returned.session_id == intent.session_id
+            logging.getLogger(__name__).debug(python_marker)
+            loguru_logger.debug(loguru_marker)
     finally:
         loguru_logger.remove(sink_id)
+        python_log_text = caplog.text
+        loguru_log_text = "".join(loguru_messages)
+        python_capture = (
+            python_marker in python_log_text,
+            credential in python_log_text,
+        )
+        loguru_capture = (
+            loguru_marker in loguru_log_text,
+            credential in loguru_log_text,
+        )
+        caplog.clear()
+        loguru_messages.clear()
 
-    captured_diagnostics = caplog.text + "".join(loguru_messages)
-    assert credential not in captured_diagnostics
+    _assert_log_capture_is_live_and_private_free(
+        saw_safe_marker=python_capture[0],
+        saw_private_value=python_capture[1],
+        surface_label="stdlib logging capture",
+    )
+    _assert_log_capture_is_live_and_private_free(
+        saw_safe_marker=loguru_capture[0],
+        saw_private_value=loguru_capture[1],
+        surface_label="loguru capture",
+    )
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,6 @@
 import asyncio
 import gc
+import hashlib
 import logging
 import threading
 import weakref
@@ -100,6 +101,89 @@ from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
     TEXT_AREA_ID as SYSTEM_PROMPT_TEXT_AREA_ID,
 )
 from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
+
+
+def _assert_private_values_absent(
+    surface: object,
+    private_values: tuple[str, ...],
+    *,
+    surface_label: str,
+) -> None:
+    """Fail without echoing a private value or inspected surface."""
+    rendered = surface if isinstance(surface, str) else repr(surface)
+    if any(value in rendered for value in private_values):
+        pytest.fail(
+            f"private value leaked through {surface_label}",
+            pytrace=False,
+        )
+
+
+def _assert_private_value_matches_opaquely(
+    actual: object,
+    expected: str,
+    *,
+    surface_label: str,
+) -> None:
+    """Compare private text by one-way digest and keep failures value-free."""
+    if not isinstance(actual, str):
+        pytest.fail(
+            f"private value missing from {surface_label}",
+            pytrace=False,
+        )
+    actual_digest = hashlib.sha256(actual.encode("utf-8")).digest()
+    expected_digest = hashlib.sha256(expected.encode("utf-8")).digest()
+    if actual_digest != expected_digest:
+        pytest.fail(
+            f"private value mismatch in {surface_label}",
+            pytrace=False,
+        )
+
+
+def _assert_log_capture_is_live_and_private_free(
+    *,
+    saw_safe_marker: bool,
+    saw_private_value: bool,
+    surface_label: str,
+) -> None:
+    """Assert a logger capture without retaining or rendering its messages."""
+    if not saw_safe_marker:
+        pytest.fail(f"safe marker missing from {surface_label}", pytrace=False)
+    if saw_private_value:
+        pytest.fail(f"private value leaked through {surface_label}", pytrace=False)
+
+
+def test_private_surface_assertions_keep_failure_messages_value_free() -> None:
+    """A failing privacy oracle reports only its fixed surface label."""
+    private_value = "TASK30010-helper-private-value"
+
+    with pytest.raises(pytest.fail.Exception) as leak_failure:
+        _assert_private_values_absent(
+            private_value,
+            (private_value,),
+            surface_label="helper absence probe",
+        )
+    with pytest.raises(pytest.fail.Exception) as mismatch_failure:
+        _assert_private_value_matches_opaquely(
+            "TASK30010-helper-wrong-value",
+            private_value,
+            surface_label="helper digest probe",
+        )
+    with pytest.raises(pytest.fail.Exception) as log_failure:
+        _assert_log_capture_is_live_and_private_free(
+            saw_safe_marker=True,
+            saw_private_value=True,
+            surface_label="helper logger probe",
+        )
+
+    assert str(leak_failure.value) == (
+        "private value leaked through helper absence probe"
+    )
+    assert str(mismatch_failure.value) == (
+        "private value mismatch in helper digest probe"
+    )
+    assert str(log_failure.value) == (
+        "private value leaked through helper logger probe"
+    )
 
 
 class SummaryHarness(ConsolidatedCSSApp):
@@ -541,15 +625,22 @@ def test_credential_request_stages_only_a_secret_free_return_and_navigation_cont
     """A credential deep link keeps Console-owned draft content off the route."""
     system_prompt = "TASK30010-private-system-prompt"
     pinned_prefill = "TASK30010-private-pinned-prefill"
-    settings = ConsoleSessionSettings(
+    suspended_settings = ConsoleSessionSettings(
         provider="llama_cpp",
         model="model-a",
         base_url="http://127.0.0.1:9099",
         system_prompt=system_prompt,
         pinned_prefill=pinned_prefill,
     )
+    committed_settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        base_url="http://127.0.0.1:9099",
+        system_prompt="Committed session prompt",
+        pinned_prefill=None,
+    )
     snapshot = ConsoleSettingsDraftSnapshot(
-        settings=settings,
+        settings=suspended_settings,
         context_policy_overrides=ConsoleContextPolicyOverrides(),
         raw_values={
             "console-settings-provider": "llama_cpp",
@@ -570,7 +661,7 @@ def test_credential_request_stages_only_a_secret_free_return_and_navigation_cont
         model="model-a",
     )
     store = ConsoleChatStore()
-    session = store.create_session(settings=settings)
+    session = store.create_session(settings=committed_settings)
     messages = []
     screen = ChatScreen.__new__(ChatScreen)
     screen.app_instance = SimpleNamespace(
@@ -603,11 +694,13 @@ def test_credential_request_stages_only_a_secret_free_return_and_navigation_cont
     from loguru import logger as loguru_logger
 
     caplog.set_level(logging.DEBUG)
+    python_marker = "TASK30010-python-capture-live"
+    loguru_marker = "TASK30010-loguru-capture-live"
+    private_values = (system_prompt, pinned_prefill)
     loguru_messages: list[str] = []
-    sink_id = loguru_logger.add(
-        lambda message: loguru_messages.append(str(message)),
-        level="DEBUG",
-    )
+    python_capture = (False, False)
+    loguru_capture = (False, False)
+    sink_id = loguru_logger.add(loguru_messages.append, level="DEBUG")
 
     try:
         ChatScreen._stage_console_settings_credential_request(
@@ -616,11 +709,47 @@ def test_credential_request_stages_only_a_secret_free_return_and_navigation_cont
             session_id=session.id,
         )
         serialized_console = screen._serialize_native_console_state()
+        logging.getLogger(__name__).debug(python_marker)
+        loguru_logger.debug(loguru_marker)
     finally:
         loguru_logger.remove(sink_id)
+        python_log_text = caplog.text
+        loguru_log_text = "".join(loguru_messages)
+        python_capture = (
+            python_marker in python_log_text,
+            any(value in python_log_text for value in private_values),
+        )
+        loguru_capture = (
+            loguru_marker in loguru_log_text,
+            any(value in loguru_log_text for value in private_values),
+        )
+        caplog.clear()
+        loguru_messages.clear()
 
-    assert screen._suspended_conversation_settings == snapshot
-    assert store.session_settings(session.id) == settings
+    retained_snapshot = screen._suspended_conversation_settings
+    assert isinstance(retained_snapshot, ConsoleSettingsDraftSnapshot)
+    _assert_private_value_matches_opaquely(
+        retained_snapshot.settings.system_prompt,
+        system_prompt,
+        surface_label="Console-owned suspended snapshot prompt",
+    )
+    _assert_private_value_matches_opaquely(
+        retained_snapshot.settings.pinned_prefill,
+        pinned_prefill,
+        surface_label="Console-owned suspended snapshot prefill",
+    )
+    committed = store.session_settings(session.id)
+    _assert_private_values_absent(
+        committed,
+        private_values,
+        surface_label="committed Console session",
+    )
+    _assert_private_value_matches_opaquely(
+        committed.system_prompt,
+        "Committed session prompt",
+        surface_label="committed Console session prompt",
+    )
+    assert committed.pinned_prefill is None
     assert store.session_settings_revision(session.id) == 0
     assert len(messages) == 1
     navigation = messages[0]
@@ -634,13 +763,22 @@ def test_credential_request_stages_only_a_secret_free_return_and_navigation_cont
     assert return_intent.settings_revision == 0
     assert return_intent.active_view == "model"
     assert return_intent.focus_control_id == "console-settings-model-picker"
-    assert system_prompt not in repr(return_intent)
-    assert pinned_prefill not in repr(return_intent)
-    assert system_prompt not in repr(return_intent.to_context())
-    assert pinned_prefill not in repr(return_intent.to_context())
+    _assert_private_values_absent(
+        return_intent,
+        private_values,
+        surface_label="return handoff value",
+    )
+    _assert_private_values_absent(
+        return_intent.to_context(),
+        private_values,
+        surface_label="return handoff context",
+    )
     assert "127.0.0.1" not in repr(settings_navigation_context)
-    assert system_prompt not in repr(settings_navigation_context)
-    assert pinned_prefill not in repr(settings_navigation_context)
+    _assert_private_values_absent(
+        settings_navigation_context,
+        private_values,
+        surface_label="Settings navigation context",
+    )
     assert settings_navigation_context == {
         "category": "providers-models",
         "provider": "llama_cpp",
@@ -650,19 +788,39 @@ def test_credential_request_stages_only_a_secret_free_return_and_navigation_cont
     }
     assert serialized_console is not None
     suspended = serialized_console["suspended_conversation_settings"]
-    assert suspended["settings"]["system_prompt"] == system_prompt
-    assert suspended["settings"]["pinned_prefill"] == pinned_prefill
+    restored_snapshot = ConsoleSettingsDraftSnapshot.from_mapping(suspended)
+    assert restored_snapshot is not None
+    _assert_private_value_matches_opaquely(
+        restored_snapshot.settings.system_prompt,
+        system_prompt,
+        surface_label="serialized suspended snapshot prompt",
+    )
+    _assert_private_value_matches_opaquely(
+        restored_snapshot.settings.pinned_prefill,
+        pinned_prefill,
+        surface_label="serialized suspended snapshot prefill",
+    )
     assert "api_key" not in repr(serialized_console)
     transfer_coordinates = {
         key: value
         for key, value in serialized_console.items()
         if key != "suspended_conversation_settings"
     }
-    assert system_prompt not in repr(transfer_coordinates)
-    assert pinned_prefill not in repr(transfer_coordinates)
-    captured_diagnostics = caplog.text + "".join(loguru_messages)
-    assert system_prompt not in captured_diagnostics
-    assert pinned_prefill not in captured_diagnostics
+    _assert_private_values_absent(
+        transfer_coordinates,
+        private_values,
+        surface_label="non-snapshot Console state",
+    )
+    _assert_log_capture_is_live_and_private_free(
+        saw_safe_marker=python_capture[0],
+        saw_private_value=python_capture[1],
+        surface_label="stdlib logging capture",
+    )
+    _assert_log_capture_is_live_and_private_free(
+        saw_safe_marker=loguru_capture[0],
+        saw_private_value=loguru_capture[1],
+        surface_label="loguru capture",
+    )
 
 
 def test_credential_route_staging_is_atomic_when_navigation_target_is_invalid(
