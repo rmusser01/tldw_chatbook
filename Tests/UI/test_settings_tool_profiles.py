@@ -534,6 +534,35 @@ async def test_tool_profiles_category_retries_failed_service_composition_once() 
 
 
 @pytest.mark.asyncio
+async def test_tool_profiles_first_use_refreshes_after_composition() -> None:
+    listing = ToolProfileListing(
+        profiles=(_profile("research", origin="imported", binding_state="unbound"),)
+    )
+    app = _build_test_app()
+    app.tool_pack_service = None
+    app.tool_pack_service_unavailable_reason = "not_ready"
+
+    class PendingComposition:
+        async def wait(self) -> None:
+            app.tool_pack_service = type(
+                "ToolPackServiceStub", (), {"list_profiles": lambda self: listing}
+            )()
+            app.tool_pack_service_unavailable_reason = None
+
+    app._deferred_wire_tool_pack_service = PendingComposition
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-tool-profiles")
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        panel = screen.query_one("#settings-tool-profiles-panel", ToolProfilesPanel)
+        assert panel.profile_ids == ("research",)
+
+
+@pytest.mark.asyncio
 async def test_tool_profiles_refresh_when_settings_resumes_after_policy_edit() -> None:
     service = _WorkflowService(
         ToolProfileListing(

@@ -3830,14 +3830,34 @@ class SettingsScreen(BaseAppScreen):
 
     def _request_tool_profiles_listing(self) -> None:
         """Refresh Tool Profiles from the app-owned service off the UI thread."""
-        if (
-            getattr(self.app_instance, "tool_pack_service", None) is None
-            and getattr(self.app_instance, "tool_pack_service_unavailable_reason", None)
-            != "starting"
-        ):
-            retry = getattr(self.app_instance, "_deferred_wire_tool_pack_service", None)
-            if callable(retry):
-                retry()
+        composition_worker = None
+        if getattr(self.app_instance, "tool_pack_service", None) is None:
+            reason = getattr(
+                self.app_instance, "tool_pack_service_unavailable_reason", None
+            )
+            if reason != "starting":
+                retry = getattr(
+                    self.app_instance, "_deferred_wire_tool_pack_service", None
+                )
+                if callable(retry):
+                    composition_worker = retry()
+            else:
+                composition_worker = getattr(
+                    self.app_instance, "_tool_pack_composition_worker", None
+                )
+            if callable(getattr(composition_worker, "wait", None)):
+                self._await_tool_pack_composition(composition_worker)
+                return
+        self._tool_profiles_listing_generation += 1
+        self._load_tool_profiles_worker(self._tool_profiles_listing_generation)
+
+    @work(group="settings-tool-pack-composition-wait", exclusive=True)
+    async def _await_tool_pack_composition(self, composition_worker: object) -> None:
+        """Refresh the listing once first-use service composition settles."""
+        try:
+            await composition_worker.wait()  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 - the listing exposes stable failure state
+            pass
         self._tool_profiles_listing_generation += 1
         self._load_tool_profiles_worker(self._tool_profiles_listing_generation)
 

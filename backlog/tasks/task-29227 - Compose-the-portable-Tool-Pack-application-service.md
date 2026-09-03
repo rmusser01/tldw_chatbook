@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-02 14:00'
-updated_date: '2026-09-03 01:54'
+updated_date: '2026-09-03 02:20'
 labels:
   - tool-packs
   - app-wiring
@@ -43,10 +43,11 @@ Expose the completed portable Tool Pack lifecycle behind one deferred app-owned 
 5. Run the prescribed targeted suites, scoped static/diff checks, self-review, and independent review before closeout.
 6. Remediate independent-review blockers at their owning seams: add the workspace registry's fail-closed deferred guard, share export's runtime-floor projection with listings, and give receipt reconciliation an entry budget. This expands the initial six-file boundary only because app-only wrappers cannot close direct registry writes or bound the store-owned traversal.
 7. PR review follow-up: add startup retry and facade-documentation regressions, reset the single-flight gate only after failure, trigger retry from Settings demand, and rerun focused startup/service tests.
+8. CI performance follow-up: prove the global deferred-startup scheduler does not queue Tool Pack composition, move composition to first Tool Profiles use, and rerun the exact UI-latency guard plus focused startup/Settings/Tool Pack checks.
 
 ADR required: no new ADR
 ADR path: backlog/decisions/107-portable-tool-use-packs.md
-Reason: ADR-107 already fixes the app/service ownership boundary, deferred composition, receipt authority and reconciliation, stable privacy-safe outcomes, and Settings-versus-MCP editing split.
+Reason: ADR-107 already fixes the app/service ownership boundary, lazy composition, receipt authority and reconciliation, stable privacy-safe outcomes, and Settings-versus-MCP editing split.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -64,4 +65,15 @@ missing prerequisites, and composition failures now release the single-flight
 gate; entering Tool Profiles retries composition on demand without replacing an
 attached service. Final verification passed 399 Tool Pack tests and 49 focused
 startup/Settings tests, with scoped Ruff/format and diff checks green.
+
+The CI performance follow-up removed Tool Pack composition from the global
+deferred-startup fleet and made Tool Profiles first use await the one shared
+composition worker before refreshing its listing. Store-owned mutation result,
+error, and policy-digest primitives now live in `MCP.permission_store`, removing
+the core MCP-to-Tool-Pack import edge; the UI-ready guard explicitly keeps the
+entire Tool Pack package absent and measures 970/972 resident modules. Final
+focused verification passed 532 Tool Pack, MCP profile-authority,
+startup/Settings, and exact UI-latency tests. Scoped Ruff, format, CSS bundle,
+and diff checks passed. ADR-107 and ADR-097 remain controlling; no new ADR or
+generalized lesson was required.
 <!-- SECTION:NOTES:END -->

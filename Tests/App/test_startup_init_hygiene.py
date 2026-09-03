@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
@@ -302,9 +303,33 @@ def _guarded_tool_pack_registry():
     return registry, bootstrap
 
 
+def test_deferred_startup_does_not_schedule_tool_pack_composition() -> None:
+    """Tool Packs stay out of boot until the user opens Tool Profiles."""
+    fake = Mock(spec=TldwCli)
+    fake.citation_artifact_ownership_coordinator = None
+    fake.citation_legacy_migration_service = None
+
+    def close_deferred(work, *, name: str):
+        del name
+        work.close()
+
+    fake._create_deferred_startup_task = close_deferred
+
+    TldwCli._schedule_deferred_startup_work(fake)
+
+    callbacks = [call.args[1] for call in fake.set_timer.call_args_list]
+    assert fake._deferred_wire_tool_pack_service not in callbacks
+
+
 def test_tool_pack_wiring_schedules_one_post_ready_thread_worker() -> None:
     calls: list[dict[str, Any]] = []
+    scheduled_worker = object()
     registry, bootstrap = _guarded_tool_pack_registry()
+
+    def schedule(work, **kwargs):
+        calls.append({"work": work, **kwargs})
+        return scheduled_worker
+
     fake = SimpleNamespace(
         _ui_ready=False,
         _tool_pack_wiring_started=False,
@@ -313,17 +338,19 @@ def test_tool_pack_wiring_schedules_one_post_ready_thread_worker() -> None:
         tool_pack_service=None,
         tool_pack_service_unavailable_reason="not_ready",
         _compose_tool_pack_service_off_thread=lambda: None,
-        run_worker=lambda work, **kwargs: calls.append({"work": work, **kwargs}),
+        run_worker=schedule,
     )
 
-    TldwCli._deferred_wire_tool_pack_service(fake)
+    assert TldwCli._deferred_wire_tool_pack_service(fake) is None
     assert calls == []
 
     fake._ui_ready = True
-    TldwCli._deferred_wire_tool_pack_service(fake)
-    TldwCli._deferred_wire_tool_pack_service(fake)
+    first = TldwCli._deferred_wire_tool_pack_service(fake)
+    second = TldwCli._deferred_wire_tool_pack_service(fake)
 
     assert len(calls) == 1
+    assert first is scheduled_worker
+    assert second is scheduled_worker
     assert calls[0]["thread"] is True
     assert calls[0]["exit_on_error"] is False
     assert fake.tool_pack_service_unavailable_reason == "starting"

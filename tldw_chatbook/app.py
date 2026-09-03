@@ -807,9 +807,6 @@ DEFERRED_NOTES_ORGANIZATION_WIRING_DELAY_SECONDS = 5.0
 #: `Workspaces.agent_provisioning` stays out of the UI-ready census
 #: (ADR-097); same 0.1-0.2 s non-essential-startup window as audio.
 DEFERRED_WORKSPACE_AGENT_PROVISIONING_DELAY_SECONDS = 0.2
-#: Tool Pack policy services and receipt recovery perform optional filesystem
-#: work and are composed only after the first interactive frame.
-DEFERRED_TOOL_PACK_WIRING_DELAY_SECONDS = 0.2
 DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS = 0.1
 DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS = 5.0
 
@@ -7875,7 +7872,7 @@ class TldwCli(
         self._tts_initialization_task: asyncio.Task | None = None
         self._stts_initialization_task: asyncio.Task | None = None
         self._deferred_startup_tasks: set[asyncio.Task] = set()
-        # Portable Tool Packs are unavailable until their post-ready worker
+        # Portable Tool Packs are unavailable until first Tool Profiles use
         # composes every authority owner and attaches one complete guard.
         self.tool_pack_service: Any | None = None
         self.tool_pack_service_unavailable_reason: str | None = "not_ready"
@@ -7883,6 +7880,7 @@ class TldwCli(
             "not_run"
         )
         self._tool_pack_wiring_started = False
+        self._tool_pack_composition_worker: Worker | None = None
         self._screen_preimport_thread: threading.Thread | None = None
         # task-21110: the splash-overlapped warm-up of the INITIAL route's
         # module. Separate from `_screen_preimport_thread` (the whole-registry
@@ -9272,18 +9270,18 @@ class TldwCli(
                 type(exc).__name__,
             )
 
-    def _deferred_wire_tool_pack_service(self) -> None:
-        """Schedule one complete Tool Pack composition after UI readiness."""
-        if (
-            not getattr(self, "_ui_ready", False)
-            or getattr(self, "_tool_pack_wiring_started", False)
-            or getattr(self, "tool_pack_service", None) is not None
-        ):
+    def _deferred_wire_tool_pack_service(self) -> Worker | None:
+        """Schedule one complete Tool Pack composition on first feature use."""
+        if not getattr(self, "_ui_ready", False) or getattr(
+            self, "tool_pack_service", None
+        ) is not None:
             return
+        if getattr(self, "_tool_pack_wiring_started", False):
+            return getattr(self, "_tool_pack_composition_worker", None)
         self._tool_pack_wiring_started = True
         self.tool_pack_service_unavailable_reason = "starting"
         try:
-            self.run_worker(
+            worker = self.run_worker(
                 self._compose_tool_pack_service_off_thread,
                 name="deferred_tool_pack_service_composition",
                 group="tool-pack-service-composition",
@@ -9291,9 +9289,12 @@ class TldwCli(
                 exclusive=True,
                 exit_on_error=False,
             )
+            self._tool_pack_composition_worker = worker
+            return worker
         except Exception:
             self._tool_pack_wiring_started = False
             self.tool_pack_service_unavailable_reason = "composition_unavailable"
+            return None
 
     def _compose_tool_pack_service_off_thread(self) -> None:
         """Compose, activate, then reconcile away from the Textual event loop."""
@@ -15569,10 +15570,6 @@ class TldwCli(
         self.set_timer(
             DEFERRED_WORKSPACE_AGENT_PROVISIONING_DELAY_SECONDS,
             self._deferred_wire_workspace_agent_provisioning,
-        )
-        self.set_timer(
-            DEFERRED_TOOL_PACK_WIRING_DELAY_SECONDS,
-            self._deferred_wire_tool_pack_service,
         )
         self.set_timer(
             DEFERRED_SCREEN_PREIMPORT_DELAY_SECONDS,
