@@ -7742,13 +7742,23 @@ async def test_conversation_settings_return_without_saving_is_single_flight_on_c
             isinstance(candidate, ConfirmationDialog)
             for candidate in host.screen_stack
         ) == 1
-        assert screen._provider_return_navigation_in_progress is True
-        assert return_without_save.disabled is True
+        assert screen._provider_return_confirmation_open is True
+        assert screen._provider_return_navigation_in_progress is False
+        assert all(
+            screen.query_one(selector, Button).disabled
+            for selector in (
+                "#settings-provider-return",
+                "#settings-provider-return-without-save",
+                "#settings-provider-conflict-return",
+            )
+        )
         host.screen_stack[-1].query_one("#confirm-button", Button).press()
         await pilot.pause()
         await pilot.pause()
 
         assert len(host.navigation_messages) == 1
+        assert screen._provider_return_confirmation_open is False
+        assert screen._provider_return_navigation_in_progress is True
         returned = ConsoleSettingsReturnTarget.from_context(
             host.navigation_messages[0].screen_context
         )
@@ -7785,12 +7795,14 @@ async def test_conversation_settings_return_without_saving_cancel_allows_retry()
         )
         await pilot.pause()
         assert isinstance(host.screen_stack[-1], ConfirmationDialog)
-        assert screen._provider_return_navigation_in_progress is True
+        assert screen._provider_return_confirmation_open is True
+        assert screen._provider_return_navigation_in_progress is False
         host.screen_stack[-1].query_one("#cancel-button", Button).press()
         await pilot.pause()
         await pilot.pause()
 
         assert host.screen_stack[-1] is screen
+        assert screen._provider_return_confirmation_open is False
         assert screen._provider_return_navigation_in_progress is False
         assert return_without_save.disabled is False
         assert host.navigation_messages == []
@@ -7800,6 +7812,8 @@ async def test_conversation_settings_return_without_saving_cancel_allows_retry()
         )
         await pilot.pause()
         assert isinstance(host.screen_stack[-1], ConfirmationDialog)
+        assert screen._provider_return_confirmation_open is True
+        assert screen._provider_return_navigation_in_progress is False
         assert sum(
             isinstance(candidate, ConfirmationDialog)
             for candidate in host.screen_stack

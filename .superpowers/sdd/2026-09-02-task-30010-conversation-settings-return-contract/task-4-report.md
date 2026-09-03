@@ -340,3 +340,118 @@ session settings revision and exercises the production rejection classifier;
 the test doubles only inject otherwise unobservable interleaving points. The
 existing privacy/copy contract is unchanged. No general lesson or new ADR was
 needed.
+
+## Round-4 review fix
+
+Resolved the Important forced-dismiss lifecycle finding entirely inside
+`SettingsScreen`; the generic confirmation dialog and application router are
+unchanged.
+
+- Added a distinct confirmation-open phase for dirty **Return without saving**.
+  Confirmation-open and committed return navigation both disable every Return
+  action and reject duplicate events, but only committed navigation suppresses
+  the safe continuation from the outgoing Settings snapshot.
+- Cancel clears only the confirmation-open phase and re-enables retry. Confirm
+  synchronously changes confirmation-open to false and committed-navigation to
+  true before claiming/posting the exact typed return, so there is no enabled
+  gap and no self-block.
+- Added a production-router mounted regression that starts from the real
+  Console Configure action, opens a dirty discard confirmation, navigates to
+  Home through `TldwCli.handle_screen_navigation()`, and returns to a fresh
+  Settings screen. It verifies the router's raw overlay dismissal cannot orphan
+  the handoff: the dirty draft and exact safe continuation return, the revision
+  remains pending, and a second confirmed attempt restores the originating
+  Conversation settings modal.
+- Strengthened the existing duplicate-confirm and cancel/retry tests to assert
+  the two phases independently and to prove all Return actions are disabled
+  while confirmation is open. The existing committed-return real-router test
+  still proves the outgoing snapshot omits continuation and a later Settings
+  visit cannot replay stale controls.
+
+### Round-4 RED evidence
+
+The first isolated run reached the real navigation handler but asserted its
+internal result; `handle_screen_navigation()` intentionally returns `None` and
+settles through the message callback/stack. That test-oracle error was corrected
+before accepting RED. The corrected isolated regression then failed at the
+product boundary:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py -k 'dirty_return_confirmation_survives_real_router_navigation_away_and_back' -q --tb=short --show-capture=no
+FAILED ... assert fresh_settings._provider_return_target is not None
+1 failed, 334 deselected, 1 warning in 12.32s
+```
+
+The combined pre-production run additionally proved the requested phase split
+did not yet exist while reproducing the same fresh-screen loss:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_native_chat_flow.py -k 'return_without_saving_is_single_flight_on_confirm or return_without_saving_cancel_allows_retry or dirty_return_confirmation_survives_real_router_navigation_away_and_back' -q --tb=short --show-capture=no
+3 failed, 702 deselected, 1 warning in 14.15s
+```
+
+The two focused Settings failures were the expected missing
+`_provider_return_confirmation_open` state; the router failure was the missing
+restored return target. There were no fixture or collection failures.
+
+### Round-4 GREEN evidence
+
+Exact phase and real-router regressions:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_native_chat_flow.py -k 'return_without_saving_is_single_flight_on_confirm or return_without_saving_cancel_allows_retry or dirty_return_confirmation_survives_real_router_navigation_away_and_back' -q --tb=short --show-capture=no
+3 passed, 702 deselected, 1 warning in 15.90s
+
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py -k 'dirty_return_confirmation_survives_real_router_navigation_away_and_back' -q --tb=short --show-capture=no
+1 passed, 334 deselected, 1 warning in 14.23s
+```
+
+Task 4 journey filter and cumulative selection:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_native_chat_flow.py -k 'conversation_settings_return or provider_navigation_conflict or dirty_return_confirmation' -q --tb=short --show-capture=no
+34 passed, 671 deselected, 1 warning in 85.26s
+
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/State/test_pending_handoff_store.py Tests/State/test_screen_state_store.py Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_native_chat_flow.py Tests/UI/test_console_session_settings.py -k 'conversation_settings or provider_navigation or credential or screen_state or dirty_return_confirmation' -q --tb=short --show-capture=no
+102 passed, 1025 deselected, 1 warning in 94.06s
+```
+
+The warning is the already documented Requests dependency-version warning from
+the shared root virtualenv. No full suite was run, per repository and task
+instructions.
+
+Static verification:
+
+```text
+../../.venv/bin/python -m ruff check tldw_chatbook/UI/Screens/settings_screen.py Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_native_chat_flow.py
+All checks passed!
+
+../../.venv/bin/python -m py_compile tldw_chatbook/UI/Screens/settings_screen.py Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_native_chat_flow.py
+exit 0
+
+git diff --check
+exit 0
+```
+
+### Round-4 files, ADR check, and self-review
+
+- `tldw_chatbook/UI/Screens/settings_screen.py`
+- `Tests/UI/test_settings_configuration_hub.py`
+- `Tests/UI/test_console_native_chat_flow.py`
+- `.superpowers/sdd/2026-09-02-task-30010-conversation-settings-return-contract/task-4-report.md`
+
+ADR required: no new ADR
+
+ADR paths: `backlog/decisions/012-provider-credential-settings-boundary.md` and
+`backlog/decisions/033-application-session-state-ownership.md`
+
+Reason: the fix separates two local UI lifecycle phases without changing the
+credential owner, handoff owner, typed payload, persistence boundary, router,
+or confirmation-dialog contract.
+
+Self-review traced each mutation: merging the two flags again loses the
+continuation in the real-router regression; failing to disable either phase is
+caught by direct duplicate events; clearing the wrong phase breaks cancel or
+confirm assertions; and serializing committed navigation replays stale controls
+in the existing real-router return test. No unrelated code, controller ledger,
+general lesson, schema, or ADR changed.

@@ -97,6 +97,7 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
     ConsoleSettingsDraftSnapshot,
     ConsoleSettingsModal,
 )
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
 import tldw_chatbook.UI.Console_Modules.message as message_module
@@ -1243,6 +1244,148 @@ async def test_conversation_settings_return_real_navigation_restores_fresh_conso
         assert app.screen.query_one(
             "#settings-provider-return-continuation"
         ).display is False
+
+
+@pytest.mark.asyncio
+async def test_dirty_return_confirmation_survives_real_router_navigation_away_and_back(
+    monkeypatch,
+):
+    """A force-dismissed discard dialog must not orphan the pending return."""
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_production_app(configured_default="chat")
+    app.chat_api_provider_value = "openai"
+    app.chat_api_model_value = "gpt-5"
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    app.providers_models = {"openai": ["gpt-5"]}
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        original_console = None
+        for _ in range(200):
+            content = app._navigation_outgoing_screen()
+            if isinstance(content, ChatScreen):
+                original_console = content
+                break
+            await pilot.pause(0.05)
+        assert original_console is not None
+        await _wait_for_selector(
+            original_console,
+            pilot,
+            "#console-native-composer",
+            timeout=10.0,
+        )
+        store = original_console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        )
+
+        assert await original_console._open_console_settings() is True
+        for _ in range(80):
+            if isinstance(app.screen, ConsoleSettingsModal):
+                break
+            await pilot.pause(0.05)
+        assert isinstance(app.screen, ConsoleSettingsModal)
+        await pilot.click("#console-settings-configure-credential")
+
+        original_settings = None
+        for _ in range(200):
+            if isinstance(app.screen, SettingsScreen):
+                original_settings = app.screen
+                break
+            await pilot.pause(0.05)
+        assert original_settings is not None
+        await _wait_for_selector(
+            original_settings,
+            pilot,
+            "#settings-provider-api-key",
+            timeout=10.0,
+        )
+        dirty_key = "DUMMY-FORCED-DISMISS-RETURN-KEY"
+        original_settings.query_one("#settings-provider-api-key", Input).value = dirty_key
+        for _ in range(80):
+            return_without_save = original_settings.query_one(
+                "#settings-provider-return-without-save", Button
+            )
+            if return_without_save.display and not return_without_save.disabled:
+                break
+            await pilot.pause(0.05)
+        assert return_without_save.display is True
+        return_without_save.press()
+        for _ in range(80):
+            if isinstance(app.screen, ConfirmationDialog):
+                break
+            await pilot.pause(0.05)
+        assert isinstance(app.screen, ConfirmationDialog)
+        return_revision = original_settings._provider_return_target.return_revision
+
+        # This is the ordinary app navigation path. It snapshots the Settings
+        # content screen, then forcibly dismisses the pushed confirmation
+        # overlay with dismiss(None) before replacing Settings.
+        await app.handle_screen_navigation(NavigateToScreen("home"))
+        assert type(app.screen).__name__ == "HomeScreen"
+        assert original_settings not in app.screen_stack
+        settings_snapshot = app.screen_state_store.restore(
+            "settings", app._current_runtime_identity()
+        )
+        assert settings_snapshot is not None
+        continuation = settings_snapshot["provider_return_continuation"]
+        assert set(continuation) == {"target", "conflict", "outcome"}
+        assert continuation["target"]["return_revision"] == return_revision
+        assert continuation["conflict"] is False
+        assert continuation["outcome"] is None
+        assert dirty_key not in repr(continuation)
+        assert (
+            app.pending_handoffs.exact_revision_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                return_revision,
+            )
+            == "pending"
+        )
+
+        await app.handle_screen_navigation(NavigateToScreen("settings"))
+        fresh_settings = app.screen
+        assert isinstance(fresh_settings, SettingsScreen)
+        assert fresh_settings is not original_settings
+        await _wait_for_selector(
+            fresh_settings,
+            pilot,
+            "#settings-provider-api-key",
+            timeout=10.0,
+        )
+        restored_input = fresh_settings.query_one("#settings-provider-api-key", Input)
+        restored_return = fresh_settings.query_one(
+            "#settings-provider-return-without-save", Button
+        )
+        assert restored_input.value == dirty_key
+        assert fresh_settings._provider_return_target is not None
+        assert fresh_settings._provider_return_target.return_revision == return_revision
+        assert restored_return.display is True
+        assert restored_return.disabled is False
+
+        # The restored controls are actionable, not merely visible: retrying
+        # the same pending handoff completes the return through the real router.
+        restored_return.press()
+        for _ in range(80):
+            if isinstance(app.screen, ConfirmationDialog):
+                break
+            await pilot.pause(0.05)
+        assert isinstance(app.screen, ConfirmationDialog)
+        app.screen.query_one("#confirm-button", Button).press()
+        returned_modal = None
+        for _ in range(240):
+            if isinstance(app.screen, ConsoleSettingsModal):
+                returned_modal = app.screen
+                break
+            await pilot.pause(0.05)
+        assert returned_modal is not None
+        assert "Returned without saving" in str(
+            returned_modal.query_one(
+                "#console-settings-return-status", Static
+            ).renderable
+        )
 
 
 @pytest.mark.asyncio
