@@ -581,3 +581,138 @@ repair path; cancellation still propagates. B can neither be acknowledged by A's
 claim nor cleared by A's identity check, and normal Console resume remains the
 only scheduling path after A's modal leaves. No controller ledger, task state,
 general lesson, schema, persistence owner, or ADR changed.
+
+## Round-6 review fix
+
+Resolved the Important covered-cancellation ownership gap at the existing modal
+transfer boundary:
+
+- `_open_console_settings()` accepts a private, optional transfer callback. It
+  reports successful modal ownership exactly once after a normal push or before
+  re-raising cancellation when the exact modal remains covered on the stack.
+  Default callers retain the prior behavior, and the callback captures no draft
+  snapshot.
+- The Task 4 return worker commits A synchronously from that callback: it
+  acknowledges the exact claim, identity-clears only A's local target, and
+  removes A's active claim pointer before cancellation can reach any release
+  path. A normal return invokes the same single-shot callback as a fallback, so
+  the Round-5 pre-status ordering remains unchanged.
+- A failed exact acknowledgement is not represented as success. The worker
+  inspects only A's exact store status; if A was concurrently requeued pending,
+  it exact-discards that owner now that the modal holds the draft. If the store
+  still reports A in flight, the source relinquishes its duplicate ownership but
+  does not release a snapshot-less retry. This deliberately fails closed and
+  leaves the store observably unsettled for diagnosis.
+- Added a mounted production-app regression that lets the real Conversation
+  settings modal mount, covers it with a newer real overlay while the push await
+  is still active, cancels the return worker, then navigates away and revisits
+  Console. It proves cancellation propagates, A settles before unmount, the
+  modal is the sole draft owner, and no stale retry survives.
+- Added an outer-worker pre-transfer cancellation regression and an exact
+  acknowledgement-failure regression. Strengthened the Round-5 B interleaving
+  test to stage B inside the transfer callback and assert the callback is
+  single-shot, A alone is acknowledged/cleared, and B remains pending with its
+  private snapshot.
+
+### Round-6 RED evidence
+
+The first combined run exposed a test-oracle identity error in the new
+pre-transfer test; that test-only error was corrected before accepting RED. The
+production-faithful covered-cancellation regression then failed at the intended
+product boundary while the pre-transfer regression already passed:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py -k 'covered_mount_cancellation_settles_before_unmount or pretransfer_cancellation_retains_retry' -q --tb=short --show-capture=no
+FAILED ... assert status_after_cancel == "settled"
+1 failed, 1 passed, 337 deselected, 1 warning in 12.44s
+```
+
+The observed exact status was `pending`: cancellation had cleared the screen
+snapshot through the Task 3 covered-modal path, then Task 4 released A because
+it could not observe that ownership transfer.
+
+### Round-6 GREEN evidence
+
+Exact RED pair after the implementation:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py -k 'covered_mount_cancellation_settles_before_unmount or pretransfer_cancellation_retains_retry' -q --tb=short --show-capture=no
+2 passed, 337 deselected, 1 warning in 12.04s
+```
+
+The final mounted test also captures the still-covered modal's draft after
+cancellation, proving the modal retains A while the source slot is empty:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py -k 'covered_mount_cancellation_settles_before_unmount' -q --tb=short --show-capture=no
+1 passed, 339 deselected, 1 warning in 11.42s
+```
+
+Exact Task 3 covered cancellation, mounted Task 4 cancellation, outer
+pre-transfer cancellation, B replacement, and acknowledgement-failure cases:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py Tests/UI/test_console_session_settings.py -k 'covered_cancelled_source_reopen_transfers_exact_draft_to_modal or covered_mount_cancellation_settles_before_unmount or pretransfer_cancellation_retains_retry or settles_at_transfer_before_status_and_keeps_replacement or ack_failure_is_not_reported_as_settled' -q --tb=short --show-capture=no
+5 passed, 625 deselected, 1 warning in 15.34s
+```
+
+Focused transfer, cancellation, transient failure, unmount, navigation, and B
+replacement slice:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py Tests/UI/test_console_session_settings.py -k 'covered_mount_cancellation_settles_before_unmount or pretransfer_cancellation_retains_retry or ack_failure_is_not_reported_as_settled or settles_at_transfer_before_status_and_keeps_replacement or real_router_unmount_after_transfer_does_not_replay_stale_handoff or success_preserves_replacement_staged_during_restore or releases_transient_modal_mount_failure or unmount_releases_acquired_exact_claim or rapid_unmount_before_consumer_keeps_handoff_pending or real_navigation_restores_fresh_console_modal or failed_source_reopen_retains_suspended_snapshot_and_token or cancelled_source_reopen_retains_suspended_snapshot_and_token or covered_cancelled_source_reopen_transfers_exact_draft_to_modal or source_reopen_revalidates_exact_owner_after_model_resolution' -q --tb=short --show-capture=no
+14 passed, 616 deselected, 1 warning in 61.65s
+```
+
+Cumulative Task 4/state selection and complete handoff-store suite:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/State/test_pending_handoff_store.py Tests/State/test_screen_state_store.py Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_native_chat_flow.py Tests/UI/test_console_session_settings.py -k 'conversation_settings or provider_navigation or credential or screen_state or dirty_return_confirmation' -q --tb=short --show-capture=no
+107 passed, 1025 deselected, 1 warning in 119.15s
+
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/State/test_pending_handoff_store.py -q --tb=short --show-capture=no
+90 passed, 1 warning in 0.46s
+```
+
+The warning is the already documented Requests dependency-version warning from
+the shared root virtualenv. No full suite was run, per repository and task
+instructions.
+
+Static verification:
+
+```text
+../../.venv/bin/python -m ruff check tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_console_native_chat_flow.py
+All checks passed!
+
+../../.venv/bin/python -m py_compile tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_console_native_chat_flow.py
+exit 0
+
+git diff --check
+exit 0
+```
+
+### Round-6 files, ADR check, and self-review
+
+- `tldw_chatbook/UI/Screens/chat_screen.py`
+- `Tests/UI/test_console_native_chat_flow.py`
+- `.superpowers/sdd/2026-09-02-task-30010-conversation-settings-return-contract/task-4-report.md`
+
+ADR required: no new ADR
+
+ADR paths: `backlog/decisions/012-provider-credential-settings-boundary.md` and
+`backlog/decisions/033-application-session-state-ownership.md`
+
+Reason: the change exposes the modal-ownership transition already required by
+ADR-033 to its exact handoff consumer; it does not move the credential owner,
+introduce persistence, or change the typed handoff/store boundary.
+
+Self-review confirmed that the transfer callback is private, optional,
+single-shot, synchronous, and does not retain the private draft. Covered
+cancellation invokes it before a bare re-raise, while pre-transfer cancellation
+never invokes it and therefore releases A with the exact retry state intact.
+The callback nulls the local A claim even when exact acknowledgement fails, so
+no `except` or `finally` path can release a snapshot-less retry. Exact identity
+checks preserve B throughout. The acknowledgement-failure case intentionally
+leaves an unexplained in-flight A observably in flight rather than claiming
+settlement or duplicating modal/store ownership. No controller ledger, task
+state, general lesson, schema, persistence owner, or ADR changed.
