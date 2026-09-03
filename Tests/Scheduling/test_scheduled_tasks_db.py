@@ -1517,6 +1517,17 @@ def test_reconcile_marks_stale_running_as_interrupted(tmp_path):
     assert row["failure_reason"] == {"code": "interrupted"}
 
 
+def test_count_automation_runs_filters_by_definition(tmp_path):
+    db = _mk_db(tmp_path)
+    db.create_automation_run("local", "d1", 1, "manual", status="running")
+    db.create_automation_run("local", "d1", 1, "scheduled", status="completed")
+    db.create_automation_run("local", "d2", 1, "manual", status="running")
+
+    assert db.count_automation_runs("d1") == 2
+    assert db.count_automation_runs("d2") == 1
+    assert db.count_automation_runs("unknown-definition") == 0
+
+
 # ----------------------------------------------------------------------
 # Automation results
 # ----------------------------------------------------------------------
@@ -2424,6 +2435,18 @@ def test_count_unread_results_owner_none_spans_all_owners(tmp_path):
     db.update_result_review(rid, "read")
     assert db.count_unread_results(None) == 1
     assert db.count_unread_results("owner-b") == 1
+
+
+def test_count_unread_results_filters_by_definition_id_across_owners(tmp_path):
+    db = _mk_db(tmp_path)
+    db.create_automation_result("owner-a", "d1", "r1", "finding", "A", "S", "key-a")
+    db.create_automation_result("owner-b", "d1", "r2", "finding", "B", "S", "key-b")
+    db.create_automation_result("owner-a", "d2", "r3", "finding", "C", "S", "key-c")
+
+    assert db.count_unread_results(None, definition_id="d1") == 2
+    assert db.count_unread_results(None, definition_id="d2") == 1
+    assert db.count_unread_results("owner-a", definition_id="d1") == 1
+    assert db.count_unread_results(None, definition_id="unknown-definition") == 0
 
 
 def test_list_automation_results_orders_mixed_offset_timestamps_correctly(tmp_path):
