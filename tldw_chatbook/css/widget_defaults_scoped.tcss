@@ -1975,6 +1975,29 @@
     }
 
 
+/* ===== WIDGET: ResultsTab (UI/Screens/scheduling/results_tab.py) ===== */
+
+
+    ResultsTab #scheduling-results-table {
+        height: 1fr;
+    }
+    ResultsTab #scheduling-results-empty {
+        color: $text-muted;
+        padding: 2 1;
+        display: none;
+    }
+    ResultsTab #scheduling-results-detail {
+        height: auto;
+        max-height: 14;
+        padding: 0 1;
+        color: $text;
+        border-top: solid $surface-lighten-2;
+    }
+    ResultsTab .results-detail-muted {
+        color: $text-muted;
+    }
+
+
 /* ===== WIDGET: SyncStatusWidget (UI/Screens/scheduling/sync_status_widget.py) ===== */
 
 

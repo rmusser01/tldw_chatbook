@@ -31,6 +31,7 @@ class MockSchedulingDB:
         sync_state: dict | None = None,
         conflicts: list | None = None,
         automation_definitions: list[dict] | None = None,
+        automation_results: list[dict] | None = None,
     ) -> None:
         self._sync_state = sync_state or {}
         self._conflicts = conflicts or []
@@ -38,6 +39,12 @@ class MockSchedulingDB:
         #: "contains" -- mirrors the real ScheduledTasksDB surface the
         #: Automations tab now reads (list_automation_definitions et al).
         self._automation_definitions = list(automation_definitions or [])
+        #: schedules-handoff PR-6 task 3: `automation_results` rows this DB
+        #: "contains" -- the Results tab's `on_mount` calls `list_
+        #: automation_results`/`count_unread_results` unconditionally, so
+        #: EVERY existing SchedulesWorkbench test built on this fake needs
+        #: these even when a test never touches the Results tab.
+        self._automation_results = list(automation_results or [])
 
     def get_sync_state(self, owner_id: str):
         return dict(self._sync_state)
@@ -80,6 +87,48 @@ class MockSchedulingDB:
         owner-agnostic retry-error lookup for a `to_server_failed` row;
         unused otherwise)."""
         return None
+
+    def list_automation_results(
+        self,
+        owner_id: str | None,
+        review_state: str | None = None,
+        definition_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ):
+        """Stub: mirrors the real `list_automation_results` filter set
+        (schedules-handoff PR-6 task 3) -- `owner_id=None` spans every
+        owner, matching Task 1's all-owners extension."""
+        rows = [
+            dict(row)
+            for row in self._automation_results
+            if (owner_id is None or row.get("owner_id") == owner_id)
+            and (review_state is None or row.get("review_state") == review_state)
+            and (definition_id is None or row.get("definition_id") == definition_id)
+        ]
+        rows.sort(key=lambda row: row.get("created_at") or "", reverse=True)
+        return rows[offset : offset + limit]
+
+    def count_automation_results(
+        self, owner_id: str | None, review_state: str | None = None
+    ) -> int:
+        """Stub: mirrors the real `count_automation_results` -- the "of N"
+        denominator for the capped inbox listing. `_refresh_results_tab`
+        calls it unconditionally, so every workbench test built on this
+        fake needs it even when it never opens the Results tab."""
+        return len(
+            [
+                row
+                for row in self._automation_results
+                if (review_state is None or row.get("review_state") == review_state)
+                and (owner_id is None or row.get("owner_id") == owner_id)
+            ]
+        )
+
+    def count_unread_results(self, owner_id: str | None) -> int:
+        """Stub: mirrors the real `count_unread_results` (Results tab
+        badge, schedules-handoff PR-6 task 3)."""
+        return self.count_automation_results(owner_id, review_state="unread")
 
     def upsert_automation_definitions_from_server(self, owner_id: str, items: list[dict]):
         inserted = 0
@@ -235,3 +284,19 @@ def painted_at_own_center(host, widget) -> bool:
     except Exception:
         return False
     return target is widget or widget in list(target.ancestors)
+
+
+def rendered_row_cells(table, row_index: int = 0) -> list[str]:
+    """The cell text a `DataTable` will actually PAINT for one row.
+
+    Routes the stored row through the widget's own
+    `_get_row_renderables` -> `default_cell_formatter`, which is where a
+    `str` cell gets run through `rich.text.Text.from_markup` and a
+    bracket token can be silently eaten (task 6 round 2, D8).
+
+    `get_cell_at()` returns the STORED value and therefore passes whether
+    or not the content survives rendering -- the same self-confirming
+    shape as the round-1 `TabPane.label` badge test. Assert through here
+    whenever the point of the test is that content renders literally.
+    """
+    return [str(cell) for cell in table._get_row_renderables(row_index).cells]

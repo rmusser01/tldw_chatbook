@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from loguru import logger
+from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -116,11 +117,17 @@ class ConflictsTab(Vertical):
             server_updated = server_state.get("updated_at", "—")
             local_updated = local_row.get("updated_at", "—")
             self._conflicts_by_id[conflict["id"]] = conflict
+            # `Text`, not `str`, for everything that came from outside
+            # this module (task 6 round 2, D8): `DataTable` runs string
+            # cells through `rich.text.Text.from_markup`, so a
+            # user-authored title carrying `[bold]` would be silently
+            # eaten. `_conflict_type_label` is this module's own
+            # vocabulary and stays a plain str.
             table.add_row(
-                local_row.get("title", "Untitled"),
+                Text(str(local_row.get("title", "Untitled"))),
                 _conflict_type_label(conflict),
-                server_updated,
-                local_updated,
+                Text(str(server_updated)),
+                Text(str(local_updated)),
                 key=conflict["id"],
             )
         has_rows = bool(conflicts)

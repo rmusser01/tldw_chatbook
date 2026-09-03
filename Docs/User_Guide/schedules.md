@@ -26,8 +26,8 @@ If creation is accepted but no completed briefing appears, inspect the exact bri
 
 Schedules controls when jobs, watchlists, and workflows run. The screen
 has no single on-screen title; it opens on a sync status bar (Local /
-Server, last pull/push) above **Queue**, **Automations**, and
-**Conflicts** tabs, with panels for the Schedule Queue, Task Detail, and
+Server, last pull/push) above **Queue**, **Automations**, **Conflicts**,
+and **Results** tabs, with panels for the Schedule Queue, Task Detail, and
 Inspector.
 
 ## Getting there
@@ -261,7 +261,19 @@ surfaces.
 Clicking Move opens a confirmation listing anything worth knowing before
 you commit: an imminent or already-passed one-time run time ("server
 behavior this close to run time is unverified"), and, for a reminder,
-that its per-run timeout is local-only and will not transfer. Confirming
+that its per-run timeout is local-only and will not transfer.
+
+What the server actually does with an already-passed one-time run was
+measured on 2026-09-02: it **accepts the transfer and parks the task
+disabled** — no catch-up run, no error, no rejection — and leaves it
+that way. This screen mirrors it as a Disabled row carrying the
+missed-while-away marker. The warning above is still worth reading,
+because a run time only *seconds* away is a different race, but an
+overdue one-time reminder does not fire twice by being moved. (Note the
+device keeps ownership until the server accepts, so an overdue task will
+usually have already fired here first.)
+
+Confirming
 a **local → server** move only queues it — the task keeps running on
 this device until the server actually accepts the transfer, the toast
 says so, and the queue row shows "(Moving to server…)" for as long as
@@ -269,6 +281,12 @@ that stays true. A **server → local** move creates a dormant local copy
 immediately (shown as "(Waiting for server release)"); it stays inert
 until the server's release is acknowledged, at which point it arms and
 starts running here.
+
+When Schedules is showing a server owner's queue, each row's title also
+carries a "(server: \<id\>)" owner suffix — the same wording the Results
+tab uses for its own rows. It is hidden whenever the window is narrow
+enough to trigger the compact layout (side panes already hidden), so a
+squeezed terminal never truncates a title to make room for it.
 
 **While a move is in flight the task is read-only.** Edit, Delete and
 Enable/Disable are disabled with the reason stated, on the buttons and
@@ -386,6 +404,74 @@ showing an empty server-shaped trail; every execution still leaves its
 trail here for server automations: queued, succeeded, failed, timed out,
 skipped, the same events the server records for reconciliation.
 
+## Results tab — the automation findings inbox
+
+The **Results** tab lists the `automation_results` rows a recurring
+question has produced, across **both** owners (this device and any
+connected server) in one inbox, newest first. Its tab label carries an
+unread badge — "Results (3)" — updating after every sync and after every
+action below, and reading plain "Results" with nothing unread.
+
+The table holds the newest 200 results: the same window a sync pull
+mirrors down, so it shows everything a sync could have fetched. Past
+that the heading says which slice you are looking at ("Automation
+results — showing newest 200 of 214"). It has to, because the unread
+badge counts *every* unread result — a silently truncated table beside
+that number would misreport how much is there. Older results stay in
+the database; there is no paging here.
+
+Each row shows a kind glyph (● for a **finding**, ✕ for a **failure** —
+failure rows are styled distinctly since they are diagnostic, not
+hidden), the result's title (with a "(server: \<id\>)" suffix for a
+server-owned row), how long ago it was created, and its review state
+("● unread" in bold, or plain "read"/"dismissed"). Selecting a row shows
+its answer, evidence (the stored source references), and review
+metadata (who reviewed it and when, plus any review note) in the detail
+pane below the table.
+
+While connected to a server, this tab also refreshes on its own the
+moment the server reports that an automation run finished — no need to
+press **s**. A short pause (well under a second) absorbs a burst of
+several finish notifications arriving close together into a single
+pull, so opening a chatty automation's run history does not fire one
+network round trip per event. Opening the screen pulls once as well, so
+results announced while you were on another screen are picked up rather
+than waiting for the next notification.
+
+Actions are keys, not buttons — the tab has no per-row detail widget
+here either:
+
+| Key | Action |
+| --- | --- |
+| `r` | Mark the selected result **read** |
+| `d` | **Dismiss** the selected result |
+| `o` | Mark the selected finding's automation **solved** |
+| `a` | Mark **every** currently-listed unread result read |
+
+`r`/`d` are the same keys the Queue tab uses for Run now/Delete —
+reused here because Read/Dismiss are the natural reading of those same
+letters on this tab. A server-owned row's read/dismiss writes locally
+and automatically queues the matching pushback to the server; nothing
+extra to do. `o`/`a` are Results-tab only, the same way the Automations
+tab's `m`/`M`/`y`/`k` are: pressed elsewhere they answer with a "Switch
+to the Results tab…" notice instead of acting on another tab's
+selection.
+
+**Mark solved** only applies to a `finding` whose automation is not
+already solved — a `failure` row, or a finding whose automation was
+already marked solved, refuses with the specific reason instead of
+attempting the call. Marking solved on a server-owned automation
+requires that server connection right now: this repo does not yet queue
+a solved/reopen mutation for later delivery, so an offline attempt
+refuses honestly ("…this action requires a server connection") rather
+than silently queuing something that might already be stale by the time
+it would send.
+
+A definite server-side refusal shows the server's own reason (for
+example "the server has archived this automation") rather than the
+connection message — only genuine connectivity failures mention the
+network.
+
 ## Execution timeouts
 
 A scheduled task's handler is bounded: if it is still running after its
@@ -402,15 +488,52 @@ The default bound is `handler_timeout_seconds` under `[scheduling]` in
 bound entirely — every handler may then run as long as it likes, and a
 wedged handler will wedge the scheduler, which is why the default is on.
 
-*Verified against working tree — 2026-09-02 (schedules-handoff PR-5 final
-fix wave: the Automations tab's M/m/y/k transfer keys and their
-tab-scoping, the read-only-except-cancel rule on in-flight rows, and the
-corrected cancel copy; plus PR-5 task 7's
+*Verified against a running tldw_server — 2026-09-02 (schedules-handoff
+PR-6 task 6, the program's §10 live gate: real TUI in tmux against
+tldw_server `origin/dev` 25fb0eca59 on a local single-user profile.
+Verified live: authoring a local recurring question, transferring it to
+the server (server returns 201) and the local row rebinding to the
+server owner; server-owned results syncing down as unread with the
+kind/owner/created/review-state columns and the answer/evidence/review
+detail pane; `r` marking a result read and that read reaching the server
+(`review_state: read` + `reviewed_at`); and the Results tab refreshing
+on a server finish notification with no `s` pressed. The three defects
+that run found — every server automation reading as `[This device]` (and
+the `r`/`m` refusals that followed from it), the inert Results/Conflicts
+unread badge, and mark-solved never becoming eligible for a synced
+result — were fixed the same day and **re-driven live in a second round**,
+which confirmed all three: `r` on a server automation now dispatches on
+the server, the badge renders "Results (2)" and drops to "Results (1)"
+after a read, and a result carrying the server's definition id now reads
+"Solve: eligible". Round 2 also cleared the legs round 1 could not
+reach — moving a server automation to this device (dormant → server
+archives its copy → armed → local run-now), a reminder round-trip whose
+`link_type`/`link_id` are visible server-side, and the past-`run_at`
+question: **the server accepts such a transfer and parks the task
+disabled** (`status: "disabled"`, `enabled: false`, no catch-up run),
+which this screen mirrors as a Disabled row. The two rendering/copy
+gaps round 2 found (a swallowed owner prefix; the archived-refusal
+wording) were fixed in the same branch and are pinned by rendered-cell
+tests, though those two specific fixes were not re-driven against a
+live server. The full live record lives in the TASK-18940 progress log
+(`backlog/tasks/`).
+Supersedes the same-day PR-6 task
+4 stamp: the Queue tab's own "(server: \<id\>)" owner suffix, hidden at
+compact width; and the Results tab's automatic refresh on a server
+finish notification, debounced so a burst of notifications settles into
+one pull; supersedes the same-day PR-6 task 3 stamp, which covered the
+new Results tab — unread badge, kind/owner/created/review-state
+columns, failure styling, the answer/evidence/review-metadata detail
+pane, and the r/d/o/a read/dismiss/mark-solved/mark-all-read keys with
+their tab-scoping and refusal reasons; and, before that, PR-5's final
+fix wave: the Automations tab's
+M/m/y/k transfer keys and their tab-scoping, the read-only-except-cancel
+rule on in-flight rows, and the corrected cancel copy; plus PR-5 task 7's
 the detail pane's Move to server/Move to local/Cancel transfer/Retry
 transfer buttons, the confirm dialog and its warnings, honest transfer
-toasts, and the queue row's transfer-state suffix; supersedes the
-2026-09-01 stamp, which covered recurring-question create/edit form, the
-Queue tab's New/Reminder/Recurring-question chooser, the Automations tab's
-own New button, the "Runs on" selector on both forms, the merged
+toasts, and the queue row's transfer-state suffix; and the 2026-09-01
+stamp before that, which covered recurring-question create/edit form,
+the Queue tab's New/Reminder/Recurring-question chooser, the Automations
+tab's own New button, the "Runs on" selector on both forms, the merged
 local+server Automations listing including not-yet-synced server-owned
 rows, and its local run-now/edit routing).*

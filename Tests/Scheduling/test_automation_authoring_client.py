@@ -91,6 +91,28 @@ class AutomationAuthoringNotificationsService:
         self.calls.append(("archive", definition_id))
         return {"id": definition_id, "family": "recurring_question", "lifecycle": "archived"}
 
+    async def mark_scheduled_automation_definition_solved(
+        self, definition_id, *, result_id=None
+    ):
+        self.calls.append(("mark_solved", definition_id, result_id))
+        return {
+            "id": definition_id,
+            "family": "recurring_question",
+            "resolution_state": "solved",
+            "resolved_result_id": result_id,
+        }
+
+    async def reopen_scheduled_automation_definition(
+        self, definition_id, *, target_lifecycle="paused", reason=None
+    ):
+        self.calls.append(("reopen", definition_id, target_lifecycle, reason))
+        return {
+            "id": definition_id,
+            "family": "recurring_question",
+            "lifecycle": target_lifecycle,
+            "resolution_state": "open",
+        }
+
 
 @pytest.mark.asyncio
 async def test_preview_automation_definition_passes_payload_through():
@@ -436,3 +458,160 @@ async def test_notifications_service_hard_stops_denied_preview():
     service = ServerNotificationsService(client=Mock(), policy_enforcer=policy)
     with pytest.raises(PolicyDeniedError):
         await service.preview_scheduled_automation_definition(_PREVIEW_REQUEST)
+
+
+# ----------------------------------------------------------------------
+# Definition resolution (mark-solved/reopen) -- schedules-handoff PR-6,
+# task 2. Same three-layer stack as the lifecycle seams above, with one
+# asymmetry: mark-solved is idempotent server-side (retried), reopen is
+# NOT (only accepts solved->open, so a retry after an ambiguous failure
+# whose first attempt landed would hit a false refusal -- kept retry=False
+# like `update_automation_definition`'s non-idempotent PATCH).
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mark_automation_definition_solved_passes_definition_and_result_id():
+    inner = AutomationAuthoringNotificationsService()
+    client = SchedulingServerClient(inner)
+
+    result = await client.mark_automation_definition_solved("def-1", result_id="res-1")
+
+    assert result["resolution_state"] == "solved"
+    assert result["resolved_result_id"] == "res-1"
+    assert inner.calls == [("mark_solved", "def-1", "res-1")]
+
+
+@pytest.mark.asyncio
+async def test_reopen_automation_definition_passes_definition_id():
+    inner = AutomationAuthoringNotificationsService()
+    client = SchedulingServerClient(inner)
+
+    result = await client.reopen_automation_definition("def-1")
+
+    assert result["resolution_state"] == "open"
+    assert inner.calls == [("reopen", "def-1", "paused", None)]
+
+
+@pytest.mark.asyncio
+async def test_mark_solved_is_retried_on_server_error():
+    attempts = {"count": 0}
+
+    class FlakyThenOk:
+        async def mark_scheduled_automation_definition_solved(
+            self, definition_id, *, result_id=None
+        ):
+            attempts["count"] += 1
+            if attempts["count"] < 2:
+                raise ServerClientServerError("boom")
+            return {"id": definition_id, "resolution_state": "solved"}
+
+    client = SchedulingServerClient(
+        FlakyThenOk(), config=ServerClientConfig(retry_delay=0.0)
+    )
+
+    result = await client.mark_automation_definition_solved("def-1")
+
+    assert attempts["count"] == 2
+    assert result["resolution_state"] == "solved"
+
+
+@pytest.mark.asyncio
+async def test_reopen_is_not_retried_on_server_error():
+    # Unlike mark-solved, reopen only accepts solved->open -- a retry after
+    # an ambiguous failure whose first attempt actually landed would hit a
+    # false "not solved" refusal instead of the real (already-applied)
+    # outcome, so this must fail after exactly one attempt.
+    attempts = {"count": 0}
+
+    class FailingService:
+        async def reopen_scheduled_automation_definition(
+            self, definition_id, *, target_lifecycle="paused", reason=None
+        ):
+            attempts["count"] += 1
+            raise ServerClientServerError("boom")
+
+    client = SchedulingServerClient(FailingService())
+    with pytest.raises(ServerClientServerError):
+        await client.reopen_automation_definition("def-1")
+    assert attempts["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_resolution_seams_require_a_connected_server():
+    client = SchedulingServerClient(None)
+    with pytest.raises(ServerUnavailableError):
+        await client.mark_automation_definition_solved("def-1")
+    with pytest.raises(ServerUnavailableError):
+        await client.reopen_automation_definition("def-1")
+
+
+@pytest.mark.asyncio
+async def test_resolution_seam_not_found_maps_to_typed_error():
+    class DeletedService:
+        async def mark_scheduled_automation_definition_solved(
+            self, definition_id, *, result_id=None
+        ):
+            raise ServerClientNotFoundError("gone")
+
+    client = SchedulingServerClient(DeletedService())
+    with pytest.raises(ServerClientNotFoundError):
+        await client.mark_automation_definition_solved("def-1")
+
+
+@pytest.mark.asyncio
+async def test_resolution_seam_policy_denial_maps_to_policy_error():
+    class DenyingService(AutomationAuthoringNotificationsService):
+        async def mark_scheduled_automation_definition_solved(
+            self, definition_id, *, result_id=None
+        ):
+            raise PolicyDeniedError(
+                action_id="scheduler.automations.configure.server",
+                reason_code="server_mode_required",
+                user_message="scheduler.automations.configure.server requires server mode.",
+                effective_source="local",
+                authority_owner="server",
+            )
+
+    client = SchedulingServerClient(DenyingService())
+    with pytest.raises(ServerClientPolicyError):
+        await client.mark_automation_definition_solved("def-1")
+
+
+@pytest.mark.asyncio
+async def test_notifications_service_gates_resolution_seams_under_configure_action():
+    inner = Mock()
+
+    async def _mark_solved(definition_id, *, result_id=None):
+        inner.mark_solved_args = (definition_id, result_id)
+        return _FakeResponse(
+            {"id": definition_id, "resolution_state": "solved", "resolved_result_id": result_id}
+        )
+
+    async def _reopen(definition_id, *, target_lifecycle="paused", reason=None):
+        inner.reopen_args = (definition_id, target_lifecycle, reason)
+        return _FakeResponse(
+            {"id": definition_id, "lifecycle": target_lifecycle, "resolution_state": "open"}
+        )
+
+    inner.mark_scheduled_task_definition_solved = _mark_solved
+    inner.reopen_scheduled_task_definition = _reopen
+
+    policy = Mock()
+    service = ServerNotificationsService(client=inner, policy_enforcer=policy)
+
+    solved = await service.mark_scheduled_automation_definition_solved(
+        "def-1", result_id="res-1"
+    )
+    reopened = await service.reopen_scheduled_automation_definition(
+        "def-1", target_lifecycle="configured", reason="False positive"
+    )
+
+    assert solved["resolution_state"] == "solved"
+    assert reopened["resolution_state"] == "open"
+    assert [c.kwargs["action_id"] for c in policy.require_allowed.call_args_list] == [
+        "scheduler.automations.configure.server",
+        "scheduler.automations.configure.server",
+    ]
+    assert inner.mark_solved_args == ("def-1", "res-1")
+    assert inner.reopen_args == ("def-1", "configured", "False positive")

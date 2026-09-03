@@ -558,3 +558,57 @@ class ServerNotificationsService:
                 definition_id
             )
         )
+
+    async def mark_scheduled_automation_definition_solved(
+        self, definition_id: str, *, result_id: str | None = None
+    ) -> dict[str, Any]:
+        """Mark a server-side automation definition solved.
+
+        Same CONFIGURE-class reasoning as pause/resume/archive above -- a
+        resolution-state transition, gated on the same action id.
+
+        Args:
+            definition_id: The server definition to mark solved.
+            result_id: The server result id that triggered the
+                resolution, if any.
+
+        Returns:
+            The updated definition row as a JSON-mode dict.
+
+        Raises:
+            PolicyDeniedError: If the runtime policy refuses the action.
+        """
+        self._enforce("scheduler.automations.configure.server")
+        return self._dump(
+            await self._require_client().mark_scheduled_task_definition_solved(
+                definition_id, result_id=result_id
+            )
+        )
+
+    async def reopen_scheduled_automation_definition(
+        self,
+        definition_id: str,
+        *,
+        target_lifecycle: str = "paused",
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        """Reopen a solved server-side automation definition.
+
+        Args:
+            definition_id: The server definition to reopen.
+            target_lifecycle: Lifecycle to restore -- ``"configured"`` or
+                ``"paused"`` (default).
+            reason: Optional free-text reason recorded on the audit event.
+
+        Returns:
+            The updated definition row as a JSON-mode dict.
+
+        Raises:
+            PolicyDeniedError: If the runtime policy refuses the action.
+        """
+        self._enforce("scheduler.automations.configure.server")
+        return self._dump(
+            await self._require_client().reopen_scheduled_task_definition(
+                definition_id, target_lifecycle=target_lifecycle, reason=reason
+            )
+        )

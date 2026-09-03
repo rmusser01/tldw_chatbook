@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
@@ -47,7 +46,22 @@ from ....Scheduling.services.server_client import (
     ServerClientError,
     ServerClientValidationError,
 )
+from ....Scheduling.services.sync_engine import (
+    _RESULTS_PAGE_SIZE,
+    _SYNC_MAX_PAGES,
+)
 from ....UI.Screens.scheduling.conflicts_tab import ConflictsTab
+from ....UI.Screens.scheduling.results_tab import (
+    ResultsTab,
+    definition_for_result,
+    # NOT `rich.markup.escape`: this dialog copy is rendered by a
+    # Textual `Label` -> `Content.from_markup`, whose tokenizer eats ANY
+    # `[...]`, while rich's escape only covers `[a-z#/@]...` tags (task 6
+    # round 1). Same parser, same escape as the results detail pane.
+    escape_markup,
+    index_definitions_by_id,
+    solved_eligibility,
+)
 from ....UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
 from ....Widgets.confirmation_dialog import ConfirmationDialog
 from .forms.automation_definition_form import AutomationDefinitionForm
@@ -59,6 +73,7 @@ from .task_detail import (
     TaskInspector,
     _format_next_run,
     _managed_elsewhere_notice,
+    _queue_owner_suffix,
     _task_status,
     _task_type_label,
     _transfer_row_suffix,
@@ -94,6 +109,35 @@ NEXT_RUN_REFRESH_SECONDS = 60.0
 #: exists so the tail of a large definition list is never silently hidden,
 #: not to render unbounded rows.
 AUTOMATIONS_LOAD_MAX_ROWS = 500
+
+#: Debounce before acting on a notification-triggered results pull
+#: (schedules-handoff PR-6 task 4) -- a burst of `automation_run_*` events
+#: collapses into ONE pull (plan ruling 3), same stop-and-restart timer
+#: shape as the queue filter's own debounce above.
+RESULTS_PULL_DEBOUNCE_SECONDS = 0.3
+
+#: How many results the inbox lists. The DB default (50) silently hid older
+#: rows while the badge counted EVERY unread one, so the tab could read
+#: "Results (120)" over 50 rows. This is the sync-mirrored window --
+#: exactly the newest-pages walk `SyncEngine._pull_results` performs -- so
+#: the inbox shows everything a pull could have brought down and nothing it
+#: could not. Beyond the cap the tab says so out loud (`ResultsTab.
+#: populate`'s `total`); deliberately no pagination machinery.
+RESULTS_INBOX_LIMIT = _RESULTS_PAGE_SIZE * _SYNC_MAX_PAGES
+
+#: How many transport reconnects `EventObserver.run()` absorbs internally
+#: (its own built-in exponential backoff, capped at 5s per attempt) before
+#: giving up and raising back to `_run_server_notification_observer`. That
+#: outer loop is the real "never give up for the life of this screen"
+#: layer -- see its docstring for the full failure-mode read.
+_NOTIFICATION_OBSERVER_MAX_RECONNECTS = 5
+
+#: Flat delay before `_run_server_notification_observer` restarts a fresh
+#: `observe()` call after one gave up (matches the inner backoff's own
+#: 5s cap -- no need to reimplement exponential backoff a second time for
+#: a rare outer-level restart). Interrupted immediately by unmount via
+#: `cancel_event`, never a blind sleep.
+_NOTIFICATION_OBSERVER_RESTART_DELAY_SECONDS = 5.0
 
 
 def automation_execution_target_label(definition: dict[str, Any]) -> str:
@@ -210,6 +254,14 @@ class SchedulesWorkbench(BaseAppScreen):
         Binding("M", "move_automation_to_server", "Move to server"),
         Binding("y", "retry_automation_transfer", "Retry transfer"),
         Binding("k", "cancel_automation_transfer", "Cancel transfer"),
+        # Results-tab-only (schedules-handoff PR-6 task 3): read/dismiss
+        # reuse r/d via the SAME active-tab routing action_run_task_now/
+        # action_delete already do for Automations -- r=Read and d=Dismiss
+        # are natural readings of those same keys on this tab. Mark
+        # solved/Mark all read have no existing-key mnemonic to reuse, so
+        # they get fresh letters (o/a), guarded the same way m/M/y/k are.
+        Binding("o", "mark_result_solved", "Mark solved"),
+        Binding("a", "mark_all_results_read", "Mark all read"),
     ]
 
     # Footer hints must stay 1:1 with BINDINGS and only advertise implemented
@@ -227,6 +279,8 @@ class SchedulesWorkbench(BaseAppScreen):
         ("M", "move to server"),
         ("y", "retry transfer"),
         ("k", "cancel transfer"),
+        ("o", "mark solved"),
+        ("a", "mark all read"),
     )
 
     def __init__(
@@ -258,6 +312,15 @@ class SchedulesWorkbench(BaseAppScreen):
         self._latest_console_follow_item_id: str | None = None
         self._latest_console_launch_kwargs: dict[str, Any] | None = None
         self._latest_console_context_loaded = False
+        # schedules-handoff PR-6 task 4: notification-triggered results
+        # pull (single-flight -- `_results_pull_running` guards concurrent
+        # pulls, `_results_pull_rerun_requested` queues at most one
+        # follow-up) and the SSE observer's stop signal, workbench-scoped
+        # per plan ruling 3 (started in on_mount, cancelled in on_unmount).
+        self._results_pull_debounce_timer: Timer | None = None
+        self._results_pull_running = False
+        self._results_pull_rerun_requested = False
+        self._notification_cancel_event: asyncio.Event | None = None
 
     def _active_server_id(self) -> str | None:
         runtime_policy = getattr(self.app_instance, "runtime_policy", None)
@@ -385,6 +448,8 @@ class SchedulesWorkbench(BaseAppScreen):
                         id="scheduling-conflicts",
                         sync_engine=service.sync_engine if service else None,
                     )
+                with TabPane("Results", id="scheduling-results-tab"):
+                    yield ResultsTab(id="scheduling-results")
 
     def _service(self) -> "SchedulingService | None":
         """Return the app's scheduling service, if available."""
@@ -403,6 +468,7 @@ class SchedulesWorkbench(BaseAppScreen):
         self._register_footer_shortcuts()
         self._refresh_owner_select()
         self._refresh_conflicts_tab()
+        self._refresh_results_tab()
         table = self.query_one("#scheduling-task-table", DataTable)
         table.add_columns("Title", "Type", "Status", "Next Run")
         automations_table = self.query_one("#scheduling-automations-table", DataTable)
@@ -421,6 +487,248 @@ class SchedulesWorkbench(BaseAppScreen):
         self._request_tasks_refresh()
         self._request_automations_refresh()
         self._refresh_scheduler_liveness()
+        self._start_server_notification_observer()
+        self._schedule_catch_up_results_pull()
+
+    def on_unmount(self) -> None:
+        """Stop the notification observer + any pending pull debounce.
+
+        Workbench-scoped lifecycle (plan ruling 3): neither must outlive
+        this screen -- setting the cancel event is the observer's own
+        documented stop signal (`EventObserver.run` checks it at every
+        await point), so the background worker unwinds on its own instead
+        of being force-cancelled mid-stream.
+        """
+        if self._notification_cancel_event is not None:
+            self._notification_cancel_event.set()
+        self._notification_cancel_event = None
+        if self._results_pull_debounce_timer is not None:
+            self._results_pull_debounce_timer.stop()
+            self._results_pull_debounce_timer = None
+        super().on_unmount()
+
+    def _start_server_notification_observer(self) -> None:
+        """Start the SSE notification observer (schedules-handoff PR-6
+        task 4) -- workbench-scoped per plan ruling 3: begins here when a
+        server connection is configured; `on_unmount` above stops it.
+
+        This is the first real caller of
+        `ServerNotificationEventObserver.observe()` --
+        `NotificationsScopeService.observe_server_feed_events` has existed
+        since 18940 slice 3 with nothing invoking it (survey §3).
+        """
+        service = self._service()
+        scope_service = getattr(self.app_instance, "notifications_scope_service", None)
+        if (
+            service is None
+            or scope_service is None
+            or not self._server_available(service, self._active_server_id())
+        ):
+            return
+        self._notification_cancel_event = asyncio.Event()
+        self.run_worker(
+            self._run_server_notification_observer,
+            exclusive=True,
+            group="schedules-notification-observer",
+            exit_on_error=False,
+        )
+
+    async def _run_server_notification_observer(self) -> None:
+        """Supervise the SSE notification observer for this screen's life.
+
+        Reading `EventObserver.run()` end to end (event_observer.py),
+        `observe()` can leave us in exactly four ways:
+
+        1. **Cancelled** -- `cancel_event` was set (our `on_unmount`
+           signal). `run()` returns cleanly, `result.cancelled is True`,
+           checked at every await point (mid-stream-read AND mid-backoff-
+           sleep), so this is near-immediate. We return -- no retry.
+        2. **Clean stream end** -- the transport's async generator raises
+           `StopAsyncIteration` (the server closed the SSE connection
+           without error). `run()` returns normally, `cancelled=False`.
+           Not fatal for a long-lived feed; we restart `observe()` after
+           the flat backoff below.
+        3. **Stale/unsupported cursor exhausted** -- `StaleCursorError`/
+           `UnsupportedCursorError` are retried internally (with reset +
+           backoff) up to `max_reconnects` times; once exhausted, `run()`
+           STILL returns normally (`cancelled=False`) rather than raising.
+           Same handling as case 2: restart.
+        4. **Sustained transport failure** -- any other `Exception` from
+           the transport is retried internally the same way, but once
+           `max_reconnects` is exhausted `run()` RE-RAISES (after
+           `observe()` records status="error" via `_record_status`). This
+           is the one case that reaches our `except` below; we log and
+           restart after the same backoff, so a down/flaky server
+           degrades to "resumes once reachable again", never a
+           permanently dead observer for the rest of this screen's life.
+
+        A handler exception (case 5, hypothetical -- `_on_server_
+        notification_event` performs no I/O and cannot realistically
+        raise) would surface identically to case 4: `run()`'s inner loop
+        has no handler-specific try/except, so it falls into the same
+        generic `except Exception` path.
+
+        `exit_on_error=False` on the `run_worker` call that invokes this
+        coroutine is the backstop against a bug here still crashing the
+        app (the established run_worker(exit_on_error) trap).
+
+        Log discipline (fix round 1 -- a sustained failure used to dump a
+        full ERROR-level traceback every ~5s restart, worst in the
+        accepted profile-vanished edge case where `_resolve_server_
+        event_scope` raises synchronously and the inner 5-reconnect
+        absorption in `EventObserver.run()` never even engages): the
+        FIRST failure of a given exception class logs one `warning` with
+        just the exception summary (no traceback); identical-class
+        repeats log at `debug`; a class change re-warns (a
+        `ServerEventScopeRequiredError` outage turning into a genuine
+        network error, say, is worth a fresh heads-up); a subsequent
+        success logs one `info` and clears the remembered class.
+        """
+        scope_service = getattr(self.app_instance, "notifications_scope_service", None)
+        cancel_event = self._notification_cancel_event
+        if scope_service is None or cancel_event is None:
+            return
+        last_failure_class: type[BaseException] | None = None
+        while not cancel_event.is_set():
+            try:
+                result = await scope_service.observe_server_feed_events(
+                    handler=self._on_server_notification_event,
+                    cancel_event=cancel_event,
+                    max_reconnects=_NOTIFICATION_OBSERVER_MAX_RECONNECTS,
+                )
+            except Exception as exc:  # noqa: BLE001 - case 4/5 above, never fatal here
+                if type(exc) is last_failure_class:
+                    logger.debug(
+                        f"Schedules notification observer still failing "
+                        f"({exc.__class__.__name__}: {exc}); retrying"
+                    )
+                else:
+                    logger.warning(
+                        f"Schedules notification observer connection failed "
+                        f"({exc.__class__.__name__}: {exc}); retrying"
+                    )
+                    last_failure_class = type(exc)
+            else:
+                if result.cancelled:
+                    return
+                if last_failure_class is not None:
+                    logger.info("Schedules notification observer reconnected")
+                    last_failure_class = None
+            if cancel_event.is_set():
+                return
+            try:
+                await asyncio.wait_for(
+                    cancel_event.wait(),
+                    timeout=_NOTIFICATION_OBSERVER_RESTART_DELAY_SECONDS,
+                )
+            except TimeoutError:
+                pass
+
+    async def _on_server_notification_event(self, event: Any) -> bool:
+        """ACK every server notification; `automation_run_*` kinds
+        schedule a debounced results pull (plan ruling 3).
+
+        Always returns True (ack): a kind this screen doesn't act on must
+        still advance the observer's durable cursor, or an unrelated
+        notification stream would replay forever (`EventObserver.run`'s
+        ack-then-advance contract). The server puts the automation_run_*
+        vocabulary at `payload["data"]["kind"]` (ADR-077 phase-1
+        pass-back, survey §3) -- `event_kind`/`payload_kind` are the SSE
+        envelope's own generic fields, not this.
+        """
+        payload = getattr(event, "payload", None)
+        data = payload.get("data") if isinstance(payload, Mapping) else None
+        kind = data.get("kind") if isinstance(data, Mapping) else None
+        if isinstance(kind, str) and kind.startswith("automation_run_"):
+            self._schedule_results_pull()
+        return True
+
+    def _schedule_catch_up_results_pull(self) -> None:
+        """Recover results whose notification was acked while unmounted.
+
+        `_on_server_notification_event` acks EVERY event before the pull
+        it schedules has run (it must -- the observer's ack-then-advance
+        contract is what stops an unrelated stream replaying forever), so
+        an event acked just before this screen went away advances the
+        durable cursor and is never redelivered. Re-timing the ack is the
+        wrong lever: the pull is a newest-window walk keyed on nothing but
+        "what does the server have now", i.e. idempotent, so one pull at
+        mount recovers whatever the lost event would have fetched -- and
+        any number of lost events, not just one.
+
+        Goes through the same debounced single-flight path as a live
+        event, so mounting into an event burst still costs exactly one
+        pull. Gated on a configured server for the same reason
+        `_start_server_notification_observer` is: with no server there is
+        nothing to pull and `_run_phase` would only record a sync error.
+        """
+        service = self._service()
+        if service is None or not self._server_available(
+            service, self._active_server_id()
+        ):
+            return
+        self._schedule_results_pull()
+
+    def _schedule_results_pull(self) -> None:
+        """Debounce a notification-triggered results pull (plan ruling
+        3): a burst of `automation_run_*` events collapses into ONE
+        pull, same stop-and-restart timer shape as the queue filter's
+        own debounce.
+        """
+        if self._results_pull_debounce_timer is not None:
+            self._results_pull_debounce_timer.stop()
+        self._results_pull_debounce_timer = self.set_timer(
+            RESULTS_PULL_DEBOUNCE_SECONDS, self._start_results_pull
+        )
+
+    def _start_results_pull(self) -> None:
+        self._results_pull_debounce_timer = None
+        if self._results_pull_running:
+            # A pull from an earlier debounce window is still in flight --
+            # absorb this trigger into a single follow-up pull instead of
+            # running two pulls concurrently (single-flight, no pile-up;
+            # the worker-collision lesson).
+            self._results_pull_rerun_requested = True
+            return
+        self._results_pull_running = True
+        self.run_worker(
+            self._pull_results_worker,
+            exclusive=True,
+            group="schedules-results-pull",
+            exit_on_error=False,
+        )
+
+    async def _pull_results_worker(self) -> None:
+        """Pull automation results once, then once more if a trigger
+        landed while the first pull was running (rerun flag) -- never
+        more than one queued follow-up.
+
+        Reuses `SyncEngine._run_phase` -- the same containment `sync_now`
+        uses for this exact phase (survey §2) -- rather than a full sync
+        (the brief: "the narrowest callable, not a full sync").
+        `_run_phase` never raises: a failure is recorded via
+        `_record_sync_error` onto the persisted sync-error state
+        `_refresh_owner_select` already renders, so a pull failure here
+        surfaces exactly like a failed "s" sync (the existing sync-error
+        path) -- and can never reach the observer's own coroutine, which
+        is a wholly separate worker/group.
+        """
+        try:
+            while True:
+                service = self._service()
+                if service is not None:
+                    await service.sync_engine._run_phase(
+                        service.owner_id,
+                        "Automation results pull (notification)",
+                        service.sync_engine._pull_results,
+                    )
+                    self._refresh_owner_select()
+                    self._refresh_results_tab()
+                if not self._results_pull_rerun_requested:
+                    return
+                self._results_pull_rerun_requested = False
+        finally:
+            self._results_pull_running = False
 
     def _refresh_scheduler_liveness(self) -> None:
         """Update the scheduler-liveness line from the durable heartbeat
@@ -579,12 +887,25 @@ class SchedulesWorkbench(BaseAppScreen):
             # user asking "what went wrong while I wasn't looking".
             or (_was_missed_while_away(task) and "missed" in text)
         ]
-        rows: list[tuple[str, str, Text, str]] = [
+        # Owner suffix (plan ruling 4): hidden at compact width, evaluated
+        # once per render pass -- `_sync_responsive_workbench` (on_mount/
+        # on_resize) always runs before this, so `self.size` is current.
+        compact_owner_suffix = self.size.width <= SCHEDULES_COMPACT_WORKBENCH_MAX_WIDTH
+        rows: list[tuple[Text, str, Text, str]] = [
             (
-                ("● " if task.id in self._marked_ids else "")
-                + ("◇ " if _was_missed_while_away(task) else "")
-                + task.title
-                + _transfer_row_suffix(task),
+                # `Text`: the title is user-authored, so it must never be
+                # re-parsed as markup by the DataTable cell formatter
+                # (D8's class -- the owner suffix here happens to use
+                # parens and survived live, but `[bold]` in a reminder
+                # title would not have). The other two str cells are built
+                # from this module's own vocabulary, not outside text.
+                Text(
+                    ("● " if task.id in self._marked_ids else "")
+                    + ("◇ " if _was_missed_while_away(task) else "")
+                    + task.title
+                    + _transfer_row_suffix(task)
+                    + _queue_owner_suffix(task, compact=compact_owner_suffix)
+                ),
                 _task_type_label(task),
                 status_badge_text(_task_status(task)),
                 # Compact: same relative form as the detail pane, without
@@ -1424,8 +1745,11 @@ class SchedulesWorkbench(BaseAppScreen):
         """Run the highlighted task immediately (``r`` key).
 
         Routes by active tab: the Automations tab's ``r`` dispatches a
-        server-side run (ADR-077 -- the server owns execution); everywhere
-        else it is the local reminder Run-now (task-18938).
+        server-side run (ADR-077 -- the server owns execution); the
+        Results tab's ``r`` marks the selected result read instead
+        (schedules-handoff PR-6 task 3 -- a natural reading of the same
+        key); everywhere else it is the local reminder Run-now
+        (task-18938).
         """
         try:
             active_pane = self.query_one("#scheduling-tabs", TabbedContent).active
@@ -1435,6 +1759,9 @@ class SchedulesWorkbench(BaseAppScreen):
             definition = self._selected_automation()
             if definition is not None:
                 self._run_automation_now(definition)
+            return
+        if active_pane == "scheduling-results-tab":
+            self._review_selected_result("read")
             return
         task = self._selected_reminder_task()
         if task is not None:
@@ -1575,12 +1902,26 @@ class SchedulesWorkbench(BaseAppScreen):
         self._automations = items
         table.clear()
         for definition in items:
+            # Every cell goes in as `Text`, never `str` (task 6 round 2,
+            # D8). `DataTable` runs string cells through `rich.text.Text.
+            # from_markup`, whose tag regex matches `\[[a-z#/@]...]` -- so
+            # a server row's own owner prefix, `[http://127.0.0.1:8020]
+            # ...`, was consumed whole and server automations rendered
+            # with NO ownership prefix while the pane's own count line
+            # still said "1 automation on the server". (The old
+            # `server:42` fixture value would have been eaten identically,
+            # so no fixture shape could have caught this.) The cell
+            # formatter returns a `Text` untouched, so nothing re-parses
+            # content that came from outside this module -- structural,
+            # rather than depending on picking the right escape for
+            # whichever parser consumes the cell, which is the mistake
+            # this saga has now made three times.
             table.add_row(
-                automation_name_cell(definition),
-                str(definition.get("family", "?")),
-                str(definition.get("lifecycle", "?")),
-                str(definition.get("health", "?")),
-                automation_execution_target_label(definition),
+                Text(automation_name_cell(definition)),
+                Text(str(definition.get("family", "?"))),
+                Text(str(definition.get("lifecycle", "?"))),
+                Text(str(definition.get("health", "?"))),
+                Text(automation_execution_target_label(definition)),
                 key=str(definition.get("id")),
             )
         row_keys = [str(definition.get("id")) for definition in items]
@@ -1644,11 +1985,25 @@ class SchedulesWorkbench(BaseAppScreen):
         of a large definition list; the cap is a defensive bound, not an
         expected cliff.
 
-        Every item is stamped with `owner_id` if the response omitted one
-        (some fixtures/older server versions do): these rows are known to
-        be server-scoped by construction (this IS the server fetch), so
-        the run-now/history/edit routing that reads `owner_id` off the row
-        must never depend on the wire response actually including it.
+        Every item's `owner_id` is OVERWRITTEN with this connection's
+        `server:<active-server-id>` scope -- never read from the payload.
+        These rows are server-scoped by construction (this IS the server
+        fetch), and a server's self-reported `owner_id` is its own raw
+        user id, which has no reason to match our scoping convention:
+        live verification against a real tldw_server (task 6, D1) got
+        `"owner_id": "1"`, so the older stamp-only-when-absent guard
+        passed a present, non-prefixed value straight through. Every
+        downstream consumer (`is_server_scoped_owner`, the Name-cell
+        prefix, run-now routing, `_resolve_local_definition_id`'s mirror
+        lookup, transfer refusals) then read the row as LOCAL: server
+        automations rendered `[This device]`, `r` refused with the
+        local-health message, and `m` refused with "This automation no
+        longer exists."
+
+        This is the only ingestion boundary that needed the fix: both DB
+        mirror upserts (`upsert_automation_definitions_from_server`,
+        `upsert_automation_results_from_server`) already exclude the
+        payload's `owner_id` and stamp the caller's owner scope instead.
         """
         items: list[dict[str, Any]] = []
         total = 0
@@ -1667,10 +2022,9 @@ class SchedulesWorkbench(BaseAppScreen):
                 or len(items) >= AUTOMATIONS_LOAD_MAX_ROWS
             ):
                 break
-        active_server_id = self._active_server_id()
+        owner_id = f"server:{self._active_server_id()}"
         for item in items:
-            if not item.get("owner_id"):
-                item["owner_id"] = f"server:{active_server_id}"
+            item["owner_id"] = owner_id
         return items, total
 
     @staticmethod
@@ -1799,10 +2153,14 @@ class SchedulesWorkbench(BaseAppScreen):
             # no microseconds or timezone noise in a table cell.
             stamp = created[:16].replace("T", " ") if created else "?"
             summary = str(event.get("summary") or "")
+            # `Text`, not `str` -- same D8 rule as the definitions table
+            # above. `summary` is free-form server text ("Run failed:
+            # ChatConfigurationError: ..."), the likeliest of all these
+            # cells to carry a bracket token.
             table.add_row(
-                stamp,
-                str(event.get("event_type") or "?"),
-                summary,
+                Text(stamp),
+                Text(str(event.get("event_type") or "?")),
+                Text(summary),
             )
         suffix = f" of {total}" if total > len(items) else ""
         self._update_static_content(
@@ -2328,6 +2686,162 @@ class SchedulesWorkbench(BaseAppScreen):
             group="schedules-automation-transfer",
         )  # type: ignore[arg-type]
 
+    # -- Results-tab actions (schedules-handoff PR-6 task 3) ---------------
+    #
+    # Read/dismiss reuse r/d via action_run_task_now/action_delete's own
+    # tab routing above. Mark-solved/Mark-all-read get fresh keys (o/a),
+    # guarded the same way m/M/y/k refuse off the Automations tab.
+
+    def _is_results_tab_active(self) -> bool:
+        try:
+            return (
+                self.query_one("#scheduling-tabs", TabbedContent).active
+                == "scheduling-results-tab"
+            )
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _review_selected_result(self, review_state: str) -> None:
+        """r/d on the Results tab: read/dismiss the selected result.
+
+        `SchedulingService.review_automation_result` writes the local row
+        and, for a server mirror, queues the PR-3 pushback mutation in the
+        SAME DB transaction -- nothing extra to do here for that half.
+        """
+        service = self._service()
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable.", severity="warning"
+            )
+            return
+        results_tab = self.query_one("#scheduling-results", ResultsTab)
+        result = results_tab.selected_result()
+        if result is None:
+            self.app_instance.notify("Select a result first.", severity="warning")
+            return
+
+        async def _review() -> None:
+            updated = await service.review_automation_result(
+                result["id"], review_state
+            )
+            if not updated:
+                self.app_instance.notify(
+                    "Could not update this result — see the log.",
+                    severity="error",
+                )
+            self._refresh_results_tab()
+
+        self.run_worker(
+            _review, exclusive=True, group="schedules-review-result"
+        )  # type: ignore[arg-type]
+
+    def action_mark_result_solved(self) -> None:
+        """o key: mark the selected finding's definition solved (Task 2's
+        facade), Results-tab only. Refused client-side for a row `solved_
+        eligibility` already rules out (wrong kind, already solved, or an
+        unknown definition); a still-eligible row can still be refused by
+        the facade itself (transfer lock, offline+server-owned -- UX-073),
+        surfaced from `ResolveOutcome.reason`.
+        """
+        if not self._is_results_tab_active():
+            self.app_instance.notify(
+                "Switch to the Results tab to mark a result solved.",
+                severity="warning",
+            )
+            return
+        service = self._service()
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable.", severity="warning"
+            )
+            return
+        results_tab = self.query_one("#scheduling-results", ResultsTab)
+        result = results_tab.selected_result()
+        if result is None:
+            self.app_instance.notify("Select a result first.", severity="warning")
+            return
+        eligible, reason = solved_eligibility(result, results_tab.definitions_by_id)
+        if not eligible:
+            self.app_instance.notify(
+                reason or "This result cannot be marked solved.",
+                severity="warning",
+            )
+            return
+        # `resolve_definition` takes a LOCAL definition id (its own
+        # contract), but a synced result's `definition_id` is the SERVER's
+        # id -- passing it through unresolved refused with "Automation
+        # definition <server id> was not found" on exactly the rows the
+        # action exists for (live verification task 6, D3). The gate above
+        # already resolved the row across both id spaces; reuse it rather
+        # than re-deriving the id a second, divergent way. Non-None here
+        # by construction: `solved_eligibility` returns ineligible when
+        # the same lookup misses.
+        definition = definition_for_result(result, results_tab.definitions_by_id)
+        local_definition_id = str((definition or {}).get("id") or "")
+
+        async def _mark_solved() -> None:
+            outcome = await service.resolve_definition(
+                local_definition_id, solved=True, result_id=result["id"]
+            )
+            if outcome.status == "saved":
+                self.app_instance.notify("Marked solved.", severity="information")
+            else:
+                self.app_instance.notify(
+                    outcome.reason or "Could not mark this result solved.",
+                    severity="warning",
+                )
+            self._refresh_results_tab()
+
+        self.run_worker(
+            _mark_solved, exclusive=True, group="schedules-mark-solved"
+        )  # type: ignore[arg-type]
+
+    def action_mark_all_results_read(self) -> None:
+        """a key: mark every currently-loaded unread result read,
+        Results-tab only. Per-row `review_automation_result` calls -- there
+        is no bulk DB primitive for this (spec's documented fan-out),
+        mirroring `_on_bulk_delete_confirmed`'s loop-and-count shape.
+        """
+        if not self._is_results_tab_active():
+            self.app_instance.notify(
+                "Switch to the Results tab to mark all results read.",
+                severity="warning",
+            )
+            return
+        service = self._service()
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable.", severity="warning"
+            )
+            return
+        results_tab = self.query_one("#scheduling-results", ResultsTab)
+        unread_ids = [
+            result["id"]
+            for result in results_tab.results()
+            if result.get("review_state") == "unread"
+        ]
+        if not unread_ids:
+            self.app_instance.notify("Nothing unread.", severity="information")
+            return
+
+        async def _mark_all() -> None:
+            errors = 0
+            for result_id in unread_ids:
+                if not await service.review_automation_result(result_id, "read"):
+                    errors += 1
+            count = len(unread_ids) - errors
+            self.app_instance.notify(
+                f"Marked {count} result{'s' if count != 1 else ''} read"
+                + (f" ({errors} failed)" if errors else "")
+                + ".",
+                severity="information" if not errors else "warning",
+            )
+            self._refresh_results_tab()
+
+        self.run_worker(
+            _mark_all, exclusive=True, group="schedules-mark-all-read"
+        )  # type: ignore[arg-type]
+
     def _set_reminder_enabled(self, task: ReminderTask, enabled: bool) -> None:
         """Update a reminder's enabled state and refresh the queue."""
         service = self._scheduling_service
@@ -2538,6 +3052,7 @@ class SchedulesWorkbench(BaseAppScreen):
         self._request_tasks_refresh()
         self._request_automations_refresh()
         self._refresh_conflicts_tab()
+        self._refresh_results_tab()
 
     @on(SyncFailed)
     def _on_sync_failed(self, event: SyncFailed) -> None:
@@ -2547,6 +3062,7 @@ class SchedulesWorkbench(BaseAppScreen):
         self._request_tasks_refresh()
         self._request_automations_refresh()
         self._refresh_conflicts_tab()
+        self._refresh_results_tab()
 
     @on(ConflictsTab.ConflictResolved)
     def _on_conflict_resolved(self, event: ConflictsTab.ConflictResolved) -> None:
@@ -2563,19 +3079,80 @@ class SchedulesWorkbench(BaseAppScreen):
         )
         conflicts_tab.populate(conflicts)
         # Surface the conflict count on the tab label itself (UX-063).
+        self._set_tab_label(
+            "scheduling-conflicts-tab",
+            f"Conflicts ({len(conflicts)})" if conflicts else "Conflicts",
+        )
+
+    def _set_tab_label(self, pane_id: str, label: str) -> None:
+        """Relabel one tab in the workbench's `TabbedContent`.
+
+        `TabPane.label` does not exist in Textual 8.x -- a pane stores its
+        title in `_title` and exposes no `label` reactive, so the previous
+        `pane.label = ...` assignment silently created an inert Python
+        attribute and the rendered tab text never changed (live
+        verification task 6, D2: both the Results unread badge and the
+        Conflicts badge it was copied from were no-ops on screen while
+        their tests passed by reading the attribute back). The real seam
+        is `TabbedContent.get_tab(pane_id)` -> the `Tab` widget's own
+        `label` setter, which calls `Tab.update` and repaints.
+        """
         try:
-            pane = self.query_one("#scheduling-conflicts-tab", TabPane)
-            pane.label = f"Conflicts ({len(conflicts)})" if conflicts else "Conflicts"
-        except Exception:  # noqa: BLE001 - pane not mounted
-            pass
+            tab = self.query_one("#scheduling-tabs", TabbedContent).get_tab(pane_id)
+        except Exception:  # noqa: BLE001 - tabs/pane not mounted yet
+            return
+        tab.label = label
+
+    def _refresh_results_tab(self) -> None:
+        """Reload the Results tab and its unread badge (schedules-handoff
+        PR-6 task 3). Mirrors `_refresh_conflicts_tab`'s shape: direct
+        `service.db.*` calls (list_automation_results/count_unread_
+        results span every owner -- Task 1), no worker -- this is a local
+        DB-only read, same cost class as `get_conflicts`. Also called
+        after Task 4's notification-triggered pull and after every
+        read/dismiss/mark-solved/mark-all-read action below.
+
+        Lists `RESULTS_INBOX_LIMIT` rows, not the DB's own default 50: the
+        badge counts EVERY unread result, so a 50-row listing made the two
+        numbers disagree and quietly hid the rest. `total` is passed so the
+        tab can say "showing newest N of M" once the cap bites.
+        """
+        service = self._service()
+        if service is None:
+            return
+        results_tab = self.query_one("#scheduling-results", ResultsTab)
+        results = service.db.list_automation_results(
+            owner_id=None, limit=RESULTS_INBOX_LIMIT
+        )
+        unread = service.db.count_unread_results(owner_id=None)
+        total = service.db.count_automation_results(owner_id=None)
+        definitions_by_id = index_definitions_by_id(
+            service.db.list_automation_definitions(owner_id=None)
+        )
+        results_tab.populate(results, definitions_by_id, total=total)
+        # Surface the unread count on the tab label itself (spec §4's
+        # inbox badge, same UX-063 idiom as the Conflicts tab above).
+        self._set_tab_label(
+            "scheduling-results-tab",
+            f"Results ({unread})" if unread else "Results",
+        )
 
     def action_delete(self) -> None:
         """Delete marked tasks in bulk, else the selected one (confirmed).
 
         While ANY mark exists, d never falls through to the highlighted,
         unmarked row (task-23107 review F1): acting on a row the user
-        never marked is worse than refusing.
+        never marked is worse than refusing. On the Results tab, ``d``
+        dismisses the selected result instead (schedules-handoff PR-6
+        task 3) -- same key, the tab-appropriate "remove from view" verb.
         """
+        try:
+            active_pane = self.query_one("#scheduling-tabs", TabbedContent).active
+        except Exception:  # noqa: BLE001
+            active_pane = None
+        if active_pane == "scheduling-results-tab":
+            self._review_selected_result("dismissed")
+            return
         if self._marked_ids:
             marked = self._marked_reminder_tasks()
             if not marked:

@@ -85,3 +85,26 @@ A search of `tldw_chatbook/tldw_api/client.py` for the strings `scheduled-tasks`
 ## Fixture scope
 
 Only the `list_reminder_tasks` response fixture (`reminder_list.json`) is present at this commit. Future fixtures for create/get/update/delete responses should follow the same format and be validated against the models documented above.
+
+## Drift guard: `owner_id` is the server's RAW user id, not a `server:` scope
+
+`automation_definition_list.json` and `automation_results_list.json` carry
+`"owner_id": "1"`. That is the shape a real tldw_server actually puts on the
+wire — live-verified 2026-09-02 against `tldw_server2` @ `25fb0eca59`
+(single-user, `GET /api/v1/scheduled-tasks/definitions` returned
+`{"id": "705657ff…", "owner_id": "1", …}`).
+
+These fixtures previously said `"owner_id": "server:42"`, which is the
+**client's** owner-scope convention (`is_server_scoped_owner`, `server:<active
+server id>`) and not something a server ever sends. That drift masked a HIGH
+defect for a whole slice: `_load_server_automations` only stamped the scoped
+owner when the payload omitted one, so against the real server every server
+automation was treated as local — wrong `[This device]` label, run-now routed
+to the local executor, and "move to this device" refused with "This automation
+no longer exists" (task 6 report, D1).
+
+**Do not "fix" these back to a prefixed value.** A server-sourced row's owner
+scope is derived from the CONNECTION at the ingestion boundary and overwritten
+there; the payload's own `owner_id` is never trusted. `"server:…"` values in
+test code are correct where they stand for a LOCAL row's owner column — the
+distinction is wire payload vs. stored row.

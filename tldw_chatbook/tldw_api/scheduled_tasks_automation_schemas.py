@@ -43,6 +43,9 @@ class ScheduledTaskAutomationDefinition(BaseModel):
     updated_at: datetime | None = None
     archived_at: datetime | None = None
     resolution_state: str = "open"
+    resolved_at: datetime | None = None
+    resolved_by: str | None = None
+    resolved_result_id: str | None = None
 
 
 class ScheduledTaskAutomationDefinitionList(BaseModel):

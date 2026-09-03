@@ -528,3 +528,118 @@ async def test_archive_definition_posts_to_archive_route(monkeypatch):
     )
     assert isinstance(result, ScheduledTaskAutomationDefinition)
     assert result.lifecycle == "archived"
+
+
+# ----------------------------------------------------------------------
+# Definition resolution (mark-solved/reopen) -- schedules-handoff PR-6,
+# task 2. Same bare-POST-with-a-body construction as previews/create; the
+# response is again `ScheduledTaskAutomationDefinition`, now carrying the
+# four resolution fields the schema was previously missing three of.
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mark_solved_posts_to_mark_solved_route_with_result_id(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "id": "def-1",
+            "family": "recurring_question",
+            "name": "Daily stand-up summary",
+            "lifecycle": "configured",
+            "resolution_state": "solved",
+            "resolved_at": "2026-09-02T00:00:00+00:00",
+            "resolved_by": "alice",
+            "resolved_result_id": "res-9",
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    result = await client.mark_scheduled_task_definition_solved(
+        "def-1", result_id="res-9"
+    )
+
+    assert mocked.await_args.args[:2] == (
+        "POST",
+        "/api/v1/scheduled-tasks/definitions/def-1/mark-solved",
+    )
+    assert mocked.await_args.kwargs["json_data"] == {"resolved_result_id": "res-9"}
+    assert isinstance(result, ScheduledTaskAutomationDefinition)
+    assert result.resolution_state == "solved"
+    assert result.resolved_at is not None
+    assert result.resolved_by == "alice"
+    assert result.resolved_result_id == "res-9"
+
+
+@pytest.mark.asyncio
+async def test_mark_solved_sends_null_result_id_when_not_given(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "id": "def-1",
+            "family": "recurring_question",
+            "name": "Daily stand-up summary",
+            "lifecycle": "configured",
+            "resolution_state": "solved",
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    await client.mark_scheduled_task_definition_solved("def-1")
+
+    assert mocked.await_args.kwargs["json_data"] == {"resolved_result_id": None}
+
+
+@pytest.mark.asyncio
+async def test_reopen_posts_to_reopen_route_with_defaults(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "id": "def-1",
+            "family": "recurring_question",
+            "name": "Daily stand-up summary",
+            "lifecycle": "paused",
+            "resolution_state": "open",
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    result = await client.reopen_scheduled_task_definition("def-1")
+
+    assert mocked.await_args.args[:2] == (
+        "POST",
+        "/api/v1/scheduled-tasks/definitions/def-1/reopen",
+    )
+    assert mocked.await_args.kwargs["json_data"] == {
+        "target_lifecycle": "paused",
+        "reason": None,
+    }
+    assert isinstance(result, ScheduledTaskAutomationDefinition)
+    assert result.resolution_state == "open"
+    assert result.resolved_at is None
+    assert result.resolved_by is None
+    assert result.resolved_result_id is None
+
+
+@pytest.mark.asyncio
+async def test_reopen_forwards_target_lifecycle_and_reason(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "id": "def-1",
+            "family": "recurring_question",
+            "name": "Daily stand-up summary",
+            "lifecycle": "configured",
+            "resolution_state": "open",
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    await client.reopen_scheduled_task_definition(
+        "def-1", target_lifecycle="configured", reason="False positive"
+    )
+
+    assert mocked.await_args.kwargs["json_data"] == {
+        "target_lifecycle": "configured",
+        "reason": "False positive",
+    }

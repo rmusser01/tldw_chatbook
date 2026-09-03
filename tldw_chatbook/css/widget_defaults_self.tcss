@@ -1530,6 +1530,17 @@
 
 
 
+/* ===== WIDGET: ResultsTab (UI/Screens/scheduling/results_tab.py) ===== */
+
+    ResultsTab {
+        height: 1fr;
+    }
+
+
+
+
+
+
 /* ===== WIDGET: SyncStatusWidget (UI/Screens/scheduling/sync_status_widget.py) ===== */
 
     SyncStatusWidget {

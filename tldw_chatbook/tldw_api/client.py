@@ -1369,6 +1369,29 @@ class TLDWAPIClient:
                         error_detail = f"Validation Error: {response_data['detail'][0].get('msg', '')} for field '{'.'.join(map(str, response_data['detail'][0].get('loc', [])))}'"
                     elif isinstance(response_data["detail"], str):
                         error_detail = response_data["detail"]
+                    elif isinstance(response_data["detail"], dict):
+                        # Structured refusal: tldw_server returns
+                        # `{"detail": {"code", "message", "details",
+                        # "retryable"}}` for its deterministic 4xx
+                        # refusals. Without this branch `error_detail`
+                        # stayed the raw httpx text ("Client error '409
+                        # Conflict' for url ... For more information
+                        # check: https://developer.mozilla.org/..."), so
+                        # the server's own explanation was dropped on the
+                        # floor and callers could only report a generic
+                        # failure -- exactly what made a 409
+                        # `scheduled_task_definition_archived` surface to
+                        # the user as "this action requires a server
+                        # connection" (schedules task 6 round 2, D9).
+                        # `message` is the human sentence, `code` the
+                        # machine token; prefer the former, fall back to
+                        # the latter, and only then to the raw text.
+                        detail_obj = response_data["detail"]
+                        error_detail = str(
+                            detail_obj.get("message")
+                            or detail_obj.get("code")
+                            or error_detail
+                        )
             except ValueError:
                 pass  # Ignore if response is not JSON or detail not found
 
@@ -8152,6 +8175,67 @@ class TLDWAPIClient:
         response = await self._request(
             "POST",
             f"/api/v1/scheduled-tasks/definitions/{definition_id}/archive",
+        )
+        return ScheduledTaskAutomationDefinition.model_validate(response)
+
+    async def mark_scheduled_task_definition_solved(
+        self, definition_id: str, *, result_id: str | None = None
+    ) -> ScheduledTaskAutomationDefinition:
+        """Mark a Recurring Question definition solved (spec §4.3 / PR-6 Task 2).
+
+        Mirrors the server's ``ScheduledTaskMarkSolvedRequest`` (one field,
+        ``resolved_result_id``).
+
+        Args:
+            definition_id: The server definition to mark solved.
+            result_id: The server result id that triggered the resolution,
+                if any.
+
+        Returns:
+            The definition row with its post-solve resolution state
+            (``resolution_state="solved"``, ``resolved_at``/``resolved_by``/
+            ``resolved_result_id`` set). Idempotent server-side: marking an
+            already-solved definition solved again is a no-op that returns
+            the current row unchanged, not an error.
+        """
+        response = await self._request(
+            "POST",
+            f"/api/v1/scheduled-tasks/definitions/{definition_id}/mark-solved",
+            json_data={"resolved_result_id": result_id},
+        )
+        return ScheduledTaskAutomationDefinition.model_validate(response)
+
+    async def reopen_scheduled_task_definition(
+        self,
+        definition_id: str,
+        *,
+        target_lifecycle: str = "paused",
+        reason: str | None = None,
+    ) -> ScheduledTaskAutomationDefinition:
+        """Reopen a solved Recurring Question definition (spec §4.3 / PR-6 Task 2).
+
+        Mirrors the server's ``ScheduledTaskReopenRequest`` (``target_
+        lifecycle`` -- ``"configured"`` or ``"paused"``, default
+        ``"paused"`` -- plus an optional free-text ``reason``).
+
+        Args:
+            definition_id: The server definition to reopen.
+            target_lifecycle: Lifecycle to restore the definition to.
+            reason: Optional free-text reason recorded on the audit event.
+
+        Returns:
+            The definition row with ``resolution_state="open"`` and
+            ``resolved_at``/``resolved_by``/``resolved_result_id`` cleared.
+
+        Raises:
+            APIResponseError: If the definition is not currently solved
+                (the server refuses the transition -- reopening is NOT a
+                no-op like mark-solved).
+        """
+        response = await self._request(
+            "POST",
+            f"/api/v1/scheduled-tasks/definitions/{definition_id}/reopen",
+            json_data={"target_lifecycle": target_lifecycle, "reason": reason},
         )
         return ScheduledTaskAutomationDefinition.model_validate(response)
 

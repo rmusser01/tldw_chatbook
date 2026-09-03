@@ -2804,6 +2804,354 @@ async def test_set_definition_lifecycle_refused_while_transferring(db):
 
 
 # ----------------------------------------------------------------------
+# resolve_definition (schedules-handoff PR-6, task 2)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_local_row_marks_solved(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    definition_id = _make_definition(db)
+    result_id = db.create_automation_result(
+        "local", definition_id, "run-1", "finding", "Found it", "Summary", "dk-1"
+    )
+
+    outcome = await svc.resolve_definition(definition_id, solved=True, result_id=result_id)
+
+    assert outcome.status == "saved"
+    row = db.get_automation_definition(definition_id)
+    assert row["resolution_state"] == "solved"
+    assert row["resolved_by"] == "local"
+    assert row["resolved_result_id"] == result_id
+    assert row["resolved_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_local_row_reopen_clears_fields(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    definition_id = _make_definition(db, resolution_state="solved")
+
+    outcome = await svc.resolve_definition(definition_id, solved=False)
+
+    assert outcome.status == "saved"
+    row = db.get_automation_definition(definition_id)
+    assert row["resolution_state"] == "open"
+    assert row["resolved_by"] is None
+    assert row["resolved_at"] is None
+    assert row["resolved_result_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_unknown_id_returns_error(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    outcome = await svc.resolve_definition("missing-id", solved=True)
+
+    assert outcome.status == "error"
+    assert "missing-id" in outcome.reason
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_server_row_online_mirrors_server_echo(db):
+    server_client = AsyncMock()
+    server_client.mark_automation_definition_solved.return_value = {
+        "id": "srv-def-1",
+        "owner_id": "server:1",
+        "family": "recurring_question",
+        "name": "Daily Q",
+        "lifecycle": "configured",
+        "resolution_state": "solved",
+        "resolved_at": "2026-09-02T00:00:00+00:00",
+        "resolved_by": "alice",
+        "resolved_result_id": "srv-res-1",
+    }
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+    definition_id = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
+
+    outcome = await svc.resolve_definition(definition_id, solved=True, result_id=None)
+
+    assert outcome.status == "saved"
+    server_client.mark_automation_definition_solved.assert_awaited_once_with(
+        "srv-def-1", result_id=None
+    )
+    row = db.get_automation_definition(definition_id)
+    assert row["resolution_state"] == "solved"
+    # Came from the server echo via the mirror upsert, not a local write
+    # (a local write would have stamped resolved_by="local").
+    assert row["resolved_by"] == "alice"
+    assert row["resolved_result_id"] == "srv-res-1"
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_server_row_reopen_online(db):
+    server_client = AsyncMock()
+    server_client.reopen_automation_definition.return_value = {
+        "id": "srv-def-1",
+        "owner_id": "server:1",
+        "family": "recurring_question",
+        "name": "Daily Q",
+        "lifecycle": "paused",
+        "resolution_state": "open",
+    }
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+    definition_id = _make_definition(
+        db, owner_id="server:1", server_id="srv-def-1", resolution_state="solved"
+    )
+
+    outcome = await svc.resolve_definition(definition_id, solved=False)
+
+    assert outcome.status == "saved"
+    server_client.reopen_automation_definition.assert_awaited_once_with("srv-def-1")
+    row = db.get_automation_definition(definition_id)
+    assert row["resolution_state"] == "open"
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_server_row_offline_returns_error_without_queuing(db):
+    """Plan ruling 2: unlike `set_definition_lifecycle`'s optimistic-write-
+    plus-queue pattern, there is NO offline queue for this action in v1 --
+    an unreachable seam must be an honest error, not a pending mutation."""
+    # No server_client given -> the default `SchedulingServerClient()` has
+    # no `notifications_service`, so any wrapper call raises
+    # ServerUnavailableError, exactly like a real disconnected server.
+    svc = SchedulingService(db=db, runtime_source="server:1")
+    definition_id = _make_definition(
+        db, owner_id="server:1", server_id="srv-def-1", resolution_state="open"
+    )
+
+    outcome = await svc.resolve_definition(definition_id, solved=True, result_id=None)
+
+    assert outcome.status == "error"
+    assert "server connection" in outcome.reason
+    row = db.get_automation_definition(definition_id)
+    assert row["resolution_state"] == "open"  # untouched
+    assert db.get_pending_mutations(primitive="automation_definition") == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_server_row_missing_server_id_returns_error(db):
+    svc = SchedulingService(
+        db=db, server_client=AsyncMock(), runtime_source="server:1"
+    )
+    definition_id = _make_definition(db, owner_id="server:1")  # no server_id set
+
+    outcome = await svc.resolve_definition(definition_id, solved=True)
+
+    assert outcome.status == "error"
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_translates_local_result_id_to_server_result_id(db):
+    """The facade receives Task 3's LOCAL result id (results are consumed
+    from the local mirror table) but the server has never heard of a
+    local UUID -- it must be translated to the mirrored result's
+    server_id before the network call."""
+    server_client = AsyncMock()
+    server_client.mark_automation_definition_solved.return_value = {
+        "id": "srv-def-1",
+        "owner_id": "server:1",
+        "family": "recurring_question",
+        "name": "Daily Q",
+        "resolution_state": "solved",
+    }
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+    definition_id = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
+    result_id = db.create_automation_result(
+        "server:1",
+        definition_id,
+        "run-1",
+        "finding",
+        "Found it",
+        "Summary",
+        "dk-1",
+        server_id="srv-res-1",
+    )
+
+    await svc.resolve_definition(definition_id, solved=True, result_id=result_id)
+
+    server_client.mark_automation_definition_solved.assert_awaited_once_with(
+        "srv-def-1", result_id="srv-res-1"
+    )
+
+
+# ----------------------------------------------------------------------
+# resolve_definition fix round 1 (task-2-review.md): transfer lock, an
+# unsynced result_id, and policy-vs-connectivity error wording.
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_refused_while_transferring(db):
+    """I7 on the resolution leg: a same-window "mark solved" mid-transfer
+    would be shipped by a create snapshot taken before this row's
+    resolution fields existed, then silently clobbered back to "open" by
+    the first mirror pull."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    definition_id = _make_definition(db)
+    db.set_transfer_state(
+        "automation_definition", definition_id, "to_server_pending", expected=(None,)
+    )
+
+    outcome = await svc.resolve_definition(definition_id, solved=True)
+
+    assert outcome.status == "error"
+    assert outcome.reason == scheduling_service_module._TRANSFER_READ_ONLY_REASON
+    row = db.get_automation_definition(definition_id)
+    assert row["resolution_state"] == "open"
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_resolves_normally_with_null_transfer_state(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    definition_id = _make_definition(db)
+    assert db.get_automation_definition(definition_id)["transfer_state"] is None
+
+    outcome = await svc.resolve_definition(definition_id, solved=True)
+
+    assert outcome.status == "saved"
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_resolves_normally_with_failed_transfer_state(db):
+    """`to_server_failed` re-armed locally -- not in `IN_FLIGHT_TRANSFER_
+    STATES`, so it must stay editable, same as `transfer_lock_reason`'s
+    own documented exception."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    definition_id = _make_definition(db)
+    db.set_transfer_state(
+        "automation_definition", definition_id, "to_server_failed", expected=(None,)
+    )
+
+    outcome = await svc.resolve_definition(definition_id, solved=True)
+
+    assert outcome.status == "saved"
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_local_result_without_server_id_fails_closed(db):
+    """Low finding 1: a result that exists locally but hasn't been synced
+    up yet must not forward its LOCAL uuid to the server as if it were a
+    server result id."""
+    server_client = AsyncMock()
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+    definition_id = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
+    result_id = db.create_automation_result(
+        "server:1", definition_id, "run-1", "finding", "Found it", "Summary", "dk-1"
+    )  # no server_id: not yet synced up
+
+    outcome = await svc.resolve_definition(definition_id, solved=True, result_id=result_id)
+
+    assert outcome.status == "error"
+    assert "not been synced to the server" in outcome.reason
+    server_client.mark_automation_definition_solved.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_unknown_result_id_fails_closed(db):
+    """Same fail-closed path for a `result_id` that isn't a local row at
+    all (never `None or {}`-falls-through to forwarding the raw id)."""
+    server_client = AsyncMock()
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+    definition_id = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
+
+    outcome = await svc.resolve_definition(
+        definition_id, solved=True, result_id="missing-result"
+    )
+
+    assert outcome.status == "error"
+    assert "not been synced to the server" in outcome.reason
+    server_client.mark_automation_definition_solved.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_policy_denial_gets_distinct_reason(db):
+    """Low finding 2: `_seam_failure_warning`'s wording split -- a
+    deterministic policy refusal reads differently from "no connection"."""
+    server_client = AsyncMock()
+    server_client.mark_automation_definition_solved.side_effect = ServerClientPolicyError(
+        "scheduler.automations.configure.server requires server mode."
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+    definition_id = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
+
+    outcome = await svc.resolve_definition(definition_id, solved=True)
+
+    assert outcome.status == "error"
+    assert "will not resolve by retrying" in outcome.reason
+    assert "requires a server connection" not in outcome.reason
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_archived_409_reports_the_server_reason(db):
+    """Live verification task 6 round 2, D9.
+
+    Releasing a definition to this device archives the server's copy, so
+    mark-solving a result that came from it returns the server's
+    non-retryable 409:
+
+        {"detail": {"code": "scheduled_task_definition_archived",
+                    "message": "Scheduled task definition is archived.",
+                    "retryable": false}}
+
+    `_call_with_retry` maps every 4xx except 404 to
+    `ServerClientValidationError` and never retries it, but the old catch
+    only special-cased the `ServerClientPolicyError` SUBCLASS, so this
+    fell through to the connectivity branch and told a plainly-connected
+    user to check their network. The reason must carry the server's own
+    explanation instead.
+    """
+    server_client = AsyncMock()
+    server_client.mark_automation_definition_solved.side_effect = (
+        ServerClientValidationError(
+            "API Error 409: Scheduled task definition is archived."
+        )
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+    definition_id = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
+
+    outcome = await svc.resolve_definition(definition_id, solved=True)
+
+    assert outcome.status == "error"
+    assert "archived" in outcome.reason
+    assert "will not resolve by retrying" in outcome.reason
+    assert "requires a server connection" not in outcome.reason
+    # A refusal is never optimistically written locally.
+    assert db.get_automation_definition(definition_id)["resolution_state"] == "open"
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_connectivity_failure_gets_generic_reason(db):
+    server_client = AsyncMock()
+    server_client.mark_automation_definition_solved.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+    definition_id = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
+
+    outcome = await svc.resolve_definition(definition_id, solved=True)
+
+    assert outcome.status == "error"
+    assert "requires a server connection" in outcome.reason
+    assert "will not resolve by retrying" not in outcome.reason
+
+
+# ----------------------------------------------------------------------
 # Qodo review, fix wave 2: per-owner recovery + atomic begin legs
 # ----------------------------------------------------------------------
 
@@ -2957,3 +3305,30 @@ def test_set_transfer_state_refused_cas_records_no_mutation(db):
     assert armed is False
     assert db.get_reminder_task(reminder_id)["transfer_state"] == "to_server_sent"
     assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_server_row_gone_reports_definitive_reason(db):
+    """A 404 from the server (row deleted server-side) is a DEFINITIVE
+    refusal, not a connectivity problem -- final-review finding 3: the
+    NotFound class isn't a ValidationError subclass, so without its own
+    branch the connectivity wording would blame the network."""
+    from tldw_chatbook.Scheduling.services.server_client import (
+        ServerClientNotFoundError,
+    )
+
+    client = AsyncMock()
+    client.mark_automation_definition_solved.side_effect = ServerClientNotFoundError(
+        "definition not found"
+    )
+    svc = SchedulingService(db=db, server_client=client, runtime_source="server:1")
+    definition_id = _make_definition(
+        db, owner_id="server:1", server_id="srv-def-404", resolution_state="open"
+    )
+
+    outcome = await svc.resolve_definition(definition_id, solved=True)
+
+    assert outcome.status == "error"
+    assert "no longer has this automation" in outcome.reason
+    assert "server connection" not in outcome.reason
+    assert db.get_automation_definition(definition_id)["resolution_state"] == "open"

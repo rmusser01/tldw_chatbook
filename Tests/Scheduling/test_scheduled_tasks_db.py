@@ -43,8 +43,9 @@ def test_get_schema_version(db: ScheduledTasksDB) -> None:
     # v2 added missed_count (task-18937); v3 adds timeout_seconds
     # Full chain: v0..v3 as before; v4 = automation runs/results
     # (schedules-handoff §4, dev); v5 = scheduled_task_runs ledger
-    # (task-26026); v6 = task_incidents (task-26027).
-    assert db.get_schema_version() == 6
+    # (task-26026); v6 = task_incidents (task-26027);
+    # v7 = automation_results server_id unique index (schedules-handoff PR-6 task 1).
+    assert db.get_schema_version() == 7
 
 
 def test_create_and_get_reminder_task(db: ScheduledTasksDB) -> None:
@@ -1742,6 +1743,100 @@ def test_upsert_definitions_skips_item_missing_id(tmp_path):
     assert db.list_automation_definitions(owner_id="server:42") == []
 
 
+def test_upsert_definitions_carries_resolution_fields_through(tmp_path):
+    """PR-6 task 2: `resolution_state`/`resolved_at`/`resolved_by`/
+    `resolved_result_id` must flow through the server-wins mirror like any
+    other field -- these columns existed since v4 with zero code touching
+    them until this task; pin that the generic upsert already covers them
+    (via `_AUTOMATION_DEFINITION_COLUMNS`) on both insert and update."""
+    db = _mk_db(tmp_path)
+    item = _definition_item(
+        resolution_state="solved",
+        resolved_at="2026-09-01T12:00:00+00:00",
+        resolved_by="alice",
+        resolved_result_id="srv-res-1",
+    )
+    db.upsert_automation_definitions_from_server("server:42", [item])
+    row = db.list_automation_definitions(owner_id="server:42")[0]
+    assert row["resolution_state"] == "solved"
+    assert row["resolved_at"] == "2026-09-01T12:00:00+00:00"
+    assert row["resolved_by"] == "alice"
+    assert row["resolved_result_id"] == "srv-res-1"
+
+    # Server-wins on update too: a later reopen echo clears them back.
+    db.upsert_automation_definitions_from_server(
+        "server:42",
+        [
+            _definition_item(
+                resolution_state="open",
+                resolved_at=None,
+                resolved_by=None,
+                resolved_result_id=None,
+            )
+        ],
+    )
+    row = db.get_automation_definition(row["id"])
+    assert row["resolution_state"] == "open"
+    assert row["resolved_at"] is None
+    assert row["resolved_by"] is None
+    assert row["resolved_result_id"] is None
+
+
+# ----------------------------------------------------------------------
+# set_definition_resolution (schedules-handoff PR-6, task 2)
+# ----------------------------------------------------------------------
+
+
+def test_set_definition_resolution_marks_solved(tmp_path):
+    db = _mk_db(tmp_path)
+    definition_id = db.create_automation_definition(
+        owner_id="local", family="recurring_question", name="Daily Q"
+    )
+    result_id = db.create_automation_result(
+        "local", definition_id, "run-1", "finding", "Found it", "Summary", "dk-1"
+    )
+
+    updated = db.set_definition_resolution(
+        definition_id, state="solved", result_id=result_id, resolved_by="local"
+    )
+
+    assert updated is True
+    row = db.get_automation_definition(definition_id)
+    assert row["resolution_state"] == "solved"
+    assert row["resolved_at"] is not None
+    assert row["resolved_by"] == "local"
+    assert row["resolved_result_id"] == result_id
+
+
+def test_set_definition_resolution_reopen_clears_all_three_fields(tmp_path):
+    """Mirrors the server's own `_reopen_definition`: an unconditional
+    clear regardless of whatever `result_id`/`resolved_by` the caller
+    passes for the open state."""
+    db = _mk_db(tmp_path)
+    definition_id = db.create_automation_definition(
+        owner_id="local", family="recurring_question", name="Daily Q"
+    )
+    db.set_definition_resolution(
+        definition_id, state="solved", result_id="res-1", resolved_by="local"
+    )
+
+    updated = db.set_definition_resolution(
+        definition_id, state="open", result_id="ignored", resolved_by="ignored"
+    )
+
+    assert updated is True
+    row = db.get_automation_definition(definition_id)
+    assert row["resolution_state"] == "open"
+    assert row["resolved_at"] is None
+    assert row["resolved_by"] is None
+    assert row["resolved_result_id"] is None
+
+
+def test_set_definition_resolution_unknown_id_returns_false(tmp_path):
+    db = _mk_db(tmp_path)
+    assert db.set_definition_resolution("missing", state="solved") is False
+
+
 # ----------------------------------------------------------------------
 # adopt_server_definition_identity (schedules-handoff PR-4, task 3)
 # ----------------------------------------------------------------------
@@ -2167,6 +2262,354 @@ def test_upsert_results_skips_item_missing_id(tmp_path):
     counts = db.upsert_automation_results_from_server("server:42", [item])
     assert counts == {"inserted": 0, "updated": 0, "skipped_dedupe": 0}
     assert db.list_automation_results("server:42") == []
+
+
+def test_upsert_results_double_pull_race_falls_into_update_or_skip_not_raise(tmp_path):
+    """v7's partial UNIQUE index on ``(owner_id, server_id)`` turns a genuine
+    double-pull race (two overlapping syncs each read the row as absent)
+    into an ``IntegrityError`` on the loser's INSERT. Proves the loser
+    recovers into the same update-or-skip path the "already present"
+    branch takes -- not re-raised, and not miscounted as a ``dedupe_key``
+    collision (a different UNIQUE constraint on the same table).
+    """
+    db = _mk_db(tmp_path)
+    db_path = str(tmp_path / "s.db")
+
+    real_get_connection = ScheduledTasksDB._get_connection
+    injected = {"done": False}
+
+    def _get_connection_with_injector(self):
+        conn = real_get_connection(self)
+
+        def _on_statement(sql):
+            if injected["done"] or "INSERT INTO automation_results (" not in sql:
+                return
+            injected["done"] = True
+            # Simulate a concurrent pull inserting the exact same server
+            # row between our SELECT-miss (already run) and this INSERT
+            # (about to run).
+            side_conn = sqlite3.connect(db_path)
+            try:
+                side_conn.execute(
+                    "INSERT INTO automation_results "
+                    "(id, server_id, owner_id, definition_id, run_id, kind, "
+                    "title, summary, dedupe_key, review_state, answer_mode, "
+                    "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        "raced-in-row", "srv-res-1", "server:42", "srv-def-1",
+                        "srv-run-1", "finding", "Raced title", "Raced summary",
+                        "raced-dedupe-key", "unread", "none",
+                        "2026-08-30T09:00:00+00:00", "2026-08-30T09:00:00+00:00",
+                    ),
+                )
+                side_conn.commit()
+            finally:
+                side_conn.close()
+
+        conn.set_trace_callback(_on_statement)
+        return conn
+
+    with mock.patch.object(
+        ScheduledTasksDB, "_get_connection", _get_connection_with_injector
+    ):
+        counts = db.upsert_automation_results_from_server(
+            "server:42",
+            [_result_item(review_state="read", reviewed_by="user:42")],
+        )
+
+    assert injected["done"], "the spy never saw the expected INSERT -- test setup is stale"
+    # Our INSERT lost the race (IntegrityError) but recovered: no raise,
+    # no dedupe_key miscount, and the review fields from our item applied
+    # onto the row the race was lost to.
+    assert counts == {"inserted": 0, "updated": 1, "skipped_dedupe": 0}
+    rows = db.list_automation_results("server:42")
+    assert len(rows) == 1
+    assert rows[0]["id"] == "raced-in-row"
+    assert rows[0]["review_state"] == "read"
+    assert rows[0]["reviewed_by"] == "user:42"
+
+
+def test_upsert_results_race_winner_vanished_before_refetch_is_counted_not_dropped(
+    tmp_path,
+):
+    """Extremely narrow window inside the double-pull race recovery: the
+    row that won the race (and made our INSERT fail) is itself deleted
+    before our recovery re-SELECT runs. The item must be counted
+    (``skipped_dedupe``, the nearest "not applied" bucket) rather than
+    silently dropped with no counter incremented at all.
+
+    Both injected statements below run on ``conn`` itself (the same
+    connection ``upsert_automation_results_from_server`` uses), not a
+    second connection: by the time the INSERT has failed, ``conn`` already
+    holds this transaction's write lock for the rest of the call (SQLite
+    keeps a failed statement's transaction open), so a genuinely separate
+    writer connection would block on that lock until the whole call
+    finishes -- the opposite of "vanished before re-fetch". Reentrant
+    ``conn.execute()`` calls from inside its own trace callback are safe
+    here: single-threaded, sequential, no cross-connection lock involved.
+    """
+    db = _mk_db(tmp_path)
+
+    real_get_connection = ScheduledTasksDB._get_connection
+    state = {"step": 0}
+
+    def _get_connection_with_injector(self):
+        conn = real_get_connection(self)
+
+        def _on_statement(sql):
+            if state["step"] == 0 and "INSERT INTO automation_results (" in sql:
+                state["step"] = 1
+                conn.execute(
+                    "INSERT INTO automation_results "
+                    "(id, server_id, owner_id, definition_id, run_id, kind, "
+                    "title, summary, dedupe_key, review_state, answer_mode, "
+                    "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        "raced-in-row", "srv-res-1", "server:42", "srv-def-1",
+                        "srv-run-1", "finding", "Raced title", "Raced summary",
+                        "raced-dedupe-key", "unread", "none",
+                        "2026-08-30T09:00:00+00:00", "2026-08-30T09:00:00+00:00",
+                    ),
+                )
+            elif (
+                state["step"] == 1
+                and "SELECT id FROM automation_results WHERE owner_id" in sql
+            ):
+                # set_trace_callback receives the EXPANDED statement (bound
+                # values substituted, not "?" placeholders), so this
+                # matches on a placeholder-free prefix. This is the
+                # recovery re-SELECT (the second occurrence of this query
+                # text for this item -- the first was the initial
+                # existence check, before the race). Delete the winning
+                # row right before it runs, so the re-SELECT finds
+                # nothing.
+                state["step"] = 2
+                conn.execute(
+                    "DELETE FROM automation_results WHERE id = ?",
+                    ("raced-in-row",),
+                )
+
+        conn.set_trace_callback(_on_statement)
+        return conn
+
+    with mock.patch.object(
+        ScheduledTasksDB, "_get_connection", _get_connection_with_injector
+    ):
+        counts = db.upsert_automation_results_from_server(
+            "server:42",
+            [_result_item(review_state="read", reviewed_by="user:42")],
+        )
+
+    assert state["step"] == 2, "the spy never saw both expected statements -- test setup is stale"
+    assert counts == {"inserted": 0, "updated": 0, "skipped_dedupe": 1}
+    assert db.list_automation_results("server:42") == []
+
+
+def test_list_automation_results_owner_none_spans_all_owners(tmp_path):
+    db = _mk_db(tmp_path)
+    db.create_automation_result("owner-a", "d1", "r1", "finding", "A", "S", "key-a")
+    db.create_automation_result("owner-b", "d1", "r2", "finding", "B", "S", "key-b")
+
+    rows = db.list_automation_results(None)
+    assert {row["owner_id"] for row in rows} == {"owner-a", "owner-b"}
+    assert len(rows) == 2
+
+
+def test_count_unread_results_owner_none_spans_all_owners(tmp_path):
+    db = _mk_db(tmp_path)
+    rid = db.create_automation_result("owner-a", "d1", "r1", "finding", "A", "S", "key-a")
+    db.create_automation_result("owner-b", "d1", "r2", "finding", "B", "S", "key-b")
+    assert db.count_unread_results(None) == 2
+
+    db.update_result_review(rid, "read")
+    assert db.count_unread_results(None) == 1
+    assert db.count_unread_results("owner-b") == 1
+
+
+def test_list_automation_results_orders_mixed_offset_timestamps_correctly(tmp_path):
+    """The parked F7 fix: server-mirrored rows copy ``created_at`` verbatim
+    (see ``upsert_automation_results_from_server``'s insert path, and
+    ``_serialize_result_fields``'s docstring on why it's an unenforced
+    assumption that they arrive UTC). A ``+05:00``-offset timestamp is
+    lexically GREATER than the same clock-digits with a ``+00:00`` offset
+    (the character after the ``+`` compares ``'5' > '0'``), even though
+    the true UTC instant it names is 5 hours EARLIER. Plain string
+    ``ORDER BY created_at DESC`` would put that row first; casting through
+    ``datetime(created_at)`` compares the real instants instead.
+    """
+    db = _mk_db(tmp_path)
+    counts_true_later = db.upsert_automation_results_from_server(
+        "owner-a",
+        [_result_item(
+            id="srv-true-later", dedupe_key="key-true-later",
+            # 2026-08-30T09:00:00 UTC -- the later instant.
+            created_at="2026-08-30T09:00:00+00:00",
+            updated_at="2026-08-30T09:00:00+00:00",
+        )],
+    )
+    counts_true_earlier = db.upsert_automation_results_from_server(
+        "owner-a",
+        [_result_item(
+            id="srv-true-earlier", dedupe_key="key-true-earlier",
+            # 2026-08-30T04:00:00 UTC -- genuinely EARLIER than the row
+            # above, but its raw string is lexically greater ("+05:00" >
+            # "+00:00" after identical clock digits), so string DESC
+            # would rank it first.
+            created_at="2026-08-30T09:00:00+05:00",
+            updated_at="2026-08-30T09:00:00+05:00",
+        )],
+    )
+    assert counts_true_later == {"inserted": 1, "updated": 0, "skipped_dedupe": 0}
+    assert counts_true_earlier == {"inserted": 1, "updated": 0, "skipped_dedupe": 0}
+
+    rows = db.list_automation_results("owner-a")
+    # True UTC order (newest first): the 09:00 UTC row, then the 04:00
+    # UTC row -- the opposite of what raw string DESC would produce.
+    assert [row["server_id"] for row in rows] == ["srv-true-later", "srv-true-earlier"]
+
+
+def test_list_automation_results_orders_z_suffix_against_plus_offset(tmp_path):
+    """The format mix the LIVE server actually produces (task 6, D4).
+
+    `_to_utc_iso` writes local rows as ``...+00:00``; a mirrored row
+    copies the server's ``...Z`` verbatim. Both denote UTC, so the suffix
+    only decides the comparison when everything before it is equal --
+    i.e. WITHIN one second -- and there ``'Z'`` (0x5A) beats ``'.'``
+    (0x2E), ranking the EARLIER whole-second row above a later
+    fractional one under raw text.
+
+    That is also why the ordering expression is ``strftime(...%f...)``
+    and not ``datetime()``: `datetime()` truncates to whole seconds, so
+    it collapses exactly the window where this can go wrong into a tie
+    broken by the UUID `id`. A pull that mirrors a page of results all
+    stamped in the same second is the normal case.
+    """
+    db = _mk_db(tmp_path)
+    db.upsert_automation_results_from_server(
+        "owner-a",
+        [_result_item(
+            id="srv-zulu-earlier", dedupe_key="key-zulu",
+            # 23:09:06.000 UTC -- the EARLIER instant, but its raw text
+            # sorts above the row below ('Z' > '.').
+            created_at="2026-09-02T23:09:06Z",
+            updated_at="2026-09-02T23:09:06Z",
+        )],
+    )
+    db.upsert_automation_results_from_server(
+        "owner-a",
+        [_result_item(
+            id="srv-offset-later", dedupe_key="key-offset",
+            created_at="2026-09-02T23:09:06.500000+00:00",
+            updated_at="2026-09-02T23:09:06.500000+00:00",
+        )],
+    )
+    rows = db.list_automation_results("owner-a")
+    # Both formats survive the mirror verbatim -- that mix is the premise.
+    stored = {row["server_id"]: row["created_at"] for row in rows}
+    assert stored["srv-zulu-earlier"].endswith("Z")
+    assert stored["srv-offset-later"].endswith("+00:00")
+
+    # Newest first by true instant, not by text.
+    assert [row["server_id"] for row in rows] == [
+        "srv-offset-later",
+        "srv-zulu-earlier",
+    ]
+
+
+def test_list_automation_results_orders_within_one_millisecond(tmp_path):
+    """`strftime('%f')` is MILLISECOND precision, but `_to_utc_iso` writes
+    MICROSECONDS -- so rows created inside the same millisecond tie on the
+    ordering key and used to fall through to the UUID `id`, i.e. arbitrary
+    order. A results burst written in one tick is exactly that case.
+
+    The raw `created_at` column is the intermediate tiebreak: at this
+    resolution the offsets are already normalized, so raw text order IS
+    instant order and the sub-millisecond digits decide.
+    """
+    db = _mk_db(tmp_path)
+    # All five land in the same `%f` bucket (...:06.123 -- `%f` ROUNDS to
+    # ms), differing only in microseconds. Five rather than two so the
+    # discarded `id DESC` fallback cannot reproduce this order by luck:
+    # local ids are UUID4, so a 2-row assertion would pass 1 time in 2 even
+    # unfixed, and 1 in 120 here.
+    micros = ["123100", "123200", "123300", "123400", "123499"]
+    for index, suffix in enumerate(micros):  # seeded oldest-first
+        stamp = f"2026-09-02T23:09:06.{suffix}+00:00"
+        db.upsert_automation_results_from_server(
+            "owner-a",
+            [_result_item(
+                id=f"srv-{index}", dedupe_key=f"key-{index}",
+                created_at=stamp, updated_at=stamp,
+            )],
+        )
+
+    rows = db.list_automation_results("owner-a")
+    assert [row["server_id"] for row in rows] == [
+        f"srv-{index}" for index in reversed(range(len(micros)))
+    ]
+    # The premise: the strftime key alone really does tie these two.
+    with closing(db._get_connection()) as conn:
+        keys = [
+            row[0]
+            for row in conn.execute(
+                "SELECT strftime('%Y-%m-%dT%H:%M:%f', created_at) "
+                "FROM automation_results"
+            )
+        ]
+    assert len(set(keys)) == 1, "test is stale: the rows no longer tie on %f"
+
+
+def test_count_automation_results_counts_every_state(tmp_path):
+    """The honest "of N" denominator for the capped inbox listing: it
+    counts EVERY result, not just unread ones (which is what made a
+    50-row listing disagree with the badge in the first place)."""
+    db = _mk_db(tmp_path)
+    rid = db.create_automation_result("owner-a", "d1", "r1", "finding", "A", "S", "key-a")
+    db.create_automation_result("owner-b", "d1", "r2", "finding", "B", "S", "key-b")
+    db.update_result_review(rid, "read")
+
+    assert db.count_automation_results(None) == 2
+    assert db.count_unread_results(None) == 1
+    assert db.count_automation_results("owner-a") == 1
+    assert db.count_automation_results(None, review_state="read") == 1
+
+
+def test_definition_mirror_normalizes_a_z_suffix_on_write(tmp_path):
+    """Definitions close the same hazard at the WRITE boundary instead
+    (task 6, D4 sweep), which is why `list_automation_definitions` still
+    orders on the raw string.
+
+    Every write routes through `_serialize_definition_fields` ->
+    `_to_utc_iso`, so a server's ``Z`` timestamp is stored as a
+    normalized ``+00:00`` one and the stored text order is the instant
+    order at full microsecond precision -- better than any SQLite date
+    function could give back.
+    """
+    db = _mk_db(tmp_path)
+    db.upsert_automation_definitions_from_server(
+        "owner-a",
+        [
+            {
+                "id": "srv-older-zulu",
+                "name": "Older",
+                "created_at": "2026-09-02T23:09:06.500360Z",
+            },
+            {
+                "id": "srv-newer-offset",
+                "name": "Newer",
+                "created_at": "2026-09-02T23:25:45.681750+00:00",
+            },
+        ],
+    )
+    rows = db.list_automation_definitions(owner_id="owner-a")
+    assert [row["created_at"] for row in rows] == [
+        "2026-09-02T23:09:06.500360+00:00",
+        "2026-09-02T23:25:45.681750+00:00",
+    ]
+    assert [row["server_id"] for row in rows] == [
+        "srv-older-zulu",
+        "srv-newer-offset",
+    ]
 
 
 def test_get_pending_mutation_for_local_id_returns_newest_across_owners(tmp_path):
