@@ -75,8 +75,9 @@ filter timings include the deliberate 200 ms debounce and Textual repaint.
 - iTerm2 native parity passes at 160×45. The walkthrough covers reciprocal MRU
   blank-Enter switching, the 11-row History fixture, visible chrome/controls,
   `workspace:roleplay` semantic search, and exact saved-destination activation.
-  It also produced a born-red native regression, the semantic-query repair in
-  `5206daca1`, and a post-fix 193-test focused rail. See
+  It also produced a born-red native regression, the core semantic-query repair
+  in `5206daca1`, the review hardening in `ca8a57990`, and a post-fix 199-test
+  focused rail. See
   `task-21351-iterm2-uat-2026-09-02.md` and its checksummed JPEG captures.
 - Windows Terminal parity remains blocked by TASK-20937.6.
 

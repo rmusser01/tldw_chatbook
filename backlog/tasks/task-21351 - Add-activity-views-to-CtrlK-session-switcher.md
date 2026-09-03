@@ -4,7 +4,7 @@ title: Add activity views to Ctrl+K session switcher
 status: In Progress
 assignee: []
 created_date: '2026-08-23 22:37'
-updated_date: '2026-09-02 21:36'
+updated_date: '2026-09-02 21:57'
 labels: []
 dependencies:
   - TASK-20937
@@ -114,4 +114,6 @@ Remaining closeout gate: parent AC #10 equal-cell native terminal parity. iTerm2
 2026-09-02 CI follow-up: the Linux UI-ready census measured 973/972 while repeated macOS runs measured 970-971/972. Root cause was the new receipt coordinator implementation module importing during Console bridge mount. Added a thread-safe lazy proxy in the already-resident ConsoleRuntime and pinned console_activity_receipts as absent at UI readiness, so first switcher or settlement use constructs the same service without spending first-paint module budget. Verification: the born-red census now passes at 970/972 locally, all 23 PR performance guards pass, and 135 receipt/switcher/runtime ownership tests pass. No new ADR is required; the fix follows the existing ADR-097 ratchet policy and preserves ADR-085 ownership.
 
 2026-09-02 native iTerm2 UAT: completed the macOS equal-cell walkthrough at 160x45. Reciprocal MRU blank Enter, History fit/grouping, and exact saved-destination activation passed. The walkthrough found and drove the repair of History workspace semantics: `workspace:roleplay` had been forwarded to conversation FTS even though workspace labels are not indexed. Rebased commit `5206daca1` separates the domain query from FTS, resolves labels to bounded workspace filters, handles the visible `Chats` global/default union, and consumes saved-state aliases. The post-fix focused rail passes 193 tests; scoped Ruff and `git diff --check` pass. Checksummed evidence is in `Docs/superpowers/qa/task-21351-console-switcher-activity/task-21351-iterm2-uat-2026-09-02.md`. Parent AC #10 remains open only for Windows Terminal evidence through TASK-20937.6. No new ADR is required; this enforces ADR-085's existing semantic-search boundary.
+
+2026-09-02 pre-PR review follow-up: reproduced and fixed all three Important findings. History now preserves Unicode literal storage queries, resolves ordinary and multi-word workspace labels while retaining neighboring title terms, and encodes arbitrarily many deduplicated workspace IDs through one parameterized `json_each(?)` value instead of an expanding placeholder list. Added controller-to-real-SQLite coverage for workspace-only, Unicode title, and Unicode message matches plus large-ID and service-boundary tests. Verification now passes 199 focused tests, scoped Ruff, and `git diff --check`. Fix: `ca8a57990`. Windows Terminal parity remains the only open parent criterion; no new ADR is required because the changes complete ADR-085's approved deterministic local search boundary.
 <!-- SECTION:NOTES:END -->
