@@ -1517,6 +1517,38 @@ def test_reconcile_marks_stale_running_as_interrupted(tmp_path):
     assert row["failure_reason"] == {"code": "interrupted"}
 
 
+def test_count_automation_runs_filters_by_definition(tmp_path):
+    db = _mk_db(tmp_path)
+    db.create_automation_run("local", "d1", 1, "manual", status="running")
+    db.create_automation_run("local", "d1", 1, "scheduled", status="completed")
+    db.create_automation_run("local", "d2", 1, "manual", status="running")
+
+    assert db.count_automation_runs("d1") == 2
+    assert db.count_automation_runs("d2") == 1
+    assert db.count_automation_runs("unknown-definition") == 0
+
+
+def test_count_automation_runs_can_scope_to_one_owner(tmp_path):
+    """schedules-redesign PR-1 final review F11: the count is scopable the
+    same way `list_automation_runs` already scopes its read.
+
+    The detail pane shows "Run count" and "Last run" in one group, and
+    `convert_row_to_server_mirror`'s "converted" path rewrites a row's
+    `owner_id` while keeping its local id -- an unscoped count beside a
+    scoped last-run rendered "Run count: 3" next to "Last run: Never run".
+    """
+    db = _mk_db(tmp_path)
+    db.create_automation_run("local", "d1", 1, "manual", status="running")
+    db.create_automation_run("server:srv-1", "d1", 1, "scheduled", status="completed")
+
+    assert db.count_automation_runs("d1") == 2, "unscoped still counts every owner"
+    assert db.count_automation_runs("d1", "local") == 1
+    assert db.count_automation_runs("d1", "server:srv-1") == 1
+    assert db.count_automation_runs("d1", "server:other") == 0
+    # Agrees with the sibling read the pane calls beside it.
+    assert len(db.list_automation_runs("local", definition_id="d1")) == 1
+
+
 # ----------------------------------------------------------------------
 # Automation results
 # ----------------------------------------------------------------------
@@ -2424,6 +2456,18 @@ def test_count_unread_results_owner_none_spans_all_owners(tmp_path):
     db.update_result_review(rid, "read")
     assert db.count_unread_results(None) == 1
     assert db.count_unread_results("owner-b") == 1
+
+
+def test_count_unread_results_filters_by_definition_id_across_owners(tmp_path):
+    db = _mk_db(tmp_path)
+    db.create_automation_result("owner-a", "d1", "r1", "finding", "A", "S", "key-a")
+    db.create_automation_result("owner-b", "d1", "r2", "finding", "B", "S", "key-b")
+    db.create_automation_result("owner-a", "d2", "r3", "finding", "C", "S", "key-c")
+
+    assert db.count_unread_results(None, definition_id="d1") == 2
+    assert db.count_unread_results(None, definition_id="d2") == 1
+    assert db.count_unread_results("owner-a", definition_id="d1") == 1
+    assert db.count_unread_results(None, definition_id="unknown-definition") == 0
 
 
 def test_list_automation_results_orders_mixed_offset_timestamps_correctly(tmp_path):

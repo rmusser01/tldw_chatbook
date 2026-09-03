@@ -24,6 +24,7 @@ from ....Scheduling.events import (
 )
 from ....Scheduling.models import ReminderTask, ScheduledTask, ScheduleKind, TaskStatus
 from ....Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
+from ....Widgets.detail_value_row import DetailGroup, DetailValueRow
 from ..destination_recovery import DestinationRecoveryState
 
 
@@ -390,8 +391,72 @@ def _task_sync_label(task: ReminderTask | ScheduledTask) -> str:
     return "local (read-only projection)"
 
 
+def definition_cron_expression(schedule: dict[str, Any]) -> Any:
+    """An automation definition's cron string, under EITHER key.
+
+    The two writers disagree: this client writes `schedule["cron"]`
+    (`AutomationDefinitionForm`'s save payload), the real server sends
+    `schedule["expression"]` (recorded fixture
+    `Tests/Scheduling/fixtures/server_responses/
+    automation_definition_list.json`), and `_load_server_automations`
+    passes the payload through raw, stamping only `owner_id`.
+
+    Both readers of that field go through here (final review F1 + its
+    carry-forward), and it lives in this leaf module because the two are
+    in packages that cannot import each other: `definition_detail`'s "At"
+    row -- where a cron-only read rendered `At: -` for EVERY server-owned
+    definition -- and `AutomationDefinitionForm._prefill_from_row`, where
+    the same read was worse than cosmetic: editing a mirrored server-only
+    definition fell through to the form's default preset, so a save wrote
+    that default OVER the server's real schedule.
+
+    Args:
+        schedule: A definition's `schedule` dict, from either source.
+
+    Returns:
+        The cron string, or ``None``/empty when neither key carries one.
+    """
+    return schedule.get("cron") or schedule.get("expression")
+
+
+def owner_display_label(owner_id: Any) -> str:
+    """Prose owner label shared by BOTH detail panes (final review F6/F7).
+
+    ``"This device"`` for a locally-owned row, the server's own id for a
+    server-scoped one (``"server:srv-1"`` -> ``"srv-1"``) -- the
+    vocabulary the spec, the User Guide and the Automations table's own
+    Name-cell prefix already use. The reminder pane's `Runs on` row used
+    to render the raw metadata string instead (``local``, ``server:1 /
+    server <id>``), so the two panes spoke two dialects for the flagship
+    row of the redesign. One helper, one vocabulary -- settled before
+    PR-3 turns this row into the transfer dropdown.
+
+    `TaskInspector`'s Owner row deliberately keeps `_task_owner_label`'s
+    raw value: that pane is the metadata inspector, where the unprettied
+    owner/server ids are the point.
+
+    Args:
+        owner_id: A row's ``owner_id`` (any type tolerated -- anything
+            that is not a server-scoped string reads as local).
+
+    Returns:
+        ``"This device"``, or the server's own id.
+    """
+    # ADR-097: scheduler.queue stays off the boot census -- function-local
+    # import, same as `_queue_owner_suffix` below.
+    from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
+
+    if not is_server_scoped_owner(owner_id):
+        return "This device"
+    owner_id = str(owner_id)
+    return owner_id.split(":", 1)[1] if ":" in owner_id else owner_id
+
+
 def _task_owner_label(task: ReminderTask | ScheduledTask) -> str:
-    """Return an owner label for the task."""
+    """Return the RAW owner label for the task (TaskInspector's Owner row).
+
+    Prose-rendered surfaces use `owner_display_label` instead.
+    """
     owner = task.owner_id or "local"
     if isinstance(task, ReminderTask) and task.server_id:
         owner += f" / server {task.server_id}"
@@ -465,6 +530,68 @@ def _queue_owner_suffix(task: ReminderTask | ScheduledTask, *, compact: bool) ->
     return f" (server: {label})"
 
 
+#: spec §5's Frequency-group "Notifications" row (schedules-redesign PR-1,
+#: task 3). A reminder dispatch always writes an inbox notification and
+#: attempts a transient toast (`ReminderHandler.handle` ->
+#: `NotificationDispatchService.dispatch`, `Scheduling/scheduler/handlers/
+#: reminder_handler.py`) -- there is no per-reminder notification-channel
+#: config to read (survey §4), so this is a fixed label, never derived.
+_REMINDER_NOTIFICATIONS_LABEL = "Inbox + toast"
+
+
+def _reminder_runs_on_label(task: ReminderTask) -> str:
+    """'Runs on' row value (spec §5 Details group): the shared prose owner
+    label plus the existing in-flight transfer badge text, when a transfer
+    is running.
+
+    Final review F6/F7: this used to render `_task_owner_label`'s raw
+    metadata string (``local``), which neither matched the definitions
+    pane's ``This device`` nor the User Guide's own description of this
+    very row. Both panes now go through `owner_display_label`.
+    """
+    return owner_display_label(task.owner_id) + _transfer_row_suffix(task)
+
+
+def _reminder_repeat_label(task: ReminderTask) -> str:
+    """'Repeat' row value (Frequency group): the schedule kind -- the same
+    content the old Type row showed for a reminder, via the same helper
+    (`_humanize_schedule_kind`, unchanged).
+    """
+    return _humanize_schedule_kind(task.schedule_kind)
+
+
+def _reminder_at_label(task: ReminderTask) -> str:
+    """'At' row value (Frequency group): the full schedule summary -- the
+    same content the old Schedule row showed, via the same helper
+    (`_humanize_schedule`, unchanged). The task-3 brief requires reusing
+    the current field-formatting helpers verbatim rather than re-deriving
+    a cadence-only or time-only string from the cron.
+    """
+    return _humanize_schedule(task)
+
+
+def _reminder_timezone_label(task: ReminderTask) -> str:
+    """'Timezone' row value (Frequency group), reusing the same per-kind
+    timezone source `_humanize_schedule`'s own formatting already reads
+    from: `run_at`'s zone for one-time, the stored cron timezone for
+    recurring.
+    """
+    if task.schedule_kind == ScheduleKind.ONE_TIME:
+        return _format_timezone(task.run_at) if task.run_at is not None else "UTC"
+    return task.timezone or "UTC"
+
+
+def _reminder_last_fire_label(task: ReminderTask) -> str:
+    """'Last fire' row value (History group): last_run_at plus the recorded
+    outcome. Uses the underlying status (task-23101 review F5), not the
+    enabled-overlaid display status, so a disabled reminder's last real
+    outcome still shows here -- same discipline as `_update_missed_notice`.
+    """
+    if task.last_run_at is None:
+        return _format_last_run(task)  # "Never run"
+    return f"{_format_last_run(task)} — {_humanize_status(_underlying_status(task))}"
+
+
 def status_badge_text(status: TaskStatus) -> Text:
     """Return a styled Rich Text badge for use in a DataTable cell."""
     label = _humanize_status(status)
@@ -518,6 +645,15 @@ class TaskDetail(Vertical):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._current_task: ReminderTask | ScheduledTask | None = None
+        # schedules-redesign PR-1, task 3: reminder-only DetailValueRow
+        # refs, captured in compose() and refreshed in place by set_task
+        # (no recompose). None until first compose().
+        self._runs_on_row: DetailValueRow | None = None
+        self._repeat_row: DetailValueRow | None = None
+        self._at_row: DetailValueRow | None = None
+        self._timezone_row: DetailValueRow | None = None
+        self._last_fire_row: DetailValueRow | None = None
+        self._body_card: Static | None = None
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -538,22 +674,28 @@ class TaskDetail(Vertical):
                     classes="scheduling-detail-value",
                 ),
             )
-            yield Horizontal(
-                Static("Type:", classes="scheduling-detail-label"),
-                Static(
-                    "-",
-                    id="scheduling-task-detail-type",
-                    classes="scheduling-detail-value",
-                ),
-            )
-            yield Horizontal(
-                Static("Schedule:", classes="scheduling-detail-label"),
-                Static(
-                    "-",
-                    id="scheduling-task-detail-schedule",
-                    classes="scheduling-detail-value",
-                ),
-            )
+            # task-3 brief: the old combined Type/Schedule rows only apply
+            # to a `ScheduledTask` projection (watchlist_job/briefing_job)
+            # now -- reminders render Repeat/At/Timezone/Notifications
+            # through the Frequency `DetailGroup` below instead. `set_task`
+            # toggles this container's `.display` per task type.
+            with Vertical(id="scheduling-task-detail-legacy-fields"):
+                yield Horizontal(
+                    Static("Type:", classes="scheduling-detail-label"),
+                    Static(
+                        "-",
+                        id="scheduling-task-detail-type",
+                        classes="scheduling-detail-value",
+                    ),
+                )
+                yield Horizontal(
+                    Static("Schedule:", classes="scheduling-detail-label"),
+                    Static(
+                        "-",
+                        id="scheduling-task-detail-schedule",
+                        classes="scheduling-detail-value",
+                    ),
+                )
             yield Horizontal(
                 Static("Status:", classes="scheduling-detail-label"),
                 Static("-", id="scheduling-task-status-badge"),
@@ -574,6 +716,72 @@ class TaskDetail(Vertical):
                 id="scheduling-task-detail-missed",
                 classes="scheduling-detail-missed",
             )
+            # schedules-redesign PR-1, task 3 (spec §5 reminder column):
+            # Details/Frequency/History groups. Rows are read-only in this
+            # PR (plan ruling 1: `affordance` stays at its False default,
+            # no new bindings). `set_task` shows this container only for a
+            # `ReminderTask`; a `ScheduledTask` projection keeps the
+            # legacy Type/Schedule rows above instead.
+            with Vertical(id="scheduling-task-detail-groups"):
+                # Spec §5 wants the body text in a rounded card above the
+                # groups, exactly like the definitions pane's question
+                # card -- final review F10: it was never built, and
+                # `ReminderTask.body` was rendered nowhere. Same
+                # `markup=False` escape discipline (reminder bodies are
+                # user text); hidden entirely for a body-less reminder
+                # rather than showing an empty bordered box.
+                self._body_card = Static(
+                    "", id="scheduling-task-detail-body-card", markup=False
+                )
+                yield self._body_card
+                self._runs_on_row = DetailValueRow(
+                    "Runs on", "-", value_id="scheduling-detail-runs-on"
+                )
+                yield DetailGroup(
+                    self._runs_on_row,
+                    title="Details",
+                    id="scheduling-detail-group-details",
+                )
+                self._repeat_row = DetailValueRow(
+                    "Repeat", "-", value_id="scheduling-detail-repeat"
+                )
+                self._at_row = DetailValueRow(
+                    "At", "-", value_id="scheduling-detail-at"
+                )
+                self._timezone_row = DetailValueRow(
+                    "Timezone", "-", value_id="scheduling-detail-timezone"
+                )
+                notifications_row = DetailValueRow(
+                    "Notifications",
+                    _REMINDER_NOTIFICATIONS_LABEL,
+                    value_id="scheduling-detail-notifications",
+                )
+                yield DetailGroup(
+                    self._repeat_row,
+                    self._at_row,
+                    self._timezone_row,
+                    notifications_row,
+                    title="Frequency",
+                    id="scheduling-detail-group-frequency",
+                )
+                self._last_fire_row = DetailValueRow(
+                    "Last fire", "-", value_id="scheduling-detail-last-fire"
+                )
+                # Final review N2: labelled "Recent runs" pointing at a
+                # section whose own label is also "Recent runs" -- one of
+                # the two had to be renamed.
+                history_link_row = DetailValueRow(
+                    "Run history",
+                    "See list below",
+                    value_id="scheduling-detail-history-link",
+                )
+                yield DetailGroup(
+                    self._last_fire_row,
+                    history_link_row,
+                    title="History",
+                    collapsed=True,
+                    id="scheduling-detail-group-history",
+                )
             # TASK-26026: durable per-dispatch run history -- the whole
             # point is that run N-1 is recoverable, not just the latest.
             yield Static(
@@ -855,6 +1063,30 @@ class TaskDetail(Vertical):
         metadata.display = True
         lifecycle.display = isinstance(task, ReminderTask)
         transfer_row.display = isinstance(task, ReminderTask)
+
+        # schedules-redesign PR-1, task 3: the Details/Frequency/History
+        # groups are reminder-only (spec §5's reminder column); a
+        # `ScheduledTask` projection (watchlist_job/briefing_job) keeps the
+        # legacy Type/Schedule rows instead, since this regrammar does not
+        # touch projection rendering.
+        is_reminder = isinstance(task, ReminderTask)
+        self.query_one("#scheduling-task-detail-legacy-fields", Vertical).display = (
+            not is_reminder
+        )
+        self.query_one("#scheduling-task-detail-groups", Vertical).display = (
+            is_reminder
+        )
+        if is_reminder:
+            assert self._runs_on_row is not None, "set_task called before mount"
+            body = (task.body or "").strip()
+            self._body_card.update(body)
+            self._body_card.display = bool(body)
+            self._runs_on_row.update_value(_reminder_runs_on_label(task))
+            self._repeat_row.update_value(_reminder_repeat_label(task))
+            self._at_row.update_value(_reminder_at_label(task))
+            self._timezone_row.update_value(_reminder_timezone_label(task))
+            self._last_fire_row.update_value(_reminder_last_fire_label(task))
+
         if isinstance(task, ReminderTask):
             # Structural visibility only (spec §6, PR-5 task 7): Move to
             # server on any local row, Move to local on any server mirror,

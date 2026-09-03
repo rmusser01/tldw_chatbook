@@ -725,3 +725,53 @@ async def test_preview_renders_junk_occurrences_instead_of_crashing(local_servic
         assert "Valid." in str(
             screen.query_one("#automation-preview-text", Static).render()
         )
+
+
+@pytest.mark.asyncio
+async def test_edit_mode_prefills_a_server_shaped_cron_schedule(local_service):
+    """Final review F1 carry-forward: the wire's `schedule.expression`.
+
+    `_prefill_from_row` read `schedule["cron"]` only -- the key THIS
+    client's own writer emits. A definition authored on the server sends
+    `expression` instead, so editing a mirrored server-only definition
+    fell through to the form's one-time/blank default, and saving would
+    then write that default OVER the server's real schedule. That is a
+    silent overwrite, not a cosmetic gap, which is why it rides this PR.
+
+    Fed the repo's own RECORDED server payload rather than a hand-written
+    dict -- client-shaped fixtures are exactly what hid this.
+    """
+    import json
+    from pathlib import Path
+
+    row = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "Scheduling/fixtures/server_responses/automation_definition_list.json"
+        ).read_text()
+    )["items"][0]
+    # Assert the PREMISE: if the recorded payload ever grows a `cron` key,
+    # this test silently stops testing what it claims to.
+    assert row["schedule"] == {
+        "kind": "cron",
+        "expression": "0 9 * * 1-5",
+        "timezone": "UTC",
+    }
+    assert "cron" not in row["schedule"]
+
+    app = _FormHost(
+        local_service,
+        definition_row=row,
+        definition_id=row["id"],
+        available_owners=[("This device", "local")],
+        default_owner="local",
+    )
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        assert (
+            screen.query_one("#automation-schedule-kind", Select).value == "recurring"
+        ), "a server-shaped cron schedule must not land on the one-time default"
+        assert screen.query_one("#automation-cron", Input).value == "0 9 * * 1-5"
+        assert screen.query_one("#automation-timezone", Select).value == "UTC"
