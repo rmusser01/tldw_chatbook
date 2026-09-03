@@ -6,17 +6,27 @@ set -e
 # Configuration
 APP_NAME="tldw chatbook"
 DMG_NAME="tldw-chatbook"
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-# Get version from command line argument or read from version.py
+# Get version from command line argument or pyproject.toml.
 if [ -n "$1" ]; then
     VERSION="$1"
 else
-    # Try to read from version.py
-    VERSION_PY="${BASH_SOURCE%/*}/../../common/version.py"
-    if [ -f "$VERSION_PY" ]; then
-        VERSION=$(python3 -c "exec(open('$VERSION_PY').read()); print(VERSION)")
+    PYPROJECT_TOML="${SCRIPT_DIR}/../../../pyproject.toml"
+    if [ -f "$PYPROJECT_TOML" ]; then
+        VERSION=$(python3 - "$PYPROJECT_TOML" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+match = re.search(r'(?m)^version = "([^"]+)"', Path(sys.argv[1]).read_text())
+if match is None:
+    raise SystemExit("project.version not found")
+print(match.group(1))
+PY
+)
     else
-        echo "Error: No version specified and version.py not found"
+        echo "Error: No version specified and pyproject.toml not found"
         echo "Usage: $0 [VERSION]"
         exit 1
     fi
@@ -27,7 +37,6 @@ VOLUME_NAME="tldw chatbook ${VERSION}"
 echo "Building DMG for version: ${VERSION}"
 
 # Paths
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 BUILD_DIR="${SCRIPT_DIR}/../dist"
 APP_PATH="${BUILD_DIR}/${APP_NAME}.app"
 DMG_DIR="${BUILD_DIR}/dmg"
