@@ -24,6 +24,7 @@
 - Existing-server model IDs with unambiguous filesystem markers fail closed without display, logging, or copy; an interior `/` alone remains valid for namespace-style IDs.
 - The narrow cross-surface display allowlist does not prevent Lab from owning and rendering its executable/GGUF selection, PID, expert configuration, redacted command/arguments, or bounded sanitized diagnostics.
 - Existing explicit user endpoints remain authoritative; the canonical `8080` choice applies only when no explicit or configured value exists.
+- Preserve active Console endpoint precedence: session target, `TLDW_CONSOLE_LLAMA_CPP_BASE_URL`, `[console].llama_cpp_base_url_override`, configured provider endpoint, then the absent-value default. Restart omits only the process-local session target.
 - Keep this contract llama.cpp-specific until TASK-31201 proves it; do not introduce a universal local-runtime framework.
 
 ---
@@ -151,20 +152,31 @@ Specify that `process_alive` alone can render Starting or Loading model, never A
 
 - [ ] **Step 5: Choose the default-resolution and readiness contract**
 
-Record this precedence:
+Record the context-specific precedence rather than one shortened chain:
 
 ```text
-explicit user-entered or launch endpoint
-  -> exact current-session target
+Active Console:
+exact current-session target
+  -> TLDW_CONSOLE_LLAMA_CPP_BASE_URL
+  -> [console].llama_cpp_base_url_override
+  -> configured provider endpoint
+  -> canonical llama.cpp absent-value default http://127.0.0.1:8080
+
+Console restart:
+TLDW_CONSOLE_LLAMA_CPP_BASE_URL
+  -> [console].llama_cpp_base_url_override
   -> configured provider endpoint
   -> canonical llama.cpp absent-value default http://127.0.0.1:8080
 ```
 
 Also record:
 
+- an explicit Lab check or launch endpoint is authoritative for that Lab action; Use in Console installs it as the exact current-session target.
+- a new local launch with no explicit endpoint uses loopback `127.0.0.1:8080` and never treats a remote Console override as a bind target.
 - existing explicit `8001`, `9099`, LAN, HTTPS, and reverse-proxy-prefix endpoints remain valid and are not migrated or rewritten.
 - new Lab launch defaults to loopback `127.0.0.1:8080` only when the user has not supplied a value.
 - API ready requires a successful health-compatible probe and successful `/v1/models` response containing the selected exact admissible model ID: the reserved alias for a Lab-owned launch or an accepted non-path-identifying ID for an existing server.
+- before path classification, an existing-server model ID must be 1–120 Unicode code points, canonical-whitespace-equal, printable, and free of `Cc`, `Cf`, and `Cs` Unicode categories; invalid input fails closed without cleaning, truncation, display, copy, or logging.
 - a user-entered existing-server check is an explicit, exact-endpoint exception to ADR-002's configured-provider-only discovery rule; it does not enable ambient LAN scanning or background remote discovery.
 - a port collision may offer Connect to it only after that exact endpoint passes the llama.cpp-compatible health and model checks.
 
@@ -339,7 +351,7 @@ The `## Verification obligations` table must contain these rows:
 
 | Contract | Required future evidence |
 |---|---|
-| Canonical endpoint | Pure normalization/default-precedence tests in `Tests/Chat/test_provider_endpoint_contract.py` and Console settings tests |
+| Canonical endpoint | Pure normalization and context-specific active-session/restart/Lab precedence tests, including both existing Console override layers |
 | Process versus readiness | Lifecycle plus real loopback HTTP tests proving live-process/not-ready and model-ready transitions |
 | Stale-result fencing | Generation replacement tests for process exit, model edit, endpoint edit, cancellation, and recomposition |
 | Console adoption | Mounted Lab-to-Console test proving exact provider/base URL/model apply without restart |

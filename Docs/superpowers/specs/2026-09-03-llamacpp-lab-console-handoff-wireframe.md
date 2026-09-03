@@ -84,6 +84,12 @@ ID is offered or copied. Recovery says to configure `llama-server --alias` and c
 again without echoing the rejected value. A forward slash by itself remains valid
 for namespace-style model IDs such as `community/gemma-3-4b-it`.
 
+Before path classification, the endpoint-provided ID must be 1–120 Unicode code
+points, already use canonical whitespace, be printable, and contain no control,
+format/bidi-control, or surrogate character. Chatbook rejects unsafe values rather
+than cleaning or truncating them, and does so before selector, display, copy, log,
+descriptor, or adoption. The recovery message never echoes the rejected value.
+
 ## Verified handoff
 
 ```text
@@ -170,6 +176,7 @@ The provider catalog and Inspector collapse before the setup column. Nothing rel
 | Model rejected | llama.cpp started, but could not load this model. | View sanitized log, choose another model |
 | Health timeout | The process is running, but its API did not become ready within the expected time. | Keep waiting, view log, stop |
 | Saved endpoint differs | Console is saved to 192.168.1.20:8080. Use this local server for the current session only? | Use for session, cancel, make default |
+| Unsafe model identity | This server did not return a model name Chatbook can safely use. | Configure `llama-server --alias`, check again |
 
 ## Scope boundaries
 

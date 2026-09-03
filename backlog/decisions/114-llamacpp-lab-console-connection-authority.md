@@ -36,23 +36,30 @@ including `-a=...` and `--alias=...` attached-value forms; they cannot replace t
 reserved value or add another model alias. A Lab-owned endpoint is model-ready only
 when `/v1/models` reports that exact reserved alias.
 
-For an existing server, Chatbook preserves an accepted selected model ID exactly,
-but first classifies it without publishing it. An ID is path-identifying only when
-its raw text, viewed with surrounding ASCII whitespace removed for classification,
-has an unambiguous filesystem marker: a case-insensitive `file:` URI; a POSIX
-absolute, explicit relative, or home-relative prefix (`/`, `./`, `../`, or `~/`); a
-Windows drive-root prefix such as `C:\` or `C:/`; a UNC prefix (`\\` or `//`);
+For an existing server, Chatbook treats every endpoint-provided model ID as
+untrusted and validates it without publishing it. The candidate must be a string
+from 1 through 120 Unicode code points, equal to its own `" ".join(value.split())`
+canonical-whitespace form, be printable, and contain no character in Unicode
+categories `Cc`, `Cf`, or `Cs`. This rejects embedded controls, bidi controls,
+surrogates, line and paragraph separators, leading or trailing whitespace, and
+non-canonical whitespace. Chatbook rejects rather than cleans, collapses, or
+truncates an invalid candidate so the accepted identifier remains exact.
+
+Only a structurally safe candidate proceeds to path classification. An ID is
+path-identifying only when its raw text has an unambiguous filesystem marker: a
+case-insensitive `file:` URI; a POSIX absolute, explicit relative, or home-relative
+prefix (`/`, `./`, `../`, or `~/`); a Windows drive-root prefix such as `C:\` or
+`C:/`; a UNC prefix (`\\` or `//`);
 any backslash path separator; a `.` or `..` path segment; or a final path
 component ending in `.gguf` case-insensitively. An interior forward slash alone is
 not path-identifying, so ordinary namespace-style IDs such as `owner/model` remain
 valid.
 
-A path-identifying candidate never enters a model selector, descriptor, handoff,
-display, copy payload, or log. If the selected existing-server identity is
-path-identifying, verification fails closed before descriptor creation or adoption
-and shows only a bounded recovery message directing the user to restart or configure
-`llama-server` with a non-path `--alias`, then check again. The rejected value is
-never interpolated into that message.
+A structurally unsafe or path-identifying candidate never enters a model selector,
+descriptor, handoff, display, copy payload, or log. Verification fails closed before
+descriptor creation or adoption and shows only a bounded recovery message directing
+the user to restart or configure `llama-server` with a safe non-path `--alias`, then
+check again. The rejected value is never interpolated into that message.
 
 The descriptor uses `canonical_connection_identity` wherever a provider and endpoint
 must be compared. Its GGUF boundary remains governed by ADR-025: managed artifacts
@@ -176,17 +183,39 @@ accepted behavior.
 
 ## Default and compatibility policy
 
-Absent values resolve in this order:
+Endpoint authority is context-specific; one shortened chain must not replace these
+three orders.
+
+Active Console execution resolves:
 
 ```text
-explicit user-entered or launch endpoint
-  -> exact current-session target
+exact current-session target
+  -> TLDW_CONSOLE_LLAMA_CPP_BASE_URL
+  -> [console].llama_cpp_base_url_override
   -> configured provider endpoint
   -> canonical llama.cpp absent-value default http://127.0.0.1:8080
 ```
 
-New Lab launches default to loopback `127.0.0.1:8080` only when the user supplied no
-value. Existing explicit `8001`, `9099`, LAN, HTTPS, and reverse-proxy-prefix
+Console restart resolution omits the process-local session target but retains the
+remaining order:
+
+```text
+TLDW_CONSOLE_LLAMA_CPP_BASE_URL
+  -> [console].llama_cpp_base_url_override
+  -> configured provider endpoint
+  -> canonical llama.cpp absent-value default http://127.0.0.1:8080
+```
+
+An explicit Lab existing-server URL or launch host/port is authoritative for that
+Lab action. **Use in Console** installs the verified target as the exact current-
+session target, so it then precedes both existing override layers without mutating
+them. An empty Connect to existing server field may be suggested from the Console
+restart chain only after `resolve_provider_endpoint` accepts and canonicalizes the
+value. A new local **Start on this computer** with no explicit launch value
+uses loopback `127.0.0.1:8080`; it never reinterprets a Console environment,
+configuration, LAN, or HTTPS endpoint as a local bind instruction.
+
+Existing explicit `8001`, `9099`, LAN, HTTPS, and reverse-proxy-prefix
 endpoints remain valid and are neither migrated nor rewritten. Endpoint parsing,
 suffix removal, safe display, and equality use `resolve_provider_endpoint` and
 `canonical_connection_identity` rather than raw string comparison.
@@ -279,10 +308,18 @@ stop unrelated processes, alter active Console sessions, or rewrite defaults.
   paths each emit exactly one `--alias chatbook-llamacpp`, and that separated and
   equals-attached `-a` and `--alias` raw-argument forms are rejected before they can
   replace or duplicate it.
-- Existing-server tests must prove path-identifying IDs fail closed before selector,
-  descriptor, display, copy, log, or adoption; the recovery names `--alias` without
-  echoing a sentinel path. The same tests must accept ordinary namespace-style IDs
-  such as `owner/model` and preserve accepted IDs exactly.
+- Existing-server tests must prove empty, over-120-code-point, non-canonical-
+  whitespace, non-printable, `Cc`, `Cf`, `Cs`, line-separator, paragraph-separator,
+  and path-identifying IDs fail closed before selector, descriptor, display, copy,
+  log, or adoption; the recovery names `--alias` without echoing a sentinel value.
+  The same tests must accept ordinary namespace-style IDs such as `owner/model` and
+  preserve accepted IDs exactly.
+- Endpoint-precedence tests must separately prove active Console session target ->
+  `TLDW_CONSOLE_LLAMA_CPP_BASE_URL` ->
+  `[console].llama_cpp_base_url_override` -> configured provider endpoint -> `8080`,
+  and restart env override -> Console override -> provider endpoint -> `8080`. Lab
+  launch tests must prove an absent launch value uses local `8080` rather than
+  reinterpreting a remote Console override as a bind target.
 - Privacy tests must prove the descriptor, app-global state, logs, and Console
   metadata exclude executable/model paths, credentials, raw commands, and unbounded
   process output while Lab retains only its explicitly permitted bounded local
@@ -291,7 +328,7 @@ stop unrelated processes, alter active Console sessions, or rewrite defaults.
 
 | Contract | Required future evidence |
 |---|---|
-| Canonical endpoint | Pure normalization/default-precedence tests in `Tests/Chat/test_provider_endpoint_contract.py` and Console settings tests |
+| Canonical endpoint | Pure normalization and context-specific active-session/restart/Lab precedence tests, including both existing Console override layers |
 | Process versus readiness | Lifecycle plus real loopback HTTP tests proving live-process/not-ready and model-ready transitions |
 | Stale-result fencing | Generation replacement tests for process exit, model edit, endpoint edit, cancellation, and recomposition |
 | Console adoption | Mounted Lab-to-Console test proving exact provider/base URL/model apply without restart |

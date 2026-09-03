@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 12:46'
-updated_date: '2026-09-03 13:30'
+updated_date: '2026-09-03 14:28'
 labels:
   - llamacpp
   - lab
@@ -56,5 +56,5 @@ Reason: TASK-31200 changes the provider/runtime boundary, cross-screen state own
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Accepted ADR-114 to separate llama.cpp process ownership, HTTP and model readiness, active Console adoption, and explicit provider-default persistence. Selected the absent-value loopback default at port 8080, reserved a stable path-independent alias for Lab launches, made path-identifying existing-server model IDs fail closed, and scoped the cross-surface privacy allowlist while preserving bounded Lab-local diagnostics. Preserved ADR-025 GGUF authority and ADR-095 settings ownership and linked the verification obligations for TASK-31201 through TASK-31206. Modified the canonical ADR index, handoff wireframe, plan, and TASK-31200 metadata; no production code or tests changed.
+Accepted ADR-114 to separate llama.cpp process ownership, HTTP and model readiness, active Console adoption, and explicit provider-default persistence. Selected the absent-value loopback default at port 8080, reserved a stable path-independent alias for Lab launches, made path-identifying existing-server model IDs fail closed, and scoped the cross-surface privacy allowlist while preserving bounded Lab-local diagnostics. Review follow-up preserved active Console and restart precedence for TLDW_CONSOLE_LLAMA_CPP_BASE_URL and [console].llama_cpp_base_url_override, and required endpoint-provided model IDs to fail closed on empty, oversized, non-canonical-whitespace, non-printable, control, bidi/format-control, surrogate, line-separator, or path-identifying input before cross-surface projection. Preserved ADR-025 GGUF authority and ADR-095 settings ownership and linked the verification obligations for TASK-31201 through TASK-31206. Modified the canonical ADR index, handoff wireframe, plan, and TASK-31200 metadata; no production code or tests changed.
 <!-- SECTION:NOTES:END -->
