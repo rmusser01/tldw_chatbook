@@ -290,7 +290,47 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         """
         title_count = self.pager.title_count if self.pager is not None else self.canvas.count
         title = "Media" if title_count is None else f"Media ({title_count})"
-        yield Static(title, id="library-media-title")
+        select_mode = getattr(self.canvas, "select_mode", False)
+        fresh_zero = (
+            self.pager is not None
+            and title_count == 0
+            and not self.canvas.rows
+            and not select_mode
+            and not self.canvas.delete_receipt_count
+            and not self.stale_action_reason
+            and not self.mutation_action_reason
+            and not self.pager.status_copy
+            and not self.pager.retry_visible
+        )
+        # task-28243: the "Sets" picker opener lives on the TITLE row, not the
+        # action toolbar -- that toolbar already overflows the narrow items
+        # pane (task-28025) and one more button pushed a squeezed Button into
+        # rich's zero-width chop_cells crash (live-verified 2026-09-02). The
+        # title row carries ~9 chars in a min-width-40 pane, so both widgets
+        # always render at full width. Auto-width Static + fixed compact
+        # Button only (task-4023's render-safe grammar: no 1fr sibling).
+        # Hidden in select mode like the other list-level actions; on the
+        # fresh-empty page it is not composed at all -- that page pins
+        # exactly ONE recovery action (and display:none still matches DOM
+        # queries).
+        title_row = Horizontal(id="library-media-title-row")
+        title_row.styles.height = "auto"
+        with title_row:
+            title_static = Static(title, id="library-media-title")
+            # A Static defaults to 1fr inside a Horizontal and would swallow
+            # the whole row, pushing the button out of view (live-verified).
+            title_static.styles.width = "auto"
+            yield title_static
+            if not fresh_zero:
+                sets_btn = Button(
+                    "Sets",
+                    id="library-media-review-sets",
+                    classes="library-canvas-action",
+                    compact=True,
+                    tooltip="Resume, switch, or dismiss saved review sets.",
+                )
+                sets_btn.display = not select_mode
+                yield sets_btn
         filter_row = Horizontal(classes="ds-toolbar")
         filter_row.styles.height = "auto"
         with filter_row:
@@ -306,18 +346,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
             clear_filter.disabled = not bool(self.canvas.query)
             yield clear_filter
-        select_mode = getattr(self.canvas, "select_mode", False)
-        if (
-            self.pager is not None
-            and title_count == 0
-            and not self.canvas.rows
-            and not select_mode
-            and not self.canvas.delete_receipt_count
-            and not self.stale_action_reason
-            and not self.mutation_action_reason
-            and not self.pager.status_copy
-            and not self.pager.retry_visible
-        ):
+        if fresh_zero:
             yield Static(
                 self.canvas.empty_copy,
                 id="library-media-status",

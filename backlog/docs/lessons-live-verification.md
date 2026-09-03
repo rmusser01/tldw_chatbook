@@ -1859,3 +1859,26 @@ caught it either.
 string is safe; "this particular example survives" is not the same as "this surface is escaped". Be
 especially suspicious of generated prefixes — URLs, ids, scope labels — because whether they trip a
 markup parser depends on their first character, which is data, not code.
+
+## tmux SGR click columns must be counted in CELLS — BSD `awk index()`/`cut -c` count BYTES (review-set picker, task-28243, 2026-09-02)
+
+**What happened.** Live-verifying the review-set picker, clicks computed from
+`capture-pane` output via `awk '{ print index($0, "Dismiss") }'` (and slices
+via `cut -c`) reliably "missed": the modal closed but the DB showed the set
+never dismissed, three rounds in a row, while the same button worked via
+keyboard and `pilot.click`. That read as an app-side hit-region bug and burned
+a debugging round with region probes and app-log archaeology. The real cause:
+macOS/BSD `awk index()` and `cut -c` count **bytes**, and every multi-byte
+glyph earlier in the captured line (`▊` `✓` `—` `·` = 2–3 bytes each) inflated
+the computed column, so the SGR click (which addresses screen **cells**)
+landed ~6 cells right of the target — on the neighbouring 1fr button, whose
+"open" action closed the modal and made the state look untouched. A DB-oracle
+column bisect (`col=154` no, `col=150` fired) pinned it.
+
+**What to do.** Compute click columns with a character-aware tool — e.g. pipe
+the captured line through python `line.find(needle)` (see
+`scratchpad/click.sh` pattern: find by char index, then emit the SGR press +
+release from that) — and treat "the click closes the dialog but the action
+didn't happen" as a coordinates smell, not an app bug, whenever the row
+contains any non-ASCII glyph. Verify a suspected hit-region bug with the
+widget's own oracle (DB row, `pilot.click`) before touching app code.

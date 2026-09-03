@@ -209,6 +209,34 @@ item-specific empty state; it does not silently switch modes.
 | "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. |
 | "Move to trash" | Two-step, title-specific confirmation. Success selects the adjacent item and leaves a bounded Undo receipt; Trash remains the durable recovery path. |
 
+### Review sets
+
+A review set pins an ordered snapshot of media items so you can work through
+them one by one, with your place and progress saved between visits.
+
+- **Create** — **Review these** on the media list pins the whole filtered
+  result (in the current sort order, capped at 500 items with a notice when
+  trimmed); in Select mode, **Review selected** pins just the checked items in
+  list order. Creating a set activates it and opens its first item in the
+  Reader.
+- **Walk** — while a set is active the Reader footer shows your place ("2 of
+  14 · 1 reviewed"). `]` advances and marks the item you leave as reviewed;
+  `[` goes back without marking; `m` toggles the loaded item's reviewed mark;
+  a final `]` on the last item marks it done in place. **Escape** leaves the
+  Reader but keeps the set active — re-entering resumes at your cursor.
+  **R** (Exit review) deactivates the set without deleting it.
+- **Resume / switch / dismiss** — **Sets** on the media list title row opens
+  the saved-set picker: each row shows the set's name and live progress, with
+  the active set marked `✓`. Picking a set activates it (deactivating any
+  other) and lands at its saved cursor; picking a completed set reopens it.
+  **Dismiss** soft-deletes a set.
+- Deleted media items become skipped tombstones: progress counts only items
+  that still exist, and a set whose items were all removed reports "No items
+  to review" instead of completing.
+
+*Verified against feat/review-sets-p4 — 2026-09-02 (task-28240..28243: live
+end-to-end create → walk → exit → resume → dismiss pass in tmux).*
+
 ### Conversations
 
 Conversations use a fixed **20-item page**. The row list scrolls independently
@@ -307,7 +335,10 @@ The Media type chooser supports **Up/Down**, **Home/End**, and **Enter**;
 The Media grips accept **Enter** and **Space**. Arrow-key traversal moves the
 Items selection with a short settle delay; **Enter** loads immediately.
 **Escape** closes transient Reader state before moving outward through Items
-and Library. **Enter** submits the "Filter conversations… (Enter)", **Filter
+and Library. While a review set is active, the Reader adds **]** (next in
+set, marking the item you leave), **[** (previous, never marks), **m**
+(toggle reviewed), and **R** (exit review, keeping the set resumable); the
+footer shows these alongside your "X of M · N reviewed" progress. **Enter** submits the "Filter conversations… (Enter)", **Filter
 media**, and "Search content…" boxes. Global
 navigation keys live in the [guide index](../index.md).
 

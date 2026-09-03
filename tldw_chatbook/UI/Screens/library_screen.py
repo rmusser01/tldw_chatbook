@@ -42212,6 +42212,152 @@ class LibraryScreen(BaseAppScreen):
         if callable(notify):
             notify(message, severity=severity)
 
+    # -- review-set picker (task-28243) ---------------------------------------
+
+    @on(Button.Pressed, "#library-media-review-sets")
+    def handle_library_media_review_sets(self, event: Button.Pressed) -> None:
+        """Open the saved review-set picker (resume / switch / dismiss).
+
+        Args:
+            event: The "Sets" toolbar button press.
+        """
+        event.stop()
+        self.run_worker(
+            self._review_set_picker_worker(),
+            group="library_review_set",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _review_set_picker_worker(self) -> None:
+        """List saved sets, await one picker decision, and apply it.
+
+        One decision per open (lean v1): resume/switch loads the chosen set at
+        its cursor, dismiss soft-deletes it. Wrapped so a DB failure surfaces a
+        notice instead of a silent no-op (the worker runs with
+        ``exit_on_error=False``).
+        """
+        try:
+            service = self._review_set_service()
+            if service is None:
+                return
+            rows = await self._run_library_service_call(
+                self._collect_review_set_picker_rows, isolate_in_worker=True
+            )
+            decision = await self._push_review_set_picker(rows)
+            if decision is None:
+                return
+            from tldw_chatbook.Widgets.Library.library_review_set_picker import (
+                PICKER_DISMISS,
+                PICKER_OPEN,
+            )
+
+            action, set_id = decision
+            if action == PICKER_DISMISS:
+                await self._run_library_service_call(
+                    service.dismiss, set_id, isolate_in_worker=True
+                )
+                self._notify_review_set("Review set dismissed.")
+                # Dismissing the ACTIVE set must drop the Reader's set chrome
+                # -- without this the footer kept advertising "] next in set"
+                # after the set was gone (live-verified 2026-09-02).
+                self._sync_library_media_viewer_or_recompose()
+                return
+            if action != PICKER_OPEN:
+                return
+            landing = await self._run_library_service_call(
+                self._activate_review_set, set_id, isolate_in_worker=True
+            )
+            if landing is None:
+                self._notify_review_set(
+                    "All items in this set were removed.", severity="warning"
+                )
+                return
+            self._open_library_media_viewer(f"local:media:{landing}")
+        except Exception:
+            self._notify_review_set(
+                "Couldn't open review sets.", severity="error"
+            )
+
+    def _collect_review_set_picker_rows(
+        self,
+    ) -> list[tuple[str, str, str, bool]]:
+        """Build the picker's display rows with live progress (off the loop).
+
+        One liveness resolve covers the union of every listed set's backing
+        ids, so per-set progress shares a single chunked Media-DB query.
+        """
+        from tldw_chatbook.Library.review_set_state import build_picker_rows
+
+        service = self._review_set_service()
+        if service is None:
+            return []
+        sets = service.list_review_sets()
+        live_ids = self._review_set_live_ids(
+            item.backing_media_id
+            for review_set in sets
+            for item in review_set.items
+        )
+        return build_picker_rows(sets, lambda candidate: candidate in live_ids)
+
+    async def _push_review_set_picker(
+        self, rows: list[tuple[str, str, str, bool]]
+    ) -> tuple[str, str] | None:
+        """Push the picker modal and await its decision.
+
+        Returns:
+            ``("open", set_id)`` | ``("dismiss", set_id)``, or ``None`` on
+            cancel (or when the host cannot push modals).
+        """
+        push_screen_wait = getattr(self.app, "push_screen_wait", None)
+        if not callable(push_screen_wait):
+            return None
+        from tldw_chatbook.Widgets.Library.library_review_set_picker import (
+            LibraryReviewSetPickerDialog,
+        )
+
+        return await push_screen_wait(LibraryReviewSetPickerDialog(rows))
+
+    def _activate_review_set(self, set_id: str) -> int | None:
+        """Activate ``set_id`` and return its landing backing id (off-loop).
+
+        Reopens a completed set first (AC#2); activation deactivates any other
+        active set (the service's one-active invariant). An all-tombstoned set
+        is NOT activated -- the caller shows the empty notice instead (design
+        §7: an empty set is empty, never resumable).
+
+        Returns:
+            The live backing id at the set's resolved cursor, or ``None``.
+        """
+        from tldw_chatbook.Library.review_set_state import resolve_cursor
+
+        service = self._review_set_service()
+        if service is None:
+            return None
+        review_set = service.get_review_set(set_id)
+        if review_set is None:
+            return None
+        live_ids = self._review_set_live_ids(
+            item.backing_media_id for item in review_set.items
+        )
+        resolved = resolve_cursor(
+            review_set.items,
+            review_set.cursor,
+            lambda candidate: candidate in live_ids,
+        )
+        landing = {item.position: item for item in review_set.items}.get(resolved)
+        if landing is None or landing.backing_media_id not in live_ids:
+            return None
+        if review_set.completed_at is not None:
+            service.reopen(set_id)
+        service.activate(set_id)
+        if resolved != review_set.cursor:
+            # Persist the tombstone resolve (the walker does the same on
+            # resume) so a later restore of the deleted item cannot yank a
+            # subsequent resume back to the stale cursor (Qodo #2337).
+            service.set_cursor(set_id, resolved)
+        return landing.backing_media_id
+
     def _focus_library_media_items_pane(self) -> None:
         """Focus the Items pane at its most useful control (task-28004).
 
