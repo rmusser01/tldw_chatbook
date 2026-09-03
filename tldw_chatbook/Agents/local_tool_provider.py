@@ -134,6 +134,12 @@ LOCAL_ROOT_CHANGED_REFUSAL = (
 LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL = (
     "Private scratch space is unavailable; the tool was not run."
 )
+# TASK-28238 phase 1: fs_write CAS-injection stale-write guard (Task 3).
+# {old}/{new} are sha256[:8]/size, or the word "absent".
+LOCAL_STALE_WRITE_REFUSAL = (
+    "Stale write refused: {path} changed since you read it "
+    "(was {old}, now {new}). Re-read the file and retry."
+)
 PROMOTION_APPROVAL_REQUIRED = "A fresh exact Agent Lesson promotion approval is required; the file was not changed."
 PROMOTION_FOREGROUND_REQUIRED = (
     "Agent Lesson promotion requires the foreground primary; the file was not changed."
@@ -1552,11 +1558,28 @@ class LocalToolProvider:
                     else self._result_redaction_root
                 )
                 dispatch_started = True
+                # ruling 1 (TASK-28238 P1 T3): `clean_args` is read by the
+                # fs_read branch below BEFORE the fs_write branch's
+                # would-be reassignment; assigning to `clean_args` anywhere
+                # in this closure makes Python treat the name as local to
+                # the whole function, and that earlier read would then hit
+                # an unbound local. `dispatch_args` is a separate alias so
+                # the fs_read branch's `clean_args` reads stay closure
+                # reads of the enclosing scope's variable.
+                dispatch_args = clean_args
+                stale_guard = None
                 if name == "fs_read":
                     self._record_fs_read_observation(
                         clean_args,
                         authority.root if authority is not None else self._root,
                     )
+                elif name == "fs_write":
+                    stale_guard = self._fs_write_guard_injection(
+                        clean_args,
+                        authority.root if authority is not None else self._root,
+                    )
+                    if stale_guard is not None:
+                        dispatch_args = stale_guard[0]
                 try:
                     selected_spec = (
                         self._path_specs_by_alias[authority.alias][name]
@@ -1567,7 +1590,7 @@ class LocalToolProvider:
                         ok=True,
                         content=self._bounded_result(
                             redact_root_locator(
-                                selected_spec.handler(clean_args),
+                                selected_spec.handler(dispatch_args),
                                 redaction_root,
                             ),
                             invocation_id=name,
@@ -1583,6 +1606,25 @@ class LocalToolProvider:
                         provider_terminal=provider_terminal,
                     )
                 except WorkspaceToolExecutionError as exc:
+                    if (
+                        stale_guard is not None
+                        and "write precondition failed" in str(exc)
+                    ):
+                        provider_terminal = LocalProviderTerminal.RETURNED
+                        return LocalToolInvocationResult(
+                            result=ToolResult.blocked(
+                                self._stale_write_refusal(
+                                    str(clean_args.get("path", "")),
+                                    stale_guard[1],
+                                    stale_guard[2],
+                                )
+                            ),
+                            final_gate=gate.verdict,
+                            approval_consumed=gate.approval_consumed,
+                            reason_code=LocalToolInvocationReason.HANDLER_RETURNED,
+                            dispatch_started=True,
+                            provider_terminal=provider_terminal,
+                        )
                     provider_terminal = LocalProviderTerminal.RAISED
                     result = _workspace_execution_error_result(
                         exc,
@@ -1893,6 +1935,54 @@ class LocalToolProvider:
             return
         digest, size = hashed
         self._read_ledger.record_present(run_id, key, digest, size)
+
+    def _stale_write_refusal(self, shown_path: str, stamp, resolved: "Path") -> str:
+        """Build the AC#2 refusal naming the conflict; never raises."""
+
+        def _fmt(sha: "str | None", size: int) -> str:
+            return "absent" if sha is None else f"{sha[:8]}/{size}"
+
+        now = _hash_file(resolved)
+        new_text = "absent" if now is None else _fmt(now[0], now[1])
+        return LOCAL_STALE_WRITE_REFUSAL.format(
+            path=shown_path, old=_fmt(stamp.sha256, stamp.size), new=new_text
+        )
+
+    def _fs_write_guard_injection(
+        self, args: dict, root: "Path"
+    ) -> "tuple[dict, object, Path] | None":
+        """Return (args_with_cas, stamp, resolved) when the ledger arms fs_write.
+
+        None means dispatch unchanged: no stamp, refused path, explicit
+        model-supplied precondition, or a promotion call.
+        """
+        from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
+        from tldw_chatbook.Agents.run_context import current_run_id
+        from tldw_chatbook.Tools.local_tool_impls import (
+            LocalToolError,
+            resolve_workspace_path,
+        )
+
+        if "expected_sha256" in args or "expected_absent" in args:
+            return None
+        if _promotion_call_kind("fs_write", args) is not None:
+            return None
+        raw = args.get("path")
+        if not isinstance(raw, str) or not raw:
+            return None
+        try:
+            resolved = resolve_workspace_path(raw, Path(root).resolve(), intent="write")
+        except (LocalToolError, OSError, ValueError):
+            return None
+        stamp = self._read_ledger.stamp_for(current_run_id(), canonical_ledger_key(resolved))
+        if stamp is None:
+            return None
+        injected = dict(args)
+        if stamp.is_absent:
+            injected["expected_absent"] = True
+        else:
+            injected["expected_sha256"] = stamp.sha256
+        return injected, stamp, resolved
 
     def _root_is_valid(self) -> bool:
         """Never raise while revalidating an optional selected-root guard."""

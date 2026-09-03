@@ -3848,3 +3848,94 @@ def test_fs_read_of_refused_path_records_nothing(tmp_path):
     assert not result.ok
     # nothing recorded under this run at all
     assert provider._read_ledger._by_run.get("run-a") in (None, {})
+
+
+# --- TASK-28238 phase 1: fs_write staleness (CAS injection) ---
+
+
+def test_two_writer_race_refuses_second_writer(tmp_path):
+    """AC#4: A reads, B writes, A's write refuses naming the conflict."""
+    target = tmp_path / "shared.txt"
+    target.write_text("original\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        assert provider.invoke("local:fs_read", {"path": "shared.txt"}).ok
+    with use_run_id("run-b"):
+        assert provider.invoke(
+            "local:fs_write", {"path": "shared.txt", "content": "B's version\n"}
+        ).ok
+    with use_run_id("run-a"):
+        result = provider.invoke(
+            "local:fs_write", {"path": "shared.txt", "content": "A's version\n"}
+        )
+    assert not result.ok
+    # NOTE (ruling 2): ToolResult.blocked(...) stores the refusal on
+    # .error, not .content -- adapted from the brief's literal text.
+    text = str(result.error)
+    assert "Stale write refused" in text and "shared.txt" in text
+    # B's content survived; A did not clobber
+    assert target.read_text() == "B's version\n"
+
+
+@pytest.mark.xfail(reason="ledger update lands in Task 5", strict=False)
+def test_own_read_write_write_chain_never_false_positives(tmp_path):
+    target = tmp_path / "mine.txt"
+    target.write_text("v1\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        assert provider.invoke("local:fs_read", {"path": "mine.txt"}).ok
+        assert provider.invoke(
+            "local:fs_write", {"path": "mine.txt", "content": "v2\n"}
+        ).ok
+        assert provider.invoke(
+            "local:fs_write", {"path": "mine.txt", "content": "v3\n"}
+        ).ok
+    assert target.read_text() == "v3\n"
+
+
+def test_blind_write_proceeds_unchanged(tmp_path):
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        result = provider.invoke(
+            "local:fs_write", {"path": "new.txt", "content": "hello\n"}
+        )
+    assert result.ok
+    assert (tmp_path / "new.txt").read_text() == "hello\n"
+
+
+def test_absent_then_created_by_peer_refuses(tmp_path):
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        provider.invoke("local:fs_read", {"path": "soon.txt"})  # records ABSENT
+    with use_run_id("run-b"):
+        assert provider.invoke(
+            "local:fs_write", {"path": "soon.txt", "content": "B first\n"}
+        ).ok
+    with use_run_id("run-a"):
+        result = provider.invoke(
+            "local:fs_write", {"path": "soon.txt", "content": "A's create\n"}
+        )
+    assert not result.ok
+    assert "Stale write refused" in str(result.error)
+    assert (tmp_path / "soon.txt").read_text() == "B first\n"
+
+
+def test_model_supplied_precondition_wins_over_ledger(tmp_path):
+    import hashlib
+
+    target = tmp_path / "explicit.txt"
+    target.write_text("old\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        provider.invoke("local:fs_read", {"path": "explicit.txt"})
+    # peer changes the file
+    target.write_text("peer\n")
+    current = hashlib.sha256(target.read_bytes()).hexdigest()
+    with use_run_id("run-a"):
+        result = provider.invoke(
+            "local:fs_write",
+            {"path": "explicit.txt", "content": "mine\n", "expected_sha256": current},
+        )
+    # model's explicit (correct, current) precondition wins -> write proceeds
+    assert result.ok
+    assert target.read_text() == "mine\n"
