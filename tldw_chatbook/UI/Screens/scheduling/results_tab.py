@@ -270,8 +270,22 @@ class ResultsTab(Vertical):
         for result in results:
             table.add_row(
                 _result_kind_cell(result.get("kind", "")),
-                (result.get("title") or result.get("definition_id") or "Untitled")
-                + _result_owner_suffix(result),
+                # `Text`, not `str` (task 6 round 2, D8): `DataTable` runs
+                # string cells through `rich.text.Text.from_markup` -- a
+                # DIFFERENT parser from the detail pane's, with its own
+                # lowercase-tag regex. An LLM-written title carrying
+                # `[bold]` would be eaten here even though the detail pane
+                # escapes it correctly (round 1 filed exactly this as a
+                # known follow-up). A `Text` is passed through unparsed,
+                # so no escape is needed at all.
+                Text(
+                    str(
+                        result.get("title")
+                        or result.get("definition_id")
+                        or "Untitled"
+                    )
+                    + _result_owner_suffix(result)
+                ),
                 _format_result_created(result.get("created_at")),
                 _review_state_cell(result.get("review_state", "")),
                 key=result["id"],

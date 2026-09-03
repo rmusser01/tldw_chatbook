@@ -3094,6 +3094,46 @@ async def test_resolve_definition_policy_denial_gets_distinct_reason(db):
 
 
 @pytest.mark.asyncio
+async def test_resolve_definition_archived_409_reports_the_server_reason(db):
+    """Live verification task 6 round 2, D9.
+
+    Releasing a definition to this device archives the server's copy, so
+    mark-solving a result that came from it returns the server's
+    non-retryable 409:
+
+        {"detail": {"code": "scheduled_task_definition_archived",
+                    "message": "Scheduled task definition is archived.",
+                    "retryable": false}}
+
+    `_call_with_retry` maps every 4xx except 404 to
+    `ServerClientValidationError` and never retries it, but the old catch
+    only special-cased the `ServerClientPolicyError` SUBCLASS, so this
+    fell through to the connectivity branch and told a plainly-connected
+    user to check their network. The reason must carry the server's own
+    explanation instead.
+    """
+    server_client = AsyncMock()
+    server_client.mark_automation_definition_solved.side_effect = (
+        ServerClientValidationError(
+            "API Error 409: Scheduled task definition is archived."
+        )
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+    definition_id = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
+
+    outcome = await svc.resolve_definition(definition_id, solved=True)
+
+    assert outcome.status == "error"
+    assert "archived" in outcome.reason
+    assert "will not resolve by retrying" in outcome.reason
+    assert "requires a server connection" not in outcome.reason
+    # A refusal is never optimistically written locally.
+    assert db.get_automation_definition(definition_id)["resolution_state"] == "open"
+
+
+@pytest.mark.asyncio
 async def test_resolve_definition_connectivity_failure_gets_generic_reason(db):
     server_client = AsyncMock()
     server_client.mark_automation_definition_solved.side_effect = ServerUnavailableError(

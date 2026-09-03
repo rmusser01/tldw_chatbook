@@ -997,3 +997,32 @@ async def test_cancel_toast_does_not_promise_no_server_effect(transfer_db):
         assert notifications, "cancel must report its outcome"
         assert "nothing further will be sent" in notifications[0]
         assert "no server-side effect" not in notifications[0]
+
+
+@pytest.mark.asyncio
+async def test_transfer_confirm_dialog_renders_brackets_literally():
+    """Task 6's escaping saga, fourth surface.
+
+    The Move dialog's copy interpolates a user-authored definition/task
+    name and the server's own warning strings, and is rendered by a
+    Textual `Label` -> `Content.from_markup`, whose tokenizer consumes
+    ANY `[...]`. It was escaped with `rich.markup.escape`, which only
+    covers `[a-z#/@]...` tags -- so an uppercase token was dropped and a
+    lowercase one was safe, the exact split that hid the detail-pane bug
+    in round 1.
+
+    Asserted on the RENDERED label: `ConfirmationDialog.message` is the
+    pre-render string and would pass either way.
+    """
+    dialog = SchedulesWorkbench._transfer_confirm_dialog(
+        'Nightly [PR-6] digest',
+        "to_server",
+        ["Field [bold] does not transfer"],
+    )
+    app = ConsolidatedCSSApp()
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(dialog)
+        await pilot.pause()
+        rendered = str(pilot.app.screen.query_one(".dialog-message").render())
+        assert "Nightly [PR-6] digest" in rendered
+        assert "Field [bold] does not transfer" in rendered

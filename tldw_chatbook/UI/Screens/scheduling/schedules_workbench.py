@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
@@ -51,6 +50,11 @@ from ....UI.Screens.scheduling.conflicts_tab import ConflictsTab
 from ....UI.Screens.scheduling.results_tab import (
     ResultsTab,
     definition_for_result,
+    # NOT `rich.markup.escape`: this dialog copy is rendered by a
+    # Textual `Label` -> `Content.from_markup`, whose tokenizer eats ANY
+    # `[...]`, while rich's escape only covers `[a-z#/@]...` tags (task 6
+    # round 1). Same parser, same escape as the results detail pane.
+    escape_markup,
     index_definitions_by_id,
     solved_eligibility,
 )
@@ -847,13 +851,21 @@ class SchedulesWorkbench(BaseAppScreen):
         # once per render pass -- `_sync_responsive_workbench` (on_mount/
         # on_resize) always runs before this, so `self.size` is current.
         compact_owner_suffix = self.size.width <= SCHEDULES_COMPACT_WORKBENCH_MAX_WIDTH
-        rows: list[tuple[str, str, Text, str]] = [
+        rows: list[tuple[Text, str, Text, str]] = [
             (
-                ("● " if task.id in self._marked_ids else "")
-                + ("◇ " if _was_missed_while_away(task) else "")
-                + task.title
-                + _transfer_row_suffix(task)
-                + _queue_owner_suffix(task, compact=compact_owner_suffix),
+                # `Text`: the title is user-authored, so it must never be
+                # re-parsed as markup by the DataTable cell formatter
+                # (D8's class -- the owner suffix here happens to use
+                # parens and survived live, but `[bold]` in a reminder
+                # title would not have). The other two str cells are built
+                # from this module's own vocabulary, not outside text.
+                Text(
+                    ("● " if task.id in self._marked_ids else "")
+                    + ("◇ " if _was_missed_while_away(task) else "")
+                    + task.title
+                    + _transfer_row_suffix(task)
+                    + _queue_owner_suffix(task, compact=compact_owner_suffix)
+                ),
                 _task_type_label(task),
                 status_badge_text(_task_status(task)),
                 # Compact: same relative form as the detail pane, without
@@ -1850,12 +1862,26 @@ class SchedulesWorkbench(BaseAppScreen):
         self._automations = items
         table.clear()
         for definition in items:
+            # Every cell goes in as `Text`, never `str` (task 6 round 2,
+            # D8). `DataTable` runs string cells through `rich.text.Text.
+            # from_markup`, whose tag regex matches `\[[a-z#/@]...]` -- so
+            # a server row's own owner prefix, `[http://127.0.0.1:8020]
+            # ...`, was consumed whole and server automations rendered
+            # with NO ownership prefix while the pane's own count line
+            # still said "1 automation on the server". (The old
+            # `server:42` fixture value would have been eaten identically,
+            # so no fixture shape could have caught this.) The cell
+            # formatter returns a `Text` untouched, so nothing re-parses
+            # content that came from outside this module -- structural,
+            # rather than depending on picking the right escape for
+            # whichever parser consumes the cell, which is the mistake
+            # this saga has now made three times.
             table.add_row(
-                automation_name_cell(definition),
-                str(definition.get("family", "?")),
-                str(definition.get("lifecycle", "?")),
-                str(definition.get("health", "?")),
-                automation_execution_target_label(definition),
+                Text(automation_name_cell(definition)),
+                Text(str(definition.get("family", "?"))),
+                Text(str(definition.get("lifecycle", "?"))),
+                Text(str(definition.get("health", "?"))),
+                Text(automation_execution_target_label(definition)),
                 key=str(definition.get("id")),
             )
         row_keys = [str(definition.get("id")) for definition in items]
@@ -2087,10 +2113,14 @@ class SchedulesWorkbench(BaseAppScreen):
             # no microseconds or timezone noise in a table cell.
             stamp = created[:16].replace("T", " ") if created else "?"
             summary = str(event.get("summary") or "")
+            # `Text`, not `str` -- same D8 rule as the definitions table
+            # above. `summary` is free-form server text ("Run failed:
+            # ChatConfigurationError: ..."), the likeliest of all these
+            # cells to carry a bracket token.
             table.add_row(
-                stamp,
-                str(event.get("event_type") or "?"),
-                summary,
+                Text(stamp),
+                Text(str(event.get("event_type") or "?")),
+                Text(summary),
             )
         suffix = f" of {total}" if total > len(items) else ""
         self._update_static_content(

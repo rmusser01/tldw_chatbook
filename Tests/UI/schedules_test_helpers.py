@@ -275,3 +275,19 @@ def painted_at_own_center(host, widget) -> bool:
     except Exception:
         return False
     return target is widget or widget in list(target.ancestors)
+
+
+def rendered_row_cells(table, row_index: int = 0) -> list[str]:
+    """The cell text a `DataTable` will actually PAINT for one row.
+
+    Routes the stored row through the widget's own
+    `_get_row_renderables` -> `default_cell_formatter`, which is where a
+    `str` cell gets run through `rich.text.Text.from_markup` and a
+    bracket token can be silently eaten (task 6 round 2, D8).
+
+    `get_cell_at()` returns the STORED value and therefore passes whether
+    or not the content survives rendering -- the same self-confirming
+    shape as the round-1 `TabPane.label` badge test. Assert through here
+    whenever the point of the test is that content renders literally.
+    """
+    return [str(cell) for cell in table._get_row_renderables(row_index).cells]

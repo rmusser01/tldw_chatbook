@@ -25,7 +25,10 @@ from loguru import logger as loguru_logger
 from textual.widgets import DataTable
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from Tests.UI.schedules_test_helpers import MockSchedulingServiceMixin
+from Tests.UI.schedules_test_helpers import (
+    MockSchedulingServiceMixin,
+    rendered_row_cells,
+)
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.models import ReminderTask, ScheduleKind
 from tldw_chatbook.Scheduling.services import SchedulingService
@@ -102,6 +105,47 @@ async def test_queue_owner_suffix_hidden_at_compact_width():
         table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
         assert "(server: 1)" not in str(table.get_cell_at((0, 0)))
         assert "Nightly digest" in str(table.get_cell_at((0, 0)))
+
+
+class _BracketTitleService(MockSchedulingServiceMixin):
+    """Stub service whose reminder title carries a markup-shaped token."""
+
+    async def list_reminders(self):
+        return [
+            ReminderTask(
+                id="task-1",
+                title="Nightly [bold] digest",
+                owner_id="server:1",
+                schedule_kind=ScheduleKind.RECURRING,
+                cron="0 3 * * *",
+                timezone="UTC",
+            )
+        ]
+
+    async def list_tasks(self):
+        return await self.list_reminders()
+
+
+class _BracketTitleApp(ConsolidatedCSSApp):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.scheduling_service = _BracketTitleService()
+
+
+@pytest.mark.asyncio
+async def test_queue_title_renders_brackets_literally():
+    """Task 6 round 2, D8's class on the Queue table.
+
+    The owner suffix survived live only because it uses parentheses; a
+    user-authored title carrying a lowercase tag token would still have
+    been eaten by `DataTable`'s `rich.text.Text.from_markup` formatting
+    of string cells. Asserted on the painted cell, not the stored one.
+    """
+    async with _BracketTitleApp().run_test(size=(160, 42)) as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+        assert rendered_row_cells(table, 0)[0] == "Nightly [bold] digest (server: 1)"
 
 
 # ---------------------------------------------------------------------------

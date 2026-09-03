@@ -7,6 +7,7 @@ round, this device's own local-owned `recurring_question` definitions
 instead -- never the server client, and never both).
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -17,6 +18,7 @@ from Tests.UI.schedules_test_helpers import (
     MockSchedulingDB,
     MockSchedulingServiceMixin,
     MockServerClient,
+    rendered_row_cells,
 )
 from tldw_chatbook.Scheduling.services.server_client import (
     ServerClientValidationError,
@@ -209,9 +211,67 @@ async def test_server_rows_are_rebound_to_the_connection_owner_scope():
         ]
 
         table = workbench.query_one("#scheduling-automations-table", DataTable)
-        first_cell = str(table.get_cell_at((0, 0)))
+        first_cell = rendered_row_cells(table, 0)[0]
         assert first_cell == "[server-1] Morning brief"
         assert "This device" not in first_cell
+
+
+@pytest.mark.asyncio
+async def test_owner_prefix_and_bracket_name_render_literally():
+    """Live verification task 6 round 2, D8.
+
+    `DataTable` formats string cells with `rich.text.Text.from_markup`,
+    whose tag regex matches `\\[[a-z#/@]...]`. A real server id is a base
+    URL, so the Name cell reads `[http://127.0.0.1:8020] ...` -- `http`
+    starts with a lowercase letter, the whole prefix parsed as a markup
+    tag, and server rows rendered with NO ownership prefix at all while
+    the pane's count line still said "1 automation on the server".
+
+    Asserted on the PAINTED cells: `get_cell_at` returns the stored
+    string and passes either way. Note the old `server:42` fixture value
+    would have been eaten identically -- no fixture shape could have
+    caught this, only a render-level assertion.
+    """
+    server_client = AutomationsServerClient()
+    server_client.list_automation_definitions = AsyncMock(
+        return_value={
+            "items": [
+                {
+                    "id": "def-1",
+                    "owner_id": "1",
+                    # A name with a lowercase tag token, which the same
+                    # parser would eat independently of the prefix.
+                    "name": "Nightly [bold] digest",
+                    "family": "recurring_question",
+                    "lifecycle": "configured",
+                    "health": "ready",
+                    "input": {
+                        "provider": "custom-openai-api",
+                        # A lowercase tag token -- `[2.5]` would NOT
+                        # discriminate, rich only eats `[a-z#/@]...`.
+                        "model": "[deprecated] Qwen2.5",
+                    },
+                },
+            ],
+            "total": 1,
+        }
+    )
+    app = AutomationsTestApp(AutomationsMockService(server_client))
+    # The live shape: an active server id that IS a base URL.
+    app.runtime_policy = SimpleNamespace(
+        state=SimpleNamespace(active_server_id="http://127.0.0.1:8020")
+    )
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        table = pilot.app.screen.query_one(
+            "#scheduling-automations-table", DataTable
+        )
+
+        cells = rendered_row_cells(table, 0)
+        assert cells[0] == "[http://127.0.0.1:8020] Nightly [bold] digest"
+        # The Model column carries server-derived text too.
+        assert cells[4] == "custom-openai-api/[deprecated] Qwen2.5"
 
 
 @pytest.mark.asyncio
@@ -442,8 +502,8 @@ async def test_definitions_table_shows_the_model_column():
             "Health",
             "Model",
         ]
-        assert table.get_cell_at((0, 4)) == "anthropic/claude-x"
-        assert table.get_cell_at((1, 4)) == "auto"
+        assert rendered_row_cells(table, 0)[4] == "anthropic/claude-x"
+        assert rendered_row_cells(table, 1)[4] == "auto"
 
 
 # --- task-5 fix round: merged local + server listing ------------------------
@@ -465,10 +525,10 @@ async def test_local_automation_appears_with_recomputed_health():
         notice = workbench.query_one("#scheduling-automations-notice")
 
         assert table.row_count == 1
-        assert table.get_cell_at((0, 0)) == "[This device] Local digest"
+        assert rendered_row_cells(table, 0)[0] == "[This device] Local digest"
         # No `library_rag_search_service` on the bare test app -> capability_unavailable,
         # NOT the DB row's stored "execution_unavailable" placeholder.
-        assert table.get_cell_at((0, 3)) == "capability_unavailable"
+        assert rendered_row_cells(table, 0)[3] == "capability_unavailable"
         assert "1 on this device" in str(notice.content)
 
 
@@ -486,7 +546,7 @@ async def test_merged_list_shows_both_local_and_server_rows_with_owner_prefix():
         table = workbench.query_one("#scheduling-automations-table", DataTable)
 
         assert table.row_count == 3
-        names = [table.get_cell_at((i, 0)) for i in range(3)]
+        names = [rendered_row_cells(table, i)[0] for i in range(3)]
         assert names[0] == "[This device] Local one"
         assert names[1] == "[server-1] Morning brief"
         assert names[2] == "[server-1] Paused one"
@@ -513,7 +573,7 @@ async def test_offline_server_owned_row_is_listed_as_pending_sync():
         workbench = pilot.app.screen
         table = workbench.query_one("#scheduling-automations-table", DataTable)
 
-        names = [table.get_cell_at((i, 0)) for i in range(table.row_count)]
+        names = [rendered_row_cells(table, i)[0] for i in range(table.row_count)]
         assert names[0] == "[server-1 · pending sync] Queued digest"
         # Its `id` is the LOCAL one; editing must not treat it as a server
         # id and mirror it back as a second row.
@@ -618,7 +678,7 @@ async def test_refresh_after_local_save_shows_the_new_row():
         await pilot.pause()
 
         assert table.row_count == 1
-        assert table.get_cell_at((0, 0)) == "[This device] Just saved"
+        assert rendered_row_cells(table, 0)[0] == "[This device] Just saved"
 
 
 # --- task-5 fix round: edit affordance ---------------------------------------

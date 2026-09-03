@@ -24,6 +24,7 @@ import pytest
 from textual.widgets import DataTable, TabbedContent
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.schedules_test_helpers import rendered_row_cells
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.services import SchedulingService
 from tldw_chatbook.Scheduling.services.server_client import SchedulingServerClient
@@ -304,6 +305,36 @@ async def test_uppercase_bracket_tokens_survive_both_render_paths():
         )
         assert "unparsed" in degraded
         assert "[PR-6]" in degraded
+
+
+@pytest.mark.asyncio
+async def test_table_title_cell_renders_brackets_literally():
+    """Task 6 round 2, D8 -- the follow-up round 1 filed and deferred.
+
+    The TABLE cell goes through a different parser from the detail pane:
+    `DataTable` formats string cells with `rich.text.Text.from_markup`,
+    which eats lowercase tags. So `[PR-6]` survived here in round 1 while
+    a `[bold]` in the same title would not have, even though the detail
+    pane escapes both correctly. Asserted on the painted cell, not the
+    stored one.
+    """
+    app = _BareResultsApp()
+    async with app.run_test() as pilot:
+        tab = pilot.app.query_one(ResultsTab)
+        await pilot.pause()
+        tab.populate(
+            [
+                _base_result(
+                    title="Digest [bold] and [PR-6]",
+                    owner_id="server:http://127.0.0.1:8020",
+                )
+            ]
+        )
+        await pilot.pause()
+        table = tab.query_one("#scheduling-results-table", DataTable)
+        assert rendered_row_cells(table, 0)[1] == (
+            "Digest [bold] and [PR-6] (server: http://127.0.0.1:8020)"
+        )
 
 
 @pytest.mark.asyncio

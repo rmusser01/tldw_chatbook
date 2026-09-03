@@ -1517,12 +1517,25 @@ class SchedulingService:
                 response = await self.server_client.reopen_automation_definition(
                     server_id
                 )
-        except ServerClientPolicyError as exc:
-            # A deterministic, pre-network policy refusal -- retrying
-            # cannot fix it. Same wording split `_seam_failure_warning`
-            # already uses for `preview_definition`'s seam failures.
+        except ServerClientValidationError as exc:
+            # Every DEFINITIVE refusal, not just the pre-network policy
+            # one (`ServerClientPolicyError` is a subclass, so widening
+            # the catch subsumes it -- the same policy-vs-connectivity
+            # split `_server_refused_outcome` already applies to
+            # save_definition, and the PR-4 wave before it).
+            #
+            # `server_client._call_with_retry` maps every 4xx except 404
+            # to this class and never retries it. Live (task 6 round 2,
+            # D9), releasing a definition to this device archives the
+            # server's copy, and mark-solving it then returns a 409
+            # `scheduled_task_definition_archived` with `retryable:
+            # false` -- which the old narrow catch let fall through to
+            # the connectivity branch below, telling a plainly-connected
+            # user to check their network while the real reason sat in
+            # the response body. That release-then-solve path is the flow
+            # immediately preceding this action, not a contrived one.
             logger.warning(
-                "resolve_definition refused by policy for {definition_id} "
+                "resolve_definition refused by the server for {definition_id} "
                 "(server row {server_id}): {exc}",
                 definition_id=definition_id,
                 server_id=server_id,

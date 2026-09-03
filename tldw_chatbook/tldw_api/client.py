@@ -1369,6 +1369,29 @@ class TLDWAPIClient:
                         error_detail = f"Validation Error: {response_data['detail'][0].get('msg', '')} for field '{'.'.join(map(str, response_data['detail'][0].get('loc', [])))}'"
                     elif isinstance(response_data["detail"], str):
                         error_detail = response_data["detail"]
+                    elif isinstance(response_data["detail"], dict):
+                        # Structured refusal: tldw_server returns
+                        # `{"detail": {"code", "message", "details",
+                        # "retryable"}}` for its deterministic 4xx
+                        # refusals. Without this branch `error_detail`
+                        # stayed the raw httpx text ("Client error '409
+                        # Conflict' for url ... For more information
+                        # check: https://developer.mozilla.org/..."), so
+                        # the server's own explanation was dropped on the
+                        # floor and callers could only report a generic
+                        # failure -- exactly what made a 409
+                        # `scheduled_task_definition_archived` surface to
+                        # the user as "this action requires a server
+                        # connection" (schedules task 6 round 2, D9).
+                        # `message` is the human sentence, `code` the
+                        # machine token; prefer the former, fall back to
+                        # the latter, and only then to the raw text.
+                        detail_obj = response_data["detail"]
+                        error_detail = str(
+                            detail_obj.get("message")
+                            or detail_obj.get("code")
+                            or error_detail
+                        )
             except ValueError:
                 pass  # Ignore if response is not JSON or detail not found
 
