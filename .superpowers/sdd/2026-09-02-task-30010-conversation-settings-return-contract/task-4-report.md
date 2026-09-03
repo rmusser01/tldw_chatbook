@@ -1074,3 +1074,38 @@ The Console clears source ownership only after a true atomic result, never
 serializes an opaque claim, and does not retain a terminal cleanup obligation.
 Normal and covered cancellation preserve exactly one draft owner. No controller
 ledger, backlog status, task state, schema, generalized lesson, or ADR changed.
+
+## Round-10 review fix
+
+Resolved the Minor timing-sensitive test oracle without changing production
+behavior. After the restored `ConsoleSettingsModal` becomes topmost, the
+missing-environment-credential journey now explicitly awaits the asynchronously
+mounted `#console-settings-return-status` row before querying its fixed copy.
+
+### Round-10 RED / characterization evidence
+
+The Round-9 combined return slice had already captured the defect by reaching
+the modal before `query_one("#console-settings-return-status")` could find the
+row; the exact test then passed in isolation. Repeating the unchanged oracle
+10 times for this fix also passed 10/10, confirming the review finding is an
+intermittent scheduling race rather than a deterministic product failure.
+
+### Round-10 GREEN evidence
+
+```text
+for i in {1..10}; do PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py::test_conversation_settings_return_missing_environment_credential_stays_blocked -q --tb=short --show-capture=no || break; done
+10/10 runs passed; each run emitted only the established RequestsDependencyWarning.
+
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/State/test_pending_handoff_store.py Tests/UI/test_console_native_chat_flow.py -k 'settle_transferred_claim or conversation_settings_return' -q --tb=short --show-capture=no
+38 passed, 402 deselected, 1 warning in 99.65s
+
+../../.venv/bin/python -m ruff check Tests/UI/test_console_native_chat_flow.py
+All checks passed!
+
+../../.venv/bin/python -m py_compile Tests/UI/test_console_native_chat_flow.py
+exit 0
+```
+
+Only `Tests/UI/test_console_native_chat_flow.py` changed outside this report and
+the progress ledger. No full suite was run. ADR required: no; this is test-only
+synchronization at the existing mounted-widget boundary.

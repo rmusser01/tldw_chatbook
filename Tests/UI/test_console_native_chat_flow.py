@@ -1307,6 +1307,7 @@ async def test_conversation_settings_return_missing_environment_credential_stays
         modal = host.screen_stack[-1]
 
         assert isinstance(modal, ConsoleSettingsModal)
+        await _wait_for_selector(modal, pilot, "#console-settings-return-status")
         readiness_copy = str(
             modal.query_one("#console-settings-readiness", Static).renderable
         )
