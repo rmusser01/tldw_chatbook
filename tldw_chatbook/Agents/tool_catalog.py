@@ -272,7 +272,9 @@ MERGE_AGENT_WORKTREE_SCHEMA = ToolSchema(
         "confirmation: 'apply' lands the changes as UNCOMMITTED edits for "
         "the user to review and commit themselves; 'merge' creates a real "
         "merge commit on the shared branch. The child must have finished "
-        "(check with check_agents or wait_agents first)."
+        "(check with check_agents or wait_agents first). Only handles "
+        "from THIS turn's spawns are available -- merge or discard before "
+        "the turn ends, or the worktree is left on disk for manual cleanup."
     ),
     parameters={
         "type": "object",
@@ -300,7 +302,10 @@ DISCARD_AGENT_WORKTREE_SCHEMA = ToolSchema(
     description=(
         "Permanently discard a FINISHED isolation=\"worktree\" sub-agent's "
         "changes -- deletes its worktree and branch. Its work is not "
-        "recoverable afterward. Requires the user's explicit confirmation."
+        "recoverable afterward. Requires the user's explicit confirmation. "
+        "Only handles from THIS turn's spawns are available -- merge or "
+        "discard before the turn ends, or the worktree is left on disk "
+        "for manual cleanup."
     ),
     parameters={
         "type": "object",

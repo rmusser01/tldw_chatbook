@@ -4136,3 +4136,119 @@ def test_discard_removes_worktree_branch_and_entry(db, git_repo):
     assert not wt.worktree_path.exists()
     assert wt.branch not in _git(git_repo, "branch", "--list", wt.branch)
     assert handle.handle_id not in service._agent_worktrees
+
+
+# -- review fix (Task 5): discard's guards are code-identical to merge's --
+# but were untested for unknown handle / non-terminal / deny -- and deny
+# must be pinned as side-effect-free (the worktree stays on disk, the
+# entry stays tracked), same as merge's own deny test above.
+
+
+def test_discard_unknown_handle_refuses(db, git_repo):
+    provider = _fs_local_provider(git_repo)
+    service, chat, _coordinator = make_fleet_service(
+        db, parent_replies=[], providers=(provider,)
+    )
+    chat.parent_replies.extend(
+        [fence(DISCARD_AGENT_WORKTREE_TOOL_NAME, {"handle_id": "nope"}), "done"]
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+        request_worktree_merge_confirm=lambda payload: {"allow": True},
+    )
+    assert outcome.status == RUN_DONE
+    results = _tool_results(db.get_run(run_id), DISCARD_AGENT_WORKTREE_TOOL_NAME)
+    assert results and all("no agent worktree" in r for r in results), results
+
+
+def test_discard_refuses_while_child_still_running(db, git_repo):
+    provider = _fs_local_provider(git_repo)
+    service, chat, coordinator = make_fleet_service(
+        db, parent_replies=[], providers=(provider,)
+    )
+    handle = coordinator.reserve("child task", None)  # left "running"
+    wt = agent_worktree.create_agent_worktree(git_repo, handle.handle_id)
+    assert isinstance(wt, agent_worktree.AgentWorktree)
+    chat.parent_replies.extend(
+        [
+            _seed_worktree_reply(
+                service, handle.handle_id, wt, DISCARD_AGENT_WORKTREE_TOOL_NAME
+            ),
+            "done",
+        ]
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+        request_worktree_merge_confirm=lambda payload: {"allow": True},
+    )
+    assert outcome.status == RUN_DONE
+    results = _tool_results(db.get_run(run_id), DISCARD_AGENT_WORKTREE_TOOL_NAME)
+    assert results and all("still running" in r for r in results), results
+    # Refused before touching anything.
+    assert wt.worktree_path.is_dir()
+
+
+def test_discard_deny_refuses_and_leaves_worktree_untouched(db, git_repo):
+    provider = _fs_local_provider(git_repo)
+    service, chat, coordinator = make_fleet_service(
+        db, parent_replies=[], providers=(provider,)
+    )
+    handle = coordinator.reserve("child task", None)
+    coordinator.finish(handle.handle_id, RUN_DONE)
+    wt = agent_worktree.create_agent_worktree(git_repo, handle.handle_id)
+    chat.parent_replies.extend(
+        [
+            _seed_worktree_reply(
+                service, handle.handle_id, wt, DISCARD_AGENT_WORKTREE_TOOL_NAME
+            ),
+            "done",
+        ]
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+        request_worktree_merge_confirm=lambda payload: {"allow": False},
+    )
+    assert outcome.status == RUN_DONE
+    results = _tool_results(db.get_run(run_id), DISCARD_AGENT_WORKTREE_TOOL_NAME)
+    assert results and all("declined" in r for r in results), results
+    # Side-effect-free: nothing was touched.
+    assert wt.worktree_path.is_dir()
+    assert wt.branch in _git(git_repo, "branch", "--list", wt.branch)
+    assert handle.handle_id in service._agent_worktrees
+
+
+def test_merge_refuses_without_a_local_provider(db, git_repo):
+    """The cheap `worktree_repo_root is None` refusal -- no fs_read
+    provider registered at all, so `_admit_agent_worktree`'s own
+    resolution pattern (reused here) finds nothing to merge into."""
+    service, chat, coordinator = make_fleet_service(db, parent_replies=[])
+    handle = coordinator.reserve("child task", None)
+    coordinator.finish(handle.handle_id, RUN_DONE)
+    wt = agent_worktree.create_agent_worktree(git_repo, handle.handle_id)
+    chat.parent_replies.extend(
+        [
+            _seed_worktree_reply(
+                service, handle.handle_id, wt, MERGE_AGENT_WORKTREE_TOOL_NAME
+            ),
+            "done",
+        ]
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+        request_worktree_merge_confirm=lambda payload: {"allow": True},
+    )
+    assert outcome.status == RUN_DONE
+    results = _tool_results(db.get_run(run_id), MERGE_AGENT_WORKTREE_TOOL_NAME)
+    assert results and all("no local filesystem provider" in r for r in results), results
