@@ -10749,9 +10749,7 @@ UPDATE db_schema_version
                 )
             else:
                 if isinstance(query_workspace_ids_by_term, (str, bytes)):
-                    raise InputError(
-                        "query_workspace_ids_by_term must be a sequence."
-                    )
+                    raise InputError("query_workspace_ids_by_term must be a sequence.")
                 normalized_query_workspace_ids_by_term = tuple(
                     normalize_workspace_ids(values, "query workspace ids") or ()
                     for values in query_workspace_ids_by_term
@@ -10806,9 +10804,7 @@ UPDATE db_schema_version
                 or any(normalized_query_workspace_ids_by_term)
                 or any(normalized_query_global_scopes)
             ):
-                raise InputError(
-                    "workspace union filters require scope_type='all'."
-                )
+                raise InputError("workspace union filters require scope_type='all'.")
             normalized_scope, normalized_workspace_id = self._normalize_scope(
                 scope_type, workspace_id
             )
@@ -10886,9 +10882,7 @@ UPDATE db_schema_version
                     "AND fts.messages_fts MATCH ?"
                     ")",
                 ]
-                params.extend(
-                    [f"%{term}%", self._fts_prefix_match_expression(term)]
-                )
+                params.extend([f"%{term}%", self._fts_prefix_match_expression(term)])
                 if len(normalized_query_terms) == 1:
                     query_clauses.append("id = ?")
                     params.append(term)
@@ -10899,9 +10893,7 @@ UPDATE db_schema_version
                     query_clauses.append(
                         "workspace_id IN (SELECT value FROM json_each(?))"
                     )
-                    params.append(
-                        json.dumps(workspace_term_ids, separators=(",", ":"))
-                    )
+                    params.append(json.dumps(workspace_term_ids, separators=(",", ":")))
                 clauses.append(f"({' OR '.join(query_clauses)})")
         elif normalized_query is not None:
             # Message-content matching goes through messages_fts (kept in

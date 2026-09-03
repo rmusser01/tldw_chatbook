@@ -379,9 +379,7 @@ async def test_history_plain_workspace_and_unicode_text_search_end_to_end(histor
         }
     )
     unicode_title_id = history_db.add_conversation({"title": "Straße release"})
-    unicode_message_id = history_db.add_conversation(
-        {"title": "Localization notes"}
-    )
+    unicode_message_id = history_db.add_conversation({"title": "Localization notes"})
     history_db.add_message(
         {
             "conversation_id": unicode_message_id,

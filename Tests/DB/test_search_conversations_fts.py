@@ -331,8 +331,7 @@ class TestCoherentConversationPages:
             }
         )
         workspace_ids = tuple(
-            [f"ws-{index}" for index in range(1_200)]
-            + ["", "ws-target", "ws-target"]
+            [f"ws-{index}" for index in range(1_200)] + ["", "ws-target", "ws-target"]
         )
 
         where_clause, params = db._conversation_search_filter(
