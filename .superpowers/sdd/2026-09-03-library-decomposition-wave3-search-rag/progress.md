@@ -37,3 +37,17 @@ recompose census 6/6 passed; preflight clean (5/5 checks); full `Tests/Architect
 re-run against the unmodified base. Recipe updated with new §17 (decision, reasoning,
 re-pin-at-move flow, measured rows). task-31203 AC#4 checked; task stays To Do
 (AC#1-3 out of scope). Full report: task-1-report.md.
+
+Task 1: review Needs Fixes (1 Important, 1 Minor) — the `--check-ac`/`--notes`
+backlog CLI call silently stripped task-31203's `## Renumbering provenance` section
+(the documented lessons-backlog-hygiene.md trap: CLI strips free-form sections /
+`--notes` replaces rather than appends; the diff-after-notes mitigation was skipped).
+Fix round 1: restored the section verbatim from base commit `2a90fa74c`, diffed the
+result against that base to confirm only `updated_date`/AC#4-tick/new Implementation
+Notes differ; re-ran and captured fresh command output for the round-4 anti-slack
+mutation (both the 51-over fail and 50-over boundary pass) per the Minor. No new
+lesson needed (already documented). Commit:
+`fix(backlog): restore task-31203 renumbering provenance stripped by the notes edit`.
+Task 1: implementer DONE (commit f5e675354; option (a), 12 controllers pinned 699-2023 lines, glob self-defending, 4-direction mutation); reviewer dispatching (sonnet)
+Task 1: note: dev-drift Architecture reds now at 15 (2 chat_screen + 12 Console/timer/worker/diagnostic) — baseline-health signal for repo owner at wave close
+Task 1: review Needs Fixes — mechanism verified exemplary (all mutations reproduced); 1 Important: backlog --notes edit stripped task-31203 Renumbering provenance (documented CLI trap, lessons-backlog-hygiene) — fix round 1/5 dispatched
