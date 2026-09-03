@@ -8,7 +8,7 @@
 ; Constants
 !define PRODUCT_NAME "tldw chatbook"
 !ifndef PRODUCT_VERSION
-  !define PRODUCT_VERSION "0.1.6.2"
+  !error "PRODUCT_VERSION must be provided by Packaging/windows/build_windows.py"
 !endif
 !ifndef PRODUCT_PUBLISHER
   !define PRODUCT_PUBLISHER "TLDW Project"
