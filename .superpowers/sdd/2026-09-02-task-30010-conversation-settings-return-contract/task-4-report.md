@@ -933,3 +933,144 @@ JSON-safe ordinary state and no cleanup object. Covered cancellation still
 propagates after modal transfer, and the pre-transfer claim path remains the
 only path that normal unmount release can requeue. No controller ledger, task
 state, general lesson, schema, store API, persistence owner, or ADR changed.
+
+## Round-9 review fix
+
+Round 9 supersedes the Round-7/8 multi-step transfer-cleanup implementation and
+its obsolete fault-injection tests. The terminal obligation no longer lives on
+a disposable `ChatScreen`:
+
+- Added `PendingHandoffStore.settle_transferred_claim(claim) -> bool`, an
+  owner-thread-affine, typed, value-free-result operation that atomically
+  settles the exact Conversation settings return. It clears exact in-flight A
+  or exact requeued-pending A, recognizes already settled/superseded A
+  idempotently, and leaves pending or claimed B unchanged and claimable.
+- Made modal transfer conditional on that atomic success. A false result or
+  exception revokes the tentative modal's suspended draft/result ownership,
+  unwinds it when it is the exact stack top, and keeps the source snapshot,
+  target, and released exact retry. A later attempt can transfer and settle the
+  same return normally.
+- The covered-cancellation path applies the same ownership decision before its
+  bare re-raise. Success leaves the modal as the one draft owner; failure
+  disables and strips the covered tentative modal while the source remains the
+  one owner. Both paths preserve the original `CancelledError`.
+- An overlapping B context no longer queues a callback behind A's active
+  worker. Finalization confirms A is `settled` or `superseded` before it
+  schedules distinct pending B; an exact-status exception fails closed without
+  claiming or clearing B, and the next explicit consumption boundary restores
+  B once.
+- Removed the screen-local cleanup claim, its mount/resume/unmount retries, and
+  the acknowledgement/release/discard tests that specified that superseded
+  mechanism.
+
+### Round-9 RED evidence
+
+The atomic store contract was run before its implementation:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/State/test_pending_handoff_store.py -k 'settle_transferred_claim' -q --tb=short --show-capture=no
+6 failed, 90 deselected, 1 warning
+```
+
+All six failures were the expected missing-method `AttributeError`; collection
+and fixtures were sound.
+
+The final mounted transfer/cancellation tests were then run before the
+`ChatScreen` production change:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py -k 'atomic_failure_retains_retry_without_modal_owner or covered_mount_cancellation_settles_before_unmount' -q --tb=short --show-capture=no
+3 failed, 1 passed, 347 deselected, 1 warning
+```
+
+The one-shot and persistent atomic faults left the tentative modal on top, and
+the covered failure cleared the source snapshot. The success control passed.
+There was no harness or fixture failure.
+
+The A-to-B scheduling regression was also run before its final gate:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py -k 'status_fault_blocks_replacement_until_retry' -q --tb=short --show-capture=no
+1 failed, 342 deselected, 1 warning
+```
+
+The failure observed reopen tokens `[161, 162]` rather than `[161]`, proving B
+was consumed through a refresh callback without a successful A terminal-status
+check. A strengthened store assertion separately failed because repeated A
+settlement returned false while B was already in flight; the implementation
+now recognizes older A as superseded without touching B.
+
+### Round-9 GREEN evidence
+
+Atomic and complete Conversation settings return slice:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/State/test_pending_handoff_store.py Tests/UI/test_console_native_chat_flow.py -k 'settle_transferred_claim or conversation_settings_return' -q --tb=short --show-capture=no
+37 passed, 402 deselected, 1 warning in 98.33s
+```
+
+Complete handoff-store file:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/State/test_pending_handoff_store.py -q --tb=short --show-capture=no
+96 passed, 1 warning in 0.47s
+```
+
+Cumulative Task 4/state selection:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/State/test_pending_handoff_store.py Tests/State/test_screen_state_store.py Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_native_chat_flow.py Tests/UI/test_console_session_settings.py -k 'conversation_settings or provider_navigation or credential or screen_state or dirty_return_confirmation' -q --tb=short --show-capture=no
+110 passed, 1031 deselected, 1 warning in 130.74s
+```
+
+The warning is the repository environment's established Requests
+dependency-version warning. No full suite was run, per repository and task
+instructions.
+
+After adding explicit false-result coverage alongside the one-shot/persistent
+exception cases, that three-case test passed in `5.64s`. A final repeat of the
+combined return slice passed 37 cases but hit one pre-existing mount-timing
+race: the missing-environment-credential test queried its asynchronously
+mounted status row immediately after observing the modal. Its isolated rerun
+passed (`1 passed, 343 deselected` in `2.17s`), and the same test had passed in
+both the earlier combined return slice and the cumulative Task 4 run. No
+production assertion failed.
+
+Static verification:
+
+```text
+../../.venv/bin/python -m ruff check tldw_chatbook/UI/Navigation/pending_handoff_store.py tldw_chatbook/UI/Screens/chat_screen.py Tests/State/test_pending_handoff_store.py Tests/UI/test_console_native_chat_flow.py
+All checks passed!
+
+../../.venv/bin/python -m py_compile tldw_chatbook/UI/Navigation/pending_handoff_store.py tldw_chatbook/UI/Screens/chat_screen.py Tests/State/test_pending_handoff_store.py Tests/UI/test_console_native_chat_flow.py
+exit 0
+
+git diff --check
+exit 0
+```
+
+### Round-9 files, ADR check, and self-review
+
+- `tldw_chatbook/UI/Navigation/pending_handoff_store.py`
+- `tldw_chatbook/UI/Screens/chat_screen.py`
+- `Tests/State/test_pending_handoff_store.py`
+- `Tests/UI/test_console_native_chat_flow.py`
+- `Docs/superpowers/plans/2026-09-02-task-30010-conversation-settings-return-contract.md`
+- `.superpowers/sdd/2026-09-02-task-30010-conversation-settings-return-contract/task-4-report.md`
+
+ADR required: no new ADR
+
+ADR paths: `backlog/decisions/012-provider-credential-settings-boundary.md` and
+`backlog/decisions/033-application-session-state-ownership.md`
+
+Reason: the atomic method remains inside ADR-033's existing application-owned,
+typed, process-local handoff store. It adds no payload exposure, schema,
+persistence, credential ownership, or new state owner.
+
+Self-review confirmed the atomic method validates thread, claim type, channel,
+revision, and detached value before mutation; it returns only terminal status.
+Every mutating branch is exact, and repeated/superseded calls are idempotent.
+The Console clears source ownership only after a true atomic result, never
+serializes an opaque claim, and does not retain a terminal cleanup obligation.
+Normal and covered cancellation preserve exactly one draft owner. No controller
+ledger, backlog status, task state, schema, generalized lesson, or ADR changed.

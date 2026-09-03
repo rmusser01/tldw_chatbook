@@ -216,14 +216,27 @@ store test file to Task 4 scope. It exposes no handoff payload, changes no
 persistence schema or owner, and requires no new ADR; ADR-033 remains the
 governing application-session ownership decision.
 
+**Round-9 review scope amendment:** Replace the screen-lifetime terminal-cleanup
+obligation with one store-owned atomic transfer settlement. The exact operation
+settles in-flight A or its exact requeued pending form, treats an already
+settled/superseded A as terminal, and never mutates pending or claimed B. A
+modal transfer commits only after that operation succeeds; failure revokes the
+tentative modal draft and retains the source snapshot/target for retry. A
+distinct B is not queued while A's terminal status is unknown. This is a narrow
+extension of ADR-033's application-owned typed handoff interface: it adds no
+schema, persistence, payload exposure, or state owner, so no new ADR is needed.
+
 **Files:**
 - Modify: `tldw_chatbook/UI/Screens/settings_screen.py`
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
+- Modify: `tldw_chatbook/UI/Navigation/pending_handoff_store.py`
 - Test: `Tests/UI/test_settings_configuration_hub.py`
 - Test: `Tests/UI/test_console_native_chat_flow.py`
+- Test: `Tests/State/test_pending_handoff_store.py`
 
 **Interfaces:**
 - Consumes: `ProviderSettingsNavigationTarget`, `ConsoleSettingsReturnTarget`, `ConversationSettingsReturnOutcome`
+- Produces: `PendingHandoffStore.settle_transferred_claim(claim) -> bool`
 - Produces: Settings continuation actions `settings-provider-return`, `settings-provider-stay`, `settings-provider-return-without-save`
 - Produces: conflict actions `settings-provider-conflict-review`, `settings-provider-conflict-discard`, `settings-provider-conflict-return`
 

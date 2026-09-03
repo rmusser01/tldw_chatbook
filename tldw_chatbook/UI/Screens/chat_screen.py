@@ -2873,7 +2873,7 @@ class ChatScreen(BaseAppScreen):
         suspended_draft: ConsoleSettingsDraftSnapshot | None = None,
         _pre_push_guard: Callable[[], bool] | None = None,
         _suspended_owner_token: int | None = None,
-        _on_transfer_committed: Callable[[], None] | None = None,
+        _on_transfer_committed: Callable[[], bool] | None = None,
     ) -> bool:
         """Open Console session settings for the active native session."""
         controller = self._ensure_console_chat_controller()
@@ -2965,7 +2965,11 @@ class ChatScreen(BaseAppScreen):
             suspended_draft=suspended_draft,
         )
 
+        transfer_revoked = False
+
         def apply_origin_result(result) -> None:
+            if transfer_revoked:
+                return
             if isinstance(result, ConsoleSettingsCredentialRequest):
                 self._stage_console_settings_credential_request(
                     result,
@@ -2974,22 +2978,31 @@ class ChatScreen(BaseAppScreen):
                 return
             self._dispatch_console_settings_submission(result)
 
-        transfer_reported = False
+        transfer_outcome: bool | None = None
 
-        def report_transfer_committed() -> None:
-            """Report exact modal ownership once without retaining its draft."""
+        def report_transfer_committed() -> bool:
+            """Commit exact modal ownership once without retaining its draft."""
 
-            nonlocal transfer_reported
-            if transfer_reported:
-                return
-            transfer_reported = True
-            if _on_transfer_committed is not None:
-                try:
-                    _on_transfer_committed()
-                except Exception:
-                    logger.error(
-                        "Unable to commit Conversation settings modal transfer"
-                    )
+            nonlocal transfer_outcome, transfer_revoked
+            if transfer_outcome is not None:
+                return transfer_outcome
+            try:
+                transfer_outcome = (
+                    True
+                    if _on_transfer_committed is None
+                    else _on_transfer_committed() is True
+                )
+            except Exception:
+                logger.error("Unable to commit Conversation settings modal transfer")
+                transfer_outcome = False
+            if not transfer_outcome:
+                # The source snapshot remains authoritative. The covered-modal
+                # cancellation path cannot safely pop through a newer overlay,
+                # so revoke this tentative modal's result and draft ownership.
+                transfer_revoked = True
+                modal._suspended_draft = None
+                modal.disabled = True
+            return transfer_outcome
 
         if _pre_push_guard is not None and not _pre_push_guard():
             return False
@@ -3007,8 +3020,8 @@ class ChatScreen(BaseAppScreen):
                 and getattr(self, "_suspended_conversation_settings_token", None)
                 == _suspended_owner_token
             ):
-                report_transfer_committed()
-                if (
+                committed = report_transfer_committed()
+                if committed and (
                     getattr(self, "_suspended_conversation_settings", None)
                     is suspended_draft
                     and getattr(
@@ -3027,11 +3040,14 @@ class ChatScreen(BaseAppScreen):
                 # A concurrently covered modal still owns the only live
                 # draft. Report ownership so a suspended snapshot is not
                 # retained as a second owner.
-                report_transfer_committed()
-                return True
+                if report_transfer_committed():
+                    return True
+                return False
             return False
-        report_transfer_committed()
-        return True
+        if report_transfer_committed():
+            return True
+        await self._unwind_failed_console_settings_modal(modal)
+        return False
 
     def _console_settings_modal_is_on_stack(
         self,
@@ -3162,7 +3178,7 @@ class ChatScreen(BaseAppScreen):
         *,
         session_id: str,
         settings_revision: int,
-        _on_transfer_committed: Callable[[], None] | None = None,
+        _on_transfer_committed: Callable[[], bool] | None = None,
     ) -> bool:
         """Transfer the exact retained draft to a restored modal when safe."""
         snapshot = getattr(self, "_suspended_conversation_settings", None)
@@ -3226,7 +3242,10 @@ class ChatScreen(BaseAppScreen):
         if self._pending_conversation_settings_return_target == target:
             return
         self._pending_conversation_settings_return_target = target
-        if self.is_mounted:
+        if (
+            self.is_mounted
+            and not self._conversation_settings_return_restore_in_progress
+        ):
             self.call_after_refresh(self._consume_pending_conversation_settings_return)
 
     def _claim_conversation_settings_return(
@@ -3342,127 +3361,6 @@ class ChatScreen(BaseAppScreen):
         except Exception:
             logger.debug("Unable to show Conversation settings recovery notice")
 
-    def _commit_conversation_settings_return_transfer(
-        self,
-        handoffs: PendingHandoffStore,
-        claim: HandoffClaim[ConversationSettingsReturnIntent],
-        target: ConsoleSettingsReturnTarget,
-    ) -> bool:
-        """Move transferred A into exact terminal cleanup and attempt it once."""
-
-        existing_cleanup = self._pending_conversation_settings_transfer_cleanup_claim
-        if existing_cleanup is not None and existing_cleanup is not claim:
-            self._attempt_conversation_settings_transfer_cleanup()
-            if self._pending_conversation_settings_transfer_cleanup_claim is not None:
-                logger.error(
-                    "Unable to replace unresolved Conversation settings transfer "
-                    "cleanup for revision {}",
-                    existing_cleanup.revision,
-                )
-                return False
-        self._pending_conversation_settings_transfer_cleanup_claim = claim
-        if self._pending_conversation_settings_return_claim is claim:
-            self._pending_conversation_settings_return_claim = None
-        self._clear_conversation_settings_return_target(target)
-        return self._attempt_conversation_settings_transfer_cleanup()
-
-    def _attempt_conversation_settings_transfer_cleanup(self) -> bool:
-        """Make one bounded exact settlement attempt for a modal-owned draft."""
-
-        claim = self._pending_conversation_settings_transfer_cleanup_claim
-        if claim is None:
-            return True
-        handoffs = getattr(self.app_instance, "pending_handoffs", None)
-        if not isinstance(handoffs, PendingHandoffStore):
-            return False
-
-        acknowledged = False
-        released = False
-        discarded = False
-        try:
-            acknowledged = handoffs.acknowledge(claim)
-        except Exception:
-            logger.error(
-                "Conversation settings transfer acknowledgement raised for revision {}",
-                claim.revision,
-            )
-
-        status: str | None = "settled" if acknowledged else None
-        if status is None:
-            try:
-                status = handoffs.exact_revision_status(
-                    HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                    claim.revision,
-                )
-            except Exception:
-                logger.error(
-                    "Unable to inspect Conversation settings transfer cleanup "
-                    "revision {}",
-                    claim.revision,
-                )
-
-        if status not in ("settled", "superseded", "pending"):
-            try:
-                released = handoffs.release(claim)
-            except Exception:
-                logger.error(
-                    "Unable to release Conversation settings transfer cleanup "
-                    "revision {}",
-                    claim.revision,
-                )
-            try:
-                status = handoffs.exact_revision_status(
-                    HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                    claim.revision,
-                )
-            except Exception:
-                logger.error(
-                    "Unable to inspect released Conversation settings transfer "
-                    "revision {}",
-                    claim.revision,
-                )
-
-        if status == "pending" or (status is None and released):
-            try:
-                discarded = handoffs.discard_pending_exact(
-                    HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                    claim.revision,
-                    claim.value,
-                )
-            except Exception:
-                logger.error(
-                    "Unable to discard pending Conversation settings transfer "
-                    "revision {}",
-                    claim.revision,
-                )
-            try:
-                status = handoffs.exact_revision_status(
-                    HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                    claim.revision,
-                )
-            except Exception:
-                logger.error(
-                    "Unable to inspect discarded Conversation settings transfer "
-                    "revision {}",
-                    claim.revision,
-                )
-
-        resolved = acknowledged or discarded or status in ("settled", "superseded")
-        if resolved:
-            if self._pending_conversation_settings_transfer_cleanup_claim is claim:
-                self._pending_conversation_settings_transfer_cleanup_claim = None
-            return True
-
-        logger.error(
-            "Conversation settings transfer cleanup remains for revision {}; "
-            "release={}, discard={}, exact status={}",
-            claim.revision,
-            released,
-            discarded,
-            status or "unknown",
-        )
-        return False
-
     def _clear_conversation_settings_return_target(
         self,
         target: ConsoleSettingsReturnTarget,
@@ -3513,7 +3411,6 @@ class ChatScreen(BaseAppScreen):
     def _consume_pending_conversation_settings_return(self) -> None:
         """Schedule the mounted restore once, retaining transient failures."""
 
-        self._attempt_conversation_settings_transfer_cleanup()
         if (
             self._conversation_settings_return_restore_in_progress
             or self._pending_conversation_settings_return_target is None
@@ -3539,30 +3436,40 @@ class ChatScreen(BaseAppScreen):
         selected_active_session_epoch: int | None = None
         transfer_committed = False
 
-        def commit_transfer() -> None:
+        def commit_transfer() -> bool:
             """Commit exact handoff ownership once at the modal transfer edge."""
 
             nonlocal claim, transfer_committed
             if transfer_committed:
-                return
-            transfer_committed = True
+                return True
             transferred_claim = claim
             if transferred_claim is None or not isinstance(
                 handoffs,
                 PendingHandoffStore,
             ):
-                return
+                return False
             try:
-                self._commit_conversation_settings_return_transfer(
-                    handoffs,
-                    transferred_claim,
-                    target,
+                settled = handoffs.settle_transferred_claim(transferred_claim)
+            except Exception:
+                logger.error(
+                    "Conversation settings return atomic transfer settlement "
+                    "raised for revision {}",
+                    transferred_claim.revision,
                 )
-            finally:
-                if self._pending_conversation_settings_return_claim is transferred_claim:
-                    self._pending_conversation_settings_return_claim = None
-                self._clear_conversation_settings_return_target(target)
-                claim = None
+                return False
+            if not settled:
+                logger.error(
+                    "Conversation settings return atomic transfer settlement "
+                    "rejected revision {}",
+                    transferred_claim.revision,
+                )
+                return False
+            transfer_committed = True
+            if self._pending_conversation_settings_return_claim is transferred_claim:
+                self._pending_conversation_settings_return_claim = None
+            self._clear_conversation_settings_return_target(target)
+            claim = None
+            return True
 
         async def restore_prior_session_if_still_owned() -> None:
             """Undo only this worker's exact active-session transition."""
@@ -3689,8 +3596,27 @@ class ChatScreen(BaseAppScreen):
                 self._pending_conversation_settings_return_claim = None
             self._conversation_settings_return_restore_in_progress = False
             replacement = self._pending_conversation_settings_return_target
+            prior_return_is_terminal = replacement is target
+            if (
+                isinstance(handoffs, PendingHandoffStore)
+                and target is not None
+                and replacement is not target
+            ):
+                try:
+                    prior_return_is_terminal = handoffs.exact_revision_status(
+                        HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                        target.return_revision,
+                    ) in ("settled", "superseded")
+                except Exception:
+                    logger.debug(
+                        "Unable to confirm prior Conversation settings return settlement"
+                    )
             replacement_is_pending = False
-            if isinstance(handoffs, PendingHandoffStore) and replacement is not None:
+            if (
+                prior_return_is_terminal
+                and isinstance(handoffs, PendingHandoffStore)
+                and replacement is not None
+            ):
                 try:
                     replacement_is_pending = handoffs.exact_revision_status(
                         HandoffChannel.CONVERSATION_SETTINGS_RETURN,
@@ -6542,9 +6468,6 @@ class ChatScreen(BaseAppScreen):
     _pending_conversation_settings_return_claim: (
         HandoffClaim[ConversationSettingsReturnIntent] | None
     ) = None
-    _pending_conversation_settings_transfer_cleanup_claim: (
-        HandoffClaim[ConversationSettingsReturnIntent] | None
-    ) = None
     _pending_conversation_settings_return_target: ConsoleSettingsReturnTarget | None = (
         None
     )
@@ -6569,7 +6492,6 @@ class ChatScreen(BaseAppScreen):
         self._suspended_conversation_settings_token: int | None = None
         self._next_suspended_conversation_settings_token = 0
         self._pending_conversation_settings_return_claim = None
-        self._pending_conversation_settings_transfer_cleanup_claim = None
         self._pending_conversation_settings_return_target = None
         self._conversation_settings_return_restore_in_progress = False
         self._pending_console_launch_auto_open_inspector = False
@@ -14424,7 +14346,6 @@ class ChatScreen(BaseAppScreen):
         # BaseAppScreen.on_mount separately for this Mount event.
 
         self.app_instance._console_h3_image_edit_screen = self
-        self._attempt_conversation_settings_transfer_cleanup()
         self._apply_focus_chrome()
         if not hasattr(self, "_console_h3_terminal_generations"):
             self._console_h3_terminal_generations: set[str] = set()
@@ -14623,7 +14544,6 @@ class ChatScreen(BaseAppScreen):
 
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
-        self._attempt_conversation_settings_transfer_cleanup()
         self._release_claimed_conversation_settings_return()
         # task-15470: flush a pending debounced sidebar-state write FIRST,
         # ahead of every other teardown step below -- several of those can
@@ -20401,7 +20321,6 @@ class ChatScreen(BaseAppScreen):
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
         logger.debug("Chat screen resuming")
-        self._attempt_conversation_settings_transfer_cleanup()
         # task-17652: a Settings change to the status-row position must land
         # on this cached screen without a recompose.
         apply_status_chips_position(self)

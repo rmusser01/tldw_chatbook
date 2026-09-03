@@ -84,7 +84,6 @@ from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
     ConversationSettingsReturnOutcome,
 )
 from tldw_chatbook.UI.Navigation.pending_handoff_store import (
-    HandoffClaim,
     HandoffChannel,
     PendingHandoffStore,
 )
@@ -935,7 +934,7 @@ async def test_conversation_settings_return_settles_at_transfer_before_status_an
             nonlocal transferred_before_replacement
             nonlocal replacement_snapshot, replacement_target
 
-            def commit_with_replacement_staged() -> None:
+            def commit_with_replacement_staged() -> bool:
                 nonlocal transferred_before_replacement
                 nonlocal transfer_commit_count
                 nonlocal replacement_snapshot, replacement_target
@@ -961,7 +960,8 @@ async def test_conversation_settings_return_settles_at_transfer_before_status_an
                 )
                 console.apply_navigation_context(replacement_target.to_context())
                 if _on_transfer_committed is not None:
-                    _on_transfer_committed()
+                    return _on_transfer_committed()
+                return True
 
             return await real_reopen(
                 request_token,
@@ -1053,649 +1053,6 @@ async def test_conversation_settings_return_settles_at_transfer_before_status_an
             == "settled"
         )
 
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("ack_failure", ("false", "exception"))
-async def test_conversation_settings_return_recovers_pre_mutation_ack_failure(
-    monkeypatch,
-    ack_failure,
-):
-    """An ack fault cannot leave transferred A blocking the channel."""
-
-    app = _build_test_app()
-    _configure_native_ready_console(app)
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
-        store = console._ensure_console_chat_store()
-        session = store.ensure_session()
-        snapshot = _conversation_settings_return_snapshot()
-        console._suspended_conversation_settings = snapshot
-        console._suspended_conversation_settings_token = 147
-        target = _stage_console_settings_return(
-            app,
-            session_id=session.id,
-            settings_revision=store.session_settings_revision(session.id),
-            snapshot=snapshot,
-        )
-        real_acknowledge = app.pending_handoffs.acknowledge
-
-        def fail_only_exact_transfer_ack(claim):
-            if claim.revision == target.return_revision:
-                if ack_failure == "exception":
-                    raise RuntimeError("injected pre-mutation acknowledgement failure")
-                return False
-            return real_acknowledge(claim)
-
-        monkeypatch.setattr(
-            app.pending_handoffs,
-            "acknowledge",
-            fail_only_exact_transfer_ack,
-        )
-        console.apply_navigation_context(target.to_context())
-        for _ in range(80):
-            if (
-                isinstance(host.screen_stack[-1], ConsoleSettingsModal)
-                and not console._conversation_settings_return_restore_in_progress
-            ):
-                break
-            await pilot.pause(0.05)
-
-        modal = host.screen_stack[-1]
-        assert isinstance(modal, ConsoleSettingsModal)
-        assert console._suspended_conversation_settings is None
-        assert console._pending_conversation_settings_return_target is None
-        assert console._pending_conversation_settings_return_claim is None
-        assert (
-            app.pending_handoffs.exact_revision_status(
-                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                target.return_revision,
-            )
-            == "settled"
-        )
-
-        replacement_intent = ConversationSettingsReturnIntent(
-            session_id=session.id,
-            settings_revision=store.session_settings_revision(session.id),
-            active_view="model",
-            focus_control_id=None,
-        )
-        replacement_revision = app.pending_handoffs.stage(
-            HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-            replacement_intent,
-        )
-        replacement_claim = app.pending_handoffs.claim(
-            HandoffChannel.CONVERSATION_SETTINGS_RETURN
-        )
-
-        assert replacement_claim is not None
-        assert replacement_claim.revision == replacement_revision
-        assert replacement_claim.value == replacement_intent
-        assert app.pending_handoffs.acknowledge(replacement_claim) is True
-
-
-@pytest.mark.asyncio
-async def test_conversation_settings_return_release_exception_retains_terminal_cleanup_until_resume(
-    monkeypatch,
-):
-    """A transferred return retries exact release without restoring its old draft."""
-
-    app = _build_test_app()
-    _configure_native_ready_console(app)
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
-        store = console._ensure_console_chat_store()
-        session = store.ensure_session()
-        snapshot = _conversation_settings_return_snapshot()
-        console._suspended_conversation_settings = snapshot
-        console._suspended_conversation_settings_token = 150
-        target = _stage_console_settings_return(
-            app,
-            session_id=session.id,
-            settings_revision=store.session_settings_revision(session.id),
-            snapshot=snapshot,
-        )
-        real_release = app.pending_handoffs.release
-        real_acknowledge = app.pending_handoffs.acknowledge
-        release_attempts = 0
-
-        def fail_transfer_ack(claim):
-            if claim.revision == target.return_revision:
-                raise RuntimeError("injected acknowledgement failure")
-            return real_acknowledge(claim)
-
-        def fail_release_once_before_mutation(claim):
-            nonlocal release_attempts
-            if claim.revision == target.return_revision:
-                release_attempts += 1
-                if release_attempts == 1:
-                    raise RuntimeError("injected pre-mutation release failure")
-            return real_release(claim)
-
-        monkeypatch.setattr(app.pending_handoffs, "acknowledge", fail_transfer_ack)
-        monkeypatch.setattr(
-            app.pending_handoffs,
-            "release",
-            fail_release_once_before_mutation,
-        )
-        console.apply_navigation_context(target.to_context())
-        for _ in range(80):
-            if (
-                isinstance(host.screen_stack[-1], ConsoleSettingsModal)
-                and not console._conversation_settings_return_restore_in_progress
-            ):
-                break
-            await pilot.pause(0.05)
-
-        modal = host.screen_stack[-1]
-        cleanup = getattr(
-            console,
-            "_pending_conversation_settings_transfer_cleanup_claim",
-            None,
-        )
-        assert isinstance(modal, ConsoleSettingsModal)
-        assert isinstance(cleanup, HandoffClaim)
-        assert cleanup.revision == target.return_revision
-        assert console._suspended_conversation_settings is None
-        assert console._pending_conversation_settings_return_target is None
-        assert (
-            app.pending_handoffs.exact_revision_status(
-                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                target.return_revision,
-            )
-            == "in_flight"
-        )
-
-        replacement_snapshot = _conversation_settings_return_snapshot(
-            model="replacement-model",
-        )
-        replacement_target = _stage_console_settings_return(
-            app,
-            session_id=session.id,
-            settings_revision=store.session_settings_revision(session.id),
-            snapshot=replacement_snapshot,
-        )
-        console._suspended_conversation_settings = replacement_snapshot
-        console._suspended_conversation_settings_token = 153
-        console._pending_conversation_settings_return_target = replacement_target
-
-        # This existing scheduling boundary may run while A's modal covers the
-        # Console. It must settle only A and leave every B coordinate intact.
-        console._consume_pending_conversation_settings_return()
-
-        assert release_attempts == 2
-        assert (
-            console._pending_conversation_settings_transfer_cleanup_claim is None
-        )
-        assert (
-            app.pending_handoffs.exact_revision_status(
-                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                target.return_revision,
-            )
-            == "superseded"
-        )
-        assert (
-            app.pending_handoffs.exact_revision_status(
-                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                replacement_target.return_revision,
-            )
-            == "pending"
-        )
-        assert console._pending_conversation_settings_return_target is replacement_target
-        assert console._suspended_conversation_settings is replacement_snapshot
-        replacement_claim = app.pending_handoffs.claim(
-            HandoffChannel.CONVERSATION_SETTINGS_RETURN
-        )
-        assert replacement_claim is not None
-        assert replacement_claim.revision == replacement_target.return_revision
-        assert app.pending_handoffs.release(replacement_claim) is True
-
-        modal.dismiss(None)
-        replacement_modal = None
-        for _ in range(120):
-            if (
-                isinstance(host.screen_stack[-1], ConsoleSettingsModal)
-                and host.screen_stack[-1] is not modal
-                and console._pending_conversation_settings_return_target is None
-            ):
-                replacement_modal = host.screen_stack[-1]
-                break
-            await pilot.pause(0.05)
-
-        assert replacement_modal is not None
-        assert (
-            replacement_modal.query_one("#console-settings-model-picker").value
-            == "replacement-model"
-        )
-        assert (
-            app.pending_handoffs.exact_revision_status(
-                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                replacement_target.return_revision,
-            )
-            == "settled"
-        )
-
-
-@pytest.mark.asyncio
-async def test_conversation_settings_return_discard_exception_retries_without_restoring_snapshot(
-    monkeypatch,
-):
-    """A pending transferred return is exact-discarded on the next safe resume."""
-
-    app = _build_test_app()
-    _configure_native_ready_console(app)
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
-        store = console._ensure_console_chat_store()
-        session = store.ensure_session()
-        snapshot = _conversation_settings_return_snapshot()
-        console._suspended_conversation_settings = snapshot
-        console._suspended_conversation_settings_token = 151
-        target = _stage_console_settings_return(
-            app,
-            session_id=session.id,
-            settings_revision=store.session_settings_revision(session.id),
-            snapshot=snapshot,
-        )
-        real_acknowledge = app.pending_handoffs.acknowledge
-        real_discard = app.pending_handoffs.discard_pending_exact
-        real_reopen = console._reopen_suspended_console_settings
-        discard_attempts = 0
-        reopen_attempts = 0
-
-        def fail_transfer_ack(claim):
-            if claim.revision == target.return_revision:
-                raise RuntimeError("injected acknowledgement failure")
-            return real_acknowledge(claim)
-
-        def fail_discard_once_after_release(channel, revision, value):
-            nonlocal discard_attempts
-            if revision == target.return_revision:
-                discard_attempts += 1
-                if discard_attempts == 1:
-                    raise RuntimeError("injected post-release discard failure")
-            return real_discard(channel, revision, value)
-
-        async def count_reopen(*args, **kwargs):
-            nonlocal reopen_attempts
-            reopen_attempts += 1
-            return await real_reopen(*args, **kwargs)
-
-        monkeypatch.setattr(app.pending_handoffs, "acknowledge", fail_transfer_ack)
-        monkeypatch.setattr(
-            app.pending_handoffs,
-            "discard_pending_exact",
-            fail_discard_once_after_release,
-        )
-        monkeypatch.setattr(
-            console,
-            "_reopen_suspended_console_settings",
-            count_reopen,
-        )
-        console.apply_navigation_context(target.to_context())
-        for _ in range(80):
-            if (
-                isinstance(host.screen_stack[-1], ConsoleSettingsModal)
-                and not console._conversation_settings_return_restore_in_progress
-            ):
-                break
-            await pilot.pause(0.05)
-
-        modal = host.screen_stack[-1]
-        cleanup = getattr(
-            console,
-            "_pending_conversation_settings_transfer_cleanup_claim",
-            None,
-        )
-        assert isinstance(modal, ConsoleSettingsModal)
-        assert isinstance(cleanup, HandoffClaim)
-        assert cleanup.revision == target.return_revision
-        assert console._suspended_conversation_settings is None
-        assert console._pending_conversation_settings_return_target is None
-        assert (
-            app.pending_handoffs.exact_revision_status(
-                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                target.return_revision,
-            )
-            == "pending"
-        )
-
-        modal.dismiss(None)
-        for _ in range(80):
-            if (
-                host.screen_stack[-1] is console
-                and getattr(
-                    console,
-                    "_pending_conversation_settings_transfer_cleanup_claim",
-                    None,
-                )
-                is None
-            ):
-                break
-            await pilot.pause(0.05)
-
-        assert discard_attempts == 2
-        assert reopen_attempts == 1
-        assert (
-            app.pending_handoffs.exact_revision_status(
-                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                target.return_revision,
-            )
-            == "settled"
-        )
-        assert console._pending_conversation_settings_return_target is None
-        assert console._suspended_conversation_settings is None
-
-
-@pytest.mark.asyncio
-async def test_conversation_settings_return_persistent_release_exception_retains_cleanup_on_unmount(
-    monkeypatch,
-):
-    """Persistent store failure stays observable without serializing retry state."""
-
-    app = _build_test_app()
-    _configure_native_ready_console(app)
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
-        store = console._ensure_console_chat_store()
-        session = store.ensure_session()
-        snapshot = _conversation_settings_return_snapshot()
-        console._suspended_conversation_settings = snapshot
-        console._suspended_conversation_settings_token = 152
-        target = _stage_console_settings_return(
-            app,
-            session_id=session.id,
-            settings_revision=store.session_settings_revision(session.id),
-            snapshot=snapshot,
-        )
-        real_acknowledge = app.pending_handoffs.acknowledge
-        release_attempts = 0
-
-        def fail_transfer_ack(claim):
-            if claim.revision == target.return_revision:
-                raise RuntimeError("injected acknowledgement failure")
-            return real_acknowledge(claim)
-
-        def always_fail_release_before_mutation(claim):
-            nonlocal release_attempts
-            if claim.revision == target.return_revision:
-                release_attempts += 1
-                raise RuntimeError("injected persistent release failure")
-            raise AssertionError("unexpected claim release")
-
-        monkeypatch.setattr(app.pending_handoffs, "acknowledge", fail_transfer_ack)
-        monkeypatch.setattr(
-            app.pending_handoffs,
-            "release",
-            always_fail_release_before_mutation,
-        )
-        console.apply_navigation_context(target.to_context())
-        for _ in range(80):
-            if (
-                isinstance(host.screen_stack[-1], ConsoleSettingsModal)
-                and not console._conversation_settings_return_restore_in_progress
-            ):
-                break
-            await pilot.pause(0.05)
-
-        modal = host.screen_stack[-1]
-        cleanup = getattr(
-            console,
-            "_pending_conversation_settings_transfer_cleanup_claim",
-            None,
-        )
-        assert isinstance(modal, ConsoleSettingsModal)
-        assert isinstance(cleanup, HandoffClaim)
-        serialized = console._serialize_native_console_state()
-        assert "pending_conversation_settings_transfer_cleanup_claim" not in serialized
-        json.dumps(serialized)
-
-        modal.dismiss(None)
-        for _ in range(80):
-            if host.screen_stack[-1] is console and release_attempts >= 2:
-                break
-            await pilot.pause(0.05)
-        console.dismiss(None)
-        for _ in range(80):
-            if console not in host.screen_stack and release_attempts >= 3:
-                break
-            await pilot.pause(0.05)
-
-        cleanup = getattr(
-            console,
-            "_pending_conversation_settings_transfer_cleanup_claim",
-            None,
-        )
-        assert release_attempts >= 3
-        assert isinstance(cleanup, HandoffClaim)
-        assert cleanup.revision == target.return_revision
-        assert console._pending_conversation_settings_return_claim is None
-        assert console._pending_conversation_settings_return_target is None
-        assert console._suspended_conversation_settings is None
-        assert (
-            app.pending_handoffs.exact_revision_status(
-                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                target.return_revision,
-            )
-            == "in_flight"
-        )
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("ack_failure", ("false", "exception"))
-async def test_conversation_settings_return_ack_failure_preserves_pending_replacement(
-    monkeypatch,
-    ack_failure,
-):
-    """Releasing transferred A must leave the already-pending B exact and claimable."""
-
-    app = _build_test_app()
-    _configure_native_ready_console(app)
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
-        store = console._ensure_console_chat_store()
-        session = store.ensure_session()
-        snapshot = _conversation_settings_return_snapshot()
-        console._suspended_conversation_settings = snapshot
-        console._suspended_conversation_settings_token = 148
-        target = _stage_console_settings_return(
-            app,
-            session_id=session.id,
-            settings_revision=store.session_settings_revision(session.id),
-            snapshot=snapshot,
-        )
-        replacement_intent = ConversationSettingsReturnIntent(
-            session_id=session.id,
-            settings_revision=store.session_settings_revision(session.id),
-            active_view="model",
-            focus_control_id="console-settings-model-picker",
-        )
-        real_acknowledge = app.pending_handoffs.acknowledge
-        real_reopen = console._reopen_suspended_console_settings
-        replacement_revision: int | None = None
-        transfer_commit_count = 0
-
-        def fail_only_exact_transfer_ack(claim):
-            if claim.revision == target.return_revision:
-                if ack_failure == "exception":
-                    raise RuntimeError("injected pre-mutation acknowledgement failure")
-                return False
-            return real_acknowledge(claim)
-
-        async def stage_replacement_before_commit(
-            request_token,
-            *,
-            session_id,
-            settings_revision,
-            _on_transfer_committed=None,
-        ):
-            def commit_after_replacement() -> None:
-                nonlocal replacement_revision, transfer_commit_count
-                transfer_commit_count += 1
-                replacement_revision = app.pending_handoffs.stage(
-                    HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                    replacement_intent,
-                )
-                if _on_transfer_committed is not None:
-                    _on_transfer_committed()
-
-            return await real_reopen(
-                request_token,
-                session_id=session_id,
-                settings_revision=settings_revision,
-                _on_transfer_committed=commit_after_replacement,
-            )
-
-        monkeypatch.setattr(
-            app.pending_handoffs,
-            "acknowledge",
-            fail_only_exact_transfer_ack,
-        )
-        monkeypatch.setattr(
-            console,
-            "_reopen_suspended_console_settings",
-            stage_replacement_before_commit,
-        )
-        console.apply_navigation_context(target.to_context())
-        for _ in range(80):
-            if (
-                isinstance(host.screen_stack[-1], ConsoleSettingsModal)
-                and not console._conversation_settings_return_restore_in_progress
-            ):
-                break
-            await pilot.pause(0.05)
-
-        assert transfer_commit_count == 1
-        assert replacement_revision is not None
-        assert (
-            app.pending_handoffs.exact_revision_status(
-                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                target.return_revision,
-            )
-            == "superseded"
-        )
-        assert (
-            app.pending_handoffs.exact_revision_status(
-                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                replacement_revision,
-            )
-            == "pending"
-        )
-        replacement_claim = app.pending_handoffs.claim(
-            HandoffChannel.CONVERSATION_SETTINGS_RETURN
-        )
-        assert replacement_claim is not None
-        assert replacement_claim.revision == replacement_revision
-        assert replacement_claim.value == replacement_intent
-        assert app.pending_handoffs.acknowledge(replacement_claim) is True
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("post_ack_state", ("settled", "superseded"))
-async def test_conversation_settings_return_false_ack_after_real_settlement_preserves_owner(
-    monkeypatch,
-    post_ack_state,
-):
-    """A stale false result must not release or discard a different store owner."""
-
-    app = _build_test_app()
-    _configure_native_ready_console(app)
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
-        store = console._ensure_console_chat_store()
-        session = store.ensure_session()
-        snapshot = _conversation_settings_return_snapshot()
-        console._suspended_conversation_settings = snapshot
-        console._suspended_conversation_settings_token = 149
-        target = _stage_console_settings_return(
-            app,
-            session_id=session.id,
-            settings_revision=store.session_settings_revision(session.id),
-            snapshot=snapshot,
-        )
-        replacement_intent = ConversationSettingsReturnIntent(
-            session_id=session.id,
-            settings_revision=store.session_settings_revision(session.id),
-            active_view="model",
-            focus_control_id=None,
-        )
-        real_acknowledge = app.pending_handoffs.acknowledge
-        replacement_revision: int | None = None
-        replacement_claim = None
-
-        def settle_exact_transfer_before_false(claim):
-            nonlocal replacement_revision, replacement_claim
-            if claim.revision != target.return_revision:
-                return real_acknowledge(claim)
-            assert real_acknowledge(claim) is True
-            if post_ack_state == "superseded":
-                replacement_revision = app.pending_handoffs.stage(
-                    HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                    replacement_intent,
-                )
-                replacement_claim = app.pending_handoffs.claim(
-                    HandoffChannel.CONVERSATION_SETTINGS_RETURN
-                )
-                assert replacement_claim is not None
-            return False
-
-        monkeypatch.setattr(
-            app.pending_handoffs,
-            "acknowledge",
-            settle_exact_transfer_before_false,
-        )
-        console.apply_navigation_context(target.to_context())
-        for _ in range(80):
-            if (
-                isinstance(host.screen_stack[-1], ConsoleSettingsModal)
-                and not console._conversation_settings_return_restore_in_progress
-            ):
-                break
-            await pilot.pause(0.05)
-
-        assert (
-            app.pending_handoffs.exact_revision_status(
-                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                target.return_revision,
-            )
-            == post_ack_state
-        )
-        if post_ack_state == "settled":
-            replacement_revision = app.pending_handoffs.stage(
-                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                replacement_intent,
-            )
-            replacement_claim = app.pending_handoffs.claim(
-                HandoffChannel.CONVERSATION_SETTINGS_RETURN
-            )
-        assert replacement_revision is not None
-        assert replacement_claim is not None
-        assert replacement_claim.revision == replacement_revision
-        assert (
-            app.pending_handoffs.exact_revision_status(
-                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                replacement_revision,
-            )
-            == "in_flight"
-        )
-        assert app.pending_handoffs.acknowledge(replacement_claim) is True
 
 
 @pytest.mark.asyncio
@@ -2246,8 +1603,251 @@ async def test_conversation_settings_return_real_router_unmount_after_transfer_d
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure_mode",
+    ("false_once", "raise_once", "raise_persistently"),
+)
+async def test_conversation_settings_return_atomic_failure_retains_retry_without_modal_owner(
+    monkeypatch,
+    failure_mode,
+):
+    """A failed atomic transfer keeps one source owner and a claimable retry."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        snapshot = _conversation_settings_return_snapshot()
+        console._suspended_conversation_settings = snapshot
+        console._suspended_conversation_settings_token = 160
+        target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=snapshot,
+        )
+        real_settle = app.pending_handoffs.settle_transferred_claim
+        attempts = 0
+
+        def fail_atomic_settlement(claim):
+            nonlocal attempts
+            if claim.revision == target.return_revision:
+                attempts += 1
+                if failure_mode == "raise_persistently" or (
+                    failure_mode == "raise_once" and attempts == 1
+                ):
+                    raise RuntimeError("injected atomic settlement failure")
+                if failure_mode == "false_once" and attempts == 1:
+                    return False
+            return real_settle(claim)
+
+        monkeypatch.setattr(
+            app.pending_handoffs,
+            "settle_transferred_claim",
+            fail_atomic_settlement,
+        )
+        console.apply_navigation_context(target.to_context())
+        for _ in range(120):
+            if (
+                host.screen_stack[-1] is console
+                and not console._conversation_settings_return_restore_in_progress
+                and attempts >= 1
+            ):
+                break
+            await pilot.pause(0.05)
+
+        assert host.screen_stack[-1] is console
+        assert console._suspended_conversation_settings is snapshot
+        assert console._pending_conversation_settings_return_target == target
+        assert console._pending_conversation_settings_return_claim is None
+        assert not hasattr(
+            console,
+            "_pending_conversation_settings_transfer_cleanup_claim",
+        )
+        assert (
+            app.pending_handoffs.exact_revision_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                target.return_revision,
+            )
+            == "pending"
+        )
+
+        console._consume_pending_conversation_settings_return()
+        for _ in range(120):
+            if (
+                not console._conversation_settings_return_restore_in_progress
+                and attempts >= 2
+            ):
+                break
+            await pilot.pause(0.05)
+
+        if failure_mode == "raise_persistently":
+            assert host.screen_stack[-1] is console
+            assert console._suspended_conversation_settings is snapshot
+            assert console._pending_conversation_settings_return_target == target
+            assert (
+                app.pending_handoffs.exact_revision_status(
+                    HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                    target.return_revision,
+                )
+                == "pending"
+            )
+            return
+
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, ConsoleSettingsModal)
+        assert console._suspended_conversation_settings is None
+        assert console._pending_conversation_settings_return_target is None
+        assert (
+            app.pending_handoffs.exact_revision_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                target.return_revision,
+            )
+            == "settled"
+        )
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_status_fault_blocks_replacement_until_retry(
+    monkeypatch,
+):
+    """B remains pending until A's terminal state can be confirmed."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        first_snapshot = _conversation_settings_return_snapshot(model="first-model")
+        replacement_snapshot = _conversation_settings_return_snapshot(
+            model="replacement-model",
+            focus_control_id="console-settings-model-picker",
+        )
+        console._suspended_conversation_settings = first_snapshot
+        console._suspended_conversation_settings_token = 161
+        first_target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=first_snapshot,
+        )
+        real_status = app.pending_handoffs.exact_revision_status
+        first_status_checks = 0
+        reopened_tokens: list[int] = []
+        replacement_target: ConsoleSettingsReturnTarget | None = None
+
+        def fail_first_terminal_status_check(channel, revision):
+            nonlocal first_status_checks
+            if (
+                channel is HandoffChannel.CONVERSATION_SETTINGS_RETURN
+                and revision == first_target.return_revision
+            ):
+                first_status_checks += 1
+                if first_status_checks == 2:
+                    raise RuntimeError("injected exact-status failure")
+            return real_status(channel, revision)
+
+        async def transfer_without_mount(
+            request_token,
+            *,
+            session_id,
+            settings_revision,
+            _on_transfer_committed=None,
+        ):
+            nonlocal replacement_target
+            reopened_tokens.append(request_token)
+            if request_token == 161:
+                replacement_target = _stage_console_settings_return(
+                    app,
+                    session_id=session_id,
+                    settings_revision=settings_revision,
+                    snapshot=replacement_snapshot,
+                )
+                console._suspended_conversation_settings = replacement_snapshot
+                console._suspended_conversation_settings_token = 162
+                console.apply_navigation_context(replacement_target.to_context())
+            assert _on_transfer_committed is not None
+            assert _on_transfer_committed() is True
+            if request_token == 162:
+                console._suspended_conversation_settings = None
+                console._suspended_conversation_settings_token = None
+            return True
+
+        async def skip_return_status(*_args, **_kwargs):
+            return None
+
+        monkeypatch.setattr(
+            app.pending_handoffs,
+            "exact_revision_status",
+            fail_first_terminal_status_check,
+        )
+        monkeypatch.setattr(
+            console,
+            "_reopen_suspended_console_settings",
+            transfer_without_mount,
+        )
+        monkeypatch.setattr(
+            console,
+            "_mount_conversation_settings_return_status",
+            skip_return_status,
+        )
+
+        console.apply_navigation_context(first_target.to_context())
+        for _ in range(80):
+            if (
+                reopened_tokens
+                and not console._conversation_settings_return_restore_in_progress
+            ):
+                break
+            await pilot.pause(0.05)
+
+        assert reopened_tokens == [161]
+        assert replacement_target is not None
+        assert console._pending_conversation_settings_return_target == replacement_target
+        assert console._suspended_conversation_settings is replacement_snapshot
+        assert (
+            real_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                replacement_target.return_revision,
+            )
+            == "pending"
+        )
+
+        console._consume_pending_conversation_settings_return()
+        for _ in range(80):
+            if (
+                reopened_tokens == [161, 162]
+                and not console._conversation_settings_return_restore_in_progress
+            ):
+                break
+            await pilot.pause(0.05)
+
+        assert reopened_tokens == [161, 162]
+        assert console._pending_conversation_settings_return_target is None
+        assert console._suspended_conversation_settings is None
+        assert (
+            real_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                replacement_target.return_revision,
+            )
+            == "settled"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("settlement_failure", (False, True))
 async def test_conversation_settings_return_covered_mount_cancellation_settles_before_unmount(
     monkeypatch,
+    settlement_failure,
 ):
     """A covered mounted modal commits A before cancellation can release it."""
 
@@ -2289,6 +1889,14 @@ async def test_conversation_settings_return_covered_mount_cancellation_settles_b
             settings_revision=store.session_settings_revision(session.id),
             snapshot=snapshot,
         )
+        if settlement_failure:
+            monkeypatch.setattr(
+                app.pending_handoffs,
+                "settle_transferred_claim",
+                lambda _claim: (_ for _ in ()).throw(
+                    RuntimeError("injected atomic settlement failure")
+                ),
+            )
         real_push_screen = app.push_screen
         newer_overlay = ConfirmationDialog(
             title="Newer overlay",
@@ -2339,6 +1947,14 @@ async def test_conversation_settings_return_covered_mount_cancellation_settles_b
             HandoffChannel.CONVERSATION_SETTINGS_RETURN,
             target.return_revision,
         )
+        if settlement_failure:
+            assert push_cancelled.is_set()
+            assert console._suspended_conversation_settings is snapshot
+            assert console._pending_conversation_settings_return_target == target
+            assert covered_modal._suspended_draft is None
+            assert covered_modal.disabled is True
+            assert status_after_cancel == "pending"
+            return
         assert console._suspended_conversation_settings is None
         assert covered_modal.capture_suspended_draft().settings.model == (
             snapshot.settings.model

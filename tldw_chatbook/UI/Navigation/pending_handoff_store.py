@@ -328,6 +328,54 @@ class PendingHandoffStore:
             slot.reserved_revisions.discard(claim.revision)
             return True
 
+    def settle_transferred_claim(self, claim: HandoffClaim[Any]) -> bool:
+        """Atomically terminally settle one transferred Settings return.
+
+        The exact claim may still be in flight or may have been requeued by a
+        partial prior release. Already settled and superseded revisions are
+        terminal successes. A different pending or in-flight owner is never
+        mutated, and no handoff value is returned.
+
+        Args:
+            claim: The opaque Conversation settings return claim whose draft
+                has transferred to its destination modal.
+
+        Returns:
+            ``True`` when the exact revision is terminal, or ``False`` when a
+            different owner currently holds that revision.
+
+        Raises:
+            RuntimeError: If called outside the owning thread.
+            TypeError: If ``claim`` is not a :class:`HandoffClaim`.
+            ValueError: If ``claim`` belongs to another channel or has an
+                invalid revision.
+        """
+
+        self._assert_owner_thread()
+        slot = self._slot_for_claim(claim)
+        if claim.channel is not HandoffChannel.CONVERSATION_SETTINGS_RETURN:
+            raise ValueError(
+                "Conversation settings transfer settlement requires its return channel"
+            )
+        if type(claim.revision) is not int or claim.revision < 1:
+            raise ValueError("handoff revision must be a positive exact integer")
+        normalized = self._detached_value(claim.channel, claim.value)
+        with self._lock:
+            current = slot.in_flight
+            if current is not None:
+                if current.claim is claim:
+                    slot.in_flight = None
+                    slot.reserved_revisions.discard(claim.revision)
+                    return True
+                return slot.revision > claim.revision
+            if slot.pending is not None and slot.pending[0] == claim.revision:
+                if slot.pending != (claim.revision, normalized):
+                    return False
+                slot.pending = None
+                slot.reserved_revisions.discard(claim.revision)
+                return True
+            return slot.revision >= claim.revision
+
     def claim_reserves_new_console_session(
         self,
         claim: HandoffClaim[ConsoleFirstChatIntent],
