@@ -39,6 +39,7 @@ from tldw_chatbook.UI.character_display_text import sanitize_character_display_l
 
 
 NATIVE_CONSOLE_PROVIDER_KEYS = DIRECT_CONSOLE_PROVIDER_KEYS
+CONSOLE_SESSION_SETTINGS_SOURCES = frozenset({"derived", "user"})
 CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS = frozenset(
     {
         "anthropic",
@@ -833,7 +834,7 @@ def _console_session_settings_structural_errors(
         or settings.provider != settings.provider.strip()
     ):
         errors.append("Provider is required.")
-    if settings.source not in {"derived", "user"}:
+    if settings.source not in CONSOLE_SESSION_SETTINGS_SOURCES:
         errors.append("Settings source must be derived or user.")
 
     if not _float_in_range(settings.temperature, 0.0, 2.0):

@@ -178,6 +178,8 @@ Expected: FAIL because the snapshot and credential-request result do not exist.
 
 Add an explicit allowlist of modal widget IDs and primitive value types; serialize `ConsoleSessionSettings` fields, context overrides via `to_dict()`, provider draft maps, disclosure flags, and logical focus. `from_mapping()` must return `None` on malformed structure and copy every nested mapping/sequence it retains.
 
+Preserve both the origin system prompt and pinned prefill when a restored draft is subsequently saved; neither field may be dropped merely because it is not edited by this modal.
+
 ```python
 @dataclass(frozen=True, slots=True)
 class ConsoleSettingsCredentialRequest:

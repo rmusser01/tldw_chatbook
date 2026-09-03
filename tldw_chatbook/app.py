@@ -13166,6 +13166,15 @@ class TldwCli(
             try:
                 switch_result = self.switch_screen(new_screen)
             except Exception as exc:
+                if self._navigation_target_owns_stack(new_screen):
+                    message.commit_target_ownership()
+                    logger.warning(
+                        "Screen switch raised after target ownership "
+                        "(route=%s, exception_category=%s).",
+                        screen_name,
+                        type(exc).__name__,
+                    )
+                    raise
                 # Sibling of the construction guard above: a screen can also
                 # fail while composing/mounting (the MCP audit canvas reads
                 # `Select.NULL` inside compose()), and Textual surfaces that

@@ -864,6 +864,22 @@ async def test_navigation_completion_callback_settles_once_for_guard_veto_and_su
     assert len(switched_screens) == 1
 
 
+def test_navigation_completion_releases_callback_before_invocation() -> None:
+    """A completed route cannot retain or re-enter its source callback."""
+    callback_slots: list[object] = []
+    message = NavigateToScreen("chat")
+
+    def callback(succeeded: bool) -> None:
+        callback_slots.append(message._on_completion)
+        message.report_completion(not succeeded)
+
+    message._on_completion = callback
+    message.report_completion(True)
+
+    assert callback_slots == [None]
+    assert message._on_completion is None
+
+
 @pytest.mark.asyncio
 async def test_navigation_commit_settles_success_before_post_switch_failure(monkeypatch):
     """Committed ownership reports success while preserving mount diagnostics."""
@@ -904,6 +920,44 @@ async def test_navigation_commit_settles_success_before_post_switch_failure(monk
 
     message = NavigateToScreen("chat", on_completion=outcomes.append)
     with pytest.raises(RuntimeError, match="mount completed after stack transfer"):
+        await app.handle_screen_navigation(message)
+
+    assert outcomes == [True]
+    assert app._screen_stacks["_default"][-1].screen_name == "chat"
+
+
+@pytest.mark.asyncio
+async def test_navigation_sync_switch_error_after_stack_transfer_commits_and_propagates(
+    monkeypatch,
+) -> None:
+    """A synchronous switch failure cannot undo exact target ownership."""
+    app = _build_test_app()
+    app._initial_screen_pushed = True
+    outcomes: list[bool] = []
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    outgoing = SimpleNamespace(screen_name="library")
+    app._screen_stacks["_default"][:] = [object(), outgoing]
+
+    def synchronous_transfer_then_raise(screen):
+        app._screen_stacks["_default"][-1] = screen
+        raise RuntimeError("switch raised after exact stack transfer")
+
+    monkeypatch.setattr(
+        app,
+        "_resolve_screen_navigation_target",
+        lambda _target: ("chat", "chat", FakeTargetScreen),
+    )
+    monkeypatch.setattr(app, "switch_screen", synchronous_transfer_then_raise)
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+
+    message = NavigateToScreen("chat", on_completion=outcomes.append)
+    with pytest.raises(RuntimeError, match="switch raised after exact stack transfer"):
         await app.handle_screen_navigation(message)
 
     assert outcomes == [True]

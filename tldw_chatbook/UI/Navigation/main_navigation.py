@@ -100,10 +100,12 @@ class NavigateToScreen(Message):
         if self._completion_reported:
             return
         self._completion_reported = True
-        if self._on_completion is None:
+        callback = self._on_completion
+        self._on_completion = None
+        if callback is None:
             return
         try:
-            self._on_completion(bool(succeeded))
+            callback(bool(succeeded))
         except Exception:
             logger.debug("Navigation completion callback failed.", exc_info=True)
 

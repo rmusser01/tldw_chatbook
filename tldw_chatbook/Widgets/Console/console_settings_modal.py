@@ -97,6 +97,9 @@ from tldw_chatbook.Chat.console_settings_defaults import (
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
+    ProviderSettingsNavigationTarget,
+)
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.model_capabilities import is_vision_capable
 from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
@@ -142,6 +145,8 @@ _SNAPSHOT_RAW_TEXT_LIMIT = 4096
 _SNAPSHOT_MODEL_TEXT_LIMIT = 512
 _SNAPSHOT_URL_TEXT_LIMIT = 2048
 _SNAPSHOT_PRIVATE_TEXT_LIMIT = 100_000
+_SNAPSHOT_PROVIDER_DRAFT_LIMIT = 256
+_SNAPSHOT_SCROLL_ANCHOR_LIMIT = 1_000_000
 _SNAPSHOT_RAW_VALUE_IDS = frozenset(
     {
         "console-settings-provider",
@@ -334,6 +339,8 @@ def _copy_snapshot_string_mapping(
     allow_blank: bool = False,
 ) -> dict[str, str | None] | None:
     """Copy a small allowlisted provider draft mapping without generic deepcopy."""
+    if len(source) > _SNAPSHOT_PROVIDER_DRAFT_LIMIT:
+        return None
     copied: dict[str, str | None] = {}
     for key, value in source.items():
         provider = _snapshot_provider(key)
@@ -385,7 +392,14 @@ def _valid_snapshot_settings_mapping(source: Mapping[str, object]) -> bool:
                 return False
         else:
             return False
-    return True
+    try:
+        settings = ConsoleSessionSettings(**dict(source))
+    except TypeError:
+        return False
+    return not validate_console_session_settings(
+        settings,
+        app_config={"api_settings": {}},
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -427,7 +441,10 @@ class ConsoleSettingsDraftSnapshot:
             raise ValueError("context policy overrides are invalid")
         if type(self.active_view) is not str or self.active_view not in {"model", "context"}:
             raise ValueError("active view is invalid")
-        if type(self.scroll_anchor) is not int or self.scroll_anchor < 0:
+        if (
+            type(self.scroll_anchor) is not int
+            or not 0 <= self.scroll_anchor <= _SNAPSHOT_SCROLL_ANCHOR_LIMIT
+        ):
             raise ValueError("scroll anchor is invalid")
         if (
             self.focus_control_id is not None
@@ -576,12 +593,15 @@ class ConsoleSettingsCredentialRequest:
     def __post_init__(self) -> None:
         if type(self.snapshot) is not ConsoleSettingsDraftSnapshot:
             raise ValueError("credential request snapshot is invalid")
-        provider = _snapshot_provider(self.provider)
-        if provider is None:
-            raise ValueError("credential request provider is invalid")
-        if not _snapshot_model(self.model, allow_none=True):
-            raise ValueError("credential request model is invalid")
-        object.__setattr__(self, "provider", provider)
+        target = ProviderSettingsNavigationTarget(
+            category="providers-models",
+            provider=self.provider,
+            model=self.model,
+            field="api_key",
+            return_revision=1,
+        )
+        object.__setattr__(self, "provider", target.provider)
+        object.__setattr__(self, "model", target.model)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1105,6 +1125,9 @@ class ConsoleSettingsModal(
             checked=False,
         )
         self._restoring_suspended_draft = False
+        self._last_logical_focus_control_id = (
+            suspended_draft.focus_control_id if suspended_draft is not None else None
+        )
         self._readiness_debounce_timer: Timer | None = None
         self._settings_close_guard_mode: str | None = None
         self._settings_close_guard_focus: Widget | None = None
@@ -2239,8 +2262,16 @@ class ConsoleSettingsModal(
             elif isinstance(control, Select):
                 raw_values[control_id] = self._select_value_text(control.value)
         try:
-            scroll_anchor = max(
-                0, int(self.query_one("#console-settings-body", ScrollableContainer).scroll_y)
+            scroll_anchor = min(
+                _SNAPSHOT_SCROLL_ANCHOR_LIMIT,
+                max(
+                    0,
+                    int(
+                        self.query_one(
+                            "#console-settings-body", ScrollableContainer
+                        ).scroll_y
+                    ),
+                ),
             )
         except (NoMatches, TypeError, ValueError):
             scroll_anchor = 0
@@ -2252,7 +2283,10 @@ class ConsoleSettingsModal(
             provider_base_url_drafts=dict(self._provider_base_url_drafts),
             active_view=self._active_view,
             scroll_anchor=scroll_anchor,
-            focus_control_id=self._logical_focus_control_id(),
+            focus_control_id=(
+                self._logical_focus_control_id()
+                or self._last_logical_focus_control_id
+            ),
             disclosure_state={
                 "advanced_generation": bool(
                     getattr(self, "_advanced_generation_disclosed", False)
@@ -2311,10 +2345,9 @@ class ConsoleSettingsModal(
             status_message=current.status_message,
         )
 
-    def _logical_focus_control_id(self) -> str | None:
+    def _logical_focus_control_id(self, focused: Widget | None = None) -> str | None:
         """Return the public focus target, never a hidden legacy alias."""
-        focused = self.focused or getattr(self.app, "focused", None)
-        current = focused
+        current = focused or self.focused or getattr(self.app, "focused", None)
         while current is not None:
             control_id = getattr(current, "id", None)
             if control_id in _SNAPSHOT_FOCUS_CONTROL_IDS:
@@ -2323,6 +2356,12 @@ class ConsoleSettingsModal(
                 return "console-settings-model-picker"
             current = getattr(current, "parent", None)
         return None
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        """Remember the last draft control before an action button takes focus."""
+        logical_focus = self._logical_focus_control_id(event.widget)
+        if logical_focus is not None:
+            self._last_logical_focus_control_id = logical_focus
 
     def credential_request(self) -> ConsoleSettingsCredentialRequest:
         """Build the modal result consumed by Console's credential recovery route."""
@@ -4192,6 +4231,9 @@ class ConsoleSettingsModal(
             ),
             streaming=self._effective_streaming_value(),
             character_label=self._settings.character_label,
+            system_prompt=self._settings.system_prompt,
+            source=self._settings.source,
+            pinned_prefill=self._settings.pinned_prefill,
         )
 
     def _sync_model_controls(self, provider: str, current_model: str | None) -> None:

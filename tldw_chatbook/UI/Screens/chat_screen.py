@@ -2867,6 +2867,7 @@ class ChatScreen(BaseAppScreen):
         focus_context: bool = False,
         transfer: ConsoleSettingsTransfer | None = None,
         suspended_draft: ConsoleSettingsDraftSnapshot | None = None,
+        _pre_push_guard: Callable[[], bool] | None = None,
     ) -> bool:
         """Open Console session settings for the active native session."""
         controller = self._ensure_console_chat_controller()
@@ -2967,11 +2968,57 @@ class ChatScreen(BaseAppScreen):
                 return
             self._dispatch_console_settings_submission(result)
 
+        if _pre_push_guard is not None and not _pre_push_guard():
+            return False
         try:
             await self.app.push_screen(modal, callback=apply_origin_result)
+        except asyncio.CancelledError:
+            await self._unwind_failed_console_settings_modal(modal)
+            raise
         except Exception:
+            removed = await self._unwind_failed_console_settings_modal(modal)
+            if not removed and self._console_settings_modal_is_on_stack(modal):
+                # A concurrently covered modal still owns the only live
+                # draft. Report ownership so a suspended snapshot is not
+                # retained as a second owner.
+                return True
             return False
         return True
+
+    def _console_settings_modal_is_on_stack(
+        self,
+        modal: ConsoleSettingsModal,
+    ) -> bool:
+        """Return whether the exact pushed modal remains anywhere on the stack."""
+        try:
+            return any(screen is modal for screen in self.app.screen_stack)
+        except Exception:
+            return False
+
+    async def _unwind_failed_console_settings_modal(
+        self,
+        modal: ConsoleSettingsModal,
+    ) -> bool:
+        """Pop only the exact failed modal when it still owns the stack top."""
+        try:
+            stack = self.app.screen_stack
+            if not stack or stack[-1] is not modal:
+                return not any(screen is modal for screen in stack)
+            pop_result = self.app.pop_screen()
+        except Exception:
+            return not self._console_settings_modal_is_on_stack(modal)
+        try:
+            await pop_result
+        except asyncio.CancelledError:
+            # Preserve the original cancellation from the failed mount; the
+            # synchronous stack re-check below remains the ownership truth.
+            pass
+        except Exception:
+            # Textual removes the exact top synchronously before its returned
+            # AwaitComplete performs unmount work, so ownership may already
+            # be repaired even when that later work reports an error.
+            pass
+        return not self._console_settings_modal_is_on_stack(modal)
 
     def _stage_console_settings_credential_request(
         self,
@@ -3037,7 +3084,11 @@ class ChatScreen(BaseAppScreen):
                 return
             if self._owns_console_screen_stack():
                 self.run_worker(
-                    self._reopen_suspended_console_settings(request_token),
+                    self._reopen_suspended_console_settings(
+                        request_token,
+                        session_id=session_id,
+                        settings_revision=settings_revision,
+                    ),
                     exclusive=False,
                 )
 
@@ -3057,22 +3108,46 @@ class ChatScreen(BaseAppScreen):
         except Exception:
             return False
 
-    async def _reopen_suspended_console_settings(self, request_token: int) -> None:
+    async def _reopen_suspended_console_settings(
+        self,
+        request_token: int,
+        *,
+        session_id: str,
+        settings_revision: int,
+    ) -> None:
         """Reopen the retained draft only after an exact failed source route."""
         snapshot = getattr(self, "_suspended_conversation_settings", None)
-        if (
-            not isinstance(snapshot, ConsoleSettingsDraftSnapshot)
-            or getattr(self, "_suspended_conversation_settings_token", None)
-            != request_token
-            or not self._owns_console_screen_stack()
-        ):
+        store = self._ensure_console_chat_store()
+
+        def may_push() -> bool:
+            """Revalidate exact source, token, snapshot, and session ownership."""
+            if (
+                not isinstance(snapshot, ConsoleSettingsDraftSnapshot)
+                or getattr(self, "_suspended_conversation_settings", None)
+                is not snapshot
+                or getattr(self, "_suspended_conversation_settings_token", None)
+                != request_token
+                or store.active_session_id != session_id
+                or not self._owns_console_screen_stack()
+            ):
+                return False
+            try:
+                return store.session_settings_revision(session_id) == settings_revision
+            except KeyError:
+                return False
+
+        if not may_push():
             return
         try:
-            reopened = await self._open_console_settings(suspended_draft=snapshot)
+            reopened = await self._open_console_settings(
+                suspended_draft=snapshot,
+                _pre_push_guard=may_push,
+            )
         except Exception:
             return
         if (
             reopened
+            and getattr(self, "_suspended_conversation_settings", None) is snapshot
             and getattr(self, "_suspended_conversation_settings_token", None)
             == request_token
         ):
@@ -3162,6 +3237,7 @@ class ChatScreen(BaseAppScreen):
         *,
         origin_session_id: str | None = None,
         origin_system_prompt: str | None = None,
+        origin_pinned_prefill: str | None = None,
     ) -> None:
         """Apply provider settings and the separately owned chat-name override."""
         if not isinstance(result, (ConsoleSettingsResult, ConsoleSessionSettings)):
@@ -3184,12 +3260,22 @@ class ChatScreen(BaseAppScreen):
                 current_settings.system_prompt if current_settings is not None else None
             )
         )
+        current_pinned_prefill = (
+            origin_pinned_prefill
+            if origin_session_id is not None
+            else (
+                current_settings.pinned_prefill
+                if current_settings is not None
+                else None
+            )
+        )
         store.replace_session_settings(
             session_id,
             replace(
                 settings,
                 source="user",
                 system_prompt=current_system_prompt,
+                pinned_prefill=current_pinned_prefill,
             ),
         )
         if isinstance(result, ConsoleSettingsResult):

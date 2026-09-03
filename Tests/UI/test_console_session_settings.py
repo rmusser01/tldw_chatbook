@@ -285,6 +285,149 @@ def test_suspended_draft_allows_incomplete_connection_and_multiline_private_text
     assert restored.settings.pinned_prefill == "prefill line one\n\tprefill line two"
 
 
+def _minimal_suspended_draft_mapping() -> dict[str, object]:
+    """Return one detached valid snapshot mapping for fail-closed mutations."""
+    return ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-model-picker": "gpt-5"},
+        provider_model_drafts={"openai": "gpt-5"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id="console-settings-model-picker",
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    ).to_mapping()
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [
+        ("temperature", float("nan")),
+        ("temperature", float("inf")),
+        ("temperature", -0.001),
+        ("temperature", 2.001),
+        ("top_p", float("nan")),
+        ("top_p", -0.001),
+        ("top_p", 1.001),
+        ("min_p", float("inf")),
+        ("min_p", -0.001),
+        ("min_p", 1.001),
+        ("top_k", -1),
+        ("max_tokens", 0),
+        ("seed", -1),
+        ("presence_penalty", float("-inf")),
+        ("presence_penalty", -2.001),
+        ("presence_penalty", 2.001),
+        ("frequency_penalty", float("inf")),
+        ("frequency_penalty", -2.001),
+        ("frequency_penalty", 2.001),
+        ("thinking_budget_tokens", 1023),
+        ("reasoning_effort", "arbitrary"),
+        ("reasoning_summary", "arbitrary"),
+        ("verbosity", "arbitrary"),
+        ("thinking_effort", "arbitrary"),
+        ("source", "arbitrary"),
+    ],
+)
+def test_suspended_draft_rejects_out_of_domain_semantic_settings(
+    field_name: str,
+    invalid_value: object,
+) -> None:
+    mapping = _minimal_suspended_draft_mapping()
+    mapping["settings"][field_name] = invalid_value  # type: ignore[index]
+
+    assert ConsoleSettingsDraftSnapshot.from_mapping(mapping) is None
+
+
+@pytest.mark.parametrize(
+    ("field_name", "boundary_value"),
+    [
+        ("temperature", 0.0),
+        ("temperature", 2.0),
+        ("top_p", 0.0),
+        ("top_p", 1.0),
+        ("min_p", 0.0),
+        ("min_p", 1.0),
+        ("top_k", 0),
+        ("max_tokens", 1),
+        ("seed", 0),
+        ("presence_penalty", -2.0),
+        ("presence_penalty", 2.0),
+        ("frequency_penalty", -2.0),
+        ("frequency_penalty", 2.0),
+        ("thinking_budget_tokens", 1024),
+        ("source", "derived"),
+        ("source", "user"),
+    ],
+)
+def test_suspended_draft_accepts_canonical_semantic_boundaries(
+    field_name: str,
+    boundary_value: object,
+) -> None:
+    mapping = _minimal_suspended_draft_mapping()
+    mapping["settings"][field_name] = boundary_value  # type: ignore[index]
+
+    assert ConsoleSettingsDraftSnapshot.from_mapping(mapping) is not None
+
+
+@pytest.mark.parametrize(
+    ("field_name", "bool_value"),
+    [
+        ("temperature", True),
+        ("min_p", False),
+        ("top_k", True),
+        ("max_tokens", False),
+        ("seed", True),
+        ("thinking_budget_tokens", False),
+    ],
+)
+def test_suspended_draft_keeps_numeric_bool_rejection_exact(
+    field_name: str,
+    bool_value: bool,
+) -> None:
+    mapping = _minimal_suspended_draft_mapping()
+    mapping["settings"][field_name] = bool_value  # type: ignore[index]
+
+    assert ConsoleSettingsDraftSnapshot.from_mapping(mapping) is None
+
+
+@pytest.mark.parametrize("mapping_name", ["provider_model_drafts", "provider_base_url_drafts"])
+def test_suspended_draft_caps_provider_draft_cardinality(mapping_name: str) -> None:
+    mapping = _minimal_suspended_draft_mapping()
+    mapping[mapping_name] = {f"provider_{index}": "draft" for index in range(257)}
+
+    assert ConsoleSettingsDraftSnapshot.from_mapping(mapping) is None
+
+
+@pytest.mark.parametrize("mapping_name", ["provider_model_drafts", "provider_base_url_drafts"])
+def test_suspended_draft_accepts_provider_draft_cardinality_boundary(
+    mapping_name: str,
+) -> None:
+    mapping = _minimal_suspended_draft_mapping()
+    mapping[mapping_name] = {f"provider_{index}": "draft" for index in range(256)}
+
+    assert ConsoleSettingsDraftSnapshot.from_mapping(mapping) is not None
+
+
+@pytest.mark.parametrize("scroll_anchor", [-1, 1_000_001, True])
+def test_suspended_draft_rejects_invalid_or_unbounded_scroll_anchor(
+    scroll_anchor: object,
+) -> None:
+    mapping = _minimal_suspended_draft_mapping()
+    mapping["scroll_anchor"] = scroll_anchor
+
+    assert ConsoleSettingsDraftSnapshot.from_mapping(mapping) is None
+
+
+@pytest.mark.parametrize("scroll_anchor", [0, 1_000_000])
+def test_suspended_draft_accepts_bounded_scroll_anchor(scroll_anchor: int) -> None:
+    mapping = _minimal_suspended_draft_mapping()
+    mapping["scroll_anchor"] = scroll_anchor
+
+    assert ConsoleSettingsDraftSnapshot.from_mapping(mapping) is not None
+
+
 def test_suspended_draft_rejects_equality_impersonating_view_and_focus() -> None:
     """Schema choices are exact strings, not arbitrary equality-compatible objects."""
 
@@ -346,6 +489,18 @@ def test_credential_request_rejects_values_the_navigation_target_would_reject() 
             snapshot=snapshot,
             provider="openai",
             model="gpt-5\nunsafe",
+        )
+    with pytest.raises(ValueError):
+        ConsoleSettingsCredentialRequest(
+            snapshot=snapshot,
+            provider="openai",
+            model=" gpt-5 ",
+        )
+    with pytest.raises(ValueError):
+        ConsoleSettingsCredentialRequest(
+            snapshot=snapshot,
+            provider="openai",
+            model="",
         )
 
 
@@ -586,6 +741,9 @@ async def test_failed_source_reopen_retains_suspended_snapshot_and_token(monkeyp
     screen = ChatScreen.__new__(ChatScreen)
     fake_app = SimpleNamespace(screen_stack=(screen,))
     monkeypatch.setattr(ChatScreen, "app", property(lambda _self: fake_app))
+    store = ConsoleChatStore()
+    session = store.create_session(settings=snapshot.settings)
+    screen._ensure_console_chat_store = lambda: store
     screen._suspended_conversation_settings = snapshot
     screen._suspended_conversation_settings_token = 7
 
@@ -593,7 +751,12 @@ async def test_failed_source_reopen_retains_suspended_snapshot_and_token(monkeyp
         return False
 
     screen._open_console_settings = failed_open
-    await ChatScreen._reopen_suspended_console_settings(screen, 7)
+    await ChatScreen._reopen_suspended_console_settings(
+        screen,
+        7,
+        session_id=session.id,
+        settings_revision=0,
+    )
 
     assert screen._suspended_conversation_settings == snapshot
     assert screen._suspended_conversation_settings_token == 7
@@ -618,6 +781,9 @@ async def test_cancelled_source_reopen_retains_suspended_snapshot_and_token(
     screen = ChatScreen.__new__(ChatScreen)
     fake_app = SimpleNamespace(screen_stack=(screen,))
     monkeypatch.setattr(ChatScreen, "app", property(lambda _self: fake_app))
+    store = ConsoleChatStore()
+    session = store.create_session(settings=snapshot.settings)
+    screen._ensure_console_chat_store = lambda: store
     screen._suspended_conversation_settings = snapshot
     screen._suspended_conversation_settings_token = 11
 
@@ -626,10 +792,87 @@ async def test_cancelled_source_reopen_retains_suspended_snapshot_and_token(
 
     screen._open_console_settings = cancelled_open
     with pytest.raises(asyncio.CancelledError):
-        await ChatScreen._reopen_suspended_console_settings(screen, 11)
+        await ChatScreen._reopen_suspended_console_settings(
+            screen,
+            11,
+            session_id=session.id,
+            settings_revision=0,
+        )
 
     assert screen._suspended_conversation_settings is snapshot
     assert screen._suspended_conversation_settings_token == 11
+
+
+@pytest.mark.asyncio
+async def test_source_reopen_revalidates_exact_owner_after_model_resolution(
+    monkeypatch,
+) -> None:
+    """A later top screen wins while the reopen awaits catalog resolution."""
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-model-picker": "gpt-5"},
+        provider_model_drafts={"openai": "gpt-5"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id="console-settings-model-picker",
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+    store = ConsoleChatStore()
+    session = store.create_session(settings=snapshot.settings)
+    screen = ChatScreen.__new__(ChatScreen)
+    stack: list[object] = [screen]
+    pushed: list[object] = []
+    fake_app = SimpleNamespace(
+        screen_stack=stack,
+        push_screen=lambda modal, **_kwargs: pushed.append(modal),
+    )
+    monkeypatch.setattr(ChatScreen, "app", property(lambda _self: fake_app))
+    screen._suspended_conversation_settings = snapshot
+    screen._suspended_conversation_settings_token = 7
+    screen._ensure_console_chat_store = lambda: store
+    screen._ensure_console_chat_controller = lambda: SimpleNamespace(
+        run_state=SimpleNamespace(is_send_allowed=True),
+        reset_active_context_memory=lambda _session_id: None,
+        undo_context_memory_reset=lambda: None,
+        reset_all_context_memories=lambda _session_id: None,
+        compact_context_now=lambda _session_id: None,
+    )
+    screen._active_console_settings_context_estimate = lambda: (
+        ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
+    )
+    screen._active_console_context_control_state = lambda **_kwargs: None
+    screen._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
+    screen._global_chat_display_name = lambda: "Ada"
+    resolution_started = asyncio.Event()
+    release_resolution = asyncio.Event()
+
+    async def delayed_provider_models(*_args, **_kwargs):
+        resolution_started.set()
+        await release_resolution.wait()
+        return {"openai": ["gpt-5"]}
+
+    screen._providers_models_for_console_settings = delayed_provider_models
+
+    reopen_task = asyncio.create_task(
+        ChatScreen._reopen_suspended_console_settings(
+            screen,
+            7,
+            session_id=session.id,
+            settings_revision=0,
+        )
+    )
+    await resolution_started.wait()
+    later_top_screen = object()
+    stack.append(later_top_screen)
+    release_resolution.set()
+    await reopen_task
+
+    assert pushed == []
+    assert stack[-1] is later_top_screen
+    assert screen._suspended_conversation_settings is snapshot
+    assert screen._suspended_conversation_settings_token == 7
 
 
 def test_resident_console_screen_is_not_active_stack_owner(monkeypatch) -> None:
@@ -761,6 +1004,78 @@ async def test_open_console_settings_returns_false_when_mount_awaitable_fails(
     screen._providers_models_for_console_settings = provider_models
 
     assert await ChatScreen._open_console_settings(screen) is False
+
+
+@pytest.mark.asyncio
+async def test_open_console_settings_unwinds_exact_modal_after_mutating_failed_mount(
+    monkeypatch,
+) -> None:
+    """An AwaitMount failure cannot leave the modal sharing draft ownership."""
+    settings = ConsoleSessionSettings(provider="openai", model="gpt-5")
+    store = ConsoleChatStore()
+    store.create_session(settings=settings)
+    screen = ChatScreen.__new__(ChatScreen)
+    stack: list[object] = [screen]
+    popped: list[object] = []
+    callbacks: list[object] = []
+
+    class FailedMount:
+        def __await__(self):
+            async def fail_mount():
+                raise RuntimeError("modal mount failed after append")
+
+            return fail_mount().__await__()
+
+    class CompletedPop:
+        def __await__(self):
+            async def complete_pop():
+                return None
+
+            return complete_pop().__await__()
+
+    def push_screen(modal, callback):
+        stack.append(modal)
+        callbacks.append(callback)
+        return FailedMount()
+
+    def pop_screen():
+        popped.append(stack.pop())
+        return CompletedPop()
+
+    fake_app = SimpleNamespace(
+        screen_stack=stack,
+        push_screen=push_screen,
+        pop_screen=pop_screen,
+    )
+    monkeypatch.setattr(ChatScreen, "app", property(lambda _self: fake_app))
+    screen._session = SimpleNamespace(
+        _ensure_active_console_session_settings=lambda: settings
+    )
+    screen._ensure_console_chat_store = lambda: store
+    screen._ensure_console_chat_controller = lambda: SimpleNamespace(
+        run_state=SimpleNamespace(is_send_allowed=True),
+        reset_active_context_memory=lambda _session_id: None,
+        undo_context_memory_reset=lambda: None,
+        reset_all_context_memories=lambda _session_id: None,
+        compact_context_now=lambda _session_id: None,
+    )
+    screen._active_console_settings_context_estimate = lambda: (
+        ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
+    )
+    screen._active_console_context_control_state = lambda **_kwargs: None
+    screen._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
+    screen._global_chat_display_name = lambda: "Ada"
+
+    async def provider_models(*_args, **_kwargs):
+        return {"openai": ["gpt-5"]}
+
+    screen._providers_models_for_console_settings = provider_models
+
+    assert await ChatScreen._open_console_settings(screen) is False
+    assert len(popped) == 1
+    assert isinstance(popped[0], ConsoleSettingsModal)
+    assert stack == [screen]
+    assert len(callbacks) == 1
 
 
 @pytest.mark.asyncio
@@ -1111,61 +1426,64 @@ async def test_missing_credential_action_is_mounted_only_for_missing_cloud_crede
     assert results[0].provider == "openai"
 
 
+class RejectingConversationSettingsHarness(ConsoleHarness):
+    """Host a real ChatScreen while rejecting its typed settings route."""
+
+    def __init__(self, app_instance) -> None:
+        super().__init__(app_instance)
+        self.rejected_settings_routes: list[object] = []
+
+    def on_navigate_to_screen(self, message) -> None:
+        self.rejected_settings_routes.append(message)
+        message.report_completion(False)
+
+
 @pytest.mark.asyncio
-async def test_mounted_configure_credential_uses_chatscreen_push_callback_and_typed_stage() -> None:
-    """The mounted action travels through ChatScreen's real modal callback."""
-    app = ModalHarness()
-    app.app_config = {"api_settings": {"openai": {}}}
-    settings = ConsoleSessionSettings(provider="openai", model="gpt-5")
-    store = ConsoleChatStore()
-    session = store.create_session(settings=settings)
-    posted: list[object] = []
-    screen = ChatScreen.__new__(ChatScreen)
-    screen.app_instance = SimpleNamespace(
-        pending_handoffs=chat_screen_module.PendingHandoffStore(),
-    )
-    screen._ensure_console_chat_store = lambda: store
-    screen.post_message = posted.append
-    modal = _basic_modal(
-        settings,
-        app,
-        providers_models={"openai": ["gpt-5"]},
-    )
+async def test_mounted_configure_rejection_restores_picker_focus_through_production_route(
+    monkeypatch,
+) -> None:
+    """A real Configure click reopens the draft at its prior logical input."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    app.chat_api_provider_value = "openai"
+    app.chat_api_model_value = "gpt-5"
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"]["openai"] = {}
+    app.providers_models = {"openai": ["gpt-5"]}
+    host = RejectingConversationSettingsHarness(app)
 
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            modal,
-            callback=lambda result: (
-                ChatScreen._stage_console_settings_credential_request(
-                    screen,
-                    result,
-                    session_id=session.id,
-                )
-                if isinstance(result, ConsoleSettingsCredentialRequest)
-                else None
-            ),
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="openai", model="gpt-5"),
         )
-        await pilot.click("#console-settings-configure-credential")
-        await pilot.pause()
 
-    assert len(posted) == 1
-    navigation = posted[0]
-    assert navigation.screen_name == "settings"
-    target = navigation.screen_context
-    assert target == {
-        "category": "providers-models",
-        "provider": "openai",
-        "model": "gpt-5",
-        "field": "api_key",
-        "return_revision": 1,
-    }
-    assert screen._suspended_conversation_settings is not None
-    assert screen._suspended_conversation_settings.settings == settings
-    claim = screen.app_instance.pending_handoffs.claim(
-        HandoffChannel.CONVERSATION_SETTINGS_RETURN
-    )
-    assert claim is not None
-    assert claim.value.session_id == session.id
+        assert await console._open_console_settings() is True
+        original = await _wait_for_console_settings_modal(host, pilot)
+        picker = original.query_one(ModelSearchPicker)
+        picker.focus_input()
+        await _wait_for_focused_id(host, pilot, "model-search-picker-input")
+        await pilot.click("#console-settings-configure-credential")
+
+        fresh = None
+        for _ in range(80):
+            top = host.screen_stack[-1]
+            if top is not original and top.query("#console-settings-modal"):
+                fresh = top
+                break
+            await pilot.pause(0.05)
+        assert fresh is not None
+        await _wait_for_focused_id(host, pilot, "model-search-picker-input")
+
+        assert len(host.rejected_settings_routes) == 1
+        navigation = host.rejected_settings_routes[0]
+        assert navigation.screen_context["provider"] == "openai"
+        assert console._suspended_conversation_settings is None
+        assert console._suspended_conversation_settings_token is None
 
 
 @pytest.mark.asyncio
@@ -6606,10 +6924,10 @@ async def test_console_settings_modal_result_stays_bound_to_opening_session() ->
 
 
 @pytest.mark.asyncio
-async def test_console_settings_save_preserves_omitted_system_prompt_and_source() -> (
+async def test_console_settings_save_preserves_omitted_prompt_prefill_and_source() -> (
     None
 ):
-    """The real general-settings draft omits prompt ownership entirely."""
+    """The real general-settings draft preserves prompt-owned session fields."""
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "model-a"
@@ -6632,7 +6950,11 @@ async def test_console_settings_save_preserves_omitted_system_prompt_and_source(
         session.character_name = "Alraune"
         store.replace_session_settings(
             session.id,
-            ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+            ConsoleSessionSettings(
+                provider="llama_cpp",
+                model="model-a",
+                pinned_prefill="Keep this pinned prefill",
+            ),
         )
         store.seed_character_roleplay(
             session.id,
@@ -6664,6 +6986,7 @@ async def test_console_settings_save_preserves_omitted_system_prompt_and_source(
         settings = store.session_settings(session.id)
         assert settings.temperature == 0.5
         assert settings.system_prompt == "Protect User."
+        assert settings.pinned_prefill == "Keep this pinned prefill"
         assert session.character_system_template == "Protect {{user}}."
         assert system_prompt_writes == []
         assert roleplay_writes == []
