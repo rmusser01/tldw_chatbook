@@ -2,8 +2,8 @@
 
 Status: design approved 2026-09-02 (brainstorming), then hardened by an
 adversarial design review against the code (same day; corrections folded in
-below). Phase 1 implemented on branch `feat/task-28238-stale-write-guard`
-(2026-09-02); phase 2 (worktree isolation) not started.
+below). Phases 1 and 2 implemented (phase 1 merged in PR #2341; phase 2 on
+branch feat/task-28238-phase2-worktree-isolation).
 
 ## Problem
 
@@ -175,51 +175,79 @@ and the write is tiny and acceptable for optimistic locking.
 - A blind `fs_edit` (no prior `fs_read`) relies on find-must-match as its only
   safety net.
 
-## Phase 2 — git-worktree isolation (later, sketch)
+## Phase 2 — git-worktree isolation (resolved design, 2026-09-03)
 
-### Opt-in
-`isolation="worktree"` on the sub-agent spawn, default off. Single-agent and
-ordinary fleet children unchanged (AC#3).
+Phase 1 merged (PR #2341). The sketch's open questions are now resolved; this
+section is the binding phase-2 design (owner approved the shape and chose the
+merge-back mechanism).
 
-### Mechanism
-On spawning an isolated child: `git worktree add <scratch> -b agent/<run_id>
-<base-ref>` off the workspace repo; compose that child's provider with
-`workspace_root=<scratch>` via the existing `_compose_local_provider` path. The
-child's fs tools are confined to its own tree; the phase-1 guard still applies
-within it.
+### Dispatch wiring (the sketch's blocker — RESOLVED, no per-child registry)
+The provider already models multiple roots as `RunAdmittedWorkspaceRoot`
+(each with its own `WorkspaceToolExecutor`, `allow_write`, and a revalidation
+`guard`), selected in `_select_admitted_root`. Phase 2 adds a per-run agent
+root map on `LocalToolProvider`:
 
-### Merge-back — explicit, never silent (AC#1)
-A deliberate step, not automatic: surface the child's diff and require an
-explicit apply (`merge_child_worktree(handle_id)` — parent-agent tool or UI
-action) that attempts the merge into the base and, ON CONFLICT, refuses and
-surfaces the conflict for manual resolution rather than overwriting. A child
-never merged leaves its work in its branch, discardable.
+- `admit_run_workspace_root(run_id: str, authority: RunAdmittedWorkspaceRoot)`
+  and `retire_run_workspace_root(run_id: str)` — a lock-guarded
+  `_agent_roots: dict[str, RunAdmittedWorkspaceRoot]`, SEPARATE from the
+  constructor's alias map (no mixed-mode breakage).
+- `_select_admitted_root` consults `_agent_roots.get(current_run_id())`
+  FIRST: an isolated child's fs/git tool calls auto-route to its worktree
+  authority — no `root_alias` argument for the model to remember. An explicit
+  `root_alias` and unmapped runs behave exactly as today, so the parent,
+  Console workspace bindings, and single-agent flows are untouched (phase-1
+  AC#3 discipline).
+- The phase-1 ledger needs no change: keys are `(run_id, resolved_path)` and
+  the child's paths resolve inside its own tree.
 
-### Git dependency, handled honestly
-Worktrees require a git workspace. If isolation is requested but the workspace
-is not a git repo (or git is unavailable), the spawn REFUSES with a clear reason
-rather than silently sharing the tree.
+### Worktree lifecycle
+New module `Agents/agent_worktree.py`:
+- `create_agent_worktree(repo_root, run_id)` →
+  `git worktree add <scratch>/agent-<run8> -b agent/<run_id> HEAD`.
+  **Base ref = HEAD at spawn** (decided). **Uncommitted shared-tree changes do
+  NOT carry** into the worktree — a clean checkout; dirt belongs to the user
+  (decided).
+- Refuses cleanly (reason-coded) when the workspace root is not a git repo or
+  git is unavailable — the spawn then fails honestly rather than silently
+  sharing the tree (AC#1's "never silent").
+- `remove_agent_worktree` (worktree remove; branch deleted on discard, kept
+  after merge-back until discarded) and a GC sweep for worktrees left by
+  crashed/abandoned children.
 
-### Lifecycle
-Worktree dir + branch created at spawn, removed via `git worktree remove` after
-merge-back or discard; a prune pass GCs worktrees left by crashed/abandoned
-children.
+### Spawn surface
+`spawn_subagent` gains `isolation: "worktree"` (default off / absent =
+today's shared tree). On an isolated spawn, agent_service: create worktree →
+build the authority (executor bound to the worktree; guard revalidates the
+worktree still exists) → `admit_run_workspace_root(child_run_id, ...)` when
+the child run id is bound → child runs entirely inside its tree →
+`retire_run_workspace_root` at child finish (worktree itself survives until
+merged or discarded).
 
-### Cost
-Each worktree is a real checkout dir + git overhead per add (~200-500ms), so
-isolation stays opt-in for children that genuinely need write-isolation.
+### Merge-back — explicit, never silent (owner decision: BOTH modes)
+A parent-invocable, `mutates`-tagged tool (floored to ask → approval card):
+`merge_agent_worktree(handle_id, mode="apply"|"merge")`, default `apply`:
+- `mode="apply"`: 3-way-apply the child branch's diff into the shared working
+  tree, leaving everything UNCOMMITTED for user review/commit. The
+  `agent/<run_id>` branch survives as backup until discarded.
+- `mode="merge"`: a real `git merge --no-ff agent/<run_id>` into the current
+  branch — an actual merge commit.
+- BOTH refuse on conflict (including git's own dirty-tree overlap refusal for
+  merge mode), naming the conflicting files; nothing is ever half-applied
+  silently. Result includes a diffstat of what landed (or would land).
+- `discard_agent_worktree(handle_id)` removes worktree + branch without
+  applying anything. **Per-child** merge-back (decided); batching can compose
+  later.
 
-### Open questions for the phase-2 build (not resolved here)
-- **Dispatch wiring (review-found hole): all children share ONE registry with
-  ONE LocalToolProvider owning the fs tool names — a per-child
-  `workspace_root` has nowhere to plug in today.** Needs a per-child registry,
-  or a root that resolves per run_id. (The existing ROOT_CHANGED/root_identity
-  guard is NOT the obstacle — a per-child provider pinned to its scratch never
-  trips it.)
-- Base ref: HEAD vs the run-start commit.
-- Whether uncommitted shared-tree changes carry into the worktree.
-- How merge-back reconciles with the user's own concurrent edits.
-- Per-child vs batched merge-back.
+### Tests (phase 2)
+- Wiring: an admitted run routes fs tools to the worktree root (write lands in
+  the worktree, not the shared tree); unmapped runs unchanged; retire restores.
+- Lifecycle: create/remove/GC round-trip on a real temp git repo; non-git root
+  refuses with the reason.
+- Merge-back: apply mode lands the diff uncommitted; merge mode creates the
+  merge commit; conflicting change in the shared tree → refusal naming files,
+  tree untouched; discard removes everything.
+- Spawn integration: isolated child's writes are invisible in the shared tree
+  until merge-back; explicit merge-back lands them (AC#1).
 
 ## How the phases compose
 The guard protects the shared tree that all fleet children use today (phase 1,

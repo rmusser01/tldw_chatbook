@@ -22,6 +22,7 @@ flipping the default made nine other suites need it too.
 """
 
 import json
+import subprocess
 import threading
 import time
 from collections import Counter
@@ -34,10 +35,12 @@ from Tests.Agents.test_agent_service import (
     ScriptedChat,
     fence,
 )
-from tldw_chatbook.Agents import agent_service
+from tldw_chatbook.Agents import agent_service, agent_worktree
 from tldw_chatbook.Agents.agent_models import (
     CHECK_AGENTS_TOOL_NAME,
+    DISCARD_AGENT_WORKTREE_TOOL_NAME,
     FENCE_TOOL_RESULT_PREFIX,
+    MERGE_AGENT_WORKTREE_TOOL_NAME,
     RUN_CANCELLED,
     RUN_DONE,
     RUN_ERROR,
@@ -3656,3 +3659,1063 @@ def test_autowake_ships_on_by_default():
     is auto-wake ON -- asserted, not assumed."""
     assert agent_service.DEFAULT_AUTOWAKE_ENABLED is True
     assert agent_service.AUTOWAKE_ENABLED_KEY == "autowake_enabled"
+
+
+# -- TASK-28238 phase 2 T4: spawn_subagent isolation="worktree" -----------
+
+
+def _git(cwd, *args):
+    return subprocess.run(
+        ["git", *args], cwd=cwd, capture_output=True, text=True, check=True
+    ).stdout
+
+
+@pytest.fixture()
+def git_repo(tmp_path):
+    """A real git repo with one committed file -- the shared workspace
+    root a `LocalToolProvider` and `create_agent_worktree` both need."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    _git(root, "init", "-b", "main")
+    _git(root, "config", "user.email", "t@t")
+    _git(root, "config", "user.name", "t")
+    (root / "seed.txt").write_text("base\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-m", "base")
+    return root
+
+
+def _fs_local_provider(root):
+    """A `LocalToolProvider` over `root` with real fs_read/fs_write specs
+    (a real `WorkspaceToolExecutor`, not the noop double above -- this
+    provider's writes must actually hit disk) and zero-round-trip
+    execution, so a scripted child can call fs_write with no approval
+    plumbing.
+    """
+    from tldw_chatbook.Tools.workspace_tool_executor import WorkspaceToolExecutor
+
+    executor = WorkspaceToolExecutor(root)
+    specs = [
+        spec
+        for spec in _default_specs(root, workspace_executor=executor)
+        if spec.name in {"fs_read", "fs_write"}
+    ]
+    return LocalToolProvider(
+        workspace_root=root,
+        specs=specs,
+        resolve_state=lambda hub: EffectiveToolState(state="allow", origin="test"),
+    )
+
+
+ISO_CFG = AgentConfig(
+    model="test-model",
+    system_prompt="You are helpful.",
+    allowed_tools=("fs_write", SPAWN_TOOL_NAME),
+    budget=RunBudget(max_steps=40, max_model_turns=40, max_subagents=4),
+)
+
+
+def test_isolated_child_never_inherits_shell_or_virtual_cli(db, git_repo, monkeypatch):
+    """Finding 6 (Qodo round, HIGH): worktree routing only ever covers
+    `_PATH_AUTHORITY_LOCAL_NAMES` -- `shell_exec` and `virtual_cli`
+    execute against the ORIGINAL workspace root regardless (the virtual
+    CLI binds its `WorkspaceToolExecutor` at compose time; raw shell runs
+    real commands there too), and children inherit the primary's
+    allow-list by default. An isolated child in a shell/virtual-CLI-
+    enabled session could therefore mutate the shared tree straight
+    through either tool, bypassing isolation entirely. Fail-closed fix:
+    both names are excluded from `child_allowed_tools` whenever
+    `isolation == "worktree"` -- a plain (non-isolated) sibling keeps
+    them, since only isolation withholds these two.
+
+    Captures every `AgentConfig` this turn constructs (there is exactly
+    one per spawned child, in spawn order -- the primary's own config is
+    a `dataclasses.replace`, never a fresh `AgentConfig(...)` call) to
+    read `allowed_tools` directly, independent of whether either tool
+    has a real provider registered in the catalog (irrelevant to the
+    allow-list filter itself, which is pure name-based tuple
+    composition).
+    """
+    from tldw_chatbook.Agents import agent_service as agent_service_module
+    from tldw_chatbook.Agents.raw_shell_tool_provider import RAW_SHELL_TOOL_NAME
+    from tldw_chatbook.Agents.virtual_cli_provider import VIRTUAL_CLI_TOOL_NAME
+
+    captured_configs = []
+    real_agent_config = agent_service_module.AgentConfig
+
+    def _spy_agent_config(**kwargs):
+        cfg = real_agent_config(**kwargs)
+        captured_configs.append(cfg)
+        return cfg
+
+    monkeypatch.setattr(agent_service_module, "AgentConfig", _spy_agent_config)
+
+    provider = _fs_local_provider(git_repo)
+    shell_cli_cfg = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=(RAW_SHELL_TOOL_NAME, VIRTUAL_CLI_TOOL_NAME, SPAWN_TOOL_NAME),
+        budget=RunBudget(max_steps=40, max_model_turns=40, max_subagents=4),
+    )
+    service, chat, coordinator = make_fleet_service(
+        db,
+        parent_replies=[
+            fence(SPAWN_TOOL_NAME, {"task": "iso task", "isolation": "worktree"}),
+            fence(SPAWN_TOOL_NAME, {"task": "plain task"}),
+            "spawned both",
+        ],
+        child_replies={"iso task": ["iso done"], "plain task": ["plain done"]},
+        providers=(provider,),
+    )
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=shell_cli_cfg,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    join_fleet_children(service)
+
+    child_configs = [
+        cfg for cfg in captured_configs if cfg is not shell_cli_cfg
+    ]
+    assert len(child_configs) == 2, child_configs
+    iso_config, plain_config = child_configs
+    assert RAW_SHELL_TOOL_NAME not in iso_config.allowed_tools
+    assert VIRTUAL_CLI_TOOL_NAME not in iso_config.allowed_tools
+    assert RAW_SHELL_TOOL_NAME in plain_config.allowed_tools
+    assert VIRTUAL_CLI_TOOL_NAME in plain_config.allowed_tools
+
+
+def test_isolated_spawn_writes_are_invisible_until_merge(db, git_repo):
+    """AC#1 (TASK-28238 P2 T4): an isolation="worktree" child's fs_write
+    lands in ITS OWN worktree, not the shared tree; a plain sibling
+    spawned in the same turn still writes the shared tree.
+    """
+    provider = _fs_local_provider(git_repo)
+    service, chat, coordinator = make_fleet_service(
+        db,
+        parent_replies=[
+            fence(SPAWN_TOOL_NAME, {"task": "iso task", "isolation": "worktree"}),
+            fence(SPAWN_TOOL_NAME, {"task": "plain task"}),
+            "spawned both",
+        ],
+        child_replies={
+            "iso task": [
+                fence("fs_write", {"path": "iso.txt", "content": "isolated\n"}),
+                "wrote iso",
+            ],
+            "plain task": [
+                fence("fs_write", {"path": "plain.txt", "content": "shared\n"}),
+                "wrote plain",
+            ],
+        },
+        providers=(provider,),
+    )
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=ISO_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    join_fleet_children(service)
+
+    # The plain sibling wrote the SHARED tree.
+    assert (git_repo / "plain.txt").read_text() == "shared\n"
+    # The isolated child's write never reached the shared tree.
+    assert not (git_repo / "iso.txt").exists()
+
+    handles_by_task = {h.task: h for h in coordinator.snapshot()}
+    iso_handle = handles_by_task["iso task"]
+    assert iso_handle.handle_id in service._agent_worktrees, (
+        "the isolated child's worktree must be tracked for later merge/discard"
+    )
+    wt = service._agent_worktrees[iso_handle.handle_id]
+    # ... and it DID land, in the child's own worktree.
+    assert (wt.worktree_path / "iso.txt").read_text() == "isolated\n"
+    # Retirement (this task's scope) un-admits the provider root but never
+    # deletes the worktree itself -- merge/discard is a later task's job.
+    assert wt.worktree_path.is_dir()
+
+
+def test_end_of_turn_gc_sweeps_a_clean_never_merged_worktree_but_spares_a_dirty_one(
+    db, git_repo
+):
+    """I3/(e) (TASK-28238 P2 T7 final fix wave): the end-of-turn GC sweep
+    (`_sweep_stale_agent_worktrees`, wired into `run_turn`'s teardown right
+    after `_settle_fleet`) reaps an isolated child's worktree that finished
+    without ever being merged/discarded -- but ONLY when it is clean.
+    Real spawns through the model loop (not the `_seed_worktree_reply`
+    shortcut other worktree tests use), so this exercises the actual
+    production wiring end-to-end: `_admit_agent_worktree` ->
+    `_settle_fleet` -> `_sweep_stale_agent_worktrees`.
+    """
+    provider = _fs_local_provider(git_repo)
+    service, chat, coordinator = make_fleet_service(
+        db,
+        parent_replies=[
+            fence(SPAWN_TOOL_NAME, {"task": "clean task", "isolation": "worktree"}),
+            fence(SPAWN_TOOL_NAME, {"task": "dirty task", "isolation": "worktree"}),
+            "spawned both",
+        ],
+        child_replies={
+            # Never writes -- its worktree is byte-identical to HEAD.
+            "clean task": ["nothing to do here"],
+            "dirty task": [
+                fence("fs_write", {"path": "d.txt", "content": "dirty\n"}),
+                "wrote it",
+            ],
+        },
+        providers=(provider,),
+    )
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=ISO_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    join_fleet_children(service)
+
+    handles_by_task = {h.task: h for h in coordinator.snapshot()}
+    # The sweep (pure git, keyed by branch name) never touches this
+    # in-memory map -- reading the path off it, not off
+    # `_worktrees_base()`'s own naming scheme, is what avoids duplicating
+    # `create_agent_worktree`'s internals here.
+    clean_wt = service._agent_worktrees[handles_by_task["clean task"].handle_id]
+    dirty_wt = service._agent_worktrees[handles_by_task["dirty task"].handle_id]
+    # The clean child's worktree is gone -- swept, never merged/discarded.
+    assert not clean_wt.worktree_path.exists()
+    # The dirty child's worktree survives -- git itself refused to remove
+    # it (no --force), same guarantee the discard tool's own schema
+    # promises for anything not explicitly confirmed.
+    assert dirty_wt.worktree_path.is_dir()
+    assert (dirty_wt.worktree_path / "d.txt").read_text() == "dirty\n"
+
+
+def test_a_later_service_instances_sweep_does_not_reap_an_earlier_ones_survivor(
+    db, git_repo
+):
+    """I3 round 2 (TASK-28238 P2 T7 final fix wave, HIGH from re-review):
+    mirrors `test_a_later_turns_settle_does_not_reach_an_earlier_turns_
+    survivor`'s two-service/shared-coordinator pattern, applied to
+    `_sweep_stale_agent_worktrees` instead of `_settle_fleet`.
+
+    Production constructs a FRESH `AgentService` per turn
+    (`console_agent_bridge.py`), sharing only the `FleetCoordinator` --
+    never `self._fleet_cancels`, which is per-instance and reset every
+    turn. The now-fixed bug: deriving sweep liveness from
+    `self.live_subagent_handles()` (filtered by `_fleet_cancels`
+    membership) made service_2's end-of-turn sweep see service_1's still-
+    `RUN_RUNNING` `subagents_outlive_turn` survivor as "not mine" and
+    reap its CLEAN worktree out from under its own running thread. The
+    fix derives liveness from the DB's run status directly (process-wide,
+    crash-safe, and correct regardless of which service instance --or
+    conversation-- spawned the run).
+    """
+    released = threading.Event()
+
+    def blocked_child():
+        released.wait(10.0)
+        return "released"
+
+    provider_1 = _fs_local_provider(git_repo)
+    provider_2 = _fs_local_provider(git_repo)
+    registry_1 = ToolCatalogRegistry()
+    registry_1.register_provider(BuiltinToolProvider())
+    registry_1.register_provider(provider_1)
+    registry_2 = ToolCatalogRegistry()
+    registry_2.register_provider(BuiltinToolProvider())
+    registry_2.register_provider(provider_2)
+    fleet = FleetCoordinator(max_live=3, clock=time.monotonic)
+    chat_1 = FleetChat(
+        [fence(SPAWN_TOOL_NAME, {"task": "survivor", "isolation": "worktree"}), "turn 1 done"],
+        {"survivor": [blocked_child]},
+    )
+    chat_2 = FleetChat(["turn 2 done"])
+    service_1 = AgentService(
+        db=db, registry=registry_1, chat_call=chat_1, fleet_coordinator=fleet
+    )
+    service_2 = AgentService(
+        db=db, registry=registry_2, chat_call=chat_2, fleet_coordinator=fleet
+    )
+    try:
+        _run_id_1, outcome_1 = service_1.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go 1"}],
+            config=ISO_CFG,
+            api_endpoint="llama_cpp",
+        )
+        assert outcome_1.status == RUN_DONE
+        _wait_until(
+            lambda: len([h for h in fleet.snapshot() if h.status == RUN_RUNNING]) == 1,
+            "turn 1's isolated child never started running",
+        )
+        survivor = next(h for h in fleet.snapshot() if h.status == RUN_RUNNING)
+        wt = service_1._agent_worktrees[survivor.handle_id]
+        assert wt.worktree_path.is_dir()  # sanity: it exists before service_2 runs
+
+        # service_2's own (unrelated) turn -- its OWN end-of-turn sweep
+        # must not touch turn 1's still-live survivor's worktree.
+        _run_id_2, outcome_2 = service_2.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go 2"}],
+            config=ISO_CFG,
+            api_endpoint="llama_cpp",
+        )
+        assert outcome_2.status == RUN_DONE
+        assert wt.worktree_path.is_dir(), (
+            "service_2's sweep reaped a DIFFERENT service instance's "
+            "still-running survivor's worktree"
+        )
+
+        # Now the survivor finishes for real.
+        released.set()
+        _wait_until(
+            lambda: fleet.get(survivor.handle_id).status == RUN_DONE,
+            "the survivor never completed after being released",
+        )
+        db.set_status(survivor.run_id, RUN_DONE, result="released")
+
+        # A later sweep (any service instance, any conversation) now
+        # correctly reaps it -- the DB says it is terminal.
+        chat_3 = FleetChat(["turn 3 done"])
+        provider_3 = _fs_local_provider(git_repo)
+        registry_3 = ToolCatalogRegistry()
+        registry_3.register_provider(BuiltinToolProvider())
+        registry_3.register_provider(provider_3)
+        service_3 = AgentService(
+            db=db, registry=registry_3, chat_call=chat_3, fleet_coordinator=fleet
+        )
+        _run_id_3, outcome_3 = service_3.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go 3"}],
+            config=ISO_CFG,
+            api_endpoint="llama_cpp",
+        )
+        assert outcome_3.status == RUN_DONE
+        assert not wt.worktree_path.exists(), (
+            "a terminal run's clean worktree should be GC-eligible once "
+            "the DB says so"
+        )
+    finally:
+        released.set()
+
+
+def test_sweep_prunes_nothing_when_the_liveness_read_fails(db, git_repo, monkeypatch):
+    """I3 round 2, item 2: a liveness-read failure must abort the WHOLE
+    sweep, not prune with an empty/partial `live_run_ids` -- over-
+    retention is acceptable, deletion of live work is not."""
+    provider = _fs_local_provider(git_repo)
+    service, chat, coordinator = make_fleet_service(
+        db,
+        parent_replies=[
+            fence(SPAWN_TOOL_NAME, {"task": "clean task", "isolation": "worktree"}),
+            "spawned it",
+        ],
+        child_replies={"clean task": ["nothing to do here"]},
+        providers=(provider,),
+    )
+
+    def boom():
+        raise RuntimeError("db unavailable")
+
+    monkeypatch.setattr(db, "list_running_run_ids", boom)
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=ISO_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    join_fleet_children(service)
+
+    handle = next(h for h in coordinator.snapshot() if h.task == "clean task")
+    wt = service._agent_worktrees[handle.handle_id]
+    # Would otherwise have been swept (it is clean and terminal) -- the
+    # liveness-read failure must have aborted pruning entirely instead.
+    assert wt.worktree_path.is_dir()
+
+
+def test_isolated_spawn_refuses_on_non_git_workspace(db, tmp_path):
+    """AC#2 (TASK-28238 P2 T4): isolation="worktree" against a workspace
+    root that is not a git repo is an honest refusal naming the reason,
+    with no live handle left reserved -- never a silent fall-through to
+    sharing the tree.
+    """
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    provider = _fs_local_provider(plain)
+    service, chat, coordinator = make_fleet_service(
+        db,
+        parent_replies=[
+            fence(SPAWN_TOOL_NAME, {"task": "iso task", "isolation": "worktree"}),
+            "done",
+        ],
+        providers=(provider,),
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=ISO_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    results = _tool_results(db.get_run(run_id), SPAWN_TOOL_NAME)
+    assert results and all(
+        "worktree isolation refused" in r and "not_a_git_repo" in r for r in results
+    ), results
+    # No handle survives the refusal -- the reserved slot was unwound.
+    assert coordinator.live_count() == 0
+    assert service._agent_worktrees == {}
+    # I1 (TASK-28238 P2 T7 final fix wave): the child's DB row must not be
+    # stranded at "running" -- `db.create_run` fires before the admit
+    # block, and nothing else ever marks this refused child terminal.
+    child_rows = db.list_runs("c", agent_kind="subagent")
+    assert child_rows, "the refused child's run row must exist"
+    assert all(row["status"] in TERMINAL_RUN_STATUSES for row in child_rows), (
+        child_rows
+    )
+
+
+# -- TASK-28238 phase 2 T4 review fix: inline spawns must refuse isolation --
+
+
+def test_isolated_spawn_refuses_without_fleet(db, monkeypatch):
+    """Review fix: `[agents] max_live_subagents == 1` (the documented
+    opt-out) means `fleet is None` -- `spawn`'s INLINE branch never
+    reaches `_launch_fleet_child`, so it can never create or admit a
+    worktree. An isolation="worktree" spawn there must refuse honestly,
+    never silently run the child inline sharing the tree.
+    """
+    service, _chat = make_inline_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "iso task", "isolation": "worktree"}),
+            "done",
+        ],
+        monkeypatch,
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    assert service._fleet is None
+    results = _tool_results(db.get_run(run_id), SPAWN_TOOL_NAME)
+    assert results and all("no_fleet" in r for r in results), results
+    # No child was created -- the refusal costs no spawn slot.
+    assert db.count_subagent_runs("c") == 0
+
+
+def test_isolated_spawn_refuses_unknown_isolation_value(db, git_repo):
+    """I2 (TASK-28238 P2 T7 final fix wave): the `isolation` argument is a
+    model-supplied JSON-fence string with no schema enum enforcement --
+    every check elsewhere only ever compares `== "worktree"`, so a typo or
+    an invented value like "sandbox" matched NONE of them and fell through
+    to a NORMAL shared-tree child launch with a success message, silently
+    ignoring the isolation request instead of refusing it.
+    """
+    provider = _fs_local_provider(git_repo)
+    service, chat, coordinator = make_fleet_service(
+        db,
+        parent_replies=[
+            fence(SPAWN_TOOL_NAME, {"task": "iso task", "isolation": "sandbox"}),
+            "done",
+        ],
+        providers=(provider,),
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=ISO_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    results = _tool_results(db.get_run(run_id), SPAWN_TOOL_NAME)
+    assert results and all(
+        'unknown isolation "sandbox"' in r and "invalid_isolation" in r
+        for r in results
+    ), results
+    # No child was created -- the refusal costs no spawn slot, and no
+    # child silently shared the tree.
+    assert db.count_subagent_runs("c") == 0
+    assert coordinator.live_count() == 0
+    assert service._agent_worktrees == {}
+
+
+def test_plain_inline_spawn_without_isolation_still_works(db, monkeypatch):
+    """Sibling pin: the same fleet-off shape with NO isolation is
+    untouched by the review fix (mirrors
+    ``test_max_live_of_one_keeps_spawn_inline``)."""
+    service, _chat = make_inline_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "plain task"}),
+            "sub answer",
+            "done",
+        ],
+        monkeypatch,
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    assert service._fleet is None
+    spawn_results = _tool_results(db.get_run(run_id), SPAWN_TOOL_NAME)
+    assert spawn_results == ["sub answer"]
+    assert db.count_subagent_runs("c") == 1
+
+
+# -- TASK-28238 phase 2 T5: merge_agent_worktree / discard_agent_worktree --
+#
+# Every test here builds its own worktree by calling Task 1's
+# `create_agent_worktree` directly (already covered by
+# `Tests/Agents/test_agent_worktree.py`) and a matching `FleetHandle` via
+# `coordinator.reserve`/`finish` -- NOT by driving a real
+# `isolation="worktree"` spawn through the model loop (Task 4's own tests
+# above already cover that path). This sidesteps two real constraints
+# that would otherwise force every test through a full spawn+wait turn:
+# a scripted `FleetChat` reply is authored BEFORE the run starts, so it
+# cannot reference a handle id spawn_subagent only generates at runtime;
+# and `run_turn` wipes `self._agent_worktrees` back to `{}` at the START
+# of every call, so the entry has to be seeded from INSIDE the same turn
+# that reads it. `_seed_worktree_reply` below is a FleetChat reply
+# callable (see `FleetChat.__call__`'s `if callable(item): item = item()`)
+# that does exactly that: it seeds the dict as a side effect, synchronously
+# on the primary's own turn, strictly before that turn's tool calls
+# dispatch -- then returns the fence text for the merge/discard call.
+
+
+def _seed_worktree_reply(service, handle_id, wt, tool_name, **extra_args):
+    def _reply():
+        service._agent_worktrees[handle_id] = wt
+        return fence(tool_name, {"handle_id": handle_id, **extra_args})
+
+    return _reply
+
+
+def test_merge_unknown_handle_refuses(db, git_repo):
+    provider = _fs_local_provider(git_repo)
+    service, chat, _coordinator = make_fleet_service(
+        db, parent_replies=[], providers=(provider,)
+    )
+    chat.parent_replies.extend(
+        [fence(MERGE_AGENT_WORKTREE_TOOL_NAME, {"handle_id": "nope"}), "done"]
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+        request_worktree_merge_confirm=lambda payload: {"allow": True},
+    )
+    assert outcome.status == RUN_DONE
+    results = _tool_results(db.get_run(run_id), MERGE_AGENT_WORKTREE_TOOL_NAME)
+    assert results and all("no agent worktree" in r for r in results), results
+
+
+def test_merge_refuses_while_child_still_running(db, git_repo):
+    provider = _fs_local_provider(git_repo)
+    service, chat, coordinator = make_fleet_service(
+        db, parent_replies=[], providers=(provider,)
+    )
+    handle = coordinator.reserve("child task", None)  # left "running"
+    wt = agent_worktree.create_agent_worktree(git_repo, handle.handle_id)
+    assert isinstance(wt, agent_worktree.AgentWorktree)
+    chat.parent_replies.extend(
+        [
+            _seed_worktree_reply(
+                service, handle.handle_id, wt, MERGE_AGENT_WORKTREE_TOOL_NAME
+            ),
+            "done",
+        ]
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+        request_worktree_merge_confirm=lambda payload: {"allow": True},
+    )
+    assert outcome.status == RUN_DONE
+    results = _tool_results(db.get_run(run_id), MERGE_AGENT_WORKTREE_TOOL_NAME)
+    assert results and all("still running" in r for r in results), results
+
+
+def test_merge_no_confirm_surface_refuses(db, git_repo):
+    provider = _fs_local_provider(git_repo)
+    service, chat, coordinator = make_fleet_service(
+        db, parent_replies=[], providers=(provider,)
+    )
+    handle = coordinator.reserve("child task", None)
+    coordinator.finish(handle.handle_id, RUN_DONE)
+    wt = agent_worktree.create_agent_worktree(git_repo, handle.handle_id)
+    chat.parent_replies.extend(
+        [
+            _seed_worktree_reply(
+                service, handle.handle_id, wt, MERGE_AGENT_WORKTREE_TOOL_NAME
+            ),
+            "done",
+        ]
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+        # request_worktree_merge_confirm omitted -- no approval surface.
+    )
+    assert outcome.status == RUN_DONE
+    results = _tool_results(db.get_run(run_id), MERGE_AGENT_WORKTREE_TOOL_NAME)
+    assert results and all("no approval surface" in r for r in results), results
+
+
+def test_merge_deny_refuses_and_leaves_tree_untouched(db, git_repo):
+    provider = _fs_local_provider(git_repo)
+    service, chat, coordinator = make_fleet_service(
+        db, parent_replies=[], providers=(provider,)
+    )
+    handle = coordinator.reserve("child task", None)
+    coordinator.finish(handle.handle_id, RUN_DONE)
+    wt = agent_worktree.create_agent_worktree(git_repo, handle.handle_id)
+    (wt.worktree_path / "child.txt").write_text("nope\n")
+    chat.parent_replies.extend(
+        [
+            _seed_worktree_reply(
+                service, handle.handle_id, wt, MERGE_AGENT_WORKTREE_TOOL_NAME
+            ),
+            "done",
+        ]
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+        request_worktree_merge_confirm=lambda payload: {"allow": False},
+    )
+    assert outcome.status == RUN_DONE
+    results = _tool_results(db.get_run(run_id), MERGE_AGENT_WORKTREE_TOOL_NAME)
+    assert results and all("declined" in r for r in results), results
+    assert not (git_repo / "child.txt").exists()
+    assert _git(git_repo, "status", "--porcelain").strip() == ""
+
+
+def test_merge_allow_apply_lands_uncommitted(db, git_repo):
+    provider = _fs_local_provider(git_repo)
+    service, chat, coordinator = make_fleet_service(
+        db, parent_replies=[], providers=(provider,)
+    )
+    handle = coordinator.reserve("child task", None)
+    coordinator.finish(handle.handle_id, RUN_DONE)
+    wt = agent_worktree.create_agent_worktree(git_repo, handle.handle_id)
+    (wt.worktree_path / "child.txt").write_text("child made this\n")
+    confirmed = {}
+
+    def confirm(payload):
+        confirmed.update(payload)
+        return {"allow": True}
+
+    chat.parent_replies.extend(
+        [
+            _seed_worktree_reply(
+                service,
+                handle.handle_id,
+                wt,
+                MERGE_AGENT_WORKTREE_TOOL_NAME,
+                mode="apply",
+            ),
+            "done",
+        ]
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+        request_worktree_merge_confirm=confirm,
+    )
+    assert outcome.status == RUN_DONE
+    results = _tool_results(db.get_run(run_id), MERGE_AGENT_WORKTREE_TOOL_NAME)
+    assert results and all("UNCOMMITTED" in r for r in results), results
+    assert confirmed["handle_id"] == handle.handle_id
+    assert confirmed["mode"] == "apply"
+    # Landed uncommitted in the shared tree.
+    assert (git_repo / "child.txt").read_text() == "child made this\n"
+    assert "child.txt" in _git(git_repo, "status", "--porcelain")
+
+
+def test_merge_allow_merge_creates_commit(db, git_repo):
+    provider = _fs_local_provider(git_repo)
+    service, chat, coordinator = make_fleet_service(
+        db, parent_replies=[], providers=(provider,)
+    )
+    handle = coordinator.reserve("child task", None)
+    coordinator.finish(handle.handle_id, RUN_DONE)
+    wt = agent_worktree.create_agent_worktree(git_repo, handle.handle_id)
+    (wt.worktree_path / "child.txt").write_text("child made this\n")
+    head_before = _git(git_repo, "rev-parse", "HEAD").strip()
+    chat.parent_replies.extend(
+        [
+            _seed_worktree_reply(
+                service,
+                handle.handle_id,
+                wt,
+                MERGE_AGENT_WORKTREE_TOOL_NAME,
+                mode="merge",
+            ),
+            "done",
+        ]
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+        request_worktree_merge_confirm=lambda payload: {"allow": True},
+    )
+    assert outcome.status == RUN_DONE
+    results = _tool_results(db.get_run(run_id), MERGE_AGENT_WORKTREE_TOOL_NAME)
+    assert results and all("merge commit" in r for r in results), results
+    assert (git_repo / "child.txt").read_text() == "child made this\n"
+    assert _git(git_repo, "status", "--porcelain").strip() == ""
+    head_after = _git(git_repo, "rev-parse", "HEAD").strip()
+    assert head_after != head_before
+
+
+def test_discard_requires_confirm_and_refuses_when_none(db, git_repo):
+    provider = _fs_local_provider(git_repo)
+    service, chat, coordinator = make_fleet_service(
+        db, parent_replies=[], providers=(provider,)
+    )
+    handle = coordinator.reserve("child task", None)
+    coordinator.finish(handle.handle_id, RUN_DONE)
+    wt = agent_worktree.create_agent_worktree(git_repo, handle.handle_id)
+    # I3 (TASK-28238 P2 T7 final fix wave): dirty on purpose -- a CLEAN,
+    # never-merged worktree is now legitimately reaped by run_turn's own
+    # end-of-turn GC sweep (that is I3's whole point); this test's own
+    # concern is that the REFUSED tool call itself made no side effect,
+    # which needs the sweep to have nothing to reap here either.
+    (wt.worktree_path / "child.txt").write_text("agent work\n")
+    chat.parent_replies.extend(
+        [
+            _seed_worktree_reply(
+                service, handle.handle_id, wt, DISCARD_AGENT_WORKTREE_TOOL_NAME
+            ),
+            "done",
+        ]
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+        # request_worktree_merge_confirm omitted -- discard gates on
+        # confirm too (it destroys the child's work).
+    )
+    assert outcome.status == RUN_DONE
+    results = _tool_results(db.get_run(run_id), DISCARD_AGENT_WORKTREE_TOOL_NAME)
+    assert results and all("no approval surface" in r for r in results), results
+    # Refused before touching anything.
+    assert wt.worktree_path.is_dir()
+    assert handle.handle_id in service._agent_worktrees
+
+
+def test_discard_removes_worktree_branch_and_entry(db, git_repo):
+    provider = _fs_local_provider(git_repo)
+    service, chat, coordinator = make_fleet_service(
+        db, parent_replies=[], providers=(provider,)
+    )
+    handle = coordinator.reserve("child task", None)
+    coordinator.finish(handle.handle_id, RUN_DONE)
+    wt = agent_worktree.create_agent_worktree(git_repo, handle.handle_id)
+    chat.parent_replies.extend(
+        [
+            _seed_worktree_reply(
+                service, handle.handle_id, wt, DISCARD_AGENT_WORKTREE_TOOL_NAME
+            ),
+            "done",
+        ]
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+        request_worktree_merge_confirm=lambda payload: {"allow": True},
+    )
+    assert outcome.status == RUN_DONE
+    results = _tool_results(db.get_run(run_id), DISCARD_AGENT_WORKTREE_TOOL_NAME)
+    assert results and all(wt.branch in r for r in results), results
+    assert not wt.worktree_path.exists()
+    assert wt.branch not in _git(git_repo, "branch", "--list", wt.branch)
+    assert handle.handle_id not in service._agent_worktrees
+
+
+# -- review fix (Task 5): discard's guards are code-identical to merge's --
+# but were untested for unknown handle / non-terminal / deny -- and deny
+# must be pinned as side-effect-free (the worktree stays on disk, the
+# entry stays tracked), same as merge's own deny test above.
+
+
+def test_discard_unknown_handle_refuses(db, git_repo):
+    provider = _fs_local_provider(git_repo)
+    service, chat, _coordinator = make_fleet_service(
+        db, parent_replies=[], providers=(provider,)
+    )
+    chat.parent_replies.extend(
+        [fence(DISCARD_AGENT_WORKTREE_TOOL_NAME, {"handle_id": "nope"}), "done"]
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+        request_worktree_merge_confirm=lambda payload: {"allow": True},
+    )
+    assert outcome.status == RUN_DONE
+    results = _tool_results(db.get_run(run_id), DISCARD_AGENT_WORKTREE_TOOL_NAME)
+    assert results and all("no agent worktree" in r for r in results), results
+
+
+def test_discard_refuses_while_child_still_running(db, git_repo):
+    provider = _fs_local_provider(git_repo)
+    service, chat, coordinator = make_fleet_service(
+        db, parent_replies=[], providers=(provider,)
+    )
+    handle = coordinator.reserve("child task", None)  # left "running"
+    wt = agent_worktree.create_agent_worktree(git_repo, handle.handle_id)
+    assert isinstance(wt, agent_worktree.AgentWorktree)
+    # I3 (TASK-28238 P2 T7 final fix wave): dirty on purpose -- see the
+    # identical note on `test_discard_requires_confirm_and_refuses_when_
+    # none` above.
+    (wt.worktree_path / "child.txt").write_text("agent work\n")
+    chat.parent_replies.extend(
+        [
+            _seed_worktree_reply(
+                service, handle.handle_id, wt, DISCARD_AGENT_WORKTREE_TOOL_NAME
+            ),
+            "done",
+        ]
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+        request_worktree_merge_confirm=lambda payload: {"allow": True},
+    )
+    assert outcome.status == RUN_DONE
+    results = _tool_results(db.get_run(run_id), DISCARD_AGENT_WORKTREE_TOOL_NAME)
+    assert results and all("still running" in r for r in results), results
+    # Refused before touching anything.
+    assert wt.worktree_path.is_dir()
+
+
+def test_discard_deny_refuses_and_leaves_worktree_untouched(db, git_repo):
+    provider = _fs_local_provider(git_repo)
+    service, chat, coordinator = make_fleet_service(
+        db, parent_replies=[], providers=(provider,)
+    )
+    handle = coordinator.reserve("child task", None)
+    coordinator.finish(handle.handle_id, RUN_DONE)
+    wt = agent_worktree.create_agent_worktree(git_repo, handle.handle_id)
+    # I3 (TASK-28238 P2 T7 final fix wave): dirty on purpose -- see the
+    # identical note on `test_discard_requires_confirm_and_refuses_when_
+    # none` above.
+    (wt.worktree_path / "child.txt").write_text("agent work\n")
+    chat.parent_replies.extend(
+        [
+            _seed_worktree_reply(
+                service, handle.handle_id, wt, DISCARD_AGENT_WORKTREE_TOOL_NAME
+            ),
+            "done",
+        ]
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+        request_worktree_merge_confirm=lambda payload: {"allow": False},
+    )
+    assert outcome.status == RUN_DONE
+    results = _tool_results(db.get_run(run_id), DISCARD_AGENT_WORKTREE_TOOL_NAME)
+    assert results and all("declined" in r for r in results), results
+    # Side-effect-free: nothing was touched.
+    assert wt.worktree_path.is_dir()
+    assert wt.branch in _git(git_repo, "branch", "--list", wt.branch)
+    assert handle.handle_id in service._agent_worktrees
+
+
+def test_merge_refuses_without_a_local_provider(db, git_repo):
+    """The cheap `worktree_repo_root is None` refusal -- no fs_read
+    provider registered at all, so `_admit_agent_worktree`'s own
+    resolution pattern (reused here) finds nothing to merge into."""
+    service, chat, coordinator = make_fleet_service(db, parent_replies=[])
+    handle = coordinator.reserve("child task", None)
+    coordinator.finish(handle.handle_id, RUN_DONE)
+    wt = agent_worktree.create_agent_worktree(git_repo, handle.handle_id)
+    chat.parent_replies.extend(
+        [
+            _seed_worktree_reply(
+                service, handle.handle_id, wt, MERGE_AGENT_WORKTREE_TOOL_NAME
+            ),
+            "done",
+        ]
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+        request_worktree_merge_confirm=lambda payload: {"allow": True},
+    )
+    assert outcome.status == RUN_DONE
+    results = _tool_results(db.get_run(run_id), MERGE_AGENT_WORKTREE_TOOL_NAME)
+    assert results and all("no local filesystem provider" in r for r in results), results
+
+
+def test_retire_after_map_reset_still_clears_provider_routing(db, git_repo):
+    """M1 (TASK-28238 P2 T7 final fix wave): `self._agent_worktrees` and the
+    provider's own `_agent_roots` are two separate maps. If the FIRST loses
+    its entry (e.g. run_turn resets `self._agent_worktrees = {}` for the
+    next turn) before retire runs, `_retire_agent_worktree` must still
+    un-admit the provider's routing -- early-returning on `wt is None`
+    BEFORE that call leaks `_agent_roots[run_id]` and its alias's
+    dispatch-spec cache entry for the rest of the process.
+    """
+    provider = _fs_local_provider(git_repo)
+    service, _chat, coordinator = make_fleet_service(
+        db, parent_replies=[], providers=(provider,)
+    )
+    handle = coordinator.reserve("child task", None)
+    # run_turn normally sets this up fresh per turn -- reproduce that
+    # here since this test drives `_admit_agent_worktree` directly.
+    service._agent_worktrees = {}
+    # A fresh id per test run -- `_worktrees_base()` is a real shared OS
+    # temp directory, not per-test isolated, so a fixed literal here would
+    # collide with a leftover directory from a prior run of this test.
+    child_run_id = handle.handle_id
+    refusal = service._admit_agent_worktree(handle, child_run_id)
+    assert refusal is None
+    assert child_run_id in provider._agent_roots
+
+    # Simulate the map reset WITHOUT the provider's own map being cleared.
+    service._agent_worktrees.clear()
+
+    service._retire_agent_worktree(child_run_id, handle.handle_id)
+    assert child_run_id not in provider._agent_roots
+
+
+def test_admit_refuses_when_root_identity_raises_oserror(db, git_repo, monkeypatch):
+    """M2 (TASK-28238 P2 T7 final fix wave): `_worktree_root_identity` does
+    a raw `os.lstat` walk -- a transient OS-level failure there (e.g. a
+    concurrent unmount) must land in `_admit_agent_worktree`'s refusal
+    path, including the worktree cleanup, exactly like the existing
+    `WorkspaceToolExecutionError`/`ValueError` cases -- not propagate out
+    of the tool call as an unhandled exception.
+    """
+    provider = _fs_local_provider(git_repo)
+    service, _chat, coordinator = make_fleet_service(
+        db, parent_replies=[], providers=(provider,)
+    )
+    handle = coordinator.reserve("child task", None)
+    service._agent_worktrees = {}
+    child_run_id = handle.handle_id
+
+    def _raise_oserror(_path):
+        raise OSError("simulated lstat failure")
+
+    monkeypatch.setattr(agent_worktree.os, "lstat", _raise_oserror)
+
+    refusal = service._admit_agent_worktree(handle, child_run_id)
+    assert refusal is not None
+    assert "admit_failed" in refusal
+    assert "simulated lstat failure" in refusal
+    # The refusal path's cleanup ran -- no tracking entry survives.
+    assert handle.handle_id not in service._agent_worktrees
+    assert child_run_id not in provider._agent_roots
+
+
+# -- TASK-28238 phase 2 T6: the confirm payload carries a diffstat preview --
+
+
+def test_merge_confirm_payload_carries_uncommitted_diffstat(db, git_repo):
+    """The child never commits inside its own worktree, so the confirm
+    card's diffstat must come from `preview_agent_worktree_diffstat`
+    (which reads uncommitted work) -- not from a `base..branch` diff in
+    `repo_root`, which would still be empty at confirm time."""
+    provider = _fs_local_provider(git_repo)
+    service, chat, coordinator = make_fleet_service(
+        db, parent_replies=[], providers=(provider,)
+    )
+    handle = coordinator.reserve("child task", None)
+    coordinator.finish(handle.handle_id, RUN_DONE)
+    wt = agent_worktree.create_agent_worktree(git_repo, handle.handle_id)
+    (wt.worktree_path / "child.txt").write_text("child made this\n")
+    confirmed = {}
+
+    def confirm(payload):
+        confirmed.update(payload)
+        return {"allow": True}
+
+    chat.parent_replies.extend(
+        [
+            _seed_worktree_reply(
+                service, handle.handle_id, wt, MERGE_AGENT_WORKTREE_TOOL_NAME
+            ),
+            "done",
+        ]
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+        request_worktree_merge_confirm=confirm,
+    )
+    assert outcome.status == RUN_DONE
+    assert "child.txt" in confirmed.get("diffstat", "")
+
+
+def test_discard_confirm_payload_carries_diffstat(db, git_repo):
+    provider = _fs_local_provider(git_repo)
+    service, chat, coordinator = make_fleet_service(
+        db, parent_replies=[], providers=(provider,)
+    )
+    handle = coordinator.reserve("child task", None)
+    coordinator.finish(handle.handle_id, RUN_DONE)
+    wt = agent_worktree.create_agent_worktree(git_repo, handle.handle_id)
+    (wt.worktree_path / "child.txt").write_text("about to be discarded\n")
+    confirmed = {}
+
+    def confirm(payload):
+        confirmed.update(payload)
+        return {"allow": True}
+
+    chat.parent_replies.extend(
+        [
+            _seed_worktree_reply(
+                service, handle.handle_id, wt, DISCARD_AGENT_WORKTREE_TOOL_NAME
+            ),
+            "done",
+        ]
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+        request_worktree_merge_confirm=confirm,
+    )
+    assert outcome.status == RUN_DONE
+    assert "child.txt" in confirmed.get("diffstat", "")

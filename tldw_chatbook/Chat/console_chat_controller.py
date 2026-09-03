@@ -691,6 +691,10 @@ _DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS = 0.0
 #: `request_skill_script_confirm`'s own wait loop (fallback used when no
 #: `skill_script_confirm_timeout_seconds` seam is injected).
 _DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS = 0.0
+#: Same ADR-067 contract, for `request_worktree_merge_confirm`'s own wait
+#: loop (fallback used when no `worktree_merge_confirm_timeout_seconds`
+#: seam is injected).
+_DEFAULT_WORKTREE_MERGE_CONFIRM_TIMEOUT_SECONDS = 0.0
 _DISPATCH_IDENTIFIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}\Z", re.ASCII)
 #: TASK-1050: synthetic round id `set_run_pending_approval`'s deprecated
 #: boolean shim registers under, internally, so its add/discard composes
@@ -3623,6 +3627,23 @@ class ConsoleChatController:
         #: `request_id`. The mounted card is the session's FIFO head, so a
         #: second same-session confirm no longer evicts an older sibling.
         self._parked_skill_script_payloads: dict[str, dict[str, Any]] = {}
+        #: TASK-28238 phase 2 Task 6: UI-thread callback that pushes/clears
+        #: the pending agent-worktree merge/discard confirm payload.
+        #: Mirrors set_pending_skill_install (single-key {"allow": bool}
+        #: decision -- no "remember" concept here). None means fail-closed-
+        #: at-once, same contract as the two skill confirms above.
+        self.set_pending_worktree_merge: Callable[[dict | None], None] | None = None
+        #: Optional test override for the confirm timeout, mirroring
+        #: `skill_install_confirm_timeout_seconds`.
+        self.worktree_merge_confirm_timeout_seconds: Callable[[], float] | None = None
+        #: Per-round release Event + shared decision box + owning session
+        #: id, keyed by request id -- same per-round design as
+        #: `_pending_skill_install_rounds`.
+        self._pending_worktree_merge_rounds: dict[str, dict[str, Any]] = {}
+        self._pending_worktree_merge_lock = threading.Lock()
+        #: Retained payload per ROUND, keyed by `request_id` -- same FIFO-
+        #: head-remount contract as `_parked_skill_install_payloads`.
+        self._parked_worktree_merge_payloads: dict[str, dict[str, Any]] = {}
 
     def _hydrate_capture_policy(self, session: ConsoleChatSession) -> None:
         if session.id in self._capture_policy_hydrated:
@@ -10158,6 +10179,7 @@ class ConsoleChatController:
         # had shown (mirrors the approval re-derive immediately above).
         self._remount_parked_skill_install(session.id)
         self._remount_parked_skill_script(session.id)
+        self._remount_parked_worktree_merge(session.id)
         return session
 
     def _ensure_default_session(self) -> ConsoleChatSession:
@@ -10542,6 +10564,7 @@ class ConsoleChatController:
         # unconditionally on every switch.
         self._remount_parked_skill_install(session_id)
         self._remount_parked_skill_script(session_id)
+        self._remount_parked_worktree_merge(session_id)
         return session
 
     def close_session(self, session_id: str) -> ConsoleChatSession | None:
@@ -10715,6 +10738,7 @@ class ConsoleChatController:
             # navigated to it.
             self._remount_parked_skill_install(new_active_id)
             self._remount_parked_skill_script(new_active_id)
+            self._remount_parked_worktree_merge(new_active_id)
         return closed
 
     def original_attempt_for_message(self, message_id: str) -> str | None:
@@ -13748,6 +13772,208 @@ class ConsoleChatController:
         """
         with self._pending_skill_script_lock:
             return list(self._pending_skill_script_rounds)
+
+    # -- Worktree-merge confirm bridge (TASK-28238 phase 2 Task 6) -----------
+
+    def request_worktree_merge_confirm(
+        self, payload: dict[str, Any], *, session_id: str | None = None
+    ) -> dict[str, bool]:
+        """WORKER THREAD: ask the user to confirm merging/discarding an
+        agent worktree before ``AgentService`` mutates anything.
+
+        Clones ``request_skill_script_confirm``'s round machinery -- arm a
+        fresh request id, park-or-mount under the same TASK-910 contract
+        (mount when ``session_id`` is the active/viewed session or
+        unknown, park a different background session's round for
+        ``switch_session``/``new_session``/``close_session`` to remount
+        later), poll under ``use_human_input_wait`` so the owning run's
+        tool-call deadline pauses while the card is up, and fail closed on
+        cancel/stop/timeout/no-UI -- with a single-key decision instead of
+        that method's two-part one: worktree merge/discard has no
+        "remember" concept, just Allow/Deny.
+
+        ``merge_agent_worktree``/``discard_agent_worktree`` are wired
+        PRIMARY-agent-only (``AgentService.run_turn``'s ``fleet_active``
+        gate -- a worktree only ever exists for a fleet-launched CHILD,
+        merged/discarded by the PRIMARY that launched it), so unlike the
+        skill-script confirm this never needs
+        ``revoke_approval_rounds_for_run``'s sweep: there is no separate
+        "a child was abandoned but its session lives on" case to guard --
+        the round's own ``_is_session_cancelled`` check already covers
+        "the primary's turn stopped."
+
+        Args:
+            payload: Confirm details to render (``{"handle_id", "mode" |
+                "action", "branch", "worktree", "diffstat"}``, built by
+                the ``AgentService`` closures -- see
+                ``merge_agent_worktree_tool``/``discard_agent_worktree_
+                tool``); ``"timeout_seconds"``, ``"request_id"``,
+                ``"session_id"``, and ``"deadline_monotonic"`` are added
+                before marshaling to the UI.
+            session_id: The run's OWNING session -- always the PRIMARY's,
+                per the gate above. ``None`` preserves the legacy VIEWED-
+                session/global-flag fallback and never parks.
+
+        Returns:
+            ``{"allow": bool}`` -- the exact shape ``AgentService``'s
+            ``merge_agent_worktree_tool``/``discard_agent_worktree_tool``
+            closures read via ``decision.get("allow", False)``. Every
+            non-Allow path (deny, cancel, stop, timeout, no wired UI)
+            returns ``allow=False``.
+        """
+        if self.app is None or self.set_pending_worktree_merge is None:
+            return {"allow": False}
+
+        event = threading.Event()
+        decision: dict[str, bool] = {}
+        request_id = str(uuid4())
+        owning_session_id = (
+            session_id
+            if session_id is not None
+            else (self.store.active_session_id or "")
+        )
+        round_cancel_event = self._bind_round_cancel_signal(session_id)
+        visit_cancel_event = self._bind_visit_cancel_signal()
+        owning_run_id = current_run_id()
+        with self._pending_worktree_merge_lock:
+            self._pending_worktree_merge_rounds[request_id] = {
+                "event": event,
+                "decision": decision,
+                "session_id": owning_session_id,
+            }
+
+        timeout_seconds = (
+            self.worktree_merge_confirm_timeout_seconds()
+            if self.worktree_merge_confirm_timeout_seconds is not None
+            else _DEFAULT_WORKTREE_MERGE_CONFIRM_TIMEOUT_SECONDS
+        )
+        # ADR-067: <= 0 arms NO deadline (the default) -- the round waits
+        # for a decision or the owning run's cancellation.
+        deadline = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
+        card_payload = dict(payload)
+        card_payload["timeout_seconds"] = timeout_seconds
+        card_payload["request_id"] = request_id
+        card_payload["session_id"] = owning_session_id
+        card_payload["deadline_monotonic"] = deadline
+        is_parked = session_id is not None and session_id != (
+            self.store.active_session_id or ""
+        )
+        is_head = True
+        if session_id is not None:
+            self.add_pending_round(session_id, request_id)
+            is_head = self._park_round_payload(
+                self._parked_worktree_merge_payloads, request_id, card_payload
+            )
+        try:
+            if is_parked:
+                if self.app is not None and self.park_pending_approval is not None:
+                    self.app.call_from_thread(self.park_pending_approval, session_id)
+            elif is_head:
+                self._marshal_pending_worktree_merge(card_payload)
+            # ADR-067: mark the owning run as waiting on a human decision.
+            resolved_via_event = False
+            with use_human_input_wait(owning_run_id):
+                while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
+                    if self._is_session_cancelled(
+                        session_id,
+                        cancel_event=round_cancel_event,
+                        visit_event=visit_cancel_event,
+                    ):
+                        break
+                    if deadline is not None and time.monotonic() >= deadline:
+                        break
+                else:
+                    resolved_via_event = True
+            # Qodo PR #2355 finding 5: a cancel/deadline BREAK must fail
+            # closed WITHOUT consulting `decision` at all --
+            # `resolve_pending_worktree_merge` can still write into that
+            # shared box after this loop has already given up on the
+            # session, and reading it unconditionally could honor an
+            # Allow click that lands microseconds too late. Mirrors
+            # `request_skill_script_confirm`'s identical post-wait guard,
+            # minus its external-revoker `was_revoked` machinery -- no
+            # external revoker exists for this primary-only round (same
+            # as `request_skill_install_confirm`'s rationale: no
+            # sub-agent can ever arm one of these).
+            if not resolved_via_event:
+                return {"allow": False}
+            return {"allow": bool(decision.get("allow", False))}
+        finally:
+            with self._pending_worktree_merge_lock:
+                self._pending_worktree_merge_rounds.pop(request_id, None)
+            self._unpark_round_payload(self._parked_worktree_merge_payloads, request_id)
+            if session_id is not None:
+                self.discard_pending_round(session_id, request_id)
+            try:
+                self._remount_head(
+                    self._parked_worktree_merge_payloads,
+                    self.set_pending_worktree_merge,
+                    owning_session_id if session_id is not None else None,
+                )
+            except Exception:  # noqa: BLE001 -- suppress teardown-time errors.
+                # No new logger call here (production-diagnostic-inventory
+                # guard, TASK-28238 phase 2 Task 6) -- a remount hiccup
+                # during teardown must not mask the confirm decision this
+                # method is about to return, and this mirrors the sibling
+                # confirms' identical intent without adding a new call site.
+                pass
+
+    def _remount_parked_worktree_merge(self, session_id: str) -> None:
+        """Re-derive the mounted worktree-merge confirm card for
+        ``session_id``. Mirrors ``_remount_parked_skill_script``.
+
+        Args:
+            session_id: The session now being activated/viewed.
+        """
+        if self.set_pending_worktree_merge is None:
+            return
+        self.set_pending_worktree_merge(
+            self._head_round_payload(self._parked_worktree_merge_payloads, session_id)
+        )
+
+    def _marshal_pending_worktree_merge(self, payload: dict[str, Any] | None) -> None:
+        """WORKER THREAD: hand a worktree-merge confirm payload to the UI thread.
+
+        Args:
+            payload: The pending confirm dict to show, or None to hide it.
+        """
+        if self.app is not None and self.set_pending_worktree_merge is not None:
+            self.app.call_from_thread(self.set_pending_worktree_merge, payload)
+
+    def resolve_pending_worktree_merge(
+        self, allow: bool, *, request_id: str | None = None
+    ) -> None:
+        """UI THREAD: apply the user's Allow/Deny, releasing the worker thread.
+
+        Strict ``request_id`` match, mirroring
+        ``resolve_pending_skill_script`` -- see that method's docstring
+        for why a resolve carrying no id, or an id belonging to any round
+        other than the one it names, is silently dropped.
+
+        Args:
+            allow: True to allow the pending merge/discard, False to deny.
+            request_id: The armed round's id, as echoed back by the UI.
+                ``None`` (the default) never matches an armed round.
+        """
+        if request_id is None:
+            return
+        with self._pending_worktree_merge_lock:
+            round_state = self._pending_worktree_merge_rounds.get(request_id)
+        if round_state is None:
+            return
+        round_state["decision"]["allow"] = bool(allow)
+        round_state["event"].set()
+
+    def pending_worktree_merge_ids(self) -> list[str]:
+        """Return the request ids of every currently-armed worktree-merge
+        confirm round. Mirrors ``pending_skill_script_ids``.
+
+        Returns:
+            The armed round ids, in insertion order. Empty when none is
+            pending.
+        """
+        with self._pending_worktree_merge_lock:
+            return list(self._pending_worktree_merge_rounds)
 
     def steer_active_run(self, text: str) -> str | None:
         """Deliver ``text`` into the ACTIVE session's running agent turn.
@@ -21921,6 +22147,29 @@ class ConsoleChatController:
                         self.request_skill_script_confirm, session_id=session_id
                     )
                     if self.set_pending_skill_script is not None
+                    else None
+                ),
+                # TASK-28238 phase 2 Task 6/Task 7: same "advertised must
+                # equal usable" gate as `request_skill_script_confirm`
+                # above. Task 5 originally advertised
+                # `merge_agent_worktree`/`discard_agent_worktree` whenever
+                # the fleet was active regardless, refusing per-call
+                # instead of disappearing -- the Task 7 ruling replaced
+                # that: `build_console_first_request_plan` now discloses
+                # the pair only when a confirm surface is wired
+                # (`worktree_merge_enabled=request_worktree_merge_confirm
+                # is not None`), so passing `None` here when no UI sink is
+                # wired both hides the tools from disclosure and (belt-
+                # and-braces) lets `AgentService`'s own "no approval
+                # surface is available in this session" refusal fire
+                # directly rather than routing through
+                # `request_worktree_merge_confirm`'s no-UI guard to
+                # produce a less accurate "declined" message.
+                request_worktree_merge_confirm=(
+                    functools.partial(
+                        self.request_worktree_merge_confirm, session_id=session_id
+                    )
+                    if self.set_pending_worktree_merge is not None
                     else None
                 ),
                 # PR2a Task 7: the fleet cancels/abandons children on the

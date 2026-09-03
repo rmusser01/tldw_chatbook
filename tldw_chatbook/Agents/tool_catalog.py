@@ -45,10 +45,12 @@ from .library_tool_provider import BuiltinLibraryAuthority, LibraryToolProvider
 from .agent_models import (
     AgentDefinition,
     CHECK_AGENTS_TOOL_NAME,
+    DISCARD_AGENT_WORKTREE_TOOL_NAME,
     FIND_TOOLS_RESULT_LIMIT,
     FIND_TOOLS_NAME,
     INSTALL_SKILL_TOOL_NAME,
     LOAD_TOOLS_NAME,
+    MERGE_AGENT_WORKTREE_TOOL_NAME,
     RUN_LOG_SLICE_TOOL_NAME,
     RUN_LOG_STATS_TOOL_NAME,
     RUN_SKILL_SCRIPT_TOOL_NAME,
@@ -110,7 +112,19 @@ SPAWN_TOOL_SCHEMA = ToolSchema(
             "task": {
                 "type": "string",
                 "description": "Complete, self-contained task description.",
-            }
+            },
+            "isolation": {
+                "type": "string",
+                "enum": ["worktree"],
+                "description": (
+                    "Run this child in an isolated git worktree; its changes "
+                    "stay out of the shared tree until explicitly merged back "
+                    "with merge_agent_worktree. Worktree isolation governs "
+                    "the built-in filesystem tools; shell and virtual-CLI "
+                    "access are withheld from isolated children, and "
+                    "external (MCP) tools are outside its guarantee."
+                ),
+            },
         },
         "required": ["task"],
     },
@@ -140,6 +154,7 @@ def build_spawn_schema(definitions: Sequence[AgentDefinition]) -> ToolSchema:
             # Shallow-copied so no future consumer of the built schema can
             # mutate the module-global SPAWN_TOOL_SCHEMA through this alias.
             "task": dict(SPAWN_TOOL_SCHEMA.parameters["properties"]["task"]),
+            "isolation": dict(SPAWN_TOOL_SCHEMA.parameters["properties"]["isolation"]),
             "agent": {
                 "type": "string",
                 "enum": [d.name for d in definitions],
@@ -245,6 +260,67 @@ SEND_TO_AGENT_SCHEMA = ToolSchema(
     },
 )
 
+
+# TASK-28238 phase 2 Task 5: merge/discard for a worktree-isolated child
+# (Task 4's spawn_subagent isolation="worktree"). Pinned beside the fleet
+# schemas above and gated under the SAME `fleet_active` predicate -- a
+# worktree only exists for a fleet-launched child, so a run with no live
+# fleet has nothing to merge or discard.
+MERGE_AGENT_WORKTREE_SCHEMA = ToolSchema(
+    id="runtime:merge_agent_worktree",
+    name=MERGE_AGENT_WORKTREE_TOOL_NAME,
+    description=(
+        "Land a FINISHED isolation=\"worktree\" sub-agent's changes into "
+        "the shared workspace. Both modes require the user's explicit "
+        "confirmation: 'apply' lands the changes as UNCOMMITTED edits for "
+        "the user to review and commit themselves; 'merge' creates a real "
+        "merge commit on the shared branch. The child must have finished "
+        "(check with check_agents or wait_agents first). Only handles "
+        "from THIS turn's spawns are available -- merge or discard before "
+        "the turn ends, or the worktree is left on disk for manual cleanup."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "handle_id": {
+                "type": "string",
+                "description": "The isolated child's handle id.",
+            },
+            "mode": {
+                "type": "string",
+                "enum": ["apply", "merge"],
+                "description": (
+                    "'apply' (default): land as uncommitted changes for "
+                    "review. 'merge': create a real merge commit."
+                ),
+            },
+        },
+        "required": ["handle_id"],
+    },
+)
+
+DISCARD_AGENT_WORKTREE_SCHEMA = ToolSchema(
+    id="runtime:discard_agent_worktree",
+    name=DISCARD_AGENT_WORKTREE_TOOL_NAME,
+    description=(
+        "Permanently discard a FINISHED isolation=\"worktree\" sub-agent's "
+        "changes -- deletes its worktree and branch. Its work is not "
+        "recoverable afterward. Requires the user's explicit confirmation. "
+        "Only handles from THIS turn's spawns are available -- merge or "
+        "discard before the turn ends, or the worktree is left on disk "
+        "for manual cleanup."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "handle_id": {
+                "type": "string",
+                "description": "The isolated child's handle id.",
+            },
+        },
+        "required": ["handle_id"],
+    },
+)
 
 FIND_TOOLS_SCHEMA = ToolSchema(
     id="runtime:find_tools",

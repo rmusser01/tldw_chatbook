@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol, cast
 from loguru import logger
 
 if TYPE_CHECKING:
+    from .agent_worktree import AgentWorktree
     from .run_log import RunLogWriter
 
 from tldw_chatbook.Chat.console_history_budget import (
@@ -158,9 +159,11 @@ from .project_instruction_runtime import (
 )
 from .tool_catalog import (
     CHECK_AGENTS_SCHEMA,
+    DISCARD_AGENT_WORKTREE_SCHEMA,
     FIND_TOOLS_SCHEMA,
     build_find_tools_schema,
     INSTALL_SKILL_TOOL_SCHEMA,
+    MERGE_AGENT_WORKTREE_SCHEMA,
     PREPARE_MANAGED_SKILL_PROMOTION_TOOL_SCHEMA,
     LOAD_TOOLS_SCHEMA,
     RUN_LOG_SLICE_TOOL_SCHEMA,
@@ -646,6 +649,7 @@ def build_first_request_schema_plan(
     run_log_active: bool,
     agent_definitions: tuple[AgentDefinition, ...] | None = None,
     fleet_active: bool = False,
+    worktree_merge_enabled: bool = False,
     fleet_max_live: int | None = None,
     agent_kind: str = AGENT_KIND_PRIMARY,
     direct_system_prompt: str | None = None,
@@ -667,6 +671,10 @@ def build_first_request_schema_plan(
         run_log_active: Whether run-log tools may be enabled for this run.
         agent_definitions: Named sub-agent definitions available to spawning.
         fleet_active: Whether the primary may coordinate a live agent fleet.
+        worktree_merge_enabled: Whether a run-entry confirm surface exists to
+            approve merge_agent_worktree/discard_agent_worktree -- like
+            run_skill_script_enabled, this disclosure is additionally gated
+            beyond fleet_active alone.
         fleet_max_live: Maximum live agents recorded in the frozen plan.
         agent_kind: Primary or sub-agent disclosure policy selector.
         direct_system_prompt: Prompt used when all allowed schemas fit directly.
@@ -701,6 +709,18 @@ def build_first_request_schema_plan(
             runtime.extend(
                 (WAIT_AGENTS_SCHEMA, CHECK_AGENTS_SCHEMA, SEND_TO_AGENT_SCHEMA)
             )
+            if worktree_merge_enabled:
+                # TASK-28238 phase 2 Task 7 ruling: merge/discard for a
+                # worktree-isolated child is no longer disclosed under the
+                # identical predicate as the three fleet schemas above --
+                # it is additionally gated on the run-entry confirm surface
+                # being wired (see worktree_merge_enabled). Without it,
+                # both tools always fail closed at their call sites, so a
+                # session with no confirm surface was advertising two
+                # tools that could only ever refuse, at real token cost.
+                runtime.extend(
+                    (MERGE_AGENT_WORKTREE_SCHEMA, DISCARD_AGENT_WORKTREE_SCHEMA)
+                )
         if offer_find_load:
             # TASK-26007: the deferred surface NAMES what exists -- the
             # model must never conclude a present capability is absent.
@@ -3816,6 +3836,172 @@ class AgentService:
                 )
         return False
 
+    def _admit_agent_worktree(self, handle: "FleetHandle", child_run_id: str) -> str | None:
+        """Create + admit an isolated git worktree for `child_run_id`.
+
+        TASK-28238 P2 T4. On success, records the worktree in
+        `self._agent_worktrees` keyed by `handle.handle_id` (read by the
+        merge/discard tools) and returns None. On any failure, returns an
+        honest error string naming the reason -- no worktree or provider
+        admission survives a refusal, so the caller unwinds the reserved
+        handle/slot exactly like its other refusal paths and never falls
+        back to sharing the tree silently.
+        """
+        from tldw_chatbook.Agents import agent_worktree
+        from tldw_chatbook.Agents.local_tool_provider import (
+            LocalToolProvider,
+            RunAdmittedWorkspaceRoot,
+        )
+
+        owner = self.registry.resolve_owner_for_name("fs_read")
+        provider = owner[1] if owner is not None else None
+        if not isinstance(provider, LocalToolProvider):
+            return (
+                "worktree isolation refused [no_local_provider]: no local "
+                "filesystem provider is reachable for this run"
+            )
+        created = agent_worktree.create_agent_worktree(
+            provider.workspace_root, child_run_id
+        )
+        if isinstance(created, agent_worktree.WorktreeRefusal):
+            return (
+                f"worktree isolation refused [{created.reason_code}]: "
+                f"{created.message}"
+            )
+        try:
+            import hashlib
+
+            from tldw_chatbook.Tools.workspace_tool_executor import (
+                WorkspaceToolExecutionError,
+                WorkspaceToolExecutor,
+            )
+
+            alias = f"agent-{child_run_id}"
+            authority = RunAdmittedWorkspaceRoot(
+                workspace_id="agent-worktree",
+                binding_id=alias,
+                alias=alias,
+                root=created.worktree_path,
+                locator_fingerprint=hashlib.sha256(
+                    str(created.worktree_path).encode("utf-8")
+                ).hexdigest(),
+                root_identity=agent_worktree._worktree_root_identity(
+                    created.worktree_path
+                ),
+                allow_write=True,
+                guard=lambda write: created.worktree_path.is_dir(),
+                workspace_executor=WorkspaceToolExecutor(created.worktree_path),
+            )
+            provider.admit_run_workspace_root(child_run_id, authority)
+        except (WorkspaceToolExecutionError, ValueError, OSError) as exc:
+            # M2 (TASK-28238 P2 T7 final fix wave): `_worktree_root_identity`
+            # does a raw `os.lstat` walk -- a transient OS-level failure
+            # there must land here too, so the refusal path (including
+            # the worktree cleanup below) runs instead of an unhandled
+            # exception escaping the tool call.
+            agent_worktree.discard_agent_worktree(provider.workspace_root, created)
+            return f"worktree isolation refused [admit_failed]: {exc}"
+        self._agent_worktrees[handle.handle_id] = created
+        return None
+
+    def _retire_agent_worktree(
+        self, run_id: str, handle_id: str, *, discard: bool = False
+    ) -> None:
+        """Un-admit `run_id`'s worktree root; a no-op when `handle_id` never
+        got one.
+
+        On the normal terminal-retire path (`discard=False`, the default:
+        the child ran and finished), only the provider's dispatch ROUTING
+        for `run_id` is torn down -- the `AgentWorktree` record stays in
+        `self._agent_worktrees` and the worktree directory itself
+        SURVIVES, so Task 5's merge/discard tools can still find and act
+        on it after the run is terminal. `discard=True` (thread-start-
+        failure teardown: a never-ran child has nothing worth keeping)
+        additionally removes the tracking entry AND the worktree itself.
+
+        Callers wrap this in try/except -- teardown must never mask a
+        child's real terminal outcome.
+        """
+        from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+
+        owner = self.registry.resolve_owner_for_name("fs_read")
+        provider = owner[1] if owner is not None else None
+        # M1 (TASK-28238 P2 T7 final fix wave): the provider-routing retire
+        # must run even when `self._agent_worktrees` has already lost this
+        # handle's entry (e.g. a map reset between turns) -- it is a
+        # SEPARATE map from the provider's own `_agent_roots`, and
+        # returning early below used to skip this call entirely, leaking
+        # `_agent_roots[run_id]` and its alias's dispatch-spec cache entry
+        # for the rest of the process. `retire_run_workspace_root` is
+        # already a no-op when `run_id` was never admitted.
+        if isinstance(provider, LocalToolProvider):
+            provider.retire_run_workspace_root(run_id)
+        wt = self._agent_worktrees.get(handle_id)
+        if wt is None:
+            return
+        if discard:
+            del self._agent_worktrees[handle_id]
+            if isinstance(provider, LocalToolProvider):
+                from tldw_chatbook.Agents import agent_worktree
+
+                agent_worktree.discard_agent_worktree(provider.workspace_root, wt)
+
+    def _sweep_stale_agent_worktrees(self) -> None:
+        """End-of-turn GC: remove agent worktrees no longer live in the DB
+        -- force=False, so git itself refuses to touch a dirty one (see
+        `discard_agent_worktree`'s own docstring).
+
+        I3 (TASK-28238 P2 T7 final fix wave). `prune_stale_agent_worktrees`
+        has existed since Task 4 but nothing ever called it: every
+        isolated child's worktree accumulated on disk forever once its
+        turn ended without an explicit merge/discard. Called from
+        `run_turn`'s teardown, after `_settle_fleet`.
+
+        `live_run_ids` reads `AgentRunsDB.list_running_run_ids()` --
+        process-wide, crash-safe truth -- NOT any in-memory,
+        coordinator-scoped source (an earlier version used
+        `live_subagent_handles()`, which filters on THIS instance's own
+        `self._fleet_cancels`; production constructs a fresh `AgentService`
+        per turn sharing only the `FleetCoordinator`, so that view made a
+        later turn's sweep see an EARLIER turn's still-`RUN_RUNNING`
+        `subagents_outlive_turn` survivor as "not mine" and reap its clean
+        worktree out from under its own running thread -- a real,
+        reproduced HIGH). The DB is correct regardless of which service
+        instance or even which CONVERSATION spawned the run (a different
+        conversation's live child sharing this workspace root is invisible
+        to any coordinator-scoped source). Ordering guarantees this can
+        never race a run's own start: `create_run` always fires before
+        `_admit_agent_worktree`, so a worktree can never exist before its
+        run row does. `reconcile_orphaned_runs` terminalizing a crashed
+        run at process start is what makes ITS worktree GC-able on a
+        later sweep, rather than leaking it forever.
+
+        Fails safe: if reading liveness raises ANYTHING, the whole sweep
+        is aborted without pruning -- over-retention is acceptable,
+        deleting live work is not. The outer containment below still
+        applies on top of that (GC must never break a turn regardless of
+        cause), and this deliberately adds no new logging either way -- a
+        missed sweep is invisible by design, not a signal an operator
+        needs paged on.
+        """
+        try:
+            from tldw_chatbook.Agents import agent_worktree
+            from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+
+            owner = self.registry.resolve_owner_for_name("fs_read")
+            provider = owner[1] if owner is not None else None
+            if not isinstance(provider, LocalToolProvider):
+                return
+            try:
+                live_run_ids = self.db.list_running_run_ids()
+            except Exception:  # noqa: BLE001 — never prune on unknown liveness
+                return
+            agent_worktree.prune_stale_agent_worktrees(
+                provider.workspace_root, live_run_ids
+            )
+        except Exception:  # noqa: BLE001 — GC must never break a turn
+            pass
+
     def _service_error_step(self, run_id: str, summary: str) -> AgentStep:
         """Allocate a causal error after this run's durable observations."""
         try:
@@ -4014,6 +4200,14 @@ class AgentService:
         continuation_owner_key: str | None = None,
         chain_id: str = "primary",
         first_request_schema_plan: FirstRequestSchemaPlan | None = None,
+        # TASK-28238 phase 2 Task 5: the run-entry approval surface for
+        # merge_agent_worktree/discard_agent_worktree. Only ever meaningful
+        # for the PRIMARY call (run_turn passes it through; child calls at
+        # `_launch_fleet_child`/inline-spawn never do -- a depth-1 child
+        # has no worktree tools wired regardless, see `fleet_active`).
+        # `None` (the default) means both tools fail closed with "no
+        # approval surface is available in this session".
+        request_worktree_merge_confirm: "Callable[[dict], dict] | None" = None,
     ) -> tuple[str, RunOutcome]:
         # PR3a-1 Task 3 -- THE WRITER THIS RUN RECORDS THROUGH, resolved
         # ONCE, here, and closed over by every log closure below instead of
@@ -4150,6 +4344,7 @@ class AgentService:
                     and self._fleet is not None
                     and config.budget.max_subagents > 0
                 ),
+                worktree_merge_enabled=request_worktree_merge_confirm is not None,
                 fleet_max_live=(
                     self._fleet.max_live
                     if agent_kind == AGENT_KIND_PRIMARY and self._fleet is not None
@@ -4461,6 +4656,7 @@ class AgentService:
             spawn_task: str,
             agent_name: "str | None",
             child_kwargs: dict,
+            isolation: "str | None" = None,
         ) -> "tuple[FleetHandle | None, ToolResult | None]":
             """spawn's reserve -> Event -> thread -> handle tail, shared.
 
@@ -4477,7 +4673,9 @@ class AgentService:
             """
             nonlocal sub_agent_spawns
             # -- FLEET path: register, launch, return a handle.
-            handle = fleet.reserve(task=spawn_task, agent=agent_name)
+            handle = fleet.reserve(
+                task=spawn_task, agent=agent_name, isolation=isolation
+            )
             if handle is None:
                 # At the live cap. Unlike a budget refusal this is
                 # RETRYABLE -- collecting a finished child frees a slot --
@@ -4550,6 +4748,22 @@ class AgentService:
                     source_event_id=f"agent-run:{resumed_from}",
                 )
             child_kwargs["precreated_run_id"] = child_run_id
+            if isolation == "worktree":
+                refusal = self._admit_agent_worktree(handle, child_run_id)
+                if refusal is not None:
+                    # I1 (TASK-28238 P2 T7 final fix wave): `db.create_run`
+                    # above already wrote this row as "running" --
+                    # attach_run (below) never happens on this path, so
+                    # nothing else ever marks it terminal. Matches the
+                    # sibling thread-start-failure path's try/except shape
+                    # exactly (round 2, item 4).
+                    try:
+                        fleet.finish(handle.handle_id, RUN_ERROR, error=refusal)
+                        self._set_terminal_status(child_run_id, RUN_ERROR)
+                    except Exception:  # noqa: BLE001 — refusal must reach parent
+                        logger.warning("could not persist failed sub-agent launch")
+                    sub_agent_spawns -= 1
+                    return None, ToolResult(ok=False, error=refusal)
             child_kwargs["lifecycle_owner_seq_start"] = owner_seq
             fleet.attach_run(handle.handle_id, child_run_id)
             durable_handle_ids[handle.handle_id] = child_run_id
@@ -4692,6 +4906,22 @@ class AgentService:
                         total_tokens=total_tokens_spent,
                         transcript=final_messages,
                     )
+                    # TASK-28238 P2 T4: un-admit this child's isolated
+                    # worktree root now that its run is terminal -- the
+                    # worktree itself SURVIVES, to be merged or discarded
+                    # later. A re-fetched (locked) read, not the possibly-
+                    # stale `handle` closed over above, same reasoning as
+                    # the re-fetch just below. Wrapped never-raise: this
+                    # is teardown on a daemon thread and must never mask
+                    # the child's real outcome.
+                    try:
+                        _worktree_handle = fleet.get(handle.handle_id)
+                        if _worktree_handle is not None:
+                            self._retire_agent_worktree(
+                                _worktree_handle.run_id, handle.handle_id
+                            )
+                    except Exception:  # noqa: BLE001 — teardown must never mask outcome
+                        pass
                     # Review fix (PR2a final review): `_persist` -- called
                     # from INSIDE `_run_one`'s own try/except -- is
                     # normally the only thing that writes this child's
@@ -4774,6 +5004,16 @@ class AgentService:
                 except Exception:  # noqa: BLE001 — refusal must reach parent
                     logger.warning("could not persist failed sub-agent launch")
                 finally:
+                    # TASK-28238 P2 T4: the thread never ran, so a never-
+                    # started child's isolated worktree (if any) has
+                    # nothing worth keeping -- un-admit AND discard it,
+                    # unlike a normal retire.
+                    try:
+                        self._retire_agent_worktree(
+                            child_run_id, handle.handle_id, discard=True
+                        )
+                    except Exception:  # noqa: BLE001 — refusal must reach parent
+                        pass
                     self._fleet_cancels.pop(handle.handle_id, None)
                     if my_handle_ids and my_handle_ids[-1] == handle.handle_id:
                         my_handle_ids.pop()
@@ -4795,6 +5035,7 @@ class AgentService:
             agent: str | None = None,
             inline: bool = False,
             spawn_step_index: int | None = None,
+            isolation: str | None = None,
         ) -> ToolResult:
             nonlocal sub_agent_spawns
             # Task-12 review Finding 2: this closure is THE single spawn
@@ -4950,6 +5191,26 @@ class AgentService:
                     )
                 )
             )
+            if isolation == "worktree":
+                # Finding 6 (Qodo round, TASK-28238 P2 T7): worktree
+                # routing only ever covers `_PATH_AUTHORITY_LOCAL_NAMES`
+                # -- `shell_exec` and `virtual_cli` execute against the
+                # ORIGINAL workspace root regardless (virtual CLI binds
+                # its `WorkspaceToolExecutor` at compose time; raw shell
+                # runs real commands there too). Applied AFTER the
+                # override branch above, not only inside the default
+                # composition, so an explicit `allowed_tools=` override
+                # can never reintroduce either name for an isolated
+                # child -- the exclusion is unconditional whenever
+                # isolation is requested.
+                from .raw_shell_tool_provider import RAW_SHELL_TOOL_NAME
+                from .virtual_cli_provider import VIRTUAL_CLI_TOOL_NAME
+
+                child_allowed_tools = tuple(
+                    n
+                    for n in child_allowed_tools
+                    if n not in (RAW_SHELL_TOOL_NAME, VIRTUAL_CLI_TOOL_NAME)
+                )
             child_system_prompt = get_internal_prompt("agents.subagent_system")
             child_model = config.model
             if resolved is not None:
@@ -5039,6 +5300,39 @@ class AgentService:
                 # record numbers unique across it.
                 run_log_writer=writer,
             )
+            if isolation not in (None, "worktree"):
+                # I2 (TASK-28238 P2 T7 final fix wave): the model-supplied
+                # value is an unenforced JSON-fence string, not a schema
+                # enum -- without this, anything other than the literal
+                # "worktree" (a typo, "sandbox", "work-tree", ...) fell
+                # through every isolation check below and silently
+                # launched a NORMAL shared-tree child with a success
+                # message, the opposite of what was asked. No child was
+                # created, so this costs no spawn slot -- same rule as the
+                # cap/unknown-agent/no_fleet refusals.
+                sub_agent_spawns -= 1
+                return ToolResult(
+                    ok=False,
+                    error=(
+                        f'unknown isolation "{isolation}" [invalid_isolation]; '
+                        'valid values: "worktree" or omit'
+                    ),
+                )
+            if isolation == "worktree" and (fleet is None or inline):
+                # TASK-28238 P2 T4 (review fix): the INLINE path never
+                # reaches `_launch_fleet_child`, so it can never create or
+                # admit a worktree -- silently falling into it here would
+                # share the tree despite the model asking for isolation.
+                # No child was created, so this costs no spawn slot --
+                # same rule as the cap/unknown-agent refusals above.
+                sub_agent_spawns -= 1
+                return ToolResult(
+                    ok=False,
+                    error=(
+                        "worktree isolation refused [no_fleet]: isolation "
+                        "requires fleet mode (max_live_subagents > 1)"
+                    ),
+                )
             if fleet is None or inline:
                 # -- INLINE path: byte-identical to every release before
                 # PR2a. Kept, not merely tolerated: with no fleet there is
@@ -5089,7 +5383,10 @@ class AgentService:
             # extracted it verbatim so the continuation path launches
             # through the exact same machinery).
             handle, failure = _launch_fleet_child(
-                spawn_task, (resolved.name if resolved else None), child_kwargs
+                spawn_task,
+                (resolved.name if resolved else None),
+                child_kwargs,
+                isolation,
             )
             if failure is not None:
                 return failure
@@ -5286,6 +5583,136 @@ class AgentService:
                 lines.extend(_line(handle) for handle in others)
             return ToolResult(ok=True, content="\n".join(lines))
 
+        # TASK-28238 phase 2 Task 5: merge_agent_worktree/
+        # discard_agent_worktree, the headless half of landing/discarding
+        # a worktree-isolated child's work (Task 4's spawn_subagent
+        # isolation="worktree"). Both fail closed: unknown handle, a
+        # still-running child, or no confirm surface all refuse before
+        # touching anything; a user denial refuses too. Resolved ONCE
+        # here (mirroring `_admit_agent_worktree`'s own resolution) rather
+        # than per call -- the local provider's workspace root does not
+        # change mid-run.
+        from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+
+        _worktree_owner = self.registry.resolve_owner_for_name("fs_read")
+        _worktree_provider = _worktree_owner[1] if _worktree_owner is not None else None
+        worktree_repo_root = (
+            _worktree_provider.workspace_root
+            if isinstance(_worktree_provider, LocalToolProvider)
+            else None
+        )
+
+        def _worktree_handle_terminal(handle_id: str) -> bool:
+            handle = fleet.get(handle_id) if fleet is not None else None
+            return handle is not None and handle.status in TERMINAL_RUN_STATUSES
+
+        def merge_agent_worktree_tool(handle_id: str, mode: str = "apply") -> ToolResult:
+            wt = self._agent_worktrees.get(str(handle_id))
+            if wt is None:
+                return ToolResult(
+                    ok=False, error=f"no agent worktree for handle {handle_id!r}"
+                )
+            if not _worktree_handle_terminal(str(handle_id)):
+                return ToolResult(
+                    ok=False,
+                    error="child is still running; wait for it to finish before merging",
+                )
+            if request_worktree_merge_confirm is None:
+                return ToolResult(
+                    ok=False,
+                    error=(
+                        "merge requires user confirmation, and no approval "
+                        "surface is available in this session"
+                    ),
+                )
+            if worktree_repo_root is None:
+                return ToolResult(
+                    ok=False,
+                    error="no local filesystem provider is reachable for this run",
+                )
+            # Preview only -- never mutate before the user consents.
+            from tldw_chatbook.Agents.agent_worktree import (
+                preview_agent_worktree_diffstat,
+            )
+
+            decision = request_worktree_merge_confirm(
+                {
+                    "handle_id": handle_id,
+                    "mode": mode,
+                    "branch": wt.branch,
+                    "worktree": str(wt.worktree_path),
+                    "diffstat": preview_agent_worktree_diffstat(worktree_repo_root, wt),
+                }
+            )
+            if not decision.get("allow", False):
+                return ToolResult(ok=False, error="The user declined the worktree merge.")
+            from tldw_chatbook.Agents.agent_worktree import merge_agent_worktree_changes
+
+            outcome = merge_agent_worktree_changes(worktree_repo_root, wt, mode=mode)
+            if hasattr(outcome, "reason_code"):
+                return ToolResult(ok=False, error=f"[{outcome.reason_code}] {outcome.message}")
+            landed = (
+                "as UNCOMMITTED changes (review and commit them)"
+                if outcome.commit_sha is None
+                else f"as merge commit {outcome.commit_sha[:9]}"
+            )
+            return ToolResult(
+                ok=True, content=f"Merged agent worktree {landed}.\n{outcome.diffstat}"
+            )
+
+        def discard_agent_worktree_tool(handle_id: str) -> ToolResult:
+            wt = self._agent_worktrees.get(str(handle_id))
+            if wt is None:
+                return ToolResult(
+                    ok=False, error=f"no agent worktree for handle {handle_id!r}"
+                )
+            if not _worktree_handle_terminal(str(handle_id)):
+                return ToolResult(
+                    ok=False,
+                    error="child is still running; wait for it to finish before discarding",
+                )
+            # Discard destroys the child's work -- same confirm gate as
+            # merge, never optional.
+            if request_worktree_merge_confirm is None:
+                return ToolResult(
+                    ok=False,
+                    error=(
+                        "discard requires user confirmation, and no approval "
+                        "surface is available in this session"
+                    ),
+                )
+            if worktree_repo_root is None:
+                return ToolResult(
+                    ok=False,
+                    error="no local filesystem provider is reachable for this run",
+                )
+            from tldw_chatbook.Agents.agent_worktree import (
+                preview_agent_worktree_diffstat,
+            )
+
+            decision = request_worktree_merge_confirm(
+                {
+                    "handle_id": handle_id,
+                    "action": "discard",
+                    "branch": wt.branch,
+                    "worktree": str(wt.worktree_path),
+                    "diffstat": preview_agent_worktree_diffstat(worktree_repo_root, wt),
+                }
+            )
+            if not decision.get("allow", False):
+                return ToolResult(
+                    ok=False, error="The user declined discarding the worktree."
+                )
+            from tldw_chatbook.Agents import agent_worktree as _agent_worktree_mod
+
+            refusal = _agent_worktree_mod.discard_agent_worktree(worktree_repo_root, wt)
+            if refusal is not None:
+                return ToolResult(ok=False, error=f"[{refusal.reason_code}] {refusal.message}")
+            del self._agent_worktrees[str(handle_id)]
+            return ToolResult(
+                ok=True, content=f"Discarded agent worktree on branch {wt.branch}."
+            )
+
         def _resume_retained_child(
             retained, steer_text: str, spawn_step_index: int | None
         ) -> ToolResult:
@@ -5372,6 +5799,18 @@ class AgentService:
                     self.skill_runner is not None and self.skill_runner.is_skill_tool(n)
                 )
             )
+            if retained.isolation == "worktree":
+                # Finding 6 twin (Qodo round, TASK-28238 P2 T7): mirrors
+                # spawn's identical exclusion -- a resumed isolated
+                # child must not reinherit shell_exec/virtual_cli either.
+                from .raw_shell_tool_provider import RAW_SHELL_TOOL_NAME
+                from .virtual_cli_provider import VIRTUAL_CLI_TOOL_NAME
+
+                child_allowed_tools = tuple(
+                    n
+                    for n in child_allowed_tools
+                    if n not in (RAW_SHELL_TOOL_NAME, VIRTUAL_CLI_TOOL_NAME)
+                )
             child_system_prompt = get_internal_prompt("agents.subagent_system")
             child_model = config.model
             if resolved is not None:
@@ -5438,7 +5877,20 @@ class AgentService:
                 child_kwargs["spawn_event_id"] or f"agent-run:{run_id}"
             )
             handle, failure = _launch_fleet_child(
-                retained.task, (resolved.name if resolved else None), child_kwargs
+                retained.task,
+                (resolved.name if resolved else None),
+                child_kwargs,
+                # TASK-28238 P2 T7 Qodo round, finding 7 (was T4: a
+                # literal `None` here silently dropped isolation on
+                # resume -- `RetainedTranscript` now carries the
+                # original child's isolation, recorded at retention time
+                # off its `FleetHandle`). A resumed run is a NEW run_id,
+                # so re-admitting a FRESH worktree here is correct, not
+                # merely tolerated -- the existing `_admit_agent_
+                # worktree` refusal machinery (non-git root, no local
+                # provider, admit failure) already covers every way that
+                # can fail.
+                retained.isolation,
             )
             if failure is not None:
                 return failure
@@ -6550,10 +7002,11 @@ class AgentService:
                 trace_step_index=step_index,
                 dispatch_call_id=call_id,
             ),
-            spawn_at_step=lambda task, step_index, agent_name: spawn(
+            spawn_at_step=lambda task, step_index, agent_name, isolation: spawn(
                 task,
                 agent=agent_name,
                 spawn_step_index=step_index,
+                isolation=isolation,
             ),
             find_tools=find_tools,
             load_schemas=load_schemas,
@@ -6628,6 +7081,11 @@ class AgentService:
             # one it was not told about).
             wait_agents=wait_agents if fleet_active else None,
             check_agents=check_agents if fleet_active else None,
+            # TASK-28238 phase 2 Task 5: merge/discard for a worktree-
+            # isolated child, wired under the identical predicate -- a
+            # worktree only ever exists for a fleet-launched child.
+            merge_agent_worktree=merge_agent_worktree_tool if fleet_active else None,
+            discard_agent_worktree=discard_agent_worktree_tool if fleet_active else None,
             # PR3b Task 2: the steering producer, under the same predicate.
             send_to_agent=send_to_agent if fleet_active else None,
             send_to_agent_at_step=(
@@ -6800,6 +7258,7 @@ class AgentService:
         continuation_target: ContinuationRestoreTarget | None = None,
         continuation_owner_key: str | None = None,
         first_request_schema_plan: FirstRequestSchemaPlan | None = None,
+        request_worktree_merge_confirm: "Callable[[dict], dict] | None" = None,
     ) -> tuple[str, RunOutcome]:
         """Run one primary-agent turn (and any sub-agents it spawns).
 
@@ -6851,6 +7310,18 @@ class AgentService:
             first_request_schema_plan: Frozen, exact-message schema-disclosure
                 decision prepared by the Console bridge. When omitted, the
                 service computes the same plan from ``messages`` and ``config``.
+            request_worktree_merge_confirm: TASK-28238 phase 2 Task 5 --
+                the approval surface merge_agent_worktree/
+                discard_agent_worktree call before mutating anything.
+                Takes a dict describing the proposed action (handle id,
+                mode/action, branch, worktree path, a cheap non-mutating
+                diffstat preview) and returns a decision dict;
+                ``{"allow": True}`` proceeds, anything else refuses. Task
+                6 wires ``ConsoleChatController.request_worktree_merge_
+                confirm`` here, mirroring ``request_skill_script_confirm``'s
+                round machinery. ``None`` (the default) means neither tool
+                has an approval surface in this session, so both fail
+                closed.
 
         Returns:
             A ``(run_id, outcome)`` tuple: the new primary run's id and its
@@ -6990,6 +7461,10 @@ class AgentService:
         # reference it needs to finish and persist itself.
         self._fleet_threads = {}
         self._fleet_cancels = {}
+        # TASK-28238 P2 T4: isolated worktrees admitted for THIS turn's
+        # children, keyed by handle_id (Task 5's merge/discard tools read
+        # it). Reset alongside the two maps above, for the same reason.
+        self._agent_worktrees: dict[str, "AgentWorktree"] = {}
         if self._injected_fleet_coordinator is not None:
             self._fleet = self._injected_fleet_coordinator
         else:
@@ -7040,6 +7515,7 @@ class AgentService:
             continuation_owner_key=continuation_owner_key,
             chain_id="primary",
             first_request_schema_plan=first_request_schema_plan,
+            request_worktree_merge_confirm=request_worktree_merge_confirm,
         )
         # Settle the children that must not outlive this turn. Must happen
         # BEFORE the manifest is written and the writer closed below: a
@@ -7062,6 +7538,11 @@ class AgentService:
             logger.error(
                 "settling sub-agents at end of turn failed; finalizing the run anyway"
             )
+        # I3 (TASK-28238 P2 T7 final fix wave): GC any agent worktree this
+        # service no longer considers live, now that settling above has
+        # resolved every non-survivor to a terminal status. Swallows its
+        # own exceptions -- see `_sweep_stale_agent_worktrees`'s docstring.
+        self._sweep_stale_agent_worktrees()
         # Manifest needs run-level metadata the writer itself does not have
         # (including supersession), so it is written once the whole run
         # tree finishes, here rather than inside _run_one.

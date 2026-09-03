@@ -103,6 +103,12 @@ class FleetHandle:
     # this field is COMPUTED onto the copies ``get()``/``snapshot()``
     # return, so a stale handle copy can never disagree with the mailbox.
     queued_steering: int = 0
+    # TASK-28238 phase 2 T7 Qodo round, finding 7. The isolation mode this
+    # child was spawned/resumed with (``None`` or ``"worktree"``) --
+    # recorded here so `_retain_locked` can copy it onto the
+    # ``RetainedTranscript`` at retention time, letting a LATER resume
+    # re-admit a fresh worktree instead of silently sharing the tree.
+    isolation: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -132,6 +138,13 @@ class RetainedTranscript:
             claimed at retention time -- a resume seeds these (original
             labels) before the new supervisor message.
         retained_at: Coordinator-clock timestamp of the retention.
+        isolation: The original child's isolation mode (``None`` or
+            ``"worktree"``), copied off its ``FleetHandle`` at retention
+            time (TASK-28238 phase 2 T7 Qodo round, finding 7) -- a resume
+            reads this to re-admit a fresh worktree instead of silently
+            sharing the tree. Defaults to ``None`` for backward
+            compatibility with any coordination state that predates this
+            field.
     """
 
     handle_id: str
@@ -143,6 +156,7 @@ class RetainedTranscript:
     steering: tuple[tuple[str, str], ...]
     retained_at: float
     steering_with_causes: tuple[tuple[str, str, str | None], ...] = ()
+    isolation: str | None = None
 
 
 class FleetCoordinator:
@@ -195,7 +209,9 @@ class FleetCoordinator:
         self._retained_transcript_max_chars = retained_transcript_max_chars
         self._retained: dict[str, RetainedTranscript] = {}
 
-    def reserve(self, task: str, agent: str | None) -> FleetHandle | None:
+    def reserve(
+        self, task: str, agent: str | None, *, isolation: str | None = None
+    ) -> FleetHandle | None:
         """Reserve a slot for a new task, returning a handle or None if at cap.
 
         Emits FLEET_STARTED event on success.
@@ -203,6 +219,9 @@ class FleetCoordinator:
         Args:
             task: Human-readable task description.
             agent: Agent name, if applicable.
+            isolation: The isolation mode this child launches under
+                (``None`` or ``"worktree"``) -- recorded on the handle so
+                a later retention/resume can see it (finding 7).
 
         Returns:
             A copy of the new FleetHandle if a slot is available, else
@@ -231,6 +250,7 @@ class FleetCoordinator:
                 error="",
                 started_at=started_at,
                 finished_at=None,
+                isolation=isolation,
             )
             self._handles[handle_id] = handle
             self._live_ids.add(handle_id)
@@ -635,6 +655,7 @@ class FleetCoordinator:
             steering=steering,
             retained_at=self._clock(),
             steering_with_causes=steering_with_causes,
+            isolation=handle.isolation,
         )
         self._evict_over_cap_locked()
         return True
