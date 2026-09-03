@@ -24,9 +24,9 @@ that coordinator.
   generation provenance, legacy exchange capture, or trajectory diagnostics.
   These values do not change the provider-neutral message envelope.
 
-The structural test records 38 live SQL sink identities and 64 boundary call
-identities: 66 model-visible, 11 visibility/ownership-only, and 25
-presentation-only identities in total. These are route-layer identities, not 102
+The structural test records 39 live SQL sink identities and 64 boundary call
+identities: 66 model-visible, 11 visibility/ownership-only, and 26
+presentation-only identities in total. These are route-layer identities, not 103
 distinct user actions; a public action appears once at its boundary and again at
 the SQL sink it reaches.
 
@@ -227,6 +227,7 @@ are derived indexes/logs, not canonical semantic owners.
 - `tldw_chatbook/Chat/console_dispatch_repository.py::ConsoleDispatchRepository._normalize_provider_continuation_owner_uncoordinated::sql:update:messages` — model-visible
 - `tldw_chatbook/Chat/console_dispatch_repository.py::ConsoleDispatchRepository._settle_with_assistant_uncoordinated::sql:update:messages` — model-visible
 - `tldw_chatbook/Chat/console_semantic_revision.py::SemanticRevisionCoordinator._mutate_message::sql:delete:messages` — model-visible
+- `tldw_chatbook/Chat/console_trace_maintenance.py::LegacyTraceMaintenance.run_batch::sql:delete:message_exchanges` — presentation-only
 - `tldw_chatbook/Chat/library_activity.py::LibraryActivityContribution.write::sql:insert:message_trajectory_metadata` — presentation-only
 - `tldw_chatbook/Chat/library_preparation.py::LibraryPreparationContribution.write::sql:insert:message_trajectory_metadata` — presentation-only
 - `tldw_chatbook/Chatbooks/chatbook_importer.py::ChatbookImporter._import_conversations::sql:update:messages` — visibility/ownership-only

@@ -54,6 +54,17 @@ _PEER_ENVELOPE = "chatbook-local-v1"
 MAX_UNRESOLVED_PROPOSALS = 200
 _COLLECTION_PAGE_SIZE = 128
 _REBASELINE_TABLES = ("local_runtime_policy", "local_scope_bindings")
+_PROFILE_CONTENT_TABLES = (
+    "encrypted_outbox",
+    "local_runtime_policy",
+    "local_scope_bindings",
+    "local_unlinked_scopes",
+    "local_undo",
+    "local_record_links",
+    "object_heads",
+    "encrypted_objects",
+    "quarantine",
+)
 _FIRST_LINK_WRITE_PLAN: ContextVar[str | None] = ContextVar(
     "personal_context_first_link_write_plan", default=None
 )
@@ -4334,17 +4345,7 @@ class PersonalContextRepository:
                 )
             if not meta["destroyed"]:
                 self._require_keys()
-                for table in (
-                    "encrypted_outbox",
-                    "local_runtime_policy",
-                    "local_scope_bindings",
-                    "local_unlinked_scopes",
-                    "local_undo",
-                    "local_record_links",
-                    "object_heads",
-                    "encrypted_objects",
-                    "quarantine",
-                ):
+                for table in _PROFILE_CONTENT_TABLES:
                     connection.execute(f"DELETE FROM {table}")
                 connection.execute(
                     """

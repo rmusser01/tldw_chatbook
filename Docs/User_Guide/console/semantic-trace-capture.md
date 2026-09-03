@@ -159,9 +159,35 @@ Purge detaches one conversation's trace owner. Background garbage collection
 can then remove objects no remaining conversation or fork owns. Logical
 reclamation, SQLite free pages, WAL bytes, and the allocated database file are
 different measurements: deleting rows does not promise immediate file-size
-reduction or forensic erasure. Later admitted SQLite maintenance may reclaim
-physical space, but filesystem snapshots, backups, synced database copies, and
-prior exports can still retain old bytes.
+reduction or forensic erasure.
+
+After a successful logical collection, Console may automatically compact the
+database when every configured gate is met. The defaults require an allocated
+database of at least 64 MiB, at least 16 MiB and 20% reclaimable free pages, 30
+seconds without provider activity, and no active retry delay or other database
+maintenance. Console pauses new provider dispatch, waits briefly for active
+database work—including direct reads that still have results to consume—across
+every in-process connection to that database file, closes those handles,
+checkpoints the WAL, verifies free disk space, and runs same-file SQLite
+maintenance outside any write transaction. Ordinary work resumes from a
+guaranteed cleanup path whether the attempt succeeds, is cancelled, or fails.
+
+Database-size and reclaimable-page thresholds are rechecked from current SQLite
+metrics on later maintenance polls. If unrelated activity grows or frees enough
+pages after logical collection, Console can reuse that exact completed
+collection result; it does not create duplicate collection records merely to
+reconsider physical compaction.
+
+**F9 > Privacy & Security** reports content-free physical-maintenance state,
+bounded progress, retry reason, and allocated/free byte totals before and after
+a completed run. It never shows trace payloads or internal trace identities.
+An interrupted app run is recognized after its lease expires; the database is
+verified as readable and the work becomes eligible for a later retry. Failures
+use bounded backoff rather than forcing maintenance during active use.
+
+Physical compaction can return unused pages to the database file, but it is not
+a forensic-erasure promise. Filesystem snapshots, backups, synced database
+copies, storage-device behavior, and prior exports can still retain old bytes.
 
 ## Related pages
 
