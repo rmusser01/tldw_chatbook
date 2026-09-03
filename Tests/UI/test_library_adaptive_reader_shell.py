@@ -145,9 +145,18 @@ async def test_shell_mounts_three_concrete_widgets_and_two_five_column_grips():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("terminal_size", [(160, 50), (120, 35), (100, 30), (80, 24)])
+@pytest.mark.parametrize(
+    ("terminal_size", "expected_library_rows"),
+    [
+        ((160, 50), [17, 32]),
+        ((120, 35), [12, 22]),
+        ((100, 30), [10, 19]),
+        ((80, 24), [8, 15]),
+    ],
+)
 async def test_grips_paint_library_arrows_at_35_and_65_percent_and_items_at_center(
     terminal_size: tuple[int, int],
+    expected_library_rows: list[int],
 ) -> None:
     app = _ProbeApp()
 
@@ -157,10 +166,8 @@ async def test_grips_paint_library_arrows_at_35_and_65_percent_and_items_at_cent
         library_rows = _painted_rows_containing(app, shell.library_grip, "<---")
         items_rows = _painted_rows_containing(app, shell.items_grip, "<---")
         last_row = shell.library_grip.region.height - 1
-        expected_upper = round(last_row * 0.35)
-        expected_lower = last_row - expected_upper
 
-        assert library_rows == [expected_upper, expected_lower]
+        assert library_rows == expected_library_rows
         assert items_rows in ([last_row // 2], [(last_row + 1) // 2])
 
 

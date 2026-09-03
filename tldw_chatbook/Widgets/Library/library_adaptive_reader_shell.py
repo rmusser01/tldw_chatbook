@@ -21,6 +21,9 @@ from tldw_chatbook.Utils.adaptive_reader_state import (
 )
 
 
+LIBRARY_ARROW_UPPER_POSITION_RATIO = 0.35
+
+
 class PaneToggleRequested(Message):
     """Request a manual toggle of one optional pane."""
 
@@ -76,11 +79,15 @@ class LibraryAdaptiveReaderPaneGrip(Button):
             self.tooltip = copy
 
     def render(self) -> Content:
-        """Paint the Library pair around the single centered Items arrow."""
+        """Paint the Library pair around the single centered Items arrow.
+
+        Returns:
+            Content: Full-height grip content with arrows at the approved rows.
+        """
         height = max(self.content_region.height, 1)
         last_row = height - 1
         if self.pane == "library" and height > 1:
-            upper_row = round(last_row * 0.35)
+            upper_row = round(last_row * LIBRARY_ARROW_UPPER_POSITION_RATIO)
             arrow_rows = {upper_row, last_row - upper_row}
         else:
             arrow_rows = {last_row // 2}

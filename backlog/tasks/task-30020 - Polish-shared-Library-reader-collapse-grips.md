@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 04:54'
-updated_date: '2026-09-03 05:15'
+updated_date: '2026-09-03 13:40'
 labels: []
 dependencies: []
 ---
@@ -43,17 +43,21 @@ Reason: This is a small visual refinement of the shared shell already governed b
 
 <!-- SECTION:NOTES:BEGIN -->
 - Added height-aware shared grip rendering: the Library control paints proportional
-  dual arrows while the Items control remains centered, without changing the existing
-  labels, activation contract, or five-column layout.
-- Centralized calm rest, hover, active, and focus styling for all six readers. Focus
-  uses theme-aware top/bottom endcaps so the arrows stay fully visible without a
-  filled or striped selected state.
-- Regenerated the canonical CSS bundles and added mounted paint/compositor coverage.
-- Captured and inspected production-shaped Media renders at 160×50, 120×35,
-  100×30, and 80×24; the retained PNG/SVG evidence and geometry ledger verify
-  arrow placement, neutral focus paint, pane adaptation, and containment.
-- Verified 65 shared-shell/Media tests, the six-variant cross-reader resize suite,
-  Ruff, Python compilation, CSS bundle reproduction, and the live capture script.
+  dual arrows while the Items control remains centered, without changing labels,
+  activation, independent collapse behavior, or five-column layout.
+- Centralized neutral interaction styling for all six readers. Focus uses
+  theme-aware top/bottom endcaps so arrows remain visible without a filled or
+  striped selected state.
+- Regenerated the canonical CSS bundles and retained production-shaped 160×50,
+  120×35, 100×30, and 80×24 PNG/SVG evidence plus its geometry ledger.
+- Addressed all four Qodo findings: documented the render return contract,
+  centralized the arrow ratio while keeping unit expectations independent, split
+  environment bootstrap from ordered runtime imports, and selected a portable
+  temporary workspace without import-time filesystem mutation.
+- Verified 66 focused shell/Media/capture tests, six production-shaped cross-reader
+  resize cases, Ruff, Python compilation, CSS bundle reproduction, and the live
+  four-size capture utility. The portability regression was observed failing before
+  the bootstrap correction and passing afterward.
 - ADR required: no. ADR-086 already governs the shared adaptive reader shell, and
   this refinement changes no architectural boundary.
 <!-- SECTION:NOTES:END -->

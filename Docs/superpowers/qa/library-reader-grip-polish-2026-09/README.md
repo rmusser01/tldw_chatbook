@@ -3,8 +3,8 @@
 Production-shaped evidence for TASK-30020. The capture mounts the real Library
 Media reader with the same CSS stack as `TldwCli`, selects and settles a real
 fixture item, focuses the Library grip, and verifies the final compositor paint.
-Its config and application data stay under
-`/private/tmp/tldw-chatbook-library-reader-grip-polish-qa`.
+Its config and application data stay under the platform temporary directory in
+`tldw-chatbook-library-reader-grip-polish-qa`.
 
 Run from the repository root:
 
