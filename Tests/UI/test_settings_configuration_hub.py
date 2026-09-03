@@ -7275,6 +7275,51 @@ async def test_conversation_settings_return_clean_deep_link_focuses_exact_provid
 
 
 @pytest.mark.asyncio
+async def test_conversation_settings_return_preserves_explicit_unselected_model():
+    """A first-run ``model=None`` target must not inherit a configured default."""
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    app.pending_handoffs = PendingHandoffStore()
+    intent = ConversationSettingsReturnIntent(
+        session_id="console-session-first-run",
+        settings_revision=0,
+        active_view="model",
+        focus_control_id="console-settings-model-picker",
+    )
+    revision = app.pending_handoffs.stage(
+        HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+        intent,
+    )
+    target = ProviderSettingsNavigationTarget(
+        category="providers-models",
+        provider="openai",
+        model=None,
+        field="api_key",
+        return_revision=revision,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        screen.apply_navigation_context(target.to_context())
+        await _wait_for_settings_value(
+            screen,
+            pilot,
+            "#settings-model-value",
+            "",
+            Input,
+        )
+
+        assert screen.query_one("#settings-provider-value", Select).value == "openai"
+        assert screen.query_one("#settings-model-value", Input).value == ""
+        assert screen.query_one("#settings-provider-api-key", Input).has_focus
+
+
+@pytest.mark.asyncio
 async def test_conversation_settings_return_preserves_same_provider_draft_and_discloses_fields():
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
@@ -7450,7 +7495,9 @@ async def test_conversation_settings_return_save_shows_typed_continuation(
         assert screen.query_one("#settings-provider-return", Button).label == (
             "Return to Conversation settings"
         )
-        assert screen.query_one("#settings-provider-stay", Button).label == "Stay"
+        assert screen.query_one("#settings-provider-stay", Button).label == (
+            "Stay in Settings"
+        )
 
         screen.query_one("#settings-provider-return", Button).press()
         await pilot.pause()
@@ -7469,6 +7516,104 @@ async def test_conversation_settings_return_save_shows_typed_continuation(
         assert returned is not None
         assert returned.outcome is expected_outcome
         assert returned.session_id == intent.session_id
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_continuation_survives_fresh_settings_screen(
+    monkeypatch,
+):
+    """Ordinary Settings replacement retains only the typed safe continuation."""
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    _intent, target = _stage_conversation_settings_return_intent(app)
+    _capture_provider_settings_mutations(monkeypatch)
+    saved_state = None
+
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(100, 30)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        screen.query_one("#settings-provider-api-key", Input).value = (
+            "DUMMY-STATE-ONLY-SECRET"
+        )
+        await pilot.pause()
+        screen.action_settings_save_category(allow_text_entry_focus=True)
+        await pilot.pause()
+
+        saved_state = screen.save_state()
+        continuation = saved_state["provider_return_continuation"]
+        assert set(continuation) == {"target", "conflict", "outcome"}
+        assert continuation["target"] == target.to_context()
+        assert continuation["conflict"] is False
+        assert continuation["outcome"] == "credential_saved"
+        assert "DUMMY-STATE-ONLY-SECRET" not in repr(continuation)
+
+    assert saved_state is not None
+    restored_host = DestinationHarness(
+        app,
+        "settings",
+        restored_state=saved_state,
+    )
+    async with restored_host.run_test(size=(100, 30)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        restored = _active_destination_screen(restored_host)
+        continuation = restored.query_one("#settings-provider-return-continuation")
+        return_button = restored.query_one("#settings-provider-return", Button)
+
+        assert continuation.display is True
+        assert return_button.label == "Return to Conversation settings"
+        assert restored.query_one("#settings-provider-stay", Button).label == (
+            "Stay in Settings"
+        )
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_save_focuses_primary_return_above_compact_fold(
+    monkeypatch,
+):
+    """Successful save makes the exact return action immediately actionable."""
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    _intent, target = _stage_conversation_settings_return_intent(app)
+    _capture_provider_settings_mutations(monkeypatch)
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(80, 24)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        screen.query_one("#settings-provider-api-key", Input).value = (
+            "DUMMY-COMPACT-RETURN-KEY"
+        )
+        await pilot.pause()
+
+        screen.action_settings_save_category(allow_text_entry_focus=True)
+        for _ in range(40):
+            return_button = screen.query_one("#settings-provider-return", Button)
+            if return_button.has_focus:
+                break
+            await pilot.pause(0.05)
+
+        return_button = screen.query_one("#settings-provider-return", Button)
+        status = screen.query_one(
+            "#settings-provider-return-continuation-status", Static
+        )
+        assert return_button.variant == "primary"
+        assert return_button.has_focus
+        assert return_button in host.screen._compositor.visible_widgets
+        assert return_button.region.width > 0
+        assert return_button.region.height > 0
+        assert str(screen.query_one("#settings-provider-stay", Button).label) == (
+            "Stay in Settings"
+        )
+        assert "check readiness" in str(status.renderable).lower()
 
 
 @pytest.mark.asyncio

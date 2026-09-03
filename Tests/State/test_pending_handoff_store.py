@@ -132,6 +132,48 @@ def test_conversation_settings_return_handoff_requires_exact_ack_and_supports_re
     assert store.acknowledge(retry) is True
 
 
+def test_exact_revision_status_distinguishes_pending_in_flight_and_terminal() -> None:
+    """Consumers can distinguish ownership without reading a handoff value."""
+
+    store = PendingHandoffStore()
+    intent = ConversationSettingsReturnIntent("session-1", 4, "model", None)
+    revision = store.stage(HandoffChannel.CONVERSATION_SETTINGS_RETURN, intent)
+
+    assert (
+        store.exact_revision_status(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN, revision
+        )
+        == "pending"
+    )
+    claim = store.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+    assert claim is not None
+    assert (
+        store.exact_revision_status(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN, revision
+        )
+        == "in_flight"
+    )
+    assert store.acknowledge(claim)
+    assert (
+        store.exact_revision_status(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN, revision
+        )
+        == "settled"
+    )
+
+    newer_revision = store.stage(
+        HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+        ConversationSettingsReturnIntent("session-2", 0, "context", None),
+    )
+    assert newer_revision > revision
+    assert (
+        store.exact_revision_status(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN, revision
+        )
+        == "superseded"
+    )
+
+
 def test_conversation_settings_return_handoff_explicit_clear() -> None:
     store = PendingHandoffStore()
     store.stage(

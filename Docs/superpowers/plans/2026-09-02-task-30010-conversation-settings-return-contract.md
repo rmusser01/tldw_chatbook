@@ -207,6 +207,15 @@ git commit -m "feat: suspend Conversation settings across credential setup"
 
 ### Task 4: Guard Settings drafts and complete the return
 
+**Round-1 review scope amendment:** The exact return retry needs a value-free
+`PendingHandoffStore.exact_revision_status()` query to distinguish an exact
+claim still held in flight by an outgoing Console screen from a consumed or
+superseded revision. This adds
+`tldw_chatbook/UI/Navigation/pending_handoff_store.py` and its existing focused
+store test file to Task 4 scope. It exposes no handoff payload, changes no
+persistence schema or owner, and requires no new ADR; ADR-033 remains the
+governing application-session ownership decision.
+
 **Files:**
 - Modify: `tldw_chatbook/UI/Screens/settings_screen.py`
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py`

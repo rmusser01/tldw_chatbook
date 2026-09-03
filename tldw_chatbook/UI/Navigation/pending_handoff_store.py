@@ -118,6 +118,9 @@ class HandoffValueError(ValueError):
 
 T = TypeVar("T")
 HandoffClaimStatus: TypeAlias = Literal["ready", "expired"]
+HandoffRevisionStatus: TypeAlias = Literal[
+    "pending", "in_flight", "settled", "superseded"
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,6 +262,29 @@ class PendingHandoffStore:
         self._assert_owner_thread()
         with self._lock:
             return self._slot_for(channel).pending is not None
+
+    def exact_revision_status(
+        self,
+        channel: HandoffChannel,
+        revision: int,
+    ) -> HandoffRevisionStatus:
+        """Describe one revision's ownership without exposing its value."""
+
+        self._assert_owner_thread()
+        if type(revision) is not int or revision < 1:
+            raise ValueError("handoff revision must be a positive exact integer")
+        with self._lock:
+            slot = self._slot_for(channel)
+            if slot.pending is not None and slot.pending[0] == revision:
+                return "pending"
+            if (
+                slot.in_flight is not None
+                and slot.in_flight.claim.revision == revision
+            ):
+                return "in_flight"
+            if slot.revision > revision:
+                return "superseded"
+            return "settled"
 
     def is_current_claim(self, claim: HandoffClaim[Any]) -> bool:
         """Return whether a claim still owns the channel's latest revision."""

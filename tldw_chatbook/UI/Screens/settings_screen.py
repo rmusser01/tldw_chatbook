@@ -2761,6 +2761,7 @@ class SettingsScreen(BaseAppScreen):
         self._overview_ownership_details_collapsed = True
         self._navigation_provider: str | None = None
         self._navigation_model: str | None = None
+        self._navigation_model_is_explicit = False
         self._navigation_field: str | None = None
         # Task 30010.4: the Settings side keeps only the typed, secret-free
         # destination and the opaque handoff revision. The private Console
@@ -2770,6 +2771,7 @@ class SettingsScreen(BaseAppScreen):
             ProviderSettingsNavigationTarget | None
         ) = None
         self._provider_return_outcome: ConversationSettingsReturnOutcome | None = None
+        self._provider_return_navigation_in_progress = False
         self._speech_tts_configure_provider: str | None = None
         self._speech_tts_navigation_target: SpeechTTSNavigationTarget | None = None
         self._speech_tts_draft_state: GlobalSpeechTTSState | None = None
@@ -2984,6 +2986,17 @@ class SettingsScreen(BaseAppScreen):
                 configure_provider=(self._speech_tts_draft_snapshot.configure_provider),
                 draft_revision=self._speech_tts_draft_snapshot.draft_revision,
             )
+        target = self._provider_return_target
+        if target is not None and not self._provider_return_navigation_in_progress:
+            state["provider_return_continuation"] = {
+                "target": target.to_context(),
+                "conflict": self._provider_navigation_conflict_target == target,
+                "outcome": (
+                    self._provider_return_outcome.value
+                    if self._provider_return_outcome is not None
+                    else None
+                ),
+            }
         return state
 
     def restore_state(self, state: dict[str, object]) -> None:
@@ -3038,6 +3051,42 @@ class SettingsScreen(BaseAppScreen):
                 )
             except (TypeError, ValueError):
                 self._speech_tts_draft_snapshot = None
+
+        continuation = state.get("provider_return_continuation")
+        if not isinstance(continuation, Mapping) or set(continuation) != {
+            "target",
+            "conflict",
+            "outcome",
+        }:
+            return
+        target_context = continuation.get("target")
+        target = (
+            ProviderSettingsNavigationTarget.from_context(target_context)
+            if isinstance(target_context, Mapping)
+            else None
+        )
+        conflict = continuation.get("conflict")
+        raw_outcome = continuation.get("outcome")
+        if target is None or type(conflict) is not bool:
+            return
+        try:
+            outcome = (
+                ConversationSettingsReturnOutcome(raw_outcome)
+                if raw_outcome is not None
+                else None
+            )
+        except (TypeError, ValueError):
+            return
+        if conflict and outcome is not None:
+            return
+        self._provider_return_target = target
+        self._provider_navigation_conflict_target = target if conflict else None
+        self._provider_return_outcome = outcome
+        if not conflict:
+            self._navigation_provider = target.provider
+            self._navigation_model = target.model
+            self._navigation_model_is_explicit = True
+            self._navigation_field = target.field
 
     def _register_footer_shortcuts(self) -> None:
         """Register Settings shortcuts via BaseAppScreen's persisting API.
@@ -3513,6 +3562,8 @@ class SettingsScreen(BaseAppScreen):
         self.call_after_refresh(self._consume_audio_cpp_model_library_result)
         if self.active_category == SettingsCategoryId.TOOL_PROFILES.value:
             self.call_after_refresh(self._request_tool_profiles_listing)
+        if self._provider_return_outcome is not None:
+            self.call_after_refresh(self._focus_provider_return_continuation)
 
     def on_unmount(self) -> None:
         """Fence any late Model Library review before this screen is replaced."""
@@ -10507,7 +10558,11 @@ class SettingsScreen(BaseAppScreen):
         if self._provider_draft() is not None or not self._navigation_provider:
             return values
         provider = self._navigation_provider
-        model = self._navigation_model or str(values.get("model") or "").strip()
+        model = (
+            str(self._navigation_model or "").strip()
+            if self._navigation_model_is_explicit
+            else str(values.get("model") or "").strip()
+        )
         profile = self._provider_model_profile(provider, model)
         display_values = dict(values)
         display_values.update(
@@ -10588,6 +10643,7 @@ class SettingsScreen(BaseAppScreen):
     def _clear_navigation_provider_context(self) -> None:
         self._navigation_provider = None
         self._navigation_model = None
+        self._navigation_model_is_explicit = False
         self._navigation_field = None
         self._pending_navigation_focus_selector = None
 
@@ -10670,12 +10726,12 @@ class SettingsScreen(BaseAppScreen):
 
     def _provider_return_continuation_copy(self) -> str:
         if self._provider_return_outcome is ConversationSettingsReturnOutcome.CREDENTIAL_SAVED:
-            return "Credential saved. Return to the suspended Conversation settings?"
+            return "Credential saved. Return to Conversation settings to check readiness."
         if (
             self._provider_return_outcome
             is ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED
         ):
-            return "Provider settings saved. Return to the suspended Conversation settings?"
+            return "Provider settings saved. Return to Conversation settings to check readiness."
         return "Provider settings handoff is inactive."
 
     def _provider_can_return_without_saving(self) -> bool:
@@ -10714,7 +10770,19 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return
 
+    def _focus_provider_return_continuation(self) -> None:
+        """Make the post-save return action visible and keyboard-primary."""
+
+        try:
+            button = self.query_one("#settings-provider-return", Button)
+            body = self.query_one("#settings-detail-pane-body", VerticalScroll)
+        except QueryError:
+            return
+        body.scroll_to_widget(button, animate=False, immediate=True, force=True)
+        button.focus()
+
     def _settle_provider_return_state(self) -> None:
+        self._provider_return_navigation_in_progress = False
         self._provider_return_target = None
         self._provider_navigation_conflict_target = None
         self._provider_return_outcome = None
@@ -10762,7 +10830,10 @@ class SettingsScreen(BaseAppScreen):
             self._settle_provider_return_state()
             return False
 
+        self._provider_return_navigation_in_progress = True
+
         def settle_navigation(succeeded: bool) -> None:
+            self._provider_return_navigation_in_progress = False
             if succeeded:
                 self._settle_provider_return_state()
 
@@ -14510,8 +14581,9 @@ class SettingsScreen(BaseAppScreen):
                 yield Button(
                     "Return to Conversation settings",
                     id="settings-provider-return",
+                    variant="primary",
                 )
-                yield Button("Stay", id="settings-provider-stay")
+                yield Button("Stay in Settings", id="settings-provider-stay")
             return_without_saving = Button(
                 "Return without saving",
                 id="settings-provider-return-without-save",
@@ -19238,7 +19310,7 @@ class SettingsScreen(BaseAppScreen):
             self._select_category(category_value, restore_focus=True)
             return
         model = (
-            return_target.model or ""
+            return_target.model
             if return_target is not None
             else str(context.get("model") or "").strip()
         )
@@ -19290,6 +19362,7 @@ class SettingsScreen(BaseAppScreen):
         self._provider_navigation_conflict_target = None
         self._navigation_provider = provider
         self._navigation_model = model
+        self._navigation_model_is_explicit = return_target is not None
         self._navigation_field = field
         self._select_category(category_value, restore_focus=True)
         self._after_category_panes(
@@ -19360,7 +19433,7 @@ class SettingsScreen(BaseAppScreen):
     def _apply_navigation_provider_context(
         self,
         provider: str,
-        model: str = "",
+        model: str | None = "",
         field: str = "",
     ) -> None:
         """Synchronize mounted provider widgets after route-targeted navigation.
@@ -19382,7 +19455,11 @@ class SettingsScreen(BaseAppScreen):
         if self._category_has_unsaved_changes(SettingsCategoryId.PROVIDERS_MODELS):
             return
         provider_settings = self._provider_setting_values_mapping()
-        model_value = str(model or provider_settings.get("model") or "").strip()
+        model_value = (
+            str(model or "").strip()
+            if self._navigation_model_is_explicit
+            else str(model or provider_settings.get("model") or "").strip()
+        )
         self._sync_provider_manual_widget(provider_value)
         try:
             endpoint_input = self.query_one("#settings-provider-endpoint-value", Input)
@@ -24255,10 +24332,11 @@ class SettingsScreen(BaseAppScreen):
         self._provider_navigation_conflict_target = None
         self._navigation_provider = target.provider
         self._navigation_model = target.model
+        self._navigation_model_is_explicit = True
         self._navigation_field = target.field
         self._apply_navigation_provider_context(
             target.provider,
-            target.model or "",
+            target.model,
             target.field,
         )
         self._update_provider_return_widgets()
@@ -25607,15 +25685,18 @@ class SettingsScreen(BaseAppScreen):
                     self._provider_return_outcome = None
                     self._navigation_provider = conflict_target.provider
                     self._navigation_model = conflict_target.model
+                    self._navigation_model_is_explicit = True
                     self._navigation_field = conflict_target.field
                     self._apply_navigation_provider_context(
                         conflict_target.provider,
-                        conflict_target.model or "",
+                        conflict_target.model,
                         conflict_target.field,
                     )
                 elif self._provider_return_target is not None:
                     self._provider_return_outcome = provider_return_outcome
                 self._update_provider_return_widgets()
+                if self._provider_return_outcome is not None:
+                    self.call_after_refresh(self._focus_provider_return_continuation)
                 self.app.notify(
                     "Provider and model settings saved.", severity="information"
                 )
