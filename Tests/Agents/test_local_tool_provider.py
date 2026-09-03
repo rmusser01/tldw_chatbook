@@ -3877,7 +3877,6 @@ def test_two_writer_race_refuses_second_writer(tmp_path):
     assert target.read_text() == "B's version\n"
 
 
-@pytest.mark.xfail(reason="ledger update lands in Task 5", strict=False)
 def test_own_read_write_write_chain_never_false_positives(tmp_path):
     target = tmp_path / "mine.txt"
     target.write_text("v1\n")
@@ -4003,3 +4002,44 @@ def test_patch_with_one_stale_target_refuses_whole_patch(tmp_path):
     # NEITHER file was touched -- whole patch refused
     assert a.read_text() == "alpha\n"
     assert b.read_text() == "beta CHANGED\n"
+
+
+# --- TASK-28238 phase 1: update-after-write ---
+
+
+def test_read_edit_edit_chain_never_false_positives(tmp_path):
+    target = tmp_path / "chain.py"
+    target.write_text("n = 1\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        assert provider.invoke("local:fs_read", {"path": "chain.py"}).ok
+        assert provider.invoke(
+            "local:fs_edit", {"path": "chain.py", "old_string": "n = 1", "new_string": "n = 2"}
+        ).ok
+        second = provider.invoke(
+            "local:fs_edit", {"path": "chain.py", "old_string": "n = 2", "new_string": "n = 3"}
+        )
+    assert second.ok, str(second.error)
+    assert target.read_text() == "n = 3\n"
+
+
+def test_write_updates_ledger_so_peer_race_still_detected_after(tmp_path):
+    """After my own write, a PEER's change is still caught on my next write."""
+    target = tmp_path / "then.txt"
+    target.write_text("v1\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        provider.invoke("local:fs_read", {"path": "then.txt"})
+        assert provider.invoke(
+            "local:fs_write", {"path": "then.txt", "content": "v2\n"}
+        ).ok
+    with use_run_id("run-b"):
+        assert provider.invoke(
+            "local:fs_write", {"path": "then.txt", "content": "peer\n"}
+        ).ok
+    with use_run_id("run-a"):
+        result = provider.invoke(
+            "local:fs_write", {"path": "then.txt", "content": "v3\n"}
+        )
+    assert not result.ok
+    assert "Stale write refused" in str(result.error)

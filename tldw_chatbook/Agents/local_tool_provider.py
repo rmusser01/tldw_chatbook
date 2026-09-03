@@ -1616,6 +1616,12 @@ class LocalToolProvider:
                             invocation_id=name,
                         ),
                     )
+                    if name in {"fs_write", "fs_edit", "fs_patch"}:
+                        self._update_ledger_after_write(
+                            name,
+                            clean_args,
+                            authority.root if authority is not None else self._root,
+                        )
                     provider_terminal = LocalProviderTerminal.RETURNED
                     return LocalToolInvocationResult(
                         result=result,
@@ -2052,6 +2058,53 @@ class LocalToolProvider:
             elif now is None or now[0] != stamp.sha256:
                 stale.append((shown, stamp, resolved))
         return stale
+
+    def _update_ledger_after_write(self, name: str, args: dict, root: "Path") -> None:
+        """Re-stamp every written target so an agent's own chain never trips.
+
+        Post-handler re-read: for fs_edit/fs_patch the written bytes are only
+        knowable from disk. Never raises.
+        """
+        from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
+        from tldw_chatbook.Agents.run_context import current_run_id
+        from tldw_chatbook.Tools.local_tool_impls import (
+            LocalToolError,
+            resolve_workspace_path,
+        )
+
+        if args.get("dry_run") is True:
+            return
+        run_id = current_run_id()
+        base = Path(root).resolve()
+        shown_paths: list[str] = []
+        if name in {"fs_write", "fs_edit"}:
+            raw = args.get("path")
+            if isinstance(raw, str) and raw:
+                shown_paths.append(raw)
+        elif name == "fs_patch":
+            from tldw_chatbook.Tools.patch_tool_impls import (
+                FilesystemPatchError,
+                parse_patch_targets,
+            )
+
+            try:
+                plans = parse_patch_targets(args.get("diff") or "")
+            except FilesystemPatchError:
+                return
+            for plan in plans:
+                if plan.new_path is not None:
+                    shown_paths.append(plan.new_path)
+        for shown in shown_paths:
+            try:
+                resolved = resolve_workspace_path(shown, base, intent="write")
+            except (LocalToolError, OSError, ValueError):
+                continue
+            key = canonical_ledger_key(resolved)
+            hashed = _hash_file(resolved)
+            if hashed is None:
+                self._read_ledger.record_absent(run_id, key)
+            else:
+                self._read_ledger.update_written(run_id, key, hashed[0], hashed[1])
 
     def _root_is_valid(self) -> bool:
         """Never raise while revalidating an optional selected-root guard."""
