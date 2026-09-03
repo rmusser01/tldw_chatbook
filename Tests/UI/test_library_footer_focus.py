@@ -44,6 +44,7 @@ def _fake(focused) -> SimpleNamespace:
 
 
 def test_typing_focus_drops_swallowed_printable_keys():
+    """Input focus removes every single-printable-key advertisement."""
     shortcuts = _fake(Input())._library_footer_shortcuts_for_current_state()
     keys = [key for key, _ in shortcuts]
     # Single printable keys are inserted as text while typing — never shown.
@@ -57,12 +58,14 @@ def test_typing_focus_drops_swallowed_printable_keys():
 
 
 def test_text_area_focus_gets_the_same_honesty():
+    """TextArea focus is a typing context exactly like Input."""
     shortcuts = _fake(TextArea())._library_footer_shortcuts_for_current_state()
     keys = [key for key, _ in shortcuts]
     assert "]" not in keys and "m" not in keys
 
 
 def test_non_typing_focus_keeps_the_full_set():
+    """A focused Button leaves the advertised set untouched."""
     shortcuts = _fake(Button())._library_footer_shortcuts_for_current_state()
     assert ("]", "next in set") in shortcuts
     assert ("m", "toggle reviewed") in shortcuts
@@ -70,6 +73,7 @@ def test_non_typing_focus_keeps_the_full_set():
 
 
 def test_no_focus_keeps_the_full_set():
+    """No focus at all leaves the advertised set untouched."""
     shortcuts = _fake(None)._library_footer_shortcuts_for_current_state()
     assert ("]", "next in set") in shortcuts
 
@@ -90,8 +94,34 @@ def test_completed_set_footer_drops_walk_keys_and_offers_the_finish():
 
 
 def test_in_progress_set_footer_keeps_the_walk_keys():
+    """An in-progress set keeps ]/[/m/R and the progress chip."""
     entries = LibraryScreen._review_footer_entries("2 of 6 · 1 reviewed")
     assert ("]", "next in set") in entries
     assert ("[", "prev in set") in entries
     assert ("R", "exit review") in entries
     assert ("", "2 of 6 · 1 reviewed") in entries
+
+
+def test_typing_flip_routes_through_the_notes_aware_dispatcher():
+    """A focus flip must re-apply the CONTEXT footer, not the generic one.
+
+    Qodo #2359: _apply_library_notes_footer_context dispatches to the Notes
+    region tiers when that workflow is active and falls back to the generic
+    (typing-filtered) set otherwise — calling the generic registration
+    directly overwrote the Notes editor's footer on focus flips.
+    """
+    calls: list[str] = []
+    fake = SimpleNamespace(
+        _library_footer_typing_context=False,
+        _apply_library_notes_footer_context=lambda: calls.append("dispatch"),
+    )
+    fake._refresh_footer_typing_context = MethodType(
+        LibraryScreen._refresh_footer_typing_context, fake
+    )
+
+    fake._refresh_footer_typing_context(Input())  # flip: False -> True
+    assert calls == ["dispatch"]
+    fake._refresh_footer_typing_context(Input())  # same context: no churn
+    assert calls == ["dispatch"]
+    fake._refresh_footer_typing_context(Button())  # flip back
+    assert calls == ["dispatch", "dispatch"]

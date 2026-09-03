@@ -3677,6 +3677,24 @@ class LibraryScreen(BaseAppScreen):
             return self.LIBRARY_LIST_SHORTCUTS
         return self.LIBRARY_GENERAL_SHORTCUTS
 
+    def _refresh_footer_typing_context(self, focused) -> None:
+        """Re-apply the footer when the typing context flips (task-31223).
+
+        Routes through ``_apply_library_notes_footer_context`` -- the
+        context dispatcher that applies the Notes region tiers when that
+        workflow is active and falls back to the generic (typing-filtered)
+        set otherwise (Qodo #2359: calling the generic registration
+        directly overwrote the Notes editor footer). Flip-gated so
+        ordinary focus moves cause zero footer churn.
+
+        Args:
+            focused: The newly focused widget.
+        """
+        typing = isinstance(focused, (Input, TextArea))
+        if typing != getattr(self, "_library_footer_typing_context", False):
+            self._library_footer_typing_context = typing
+            self._apply_library_notes_footer_context()
+
     @staticmethod
     def _review_footer_entries(progress: str) -> tuple[tuple[str, str], ...]:
         """The Reader footer's review-set segment for one progress line.
@@ -10572,12 +10590,7 @@ class LibraryScreen(BaseAppScreen):
             return
         # task-31223: the footer's typing-context swap (drop keys a text
         # field will swallow) must follow focus, not just route changes.
-        # Re-register only on a context FLIP so ordinary focus moves stay
-        # free of footer churn.
-        typing = isinstance(focused, (Input, TextArea))
-        if typing != getattr(self, "_library_footer_typing_context", False):
-            self._library_footer_typing_context = typing
-            self._register_footer_shortcuts()
+        self._refresh_footer_typing_context(focused)
         self._remember_library_notes_authority_focus(focused)
         target_restore = self._library_notes_programmatic_focus_target is focused
         pending_receipt = self._library_pending_list_entry_media_return
