@@ -89,7 +89,6 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
     ConsoleSettingsDraftSnapshot,
     ConsoleSettingsModal,
     ConsoleSettingsResult,
-    _is_local_thinking_provider,
     _settings_screen_region,
 )
 from tldw_chatbook.Widgets.Console.console_provider_picker import (
@@ -5254,22 +5253,6 @@ async def test_console_settings_modal_renders_current_chat_identity() -> None:
         assert "Leave blank to use the global default." in _visible_text(app)
 
 
-def test_local_thinking_provider_detection_covers_execution_key_aliases() -> None:
-    assert _is_local_thinking_provider("llama_cpp") is True
-    assert _is_local_thinking_provider("local_llamacpp") is True
-    assert _is_local_thinking_provider("local_llamafile") is True
-    assert _is_local_thinking_provider("local_llm") is True
-    assert _is_local_thinking_provider("vllm") is True
-    assert _is_local_thinking_provider("local_vllm") is True
-    assert _is_local_thinking_provider("local_mlx_lm") is True
-    # Readiness aliases resolve to their custom-openai execution keys.
-    assert _is_local_thinking_provider("custom") is True
-    assert _is_local_thinking_provider("custom_2") is True
-    assert _is_local_thinking_provider("anthropic") is False
-    assert _is_local_thinking_provider("openai") is False
-    assert _is_local_thinking_provider(None) is False
-
-
 @pytest.mark.asyncio
 async def test_console_settings_modal_local_provider_marks_no_effect_choices() -> None:
     app = ModalHarness()
@@ -5328,14 +5311,191 @@ async def test_console_settings_modal_provider_switch_refreshes_choice_hints() -
         )
         await pilot.pause()
 
-        thinking = app.screen.query_one("#console-settings-thinking-effort", Input)
-        assert PROVIDER_CHOICE_NO_EFFECT_SUFFIX not in thinking.placeholder
+        summary = app.screen.query_one("#console-settings-reasoning-summary", Input)
+        assert PROVIDER_CHOICE_NO_EFFECT_SUFFIX not in summary.placeholder
+        assert summary.parent is not None and summary.parent.display is True
 
         provider_select = app.screen.query_one("#console-settings-provider", Select)
         provider_select.value = "llama_cpp"
         await pilot.pause()
 
-        assert thinking.placeholder.endswith(PROVIDER_CHOICE_NO_EFFECT_SUFFIX)
+        assert summary.placeholder.endswith(PROVIDER_CHOICE_NO_EFFECT_SUFFIX)
+        assert summary.parent is not None and summary.parent.display is False
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_hides_only_authoritatively_unsupported_controls() -> (
+    None
+):
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        reasoning_effort="high",
+        reasoning_summary="auto",
+        thinking_budget_tokens=2048,
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(
+            _basic_modal(settings, app), callback=app.capture_saved_settings
+        )
+        await pilot.pause()
+
+        reasoning = app.screen.query_one("#console-settings-reasoning-effort", Input)
+        budget = app.screen.query_one("#console-settings-thinking-budget-tokens", Input)
+        summary = app.screen.query_one("#console-settings-reasoning-summary", Input)
+
+        assert reasoning.parent is not None and reasoning.parent.display is True
+        assert budget.parent is not None and budget.parent.display is True
+        assert summary.parent is not None and summary.parent.display is False
+        assert app.screen._is_effectively_focusable(summary) is False
+
+        await pilot.click("#console-settings-save")
+
+    # Hiding a no-effect control does not rewrite a retained session draft.
+    assert app.saved_settings is not None
+    assert app.saved_settings.reasoning_summary == "auto"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_keeps_unknown_support_visible_with_neutral_copy() -> (
+    None
+):
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="openai",
+        model="future-custom-model",
+        reasoning_effort="high",
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(
+            _basic_modal(
+                settings,
+                app,
+                providers_models={"openai": ["future-custom-model"]},
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        reasoning = app.screen.query_one("#console-settings-reasoning-effort", Input)
+        note = app.screen.query_one(
+            "#console-settings-reasoning-effort-support", Static
+        )
+        assert reasoning.parent is not None and reasoning.parent.display is True
+        assert str(note.renderable) == "Support not verified for this model."
+        assert note.display is True
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_tab_order_skips_hidden_support_rows() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="local_vllm", model="model-a")
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(
+            _basic_modal(
+                settings,
+                app,
+                providers_models={"local_vllm": ["model-a"]},
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        reasoning = app.screen.query_one("#console-settings-reasoning-effort", Input)
+        reasoning.focus()
+        visited: list[str | None] = []
+        for _ in range(8):
+            await pilot.press("tab")
+            visited.append(getattr(app.focused, "id", None))
+
+        assert "console-settings-reasoning-summary" not in visited
+        assert "console-settings-verbosity" not in visited
+        assert "console-settings-thinking-effort" not in visited
+        assert "console-settings-thinking-budget-tokens" not in visited
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_ignores_hidden_invalid_value_without_rewriting_it() -> None:
+    app = ModalHarness()
+    app.app_config["api_settings"]["local_vllm"] = {
+        "api_url": "http://127.0.0.1:8000"
+    }
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        thinking_budget_tokens=2048,
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(
+            _basic_modal(
+                settings,
+                app,
+                providers_models={
+                    "llama_cpp": ["model-a"],
+                    "local_vllm": ["model-b"],
+                },
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        budget = app.screen.query_one(
+            "#console-settings-thinking-budget-tokens", Input
+        )
+        budget.value = "unfinished-budget"
+        app.screen.query_one("#console-settings-provider", Select).value = "local_vllm"
+        await pilot.pause()
+
+        assert budget.value == "unfinished-budget"
+        assert budget.parent is not None and budget.parent.display is False
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.provider == "local_vllm"
+    assert app.saved_settings.thinking_budget_tokens == 2048
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_preserves_hidden_parseable_current_value() -> None:
+    app = ModalHarness()
+    app.app_config["api_settings"]["local_vllm"] = {
+        "api_url": "http://127.0.0.1:8000"
+    }
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        thinking_budget_tokens=2048,
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(
+            _basic_modal(
+                settings,
+                app,
+                providers_models={
+                    "llama_cpp": ["model-a"],
+                    "local_vllm": ["model-b"],
+                },
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        budget = app.screen.query_one(
+            "#console-settings-thinking-budget-tokens", Input
+        )
+        budget.value = "4096"
+        app.screen.query_one("#console-settings-provider", Select).value = "local_vllm"
+        await pilot.pause()
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.thinking_budget_tokens == 4096
 
 
 @pytest.mark.asyncio
@@ -5709,8 +5869,6 @@ async def test_console_settings_modal_preserves_provider_specific_generation_con
             "#console-settings-reasoning-effort",
             "#console-settings-reasoning-summary",
             "#console-settings-verbosity",
-            "#console-settings-thinking-effort",
-            "#console-settings-thinking-budget-tokens",
         ):
             input_widget = app.screen.query_one(selector, Input)
             body = app.screen.query_one("#console-settings-body")
@@ -5722,6 +5880,14 @@ async def test_console_settings_modal_preserves_provider_specific_generation_con
             assert input_widget.value
             assert input_widget.content_region.height >= 1
 
+        for selector in (
+            "#console-settings-thinking-effort",
+            "#console-settings-thinking-budget-tokens",
+        ):
+            input_widget = app.screen.query_one(selector, Input)
+            assert input_widget.parent is not None
+            assert input_widget.parent.display is False
+
         app.screen.query_one("#console-settings-seed", Input).value = "23"
         app.screen.query_one("#console-settings-presence-penalty", Input).value = "0.6"
         app.screen.query_one("#console-settings-frequency-penalty", Input).value = "0.7"
@@ -5732,12 +5898,6 @@ async def test_console_settings_modal_preserves_provider_specific_generation_con
             "#console-settings-reasoning-summary", Input
         ).value = "concise"
         app.screen.query_one("#console-settings-verbosity", Input).value = "high"
-        app.screen.query_one(
-            "#console-settings-thinking-effort", Input
-        ).value = "medium"
-        app.screen.query_one(
-            "#console-settings-thinking-budget-tokens", Input
-        ).value = "4096"
         await pilot.click("#console-settings-save")
 
     assert app.saved_settings is not None
@@ -5747,8 +5907,8 @@ async def test_console_settings_modal_preserves_provider_specific_generation_con
     assert app.saved_settings.reasoning_effort == "medium"
     assert app.saved_settings.reasoning_summary == "concise"
     assert app.saved_settings.verbosity == "high"
-    assert app.saved_settings.thinking_effort == "medium"
-    assert app.saved_settings.thinking_budget_tokens == 4096
+    assert app.saved_settings.thinking_effort == "low"
+    assert app.saved_settings.thinking_budget_tokens == 2048
 
 
 @pytest.mark.asyncio
@@ -10724,4 +10884,58 @@ async def test_discovery_selects_the_model_when_exactly_one_is_found() -> None:
         await pilot.press("o", "n", "l", "y")
         await pilot.pause()
         results = modal.query_one("#model-search-picker-results", OptionList)
-        assert [str(option.prompt) for option in results.options] == ["only-real-model"]
+        assert [str(option.prompt) for option in results.options] == [
+            "only-real-model"
+        ]
+
+
+@pytest.mark.asyncio
+async def test_single_model_discovery_refreshes_generation_control_support(
+    monkeypatch,
+) -> None:
+    app = ModalHarness()
+    modal = ConsoleSettingsModal(
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp", model="stale-model", base_url="http://127.0.0.1:9099"
+        ),
+        app_config=app.app_config,
+        providers_models={"llama_cpp": ["stale-model"]},
+        context_estimate=ConsoleSettingsContextEstimate(
+            used_tokens=10, token_limit=16384, label="10 / 16k"
+        ),
+        can_save=True,
+    )
+
+    def model_dependent_support(_provider, model, control):
+        if control == "verbosity" and model == "only-real-model":
+            return "unsupported"
+        return "unknown"
+
+    monkeypatch.setattr(
+        settings_modal_module,
+        "console_generation_control_support",
+        model_dependent_support,
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        verbosity = modal.query_one("#console-settings-verbosity", Input)
+        assert verbosity.parent is not None and verbosity.parent.display is True
+
+        picker = modal.query_one(ModelSearchPicker)
+        with (
+            modal.prevent(Select.Changed, ModelSearchPicker.ModelValueChanged),
+            picker.prevent(ModelSearchPicker.ModelValueChanged),
+        ):
+            modal._apply_model_discovery_result(
+                "llama_cpp",
+                LocalModelProbeResult(
+                    ok=True,
+                    base_url="http://127.0.0.1:9099",
+                    model_ids=("only-real-model",),
+                ),
+            )
+        await pilot.pause()
+
+        assert verbosity.parent is not None and verbosity.parent.display is False

@@ -43,7 +43,8 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
     normalize_generic_endpoint_for_compare,
 )
 from tldw_chatbook.Chat.console_provider_support import (
-    resolve_console_provider_identity,
+    ConsoleGenerationControl,
+    console_generation_control_support,
 )
 from tldw_chatbook.Chat.local_server_discovery import (
     normalize_probe_base_url,
@@ -675,33 +676,15 @@ PROVIDER_CHOICE_INPUTS = (
         "off, low, medium, high, xhigh, max",
     ),
 )
-# ADR-066: local thinking execution keys. These providers consume only the
-# reasoning-effort level (and the token budget) via their local thinking
-# payload fields; the other provider-specific choice inputs have no effect.
-_LOCAL_THINKING_EXECUTION_KEYS = frozenset(
-    {
-        "llama_cpp",
-        "local_llamacpp",
-        "local_llamafile",
-        "local-llm",
-        "vllm",
-        "local_vllm",
-        "local_mlx_lm",
-        "custom-openai-api",
-        "custom-openai-api-2",
-    }
-)
-# Choice inputs with no effect on local thinking providers. The reasoning
-# effort input is excluded: local providers consume it via
-# chat_template_kwargs / reasoning_effort.
-_LOCAL_NO_EFFECT_CHOICE_INPUT_IDS = frozenset(
-    {
-        "console-settings-thinking-effort",
-        "console-settings-reasoning-summary",
-        "console-settings-verbosity",
-    }
-)
 PROVIDER_CHOICE_NO_EFFECT_SUFFIX = " (no effect on this provider)"
+GENERATION_CONTROL_UNKNOWN_COPY = "Support not verified for this model."
+_GENERATION_CONTROL_INPUTS: tuple[tuple[str, ConsoleGenerationControl], ...] = (
+    ("console-settings-reasoning-effort", "reasoning_effort"),
+    ("console-settings-reasoning-summary", "reasoning_summary"),
+    ("console-settings-verbosity", "verbosity"),
+    ("console-settings-thinking-effort", "thinking_effort"),
+    ("console-settings-thinking-budget-tokens", "thinking_budget_tokens"),
+)
 STREAMING_ON_LABEL = "On"
 STREAMING_OFF_LABEL = "Off"
 CONSOLE_SETTINGS_MODEL_SCOPE_COPY = (
@@ -776,21 +759,6 @@ def _settings_screen_region(widget: Any) -> Any:
         exposes one; otherwise the mounted widget region used by this project.
     """
     return getattr(widget, "screen_region", None) or widget.region
-
-
-def _is_local_thinking_provider(provider: str | None) -> bool:
-    """Return whether a provider executes through a local thinking key.
-
-    Args:
-        provider: Raw provider name from Console controls or session settings.
-
-    Returns:
-        True when the resolved execution key is one of the local thinking
-        keys, i.e. the provider-specific choice inputs other than the
-        reasoning-effort level have no effect on sends.
-    """
-    identity = resolve_console_provider_identity(provider)
-    return identity.execution_key in _LOCAL_THINKING_EXECUTION_KEYS
 
 
 async def _default_model_prober(
@@ -1637,7 +1605,10 @@ class ConsoleSettingsModal(
                     classes="console-settings-modal-section console-settings-model-view"
                 ):
                     yield Static("Provider-specific", classes="destination-section")
-                    with Horizontal(classes="console-settings-modal-row"):
+                    with Horizontal(
+                        id="console-settings-reasoning-effort-row",
+                        classes="console-settings-modal-row",
+                    ):
                         yield self._modal_label("Reasoning")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.reasoning_effort),
@@ -1647,7 +1618,15 @@ class ConsoleSettingsModal(
                             id="console-settings-reasoning-effort",
                             classes="console-settings-control",
                         )
-                    with Horizontal(classes="console-settings-modal-row"):
+                        yield Static(
+                            GENERATION_CONTROL_UNKNOWN_COPY,
+                            id="console-settings-reasoning-effort-support",
+                            classes="console-settings-control-support",
+                        )
+                    with Horizontal(
+                        id="console-settings-reasoning-summary-row",
+                        classes="console-settings-modal-row",
+                    ):
                         yield self._modal_label("Summary")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.reasoning_summary),
@@ -1657,7 +1636,15 @@ class ConsoleSettingsModal(
                             id="console-settings-reasoning-summary",
                             classes="console-settings-control",
                         )
-                    with Horizontal(classes="console-settings-modal-row"):
+                        yield Static(
+                            GENERATION_CONTROL_UNKNOWN_COPY,
+                            id="console-settings-reasoning-summary-support",
+                            classes="console-settings-control-support",
+                        )
+                    with Horizontal(
+                        id="console-settings-verbosity-row",
+                        classes="console-settings-modal-row",
+                    ):
                         yield self._modal_label("Verbosity")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.verbosity),
@@ -1667,7 +1654,15 @@ class ConsoleSettingsModal(
                             id="console-settings-verbosity",
                             classes="console-settings-control",
                         )
-                    with Horizontal(classes="console-settings-modal-row"):
+                        yield Static(
+                            GENERATION_CONTROL_UNKNOWN_COPY,
+                            id="console-settings-verbosity-support",
+                            classes="console-settings-control-support",
+                        )
+                    with Horizontal(
+                        id="console-settings-thinking-effort-row",
+                        classes="console-settings-modal-row",
+                    ):
                         yield self._modal_label("Thinking")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.thinking_effort),
@@ -1677,7 +1672,15 @@ class ConsoleSettingsModal(
                             id="console-settings-thinking-effort",
                             classes="console-settings-control",
                         )
-                    with Horizontal(classes="console-settings-modal-row"):
+                        yield Static(
+                            GENERATION_CONTROL_UNKNOWN_COPY,
+                            id="console-settings-thinking-effort-support",
+                            classes="console-settings-control-support",
+                        )
+                    with Horizontal(
+                        id="console-settings-thinking-budget-tokens-row",
+                        classes="console-settings-modal-row",
+                    ):
                         yield self._modal_label("Budget")
                         yield ConsoleSettingsInput(
                             value=self._format_value(
@@ -1685,6 +1688,11 @@ class ConsoleSettingsModal(
                             ),
                             id="console-settings-thinking-budget-tokens",
                             classes="console-settings-control",
+                        )
+                        yield Static(
+                            GENERATION_CONTROL_UNKNOWN_COPY,
+                            id="console-settings-thinking-budget-tokens-support",
+                            classes="console-settings-control-support",
                         )
 
                 with Vertical(
@@ -2148,6 +2156,7 @@ class ConsoleSettingsModal(
             elif self._active_view == "context":
                 self._sync_visual_representation_availability()
                 self.call_after_refresh(self._focus_context_control)
+        self._sync_generation_control_support()
         self.call_after_refresh(self._sync_fold_hint)
 
     def _finish_initial_control_sync(self) -> None:
@@ -2312,6 +2321,7 @@ class ConsoleSettingsModal(
         self._sync_base_url_control(provider, self._base_url_for_provider(provider))
         self._sync_model_discover_controls(provider)
         self._sync_provider_choice_placeholders()
+        self._sync_generation_control_support()
         self._sync_readiness_display()
         self._sync_visual_representation_availability()
 
@@ -3766,14 +3776,22 @@ class ConsoleSettingsModal(
     def _choice_placeholder(self, input_id: str) -> str:
         """Return the accepted-values placeholder for an enumerated choice input."""
         if input_id == "console-settings-reasoning-effort":
-            hint = reasoning_effort_hint_for_model(self._settings.model)
+            hint = reasoning_effort_hint_for_model(
+                self._model_for_provider(self._active_provider)
+            )
             if hint is not None:
                 return " / ".join(sorted(hint)) + " (consumed by this model)"
         for _label, choice_input_id, placeholder in PROVIDER_CHOICE_INPUTS:
             if choice_input_id == input_id:
+                control = dict(_GENERATION_CONTROL_INPUTS).get(input_id)
                 if (
-                    input_id in _LOCAL_NO_EFFECT_CHOICE_INPUT_IDS
-                    and _is_local_thinking_provider(self._active_provider)
+                    control is not None
+                    and console_generation_control_support(
+                        self._active_provider,
+                        self._model_for_provider(self._active_provider),
+                        control,
+                    )
+                    == "unsupported"
                 ):
                     return placeholder + PROVIDER_CHOICE_NO_EFFECT_SUFFIX
                 return placeholder
@@ -3785,6 +3803,37 @@ class ConsoleSettingsModal(
             self.query_one(
                 f"#{input_id}", Input
             ).placeholder = self._choice_placeholder(input_id)
+
+    def _sync_generation_control_support(self) -> None:
+        """Apply authoritative support without rewriting retained draft values."""
+        model = self._current_model_value()
+        focused = self.app.focused
+        hid_focused_control = False
+        for input_id, control in _GENERATION_CONTROL_INPUTS:
+            support = console_generation_control_support(
+                self._active_provider,
+                model,
+                control,
+            )
+            row = self.query_one(f"#{input_id}-row", Horizontal)
+            note = self.query_one(f"#{input_id}-support", Static)
+            if support == "unsupported":
+                current: Widget | None = focused
+                while current is not None:
+                    if current is row:
+                        hid_focused_control = True
+                        break
+                    parent = current.parent
+                    current = parent if isinstance(parent, Widget) else None
+                row.display = False
+                note.display = False
+                continue
+            row.display = True
+            note.display = support == "unknown"
+            if support == "unknown":
+                note.update(GENERATION_CONTROL_UNKNOWN_COPY)
+        if hid_focused_control:
+            self.call_after_refresh(self._focus_connection_fallback)
 
     @on(Input.Changed)
     @on(Select.Changed)
@@ -4025,6 +4074,7 @@ class ConsoleSettingsModal(
         self._sync_base_url_control(provider, base_url)
         self._sync_model_discover_controls(provider)
         self._sync_provider_choice_placeholders()
+        self._sync_generation_control_support()
         self._sync_readiness_display()
         self._sync_visual_representation_availability()
         self._sync_endpoint_controls()
@@ -4059,6 +4109,7 @@ class ConsoleSettingsModal(
             return
         self._sync_readiness_display()
         self._sync_visual_representation_availability()
+        self._sync_generation_control_support()
 
     @on(Input.Changed, "#console-settings-model-input")
     def _model_input_changed(self, event: Input.Changed) -> None:
@@ -4108,6 +4159,7 @@ class ConsoleSettingsModal(
         self._sync_readiness_display()
         self._sync_default_readiness()
         self._sync_visual_representation_availability()
+        self._sync_generation_control_support()
 
     @on(ModelSearchPicker.ModelSelected)
     def _model_picker_selected(self, event: ModelSearchPicker.ModelSelected) -> None:
@@ -4125,6 +4177,7 @@ class ConsoleSettingsModal(
         self._sync_model_controls(self._active_provider, event.model_id)
         self._sync_readiness_display()
         self._sync_visual_representation_availability()
+        self._sync_generation_control_support()
 
     @on(ModelSearchPicker.ModelValueChanged)
     def _model_picker_value_changed(
@@ -4152,6 +4205,7 @@ class ConsoleSettingsModal(
         self._set_provider_model_draft(self._active_provider, event.model_id)
         self._sync_readiness_display()
         self._sync_visual_representation_availability()
+        self._sync_generation_control_support()
 
     @on(Select.Changed, "#console-context-compaction-representation")
     def _compaction_representation_changed(self, _event: Select.Changed) -> None:
@@ -4269,12 +4323,18 @@ class ConsoleSettingsModal(
             selected_model = result.model_ids[0]
         self._sync_model_controls(provider, selected_model)
         if count == 1:
+            # ``_sync_model_controls`` schedules the picker refresh. Commit the
+            # sole discovered model synchronously as well so the support/readiness
+            # projections below cannot observe the previous model in this turn.
+            picker.set_model_value(selected_model)
+            self._set_provider_model_draft(provider, selected_model)
             self._set_model_discover_status(
                 f"Found 1 model at {display}; selected {result.model_ids[0]}."
             )
         else:
             self._set_model_discover_status(f"Found {count} models at {display}.")
         self._sync_readiness_display()
+        self._sync_generation_control_support()
 
     def _set_model_discover_status(self, text: str) -> None:
         """Update the inline discovery status line, hiding it when blank."""
@@ -4345,17 +4405,19 @@ class ConsoleSettingsModal(
             frequency_penalty=self._parse_optional_float_input(
                 "console-settings-frequency-penalty"
             ),
-            reasoning_effort=self._parse_optional_choice_input(
-                "console-settings-reasoning-effort"
+            reasoning_effort=self._generation_choice_draft_value(
+                "reasoning_effort", "console-settings-reasoning-effort"
             ),
-            reasoning_summary=self._parse_optional_choice_input(
-                "console-settings-reasoning-summary"
+            reasoning_summary=self._generation_choice_draft_value(
+                "reasoning_summary", "console-settings-reasoning-summary"
             ),
-            verbosity=self._parse_optional_choice_input("console-settings-verbosity"),
-            thinking_effort=self._parse_optional_choice_input(
-                "console-settings-thinking-effort"
+            verbosity=self._generation_choice_draft_value(
+                "verbosity", "console-settings-verbosity"
             ),
-            thinking_budget_tokens=self._parse_optional_int_input(
+            thinking_effort=self._generation_choice_draft_value(
+                "thinking_effort", "console-settings-thinking-effort"
+            ),
+            thinking_budget_tokens=self._generation_budget_draft_value(
                 "console-settings-thinking-budget-tokens"
             ),
             streaming=self._effective_streaming_value(),
@@ -5060,6 +5122,13 @@ class ConsoleSettingsModal(
     def _provider_choice_input_errors(self) -> list[str]:
         errors: list[str] = []
         for label, input_id, _placeholder in PROVIDER_CHOICE_INPUTS:
+            control = dict(_GENERATION_CONTROL_INPUTS)[input_id]
+            if console_generation_control_support(
+                self._active_provider,
+                self._current_model_value(),
+                control,
+            ) == "unsupported":
+                continue
             raw_value = self.query_one(f"#{input_id}", Input).value.strip()
             if raw_value and not validate_text_input(
                 raw_value,
@@ -5094,3 +5163,34 @@ class ConsoleSettingsModal(
     def _parse_optional_choice_input(self, input_id: str) -> str | None:
         raw_value = self._parse_optional_text_input(input_id)
         return raw_value.lower() if raw_value else None
+
+    def _generation_choice_draft_value(
+        self,
+        control: ConsoleGenerationControl,
+        input_id: str,
+    ) -> str | None:
+        """Retain a hidden choice unless its raw draft is not representable."""
+        value = self._parse_optional_choice_input(input_id)
+        support = console_generation_control_support(
+            self._active_provider,
+            self._current_model_value(),
+            control,
+        )
+        if support != "unsupported" or value is None:
+            return value
+        domain = _SNAPSHOT_SETTING_CHOICE_DOMAINS[control]
+        return value if value in domain else getattr(self._settings, control)
+
+    def _generation_budget_draft_value(self, input_id: str) -> object:
+        """Retain a valid hidden budget or carry forward the last valid value."""
+        value = self._parse_optional_int_input(input_id)
+        support = console_generation_control_support(
+            self._active_provider,
+            self._current_model_value(),
+            "thinking_budget_tokens",
+        )
+        if support != "unsupported" or value is None:
+            return value
+        if type(value) is int and value >= 1024:
+            return value
+        return self._settings.thinking_budget_tokens

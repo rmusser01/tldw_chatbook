@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Collection
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from loguru import logger
 
@@ -12,9 +12,23 @@ from tldw_chatbook.Chat.provider_readiness import (
     PROVIDERS_REQUIRING_API_KEY_KEYS,
     provider_config_key,
 )
+from tldw_chatbook.model_capabilities import (
+    anthropic_model_rejects_fixed_thinking_budget,
+    moonshot_model_supports_reasoning_effort,
+    zai_model_supports_reasoning_effort,
+)
 
 
 DIRECT_CONSOLE_PROVIDER_KEYS = frozenset({"llama_cpp", "local_llamacpp"})
+
+ConsoleGenerationControl = Literal[
+    "reasoning_effort",
+    "reasoning_summary",
+    "verbosity",
+    "thinking_effort",
+    "thinking_budget_tokens",
+]
+ConsoleControlSupport = Literal["supported", "unsupported", "unknown"]
 
 _READINESS_TO_EXECUTION_ALIASES = {
     "custom": "custom-openai-api",
@@ -101,9 +115,7 @@ _LLAMA_CPP_THINKING_KEYS = frozenset(
     {"llama_cpp", "local_llamacpp", "local_llamafile", "local-llm"}
 )
 _VLLM_THINKING_KEYS = frozenset({"vllm", "local_vllm"})
-_CUSTOM_OPENAI_THINKING_KEYS = frozenset(
-    {"custom-openai-api", "custom-openai-api-2"}
-)
+_CUSTOM_OPENAI_THINKING_KEYS = frozenset({"custom-openai-api", "custom-openai-api-2"})
 # MLX-LM: template-kwargs shape pending live verification of mlx_lm.server
 # support; if unsupported this row degrades to drop-and-log.
 _TEMPLATE_KWARGS_THINKING_KEYS = frozenset({"local_mlx_lm"})
@@ -113,6 +125,76 @@ _TEMPLATE_KWARGS_THINKING_KEYS = frozenset({"local_mlx_lm"})
 # "none" is safe because we pair it with enable_thinking=false which
 # short-circuits the template's validation block.
 _TEMPLATE_SAFE_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "none"})
+
+_LOCAL_REASONING_EXECUTION_KEYS = (
+    _LLAMA_CPP_THINKING_KEYS
+    | _VLLM_THINKING_KEYS
+    | _CUSTOM_OPENAI_THINKING_KEYS
+    | _TEMPLATE_KWARGS_THINKING_KEYS
+)
+_LOCAL_BUDGET_EXECUTION_KEYS = _LLAMA_CPP_THINKING_KEYS
+_LOCAL_DROPPED_CONTROLS = frozenset(
+    {"reasoning_summary", "verbosity", "thinking_effort"}
+)
+
+
+def console_generation_control_support(
+    provider: str,
+    model: str | None,
+    control: ConsoleGenerationControl,
+) -> ConsoleControlSupport:
+    """Return existing authoritative support for one generation control.
+
+    The answer describes whether the current Console send path and known model
+    family consume the control. An unrecognised model stays ``unknown`` rather
+    than inheriting a negative result from a capability predicate whose false
+    value also covers names outside that predicate's domain.
+    """
+    identity = resolve_console_provider_identity(provider)
+    execution_key = identity.execution_key
+    readiness_key = identity.readiness_key
+
+    if execution_key in _LOCAL_REASONING_EXECUTION_KEYS:
+        if control in _LOCAL_DROPPED_CONTROLS:
+            return "unsupported"
+        if control == "thinking_budget_tokens":
+            return (
+                "supported"
+                if execution_key in _LOCAL_BUDGET_EXECUTION_KEYS
+                else "unsupported"
+            )
+        if control == "reasoning_effort":
+            # A custom OpenAI-compatible server accepts an arbitrary model and
+            # does not provide authoritative model capability metadata.
+            if execution_key in (
+                _CUSTOM_OPENAI_THINKING_KEYS | _TEMPLATE_KWARGS_THINKING_KEYS
+            ):
+                return "unknown"
+            return "supported"
+
+    if identity.is_supported:
+        from tldw_chatbook.Chat.Chat_Functions import PROVIDER_PARAM_MAP
+
+        provider_params = PROVIDER_PARAM_MAP.get(execution_key)
+        if provider_params is not None and control not in provider_params:
+            return "unsupported"
+
+    if readiness_key == "anthropic":
+        if anthropic_model_rejects_fixed_thinking_budget(model):
+            return "unsupported" if control == "thinking_budget_tokens" else "supported"
+        return "unknown"
+
+    if readiness_key == "moonshot":
+        return (
+            "supported"
+            if moonshot_model_supports_reasoning_effort(model)
+            else "unknown"
+        )
+
+    if readiness_key == "zai":
+        return "supported" if zai_model_supports_reasoning_effort(model) else "unknown"
+
+    return "unknown"
 
 
 def build_local_thinking_payload_fields(
