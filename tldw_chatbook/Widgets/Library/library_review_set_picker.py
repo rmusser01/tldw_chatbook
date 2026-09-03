@@ -43,7 +43,9 @@ class LibraryReviewSetPickerDialog(
 
     BUNDLED_CSS = """
     LibraryReviewSetPickerDialog { align: center middle; }
-    LibraryReviewSetPickerDialog > Vertical {
+    /* ID subject, not `... > Vertical`: an ancestor-scoped bare-type rule
+     * would trip the CSS fast-path ratchet (275 > 274, UI latency CI). */
+    #library-review-set-picker-dialog {
         width: 72; max-height: 80%; height: auto; padding: 1 2;
         border: tall $accent; background: $surface;
     }

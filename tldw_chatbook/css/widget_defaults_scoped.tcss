@@ -2846,7 +2846,13 @@
 /* ===== WIDGET: LibraryReviewSetPickerDialog (Widgets/Library/library_review_set_picker.py) ===== */
 
 
-
+    /* ID subject, not `... > Vertical`: an ancestor-scoped bare-type rule
+     * would trip the CSS fast-path ratchet (275 > 274, UI latency CI). */
+    LibraryReviewSetPickerDialog #library-review-set-picker-dialog {
+        width: 72; max-height: 80%; height: auto; padding: 1 2;
+        border: tall $accent; background: $surface;
+    }
+    LibraryReviewSetPickerDialog #library-review-set-picker-rows { height: auto; max-height: 20; }
     LibraryReviewSetPickerDialog .library-review-set-row { height: auto; }
     LibraryReviewSetPickerDialog .library-review-set-open { width: 1fr; }
     LibraryReviewSetPickerDialog #library-review-set-picker-actions { height: auto; align-horizontal: right; }
