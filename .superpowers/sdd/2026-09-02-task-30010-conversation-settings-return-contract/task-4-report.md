@@ -1170,3 +1170,62 @@ The sole warning is the established Requests dependency-version warning. No
 full suite was run. ADR required: no new ADR; this fix preserves ADR-033's
 existing exact transfer and session-ownership boundaries and does not change
 ADR-012's credential owner.
+
+## Round-12 review fix
+
+The requested failure-side session assertion reclassified the review's Minor
+test gap as an Important product defect. In the real covered-overlay journey,
+atomic settlement failure correctly revoked the tentative modal and retained
+source-owned draft A, but left return target session A active instead of
+restoring conversation C.
+
+Root cause: the return worker switched from C to target A and recorded that
+activation epoch for exact rollback, then `_open_console_settings()`
+redundantly called `switch_session()` for the already-active A. That no-op in
+identity was a real activation transition in the store, so it incremented the
+epoch and caused the cancellation repair fence to reject its own rollback.
+The smallest correction reads the already-active session with
+`ensure_session()` and therefore preserves the worker's activation epoch.
+The existing ID-plus-epoch guard still rejects a genuinely newer selection or
+ABA transition, while a committed transfer still retains target A.
+
+### Round-12 RED evidence
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest 'Tests/UI/test_console_native_chat_flow.py::test_conversation_settings_return_covered_mount_cancellation_settles_before_unmount' -q --tb=short --show-capture=no
+1 failed, 1 passed, 1 warning in 21.19s
+
+PYTHONPATH=. ../../.venv/bin/python -m pytest 'Tests/UI/test_console_native_chat_flow.py::test_conversation_settings_return_covered_mount_cancellation_settles_before_unmount[True]' -q --tb=short --show-capture=no
+1 failed, 1 warning in 10.46s
+```
+
+Both failures were the new exact assertion: active session A was observed
+where prior session C was required. The isolated rerun proved the defect was
+deterministic rather than scheduling-sensitive.
+
+### Round-12 GREEN evidence
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest 'Tests/UI/test_console_native_chat_flow.py::test_conversation_settings_return_covered_mount_cancellation_settles_before_unmount' -q --tb=short --show-capture=no
+2 passed, 1 warning in 20.94s
+
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py -k 'conversation_settings_return_releases_transient_modal_mount_failure or conversation_settings_return_pretransfer_cancellation_retains_retry or conversation_settings_return_transient_cleanup_preserves_new_session_selection or conversation_settings_return_atomic_failure_retains_retry_without_modal_owner or conversation_settings_return_status_fault_blocks_replacement_until_retry or conversation_settings_return_covered_mount_cancellation_settles_before_unmount or conversation_settings_return_posttransfer_cancellation_keeps_target_session or conversation_settings_return_success_preserves_replacement_staged_during_restore or conversation_settings_return_settles_at_transfer_before_status_and_keeps_replacement' -q --tb=short --show-capture=no
+12 passed, 333 deselected, 1 warning in 34.24s
+
+../../.venv/bin/python -m ruff check tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_console_native_chat_flow.py
+All checks passed!
+
+../../.venv/bin/python -m py_compile tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_console_native_chat_flow.py
+exit 0
+
+git diff --check
+exit 0
+```
+
+The targeted lifecycle slice covers transient failure, pre-transfer
+cancellation, later-session/ABA protection, atomic settlement failure,
+post-transfer cancellation, and A-to-B replacement scheduling. The sole
+warning is the established Requests dependency-version warning. No full suite
+was run. ADR required: no new ADR; this one-line correction restores the
+existing ADR-033 exact activation/ownership fence and does not change any
+state owner or persisted contract.

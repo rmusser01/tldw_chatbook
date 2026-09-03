@@ -1963,6 +1963,7 @@ async def test_conversation_settings_return_covered_mount_cancellation_settles_b
             assert covered_modal._suspended_draft is None
             assert covered_modal.disabled is True
             assert status_after_cancel == "pending"
+            assert store.active_session_id == prior_session.id
             return
         assert store.active_session_id == session.id
         assert console._suspended_conversation_settings is None
