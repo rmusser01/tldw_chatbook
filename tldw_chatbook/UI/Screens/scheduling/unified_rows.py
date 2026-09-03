@@ -410,9 +410,18 @@ def reminder_has_fired(task: ReminderTask) -> bool:
     """True for a fired one-time reminder (survey SS6, task_detail.py:163-167).
 
     Dispatching a one-time reminder disables it AND clears
-    ``next_run_at`` -- this triple (disabled, no next run, but has run at
-    least once) is the only way an ``enabled=0`` reminder also carries a
-    ``last_run_at``, distinguishing "fired" from a user-initiated pause.
+    ``next_run_at``; "has run at least once, has no next run" is what
+    distinguishes "fired" from a user-initiated pause (which keeps its
+    ``next_run_at``) and from a reminder that never ran (no
+    ``last_run_at``).
+
+    ``enabled`` is deliberately NOT part of the predicate (final review
+    F9, ruled): re-enabling a fired one-time reminder does not give it a
+    future run -- `_set_reminder_enabled` sends only ``{"enabled": ...}``
+    and `SchedulingService.update_reminder` recomputes ``next_run_at``
+    only when a SCHEDULE key is in the payload, while the due query
+    filters ``next_run_at IS NOT NULL``. Bucketing that row Active would
+    advertise armed status the scheduler will never honour.
 
     Args:
         task: The reminder to check.
@@ -420,9 +429,7 @@ def reminder_has_fired(task: ReminderTask) -> bool:
     Returns:
         ``True`` when the reminder has fired its one-time schedule.
     """
-    return (
-        not task.enabled and task.next_run_at is None and task.last_run_at is not None
-    )
+    return task.next_run_at is None and task.last_run_at is not None
 
 
 def definition_is_armed(definition: dict[str, Any]) -> bool:
@@ -512,16 +519,29 @@ def _definition_glyph(definition: dict[str, Any], bucket: RowBucket) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _unread_counts_by_local_id(
+def _unread_row_key(definition: dict[str, Any]) -> str:
+    """The key a definition's unread count is stored and looked up under.
+
+    ``server_id or id`` (final review F2): the DISPLAY list carries a
+    transferred definition as the raw server payload (whose ``id`` IS the
+    server id), while the local table carries the same definition as a
+    row with a local uuid ``id`` and that server id in ``server_id``.
+    Keying on ``server_id or id`` is the one expression both shapes agree
+    on; a purely local row has no ``server_id`` and keeps its own id.
+    """
+    return str(definition.get("server_id") or definition.get("id") or "")
+
+
+def _unread_counts_by_row_key(
     results: list[dict[str, Any]], definitions_by_id: dict[str, dict[str, Any]]
 ) -> dict[str, int]:
-    """Group unread results by their resolved definition's LOCAL id.
+    """Group unread results by their resolved definition's row key.
 
     Routes every result through `definition_for_result` (the same dual
     local/server id-space resolution `results_tab.py` uses) BEFORE
-    grouping, so a server-mirrored definition's results are counted
-    under that definition's own local ``id`` even though the result row
-    itself may carry the server's id verbatim (plan ruling 3).
+    grouping, so a server-mirrored definition's results are counted for
+    that definition even though the result row itself may carry the
+    server's id verbatim (plan ruling 3).
 
     Args:
         results: All-owners `automation_results` rows (one
@@ -529,8 +549,8 @@ def _unread_counts_by_local_id(
         definitions_by_id: The index built by `index_definitions_by_id`.
 
     Returns:
-        ``{definition_local_id: unread_count}``, omitting definitions
-        with zero unread results.
+        ``{_unread_row_key(definition): unread_count}``, omitting
+        definitions with zero unread results.
     """
     counts: dict[str, int] = defaultdict(int)
     for result in results:
@@ -539,7 +559,7 @@ def _unread_counts_by_local_id(
         definition = definition_for_result(result, definitions_by_id)
         if definition is None:
             continue
-        counts[str(definition.get("id") or "")] += 1
+        counts[_unread_row_key(definition)] += 1
     return dict(counts)
 
 
@@ -563,7 +583,7 @@ def _reminder_row(task: ReminderTask) -> UnifiedRow:
 
 
 def _definition_row(
-    definition: dict[str, Any], unread_by_local_id: dict[str, int]
+    definition: dict[str, Any], unread_by_row_key: dict[str, int]
 ) -> UnifiedRow:
     bucket = _definition_bucket(definition)
     local_id = str(definition.get("id") or "")
@@ -580,7 +600,7 @@ def _definition_row(
         transfer_state=definition.get("transfer_state"),
         bucket=bucket,
         glyph=_definition_glyph(definition, bucket),
-        unread_count=unread_by_local_id.get(local_id, 0),
+        unread_count=unread_by_row_key.get(_unread_row_key(definition), 0),
         search_blob=f"{name}\n{_definition_question_text(definition)}",
         source_row=definition,
     )
@@ -590,6 +610,7 @@ def build_unified_rows(
     reminders: list[ReminderTask],
     definitions: list[dict[str, Any]],
     results: list[dict[str, Any]],
+    local_definitions: list[dict[str, Any]] | None = None,
 ) -> list[UnifiedRow]:
     """Adapt reminders + automation definitions into one unified row list.
 
@@ -603,15 +624,34 @@ def build_unified_rows(
             precedent: `_load_local_automations` + `_load_server_automations`).
         results: One all-owners `list_automation_results(owner_id=None)`
             listing, used only to derive `UnifiedRow.unread_count`.
+        local_definitions: The FULL local definitions table
+            (`list_automation_definitions(owner_id=None)`, the same input
+            the Results tab's own index uses), for result->definition
+            resolution ONLY -- never a source of rows. Final review F2:
+            the display merge above deliberately EXCLUDES every local row
+            that carries a ``server_id``, so a definition transferred to
+            the server is a key in NEITHER of the merge's two id spaces;
+            its pre-transfer, locally-produced results resolved to
+            nothing and dropped out of the unread count, hiding the
+            rail's `Mark all read` button while the Results tab's badge
+            still counted them. Resolution indexes these rows AND the
+            display rows, since a server definition with no local mirror
+            row is absent from the local table. Defaults to
+            ``definitions`` -- every caller with no separate local
+            listing behaves exactly as before.
 
     Returns:
         One `UnifiedRow` per reminder and per definition, unsorted and
         unfiltered (`filter_rows`/`sort_rows` do that).
     """
-    definitions_by_id = index_definitions_by_id(definitions)
-    unread_by_local_id = _unread_counts_by_local_id(results, definitions_by_id)
+    definitions_by_id = index_definitions_by_id(
+        [*local_definitions, *definitions]
+        if local_definitions is not None
+        else definitions
+    )
+    unread_by_row_key = _unread_counts_by_row_key(results, definitions_by_id)
     rows = [_reminder_row(task) for task in reminders]
-    rows.extend(_definition_row(d, unread_by_local_id) for d in definitions)
+    rows.extend(_definition_row(d, unread_by_row_key) for d in definitions)
     return rows
 
 

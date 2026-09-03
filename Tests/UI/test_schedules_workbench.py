@@ -78,6 +78,7 @@ class MockSchedulingService(_MockSchedulingServiceMixin):
         # flip), so a cross-owner save is observable here.
         self.created_owners: list[str | None] = []
         self.updated_owners: list[str | None] = []
+        self.deleted_owners: list[str | None] = []
 
     async def list_reminders(self):
         return [
@@ -109,8 +110,9 @@ class MockSchedulingService(_MockSchedulingServiceMixin):
             setattr(task, key, value)
         return task
 
-    async def delete_reminder(self, task_id: str):
+    async def delete_reminder(self, task_id: str, *, owner_id: str | None = None):
         self.deleted_ids.append(task_id)
+        self.deleted_owners.append(owner_id)
         return True
 
 
@@ -819,7 +821,7 @@ class RecordingMockSchedulingService(_MockSchedulingServiceMixin):
     async def list_tasks(self, owner_id=None, include_projections=True):
         return await self.list_reminders()
 
-    async def delete_reminder(self, task_id: str) -> None:
+    async def delete_reminder(self, task_id: str, *, owner_id: str | None = None) -> None:
         if self.fail_delete:
             raise RuntimeError("delete failed")
         self.deleted_ids.append(task_id)
@@ -890,11 +892,15 @@ class ControlledRefreshSchedulingService(_MockSchedulingServiceMixin):
             return [self.newest_task]
         raise AssertionError(f"Unexpected list_tasks call {self._list_calls}")
 
-    async def delete_reminder(self, task_id: str) -> None:
+    async def delete_reminder(
+        self, task_id: str, *, owner_id: str | None = None
+    ) -> None:
         """Record completion of the controlled delete.
 
         Args:
             task_id: Identifier of the deleted reminder.
+            owner_id: The row's own owner, threaded by the workbench
+                (final review F4); recorded only, not acted on.
         """
         self.deleted_ids.append(task_id)
         self.delete_completed.set()
@@ -1176,10 +1182,14 @@ async def test_create_reminder_for_a_different_runs_on_owner_queues_a_mutation(
 
             toasts = [n.message for n in pilot.app._notifications]
             assert any(
-                "Server (example.com)" in message
-                and "switch to that owner" in message
-                for message in toasts
+                "Server (example.com)" in message for message in toasts
             ), f"the toast must name the owner it was created for; got {toasts}"
+            # Final review F7: the queue spans owners since redesign PR-2
+            # Task 1, so the old "switch to that owner to see it"
+            # instruction told the user to do something unnecessary.
+            assert not any("switch to that owner" in m for m in toasts), (
+                f"the cross-owner instruction must be gone; got {toasts}"
+            )
 
         assert service.owner_id == "local"  # never repointed by the save
         assert service.sync_engine.owner_id == "local"

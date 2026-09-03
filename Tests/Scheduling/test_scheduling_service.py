@@ -381,6 +381,106 @@ async def test_delete_reminder_server_falls_back_to_tombstone_on_generic_error(d
     assert tombstone is not None
 
 
+# ---------------------------------------------------------------------------
+# Cross-owner writes (final review F4): redesign PR-2's Queue lists
+# reminders across owners, so "the row under the cursor" is no longer
+# guaranteed to be the service's ACTIVE owner. Every reminder write now
+# takes the ROW's owner, the same `owner_id=` thread `create_reminder`
+# established -- without it a `server:` row's toggle/delete took the
+# local-only branch: no server call, no pending mutation, no tombstone,
+# and the next pull silently undid the user's action.
+# ---------------------------------------------------------------------------
+
+
+async def _server_owned_row(db, server_client):
+    """A local row owned by `server:1`, created while `local` is active."""
+    svc = SchedulingService(db=db, server_client=server_client, runtime_source="local")
+    server_client.create_reminder.side_effect = ServerUnavailableError("offline")
+    task = await svc.create_reminder(
+        _reminder_payload("Server row"), owner_id="server:1"
+    )
+    db.update_reminder_task(task.id, server_id="srv-1")
+    db.delete_pending_mutation_for_record(task.id, "reminder_task", "server:1")
+    server_client.create_reminder.side_effect = None
+    assert svc.owner_id == "local"
+    return svc, task
+
+
+@pytest.mark.asyncio
+async def test_update_reminder_for_server_row_reaches_the_server_while_local_active(db):
+    server_client = AsyncMock()
+    svc, task = await _server_owned_row(db, server_client)
+    server_client.update_reminder.return_value = {
+        "id": "srv-1",
+        "title": "Server row",
+        "schedule_kind": "one_time",
+        "run_at": "2026-07-20T14:00:00+00:00",
+        "enabled": False,
+    }
+
+    await svc.update_reminder(task.id, {"enabled": False}, owner_id=task.owner_id)
+
+    server_client.update_reminder.assert_awaited_once()
+    assert server_client.update_reminder.await_args.args[0] == "srv-1"
+
+
+@pytest.mark.asyncio
+async def test_update_reminder_for_server_row_records_mutation_when_offline(db):
+    server_client = AsyncMock()
+    svc, task = await _server_owned_row(db, server_client)
+    server_client.update_reminder.side_effect = ServerUnavailableError("offline")
+
+    await svc.update_reminder(task.id, {"enabled": False}, owner_id=task.owner_id)
+
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert [row["payload"]["action"] for row in pending] == ["update"]
+    assert db.get_reminder_task(task.id)["enabled"] == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_reminder_for_server_row_reaches_the_server_while_local_active(db):
+    server_client = AsyncMock()
+    svc, task = await _server_owned_row(db, server_client)
+    server_client.delete_reminder.return_value = {"deleted": True}
+
+    assert await svc.delete_reminder(task.id, owner_id=task.owner_id) is True
+
+    server_client.delete_reminder.assert_awaited_once_with("srv-1")
+    assert await svc.get_reminder(task.id) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_reminder_for_server_row_records_tombstone_when_offline(db):
+    server_client = AsyncMock()
+    svc, task = await _server_owned_row(db, server_client)
+    server_client.delete_reminder.side_effect = ServerUnavailableError("offline")
+
+    assert await svc.delete_reminder(task.id, owner_id=task.owner_id) is True
+
+    assert await svc.get_reminder(task.id) is None
+    assert db.get_tombstone(task.id, "reminder_task", "server:1") is not None
+
+
+@pytest.mark.asyncio
+async def test_local_row_writes_record_nothing_while_a_server_owner_is_active(db):
+    """The inverse guard: threading the ROW's owner must not start
+    recording server mutations for LOCAL rows just because the active
+    owner happens to be a server."""
+    server_client = AsyncMock()
+    svc = SchedulingService(db=db, server_client=server_client, runtime_source="local")
+    task = await svc.create_reminder(_reminder_payload("Local row"))
+    svc.set_owner("server:1")
+
+    await svc.update_reminder(task.id, {"enabled": False}, owner_id=task.owner_id)
+    assert db.get_pending_mutations("local", primitive="reminder_task") == []
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+    server_client.update_reminder.assert_not_awaited()
+
+    assert await svc.delete_reminder(task.id, owner_id=task.owner_id) is True
+    server_client.delete_reminder.assert_not_awaited()
+    assert db.get_tombstone(task.id, "reminder_task", "local") is None
+
+
 @pytest.mark.asyncio
 async def test_delete_reminder_returns_false_for_missing_id(db):
     svc = SchedulingService(db=db, runtime_source="local")

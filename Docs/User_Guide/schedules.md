@@ -43,7 +43,10 @@ reminder or a `configured` automation, including one mid-transfer to the
 server — it keeps running locally until the server actually accepts
 it); **Paused** is anything disabled or explicitly paused; **Completed**
 is a fired one-time reminder or an archived automation, kept out of the
-default **All** view so it stays uncluttered. Each row shows a status
+default **All** view so it stays uncluttered (a one-time reminder that
+has already fired stays under **Completed** even if you re-enable it —
+re-enabling gives it no new run time; edit its schedule to arm it
+again). Each row shows a status
 glyph (`○` recurring, `▶` one-shot, `⏸` paused, `✓` completed), the
 title with the same owner/transfer-badge suffixes described below, and
 a subtitle line (the schedule summary plus a relative next-run time, or
@@ -53,7 +56,10 @@ with unread results carries a bold unread dot after its title.
 Automation-definition rows are **view-only from the Queue tab** —
 highlighting one opens the same read-only detail pane the Automations
 tab uses, but editing, running, transferring, or deleting a recurring
-question still happens from the **Automations** tab. Every reminder
+question still happens from the **Automations** tab. Pressing a
+reminder key (**e**, **r**, **x**, **space**, **d**) on a definition row
+says so ("This automation is managed on the Automations tab for now")
+rather than doing nothing. Every reminder
 action described in the rest of this page (edit, run now, delete, mark,
 enable/disable, move between owners) is unchanged and still reachable
 from the Queue tab exactly as before.
@@ -77,8 +83,13 @@ The Queue tab's pane header is a rail: **Create ▾** opens the chooser
 described below; **Mark all read** appears only once an automation
 result somewhere in the queue is unread, and clears every one of them
 in one press (the same action as pressing **a**, without needing to be
-on the Results tab first). Below the chip row, the filter box narrows
-the list by title or body text as you type.
+on the Results tab first). It — and the per-row unread dots — track
+results as they change: a result arriving from the server makes them
+appear without switching tabs, and marking everything read from the
+Results tab clears them here too. Below the chip row, the filter box
+narrows the list by title or question/body text as you type — not by
+status words like `missed`, which the unified list dropped along with
+the Status/Type columns.
 
 ## Status strip
 
@@ -609,6 +620,21 @@ The default bound is `handler_timeout_seconds` under `[scheduling]` in
 `config.toml` (**300** seconds). Set it to `0` (or negative) to disable the
 bound entirely — every handler may then run as long as it likes, and a
 wedged handler will wedge the scheduler, which is why the default is on.
+
+*Verified against the schedules redesign PR-2 final fix wave —
+2026-09-03 (docs pass against shipped code/tests, live check pending the
+redesign program's later PRs per spec §14: an automation created from
+the Queue rail's **Create ▾** now appears in the list immediately; a
+definition moved to the server keeps its earlier unread results in the
+Queue's count, so the unread dots and **Mark all read** agree with the
+Results tab's badge; results pulled from the server (or marked read
+anywhere) refresh both surfaces; reminder enable/disable and delete act
+under the row's OWN owner, so a server-owned row's change is pushed
+instead of silently reverted by the next sync; and the reminder keys
+answer honestly on a definition row. Pinned by
+`Tests/UI/test_schedules_unified_list.py`,
+`Tests/Scheduling/test_unified_rows.py`, and
+`Tests/Scheduling/test_scheduling_service.py`.)*
 
 *Verified against the schedules redesign PR-2 Task 4 fix wave —
 2026-09-03 (docs pass against shipped code/tests, live check pending the

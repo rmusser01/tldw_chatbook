@@ -308,6 +308,12 @@ class SchedulesWorkbench(BaseAppScreen):
         self._visible_tasks: list[ReminderTask] = []
         self._all_rows: list[UnifiedRow] = []
         self._visible_rows: list[UnifiedRow] = []
+        # Final review F2: the UNFILTERED local definitions table from the
+        # last full definitions fetch, for unread-count resolution only
+        # (never a source of rows). The display merge above excludes every
+        # row that has a `server_id`, so a transferred definition's
+        # pre-transfer results have no key to resolve through without it.
+        self._queue_local_definitions: list[dict[str, Any]] = []
         # redesign PR-2, Task 2 review round 2: any Automations-tab
         # mutation of a definition (create/edit save, run-now, transfer
         # begin/cancel -- everything that funnels through
@@ -467,7 +473,13 @@ class SchedulesWorkbench(BaseAppScreen):
                                     classes="scheduling-queue-chip",
                                 )
                             yield Input(
-                                placeholder="Filter: title, type, or status…",
+                                # Says what ruling 5's search actually
+                                # matches -- title + question/body (final
+                                # review F6: the Type/Status columns are
+                                # gone and status words like "missed" no
+                                # longer match, which the user guide
+                                # already documents).
+                                placeholder="Filter: title or question…",
                                 id="scheduling-queue-filter",
                             )
                             yield DataTable(
@@ -839,7 +851,9 @@ class SchedulesWorkbench(BaseAppScreen):
                         service.sync_engine._pull_results,
                     )
                     self._refresh_owner_select()
-                    self._refresh_results_tab()
+                    # A pull is exactly the event the Queue's unread dots
+                    # and rail button exist for (final review F5).
+                    self._refresh_results_surfaces()
                 if not self._results_pull_rerun_requested:
                     return
                 self._results_pull_rerun_requested = False
@@ -902,7 +916,7 @@ class SchedulesWorkbench(BaseAppScreen):
         # has relative next-run text that must not go stale.
         if not self._visible_rows:
             return
-        self._render_table()
+        self._render_table(tick=True)
 
     def on_screen_suspend(self) -> None:
         """Stop the relative-time refresh while another screen covers this.
@@ -1043,7 +1057,12 @@ class SchedulesWorkbench(BaseAppScreen):
                 results = service.db.list_automation_results(
                     owner_id=None, limit=RESULTS_INBOX_LIMIT
                 )
-                return build_unified_rows(reminders, definitions, results)
+                return build_unified_rows(
+                    reminders,
+                    definitions,
+                    results,
+                    self._queue_local_definitions,
+                )
 
             all_rows = await asyncio.to_thread(_build_rows)
         except Exception:  # noqa: BLE001
@@ -1087,8 +1106,22 @@ class SchedulesWorkbench(BaseAppScreen):
         than a third fetch shape -- this is a SEPARATE fetch from
         `load_automations`'s own cadence (own tab, own refresh triggers),
         not a shared cache.
+
+        Also stashes the UNFILTERED local listing in
+        `self._queue_local_definitions` for `build_unified_rows`'s
+        unread-count resolution (final review F2): the display merge
+        above drops every local row that has a `server_id`, so a
+        transferred definition's pre-transfer results resolved to
+        nothing. Same single `list_automation_definitions` call -- the
+        rows were already read and then filtered away.
         """
-        local_items = await self._load_local_automations(service)
+        try:
+            local_rows = await asyncio.to_thread(service.db.list_automation_definitions)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to load local automation definitions")
+            local_rows = []
+        self._queue_local_definitions = local_rows
+        local_items = self._device_only_automations(local_rows)
         server_client = getattr(service, "server_client", None)
         server_available = server_client is not None and self._server_available(
             service, self._active_server_id()
@@ -1105,9 +1138,16 @@ class SchedulesWorkbench(BaseAppScreen):
             return local_items
         return local_items + server_items
 
-    def _render_table(self, now: datetime | None = None) -> None:
+    def _render_table(self, now: datetime | None = None, *, tick: bool = False) -> None:
         """Rebuild the unified queue rows from `self._all_rows` + the
         current chip + filter text (redesign PR-2, Task 2).
+
+        ``tick`` marks the relative-time ticker's own re-render (the only
+        caller that re-renders WITHOUT new data): it suppresses the
+        definition-detail re-read for an unchanged selection (final
+        review F12). Every other caller leaves it False, because data
+        genuinely can change without the selection changing -- the
+        PR-1 F4 lesson: a refresh-driven re-feed must still re-feed.
 
         Chip + search narrowing and ordering are Task 1's own pure
         functions (`filter_rows`/`sort_rows`) -- never re-derived here.
@@ -1169,7 +1209,7 @@ class SchedulesWorkbench(BaseAppScreen):
                         break
             if table.row_count:
                 table.move_cursor(row=target_index)
-            self._update_detail_for_index(target_index)
+            self._update_detail_for_index(target_index, from_tick=tick)
         else:
             self._selected_row_id = None
             self._selected_task_id = None
@@ -1184,17 +1224,33 @@ class SchedulesWorkbench(BaseAppScreen):
             if self._all_rows and (self._filter_text.strip() or self._chip != "all"):
                 # Everything filtered out: say so instead of "select a task".
                 filter_text = self._filter_text.strip()
-                notice = (
-                    f"No tasks match '{filter_text}'. "
-                    "Clear the filter to see the queue."
-                    if filter_text
-                    else "No tasks in this view. Choose a different chip "
-                    "to see the queue."
-                )
+                if filter_text:
+                    notice = (
+                        f"No tasks match '{filter_text}'. "
+                        "Clear the filter to see the queue."
+                    )
+                else:
+                    # The chip row is hidden below width 84 (the `compact`
+                    # class this same threshold sets), while the selected
+                    # chip persists -- so don't point at a control that is
+                    # not on screen (final review F10).
+                    notice = "No tasks in this view."
+                    if not self._chips_hidden():
+                        notice += " Choose a different chip to see the queue."
                 self._update_static_content(
                     self.query_one("#scheduling-task-detail-empty-state", Static),
                     notice,
                 )
+
+    def _chips_hidden(self) -> bool:
+        """True when the chip row is off screen (`_scheduling.tcss`:
+        `#scheduling-workbench.compact #scheduling-queue-chips { display:
+        none }`). Reads the class `on_resize` actually set rather than
+        re-deriving its width threshold here."""
+        try:
+            return self.query_one("#scheduling-workbench").has_class("compact")
+        except Exception:  # noqa: BLE001 - not mounted yet
+            return False
 
     def _show_queue_detail_pane(self, kind: RowKind) -> None:
         """Toggle which Queue detail widget is visible (redesign PR-2,
@@ -1260,7 +1316,28 @@ class SchedulesWorkbench(BaseAppScreen):
 
     @on(DataTable.RowHighlighted)
     def _on_task_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        """Update the detail pane when the user highlights a task row."""
+        """Update the detail pane when the user highlights a task row.
+
+        Both guards below suppress `_render_table`'s own ECHOES, not any
+        real cursor move (final review F12 -- the same unchanged-selection
+        discipline `_on_automations_row_highlighted` has):
+
+        1. `DataTable.clear()` posts a RowHighlighted for row 0 before
+           the rows are re-added, so every render re-rendered row 0's
+           detail (clobbering `_selected_row_id` on the way) before the
+           restored row won it back. That event is stale by the time it
+           is processed -- the table's live cursor has already moved on.
+        2. `move_cursor` back to the restored row posts an echo for a row
+           `_render_table` just called `_update_detail_for_index` with
+           directly. A refresh's re-feed is that DIRECT call; repeating
+           it here is pure duplication.
+        """
+        if event.cursor_row != event.data_table.cursor_row:
+            return
+        if not (0 <= event.cursor_row < len(self._visible_rows)):
+            return
+        if self._visible_rows[event.cursor_row].row_id == self._selected_row_id:
+            return
         self._update_detail_for_index(event.cursor_row)
 
     def _incidents_for(self, task_id) -> list:
@@ -1298,13 +1375,22 @@ class SchedulesWorkbench(BaseAppScreen):
         except Exception:  # noqa: BLE001 -- history read never breaks the pane
             return []
 
-    def _update_detail_for_index(self, index: int) -> None:
+    def _update_detail_for_index(self, index: int, *, from_tick: bool = False) -> None:
         """Render the highlighted Queue row's detail, routed by kind
         (redesign PR-2, Task 2). ``index`` is a `self._visible_rows`
         index (the table's own row index), NOT a `self._visible_tasks`
         one -- the two lists diverge whenever a definition row precedes
         the highlighted one.
+
+        ``from_tick`` is set only by the relative-time ticker's own
+        re-render: it skips the definition-detail worker when the
+        selection has not changed (final review F12 -- 3 DB reads a
+        minute for a row that did not move, against the ticker's own
+        "no reload/DB on tick" contract). Deliberately NOT applied to
+        refresh-driven calls: those re-feed on purpose, because the
+        DATA can change while the selection stands still.
         """
+        previously_selected_row_id = self._selected_row_id
         if not (0 <= index < len(self._visible_rows)):
             self._selected_row_id = None
             self._selected_task_id = None
@@ -1343,6 +1429,11 @@ class SchedulesWorkbench(BaseAppScreen):
             self.query_one("#scheduling-task-inspector", TaskInspector).set_task(None)
             definition = row.source_row
             assert isinstance(definition, dict)
+            if from_tick and row.row_id == previously_selected_row_id:
+                # Same row, no new data (F12): the pane already shows
+                # this definition's counts. Mirrors `_on_automations_row_
+                # highlighted`'s own unchanged-selection guard.
+                return
             self._request_queue_definition_detail(row.row_id, definition)
 
     def _update_transfer_actions(
@@ -1574,7 +1665,13 @@ class SchedulesWorkbench(BaseAppScreen):
 
         async def _delete_and_refresh() -> None:
             try:
-                await service.delete_reminder(event.task.id)
+                # The ROW's owner (final review F4): deleting a `server:`
+                # row while "This device" is active took the local-only
+                # branch -- no server call, no tombstone -- and the row
+                # came back on the next pull.
+                await service.delete_reminder(
+                    event.task.id, owner_id=event.task.owner_id
+                )
             except Exception:  # noqa: BLE001
                 logger.exception("Failed to delete reminder {}", event.task.id)
                 self.app_instance.notify(
@@ -1939,6 +2036,15 @@ class SchedulesWorkbench(BaseAppScreen):
         `was_edit` only changes the toast wording ("updated" vs
         "created") -- an edit reusing the create-mode "created" copy
         would misreport what actually happened.
+
+        Refreshes the QUEUE too, not just the Automations list (final
+        review F1): Task 3 moved the create entry point onto the Queue
+        rail (`Create ▾` -> "Recurring question…"), so this save's
+        flagship path never leaves the Queue tab -- `TabActivated`, the
+        only consumer of `_definitions_stale`, never fires, and the
+        automation the user just created stayed invisible on the surface
+        it was created from. Symmetric with the reminder half
+        (`_on_reminder_form_result`), which has always refreshed here.
         """
         if outcome is None:
             return
@@ -1957,6 +2063,10 @@ class SchedulesWorkbench(BaseAppScreen):
                 severity="information",
             )
         self._request_automations_refresh()
+        # Full refresh (definitions included): `_definitions_stale` is set
+        # above, so a `refresh_definitions=False` call would upgrade
+        # itself anyway -- ask for what this actually needs.
+        self._request_tasks_refresh()
 
     def _on_reminder_form_result(
         self, form_data: dict[str, Any] | None, task_id: str | None = None
@@ -1978,18 +2088,20 @@ class SchedulesWorkbench(BaseAppScreen):
         # so a form built before this selector existed (or a caller that
         # omits it) behaves exactly as before.
         target_owner = form_data.pop("owner_id", None) or service.owner_id
-        # This list is owner-scoped, so a save aimed elsewhere cannot appear
-        # in it -- say where it went instead of a bare "created" that reads
-        # as a lost save. Label, not raw id: same vocabulary as the "Runs on"
-        # selector the owner was picked from.
+        # Name the owner it was created for (label, not raw id: same
+        # vocabulary as the "Runs on" selector the owner was picked from).
+        # The old copy also told the user to "switch to that owner to see
+        # it" -- true when this list was owner-scoped, wrong since Task 1
+        # made it span owners (final review F7, spec §4: the cross-owner
+        # list "dissolves" that wart). The row appears here immediately
+        # whatever owner it was created under.
         owner_label = {
             value: label for label, value in self._runs_on_options()[0]
         }.get(target_owner, target_owner)
         created_message = (
             "Scheduled task created."
             if target_owner == service.owner_id
-            else f"Scheduled task created for {owner_label} — switch to that "
-            "owner to see it."
+            else f"Scheduled task created for {owner_label}."
         )
 
         async def _save_and_refresh() -> None:
@@ -2039,10 +2151,16 @@ class SchedulesWorkbench(BaseAppScreen):
             logger.debug("acknowledge_incident failed")
             return
         # re-render the detail so the acked incident drops out of the
-        # alerting set and the button hides.
-        if self._selected_task_id is not None:
-            for index, task in enumerate(self._visible_tasks):
-                if task.id == self._selected_task_id:
+        # alerting set and the button hides. Indexed over `_visible_rows`,
+        # NOT `_visible_tasks` (final review F3): `_update_detail_for_
+        # index` takes the table's own row index, and the two lists
+        # diverge the moment a definition row sorts above the highlighted
+        # reminder -- the old code then rendered a DIFFERENT row's detail
+        # and moved the selection with it, silently, while the cursor
+        # stayed put.
+        if self._selected_row_id is not None:
+            for index, row in enumerate(self._visible_rows):
+                if row.row_id == self._selected_row_id:
                     self._update_detail_for_index(index)
                     break
 
@@ -2104,8 +2222,14 @@ class SchedulesWorkbench(BaseAppScreen):
             self._review_selected_result("read")
             return
         task = self._selected_reminder_task()
-        if task is not None:
-            self._run_reminder_now(task)
+        if task is None:
+            # Never swallow the key silently (final review F8): on a
+            # definition row `r` did nothing at all, with no message.
+            self.app_instance.notify(
+                self._no_task_notice("run"), severity="warning"
+            )
+            return
+        self._run_reminder_now(task)
 
     def _selected_reminder_task(self) -> ReminderTask | None:
         """Return the highlighted task when it is a reminder (not a projection)."""
@@ -2333,13 +2457,25 @@ class SchedulesWorkbench(BaseAppScreen):
         create-time placeholder (`execution_unavailable`) as if it were
         live.
         """
-        from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
-
         try:
             all_rows = await asyncio.to_thread(service.db.list_automation_definitions)
         except Exception:  # noqa: BLE001
             logger.exception("Failed to load local automation definitions")
             return []
+        return self._device_only_automations(all_rows)
+
+    def _device_only_automations(
+        self, all_rows: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """The device-only half of a local definitions listing, decorated.
+
+        Split out of `_load_local_automations` (final review F2) so the
+        Queue loader can keep the UNFILTERED listing for its unread-count
+        resolution while still deriving the same display half from it --
+        one `list_automation_definitions` call per refresh either way.
+        """
+        from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
+
         rows = [row for row in all_rows if not row.get("server_id")]
         for row in rows:
             if is_server_scoped_owner(row.get("owner_id")):
@@ -2835,6 +2971,11 @@ class SchedulesWorkbench(BaseAppScreen):
                 "The result arrives as a notification.",
                 severity="information",
             )
+            # Same rule as the local twin (final review F11): mark
+            # staleness at each genuine mutation call site. A server
+            # run-now can change what the next `_load_server_automations`
+            # returns (next_run_at, health, last-run state).
+            self._definitions_stale = True
             # The dispatch returns when the run is ENQUEUED, not finished:
             # the terminal audit event lands only after the server executes
             # (an LLM call -- seconds). One immediate fetch catches the
@@ -3265,7 +3406,7 @@ class SchedulesWorkbench(BaseAppScreen):
                     "Could not update this result — see the log.",
                     severity="error",
                 )
-            self._refresh_results_tab()
+            self._refresh_results_surfaces()
 
         self.run_worker(
             _review, exclusive=True, group="schedules-review-result"
@@ -3326,7 +3467,7 @@ class SchedulesWorkbench(BaseAppScreen):
                     outcome.reason or "Could not mark this result solved.",
                     severity="warning",
                 )
-            self._refresh_results_tab()
+            self._refresh_results_surfaces()
 
         self.run_worker(
             _mark_solved, exclusive=True, group="schedules-mark-solved"
@@ -3349,7 +3490,12 @@ class SchedulesWorkbench(BaseAppScreen):
         result ids -- there is no bulk DB primitive for this (spec's
         documented fan-out, mirroring `_on_bulk_delete_confirmed`'s
         loop-and-count shape). Shared by the Results tab's `a` keybinding
-        and the rail's `Mark all read` button (redesign PR-2, Task 3).
+        and the rail's `Mark all read` button (redesign PR-2, Task 3) --
+        the Queue refresh included, which used to sit in the rail
+        button's own wrapper as if it were a rail-specific nicety (final
+        review F5): pressing `a` on the Results tab left the Queue's
+        unread dots painted and its rail button visible, and pressing
+        that button then reported "Nothing unread."
         """
         errors = 0
         for result_id in unread_ids:
@@ -3362,7 +3508,7 @@ class SchedulesWorkbench(BaseAppScreen):
             + ".",
             severity="information" if not errors else "warning",
         )
-        self._refresh_results_tab()
+        self._refresh_results_surfaces()
 
     def action_mark_all_results_read(self) -> None:
         """a key: mark every currently-loaded unread result read,
@@ -3397,12 +3543,9 @@ class SchedulesWorkbench(BaseAppScreen):
         """Rail `Mark all read` (redesign PR-2, Task 3): reuses the exact
         same per-row fan-out as the `a` keybinding above, but reachable
         without switching to the Results tab first -- the whole point of
-        a rail-level affordance for it. Also refreshes the Queue's own
-        unified rows afterward so the per-row unread dots and this
-        button's own visibility drop immediately (`refresh_definitions=
-        False`: definitions did not change, only result review state
-        did -- results are always re-fetched regardless, same reminder-
-        only-refresh shape Task 2 review established).
+        a rail-level affordance for it. The Queue refresh that used to
+        live here moved INTO that shared fan-out (final review F5): it
+        was never rail-specific.
         """
         service = self._service()
         if service is None:
@@ -3417,7 +3560,6 @@ class SchedulesWorkbench(BaseAppScreen):
 
         async def _mark_all() -> None:
             await self._dispatch_mark_all_results_read(service, unread_ids)
-            self._request_tasks_refresh(refresh_definitions=False)
 
         self.run_worker(
             _mark_all, exclusive=True, group="schedules-mark-all-read"
@@ -3435,7 +3577,16 @@ class SchedulesWorkbench(BaseAppScreen):
 
         async def _update_and_refresh() -> None:
             try:
-                await service.update_reminder(task.id, {"enabled": enabled})
+                # The ROW's owner, never the service's active one (final
+                # review F4): this list spans owners since Task 1, so
+                # toggling a `server:` row while "This device" is active
+                # used to write the local mirror with NO pending mutation
+                # -- the server kept firing it and the next pull undid the
+                # toggle. Same `owner_id=` thread PR-5 established for
+                # `create_reminder`.
+                await service.update_reminder(
+                    task.id, {"enabled": enabled}, owner_id=task.owner_id
+                )
                 status = "enabled" if enabled else "disabled"
                 self.app_instance.notify(
                     f"'{task.title}' {status}.", severity="information"
@@ -3732,6 +3883,25 @@ class SchedulesWorkbench(BaseAppScreen):
             f"Results ({unread})" if unread else "Results",
         )
 
+    def _refresh_results_surfaces(self) -> None:
+        """Every surface a results MUTATION moves: the Results tab and the
+        Queue's own unread dots + rail `Mark all read` visibility.
+
+        Final review F5: the unread affordances Task 3 added to the Queue
+        derive from `UnifiedRow.unread_count`, which is only recomputed by
+        `load_tasks` -- so an SSE-triggered pull, a read/dismiss, a
+        mark-solved or a mark-all-read updated the Results tab and left
+        the Queue's dots (and the rail button, gated on
+        `sum(row.unread_count) > 0`) stale in both directions: hidden
+        while unread work existed, or visible with nothing left to mark.
+        `refresh_definitions=False` -- results never change which
+        definitions exist, and results are re-read on every load anyway.
+        Called from the mutation paths only, never from the mount/reload
+        paths that already run their own `_request_tasks_refresh`.
+        """
+        self._refresh_results_tab()
+        self._request_tasks_refresh(refresh_definitions=False)
+
     def action_delete(self) -> None:
         """Delete marked tasks in bulk, else the selected one (confirmed).
 
@@ -3783,7 +3953,19 @@ class SchedulesWorkbench(BaseAppScreen):
                 severity="warning",
             )
             return
-        if self._refuse_if_transfer_locked(self._selected_task(), "delete this task"):
+        task = self._selected_task()
+        if task is None:
+            # `TaskDetail.request_delete` deletes the task the pane last
+            # HELD, and the definition branch of `_update_detail_for_
+            # index` only hides that pane -- it never clears it. Pressing
+            # `d` on a definition row therefore opened a confirmation for
+            # whichever reminder was highlighted before it (final review
+            # F8's silent-refusal finding, in its sharpest form).
+            self.app_instance.notify(
+                self._no_task_notice("delete"), severity="warning"
+            )
+            return
+        if self._refuse_if_transfer_locked(task, "delete this task"):
             return
         self.query_one("#scheduling-task-detail", TaskDetail).request_delete()
 
@@ -3806,8 +3988,11 @@ class SchedulesWorkbench(BaseAppScreen):
                     # A False return is a refusal, not a crash (e.g. the
                     # transfer read-only guard, final review I7) -- count
                     # it, so the toast never claims a delete that the
-                    # facade declined.
-                    if not await service.delete_reminder(task.id):
+                    # facade declined. `owner_id` is the ROW's own (final
+                    # review F4), same as the single-row delete.
+                    if not await service.delete_reminder(
+                        task.id, owner_id=task.owner_id
+                    ):
                         errors += 1
                 except Exception:  # noqa: BLE001
                     logger.exception("Failed to delete reminder {}", task.id)
@@ -3850,6 +4035,23 @@ class SchedulesWorkbench(BaseAppScreen):
             return None
         return row.source_row
 
+    def _no_task_notice(self, verb: str) -> str:
+        """Copy for a reminder verb that found no reminder to act on.
+
+        A definition row IS selected and highlighted when the cursor sits
+        on one, so "select a task first" reads as a bug (final review
+        F8). Say where the action lives instead -- the same "managed
+        elsewhere" vocabulary `_managed_elsewhere_notice` established for
+        projection rows. Definition rows stay action-free here per plan
+        ruling 1; this only fixes how the refusal is REPORTED.
+        """
+        if (self._selected_row_id or "").startswith("definition:"):
+            return (
+                "This automation is managed on the Automations tab for "
+                f"now — {verb} it there."
+            )
+        return f"Nothing to {verb} — select a task first."
+
     def action_edit_task(self) -> None:
         """Open the highlighted task/definition in its edit form (e key).
 
@@ -3868,7 +4070,7 @@ class SchedulesWorkbench(BaseAppScreen):
         task = self._selected_task()
         if task is None:
             self.app_instance.notify(
-                "Nothing to edit — select a task first.",
+                self._no_task_notice("edit"),
                 severity="warning",
             )
             return
@@ -3895,7 +4097,7 @@ class SchedulesWorkbench(BaseAppScreen):
         task = self._selected_task()
         if task is None:
             self.app_instance.notify(
-                "Nothing to mark — select a task first.",
+                self._no_task_notice("mark"),
                 severity="warning",
             )
             return
@@ -3948,7 +4150,7 @@ class SchedulesWorkbench(BaseAppScreen):
         task = self._selected_task()
         if task is None:
             self.app_instance.notify(
-                "Nothing to toggle — select a task first.",
+                self._no_task_notice("enable or disable"),
                 severity="warning",
             )
             return
@@ -3979,9 +4181,11 @@ class SchedulesWorkbench(BaseAppScreen):
             for task in marked:
                 try:
                     # A None return is a refusal, not a crash -- same
-                    # reasoning as the bulk delete above.
+                    # reasoning as the bulk delete above. `owner_id` is
+                    # the ROW's own (final review F4), same as the
+                    # single-row toggle.
                     if await service.update_reminder(
-                        task.id, {"enabled": not task.enabled}
+                        task.id, {"enabled": not task.enabled}, owner_id=task.owner_id
                     ) is None:
                         errors += 1
                 except Exception:  # noqa: BLE001

@@ -232,7 +232,7 @@ class _DisabledTaskService(MockSchedulingServiceMixin):
     async def list_tasks(self, owner_id=None, include_projections=True):
         return [_reminder(enabled=self.enabled)]
 
-    async def update_reminder(self, task_id, fields):
+    async def update_reminder(self, task_id, fields, *, owner_id=None):
         self.enabled = fields.get("enabled", self.enabled)
 
 

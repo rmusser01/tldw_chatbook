@@ -582,12 +582,27 @@ class SchedulingService:
         assert row is not None
         return self._row_to_reminder(row)
 
-    async def delete_reminder(self, task_id: str) -> bool:
+    async def delete_reminder(
+        self, task_id: str, *, owner_id: str | None = None
+    ) -> bool:
         """Delete a reminder locally and on the server when connected.
 
         If the server is unavailable or returns an error, a tombstone is recorded
         so the delete can be pushed later.
+
+        Args:
+            task_id: The local reminder row to delete.
+            owner_id: The owner this delete belongs to; defaults to
+                `self.owner_id`. Same rationale (and same `_owner_uses_
+                server` seam) as `create_reminder`/`update_reminder`'s --
+                redesign PR-2's Queue lists reminders across owners, so
+                "the row under the cursor" is no longer guaranteed to be
+                the service's active owner. Deleting a `server:` row
+                while the active owner was local previously took the
+                local-only branch: no server call, no tombstone, and the
+                row came back on the next pull (final review F4).
         """
+        owner_id = owner_id or self.owner_id
         row = self.db.get_reminder_task(task_id)
         if row is None:
             return False
@@ -605,7 +620,7 @@ class SchedulingService:
             )
             return False
 
-        use_server = self._use_server()
+        use_server = self._owner_uses_server(owner_id)
         if use_server:
             assert self.server_client is not None
             server_id = row.get("server_id")
@@ -613,32 +628,32 @@ class SchedulingService:
                 if server_id:
                     await self.server_client.delete_reminder(server_id)
                 self.db.delete_reminder_task(task_id)
-                self.db.delete_sync_mapping(task_id, _REMINDER_PRIMITIVE, self.owner_id)
+                self.db.delete_sync_mapping(task_id, _REMINDER_PRIMITIVE, owner_id)
                 self.db.delete_pending_mutation_for_record(
-                    task_id, _REMINDER_PRIMITIVE, self.owner_id
+                    task_id, _REMINDER_PRIMITIVE, owner_id
                 )
                 self._notify_queue_changed()
                 return True
             except ServerUnavailableError:
                 logger.warning(
-                    f"Server unavailable while deleting reminder {task_id} for {self.owner_id}"
+                    f"Server unavailable while deleting reminder {task_id} for {owner_id}"
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.exception(
-                    f"Server delete_reminder failed for {task_id} ({self.owner_id}): {exc}"
+                    f"Server delete_reminder failed for {task_id} ({owner_id}): {exc}"
                 )
 
             if server_id is None:
                 # No server copy exists; drop any stale pending mutation and
                 # fall back to a local-only delete.
                 self.db.delete_pending_mutation_for_record(
-                    task_id, _REMINDER_PRIMITIVE, self.owner_id
+                    task_id, _REMINDER_PRIMITIVE, owner_id
                 )
 
-            self.db.record_tombstone(task_id, _REMINDER_PRIMITIVE, self.owner_id)
+            self.db.record_tombstone(task_id, _REMINDER_PRIMITIVE, owner_id)
             self.db.delete_reminder_task(task_id)
             self.db.delete_pending_mutation_for_record(
-                task_id, _REMINDER_PRIMITIVE, self.owner_id
+                task_id, _REMINDER_PRIMITIVE, owner_id
             )
             self._notify_queue_changed()
             return True

@@ -181,7 +181,7 @@ class _MixedService(MockSchedulingServiceMixin):
             ),
         ]
 
-    async def update_reminder(self, task_id, fields):
+    async def update_reminder(self, task_id, fields, *, owner_id=None):
         self.updated.append((task_id, fields))
 
 
@@ -206,7 +206,9 @@ async def test_definition_rows_are_not_markable():
         assert not workbench._marked_ids
         assert "marked" not in _notice_text(workbench)
         messages = [n.message for n in pilot.app._notifications]
-        assert any("select a task first" in m.lower() for m in messages), messages
+        # Final review F8: a definition row IS selected, so the refusal
+        # says where the action lives instead of "select a task first".
+        assert any("Automations tab" in m for m in messages), messages
 
 
 @pytest.mark.asyncio

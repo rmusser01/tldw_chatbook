@@ -100,13 +100,17 @@ class TestReminderHasFired:
         task = _reminder(enabled=False, next_run_at=None, last_run_at=None)
         assert reminder_has_fired(task) is False
 
-    def test_not_fired_when_enabled(self):
+    def test_fired_when_re_enabled_after_firing(self):
+        """Final review F9 (ruled): re-enabling a fired one-time reminder
+        gives it no future run -- only a SCHEDULE edit recomputes
+        `next_run_at`, and the due query filters `next_run_at IS NOT
+        NULL`. `enabled` is therefore not part of the predicate."""
         task = _reminder(
             enabled=True,
             next_run_at=None,
             last_run_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
         )
-        assert reminder_has_fired(task) is False
+        assert reminder_has_fired(task) is True
 
     def test_not_fired_when_next_run_still_set(self):
         task = _reminder(
@@ -185,6 +189,24 @@ def test_disabled_unfired_reminder_is_paused():
     )
     rows = build_unified_rows([task], [], [])
     assert rows[0].bucket == "paused"
+
+
+def test_re_enabled_fired_reminder_is_completed_not_active():
+    """Final review F9 (ruled): re-enabling a fired one-time reminder
+    (space, or the detail pane's Enable) gives it no future run --
+    `_set_reminder_enabled` sends only `{"enabled": ...}`, `update_
+    reminder` recomputes `next_run_at` only for a SCHEDULE change, and
+    the due query filters `next_run_at IS NOT NULL`. It buckets
+    Completed; an Active chip would advertise armed status the scheduler
+    will never honour."""
+    task = _one_time_reminder(
+        enabled=True,
+        next_run_at=None,
+        last_run_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+    )
+    rows = build_unified_rows([task], [], [])
+    assert rows[0].bucket == "completed"
+    assert rows[0].glyph == "✓"
 
 
 def test_fired_reminder_is_completed():
@@ -329,6 +351,44 @@ def test_unread_count_resolves_across_local_and_server_id_spaces():
     ]
     rows = build_unified_rows([], [definition], results)
     assert rows[0].unread_count == 2
+
+
+def test_transferred_definition_keeps_its_pre_transfer_unread_results():
+    """Final review F2, the review's own repro: a definition moved to the
+    server is carried in the DISPLAY list as the raw server payload
+    (`id` IS the server id) and is EXCLUDED from the local half of the
+    merge (which drops every `server_id`-bearing row). Its pre-transfer,
+    locally-produced results carry the LOCAL uuid, so without the full
+    local table they resolve to nothing and the count silently reads 0 --
+    hiding the rail's `Mark all read` button while the Results tab's
+    badge still counts them."""
+    local_table_row = _definition(id="def-local-1", server_id="srv-77")
+    display_row = _definition(id="srv-77", name="A Definition")
+    display_row.pop("server_id")  # a raw server payload carries no server_id
+    results = [
+        _result(id="res-a", definition_id="def-local-1", review_state="unread"),
+        _result(id="res-b", definition_id="def-local-1", review_state="unread"),
+    ]
+
+    stale = build_unified_rows([], [display_row], results)
+    assert stale[0].unread_count == 0, "the pre-fix behaviour this pins against"
+
+    rows = build_unified_rows([], [display_row], results, [local_table_row])
+    assert rows[0].unread_count == 2, (
+        "the Queue's unread count must match the Results tab's badge for "
+        "the same DB"
+    )
+
+
+def test_server_only_definition_still_resolves_with_a_local_table():
+    """The full local table is ADDED to the resolution index, not
+    substituted for it: a server definition with no local mirror row is
+    absent from that table, and its results must still be counted."""
+    results = [_result(definition_id="srv-99", review_state="unread")]
+    rows = build_unified_rows(
+        [], [_definition(id="srv-99")], results, [_definition(id="def-other")]
+    )
+    assert rows[0].unread_count == 1
 
 
 def test_reminder_rows_never_carry_unread_count():
