@@ -10365,6 +10365,559 @@ def _basic_modal(
     )
 
 
+def test_console_settings_modal_exposes_ctrl_enter_primary_binding() -> None:
+    """The documented Apply accelerator must remain visible and deterministic."""
+    binding = next(
+        binding
+        for binding in ConsoleSettingsModal.BINDINGS
+        if getattr(binding, "key", None) == "ctrl+enter"
+    )
+
+    assert binding.action == "activate_primary"
+    assert binding.description == "Apply"
+    assert binding.show is True
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_focus_order_starts_provider_ends_cancel_and_skips_collapsed() -> None:
+    """Tab order is logical and never enters undisclosed advanced fields."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"), app
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        assert app.focused.id == "console-settings-provider-picker-input"
+        await pilot.press("shift+tab")
+        assert app.focused.id == "console-settings-cancel"
+
+        focused_ids: list[str | None] = []
+        for _ in range(40):
+            await pilot.press("tab")
+            focused_ids.append(app.focused.id)
+            if app.focused.id == "console-settings-cancel":
+                break
+
+        assert "console-settings-save" in focused_ids
+        assert "console-settings-temperature" not in focused_ids
+        assert "console-settings-user-display-name" not in focused_ids
+
+
+@pytest.mark.asyncio
+async def test_console_settings_keyboard_tab_leaves_provider_results_in_logical_order() -> None:
+    """Tab from an open compound list advances instead of reopening Provider."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"), app
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.press("down")
+        assert app.focused.id == "console-settings-provider-picker-results"
+
+        await pilot.press("tab")
+
+        assert app.focused.id == "console-settings-base-url"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_focus_moves_to_reason_when_primary_becomes_disabled() -> None:
+    """A state transition cannot leave focus attached to a disabled primary."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"), app
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        primary = modal.query_one("#console-settings-save", Button)
+        primary.focus()
+        await pilot.pause()
+        modal._can_save = False
+        modal._sync_completion_actions()
+        await pilot.pause()
+
+        reason = modal.query_one(
+            "#console-settings-primary-disabled-reason", Static
+        )
+        assert primary.disabled
+        assert reason.display
+        assert app.focused is reason
+
+
+@pytest.mark.asyncio
+async def test_console_settings_focus_moves_to_unavailable_copy_when_test_hides() -> None:
+    """Provider changes cannot strand focus on a hidden generation-test button."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"), app
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        test_button = modal.query_one("#console-settings-test-generation", Button)
+        test_button.focus()
+        await pilot.pause()
+        modal._active_provider = "local_onnx"
+        modal._sync_generation_test_controls()
+        await pilot.pause()
+
+        unavailable = modal.query_one(
+            "#console-settings-generation-unavailable", Static
+        )
+        assert not test_button.display
+        assert unavailable.display
+        assert app.focused is unavailable
+
+
+@pytest.mark.asyncio
+async def test_generation_confirmation_cancel_restores_visible_action_focus() -> None:
+    """Canceling consent cannot leave focus inside its hidden container."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"), app
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        action = modal.query_one("#console-settings-test-generation", Button)
+        action.press()
+        await pilot.pause()
+        cancel = modal.query_one("#console-settings-cancel-generation", Button)
+        cancel.focus()
+        await pilot.pause()
+        assert app.focused is cancel
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app.focused is action
+        assert modal._is_effectively_focusable(app.focused)
+        assert str(action.label) == "Test generation"
+
+
+@pytest.mark.asyncio
+async def test_generation_confirmation_confirm_restores_running_action_focus() -> None:
+    """Starting the probe moves focus to its visible Cancel-test action."""
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def waiting_tester(_request):
+        started.set()
+        await release.wait()
+        return settings_modal_module.ProviderGenerationProbeResult("succeeded")
+
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        app,
+        generation_tester=waiting_tester,
+    )
+
+    try:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await app.push_screen(modal)
+            await pilot.pause()
+            action = modal.query_one("#console-settings-test-generation", Button)
+            action.press()
+            await pilot.pause()
+            confirm = modal.query_one("#console-settings-confirm-generation", Button)
+            confirm.focus()
+            await pilot.pause()
+            assert app.focused is confirm
+
+            await pilot.press("enter")
+            await asyncio.wait_for(started.wait(), timeout=1)
+            await pilot.pause()
+
+            assert app.focused is action
+            assert modal._is_effectively_focusable(app.focused)
+            assert str(action.label) == "Cancel test"
+            action.press()
+            await pilot.pause()
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+async def test_model_picker_keyboard_escape_restores_then_dismisses_modal() -> None:
+    """Model Escape is two-stage: cancel picker state, then request safe close."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"), app
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal, callback=app.capture_saved_settings)
+        await pilot.pause()
+        picker = modal.query_one("#console-settings-model-picker", ModelSearchPicker)
+        picker.focus_input()
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.screen is modal
+        assert picker.value == "model-a"
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.screen is not modal
+        assert app.saved_result is None
+
+
+@pytest.mark.parametrize(
+    "focus_selector",
+    [
+        "#console-settings-provider-picker-input",
+        "#console-settings-cancel",
+    ],
+)
+@pytest.mark.asyncio
+async def test_default_save_freeze_rehomes_and_restores_keyboard_focus(
+    focus_selector: str,
+) -> None:
+    """Persistence freeze keeps focus visible, then restores its valid target."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"), app
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        original = modal.query_one(focus_selector)
+        original.focus()
+        await pilot.pause()
+        assert app.focused is original
+
+        modal._set_default_save_in_flight(True)
+        await pilot.pause()
+
+        reason = modal.query_one(
+            "#console-settings-primary-disabled-reason", Static
+        )
+        assert reason.display
+        assert app.focused is reason
+        assert modal._is_effectively_focusable(reason)
+
+        modal._set_default_save_in_flight(False)
+        await pilot.pause()
+
+        assert app.focused is original
+        assert modal._is_effectively_focusable(original)
+
+
+@pytest.mark.asyncio
+async def test_console_settings_ctrl_enter_activates_enabled_primary_or_focuses_reason() -> None:
+    """The shortcut applies only a usable primary and explains blocked drafts."""
+    ready_app = ModalHarness()
+    ready_modal = _basic_modal(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"), ready_app
+    )
+    async with ready_app.run_test(size=(120, 40)) as pilot:
+        await ready_app.push_screen(
+            ready_modal, callback=ready_app.capture_saved_settings
+        )
+        await pilot.pause()
+        await pilot.press("ctrl+enter")
+        await pilot.pause()
+    assert ready_app.saved_settings is not None
+
+    blocked_app = ModalHarness()
+    blocked_modal = _basic_modal(
+        ConsoleSessionSettings(provider="llama_cpp", model=None),
+        blocked_app,
+        providers_models={"llama_cpp": []},
+    )
+    async with blocked_app.run_test(size=(120, 40)) as pilot:
+        await blocked_app.push_screen(
+            blocked_modal, callback=blocked_app.capture_saved_settings
+        )
+        await pilot.pause()
+        await pilot.press("ctrl+enter")
+        await pilot.pause()
+
+        reason = blocked_modal.query_one(
+            "#console-settings-primary-disabled-reason", Static
+        )
+        assert blocked_app.screen is blocked_modal
+        assert blocked_app.saved_settings is None
+        assert reason.display
+        assert blocked_app.focused is reason
+
+
+@pytest.mark.parametrize(
+    ("guard_mode", "expected_focus_id"),
+    [
+        ("reset", "console-settings-close-undo"),
+        ("compaction", "console-settings-close-anyway"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_console_settings_ctrl_enter_respects_visible_close_guard(
+    guard_mode: str,
+    expected_focus_id: str,
+) -> None:
+    """Apply cannot bypass reset or running-compaction close choices."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"), app
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal, callback=app.capture_saved_settings)
+        await pilot.pause()
+        if guard_mode == "reset":
+            modal._memory_reset_token = ("memory-1", 2)
+        else:
+            modal._compaction_provider_task = SimpleNamespace(done=lambda: False)
+        modal._show_settings_close_guard(guard_mode)
+        await pilot.pause()
+
+        await pilot.press("ctrl+enter")
+        await pilot.pause()
+
+        guard = modal.query_one("#console-settings-close-guard")
+        expected_focus = modal.query_one(f"#{expected_focus_id}", Button)
+        assert app.screen is modal
+        assert app.saved_result is None
+        assert guard.display
+        assert app.focused is expected_focus
+        assert modal._is_effectively_focusable(expected_focus)
+
+
+@pytest.mark.asyncio
+async def test_console_settings_accessible_inputs_have_names_and_bounded_descriptions() -> None:
+    """Every visible editable field has a stable name and keyboard help copy."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"), app
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        visible_fields = [
+            control
+            for control in modal.query("Input, Select")
+            if modal._is_effectively_focusable(control)
+        ]
+        assert visible_fields
+        for control in visible_fields:
+            assert control.tooltip
+            assert len(str(control.tooltip)) <= 120
+
+        for control in modal._settings_focus_targets():
+            visible_label = str(getattr(control, "label", "")).strip()
+            description = str(control.tooltip or "").strip()
+            assert visible_label or description
+            assert len(description) <= 160
+
+        readiness = str(
+            modal.query_one("#console-settings-readiness", Static).renderable
+        )
+        assert "Ready to send" in readiness
+        assert "Endpoint · Not tested" in readiness
+        assert "Generation · Not tested" in readiness
+
+
+@pytest.mark.asyncio
+async def test_current_verification_result_announcement_fires_once_without_markup(monkeypatch) -> None:
+    """Each current terminal connection/generation result has one bounded notice."""
+    async def connection_tester(_identity):
+        return ProviderProbeResult("reachable", ("model-a",))
+
+    async def generation_tester(_request):
+        return settings_modal_module.ProviderGenerationProbeResult("succeeded")
+
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        connection_tester=connection_tester,
+        generation_tester=generation_tester,
+    )
+    notices: list[tuple[str, dict[str, object]]] = []
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        monkeypatch.setattr(
+            modal,
+            "notify",
+            lambda message, **kwargs: notices.append((str(message), kwargs)),
+        )
+
+        modal.query_one("#console-settings-model-discover", Button).press()
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if modal._active_connection_probe_token is None:
+                break
+        assert notices == [("Connection test succeeded; 1 model listed.", {"markup": False})]
+
+        notices.clear()
+        modal.query_one("#console-settings-test-generation", Button).press()
+        modal.query_one("#console-settings-confirm-generation", Button).press()
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if modal._active_generation_probe_token is None:
+                break
+        assert notices == [("Generation test succeeded.", {"markup": False})]
+
+
+@pytest.mark.parametrize("probe_kind", ["connection", "generation"])
+@pytest.mark.asyncio
+async def test_operational_tester_exception_announces_sanitized_terminal_failure(
+    monkeypatch,
+    probe_kind: str,
+) -> None:
+    """Caught tester failures remain valid current outcomes and announce once."""
+
+    async def throwing_tester(_request):
+        raise RuntimeError("PRIVATE-TESTER-EXCEPTION")
+
+    kwargs = (
+        {"connection_tester": throwing_tester}
+        if probe_kind == "connection"
+        else {"generation_tester": throwing_tester}
+    )
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        **kwargs,
+    )
+    notices: list[tuple[str, dict[str, object]]] = []
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        monkeypatch.setattr(
+            modal,
+            "notify",
+            lambda message, **notify_kwargs: notices.append(
+                (str(message), notify_kwargs)
+            ),
+        )
+
+        if probe_kind == "connection":
+            modal.query_one("#console-settings-model-discover", Button).press()
+            for _ in range(20):
+                await pilot.pause(0.05)
+                if modal._active_connection_probe_token is None:
+                    break
+            expected = "Connection test failed: connection error."
+        else:
+            modal.query_one("#console-settings-test-generation", Button).press()
+            modal.query_one("#console-settings-confirm-generation", Button).press()
+            for _ in range(20):
+                await pilot.pause(0.05)
+                if modal._active_generation_probe_token is None:
+                    break
+            expected = "Generation test failed: provider error."
+
+        assert notices == [(expected, {"markup": False})]
+        assert "PRIVATE-TESTER-EXCEPTION" not in repr(notices)
+
+
+@pytest.mark.parametrize(
+    ("model_ids", "expected"),
+    [
+        ((), "Connection test succeeded; no models reported."),
+        (("model-a",), "Connection test succeeded; 1 model listed."),
+        (
+            ("model-a", "model-b", "model-c"),
+            "Connection test succeeded; 3 models listed.",
+        ),
+    ],
+)
+def test_connection_success_announcement_has_bounded_zero_one_many_copy(
+    monkeypatch,
+    model_ids: tuple[str, ...],
+    expected: str,
+) -> None:
+    """Connection announcements describe counts without endpoint or model IDs."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"), app
+    )
+    notices: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        modal,
+        "notify",
+        lambda message, **kwargs: notices.append((str(message), kwargs)),
+    )
+
+    modal._announce_verification_result(ProviderProbeResult("reachable", model_ids))
+
+    assert notices == [(expected, {"markup": False})]
+
+
+@pytest.mark.asyncio
+async def test_stale_or_cancelled_verification_has_no_announcement(monkeypatch) -> None:
+    """Revoked probe capabilities cannot emit late success announcements."""
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def connection_tester(_identity):
+        started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            await release.wait()
+        return ProviderProbeResult("reachable", ("stale-model",))
+
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        connection_tester=connection_tester,
+    )
+    notices: list[str] = []
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        monkeypatch.setattr(
+            modal,
+            "notify",
+            lambda message, **_kwargs: notices.append(str(message)),
+        )
+        modal.query_one("#console-settings-model-discover", Button).press()
+        await asyncio.wait_for(started.wait(), timeout=1)
+        modal.query_one("#console-settings-base-url", Input).value = (
+            "http://127.0.0.1:9199"
+        )
+        release.set()
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if modal._active_connection_probe_token is None:
+                break
+
+        assert notices == []
+
+
 @pytest.mark.asyncio
 async def test_console_settings_modal_streaming_cycles_inherit_and_boolean_values() -> (
     None
@@ -11089,7 +11642,9 @@ async def test_generation_edit_preserves_active_connection_probe_and_settlement(
 
 
 @pytest.mark.asyncio
-async def test_malformed_connection_tester_result_restores_bounded_action() -> None:
+async def test_malformed_connection_tester_result_restores_bounded_action(
+    monkeypatch,
+) -> None:
     app = ModalHarness()
     modal = _basic_modal(
         ConsoleSessionSettings(
@@ -11101,9 +11656,15 @@ async def test_malformed_connection_tester_result_restores_bounded_action() -> N
         connection_tester=_MalformedConnectionTester(),
     )
 
+    notices: list[str] = []
     async with app.run_test(size=(120, 60)) as pilot:
         await app.push_screen(modal)
         await pilot.pause()
+        monkeypatch.setattr(
+            modal,
+            "notify",
+            lambda message, **_kwargs: notices.append(str(message)),
+        )
         action = modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
         action.press()
         for _ in range(20):
@@ -11122,6 +11683,7 @@ async def test_malformed_connection_tester_result_restores_bounded_action() -> N
         assert "Testing" not in readiness
         assert "Connection failed: connection error." in rendered
         assert "PRIVATE-CONNECTION-PAYLOAD" not in rendered
+        assert notices == []
 
 
 @pytest.mark.asyncio
@@ -14705,7 +15267,9 @@ async def test_generation_edit_marks_changed_without_invalidating_endpoint(
 
 
 @pytest.mark.asyncio
-async def test_malformed_generation_tester_result_fails_bounded_and_restores_action() -> None:
+async def test_malformed_generation_tester_result_fails_bounded_and_restores_action(
+    monkeypatch,
+) -> None:
     async def malformed_tester(_request):
         return {"text": "secret provider response"}
 
@@ -14720,9 +15284,15 @@ async def test_malformed_generation_tester_result_fails_bounded_and_restores_act
         generation_tester=malformed_tester,
     )
 
+    notices: list[str] = []
     async with app.run_test(size=(120, 40)) as pilot:
         await app.push_screen(modal)
         await pilot.pause()
+        monkeypatch.setattr(
+            modal,
+            "notify",
+            lambda message, **_kwargs: notices.append(str(message)),
+        )
         modal.query_one("#console-settings-test-generation", Button).press()
         modal.query_one("#console-settings-confirm-generation", Button).press()
         for _ in range(20):
@@ -14741,6 +15311,7 @@ async def test_malformed_generation_tester_result_fails_bounded_and_restores_act
         )
         assert status == "Provider generation test failed."
         assert "secret provider response" not in status
+        assert notices == []
 
 
 @pytest.mark.asyncio

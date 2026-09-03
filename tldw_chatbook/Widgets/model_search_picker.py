@@ -159,6 +159,7 @@ class ModelSearchPicker(Widget):
         self._discovered_model_ids: dict[str, tuple[str, ...]] = {}
         self._load_errors: dict[str, bool] = {}
         self._load_counts: dict[str, int] = {}
+        self._preserve_committed_on_next_input_focus = False
 
     @property
     def value(self) -> str | None:
@@ -181,14 +182,25 @@ class ModelSearchPicker(Widget):
                 value=self._selected_model or "",
                 placeholder="Choose or search models",
                 id="model-search-picker-input",
+                name="model-search",
+                tooltip="Choose or search the model for this provider.",
             )
             custom_button = Button(
-                "Custom ID", id="model-search-picker-custom", compact=True
+                "Custom ID",
+                id="model-search-picker-custom",
+                name="custom-model-id",
+                compact=True,
+                tooltip="Enter an exact model ID that is not in the list.",
             )
             custom_button.display = self._show_custom_button
             yield custom_button
         yield Static("Loading models...", id="model-search-picker-status", markup=False)
-        yield OptionList(id="model-search-picker-results")
+        results = OptionList(
+            id="model-search-picker-results",
+            name="model-options",
+        )
+        results.tooltip = "Matching models; use arrow keys and Enter to select."
+        yield results
 
     def on_mount(self) -> None:
         """Start the initial catalog load without blocking Textual's message pump."""
@@ -707,6 +719,8 @@ class ModelSearchPicker(Widget):
         normalized = self._normalize_model(model_id)
         if not normalized:
             return
+        results = self.query_one("#model-search-picker-results", OptionList)
+        results_had_focus = results.has_focus
         self._custom_mode = False
         self._selected_model = normalized
         self._model_before_custom = normalized
@@ -714,6 +728,9 @@ class ModelSearchPicker(Widget):
         self._sync_custom_button()
         self._hide_results()
         self._render_catalog_status()
+        if results_had_focus:
+            self._preserve_committed_on_next_input_focus = True
+            self.focus_input()
         self.post_message(self.ModelSelected(normalized))
 
     def _sync_custom_button(self) -> None:
@@ -724,6 +741,9 @@ class ModelSearchPicker(Widget):
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         if getattr(event.control, "id", None) != "model-search-picker-input":
+            return
+        if self._preserve_committed_on_next_input_focus:
+            self._preserve_committed_on_next_input_focus = False
             return
         if self._custom_mode:
             return
@@ -807,6 +827,8 @@ class ModelSearchPicker(Widget):
 
     def _cancel_edit(self, event: Message) -> None:
         input_widget = self.query_one("#model-search-picker-input", Input)
+        results = self.query_one("#model-search-picker-results", OptionList)
+        results_had_focus = results.has_focus
         if self._custom_mode:
             self._custom_mode = False
             self._selected_model = self._model_before_custom
@@ -817,12 +839,18 @@ class ModelSearchPicker(Widget):
             self.post_message(
                 self.ModelValueChanged(self._selected_model, custom=False)
             )
+            if results_had_focus:
+                self._preserve_committed_on_next_input_focus = True
+                self.focus_input()
             event.stop()
             return
         if input_widget.value != (self._selected_model or "") or self._matches:
             self._set_input_value(self._selected_model or "")
             self._hide_results()
             self._render_catalog_status()
+            if results_had_focus:
+                self._preserve_committed_on_next_input_focus = True
+                self.focus_input()
             event.stop()
 
     @on(ModelPickerInput.EscapePressed)

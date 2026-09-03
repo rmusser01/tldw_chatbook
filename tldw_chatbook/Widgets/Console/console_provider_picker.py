@@ -118,13 +118,20 @@ class ConsoleProviderPicker(Widget):
             value=self._display_name(self._value),
             placeholder="Choose or search providers",
             id="console-settings-provider-picker-input",
+            name="provider-search",
+            tooltip="Choose or search the provider for this conversation.",
         )
         yield Static(
             self._selected_status(),
             id="console-settings-provider-picker-status",
             markup=False,
         )
-        yield OptionList(id="console-settings-provider-picker-results")
+        results = OptionList(
+            id="console-settings-provider-picker-results",
+            name="provider-options",
+        )
+        results.tooltip = "Matching providers; use arrow keys and Enter to select."
+        yield results
 
     def on_mount(self) -> None:
         """Start with the current selection visible and results collapsed."""
@@ -232,12 +239,16 @@ class ConsoleProviderPicker(Widget):
                 )
                 self._row_provider_ids.append(option.value)
         results.display = bool(matches)
+        selection = self._selected_status().rstrip(".")
         if matches:
             self._set_status(
-                f"{len(matches)} provider{'s' if len(matches) != 1 else ''} available."
+                f"{selection} · {len(matches)} "
+                f"provider{'s' if len(matches) != 1 else ''} available."
             )
         else:
-            self._set_status("No matching providers. Clear the filter.")
+            self._set_status(
+                f"{selection} · No matching providers. Clear the filter."
+            )
 
     def _hide_results(self) -> None:
         if not self.is_mounted:

@@ -136,7 +136,7 @@ from tldw_chatbook.UI.Screens.provider_model_resolution import (
 )
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.model_capabilities import is_vision_capable
-from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
+from tldw_chatbook.Widgets.model_search_picker import ModelPickerInput, ModelSearchPicker
 from .console_provider_picker import ConsoleProviderPicker, ConsoleProviderPickerInput
 from .console_context_controls import (
     ConsoleContextControlState,
@@ -1149,6 +1149,7 @@ class ConsoleSettingsModal(
 
     BINDINGS = [
         ("escape", "request_safe_cancel", "Cancel"),
+        Binding("ctrl+enter", "activate_primary", "Apply", show=True),
         Binding(
             "tab",
             "settings_focus_next",
@@ -1420,6 +1421,7 @@ class ConsoleSettingsModal(
         self._default_save_kind = "defaults"
         self._provider_setup_requires_reload = False
         self._default_save_disabled_snapshot: dict[Widget, bool] = {}
+        self._default_save_focus_before_freeze: Widget | None = None
         self._last_model_discovery_draft_key = (
             provider_config_key(self._active_provider),
             canonical_connection_identity(
@@ -1883,6 +1885,10 @@ class ConsoleSettingsModal(
                             id="console-settings-generation-unavailable",
                             classes="console-settings-field-help",
                             markup=False,
+                        )
+                        generation_unavailable.can_focus = True
+                        generation_unavailable.tooltip = (
+                            "Explains why a generation test is unavailable."
                         )
                         generation_unavailable.display = not generation_supported
                         yield generation_unavailable
@@ -2589,6 +2595,7 @@ class ConsoleSettingsModal(
         self._sync_generation_control_support()
         self._sync_generation_test_controls()
         self._sync_completion_actions()
+        self._apply_accessible_control_metadata()
         if self._suspended_draft is None and not self._focus_model and self._active_view == "model":
             self.call_after_refresh(self._focus_highest_priority_connection)
         self.call_after_refresh(self._sync_fold_hint)
@@ -2649,6 +2656,14 @@ class ConsoleSettingsModal(
         self, event: ConsoleProviderPickerInput.EscapePressed
     ) -> None:
         """Close after the picker has no filter or result state left to restore."""
+        event.stop()
+        self.action_dismiss()
+
+    @on(ModelPickerInput.EscapePressed)
+    def _model_picker_escape_unhandled(
+        self, event: ModelPickerInput.EscapePressed
+    ) -> None:
+        """Close safely after the model picker has no edit state left to restore."""
         event.stop()
         self.action_dismiss()
 
@@ -3165,7 +3180,6 @@ class ConsoleSettingsModal(
             f"{status}\n{action}: {intent.provider_config_key}/"
             f"{intent.literal_model_id} · fields: {fields}{endpoint}"
         )
-
     def _sync_default_recovery_region(self) -> None:
         """Render the current app-owned recovery snapshot without consuming it."""
 
@@ -3630,14 +3644,126 @@ class ConsoleSettingsModal(
     def action_settings_focus_next(self) -> None:
         """Move focus forward within the active close guard or Settings."""
         guard = self.query_one("#console-settings-close-guard", Vertical)
-        selector = "#console-settings-close-guard Button" if guard.display else "*"
-        self.focus_next(selector)
+        if guard.display:
+            self.focus_next("#console-settings-close-guard Button")
+            return
+        self._cycle_settings_focus(1)
 
     def action_settings_focus_previous(self) -> None:
         """Move focus backward within the active close guard or Settings."""
         guard = self.query_one("#console-settings-close-guard", Vertical)
-        selector = "#console-settings-close-guard Button" if guard.display else "*"
-        self.focus_previous(selector)
+        if guard.display:
+            self.focus_previous("#console-settings-close-guard Button")
+            return
+        self._cycle_settings_focus(-1)
+
+    def _settings_focus_targets(self) -> list[Widget]:
+        """Return the visible logical tab order for the current destination."""
+        provider_input = self.query_one(
+            "#console-settings-provider-picker-input", Input
+        )
+        body = self.query_one("#console-settings-body", ScrollableContainer)
+        excluded_ids = {
+            "console-settings-provider-picker-results",
+            "model-search-picker-results",
+            "console-settings-primary-disabled-reason",
+        }
+        targets: list[Widget] = []
+
+        if self._is_effectively_focusable(provider_input):
+            targets.append(provider_input)
+        for control in body.query("*"):
+            if control is provider_input or control.id in excluded_ids:
+                continue
+            if self._is_effectively_focusable(control):
+                targets.append(control)
+        for selector in (
+            "#console-settings-view-model",
+            "#console-settings-view-context",
+            "#console-settings-reload-current",
+            "#console-settings-save-default",
+            "#console-settings-save",
+        ):
+            control = self.query_one(selector)
+            if self._is_effectively_focusable(control) and control not in targets:
+                targets.append(control)
+        cancel = self.query_one("#console-settings-cancel", Button)
+        if self._is_effectively_focusable(cancel):
+            targets.append(cancel)
+        return targets
+
+    def _cycle_settings_focus(self, direction: int) -> None:
+        """Move through the logical focus order without entering hidden controls."""
+        targets = self._settings_focus_targets()
+        if not targets:
+            return
+        focused = self.focused
+        focused_id = getattr(focused, "id", None)
+        if focused_id == "console-settings-provider-picker-results":
+            focused = self.query_one(
+                "#console-settings-provider-picker-input", Input
+            )
+        elif focused_id == "model-search-picker-results":
+            focused = self.query_one("#model-search-picker-input", Input)
+        if focused not in targets:
+            for ancestor in getattr(focused, "ancestors_with_self", ()):
+                if ancestor in targets:
+                    focused = ancestor
+                    break
+        try:
+            index = targets.index(focused)
+        except ValueError:
+            index = -1 if direction > 0 else 0
+        targets[(index + direction) % len(targets)].focus()
+
+    def action_activate_primary(self) -> None:
+        """Activate the sole visible enabled primary, or explain why none exists."""
+        guard = self.query_one("#console-settings-close-guard", Vertical)
+        if guard.display:
+            self._focus_settings_close_guard()
+            return
+        for selector in (
+            "#console-settings-reload-current",
+            "#console-settings-save-default",
+            "#console-settings-save",
+        ):
+            primary = self.query_one(selector, Button)
+            if (
+                primary.variant == "primary"
+                and self._is_effectively_focusable(primary)
+            ):
+                primary.press()
+                return
+        reason = self.query_one(
+            "#console-settings-primary-disabled-reason", Static
+        )
+        if not str(reason.renderable).strip():
+            reason.update("Apply is unavailable for the current draft.")
+        reason.display = True
+        reason.focus()
+        reason.scroll_visible(animate=False)
+
+    def _apply_accessible_control_metadata(self) -> None:
+        """Add stable names and bounded descriptions to editable controls."""
+        for control in self.query("Input, Select"):
+            if control.tooltip:
+                continue
+            label = ""
+            parent = control.parent
+            if isinstance(parent, Widget):
+                for sibling in parent.children:
+                    if sibling is control:
+                        break
+                    if isinstance(sibling, Static) and sibling.has_class(
+                        "console-settings-modal-label"
+                    ):
+                        label = str(sibling.renderable).strip()
+            if label:
+                verb = "Choose" if isinstance(control, Select) else "Edit"
+                control.tooltip = f"{verb} {label.lower()} for this conversation."
+            elif control.id:
+                field = control.id.removeprefix("console-settings-").replace("-", " ")
+                control.tooltip = f"Edit {field} for this conversation."
 
     def _hide_settings_close_guard(self) -> str | None:
         guard = self.query_one("#console-settings-close-guard", Vertical)
@@ -5250,6 +5376,12 @@ class ConsoleSettingsModal(
             )
         except (NoMatches, QueryError):
             return
+        button_had_focus = button.has_focus
+        focused = self.focused
+        confirmation_had_focus = bool(
+            focused is not None
+            and confirmation in focused.ancestors_with_self
+        )
         supported = (
             console_generation_test_availability(self._active_provider)
             is ConsoleGenerationTestAvailability.SUPPORTED
@@ -5263,6 +5395,26 @@ class ConsoleSettingsModal(
         confirmation.display = bool(
             supported and self._generation_confirmation_visible and not running
         )
+        if confirmation_had_focus and not confirmation.display:
+            self.call_after_refresh(self._focus_generation_test_fallback)
+        elif button_had_focus and not supported:
+            self.call_after_refresh(unavailable.focus)
+
+    def _focus_generation_test_fallback(self) -> None:
+        """Move focus from hidden consent controls to current visible context."""
+        button = self.query_one(f"#{GENERATION_TEST_BUTTON_ID}", Button)
+        if self._is_effectively_focusable(button):
+            button.focus()
+            return
+        for selector in (
+            f"#{GENERATION_TEST_STATUS_ID}",
+            "#console-settings-generation-unavailable",
+        ):
+            status = self.query_one(selector, Static)
+            if self._is_effectively_focusable(status):
+                status.focus()
+                return
+        self._focus_connection_fallback()
 
     def _set_generation_test_status(self, text: str) -> None:
         try:
@@ -5338,7 +5490,10 @@ class ConsoleSettingsModal(
             raise
         except Exception:
             result = ProviderGenerationProbeResult("failed", "provider_error")
-        if type(result) is not ProviderGenerationProbeResult:
+            malformed_return = False
+        else:
+            malformed_return = type(result) is not ProviderGenerationProbeResult
+        if malformed_return:
             result = ProviderGenerationProbeResult("failed", "provider_error")
         if request.identity != self._current_connection_probe_identity():
             self._connection_evidence_store.cancel_generation_probe(token)
@@ -5375,6 +5530,8 @@ class ConsoleSettingsModal(
                 result.category, "Provider generation test failed."
             )
         self._set_generation_test_status(copy)
+        if not malformed_return:
+            self._announce_verification_result(result)
         self._sync_readiness_display()
         self._sync_generation_test_controls()
 
@@ -5493,10 +5650,13 @@ class ConsoleSettingsModal(
                 (),
                 "connection_error",
             )
+            malformed_return = False
+        else:
+            malformed_return = type(result) is not ProviderProbeResult
         if not self.is_mounted:
             self._discard_connection_probe_result(token)
             return
-        if type(result) is not ProviderProbeResult:
+        if malformed_return:
             result = ProviderProbeResult(
                 "unreachable",
                 (),
@@ -5514,6 +5674,8 @@ class ConsoleSettingsModal(
         if self._active_connection_probe_token is token:
             self._active_connection_probe_token = None
         self._apply_connection_probe_result(discovery_identity, result)
+        if not malformed_return:
+            self._announce_verification_result(result)
 
         # Selecting a sole returned model advances the modal's exact model
         # generation. Re-publish the same bounded endpoint evidence against
@@ -5523,6 +5685,49 @@ class ConsoleSettingsModal(
             rebound_token = self._connection_evidence_store.begin(rebound)
             self._connection_evidence_store.settle(rebound_token, result)
         self._sync_readiness_display()
+
+    def _announce_verification_result(
+        self,
+        result: ProviderProbeResult | ProviderGenerationProbeResult,
+    ) -> None:
+        """Announce one bounded terminal result after exact-identity settlement."""
+        if type(result) is ProviderGenerationProbeResult:
+            if result.generation == "succeeded":
+                copy = "Generation test succeeded."
+            else:
+                copy = {
+                    "authentication": "Generation test failed: authentication.",
+                    "rate_limit": "Generation test failed: provider rate limit.",
+                    "bad_request": "Generation test failed: request rejected.",
+                    "timeout": (
+                        "Generation test timed out; provider work may continue and "
+                        "may still be billed."
+                    ),
+                    "connection_error": "Generation test failed: connection error.",
+                    "provider_error": "Generation test failed: provider error.",
+                }.get(result.category, "Generation test failed: provider error.")
+            self.notify(copy, markup=False)
+            return
+
+        if result.endpoint == "reachable":
+            listed = _model_availability_copy(
+                len(result.model_ids),
+                "",
+            ).lower()
+            copy = f"Connection test succeeded; {listed}."
+        elif result.endpoint == "model_listing_unavailable":
+            copy = "Connection test succeeded; model listing unavailable."
+        else:
+            copy = {
+                "timeout": "Connection test failed: request timed out.",
+                "connection_refused": "Connection test failed: connection refused.",
+                "unauthorized": "Connection test failed: unauthorized.",
+                "forbidden": "Connection test failed: forbidden.",
+                "http_status": "Connection test failed: endpoint HTTP error.",
+                "invalid_payload": "Connection test failed: invalid models response.",
+                "connection_error": "Connection test failed: connection error.",
+            }.get(result.category, "Connection test failed: connection error.")
+        self.notify(copy, markup=False)
 
     def _discard_connection_probe_result(self, token: object) -> None:
         """Revoke a stale probe and restore its action without publishing data."""

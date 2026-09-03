@@ -211,7 +211,9 @@ async def test_escape_restores_current_value_and_no_match_copy_is_explicit() -> 
         search.value = "no such provider"
         await pilot.pause()
         status = app.query_one("#console-settings-provider-picker-status", Static)
-        assert str(status.renderable) == "No matching providers. Clear the filter."
+        assert str(status.renderable) == (
+            "Selected: OpenAI · No matching providers. Clear the filter."
+        )
         assert app.query_one(ConsoleProviderPicker).visible_provider_ids() == ()
 
         await pilot.press("escape")
@@ -219,6 +221,26 @@ async def test_escape_restores_current_value_and_no_match_copy_is_explicit() -> 
         assert search.value == "OpenAI"
         assert app.query_one(ConsoleProviderPicker).value == "openai"
         assert app.selected == []
+
+
+@pytest.mark.asyncio
+async def test_picker_accessible_metadata_and_selected_state_are_explicit() -> None:
+    """The compound picker must expose purpose and selection without color."""
+    app = ProviderPickerApp(OPTIONS, current_provider="openai")
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        search = app.query_one("#console-settings-provider-picker-input", Input)
+        results = app.query_one(
+            "#console-settings-provider-picker-results", OptionList
+        )
+        status = app.query_one("#console-settings-provider-picker-status", Static)
+
+        assert search.name == "provider-search"
+        assert search.tooltip == "Choose or search the provider for this conversation."
+        assert results.name == "provider-options"
+        assert results.tooltip == "Matching providers; use arrow keys and Enter to select."
+        assert str(status.renderable) == "Selected: OpenAI · 2 providers available."
 
 
 @pytest.mark.asyncio

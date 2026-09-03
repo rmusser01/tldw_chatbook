@@ -1025,6 +1025,29 @@ async def test_popover_full_settings_returns_sentinel_and_escape_cancels():
 
 
 @pytest.mark.asyncio
+async def test_popover_model_picker_escape_restores_then_dismisses_popover():
+    """The shared picker must not trap a second Escape in the quick popover."""
+    app = _PopoverApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        picker = app.screen.query_one(
+            "#console-popover-model-search", ModelSearchPicker
+        )
+        picker.focus_input()
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, ConsoleModelPopover)
+        assert picker.value == "model-a"
+        assert app.result == "unset"
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, ConsoleModelPopover)
+        assert app.result is None
+
+
+@pytest.mark.asyncio
 async def test_popover_apply_with_blank_temperature_clears_it():
     from textual.widgets import Input
 
