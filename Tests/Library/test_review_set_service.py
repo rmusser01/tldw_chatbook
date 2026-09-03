@@ -177,6 +177,18 @@ def test_dismiss_soft_deletes_and_deactivates():
     assert svc.get_review_set(set_id) is None  # dismissed sets are hidden
 
 
+def test_deactivate_active_keeps_the_set_resumable():
+    svc = _service()
+    set_id = svc.create_review_set("X", origin="browse", items=[(1, "a")])
+
+    svc.deactivate_active()
+    assert svc.get_active_review_set() is None
+    # not deleted -- still listable and re-activatable at its cursor.
+    assert [rs.set_id for rs in svc.list_review_sets()] == [set_id]
+    svc.activate(set_id)
+    assert svc.get_active_review_set().set_id == set_id
+
+
 def test_reopen_clears_completion():
     svc = _service()
     set_id = svc.create_review_set("X", origin="browse", items=[(1, "a")])

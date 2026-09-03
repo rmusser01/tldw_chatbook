@@ -10,10 +10,13 @@ never renumbers.
 from __future__ import annotations
 
 from tldw_chatbook.Library.review_set_state import (
+    ReviewProgress,
     ReviewSetItem,
     advance_cursor,
+    format_review_progress,
     is_complete,
     is_empty,
+    plan_walk,
     resolve_cursor,
     review_progress,
 )
@@ -135,3 +138,66 @@ def test_all_tombstoned_set_is_empty_not_complete():
     items = _items((10, True), (11, True))
     assert is_empty(items, is_live=_live(10, 11)) is True
     assert is_complete(items, is_live=_live(10, 11)) is False
+
+
+# --- the walk planner (forward marks-done, back does not) --------------------
+
+
+def test_plan_walk_forward_marks_current_done_and_targets_next():
+    items = _items((10, False), (11, False), (12, False))
+    outcome = plan_walk(items, cursor=0, step=1, is_live=_live())
+
+    assert outcome.new_cursor == 1
+    assert outcome.mark_done_backing_id == 10  # the item we leave
+    assert outcome.target.backing_media_id == 11  # the item we load
+
+
+def test_plan_walk_forward_skips_a_tombstone_target():
+    items = _items((10, False), (11, False), (12, False))
+    outcome = plan_walk(items, cursor=0, step=1, is_live=_live(11))
+
+    assert outcome.new_cursor == 2
+    assert outcome.mark_done_backing_id == 10
+    assert outcome.target.backing_media_id == 12
+
+
+def test_plan_walk_back_does_not_mark_and_targets_prev():
+    items = _items((10, False), (11, False), (12, False))
+    outcome = plan_walk(items, cursor=2, step=-1, is_live=_live())
+
+    assert outcome.new_cursor == 1
+    assert outcome.mark_done_backing_id is None  # Prev never auto-marks
+    assert outcome.target.backing_media_id == 11
+
+
+def test_plan_walk_forward_on_last_item_marks_done_without_moving():
+    items = _items((10, False), (11, False))
+    outcome = plan_walk(items, cursor=1, step=1, is_live=_live())
+
+    assert outcome.new_cursor == 1  # clamped
+    assert outcome.mark_done_backing_id == 11  # the completion gesture
+    assert outcome.target is None  # nothing new to load
+
+
+# --- the progress readout string --------------------------------------------
+
+
+def test_format_progress_reads_x_of_m_reviewed_n():
+    assert (
+        format_review_progress(ReviewProgress(index=12, total=40, reviewed=7))
+        == "12 of 40 · 7 reviewed"
+    )
+
+
+def test_format_progress_all_reviewed():
+    assert (
+        format_review_progress(ReviewProgress(index=40, total=40, reviewed=40))
+        == "All 40 reviewed"
+    )
+
+
+def test_format_progress_empty_set():
+    assert (
+        format_review_progress(ReviewProgress(index=0, total=0, reviewed=0))
+        == "No items to review"
+    )

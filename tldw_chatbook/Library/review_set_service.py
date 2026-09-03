@@ -354,6 +354,16 @@ class ReviewSetService:
                 (timestamp, timestamp, set_id),
             )
 
+    def deactivate_active(self) -> None:
+        """Deactivate the active set ("Exit review"), keeping it resumable.
+
+        task-28241: distinct from ``dismiss`` -- the set is not deleted, it just
+        stops being the one the Reader walks; a later ``activate`` resumes it at
+        its saved cursor. A no-op when nothing is active.
+        """
+        with self._db.transaction() as conn:
+            self._deactivate_all(conn, self._now())
+
     # -- internals ------------------------------------------------------------
 
     def _read_review_set(
