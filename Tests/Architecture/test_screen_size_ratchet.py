@@ -162,7 +162,31 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # docstring for the full per-name accounting and its own exclusion
     # reasoning, which is where that reasoning lives, NOT as inline
     # comments on the 29 untouched screen methods themselves).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43432, 1282),
+    # Wave-2 task 4 (export series 3/3, cleanup PR): 43432/1282 -> 43413/1281.
+    # The Task-2-generated export-state shim block (13 properties) is
+    # deleted wholesale; every remaining screen-side `_library_export_*`
+    # field reference (42 literal `self._library_export_<field>` sites, an
+    # AST-driven mechanical pass) is retargeted to
+    # `self._export_state.<field>`, including a dynamic-dispatch site
+    # (`_library_open_choice_strip`/`_close_open_library_choice_strip`'s
+    # visibility-attr string, one of the four converged choice-strip
+    # destinations) via the recipe's own dotted-vs-flat `operator.attrgetter`
+    # passthrough helper (already installed by the conversations exemplar's
+    # Task 9). Exactly ONE of the 22 screen delegators
+    # (`_library_export_is_server_mode`) had zero references anywhere
+    # outside its own one-line body (a repo-wide census; the other 21 all
+    # have a genuine production caller -- mostly the round-2/round-3
+    # screen-resident siblings task 3 excluded -- or a direct test call) and
+    # was pruned: exactly 1 fewer `FunctionDef`, matching the method-count
+    # drop 1-for-1. 5 named dead imports pruned
+    # (`LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP`, `MEDIA_QUALITY_OPTIONS`,
+    # `count_export_scope`, `default_export_name`,
+    # `normalize_export_destination`), each confirmed single-occurrence and
+    # not a member of any `_SURFACE`-shaped re-export contract in
+    # `Tests/Architecture/test_library_support_layer_surface.py` first (the
+    # conversations exemplar's own "dead within this file is not the same
+    # question as dead" lesson).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43413, 1281),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

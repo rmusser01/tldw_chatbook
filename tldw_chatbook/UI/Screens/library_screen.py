@@ -122,17 +122,13 @@ from ...Library.library_conversation_reader_state import (
 )
 from ...Library.library_export_scope import (
     ExportScope,
-    count_export_scope,
     resolve_export_selections,
 )
 from ...Library.library_export_state import (
     DEFAULT_MEDIA_QUALITY,
-    MEDIA_QUALITY_OPTIONS,
     LibraryExportFormState,
     build_library_export_form_state,
-    default_export_name,
     format_last_export_line,
-    normalize_export_destination,
 )
 from ...Widgets.Library.library_export_canvas import (
     apply_library_export_submit_gate,
@@ -383,7 +379,6 @@ from ...Library.library_shell_state import (
     LIBRARY_DELETE_SELECTED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
-    LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP,
     LIBRARY_ROW_BROWSE_COLLECTIONS,
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
@@ -865,6 +860,16 @@ def _assign_library_reader_preferences_attribute(
     destination -- so the six not-yet-extracted subsystems are unaffected.
     Future subsystem extractions hit this exact same shape; this helper is
     meant to keep serving them, not to be re-derived per subsystem.
+
+    Second use, added by Task 4 (Export cleanup): ``_close_open_library_
+    choice_strip`` dispatches across a DIFFERENT dict-of-name-strings
+    (media/prompts/skills/export choice-strip visibility, built by
+    ``_library_open_choice_strip``) with the identical possibly-dotted-path
+    shape -- Export's own visibility field moved to ``self._export_state.
+    quality_choices_visible`` (Task 2/4), while media/prompts/skills keep
+    flat screen attributes, so the same generic dotted-vs-flat passthrough
+    this docstring already describes serves that dispatcher too, without a
+    second near-identical helper.
     """
     head, _, tail = attribute.rpartition(".")
     target = operator.attrgetter(head)(owner) if head else owner
@@ -3469,7 +3474,7 @@ class LibraryScreen(BaseAppScreen):
             if self._library_open_choice_strip() is not None:
                 return (("enter", "choose quality"), ("esc", "cancel"))
             origin_label = _LIBRARY_HELP_SURFACE_LABELS.get(
-                self._library_export_origin_row_id, ""
+                self._export_state.origin_row_id, ""
             )
             back_label = f"back to {origin_label}" if origin_label else "back to hub"
             return (
@@ -5080,7 +5085,7 @@ class LibraryScreen(BaseAppScreen):
             or self._library_skill_conflict
             or self._library_skill_confirming_delete
             or self._library_skill_more_actions_open
-            or self._library_export_running
+            or self._export_state.running
             or self._library_ingest_start_consent is not None
             or self._library_media_confirming_bulk_delete
             or self._library_media_bulk_delete_in_flight
@@ -9378,14 +9383,14 @@ class LibraryScreen(BaseAppScreen):
             )
         if (
             self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
-            and self._library_export_counts is None
+            and self._export_state.counts is None
         ):
             # Same restored-placeholder class as the media viewer/notes
             # editor above: a cross-visit ``restore_state`` (or a tab
             # round-trip whose ``save_state`` persisted
             # ``_library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT``)
             # lands a fresh instance on the export canvas with
-            # ``_library_export_counts is None`` -> the scope line renders
+            # ``_export_state.counts is None`` -> the scope line renders
             # "Counting…" and Export stays disabled. But the counts worker
             # is only kicked from the two LIVE entry points
             # (``_select_library_rail_row`` and
@@ -9665,8 +9670,8 @@ class LibraryScreen(BaseAppScreen):
         # task-2858 AC#3 (LIB-12): extend the receipt's durability past a
         # full navigate-away-and-back, not just within-instance canvas
         # switches (see the field's own ``__init__`` comment).
-        state["library_export_last_path"] = self._library_export_last_path
-        state["library_export_last_at"] = self._library_export_last_at
+        state["library_export_last_path"] = self._export_state.last_path
+        state["library_export_last_at"] = self._export_state.last_at
         return state
 
     @staticmethod
@@ -10134,11 +10139,11 @@ class LibraryScreen(BaseAppScreen):
         # (see the field's ``__init__`` comment) -- a foreign/corrupted
         # dict degrades to "no receipt yet" rather than raising.
         last_export_path = state.get("library_export_last_path")
-        self._library_export_last_path = (
+        self._export_state.last_path = (
             last_export_path if isinstance(last_export_path, str) else ""
         )
         last_export_at = state.get("library_export_last_at")
-        self._library_export_last_at = (
+        self._export_state.last_at = (
             float(last_export_at)
             if isinstance(last_export_at, (int, float))
             and not isinstance(last_export_at, bool)
@@ -19716,9 +19721,6 @@ class LibraryScreen(BaseAppScreen):
     async def _open_library_export_canvas(self, scope: ExportScope) -> None:
         return await self._export_controller._open_library_export_canvas(scope)
 
-    def _library_export_is_server_mode(self) -> bool:
-        return self._export_controller._library_export_is_server_mode()
-
     def _resolve_library_export_chachanotes_db(self) -> Any:
         return self._export_controller._resolve_library_export_chachanotes_db()
 
@@ -19738,9 +19740,9 @@ class LibraryScreen(BaseAppScreen):
         A real (file-backed) deployment always takes the
         ``group="library_export_counts"`` worker-thread path.
         """
-        self._library_export_counts_request_id += 1
-        request_id = self._library_export_counts_request_id
-        scope = self._library_export_scope
+        self._export_state.counts_request_id += 1
+        request_id = self._export_state.counts_request_id
+        scope = self._export_state.scope
         generation = self._library_snapshot_state_generation
         route_key = self._library_entry_route_key()
         media_db = getattr(self.app_instance, "media_db", None)
@@ -19863,9 +19865,9 @@ class LibraryScreen(BaseAppScreen):
                 "prompts").
             request_id: Monotonic identity of the Export visit/count request.
         """
-        if request_id != self._library_export_counts_request_id:
+        if request_id != self._export_state.counts_request_id:
             return LibraryEntryReconcileResult.SUPERSEDED
-        if scope != self._library_export_scope:
+        if scope != self._export_state.scope:
             return LibraryEntryReconcileResult.SUPERSEDED
         if (
             generation is not None
@@ -19893,7 +19895,7 @@ class LibraryScreen(BaseAppScreen):
         active_route_key = self._library_entry_route_key()
         if not self._library_entry_reconcile_is_current(generation, active_route_key):
             return LibraryEntryReconcileResult.SUPERSEDED
-        self._library_export_counts = counts
+        self._export_state.counts = counts
         state = self._build_library_export_state()
         try:
             canvas = self.query_one("#library-export-canvas", LibraryExportCanvas)
@@ -19927,28 +19929,28 @@ class LibraryScreen(BaseAppScreen):
 
     def _build_library_export_state(self) -> LibraryExportFormState:
         """Build the export canvas's full display state from screen fields."""
-        form = self._library_export_form
+        form = self._export_state.form
         last_export_line = (
             format_last_export_line(
-                self._library_export_last_path, self._library_export_last_at
+                self._export_state.last_path, self._export_state.last_at
             )
-            if self._library_export_last_path
-            and self._library_export_last_at is not None
+            if self._export_state.last_path
+            and self._export_state.last_at is not None
             else ""
         )
         return build_library_export_form_state(
-            scope=self._library_export_scope,
-            counts=self._library_export_counts,
+            scope=self._export_state.scope,
+            counts=self._export_state.counts,
             name=str(form.get("name", "")),
             description=str(form.get("description", "")),
             media_quality=str(form.get("quality", DEFAULT_MEDIA_QUALITY)),
             destination=str(form.get("destination", "")),
             destination_exists=bool(form.get("destination_exists", False)),
-            running=self._library_export_running,
-            status_line=self._library_export_status,
-            error_line=self._library_export_error,
+            running=self._export_state.running,
+            status_line=self._export_state.status,
+            error_line=self._export_state.error,
             last_export_line=last_export_line,
-            quality_choices_visible=self._library_export_quality_choices_visible,
+            quality_choices_visible=self._export_state.quality_choices_visible,
         )
 
     # ----- Export canvas: execution (Task 3) ------------------------------
@@ -19962,18 +19964,18 @@ class LibraryScreen(BaseAppScreen):
         """Request cancellation of the in-flight export.
 
         Sets the worker's cancel Event (idempotent) and flips the status line to
-        "Cancelling…". Deliberately does NOT bump _library_export_run_id: the run
+        "Cancelling…". Deliberately does NOT bump _export_state.run_id: the run
         is still the current, visible one until the worker reports back with the
         cancelled outcome (see _apply_library_export_cancelled).
         """
-        if not self._library_export_running:
+        if not self._export_state.running:
             return
         if event is not None:
             event.stop()
-        event_obj = self._library_export_cancel_event
+        event_obj = self._export_state.cancel_event
         if event_obj is not None:
             event_obj.set()
-        self._library_export_status = "Cancelling…"
+        self._export_state.status = "Cancelling…"
         self._refresh_library_export_status_line()
 
     def _start_library_export_worker(
@@ -20154,11 +20156,11 @@ class LibraryScreen(BaseAppScreen):
 
     def _apply_library_export_cancelled(self, run_id: int) -> None:
         """UI-thread completion for a cancelled run: clear running, show cancelled, return to form."""
-        if run_id != self._library_export_run_id:
+        if run_id != self._export_state.run_id:
             return
-        self._library_export_running = False
-        self._library_export_status = "Export cancelled."
-        self._library_export_error = ""
+        self._export_state.running = False
+        self._export_state.status = "Export cancelled."
+        self._export_state.error = ""
         self._sync_library_emergency_guard_presentation()
         self._update_library_export_canvas_after_run()
 
@@ -20193,15 +20195,15 @@ class LibraryScreen(BaseAppScreen):
         would otherwise never learn the artifact is missing from
         Artifacts.
 
-        ``run_id`` is compared against the live ``_library_export_run_id``
+        ``run_id`` is compared against the live ``_export_state.run_id``
         BEFORE any state/DOM mutation: an export genuinely finished, so the
         notifications always fire, but a run the user has since navigated
-        away from (see ``_library_export_run_id``'s docstring) must not
-        stomp ``_library_export_running``/``_error``/``_status`` or the
+        away from (see ``_export_state.run_id``'s docstring, ``LibraryExportState``)
+        must not stomp ``_export_state.running``/``.error``/``.status`` or the
         canvas DOM out from under whatever the user is now looking at.
 
         The task-2858 AC#3 (LIB-12) receipt fields
-        (``_library_export_last_path``/``_last_at``) are set here too,
+        (``_export_state.last_path``/``.last_at``) are set here too,
         BEFORE the staleness guard, for the identical reason the
         notifications above are unconditional: the zip genuinely landed on
         disk regardless of which run/canvas is currently displayed. The
@@ -20225,13 +20227,13 @@ class LibraryScreen(BaseAppScreen):
                     "appear under Artifacts.",
                     severity="warning",
                 )
-        self._library_export_last_path = str(path)
-        self._library_export_last_at = time.time()
-        if run_id != self._library_export_run_id:
+        self._export_state.last_path = str(path)
+        self._export_state.last_at = time.time()
+        if run_id != self._export_state.run_id:
             return
-        self._library_export_running = False
-        self._library_export_error = ""
-        self._library_export_status = ""
+        self._export_state.running = False
+        self._export_state.error = ""
+        self._export_state.status = ""
         self._sync_library_emergency_guard_presentation()
         self._update_library_export_canvas_after_run()
 
@@ -20242,9 +20244,9 @@ class LibraryScreen(BaseAppScreen):
         self, run_id: int, phase: str, current: int, total: int
     ) -> None:
         """UI-thread progress tick: update the status line in place if this run is current."""
-        if run_id != self._library_export_run_id or not self._library_export_running:
+        if run_id != self._export_state.run_id or not self._export_state.running:
             return
-        self._library_export_status = format_export_progress_line(phase, current, total)
+        self._export_state.status = format_export_progress_line(phase, current, total)
         self._refresh_library_export_status_line()
 
     def _refresh_library_export_status_line(self) -> None:
@@ -20289,7 +20291,7 @@ class LibraryScreen(BaseAppScreen):
             error_widget.update(state.error_line)
             error_widget.display = bool(state.error_line)
             # task-2858 AC#3 (LIB-12): the durable receipt -- rendered from
-            # ``_library_export_last_path``/``_last_at``, set by
+            # ``_export_state.last_path``/``.last_at``, set by
             # ``_apply_library_export_success`` just before this runs on a
             # genuine success completion.
             last_export_widget = self.query_one("#library-export-last-line", Static)
@@ -23350,7 +23352,7 @@ class LibraryScreen(BaseAppScreen):
         # task-4023 AC#7: a plain rail switch is a fresh entry -- only
         # ``_open_library_export_canvas`` (which bypasses this seam) may
         # arm an Export back-origin.
-        self._library_export_origin_row_id = ""
+        self._export_state.origin_row_id = ""
         # task-420: keep the footer's "u" hint in sync with the row gate.
         self._register_footer_shortcuts()
         self._library_notes_explicit_stage_intent = row_id in {
@@ -31397,12 +31399,12 @@ class LibraryScreen(BaseAppScreen):
             )
         if (
             self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
-            and self._library_export_quality_choices_visible
+            and self._export_state.quality_choices_visible
         ):
             return (
                 "quality",
                 "#library-export-quality",
-                "_library_export_quality_choices_visible",
+                "_export_state.quality_choices_visible",
             )
         return None
 
@@ -31417,13 +31419,13 @@ class LibraryScreen(BaseAppScreen):
         if open_strip is None:
             return False
         _subject, opener_selector, visibility_attr = open_strip
-        setattr(self, visibility_attr, False)
+        _assign_library_reader_preferences_attribute(self, visibility_attr, False)
         self._sync_library_emergency_guard_presentation()
         canvas_kind = {
             "_library_media_type_choices_visible": "media",
             "_library_prompts_sort_choices_visible": "prompts",
             "_library_skills_sort_choices_visible": "skills",
-            "_library_export_quality_choices_visible": "export",
+            "_export_state.quality_choices_visible": "export",
         }[visibility_attr]
         _sync_library_canvas(
             self,
@@ -43408,25 +43410,3 @@ LibraryConversationsController._safe_text = staticmethod(LibraryScreen._safe_tex
 # overwrites a same-named property, so there is deliberately no separate
 # per-instance constructor-dependency for `_safe_text` here either).
 LibraryExportController._safe_text = staticmethod(LibraryScreen._safe_text)
-
-# --- BEGIN generated export-state shims (delete wholesale at cleanup) ---
-# wave-2 task 2: keeps every original `_library_export_<field>` name
-# working as a property over `self._export_state`; attached programmatically
-# so the class body gains no FunctionDefs (the size ratchet counts those).
-# Every export field uses the same `_library_export_` prefix -- the
-# ownership analysis found no field needing a plural variant (see
-# LibraryConversationsState's own shim block for that pattern, and the
-# task-2 report's ownership table for why export never needed it).
-for _es_field in dataclasses.fields(LibraryExportState):
-    setattr(
-        LibraryScreen,
-        "_library_export_" + _es_field.name,
-        property(
-            lambda self, _n=_es_field.name: getattr(self._export_state, _n),
-            lambda self, value, _n=_es_field.name: setattr(
-                self._export_state, _n, value
-            ),
-        ),
-    )
-del _es_field
-# --- END generated export-state shims ---

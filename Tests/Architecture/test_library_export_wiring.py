@@ -1,13 +1,23 @@
 """Export extraction series: state object + controller are screen-wired.
 
-Wave-2 Task 2 (state PR) and Task 3 (controller PR, export series 2/3;
-recipe: backlog/docs/library-decomposition-recipe.md; conversations series
-precedent: Tests/Architecture/test_library_conversations_wiring.py). Task 2's
-single assertion (every LibraryExportState field has a matching generated
-property shim on LibraryScreen, under the single `_library_export_` prefix
-every export field uses) is unchanged below; Task 3 adds the full-cluster
-controller-ownership and same-name-delegator-forwarding checks, mirroring
-`_BROWSE_CLUSTER_METHOD_NAMES`'s shape in the conversations wiring test.
+Wave-2 Task 2 (state PR), Task 3 (controller PR), and Task 4 (cleanup PR --
+export series 3/3; recipe: backlog/docs/library-decomposition-recipe.md;
+conversations series precedent: Tests/Architecture/test_library_conversations_
+wiring.py). Task 2's own screen-shim assertion
+(`test_state_object_fields_match_the_shim_surface`) is GONE as of Task 4:
+the screen's generated `_library_export_<field>` property shim block was
+deleted wholesale in cleanup (`self._export_state` is a real
+`LibraryExportState` instance now, not a shimmed screen attribute), so
+there is nothing left on `LibraryScreen` for that assertion to check --
+exactly the conversations exemplar's own Task 9 precedent (see that
+controller module's `test_reader_controller_exposes_every_state_field`
+docstring). `test_export_controller_exposes_every_state_field` below
+already covers the equivalent job on the controller side and needed no
+change. Task 3's full-cluster controller-ownership and same-name-
+delegator-forwarding checks are unchanged in shape; Task 4 adds the
+`_EXPORT_CLUSTER_SCREEN_DELEGATOR_PRUNED` skip/absence-assertion pair to
+`test_screen_delegates_export_handlers`, mirroring
+`_BROWSE_CLUSTER_SCREEN_DELEGATOR_PRUNED` in the conversations wiring test.
 """
 from __future__ import annotations
 
@@ -20,19 +30,6 @@ import pytest
 from tldw_chatbook.UI.Library_Modules.library_export_state import (
     LibraryExportState,
 )
-
-
-@pytest.mark.unit
-def test_state_object_fields_match_the_shim_surface() -> None:
-    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
-
-    field_names = {f.name for f in dataclasses.fields(LibraryExportState)}
-    assert field_names, "state object is empty"
-    for name in field_names:
-        shim = getattr(LibraryScreen, "_library_export_" + name, None)
-        assert isinstance(shim, property), (
-            f"no screen shim property found for state field {name!r}"
-        )
 
 
 #: Every method Task 3 moved into `LibraryExportController`, under its
@@ -94,6 +91,24 @@ _EXPORT_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "_apply_library_export_destination",
 )
 
+#: Task 4 cleanup: `_library_export_is_server_mode` has ZERO references
+#: anywhere except its own one-line screen delegator (checked via a
+#: repo-wide census across `tldw_chatbook/` and `Tests/`) -- every call is
+#: either the controller's own internal `self._library_export_is_server_
+#: mode()` (twice, both moved-body-internal) or the now-deleted screen
+#: delegator itself; nothing outside the controller ever called
+#: `screen._library_export_is_server_mode()`. Its screen delegator was
+#: deleted as dead weight; the name remains in
+#: `_EXPORT_CLUSTER_METHOD_NAMES` above (the controller still genuinely
+#: owns and uses it) but is excluded from the delegation-forwarding check
+#: below, same shape as the conversations exemplar's own
+#: `_BROWSE_CLUSTER_SCREEN_DELEGATOR_PRUNED` (Task 9).
+_EXPORT_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
+    {
+        "_library_export_is_server_mode",
+    }
+)
+
 #: The 5 names above that are `@staticmethod`s on `LibraryScreen`. Their
 #: delegators forward straight to the module-level `LibraryExportController`
 #: CLASS (per task-8-report.md's "static-method delegator pattern"
@@ -139,6 +154,12 @@ def test_screen_delegates_export_handlers() -> None:
     Mirrors `test_screen_delegates_browse_handlers` in the conversations
     wiring test: a same-name forwarding check, not a loose "the controller
     is referenced somewhere" substring check.
+
+    Skips `_EXPORT_CLUSTER_SCREEN_DELEGATOR_PRUNED` (Task 4 deleted that
+    1 screen delegator as dead weight -- zero external references) and
+    instead asserts that name is genuinely ABSENT from `LibraryScreen`, so
+    a future accidental re-add would fail loudly here rather than silently
+    reintroducing dead code.
     """
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
     from tldw_chatbook.UI.Library_Modules.library_export_controller import (
@@ -147,6 +168,13 @@ def test_screen_delegates_export_handlers() -> None:
 
     not_delegators = []
     for name in _EXPORT_CLUSTER_METHOD_NAMES:
+        if name in _EXPORT_CLUSTER_SCREEN_DELEGATOR_PRUNED:
+            assert getattr(LibraryScreen, name, None) is None, (
+                f"{name!r} was pruned from the screen (task 4) but is back -- "
+                "either wire it as a delegator again or drop it from "
+                "_EXPORT_CLUSTER_SCREEN_DELEGATOR_PRUNED"
+            )
+            continue
         method = getattr(LibraryScreen, name, None)
         if method is None:
             not_delegators.append(f"{name!r} (missing entirely)")

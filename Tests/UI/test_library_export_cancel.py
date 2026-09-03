@@ -16,43 +16,54 @@ from tldw_chatbook.Library.library_export_scope import ExportScope
 def test_cancel_apply_ignores_stale_run():
     calls = []
     fake = SimpleNamespace(
-        _library_export_run_id=9,
-        _library_export_running=True,
-        _library_export_status="Packaging archive…  1/5",
-        _library_export_error="x",
+        # Task 4 cleanup: the screen's flat `_library_export_<field>` shim
+        # is gone -- `_apply_library_export_cancelled`'s body now reads
+        # `self._export_state.<field>`, so this fake nests its export
+        # fields under `_export_state` (recipe §11's "unbound fake-self"
+        # retarget precedent).
+        _export_state=SimpleNamespace(
+            run_id=9,
+            running=True,
+            status="Packaging archive…  1/5",
+            error="x",
+        ),
         _update_library_export_canvas_after_run=lambda: calls.append("update"),
     )
     LibraryScreen._apply_library_export_cancelled(fake, 4)  # 4 != 9
-    assert fake._library_export_running is True
+    assert fake._export_state.running is True
     assert calls == []
 
 
 def test_cancel_apply_current_run_sets_cancelled_status():
     calls = []
     fake = SimpleNamespace(
-        _library_export_run_id=9,
-        _library_export_running=True,
-        _library_export_status="Packaging archive…  1/5",
-        _library_export_error="x",
+        _export_state=SimpleNamespace(
+            run_id=9,
+            running=True,
+            status="Packaging archive…  1/5",
+            error="x",
+        ),
         _update_library_export_canvas_after_run=lambda: calls.append("update"),
     )
     LibraryScreen._apply_library_export_cancelled(fake, 9)
-    assert fake._library_export_running is False
-    assert fake._library_export_status == "Export cancelled."
-    assert fake._library_export_error == ""
+    assert fake._export_state.running is False
+    assert fake._export_state.status == "Export cancelled."
+    assert fake._export_state.error == ""
     assert calls == ["update"]
 
 
 def test_cancel_handler_sets_event():
     fake = SimpleNamespace(
-        _library_export_cancel_event=threading.Event(),
-        _library_export_running=True,
-        _library_export_status="",
+        _export_state=SimpleNamespace(
+            cancel_event=threading.Event(),
+            running=True,
+            status="",
+        ),
         _refresh_library_export_status_line=lambda: None,
     )
     LibraryScreen.handle_library_export_cancel(fake, None)
-    assert fake._library_export_cancel_event.is_set()
-    assert fake._library_export_status == "Cancelling…"
+    assert fake._export_state.cancel_event.is_set()
+    assert fake._export_state.status == "Cancelling…"
 
 
 @pytest.mark.asyncio

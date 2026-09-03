@@ -81,11 +81,13 @@ that same well-covered submit/counts/destination/note/prompt pipeline
 own 34 private helpers) and are not individually re-pinned here.
 
 Every test below drives the screen only through DOM queries/presses and
-public screen attributes (the pre-extraction ``_library_export_*`` names,
-which the state PR's generated property shim keeps resolving identically),
-per the recipe's byte-for-byte move discipline, so each keeps working
-unmodified once the export series' controller PR relocates the method
-bodies.
+public screen attributes -- originally the pre-extraction ``_library_
+export_*`` names, kept resolving identically by the state PR's generated
+property shim through the controller PR (Task 3), and retargeted to
+``screen._export_state.<field>`` by Task 4's cleanup PR once that shim was
+deleted (recipe §1's "Test retarget" step: assertions unchanged
+byte-for-byte, only the receiver path moved). The pinned BEHAVIOR these
+tests characterize is unaffected by that retarget.
 """
 
 from __future__ import annotations
@@ -191,7 +193,7 @@ async def test_cancel_button_press_sets_the_cancel_event_and_settles_cancelled(
         await _wait_for_selector(screen, pilot, "#library-export-destination")
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_export_counts is not None,
+            lambda: screen._export_state.counts is not None,
             message="Export counts never landed.",
         )
         screen.refresh(recompose=True)
@@ -206,8 +208,8 @@ async def test_cancel_button_press_sets_the_cancel_event_and_settles_cancelled(
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_export_running is True
-        cancel_event = screen._library_export_cancel_event
+        assert screen._export_state.running is True
+        cancel_event = screen._export_state.cancel_event
         assert cancel_event is not None and not cancel_event.is_set()
 
         cancel_button = screen.query_one("#library-export-cancel", Button)
@@ -215,20 +217,20 @@ async def test_cancel_button_press_sets_the_cancel_event_and_settles_cancelled(
         await pilot.pause()
 
         assert cancel_event.is_set()
-        assert screen._library_export_status == "Cancelling…"
+        assert screen._export_state.status == "Cancelling…"
         status_widget = screen.query_one("#library-export-status-line", Static)
         assert str(status_widget.renderable) == "Cancelling…"
 
         gate.set()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_export_running is False,
+            lambda: screen._export_state.running is False,
             message="Cancelled export never settled.",
         )
         await pilot.pause()
 
-        assert screen._library_export_status == "Export cancelled."
-        assert screen._library_export_error == ""
+        assert screen._export_state.status == "Export cancelled."
+        assert screen._export_state.error == ""
         assert len(service.export_calls) == 1
 
 
@@ -261,7 +263,7 @@ async def test_description_input_updates_the_export_form_state() -> None:
         await pilot.pause()
 
         assert description_input.value == "quarterly bundle"
-        assert screen._library_export_form["description"] == "quarterly bundle"
+        assert screen._export_state.form["description"] == "quarterly bundle"
 
 
 @pytest.mark.asyncio
@@ -299,10 +301,10 @@ async def test_export_selected_conversations_opens_export_canvas_scoped_to_the_s
         )
         await pilot.pause()
 
-        assert screen._library_export_scope == ExportScope(
+        assert screen._export_state.scope == ExportScope(
             kind="conversations", ids=("chat-1",)
         )
-        assert screen._library_export_origin_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+        assert screen._export_state.origin_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
 
 
 @pytest.mark.asyncio
@@ -349,10 +351,10 @@ async def test_export_selected_media_opens_export_canvas_scoped_to_the_selection
         )
         await pilot.pause()
 
-        assert screen._library_export_scope == ExportScope(
+        assert screen._export_state.scope == ExportScope(
             kind="media", ids=(expected_id,)
         )
-        assert screen._library_export_origin_row_id == LIBRARY_ROW_BROWSE_MEDIA
+        assert screen._export_state.origin_row_id == LIBRARY_ROW_BROWSE_MEDIA
 
 
 @pytest.mark.asyncio

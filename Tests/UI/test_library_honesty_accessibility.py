@@ -1223,8 +1223,9 @@ async def test_compact_presentation_keeps_marker_and_retiers_the_stash():
 
 # ---------------------------------------------------------------------------
 # AC#7 follow-up (whole-branch review M-A): the rail-switch export-origin
-# clear (`_select_library_rail_row`'s `_library_export_origin_row_id = ""`)
-# had zero coverage -- mutating it to a no-op left the full honesty file
+# clear (`_select_library_rail_row`'s `_export_state.origin_row_id = ""`,
+# `_library_export_origin_row_id` pre-Task-4-cleanup) had zero coverage --
+# mutating it to a no-op left the full honesty file
 # green. The escape pin's rail-entry leg only reaches the rail AFTER
 # `action_library_export_back` already cleared the origin, so the guarded
 # path (Export-from-Media -> rail-switch AWAY -> rail-enter Export fresh)
@@ -1265,7 +1266,7 @@ async def test_rail_entry_to_export_after_media_origin_does_not_claim_media():
         await _wait_for_selector(screen, pilot, "#library-media-export")
         screen.query_one("#library-media-export", Button).press()
         await _wait_for_selector(screen, pilot, "#library-export-submit")
-        assert screen._library_export_origin_row_id == LIBRARY_ROW_BROWSE_MEDIA
+        assert screen._export_state.origin_row_id == LIBRARY_ROW_BROWSE_MEDIA
 
         # Rail-switch AWAY (a plain route boundary, not Export's own back).
         screen.query_one("#library-row-browse-notes", Button).press()

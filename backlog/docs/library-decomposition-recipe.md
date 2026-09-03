@@ -365,6 +365,17 @@ rediscover the same red from scratch.
   result, and should expect this shape to scale with how much a
   subsystem's tests favor unbound-`SimpleNamespace`/`Mock` unit-style
   calls over full-harness ones.
+- Wave-2 Task 4 (export cleanup PR) found 1 more, confirmed identical on a
+  `git stash -u` pristine baseline of the pre-task tree (same command,
+  isolated to the 3 files that carried it):
+  `Tests/UI/test_library_choice_strips.py::
+  test_media_type_strip_works_in_both_layouts` -- times out waiting for
+  the narrow-layout `library-notes-compact` CSS class within its 15s
+  budget; reproduces identically on both trees, consistent with the
+  machine-load-sensitive DOM-mount-timing flakiness this file's sibling
+  rows already describe, not a logic regression. Task 4's own field-
+  retarget pass touches none of this test's assertions or the media-type
+  choice-strip code path.
 
 ## 8. Subsystem order (spec, "Order of work")
 
@@ -591,3 +602,127 @@ loaded, making the property, its parameter, and its backing attribute
 dead code with a misleading docstring. The corrected version carries only
 the one class-level binding, documented in-place with this exact
 incident.
+
+## 12. The export series, as landed — the recipe's first non-exemplar rehearsal
+
+Export (churn 3, §8) is the first subsystem to run this recipe after the
+conversations exemplar wrote it. Its series (wave-2 tasks 2–4: state PR,
+controller PR, cleanup PR) is complete. This section records what actually
+landed and what the rehearsal changed or reconfirmed about the recipe
+above — read this before running the next subsystem (collections/search,
+also churn 6, per §8).
+
+### Fields/methods moved, per task
+
+| Task | PR | What moved | Screen delta |
+|---|---|---|---|
+| 2 | State | 13 fields → `LibraryExportState` (0 methods; a programmatic property-shim block, one prefix — no plural-name split needed, unlike Conversations) | 43965 → 43930 lines (net -35: the shim block added less than `__init__` lost, unlike the conversations exemplar's net-zero), 1282 methods (unchanged) |
+| 3 | Controller | 22 methods → `LibraryExportController` (of 51 "export"-named candidates: 18 belong to other subsystems, 2 excluded for a NEW bypass shape — "framework-decorator self-type assertion", `@work`'s `isinstance(self, DOMNode)` runtime assertion — and 9 excluded as unbound-fake-self/silent-Mock-auto-attribution, found only by running the battery) | 43930 → 43432 lines, 1282 methods (unchanged: pure move, 22 `FunctionDef`s out, 22 delegators in) |
+| 4 | Cleanup | Shim block (13 properties) deleted; every remaining screen-side field reference retargeted to `self._export_state.<field>` (42 literal `self._library_export_<field>` occurrences via one mechanical regex pass, AST-verified against the same census the conversations exemplar used, plus 1 dynamic-dispatch site — see below); 1 of the 22 screen delegators deleted (repo-wide census: zero references anywhere outside its own one-line body); 5 named dead imports removed, each verified single-occurrence and checked against `_SURFACE` first | 43432 → **43413 lines, 1281 methods** (1 fewer `FunctionDef` — exactly the 1 pruned delegator) |
+
+**Pin trajectory** (`_BUDGETS["tldw_chatbook/UI/Screens/library_screen.py"]`
+in `Tests/Architecture/test_screen_size_ratchet.py`):
+`43965/1282 → 43930/1282 → 43432/1282 → 43413/1281` (final).
+
+**22 screen delegators, not 51 methods**: the 51-method naive census
+(matching name substring `"export"`) is the same trap §2's `startswith`
+lesson warns about, applied to methods instead of fields — Task 3's own
+report reads every one of the 51 bodies rather than trusting the name
+match, and finds only 22 genuinely Export-owned AND movable. Of those 22,
+**21 have a genuine external reference** (mostly the screen-resident
+round-2/round-3-excluded siblings calling back into the delegator, plus 5
+`@on` handlers and one `action_*`) and **1 had none**
+(`_library_export_is_server_mode`, reached only by the controller's own
+internal `self.<name>()` calls) and was deleted in the cleanup PR. This
+21-of-22 keep ratio is sharply higher than the conversations exemplar's
+43-of-61 (18 pruned) — not a sign of a shallower census, but a direct
+consequence of Export's own round-2/round-3 exclusions: 11 of the 51
+naive candidates stayed screen-resident specifically because a test or a
+framework decorator reaches them unbound, and every one of those 11
+still calls its sibling delegators internally (`self.<delegator_name>()`),
+which is exactly the shape that keeps a delegator alive. Conversations
+had no round-2/round-3-shaped exclusion class this large, so its moved
+cluster called itself controller-to-controller far more often, orphaning
+far more of the screen-side one-liners.
+
+### Lessons
+
+**A fourth bypass shape, new to this series: "framework-decorator
+self-type assertion".** Textual's `@work(...)` decorator wraps a method in
+a closure that asserts `isinstance(self, DOMNode)` at CALL time (read from
+`textual/_work_decorator.py` via `inspect.getsource`, not assumed). A
+plain controller object is not a `DOMNode`, so a moved `@work`-decorated
+method would raise `AssertionError` on every call, not just under test —
+this is not a test-bypass shape at all, but a permanent runtime contract
+the framework itself enforces. Two methods
+(`_run_library_export_counts_worker`, `_run_library_export_worker`) stay
+on `LibraryScreen`, UNMOVED, decorator and body byte-for-byte untouched.
+Add this to recipe §3's catalogue alongside the class-level monkeypatch
+and the conversations exemplar's three: **before moving any `@work`- (or
+similarly self-type-asserting-decorator-)wrapped method, read the
+decorator's own source**, not just its name, to confirm it does not bind
+`self` to a concrete type the target controller cannot satisfy.
+
+**The "unbound fake-self" bypass shape scales with a subsystem's test
+style, sometimes far past the exemplar's own precedent — and can require
+widening the sweep root.** Conversations' Task 8 found 5 methods reached
+this way, in one test file, entirely within `Tests/UI/`. Export's Task 3
+found 9, across SIX test files, FOUR of them in `Tests/Library/` — a
+directory the recipe's own canonical `-k "library"`/`-k "export and
+library"` sweep commands do not cover by default (they scope to
+`Tests/UI`). None of the 9 were caught by static analysis (free-name
+resolution, byte-for-byte diff, or a read of the moved bodies); every one
+surfaced only by running the verification battery and reading a
+traceback. **Any future subsystem's controller-PR battery should
+deliberately widen its `-k` search beyond `Tests/UI` before trusting a
+clean result** — this recipe's §7 sweep-command documentation has been
+updated with this forward note since Task 3 landed; Task 4's cleanup
+confirmed the same 2 files needed touching again for the field-level
+retarget (`Tests/Library/test_library_export_execution.py`,
+`Tests/Library/test_library_export_roundtrip.py`).
+
+**The dynamic-dispatch bypass shape (recipe §11 lesson 3, generalized) can
+share ONE helper across two unrelated dispatch mechanisms.** Export's
+cleanup found exactly one dynamic-dispatch site touching its own state:
+`_library_open_choice_strip`/`_close_open_library_choice_strip` (a
+FOUR-subsystem-shared, not Export-exclusive, converged Escape-handler)
+returns/consumes a visibility-attribute NAME as a plain string, resolved
+with `setattr(self, visibility_attr, False)`. Media/Prompts/Skills still
+keep flat screen attributes for their own visibility fields; only
+Export's moved to `self._export_state.quality_choices_visible` (Task 2).
+Rather than write a SECOND `_assign_...attribute(owner, path, value)`
+helper duplicating the shape, this task reused the conversations
+exemplar's own `_assign_library_reader_preferences_attribute` (already a
+generic dotted-vs-flat passthrough, `owner`/`attribute`/`value` in shape,
+with no reader-preferences-specific logic in its body) for the SECOND,
+unrelated call site, extending its docstring to document both callers
+rather than asserting the reuse silently. **Before writing a new
+`_assign_...attribute` helper for a newly-found dynamic-dispatch site,
+check whether an existing one is already fully generic in behavior** — the
+shape (write through a possibly-dotted path, flat-name passthrough
+otherwise) is likely to recur exactly, and one documented helper serving
+two call sites beats two near-identical ones.
+
+**The screen-shim wiring test's own retirement, confirmed a second time.**
+The state PR's `test_state_object_fields_match_the_shim_surface` (pinning
+that every `LibraryExportState` field has a matching generated property
+shim on `LibraryScreen`) was deleted wholesale in the cleanup PR, exactly
+as the conversations exemplar's Task 9 first established for
+`LibraryConversationsState`'s equivalent test — there is nothing left on
+the screen for that assertion to check once the shim block is gone. The
+controller-side `test_export_controller_exposes_every_state_field`
+(already added in Task 3, unchanged by Task 4) covers the equivalent job
+from the surviving side. Any future subsystem's state-PR wiring test
+should expect its own screen-shim-surface assertion to be a cleanup-PR
+deletion, not a retarget, from the day it's written.
+
+**Sweep evidence came back cleaner than the exemplar's own, not worse.**
+The full xdist paired-baseline sweep (recipe §7) found **zero**
+branch-unique failures this time (329 shared with the pristine baseline,
+2 baseline-unique — noise in the opposite direction) — cleaner than the
+conversations exemplar's own 5+4 split. This is not evidence the sweep
+step is skippable for a "small" cleanup PR: the field-retarget pass
+touched 13 test files and one dynamic-dispatch site shared across four
+subsystems, any one of which could plausibly have broken something the
+narrower `-k` checks don't cover. The sweep is the check that would have
+caught it if it had.

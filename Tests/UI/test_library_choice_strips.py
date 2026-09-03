@@ -446,7 +446,7 @@ async def test_export_quality_strip_opens_picks_and_second_press_closes():
         await pilot.pause()
         await pilot.pause()
         assert not screen.query("#library-export-quality-choices")
-        assert screen._library_export_form.get("quality", "thumbnail") == "thumbnail"
+        assert screen._export_state.form.get("quality", "thumbnail") == "thumbnail"
 
         # Reopen and pick directly: value + helper line update, strip closes.
         screen.query_one("#library-export-quality", Button).press()
@@ -460,7 +460,7 @@ async def test_export_quality_strip_opens_picks_and_second_press_closes():
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_export_form["quality"] == "original"
+        assert screen._export_state.form["quality"] == "original"
         assert not screen.query("#library-export-quality-choices")
         assert (
             str(screen.query_one("#library-export-quality", Button).label)
