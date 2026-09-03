@@ -76,7 +76,15 @@ def _literal(value: str | Text) -> Text:
 
 
 class DetailValueRow(Vertical):
-    """One label/value detail-pane field, with an editable affordance and error slot."""
+    """One label/value detail-pane field, with an editable affordance and error slot.
+
+    ``affordance=True`` makes the row post ``Activated`` on click OR Enter,
+    but Enter only ever reaches a widget that has focus: a caller that wants
+    an editable row to be keyboard-reachable (not just clickable) must also
+    pass ``can_focus=True`` (review finding 2, task-1-review.md) -- the two
+    flags are independent by design, so ``affordance=True`` alone is a
+    click-only, keyboard-unreachable row.
+    """
 
     class Activated(Message):
         """Posted when the row's affordance is triggered by click or Enter.
@@ -194,24 +202,27 @@ class DetailValueRow(Vertical):
 
         A dormant row (``affordance`` False) never intercepts the click --
         it bubbles up untouched, same as before this row had a handler at
-        all. An editable row owns the click either way; it only posts
-        ``Activated`` while no editor is open yet (once one is, focus has
-        already moved to the editor and this handler will not fire).
+        all. Only the activation case (no editor open yet) stops the event
+        and posts ``Activated``. Once an editor is open the row must NOT
+        stop the event -- review finding 1 (task-1-review.md): Textual only
+        resolves a BINDINGS-driven editor's own key/click handling once the
+        raw event bubbles unstopped up to ``App``, so an unconditional stop
+        here silently ate a mounted ``Select``'s Enter-to-open even though
+        that is `begin_edit`'s own named typical case. While editing, the
+        event passes through untouched and the editor/App own it.
         """
-        if not self._affordance:
+        if not self._affordance or self._editor is not None:
             return
         event.stop()
-        if self._editor is None:
-            self.post_message(self.Activated(self))
+        self.post_message(self.Activated(self))
 
     def _on_key(self, event: events.Key) -> None:
         """Activate on Enter -- see ``_on_click``."""
-        if event.key != "enter" or not self._affordance:
+        if event.key != "enter" or not self._affordance or self._editor is not None:
             return
         event.stop()
         event.prevent_default()
-        if self._editor is None:
-            self.post_message(self.Activated(self))
+        self.post_message(self.Activated(self))
 
     def begin_edit(self, editor: Widget) -> None:
         """Swap the read-only value for ``editor``, in place, and focus it.

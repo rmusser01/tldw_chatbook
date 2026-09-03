@@ -14,7 +14,7 @@ import pytest
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.css.query import NoMatches
-from textual.widgets import Input
+from textual.widgets import Input, Select
 from textual.widgets._collapsible import CollapsibleTitle
 
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
@@ -486,3 +486,36 @@ async def test_affordance_undims_to_the_value_color_when_the_row_has_focus():
         await pilot.pause()
         focused_luminance = _relative_luminance(_painted_color(app, affordance))
         assert focused_luminance == pytest.approx(value_luminance, abs=0.02)
+
+
+@pytest.mark.asyncio
+async def test_a_select_editor_mounted_via_begin_edit_still_opens_on_enter():
+    """Fix round 1, review finding 1 (task-1-review.md): an unconditional
+    `event.stop()`/`prevent_default()` in `_on_key`'s already-editing
+    branch silently ate a mounted `Select`'s own Enter-to-open binding
+    (`expanded` stayed `False`, verified against a bare `Select` which
+    does open). Textual only resolves a non-priority `BINDINGS` action
+    (`Select`'s `Binding("enter,down,space,up", "show_overlay")`) once the
+    raw `Key` event bubbles unstopped all the way up to `App` -- a
+    `DetailValueRow` ancestor stopping it broke the editor `begin_edit`'s
+    own docstring names as the typical case. This is the regression test
+    the review said would have caught it."""
+    row = DetailValueRow(
+        "Repeat", "Weekly", affordance=True, can_focus=True, id="row"
+    )
+    app = _RowHarness(row)
+    async with app.run_test(size=(40, 8)) as pilot:
+        select: Select[str] = Select(
+            [("Weekly", "weekly"), ("Daily", "daily")], id="editor"
+        )
+        row.begin_edit(select)
+        await pilot.pause()
+        assert app.focused is select
+        assert select.expanded is False
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert select.expanded is True, (
+            "Select's own Enter-to-open binding must still fire while it "
+            "is the row's open editor"
+        )
