@@ -8,7 +8,7 @@ import math
 import os
 import re
 from dataclasses import dataclass, fields, replace
-from typing import Callable, Mapping, Sequence, overload
+from typing import Callable, Literal, Mapping, Sequence, overload
 from urllib.parse import urlparse, urlunparse
 
 from tldw_chatbook.Chat.console_provider_support import (
@@ -30,6 +30,20 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
 from tldw_chatbook.Chat.provider_readiness import (
     get_provider_readiness,
     provider_config_key,
+)
+from tldw_chatbook.Chat.provider_catalog import provider_display_name
+from tldw_chatbook.Chat.provider_test_evidence import (
+    ConfigurationFacet,
+    ConfigurationIssueCode,
+    CredentialFacet,
+    CredentialSource,
+    EndpointFailureCategory,
+    EndpointFacet,
+    GenerationFailureCategory,
+    GenerationFacet,
+    ModelFacet,
+    ProviderDraftIdentity,
+    ProviderTestEvidence,
 )
 from tldw_chatbook.config import ProviderSettingsError, provider_settings_for_key
 from tldw_chatbook.model_capabilities import anthropic_model_rejects_disabled_thinking
@@ -81,6 +95,27 @@ INVALID_LLAMACPP_BASE_URL_COPY = (
 MODEL_OPTION_PLACEHOLDER_VALUES = frozenset({"none", "null"})
 TokenCounter = Callable[[Sequence[Mapping[str, str]], str, str], int]
 TokenLimitResolver = Callable[[str, str], int]
+ConsoleOperability = Literal["ready_to_send", "not_ready"]
+ConsoleSettingsBlockerCode = Literal[
+    "provider_missing",
+    "provider_unsupported",
+    "provider_configuration_invalid",
+    "endpoint_invalid",
+    "endpoint_not_saved",
+    "credential_missing",
+    "model_missing",
+    "endpoint_unreachable",
+]
+ConsoleSettingsRecoveryAction = Literal[
+    "select_provider",
+    "select_supported_provider",
+    "review_provider_settings",
+    "configure_endpoint",
+    "save_endpoint",
+    "configure_credential",
+    "select_model",
+    "retry_connection",
+]
 CONSOLE_MODEL_TOKEN_LIMITS = {
     "gpt-4": 8192,
     "gpt-4-32k": 32768,
@@ -307,11 +342,38 @@ class ConsoleSettingsOption:
 
 @dataclass(frozen=True)
 class ConsoleSettingsReadiness:
-    """Readiness copy for the currently selected Console settings."""
+    """Console operability plus independent provider-test evidence.
+
+    The first three fields retain their positional constructor contract for
+    existing callers. New callers should consume the typed fields instead of
+    inferring state from ``label`` or ``detail``.
+    """
 
     label: str
     detail: str
     native_send_supported: bool
+    operability: ConsoleOperability | None = None
+    blocker: ConsoleSettingsBlockerCode | None = None
+    recovery_action: ConsoleSettingsRecoveryAction | None = None
+    provider_display_name: str = ""
+    configuration: ConfigurationFacet = "incomplete"
+    configuration_issue: ConfigurationIssueCode | None = None
+    credential: CredentialFacet = "missing"
+    credential_source: CredentialSource = "none"
+    endpoint: EndpointFacet = "not_tested"
+    endpoint_category: EndpointFailureCategory | None = None
+    model: ModelFacet = "missing"
+    generation: GenerationFacet = "not_tested"
+    generation_category: GenerationFailureCategory | None = None
+
+    def __post_init__(self) -> None:
+        """Derive operability for legacy three-positional-argument callers."""
+        if self.operability is None:
+            object.__setattr__(
+                self,
+                "operability",
+                "ready_to_send" if self.native_send_supported else "not_ready",
+            )
 
 
 @dataclass(frozen=True)
@@ -931,8 +993,10 @@ def build_console_settings_readiness(
     app_config: Mapping[str, object],
     environ: Mapping[str, str] | None = None,
     native_provider_keys: set[str] | None = None,
+    evidence: ProviderTestEvidence | None = None,
+    current_identity: ProviderDraftIdentity | None = None,
 ) -> ConsoleSettingsReadiness:
-    """Build readiness copy without probing networks or mutating state."""
+    """Project one deterministic Console blocker and independent evidence."""
     identity = resolve_console_provider_identity(
         settings.provider,
         handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
@@ -943,88 +1007,143 @@ def build_console_settings_readiness(
 
     base_url = _string_value(settings.base_url)
     provider_settings = _provider_settings(app_config, provider_key)
+    readiness = get_provider_readiness(provider_key, app_config, environ=environ)
+    snapshot = readiness.snapshot(
+        selected_model=settings.model,
+        evidence=evidence,
+        current_identity=current_identity,
+    )
+    evidence_is_current = bool(
+        evidence is not None
+        and current_identity is not None
+        and evidence.identity == current_identity
+        and current_identity.provider_key == provider_key
+    )
+
+    credential_source: CredentialSource = "none"
     if (
+        current_identity is not None
+        and current_identity.provider_key == provider_key
+        and current_identity.credential_source != "none"
+    ):
+        credential_source = current_identity.credential_source
+    elif readiness.api_key_source:
+        credential_source = (
+            "environment"
+            if readiness.api_key_source.startswith("env:")
+            else "stored"
+        )
+
+    if not readiness.requires_api_key:
+        credential: CredentialFacet = "not_required"
+    elif evidence_is_current and evidence is not None:
+        credential = evidence.credential
+    elif credential_source != "none" or readiness.ready:
+        credential = "present_unverified"
+    else:
+        credential = "missing"
+
+    if evidence_is_current and evidence is not None:
+        generation: GenerationFacet = evidence.generation
+        generation_category = evidence.generation_category
+    elif evidence is not None:
+        generation = "changed_since_test"
+        generation_category = None
+    else:
+        generation = "not_tested"
+        generation_category = None
+
+    provider_supported = provider_key in supported_keys
+    execution_supported = provider_key in send_capable_keys
+    endpoint_invalid = bool(
         base_url
         and _is_url_based_provider(provider_key, provider_settings)
         and not _valid_base_url(provider_key, base_url)
-    ):
+    )
+    endpoint_not_saved = bool(
+        base_url
+        and not identity.uses_direct_llama_path
+        and _is_url_based_provider(provider_key, provider_settings)
+        and _endpoint_differs_for_provider(provider_key, base_url, provider_settings)
+    )
+    model_missing = normalize_console_model_value(settings.model) is None
+
+    blocker: ConsoleSettingsBlockerCode | None
+    recovery_action: ConsoleSettingsRecoveryAction | None
+    if not provider_key:
+        blocker, recovery_action = "provider_missing", "select_provider"
+    elif not provider_supported or not execution_supported:
+        blocker, recovery_action = (
+            "provider_unsupported",
+            "select_supported_provider",
+        )
+    elif endpoint_invalid:
+        blocker, recovery_action = "endpoint_invalid", "configure_endpoint"
+    elif endpoint_not_saved:
+        blocker, recovery_action = "endpoint_not_saved", "save_endpoint"
+    elif readiness.configuration_issue == "invalid_settings":
+        blocker, recovery_action = (
+            "provider_configuration_invalid",
+            "review_provider_settings",
+        )
+    elif credential == "missing":
+        blocker, recovery_action = "credential_missing", "configure_credential"
+    elif model_missing:
+        blocker, recovery_action = "model_missing", "select_model"
+    elif snapshot.endpoint == "unreachable":
+        blocker, recovery_action = "endpoint_unreachable", "retry_connection"
+    else:
+        blocker, recovery_action = None, None
+
+    native_send_supported = blocker is None
+    if blocker == "endpoint_invalid":
         detail = (
             INVALID_LLAMACPP_BASE_URL_COPY
             if provider_key in NATIVE_CONSOLE_PROVIDER_KEYS
             else "Provider blocked: invalid base URL. Use an http(s) URL."
         )
-        return ConsoleSettingsReadiness(
-            label="Invalid URL",
-            detail=detail,
-            native_send_supported=False,
-        )
-    if (
-        base_url
-        and not identity.uses_direct_llama_path
-        and _is_url_based_provider(provider_key, provider_settings)
-        and _endpoint_differs_for_provider(provider_key, base_url, provider_settings)
-    ):
-        return ConsoleSettingsReadiness(
-            label="Endpoint not saved",
-            detail=unsaved_endpoint_copy(base_url, provider_settings),
-            native_send_supported=False,
-        )
-
-    readiness = get_provider_readiness(provider_key, app_config, environ=environ)
-    provider_supported = provider_key in supported_keys
-    native_send_supported = provider_key in send_capable_keys and readiness.ready
-
-    if not provider_key:
-        # An unset provider is not an unsupported one: the template below
-        # would interpolate the empty key as "'' is not available in Console
-        # yet" (FR-07). Use the canonical no-provider readiness copy instead.
-        return ConsoleSettingsReadiness(
-            label="Unknown",
-            detail=readiness.user_message,
-            native_send_supported=False,
-        )
-
-    if not provider_supported:
-        return ConsoleSettingsReadiness(
-            label="Unknown",
-            detail=(
+        label = "Invalid URL"
+    elif blocker == "endpoint_not_saved":
+        label = "Endpoint not saved"
+        detail = unsaved_endpoint_copy(base_url, provider_settings)
+    elif blocker in {"provider_missing", "provider_unsupported"}:
+        label = "Unknown"
+        detail = readiness.user_message
+        if blocker == "provider_unsupported":
+            detail = (
                 f"Provider blocked: '{provider_key}' is not available in Console yet. "
                 "Choose a supported provider."
-            ),
-            native_send_supported=False,
-        )
-
-    if readiness.reason == "Unknown provider":
-        return ConsoleSettingsReadiness(
-            label="Unknown",
-            detail=readiness.user_message,
-            native_send_supported=False,
-        )
-
-    if readiness.ready:
-        if not native_send_supported:
-            return ConsoleSettingsReadiness(
-                label="Pending",
-                detail=f"Provider ready; Console send support is pending for '{provider_key}'.",
-                native_send_supported=False,
             )
-        return ConsoleSettingsReadiness(
-            label="Ready",
-            detail=readiness.user_message,
-            native_send_supported=native_send_supported,
-        )
-
-    if readiness.reason == "Missing API key":
-        return ConsoleSettingsReadiness(
-            label="Missing key",
-            detail=readiness.user_message,
-            native_send_supported=False,
-        )
+    elif blocker == "credential_missing":
+        label = "Missing key"
+        detail = readiness.user_message
+    elif blocker == "model_missing":
+        label = "Missing model"
+        detail = readiness.user_message
+    elif blocker is not None:
+        label = "Not ready"
+        detail = readiness.user_message
+    else:
+        label = "Ready"
+        detail = readiness.user_message
 
     return ConsoleSettingsReadiness(
-        label="Not ready",
-        detail=readiness.user_message,
-        native_send_supported=False,
+        label=label,
+        detail=detail,
+        native_send_supported=native_send_supported,
+        operability="ready_to_send" if blocker is None else "not_ready",
+        blocker=blocker,
+        recovery_action=recovery_action,
+        provider_display_name=provider_display_name(provider_key),
+        configuration=snapshot.configuration,
+        configuration_issue=snapshot.configuration_issue,
+        credential=credential,
+        credential_source=credential_source,
+        endpoint=snapshot.endpoint,
+        endpoint_category=snapshot.category,
+        model=snapshot.model,
+        generation=generation,
+        generation_category=generation_category,
     )
 
 

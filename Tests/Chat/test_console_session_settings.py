@@ -28,6 +28,13 @@ from tldw_chatbook.Chat.console_session_settings import (
     reasoning_effort_hint_for_model,
     validate_console_session_settings,
 )
+from tldw_chatbook.Chat.provider_test_evidence import (
+    ProviderDraftIdentity,
+    ProviderTestEvidence,
+)
+from tldw_chatbook.Chat.provider_endpoint_contract import (
+    canonical_connection_identity,
+)
 from tldw_chatbook.Utils.token_counter import count_tokens_messages
 from tldw_chatbook.Widgets.Console.console_context_controls import (
     build_console_context_control_state,
@@ -598,6 +605,340 @@ def test_readiness_reports_missing_key_for_supported_openai_instead_of_wip() -> 
     assert "not wired" not in readiness.detail
 
 
+def _readiness_identity(
+    *,
+    provider: str = "ollama",
+    endpoint: str = "http://127.0.0.1:11434/api/chat",
+    credential_source: str = "none",
+    credential_revision: int = 0,
+    draft_generation: int = 1,
+) -> ProviderDraftIdentity:
+    connection_identity = canonical_connection_identity(provider, endpoint)
+    assert connection_identity is not None
+    return ProviderDraftIdentity(
+        provider_key=provider,
+        connection_identity=connection_identity,
+        credential_source=credential_source,
+        credential_revision=credential_revision,
+        draft_generation=draft_generation,
+    )
+
+
+def test_console_readiness_retains_three_positional_argument_compatibility():
+    readiness = session_settings.ConsoleSettingsReadiness(
+        "Ready",
+        "Existing display copy.",
+        True,
+    )
+
+    assert readiness.label == "Ready"
+    assert readiness.detail == "Existing display copy."
+    assert readiness.native_send_supported is True
+    assert readiness.operability == "ready_to_send"
+
+
+@pytest.mark.parametrize(
+    (
+        "settings",
+        "app_config",
+        "environ",
+        "evidence",
+        "identity",
+        "expected_blocker",
+        "expected_recovery",
+    ),
+    [
+        (
+            ConsoleSessionSettings(provider="", model=None, base_url="bad"),
+            {},
+            {},
+            None,
+            None,
+            "provider_missing",
+            "select_provider",
+        ),
+        (
+            ConsoleSessionSettings(
+                provider="future_provider", model="future", base_url="bad"
+            ),
+            {"api_settings": {"future_provider": {"api_url": "bad"}}},
+            {},
+            None,
+            None,
+            "provider_unsupported",
+            "select_supported_provider",
+        ),
+        (
+            ConsoleSessionSettings(provider="vllm", model="model", base_url="bad"),
+            {},
+            {},
+            None,
+            None,
+            "endpoint_invalid",
+            "configure_endpoint",
+        ),
+        (
+            ConsoleSessionSettings(
+                provider="qwencloud",
+                model="model",
+                base_url="https://new.example.test/v1",
+            ),
+            {
+                "api_settings": {
+                    "qwencloud": {
+                        "api_base_url": "https://saved.example.test/v1",
+                        "api_key_env_var": "ABSENT_QWEN_KEY",
+                    }
+                }
+            },
+            {},
+            None,
+            None,
+            "endpoint_not_saved",
+            "save_endpoint",
+        ),
+        (
+            ConsoleSessionSettings(provider="openai", model=None),
+            {"api_settings": {"openai": {"api_key_env_var": "ABSENT_KEY"}}},
+            {},
+            None,
+            None,
+            "credential_missing",
+            "configure_credential",
+        ),
+        (
+            ConsoleSessionSettings(
+                provider="ollama",
+                model=None,
+                base_url="http://127.0.0.1:11434",
+            ),
+            {
+                "api_settings": {
+                    "ollama": {"api_url": "http://127.0.0.1:11434"}
+                }
+            },
+            {},
+            ProviderTestEvidence(
+                _readiness_identity(), "unreachable", (), "connection_refused"
+            ),
+            _readiness_identity(),
+            "model_missing",
+            "select_model",
+        ),
+        (
+            ConsoleSessionSettings(
+                provider="ollama",
+                model="model",
+                base_url="http://127.0.0.1:11434",
+            ),
+            {
+                "api_settings": {
+                    "ollama": {"api_url": "http://127.0.0.1:11434"}
+                }
+            },
+            {},
+            ProviderTestEvidence(
+                _readiness_identity(), "unreachable", (), "connection_refused"
+            ),
+            _readiness_identity(),
+            "endpoint_unreachable",
+            "retry_connection",
+        ),
+        (
+            ConsoleSessionSettings(provider="qwencloud", model="model"),
+            {"api_settings": {"qwencloud": ["malformed"]}},
+            {},
+            None,
+            None,
+            "provider_configuration_invalid",
+            "review_provider_settings",
+        ),
+        (
+            ConsoleSessionSettings(
+                provider="ollama",
+                model="model",
+                base_url="http://127.0.0.1:11434",
+            ),
+            {
+                "api_settings": {
+                    "ollama": {"api_url": "http://127.0.0.1:11434"}
+                }
+            },
+            {},
+            None,
+            None,
+            None,
+            None,
+        ),
+    ],
+    ids=[
+        "provider-before-endpoint",
+        "support-before-endpoint",
+        "endpoint-syntax",
+        "persistence-before-credential",
+        "credential-before-model",
+        "model-before-reachability",
+        "known-endpoint-failure",
+        "invalid-provider-configuration",
+        "ready",
+    ],
+)
+def test_console_readiness_selects_one_highest_priority_blocker(
+    settings,
+    app_config,
+    environ,
+    evidence,
+    identity,
+    expected_blocker,
+    expected_recovery,
+):
+    readiness = build_console_settings_readiness(
+        settings,
+        app_config=app_config,
+        environ=environ,
+        evidence=evidence,
+        current_identity=identity,
+    )
+
+    assert readiness.blocker == expected_blocker
+    assert readiness.recovery_action == expected_recovery
+    assert readiness.operability == (
+        "ready_to_send" if expected_blocker is None else "not_ready"
+    )
+
+
+def test_console_readiness_projects_exact_generation_and_credential_evidence():
+    identity = _readiness_identity(
+        provider="openai",
+        endpoint="https://api.openai.com/v1/chat/completions",
+        credential_source="stored",
+        credential_revision=3,
+    )
+    evidence = ProviderTestEvidence(
+        identity,
+        "not_tested",
+        (),
+        credential="present_unverified",
+        generation="succeeded",
+    )
+
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="openai", model="gpt-test"),
+        app_config={"api_settings": {"openai": {"api_key": "fake-test-key"}}},
+        environ={},
+        evidence=evidence,
+        current_identity=identity,
+    )
+
+    assert readiness.operability == "ready_to_send"
+    assert readiness.credential == "authenticated"
+    assert readiness.credential_source == "stored"
+    assert readiness.endpoint == "not_tested"
+    assert readiness.model == "unconfirmed"
+    assert readiness.generation == "succeeded"
+    assert readiness.generation_category is None
+    assert readiness.provider_display_name == "OpenAI"
+
+
+def test_failed_generation_remains_evidence_and_does_not_block_an_attempt():
+    identity = _readiness_identity(
+        credential_source="none",
+        credential_revision=0,
+    )
+    evidence = ProviderTestEvidence(
+        identity,
+        "reachable",
+        ("model",),
+        generation="failed",
+        generation_category="provider_error",
+    )
+
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(
+            provider="ollama",
+            model="model",
+            base_url="http://127.0.0.1:11434",
+        ),
+        app_config={
+            "api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}
+        },
+        environ={},
+        evidence=evidence,
+        current_identity=identity,
+    )
+
+    assert readiness.operability == "ready_to_send"
+    assert readiness.blocker is None
+    assert readiness.endpoint == "reachable"
+    assert readiness.model == "confirmed"
+    assert readiness.generation == "failed"
+    assert readiness.generation_category == "provider_error"
+
+
+def test_stale_verification_is_typed_without_echoing_old_endpoint():
+    tested = _readiness_identity()
+    current = _readiness_identity(
+        endpoint="http://127.0.0.1:11434/v1/chat/completions",
+        draft_generation=2,
+    )
+    evidence = ProviderTestEvidence(
+        tested,
+        "reachable",
+        ("model",),
+        generation="succeeded",
+    )
+
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(
+            provider="ollama",
+            model="model",
+            base_url="http://127.0.0.1:11434",
+        ),
+        app_config={
+            "api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}
+        },
+        environ={},
+        evidence=evidence,
+        current_identity=current,
+    )
+
+    assert readiness.operability == "ready_to_send"
+    assert readiness.endpoint == "changed_since_test"
+    assert readiness.model == "unconfirmed"
+    assert readiness.generation == "changed_since_test"
+    assert "api/chat" not in readiness.provider_display_name
+
+
+@pytest.mark.parametrize(
+    ("category", "expected"),
+    [
+        ("timeout", "timeout"),
+        ("connection_refused", "connection_refused"),
+        ("unauthorized", "unauthorized"),
+    ],
+)
+def test_endpoint_failure_category_remains_typed(category, expected):
+    identity = _readiness_identity()
+    evidence = ProviderTestEvidence(identity, "unreachable", (), category)
+
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(
+            provider="ollama",
+            model="model",
+            base_url="http://127.0.0.1:11434",
+        ),
+        app_config={
+            "api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}
+        },
+        environ={},
+        evidence=evidence,
+        current_identity=identity,
+    )
+
+    assert readiness.blocker == "endpoint_unreachable"
+    assert readiness.endpoint_category == expected
+
+
 def test_readiness_empty_provider_uses_select_provider_copy_without_empty_quotes() -> (
     None
 ):
@@ -894,7 +1235,8 @@ def test_configured_url_provider_validates_invalid_base_url() -> None:
     )
     errors = validate_console_session_settings(settings, app_config=app_config)
 
-    assert readiness.label == "Invalid URL"
+    assert readiness.label == "Unknown"
+    assert readiness.blocker == "provider_unsupported"
     assert "Base URL must be a valid http(s) URL." in errors
 
 
