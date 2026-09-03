@@ -25,6 +25,6 @@ echo
 echo "Next steps:"
 echo "1. Run the installed-wheel regression printed above."
 echo "2. Use the publish-pypi GitHub Actions workflow for TestPyPI."
-echo "3. Publish production PyPI from a protected v${VERSION} tag."
+echo "3. Merge the approved release commit to protected main for production PyPI."
 echo
 echo "See Packaging/PYPI_RELEASE.md for detailed instructions."
