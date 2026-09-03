@@ -1569,10 +1569,13 @@ class LocalToolProvider:
                 dispatch_args = clean_args
                 stale_guard = None
                 if name == "fs_read":
-                    self._record_fs_read_observation(
-                        clean_args,
-                        authority.root if authority is not None else self._root,
-                    )
+                    try:
+                        self._record_fs_read_observation(
+                            clean_args,
+                            authority.root if authority is not None else self._root,
+                        )
+                    except Exception:  # noqa: BLE001 - observation must never affect dispatch
+                        pass
                 elif name == "fs_write":
                     stale_guard = self._fs_write_guard_injection(
                         clean_args,
@@ -1632,9 +1635,8 @@ class LocalToolProvider:
                         provider_terminal=provider_terminal,
                     )
                 except WorkspaceToolExecutionError as exc:
-                    if (
-                        stale_guard is not None
-                        and "write precondition failed" in str(exc)
+                    if stale_guard is not None and _is_cas_precondition_failure(
+                        str(exc)
                     ):
                         provider_terminal = LocalProviderTerminal.RETURNED
                         return LocalToolInvocationResult(
@@ -1953,7 +1955,11 @@ class LocalToolProvider:
             return  # refused path: not an observation
         key = canonical_ledger_key(resolved)
         run_id = current_run_id()
-        if not resolved.is_file():
+        try:
+            present = resolved.is_file()
+        except OSError:
+            return  # e.g. EACCES on a parent dir -- not an observation
+        if not present:
             self._read_ledger.record_absent(run_id, key)
             return
         hashed = _hash_file(resolved)
@@ -1980,7 +1986,9 @@ class LocalToolProvider:
         """Return (args_with_cas, stamp, resolved) when the ledger arms fs_write.
 
         None means dispatch unchanged: no stamp, refused path, explicit
-        model-supplied precondition, or a promotion call.
+        model-supplied precondition, a promotion call, or a dry-run preview
+        (nothing is written on a preview, so there is no clobber risk to
+        guard against).
         """
         from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
         from tldw_chatbook.Agents.run_context import current_run_id
@@ -1989,6 +1997,8 @@ class LocalToolProvider:
             resolve_workspace_path,
         )
 
+        if args.get("dry_run") is True:
+            return None
         if "expected_sha256" in args or "expected_absent" in args:
             return None
         if _promotion_call_kind("fs_write", args) is not None:
@@ -2022,7 +2032,10 @@ class LocalToolProvider:
         )
 
         run_id = current_run_id()
-        base = Path(root).resolve()
+        try:
+            base = Path(root).resolve()
+        except OSError:
+            return []  # unresolvable root -- no guard, not a raise
         shown_paths: list[str] = []
         if name == "fs_edit":
             raw = args.get("path")
@@ -2062,8 +2075,11 @@ class LocalToolProvider:
     def _update_ledger_after_write(self, name: str, args: dict, root: "Path") -> None:
         """Re-stamp every written target so an agent's own chain never trips.
 
-        Post-handler re-read: for fs_edit/fs_patch the written bytes are only
-        knowable from disk. Never raises.
+        fs_write: the stamp comes straight from the CONTENT ARGUMENT, not a
+        disk re-read -- closes the microsecond window between our atomic
+        replace and a re-read where a peer's write landing in between would
+        get misrecorded as ours. fs_edit/fs_patch: post-handler re-read,
+        since the written bytes are only knowable from disk. Never raises.
         """
         from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
         from tldw_chatbook.Agents.run_context import current_run_id
@@ -2076,8 +2092,22 @@ class LocalToolProvider:
             return
         run_id = current_run_id()
         base = Path(root).resolve()
+        if name == "fs_write":
+            raw = args.get("path")
+            if not isinstance(raw, str) or not raw:
+                return
+            try:
+                resolved = resolve_workspace_path(raw, base, intent="write")
+            except (LocalToolError, OSError, ValueError):
+                return
+            encoded = str(args.get("content", "")).encode("utf-8")
+            digest = hashlib.sha256(encoded).hexdigest()
+            self._read_ledger.update_written(
+                run_id, canonical_ledger_key(resolved), digest, len(encoded)
+            )
+            return
         shown_paths: list[str] = []
-        if name in {"fs_write", "fs_edit"}:
+        if name == "fs_edit":
             raw = args.get("path")
             if isinstance(raw, str) and raw:
                 shown_paths.append(raw)
@@ -2308,13 +2338,28 @@ def _promotion_call_kind(name: str, args: object) -> str | None:
 
 def _hash_file(path: "Path") -> "tuple[str, int] | None":
     """Whole-file (sha256, size) of ``path``; None when missing/unreadable."""
-    import hashlib
-
+    h = hashlib.sha256()
+    total = 0
     try:
-        data = path.read_bytes()
+        with path.open("rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+                total += len(chunk)
     except OSError:
         return None
-    return hashlib.sha256(data).hexdigest(), len(data)
+    return h.hexdigest(), total
+
+
+def _is_cas_precondition_failure(text: str) -> bool:
+    """True for the two genuine stale-write CAS refusals, not lock contention.
+
+    All three messages raised by ``local_tool_impls``'s atomic writer share
+    a "write precondition failed: " prefix, including the portalocker
+    contention message ("target is being modified") -- a transient lock
+    conflict, not staleness, that must not be relabeled "Stale write
+    refused".
+    """
+    return any(m in text for m in ("target digest changed", "target is present"))
 
 
 def _proposal_payload(proposal: RepositoryInstructionProposal) -> dict[str, Any]:

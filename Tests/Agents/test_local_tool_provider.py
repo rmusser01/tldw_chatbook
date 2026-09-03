@@ -4043,3 +4043,134 @@ def test_write_updates_ledger_so_peer_race_still_detected_after(tmp_path):
         )
     assert not result.ok
     assert "Stale write refused" in str(result.error)
+
+
+def test_fs_write_stamps_ledger_from_content_argument(tmp_path):
+    """M2: the post-write stamp is the CONTENT ARG hash, not a disk re-read.
+
+    Closes the microsecond window between our atomic replace and a re-read
+    where a peer's write in between would get misrecorded as ours.
+    """
+    import hashlib
+
+    from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
+
+    target = tmp_path / "stamped.txt"
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        assert provider.invoke(
+            "local:fs_write", {"path": "stamped.txt", "content": "hello\n"}
+        ).ok
+    key = canonical_ledger_key(target.resolve())
+    stamp = provider._read_ledger.stamp_for("run-a", key)
+    assert stamp is not None
+    encoded = "hello\n".encode("utf-8")
+    assert stamp.sha256 == hashlib.sha256(encoded).hexdigest()
+    assert stamp.size == len(encoded)
+
+
+# --- TASK-28238 final-review fix wave (I1/M1/M4) ---
+
+
+def test_fs_read_of_file_in_unreadable_dir_returns_error_not_raise(tmp_path):
+    """I1: ``Path.is_file()`` re-raises OSError (e.g. EACCES) instead of
+    swallowing it -- confirmed empirically: a chmod-0 parent dir makes
+    ``resolve()`` succeed (no stat needed) but ``is_file()`` raise
+    PermissionError. That must surface as a normal ToolResult error, not
+    escape ``invoke()`` with an unredacted absolute path, and must record
+    nothing in the ledger.
+    """
+    if os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0):
+        pytest.skip("chmod 0o000 does not block root or apply on Windows")
+    blocked_dir = tmp_path / "locked"
+    blocked_dir.mkdir()
+    target = blocked_dir / "secret.txt"
+    target.write_text("hidden\n")
+    blocked_dir.chmod(0o000)
+    provider = _guard_provider(tmp_path)
+    try:
+        with use_run_id("run-a"):
+            result = provider.invoke(
+                "local:fs_read", {"path": "locked/secret.txt"}
+            )
+    finally:
+        blocked_dir.chmod(0o755)
+    assert not result.ok
+    assert provider._read_ledger._by_run.get("run-a") in (None, {})
+
+
+def test_cas_precondition_predicate_excludes_lock_contention():
+    """M1: the two genuine CAS refusals match; portalocker contention does
+    not, even though all three share the "write precondition failed: "
+    prefix.
+    """
+    is_cas = local_tool_provider._is_cas_precondition_failure
+    assert is_cas("write precondition failed: target digest changed")
+    assert is_cas("write precondition failed: target is present")
+    assert not is_cas("write precondition failed: target is being modified")
+
+
+def test_lock_contention_is_not_relabeled_stale_write(tmp_path):
+    """M1: a WorkspaceToolExecutionError for lock contention must surface
+    as the generic worker error, not get relabeled "Stale write refused"
+    just because a stale_guard happened to be armed.
+    """
+    import dataclasses
+
+    from tldw_chatbook.Tools.workspace_tool_executor import (
+        WorkspaceToolExecutionError,
+    )
+
+    target = tmp_path / "contended.txt"
+    target.write_text("v1\n")
+    provider = _guard_provider(tmp_path)
+
+    def _raise_contention(*_args, **_kwargs):
+        # "tool_failure" is the real code the worker maps a LocalToolError
+        # to (Tools/workspace_tool_worker.py) -- the code under which
+        # _workspace_execution_error_result passes the message through
+        # unchanged rather than substituting a fixed refusal string.
+        raise WorkspaceToolExecutionError(
+            "tool_failure", "write precondition failed: target is being modified"
+        )
+
+    with use_run_id("run-a"):
+        assert provider.invoke("local:fs_read", {"path": "contended.txt"}).ok
+        # LocalToolSpec is frozen -- swap the whole spec, not the attr.
+        original_spec = provider._specs["fs_write"]
+        provider._specs["fs_write"] = dataclasses.replace(
+            original_spec, handler=_raise_contention
+        )
+        try:
+            result = provider.invoke(
+                "local:fs_write", {"path": "contended.txt", "content": "v2\n"}
+            )
+        finally:
+            provider._specs["fs_write"] = original_spec
+    assert not result.ok
+    assert "Stale write refused" not in str(result.error)
+    assert "target is being modified" in str(result.error)
+
+
+def test_fs_write_dry_run_previews_even_with_stale_stamp(tmp_path):
+    """M4: dry_run must preview, not stale-refuse -- nothing is written so
+    there is no clobber risk.
+    """
+    target = tmp_path / "preview.txt"
+    target.write_text("original\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        assert provider.invoke("local:fs_read", {"path": "preview.txt"}).ok
+    with use_run_id("run-b"):
+        assert provider.invoke(
+            "local:fs_write", {"path": "preview.txt", "content": "B's version\n"}
+        ).ok
+    with use_run_id("run-a"):
+        result = provider.invoke(
+            "local:fs_write",
+            {"path": "preview.txt", "content": "A's preview\n", "dry_run": True},
+        )
+    assert result.ok, str(result.error)
+    assert "Stale write refused" not in str(result.content)
+    # nothing written
+    assert target.read_text() == "B's version\n"

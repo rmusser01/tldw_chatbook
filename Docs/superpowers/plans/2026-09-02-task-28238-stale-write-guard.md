@@ -33,7 +33,6 @@
 **Interfaces:**
 - Consumes: stdlib only.
 - Produces (later tasks rely on these exact names):
-  - `ABSENT: object` — module-level sentinel.
   - `@dataclass(frozen=True) ReadStamp: sha256: str | None; size: int` — `sha256 is None` means the stamp is ABSENT-kind; use `ReadStamp.absent()` classmethod.
   - `class ReadLedger:`
     - `record_present(run_id: str, canonical_path: str, sha256: str, size: int) -> None`
