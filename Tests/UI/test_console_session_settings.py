@@ -1753,6 +1753,64 @@ async def test_mounted_suspended_draft_rehydrates_blank_connection_and_private_f
 
 
 @pytest.mark.asyncio
+async def test_mounted_suspended_none_model_stays_blank_after_provider_round_trip() -> (
+    None
+):
+    """An explicitly unselected provider model cannot fall back to the catalog."""
+    app = ModalHarness()
+    app.app_config = {
+        "api_settings": {
+            "openai": {"api_key": "test-key"},
+            "anthropic": {"api_key": "test-key"},
+        }
+    }
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(provider="openai", model=None),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={
+            "console-settings-provider": "openai",
+            "console-settings-model-picker": "",
+        },
+        provider_model_drafts={"openai": None},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id="console-settings-model-picker",
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = _basic_modal(
+            snapshot.settings,
+            app,
+            providers_models={
+                "openai": ["catalog-model"],
+                "anthropic": ["claude-model"],
+            },
+            suspended_draft=snapshot,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        picker_input = modal.query_one("#model-search-picker-input", Input)
+        provider_select = modal.query_one("#console-settings-provider", Select)
+        assert picker_input.value == ""
+        assert modal._provider_model_drafts["openai"] is None
+
+        provider_select.value = "anthropic"
+        await pilot.pause()
+        assert picker_input.value == "claude-model"
+        assert modal._provider_model_drafts["openai"] is None
+        provider_select.value = "openai"
+        await pilot.pause()
+
+        assert picker_input.value == ""
+        captured = modal.capture_suspended_draft()
+        assert captured.raw_values["console-settings-model-picker"] == ""
+        assert captured.provider_model_drafts["openai"] is None
+
+
+@pytest.mark.asyncio
 async def test_suspended_focus_falls_back_to_connection_provider_when_target_hidden() -> None:
     app = ModalHarness()
     app.app_config = {"api_settings": {"openai": {"api_key": "test-key"}}}

@@ -1136,10 +1136,9 @@ class ConsoleSettingsModal(
         if suspended_draft is not None:
             self._provider_model_drafts.update(suspended_draft.provider_model_drafts)
         if self._active_provider not in self._provider_model_drafts:
-            self._set_provider_model_draft(
-                self._active_provider,
-                self._settings.model,
-            )
+            initial_model = normalize_console_model_value(settings.model)
+            if initial_model is not None:
+                self._provider_model_drafts[self._active_provider] = initial_model
         self._provider_base_url_drafts: dict[str, str] = {}
         if suspended_draft is not None:
             self._provider_base_url_drafts.update(
@@ -4287,9 +4286,9 @@ class ConsoleSettingsModal(
             selected = (
                 current_model
                 if current_model in option_values
-                else str(model_options[0][1])
+                else ("" if raw_model_is_blank else str(model_options[0][1]))
             )
-            model_select.value = selected
+            model_select.value = selected or Select.NULL
             use_model_select = self._should_use_model_select(
                 provider, selected, model_options
             )
@@ -4484,7 +4483,11 @@ class ConsoleSettingsModal(
             picker_input = picker.query_one("#model-search-picker-input", Input)
             current_model = self._current_model_value()
             if current_model is None and picker_input.value == "":
-                self._provider_model_drafts[provider] = ""
+                if not (
+                    provider in self._provider_model_drafts
+                    and self._provider_model_drafts[provider] is None
+                ):
+                    self._provider_model_drafts[provider] = ""
             else:
                 self._set_provider_model_draft(provider, current_model)
 
@@ -4497,7 +4500,9 @@ class ConsoleSettingsModal(
     def _model_for_provider(self, provider: str) -> str | None:
         if provider in self._provider_model_drafts:
             stored_value = self._provider_model_drafts[provider]
-            if type(stored_value) is str and stored_value == "":
+            if stored_value is None or (
+                type(stored_value) is str and stored_value == ""
+            ):
                 return ""
             stored_model = normalize_console_model_value(stored_value)
             if stored_model:
