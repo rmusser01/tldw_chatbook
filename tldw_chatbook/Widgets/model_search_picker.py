@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import replace
 
 from rich.markup import escape as escape_markup
+from rich.text import Text
 from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Horizontal
@@ -19,6 +21,10 @@ from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
 )
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
+from tldw_chatbook.UI.Screens.provider_model_resolution import (
+    ConsoleModelProvenance,
+    ResolvedProviderModelOption,
+)
 
 
 _CLOUD_CATALOG_PROVIDER_KEYS = {
@@ -26,6 +32,12 @@ _CLOUD_CATALOG_PROVIDER_KEYS = {
 }
 MODEL_ID_MAX_LENGTH = 256
 _BLUR_RESTORE_DELAY_SECONDS = 0.05
+_PROVENANCE_GROUP_LABELS = {
+    ConsoleModelProvenance.SERVED_NOW: "Served now",
+    ConsoleModelProvenance.CURRENT_CATALOG: "Current catalog",
+    ConsoleModelProvenance.SAVED_FALLBACK: "Saved fallback",
+    ConsoleModelProvenance.CUSTOM_UNVERIFIED: "Custom / unverified",
+}
 
 
 class ModelPickerInput(Input):
@@ -99,6 +111,13 @@ class ModelSearchPicker(Widget):
             self.model_id = model_id
             self.custom = custom
 
+    class ProvenanceOptionsChanged(Message):
+        """Posted when source-aware options become available for a provider."""
+
+        def __init__(self, provider: str) -> None:
+            super().__init__()
+            self.provider = provider
+
     def __init__(
         self,
         *,
@@ -107,6 +126,7 @@ class ModelSearchPicker(Widget):
         current_model: str | None = None,
         providers_models: Mapping[str, object] | None = None,
         show_custom_button: bool = True,
+        show_provenance: bool = False,
     ) -> None:
         """Initialize the controlled picker.
 
@@ -119,18 +139,23 @@ class ModelSearchPicker(Widget):
                 still used to obtain the full uncapped endpoint snapshot.
             show_custom_button: Whether this widget renders its own custom-ID
                 action. Full settings reuses its existing adjacent action.
+            show_provenance: Whether to group resolved options by their typed
+                model provenance. Existing callers retain flat results.
         """
         super().__init__(id=id)
         self._provider_select_id = provider_select_id
         self._initial_providers_models = providers_models
         self._show_custom_button = show_custom_button
+        self._show_provenance = show_provenance
         self._provider = ""
         self._selected_model = self._normalize_model(current_model)
         self._model_before_custom = self._selected_model
         self._custom_mode = False
         self._suppress_input_events = False
-        self._matches: list[str] = []
+        self._matches: list[str] | list[ResolvedProviderModelOption] = []
         self._options_by_provider: dict[str, tuple[object, ...]] = {}
+        self._provenance_provider_keys: set[str] = set()
+        self._result_model_ids_by_option_id: dict[str, str] = {}
         self._discovered_model_ids: dict[str, tuple[str, ...]] = {}
         self._load_errors: dict[str, bool] = {}
         self._load_counts: dict[str, int] = {}
@@ -234,6 +259,8 @@ class ModelSearchPicker(Widget):
         cache_key = provider_config_key(normalized_provider)
         if not force and cache_key in self._options_by_provider:
             self._render_catalog_status()
+            if self._show_provenance:
+                self.post_message(self.ProvenanceOptionsChanged(normalized_provider))
             return
 
         self._set_status("Loading models...")
@@ -257,7 +284,10 @@ class ModelSearchPicker(Widget):
             self._load_errors[cache_key] = False
         if provider_config_key(self._provider) != cache_key:
             return
-        self._options_by_provider[cache_key] = tuple(options)
+        if self._show_provenance:
+            self.set_provenance_options(normalized_provider, options)
+        else:
+            self._options_by_provider[cache_key] = tuple(options)
         self._render_catalog_status()
         input_widget = self.query_one("#model-search-picker-input", Input)
         input_shows_committed_model = bool(self._selected_model) and (
@@ -335,6 +365,83 @@ class ModelSearchPicker(Widget):
         input_widget = self.query_one("#model-search-picker-input", Input)
         if input_widget.has_focus and not self._custom_mode:
             self._render_matches(input_widget.value, show_empty_query=True)
+        if self._uses_provenance_options():
+            self.post_message(self.ProvenanceOptionsChanged(provider))
+
+    def provenance_for_model(
+        self,
+        model_id: str | None,
+        *,
+        provider: str | None = None,
+    ) -> ConsoleModelProvenance | None:
+        """Return the source category for a model in the active provider."""
+        normalized = self._normalize_model(model_id)
+        if normalized is None:
+            return None
+        if provider is not None and provider_config_key(provider) != provider_config_key(
+            self._provider
+        ):
+            return None
+        if self._custom_mode:
+            return ConsoleModelProvenance.CUSTOM_UNVERIFIED
+        if not self._uses_provenance_options():
+            return None
+        for option in self._typed_provider_options():
+            if option.model_id == normalized:
+                return self._display_provenance(option)
+        return ConsoleModelProvenance.CUSTOM_UNVERIFIED
+
+    @staticmethod
+    def _display_provenance(
+        option: ResolvedProviderModelOption,
+    ) -> ConsoleModelProvenance:
+        """Fail closed if a served-now option lacks connection verification."""
+        if (
+            option.provenance == ConsoleModelProvenance.SERVED_NOW
+            and not option.verified_for_connection
+        ):
+            return ConsoleModelProvenance.CUSTOM_UNVERIFIED
+        return option.provenance
+
+    def set_provenance_options(
+        self,
+        provider: str,
+        options: Sequence[ResolvedProviderModelOption],
+    ) -> None:
+        """Replace one provider's results with source-aware model choices.
+
+        This opt-in path leaves existing catalog-loading callers on their
+        original flat result list. Model IDs are normalized and deduplicated,
+        while the complete typed option remains available for grouping and
+        selection provenance.
+        """
+        cache_key = provider_config_key(provider)
+        normalized_options: list[ResolvedProviderModelOption] = []
+        seen_model_ids: set[str] = set()
+        for option in options:
+            if not isinstance(option, ResolvedProviderModelOption):
+                raise TypeError(
+                    "provenance options must be ResolvedProviderModelOption values"
+                )
+            model_id = self._normalize_model(option.model_id)
+            if not model_id or model_id in seen_model_ids:
+                continue
+            normalized_options.append(
+                replace(
+                    option,
+                    model_id=model_id,
+                )
+            )
+            seen_model_ids.add(model_id)
+        self._options_by_provider[cache_key] = tuple(normalized_options)
+        self._provenance_provider_keys.add(cache_key)
+        if provider_config_key(self._provider) != cache_key:
+            return
+        self._render_catalog_status()
+        input_widget = self.query_one("#model-search-picker-input", Input)
+        if input_widget.has_focus and not self._custom_mode:
+            self._render_matches(input_widget.value, show_empty_query=True)
+        self.post_message(self.ProvenanceOptionsChanged(provider))
 
     def toggle_custom_mode(self) -> None:
         """Toggle the explicit custom-ID escape hatch."""
@@ -355,6 +462,35 @@ class ModelSearchPicker(Widget):
 
     def _provider_options(self) -> tuple[object, ...]:
         return self._options_by_provider.get(provider_config_key(self._provider), ())
+
+    def _uses_provenance_options(self) -> bool:
+        return provider_config_key(self._provider) in self._provenance_provider_keys
+
+    def _typed_provider_options(self) -> list[ResolvedProviderModelOption]:
+        options = [
+            option
+            for option in self._provider_options()
+            if isinstance(option, ResolvedProviderModelOption)
+        ]
+        seen_model_ids = {option.model_id for option in options}
+        for model_id in self._discovered_model_ids.get(
+            provider_config_key(self._provider), ()
+        ):
+            if model_id in seen_model_ids:
+                continue
+            options.append(
+                ResolvedProviderModelOption(
+                    label=model_id,
+                    model_id=model_id,
+                    source="manual_discovery_unfenced",
+                    capability_status="unknown",
+                    persisted=False,
+                    provenance=ConsoleModelProvenance.CUSTOM_UNVERIFIED,
+                    verified_for_connection=False,
+                )
+            )
+            seen_model_ids.add(model_id)
+        return options
 
     def _catalog_model_ids(self) -> list[str]:
         model_ids: list[str] = []
@@ -444,12 +580,20 @@ class ModelSearchPicker(Widget):
             return
         results = self.query_one("#model-search-picker-results", OptionList)
         self._matches = []
+        self._result_model_ids_by_option_id = {}
         results.clear_options()
         results.display = False
 
     def _render_matches(self, query: str, *, show_empty_query: bool = False) -> None:
         results = self.query_one("#model-search-picker-results", OptionList)
         normalized_query = query.strip().lower()
+        if self._uses_provenance_options():
+            self._render_provenance_matches(
+                results,
+                normalized_query,
+                show_empty_query=show_empty_query,
+            )
+            return
         catalog_model_ids = self._catalog_model_ids()
         model_ids = catalog_model_ids
         if normalized_query:
@@ -462,6 +606,7 @@ class ModelSearchPicker(Widget):
             self._hide_results()
             return
         self._matches = model_ids[: self.MAX_RESULTS]
+        self._result_model_ids_by_option_id = {}
         results.clear_options()
         for model_id in self._matches:
             results.add_option(Option(escape_markup(model_id)))
@@ -470,6 +615,70 @@ class ModelSearchPicker(Widget):
         if (
             normalized_query
             and catalog_model_ids
+            and not self._matches
+            and not self._load_errors.get(cache_key, False)
+        ):
+            self._set_status("No matching models. Clear the filter or use Custom ID.")
+        else:
+            self._render_catalog_status()
+
+    def _render_provenance_matches(
+        self,
+        results: OptionList,
+        normalized_query: str,
+        *,
+        show_empty_query: bool,
+    ) -> None:
+        """Render only populated provenance groups with stable option IDs."""
+        if not normalized_query and not show_empty_query:
+            self._hide_results()
+            return
+        options = self._typed_provider_options()
+        if normalized_query:
+            options = [
+                option
+                for option in options
+                if normalized_query in option.model_id.lower()
+                or normalized_query in option.label.lower()
+            ]
+        ordered_options = [
+            option
+            for provenance in _PROVENANCE_GROUP_LABELS
+            for option in options
+            if self._display_provenance(option) == provenance
+        ]
+        self._matches = ordered_options[: self.MAX_RESULTS]
+        self._result_model_ids_by_option_id = {}
+        results.clear_options()
+        for provenance, group_label in _PROVENANCE_GROUP_LABELS.items():
+            group = [
+                option
+                for option in self._matches
+                if self._display_provenance(option) == provenance
+            ]
+            if not group:
+                continue
+            results.add_option(
+                Option(
+                    group_label,
+                    id=f"model-provenance-heading-{provenance.value}",
+                    disabled=True,
+                )
+            )
+            for option in group:
+                option_id = f"model-provenance-option-{len(self._result_model_ids_by_option_id)}"
+                self._result_model_ids_by_option_id[option_id] = option.model_id
+                results.add_option(
+                    Option(
+                        Text(option.model_id),
+                        id=option_id,
+                    )
+                )
+        results.display = bool(self._matches)
+        cache_key = provider_config_key(self._provider)
+        if (
+            normalized_query
+            and self._catalog_model_ids()
             and not self._matches
             and not self._load_errors.get(cache_key, False)
         ):
@@ -543,21 +752,36 @@ class ModelSearchPicker(Widget):
             self.post_message(self.ModelValueChanged(self._selected_model, custom=True))
             return
         query = event.value.strip().lower()
+        match_model_ids = [
+            option.model_id
+            if isinstance(option, ResolvedProviderModelOption)
+            else option
+            for option in self._matches
+        ]
         exact = next(
-            (model_id for model_id in self._matches if model_id.lower() == query),
+            (model_id for model_id in match_model_ids if model_id.lower() == query),
             None,
         )
         if exact is not None:
             self._commit_catalog_model(exact)
-        elif len(self._matches) == 1:
-            self._commit_catalog_model(self._matches[0])
+        elif len(match_model_ids) == 1:
+            self._commit_catalog_model(match_model_ids[0])
 
     @on(OptionList.OptionSelected, "#model-search-picker-results")
     def _handle_selected(self, event: OptionList.OptionSelected) -> None:
+        if event.option.id is not None:
+            model_id = self._result_model_ids_by_option_id.get(event.option.id)
+            if model_id is not None:
+                self._commit_catalog_model(model_id)
+            return
         index = event.option_index
         if index is None or not (0 <= index < len(self._matches)):
             return
-        self._commit_catalog_model(self._matches[index])
+        model = self._matches[index]
+        if isinstance(model, ResolvedProviderModelOption):
+            self._commit_catalog_model(model.model_id)
+        else:
+            self._commit_catalog_model(model)
 
     @on(Button.Pressed, "#model-search-picker-custom")
     def _toggle_custom(self, event: Button.Pressed) -> None:
@@ -593,7 +817,14 @@ class ModelSearchPicker(Widget):
         if event.key == "down" and self._matches:
             results = self.query_one("#model-search-picker-results", OptionList)
             results.focus()
-            results.highlighted = 0
+            results.highlighted = next(
+                (
+                    index
+                    for index, option in enumerate(results.options)
+                    if not option.disabled
+                ),
+                None,
+            )
             event.stop()
             return
         if event.key != "escape":

@@ -11020,7 +11020,8 @@ async def test_discovery_selects_the_model_when_exactly_one_is_found() -> None:
         await pilot.pause()
         results = modal.query_one("#model-search-picker-results", OptionList)
         assert [str(option.prompt) for option in results.options] == [
-            "only-real-model"
+            "Custom / unverified",
+            "only-real-model",
         ]
 
 
@@ -11459,6 +11460,85 @@ def test_console_settings_modal_discovery_uses_exact_model_count_copy() -> None:
         settings_modal_module._model_availability_copy(2, endpoint)
         == "2 models available at http://127.0.0.1:9099."
     )
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_shows_current_catalog_model_provenance() -> None:
+    """A selected catalog model must expose its source beside the control."""
+    app = ModalHarness()
+    app.llm_provider_catalog_scope_service = FakeConsoleModelDiscoveryScope(
+        (_merged_model("gpt-5.6-terra", source="runtime_discovered"),)
+    )
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="openai", model="gpt-5.6-terra"),
+        app,
+        providers_models={"openai": ["gpt-5.6-terra"]},
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        provenance = modal.query_one("#console-settings-model-provenance", Static)
+        for _ in range(40):
+            if str(provenance.renderable) == "Current provider catalog":
+                break
+            await pilot.pause(0.01)
+
+        assert str(provenance.renderable) == "Current provider catalog"
+        picker = modal.query_one(ModelSearchPicker)
+        picker.focus_input()
+        await pilot.pause()
+        picker.query_one("#model-search-picker-input", Input).value = "gpt"
+        await pilot.pause()
+        assert [
+            str(option.prompt)
+            for option in modal.query_one(
+                "#model-search-picker-results", OptionList
+            ).options
+        ] == ["Current catalog", "gpt-5.6-terra"]
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_unfenced_probe_stays_custom_unverified() -> None:
+    """Before identity fencing, a manual probe must not claim Served now."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="saved-model",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        providers_models={"llama_cpp": ["saved-model"]},
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal._apply_model_discovery_result(
+            "llama_cpp",
+            LocalModelProbeResult(
+                ok=True,
+                base_url="http://127.0.0.1:9099",
+                model_ids=("probe-model",),
+            ),
+        )
+        await pilot.pause()
+
+        provenance = modal.query_one("#console-settings-model-provenance", Static)
+        assert str(provenance.renderable) == (
+            "Custom model ID; generation not verified."
+        )
+        picker = modal.query_one(ModelSearchPicker)
+        picker.focus_input()
+        await pilot.pause()
+        prompts = [
+            str(option.prompt)
+            for option in modal.query_one(
+                "#model-search-picker-results", OptionList
+            ).options
+        ]
+        assert "Served now" not in prompts
+        assert "Custom / unverified" in prompts
 
 
 def _visible_enabled_primary_buttons(modal: ConsoleSettingsModal) -> list[Button]:

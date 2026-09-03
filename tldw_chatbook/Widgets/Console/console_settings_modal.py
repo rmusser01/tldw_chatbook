@@ -112,6 +112,7 @@ from tldw_chatbook.UI.character_display_text import sanitize_character_display_l
 from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
     ProviderSettingsNavigationTarget,
 )
+from tldw_chatbook.UI.Screens.provider_model_resolution import ConsoleModelProvenance
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.model_capabilities import is_vision_capable
 from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
@@ -150,6 +151,14 @@ COMPACTION_CLOSE_WARNING = "Provider work may continue and may still be billed."
 CONSOLE_SETTINGS_SAVE_DEFAULT_PROGRESS_COPY = (
     "Saving defaults… Keep this window open."
 )
+_MODEL_PROVENANCE_COPY = {
+    ConsoleModelProvenance.SERVED_NOW: "Served by this endpoint now",
+    ConsoleModelProvenance.CURRENT_CATALOG: "Current provider catalog",
+    ConsoleModelProvenance.SAVED_FALLBACK: "Saved fallback",
+    ConsoleModelProvenance.CUSTOM_UNVERIFIED: (
+        "Custom model ID; generation not verified."
+    ),
+}
 
 
 _CONSOLE_SETTINGS_DRAFT_VERSION = 1
@@ -1553,7 +1562,16 @@ class ConsoleSettingsModal(
                                 current_model=selected_model,
                                 providers_models=self._providers_models,
                                 show_custom_button=False,
+                                show_provenance=True,
                             )
+                        model_provenance = Static(
+                            "Checking model source…" if selected_model else "",
+                            id="console-settings-model-provenance",
+                            classes="console-settings-field-help",
+                            markup=False,
+                        )
+                        model_provenance.display = bool(selected_model)
+                        yield model_provenance
                         legacy_model_row = Horizontal(
                             id="console-settings-model-legacy-adapter"
                         )
@@ -4402,6 +4420,7 @@ class ConsoleSettingsModal(
         ):
             self._rebase_to(self._active_provider, model_id)
             return
+        self._sync_model_provenance_copy()
         self._sync_readiness_display()
         self._sync_visual_representation_availability()
         self._sync_generation_control_support()
@@ -4423,6 +4442,7 @@ class ConsoleSettingsModal(
         picker = self.query_one("#console-settings-model-picker", ModelSearchPicker)
         if picker.custom_mode:
             picker.set_custom_value(event.value)
+            self._sync_model_provenance_copy()
         self._schedule_readiness_sync()
 
     def _schedule_readiness_sync(self) -> None:
@@ -4473,6 +4493,7 @@ class ConsoleSettingsModal(
         self._sync_readiness_display()
         self._sync_visual_representation_availability()
         self._sync_generation_control_support()
+        self._sync_model_provenance_copy()
 
     @on(ModelSearchPicker.ModelValueChanged)
     def _model_picker_value_changed(
@@ -4501,6 +4522,18 @@ class ConsoleSettingsModal(
         self._sync_readiness_display()
         self._sync_visual_representation_availability()
         self._sync_generation_control_support()
+        self._sync_model_provenance_copy()
+
+    @on(ModelSearchPicker.ProvenanceOptionsChanged)
+    def _model_picker_provenance_changed(
+        self, event: ModelSearchPicker.ProvenanceOptionsChanged
+    ) -> None:
+        """Refresh the adjacent source label for the active provider only."""
+        if provider_config_key(event.provider) != provider_config_key(
+            self._active_provider
+        ):
+            return
+        self._sync_model_provenance_copy()
 
     @on(Select.Changed, "#console-context-compaction-representation")
     def _compaction_representation_changed(self, _event: Select.Changed) -> None:
@@ -4523,6 +4556,7 @@ class ConsoleSettingsModal(
             model_custom.label = "Model list"
         else:
             self._sync_model_controls(self._active_provider, picker.value)
+        self._sync_model_provenance_copy()
         self._sync_readiness_display()
 
     @staticmethod
@@ -4636,6 +4670,7 @@ class ConsoleSettingsModal(
             )
         self._sync_readiness_display()
         self._sync_generation_control_support()
+        self._sync_model_provenance_copy()
 
     def _set_model_discover_status(self, text: str) -> None:
         """Update the inline discovery status line, hiding it when blank."""
@@ -4763,6 +4798,7 @@ class ConsoleSettingsModal(
                 provider,
                 current_model="" if raw_model_is_blank else selected,
             )
+            self._sync_model_provenance_copy()
             return
 
         fallback = current_model or ""
@@ -4783,6 +4819,33 @@ class ConsoleSettingsModal(
             provider,
             current_model="" if raw_model_is_blank else fallback or None,
         )
+        self._sync_model_provenance_copy()
+
+    def _sync_model_provenance_copy(self) -> None:
+        """Keep selected-model authority visible without implying generation."""
+        try:
+            picker = self.query_one(
+                "#console-settings-model-picker", ModelSearchPicker
+            )
+            status = self.query_one("#console-settings-model-provenance", Static)
+        except (NoMatches, QueryError):
+            return
+        model_id = self._current_model_value()
+        if model_id is None:
+            status.update("")
+            status.display = False
+            return
+        provenance = picker.provenance_for_model(
+            model_id,
+            provider=self._active_provider,
+        )
+        copy = (
+            _MODEL_PROVENANCE_COPY[provenance]
+            if provenance is not None
+            else "Checking model source…"
+        )
+        status.update(copy)
+        status.display = True
 
     def _toggle_manual_model_input(self) -> None:
         model_select = self.query_one("#console-settings-model-select", Select)
