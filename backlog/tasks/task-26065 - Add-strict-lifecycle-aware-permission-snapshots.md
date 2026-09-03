@@ -11,7 +11,7 @@ labels:
   - permissions
   - security
 dependencies:
-  - TASK-25713
+  - TASK-29232
 priority: high
 ---
 

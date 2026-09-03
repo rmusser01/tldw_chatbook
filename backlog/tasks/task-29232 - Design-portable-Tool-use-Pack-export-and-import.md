@@ -1,5 +1,5 @@
 ---
-id: TASK-25713
+id: TASK-29232
 title: Design portable Tool-use Pack export and import
 status: Done
 assignee:
@@ -43,6 +43,16 @@ ADR path: `backlog/decisions/107-portable-tool-use-packs.md`
 
 Reason: The design establishes portable permission-policy semantics, import activation rules, deletion behavior, and first-bind security boundaries.
 <!-- SECTION:PLAN:END -->
+
+## Renumbering provenance
+
+This task was originally filed as TASK-25713 at 2026-08-31 14:22, ten
+minutes after the older "Census warm-boot flakes on sys.modules mutation
+during iteration" task claimed TASK-25713 at 14:12. The duplicate-id CI
+guard detected the collision during PR #2324. Per the TASK-19601 owner rule,
+the older task keeps 25713 and this younger task renumbers to TASK-29232.
+Live dependencies and documentation links were updated; historical commit
+messages remain unchanged.
 
 ## Implementation Notes
 

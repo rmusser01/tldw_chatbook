@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-31
-- **Task:** [TASK-25713](../tasks/task-25713%20-%20Design-portable-Tool-use-Pack-export-and-import.md)
+- **Task:** [TASK-29232](../tasks/task-29232%20-%20Design-portable-Tool-use-Pack-export-and-import.md)
 - **Design:** [Portable Tool-use Packs design](../../Docs/superpowers/specs/2026-08-31-tool-use-pack-design.md)
 - **Related:** [ADR-032](032-local-agent-tool-permission-boundary.md),
   [ADR-069](069-console-project-instruction-local-state-and-preflight.md),
@@ -221,7 +221,7 @@ surfaces are not extended.
 ## Links
 
 - [Portable Tool-use Packs design](../../Docs/superpowers/specs/2026-08-31-tool-use-pack-design.md)
-- [TASK-25713](../tasks/task-25713%20-%20Design-portable-Tool-use-Pack-export-and-import.md)
+- [TASK-29232](../tasks/task-29232%20-%20Design-portable-Tool-use-Pack-export-and-import.md)
 - [ADR-032: Local Agent Tool Permission Boundary](032-local-agent-tool-permission-boundary.md)
 - [ADR-069: Console project-instruction local state and preflight](069-console-project-instruction-local-state-and-preflight.md)
 - [ADR-074: Portable Actor Packs and local Persona Visual runtime](074-portable-actor-packs-and-local-persona-visual-runtime.md)

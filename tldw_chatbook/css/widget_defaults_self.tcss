@@ -3625,6 +3625,203 @@
         display: none;
     }
 
+/* ===== WIDGET: ToolPackImportOptionsModal (Widgets/Settings_Widgets/tool_pack_import_review.py) ===== */
+
+    ToolPackImportOptionsModal {
+        align: center middle;
+    }
+
+    ToolPackImportOptionsModal #tool-pack-import-options {
+        width: 82%;
+        max-width: 86;
+        height: auto;
+        max-height: 34;
+        background: $surface;
+        border: tall $accent;
+        padding: 1 2;
+    }
+
+    ToolPackImportOptionsModal .tool-pack-options-copy {
+        width: 100%;
+        height: auto;
+        text-wrap: wrap;
+        margin-bottom: 1;
+    }
+
+    ToolPackImportOptionsModal #tool-pack-import-server-mappings {
+        height: 8;
+        margin-bottom: 1;
+    }
+
+    ToolPackImportOptionsModal #tool-pack-import-options-error {
+        color: $error;
+        min-height: 1;
+    }
+
+    ToolPackImportOptionsModal #tool-pack-import-options-actions {
+        height: auto;
+        align: right middle;
+    }
+
+    ToolPackImportOptionsModal #tool-pack-import-options-actions Button {
+        width: auto;
+        min-width: 12;
+        margin-left: 1;
+    }
+
+
+/* ===== WIDGET: ToolPackImportReviewModal (Widgets/Settings_Widgets/tool_pack_import_review.py) ===== */
+
+    ToolPackImportReviewModal {
+        align: center middle;
+    }
+
+    ToolPackImportReviewModal #tool-pack-import-review {
+        width: 88%;
+        max-width: 96;
+        height: 90%;
+        max-height: 42;
+        background: $surface;
+        border: tall $accent;
+        padding: 1 2;
+    }
+
+    ToolPackImportReviewModal #tool-pack-import-title {
+        height: 1;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    ToolPackImportReviewModal #tool-pack-import-scroll {
+        height: 1fr;
+        scrollbar-size: 1 1;
+    }
+
+    ToolPackImportReviewModal .tool-pack-review-heading {
+        height: 1;
+        text-style: bold;
+        margin-top: 1;
+    }
+
+    ToolPackImportReviewModal .tool-pack-review-copy {
+        width: 100%;
+        height: auto;
+        text-wrap: wrap;
+    }
+
+    ToolPackImportReviewModal #tool-pack-import-actions {
+        height: auto;
+        min-height: 3;
+        margin-top: 1;
+        align: right middle;
+    }
+
+    ToolPackImportReviewModal #tool-pack-import-actions Button {
+        width: auto;
+        min-width: 12;
+        margin-left: 1;
+    }
+
+
+/* ===== WIDGET: ToolPackExportReviewModal (Widgets/Settings_Widgets/tool_pack_import_review.py) ===== */
+
+    ToolPackExportReviewModal {
+        align: center middle;
+    }
+
+    ToolPackExportReviewModal #tool-pack-export-review {
+        width: 86%;
+        max-width: 92;
+        height: 86%;
+        max-height: 38;
+        background: $surface;
+        border: tall $accent;
+        padding: 1 2;
+    }
+
+    ToolPackExportReviewModal #tool-pack-export-scroll {
+        height: 1fr;
+        scrollbar-size: 1 1;
+    }
+
+    ToolPackExportReviewModal .tool-pack-export-heading {
+        height: 1;
+        text-style: bold;
+        margin-top: 1;
+    }
+
+    ToolPackExportReviewModal .tool-pack-export-copy {
+        width: 100%;
+        height: auto;
+        text-wrap: wrap;
+    }
+
+    ToolPackExportReviewModal #tool-pack-export-actions {
+        height: auto;
+        min-height: 3;
+        align: right middle;
+    }
+
+    ToolPackExportReviewModal #tool-pack-export-actions Button {
+        width: auto;
+        min-width: 12;
+        margin-left: 1;
+    }
+
+
+/* ===== WIDGET: ToolProfileFirstBindReviewModal (Widgets/Settings_Widgets/tool_pack_import_review.py) ===== */
+
+    ToolProfileFirstBindReviewModal {
+        align: center middle;
+    }
+
+    ToolProfileFirstBindReviewModal #tool-profile-bind-review {
+        width: 88%;
+        max-width: 96;
+        height: 90%;
+        max-height: 42;
+        background: $surface;
+        border: tall $warning;
+        padding: 1 2;
+    }
+
+    ToolProfileFirstBindReviewModal #tool-profile-bind-title {
+        height: 1;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    ToolProfileFirstBindReviewModal #tool-profile-bind-scroll {
+        height: 1fr;
+        scrollbar-size: 1 1;
+    }
+
+    ToolProfileFirstBindReviewModal .tool-profile-bind-heading {
+        height: 1;
+        text-style: bold;
+        margin-top: 1;
+    }
+
+    ToolProfileFirstBindReviewModal .tool-profile-bind-copy {
+        width: 100%;
+        height: auto;
+        text-wrap: wrap;
+    }
+
+    ToolProfileFirstBindReviewModal #tool-profile-bind-actions {
+        height: auto;
+        min-height: 3;
+        margin-top: 1;
+        align: right middle;
+    }
+
+    ToolProfileFirstBindReviewModal #tool-profile-bind-actions Button {
+        width: auto;
+        min-width: 12;
+        margin-left: 1;
+    }
+
+
 /* ===== WIDGET: _BackdropClickShield (Widgets/modal_dismissal.py) ===== */
 
     _BackdropClickShield {

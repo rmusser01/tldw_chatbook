@@ -15,7 +15,7 @@ Related:
 - [ADR-074: Portable Actor Packs and local Persona Visual runtime](../../../backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md)
 - [MCP Hub redesign design](2026-07-13-mcp-hub-redesign-design.md)
 - [Workspace assistant defaults design](2026-08-29-workspace-assistant-defaults-design.md)
-- [TASK-25713](../../../backlog/tasks/task-25713%20-%20Design-portable-Tool-use-Pack-export-and-import.md)
+- [TASK-29232](../../../backlog/tasks/task-29232%20-%20Design-portable-Tool-use-Pack-export-and-import.md)
 
 ADR required: yes
 
