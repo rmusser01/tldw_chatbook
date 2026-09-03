@@ -164,3 +164,52 @@ def test_clean_worktree_is_nothing_to_merge(repo):
     assert isinstance(refusal, WorktreeRefusal)
     assert refusal.reason_code == "nothing_to_merge"
     discard_agent_worktree(repo, wt)
+
+
+def test_apply_conflict_names_file_for_already_exists_shape(repo):
+    """Real git stderr for a new-file collision is a DIFFERENT shape than a
+    content conflict ("error: <file>: already exists in working directory"
+    vs. "error: patch failed: <file>:<line>") -- both must name the file.
+    """
+    wt = create_agent_worktree(repo, "run-newfile1")
+    (wt.worktree_path / "new.txt").write_text("child content\n")
+    (repo / "new.txt").write_text("shared content\n")  # independent, untracked
+    refusal = merge_agent_worktree_changes(repo, wt, mode="apply")
+    assert isinstance(refusal, WorktreeRefusal)
+    assert refusal.reason_code == "apply_conflict"
+    assert "new.txt" in refusal.message
+    discard_agent_worktree(repo, wt)
+
+
+def test_apply_patch_tempfile_write_failure_is_refusal_not_exception(repo, monkeypatch):
+    wt = create_agent_worktree(repo, "run-tmpfail1")
+    (wt.worktree_path / "a.txt").write_text("child change\n")
+
+    def boom(*_a, **_k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("tempfile.NamedTemporaryFile", boom)
+    refusal = merge_agent_worktree_changes(repo, wt, mode="apply")
+    assert isinstance(refusal, WorktreeRefusal)
+    assert refusal.reason_code == "apply_conflict"
+    assert "disk full" in refusal.message
+    discard_agent_worktree(repo, wt)
+
+
+def test_auto_commit_failure_is_refusal_not_silent_nothing_to_merge(repo, monkeypatch):
+    from tldw_chatbook.Agents import agent_worktree as mod
+
+    wt = create_agent_worktree(repo, "run-cmtfail1")
+    (wt.worktree_path / "a.txt").write_text("child change\n")
+    real_git = mod._git
+
+    def fake_git(repo_root, *args):
+        if "commit" in args:
+            return 128, "", "fatal: unable to auto-detect email address"
+        return real_git(repo_root, *args)
+
+    monkeypatch.setattr(mod, "_git", fake_git)
+    refusal = merge_agent_worktree_changes(repo, wt, mode="apply")
+    assert isinstance(refusal, WorktreeRefusal)
+    assert refusal.reason_code == "worktree_commit_failed"
+    discard_agent_worktree(repo, wt)

@@ -125,13 +125,38 @@ class MergeOutcome:
     commit_sha: str | None
 
 
+def _conflicting_files(stderr: str) -> str:
+    """Extract the file name(s) named by a failed `git apply`, in order.
+
+    Real git uses two different shapes depending on the failure:
+      - content conflict: "error: patch failed: a.txt:1"
+      - new-file collision: "error: a.txt: already exists in working directory"
+    Both name the file, but at different positions in the line.
+    """
+    names: list[str] = []
+    for raw in stderr.splitlines():
+        line = raw.strip()
+        if line.startswith("error: patch failed: "):
+            name = line[len("error: patch failed: "):].rsplit(":", 1)[0]
+        elif line.startswith("error: ") and "already exists" in line:
+            name = line[len("error: "):].split(":", 1)[0]
+        else:
+            continue
+        if name and name not in names:
+            names.append(name)
+    return ", ".join(names) or stderr.strip()[:200]
+
+
 def _apply_patch(repo_root: Path, patch: str, *, check_only: bool) -> WorktreeRefusal | None:
     """git-apply the patch text (via a temp file, so this stays on `_git`); a
     refusal naming files on failure, None on success.
     """
-    with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as fh:
-        fh.write(patch)
-        patch_path = fh.name
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as fh:
+            fh.write(patch)
+            patch_path = fh.name
+    except OSError as exc:
+        return WorktreeRefusal("apply_conflict", f"cannot stage patch: {exc}")
     try:
         args = ("apply", *(("--check",) if check_only else ()), patch_path)
         code, _out, err = _git(repo_root, *args)
@@ -139,12 +164,9 @@ def _apply_patch(repo_root: Path, patch: str, *, check_only: bool) -> WorktreeRe
         Path(patch_path).unlink(missing_ok=True)
     if code == 0:
         return None
-    failed = ", ".join(
-        line.split(":", 2)[-1].strip()
-        for line in err.splitlines()
-        if "patch failed" in line or "already exists" in line or "error:" in line
-    ) or err.strip()[:200]
-    return WorktreeRefusal("apply_conflict", f"patch does not apply cleanly: {failed}")
+    return WorktreeRefusal(
+        "apply_conflict", f"patch does not apply cleanly: {_conflicting_files(err)}"
+    )
 
 
 def merge_agent_worktree_changes(
@@ -160,16 +182,37 @@ def merge_agent_worktree_changes(
 
     Returns:
         A MergeOutcome, or a refusal (``nothing_to_merge`` / ``apply_conflict``
-        / ``merge_conflict`` naming the conflicting files / ``invalid_mode``).
+        / ``merge_conflict`` naming the conflicting files / ``invalid_mode``
+        / ``worktree_commit_failed``).
     """
     if mode not in ("apply", "merge"):
         return WorktreeRefusal("invalid_mode", f"unknown merge mode: {mode!r}")
     # The child only edits files in its worktree -- nothing commits them
     # there, so diff/merge can't see the work until it lands on the branch.
+    # A failure here must not fall through to "nothing_to_merge" -- that
+    # would silently strand the child's work (lost on discard, no trail).
     code, out, _err = _git(wt.worktree_path, "status", "--porcelain")
     if code == 0 and out.strip():
-        _git(wt.worktree_path, "add", "-A")
-        _git(wt.worktree_path, "commit", "-m", f"agent work ({wt.run_id[:8]})")
+        add_code, _add_out, add_err = _git(wt.worktree_path, "add", "-A")
+        if add_code != 0:
+            return WorktreeRefusal(
+                "worktree_commit_failed",
+                f"could not commit agent work: {add_err.strip()[:200]}",
+            )
+        # Explicit identity: the worktree may have no resolvable git user
+        # (no ~/.gitconfig, no global identity) even though the shared repo
+        # does, since `commit` needs one regardless of who is landing it.
+        commit_code, _commit_out, commit_err = _git(
+            wt.worktree_path,
+            "-c", "user.name=tldw-agent",
+            "-c", "user.email=agent@tldw.local",
+            "commit", "-m", f"agent work ({wt.run_id[:8]})",
+        )
+        if commit_code != 0:
+            return WorktreeRefusal(
+                "worktree_commit_failed",
+                f"could not commit agent work: {commit_err.strip()[:200]}",
+            )
     code, out, _err = _git(repo_root, "diff", "--stat", f"{wt.base_sha}..{wt.branch}")
     diffstat = out.strip()
     if code != 0 or not diffstat:
