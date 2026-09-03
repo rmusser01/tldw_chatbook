@@ -76,7 +76,7 @@ filter timings include the deliberate 200 ms debounce and Textual repaint.
   blank-Enter switching, the 11-row History fixture, visible chrome/controls,
   `workspace:roleplay` semantic search, and exact saved-destination activation.
   It also produced a born-red native regression, the semantic-query repair in
-  `c5e5918bf`, and a post-fix 193-test focused rail. See
+  `5206daca1`, and a post-fix 193-test focused rail. See
   `task-21351-iterm2-uat-2026-09-02.md` and its checksummed JPEG captures.
 - Windows Terminal parity remains blocked by TASK-20937.6.
 
