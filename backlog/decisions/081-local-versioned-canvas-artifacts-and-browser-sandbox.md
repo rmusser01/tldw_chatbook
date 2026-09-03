@@ -1,0 +1,245 @@
+# ADR-081: Local versioned Canvas artifacts and browser sandbox
+
+Status: Proposed
+Date: 2026-09-03
+Related Task: Implementation tasks will be created from the approved design during planning.
+Related: TASK-31003, ADR-069, ADR-032
+
+## Decision
+
+Chatbook will add **Canvas** as a conversation-owned, local-first artifact
+system. A Canvas is a stable identity whose immutable revisions contain one
+complete, self-contained HTML document. Revisions form a parent-linked graph,
+are anchored to the assistant message/turn that produced them, and are
+resolved against the Console conversation's active message branch. Multiple
+named Canvases may belong to a conversation; each live Chatbook session has
+one selected Canvas/revision at a time. Each revision records a
+Chatbook-selected runtime profile so unsupported content is never executed
+under a guessed or weaker compatibility contract.
+
+The assistant receives four narrow, conversation-scoped tools:
+
+- `canvas_list()` returns bounded metadata for Canvases reachable on the
+  active branch.
+- `canvas_read(canvas_id)` returns the selected reachable revision's complete
+  HTML and identity.
+- `canvas_create(title, html)` stages a new Canvas under the current run.
+- `canvas_update(canvas_id, expected_parent_revision_id, html)` stages one
+  complete replacement and fails on a stale selected parent.
+
+Conversation and browser identities are injected by Chatbook, never supplied
+by the model. Canvas mutations are local and reversible and do not enter the
+ordinary tool-approval UI. The runtime must project Canvas tool calls
+differently for each consumer: full HTML may enter volatile model history and
+the Canvas service, while run logs, diagnostics, transcript tool cards, cycle
+detection, and ordinary persisted tool records receive only safe metadata
+(opaque IDs, title where safe, byte count, digest, status, and redacted
+errors). `canvas_read` receives the same output-projection treatment.
+
+Tool revisions remain staged until the originating assistant turn commits.
+The assistant message, transcript Canvas card, and every staged revision for
+that turn commit atomically. A failed or cancelled turn discards its staged
+revisions and restores the last committed preview. Temporary-chat Canvases
+stay in memory, carry a **Temporary** badge, and join the existing atomic
+temporary-conversation promotion transaction. Ending an unsaved session
+destroys their host-side state and revokes its capabilities.
+
+Canvas titles are revisioned state, not mutable document-global metadata. A
+direct user rename creates a lightweight revision with the same HTML, a new
+title, a user actor marker, and the same optimistic-parent rule. Selecting an
+older revision is not itself a mutation; the next update or rename branches
+from that selection.
+
+### Browser delivery boundary
+
+The Chatbook application process remains the authority for conversation
+scope, branch selection, staging, persistence, and composer insertion. A
+Canvas Gateway is a delivery/session broker only.
+
+- In native terminal mode, Chatbook lazily starts a loopback-only gateway and
+  opens the trusted shell through Textual's driver URL-opening API. Failure to
+  open a browser does not roll back the Canvas; Chatbook exposes a copyable
+  URL and retry action.
+- In `--serve` mode, Canvas routes share the existing Chatbook server origin.
+  The textual-serve parent owns HTTP/browser delivery while each browser's
+  Chatbook application runs in a child process. Each child therefore connects
+  to the parent through a private, authenticated, loopback control channel.
+  A per-AppService secret and browser-session identity are injected at spawn.
+  The channel carries bounded control events and revision bytes; it never
+  grants the parent authority to enumerate the database or choose a branch.
+  Loss of the channel disables Canvas for that session without terminating
+  the TUI.
+
+The served UI uses a Chatbook-owned, versioned browser shell rather than
+adding further string patches to textual-serve's bundled JavaScript. That
+shell owns the split pane, toolbar, confirmation surfaces, and Canvas event
+channel. A live session explicitly authorizes only the conversation it has
+opened; no Canvas route provides a global conversation or Canvas listing.
+
+The model-authored document is compiled into a closed render plan; raw source
+is never handed to a browser parser as active markup. Inline generated scripts
+execute only in a version-pinned ECMAScript engine compiled to WebAssembly,
+behind a `CanvasScriptRuntime` adapter. A mirrored DOM and capability-limited
+facade turn script mutations into bounded typed patches, each revalidated by
+the native renderer. Generated code receives no native browser global,
+navigation, network, storage, filesystem, clipboard, worker, or Chatbook API.
+
+The renderer iframe runs only Chatbook-owned bootstrap code with
+`sandbox="allow-scripts"` and without same-origin, forms, popups, downloads,
+navigation, storage, or modal privileges. A response CSP permits only fixed
+integrity-pinned runtime assets and the one trusted worker, while denying
+connections, untrusted/native scripts, child frames, objects, forms, and
+external resources. The renderer route accepts a fresh, single-use, session +
+conversation + Canvas + revision capability for iframe navigation, consumes
+it on load, and refuses top-level navigation. Generated code receives no
+reusable browser-session credential.
+
+V1's DOM/CSS API is an explicit compatibility subset. It supports structural
+HTML, local form controls, tables, SVG, selectors, event listeners, and common
+text/class/style/node mutations. It excludes external links, active embeds,
+native custom elements, native markup sinks such as `innerHTML`, and arbitrary
+browser APIs. Data assets are opaque validated handles. A QuickJS-family WASM
+engine is the reference candidate; implementation begins with a license,
+bundle, browser, resource-control, and security spike. Failure to satisfy the
+zero-egress suite disables generated JavaScript rather than falling back to
+native execution.
+
+The only model-page bridge in V1 is:
+
+- `canvas.submit(value)`: bounded text/JSON is validated by the trusted shell,
+  shown for user confirmation, revalidated by the Chatbook process, and
+  inserted into the exact matching chat composer as an unsent draft.
+- `canvas.download(request)`: bounded generated bytes/text are validated and
+  shown with filename, MIME type, and size before the trusted shell initiates
+  a browser download. Active/executable formats are rejected.
+
+The shell separately offers trusted source inspection, copy, and source
+download. Exact source defaults to an inert text attachment; downloading it as
+runnable HTML requires an explicit warning that execution outside Chatbook
+bypasses the Canvas security boundary. Every bridge message is checked against
+the exact iframe window,
+per-load nonce, schema, size/depth limits, rate limit, current conversation,
+selected Canvas/revision, and browser session. At most one confirmation may be
+pending. Nothing is submitted or downloaded automatically.
+
+### Authentication and portability
+
+Binding `--serve` beyond loopback requires a configured Chatbook web access
+token and origin-wide authentication for the terminal shell, terminal
+websocket, Canvas shell/events/renderer, and downloads. The bootstrap token is
+exchanged for a short-lived, host-only, HttpOnly, SameSite browser session and
+removed from the visible URL. Host, Origin, websocket, and CSRF checks apply.
+Authentication is not encryption: non-loopback plain HTTP fails closed unless
+the user explicitly enables an insecure-network override; TLS or a trusted
+reverse proxy is the supported recommendation. Per-browser Canvas
+capabilities cannot list or open another browser session's conversations.
+
+Durable Canvas records live only on the Chatbook host and are included in
+conversation/Chatbook export-import. A Canvas-bearing archive uses Chatbook
+format 3.0, keeps revision files inert during validation/import, enforces
+declared and actual uncompressed limits, and remaps conversation, message,
+Canvas, and revision identities as one graph when importing as new. A
+same-identity restore is digest-idempotent. Runtime profiles are preserved;
+unknown or retired profiles never fall back to native execution. Archives
+without Canvas content may remain format 2.0 for compatibility.
+
+Canvas records are deliberately excluded from server synchronization until an
+explicit contract is designed and approved under TASK-31003. Adding network,
+filesystem, cookies, persistent page storage, external connectors, sharing,
+or collaboration requires a later security/ownership decision and must not be
+enabled by relaxing the V1 sandbox.
+
+## Context
+
+Chatbook's Console already persists a branching message tree, records one
+local active-leaf hint, and promotes temporary conversations atomically. Its
+`--serve` mode is not the same process as the Textual app: aiohttp and browser
+websockets live in the textual-serve parent, which launches a Chatbook child
+per browser session. Canvas must work in both modes without exposing an extra
+localhost port to a remote browser or letting the parent server become a
+second conversation authority.
+
+Generic agent runtime behavior is also unsuitable for large/sensitive HTML:
+tool arguments and full tool results are currently written to run logs and
+step state. Canvas therefore needs a formal projection seam rather than
+special-case redaction scattered across UI widgets.
+
+The product direction follows useful lessons from Claude Code/Claude
+Artifacts and ChatGPT Visualizations: use an artifact only when terminal/chat
+text is the wrong medium, keep a stable browser view with explicit versions,
+make errors easy to return to chat, preserve useful non-JavaScript content,
+and treat generated visualizations as reviewable snapshots rather than live
+authoritative dashboards.
+
+## Alternatives Considered
+
+| Option | Why rejected |
+| --- | --- |
+| Run a separate public Canvas server/port | Remote browsers could not safely reach a second localhost listener, configuration would diverge between native and served modes, and it would expand the attack surface. |
+| Let the textual-serve parent read/write Canvas tables directly | It cannot authoritatively know the child session's live conversation branch or composer and would create two mutation owners. |
+| Put all Canvas HTTP serving inside the Textual child | Works locally but is not reachable through the same served origin without a proxy/control contract, and one port per browser child is operationally fragile. |
+| Reuse only textual-serve's `open_url` and always open a new tab | It gives native mode a useful fallback but cannot implement the approved served split pane or trusted return-to-composer flow. |
+| Continue patching textual-serve's minified browser bundle | Brittle across dependency upgrades and provides no stable application-owned protocol for Canvas state. |
+| Store one mutable HTML document per Canvas | Loses undo, branch history, origin attribution, stale-write protection, and exact transcript-card reopening. |
+| Store patch/diff updates | More token-efficient but nondeterministic to validate/apply across providers and inconsistent with V1's single-file model. Complete replacement documents were chosen explicitly. |
+| Keep titles mutable outside revisions | Renames would leak across sibling conversation branches and could not be undone consistently. |
+| Persist temporary Canvases in staging tables | Survives crashes unexpectedly and weakens the promise that unsaved session artifacts are destroyed. In-memory authority plus bounded broker cache is sufficient. |
+| Put Canvas HTML in message metadata or generic attachments | Conflates transcript and artifact lifecycles, duplicates large snapshots, and makes branch/import semantics implicit. |
+| Allow external CDNs in V1 | Makes rendering depend on network state and broadens CSP, privacy, integrity, and export guarantees. A bundled-library catalog is deferred to V2. |
+| Execute generated JavaScript natively in a sandboxed iframe | CSP and sandbox flags block ordinary APIs and resources but do not prove that a hostile script cannot initiate iframe self-navigation carrying data. This violates strict zero egress. |
+| Render the full browser platform in a controlled remote Chromium stream | Provides request interception but adds a large process, streaming, input, accessibility, and cross-platform subsystem. A capability-limited in-browser virtual engine keeps rendering local and inspectable. |
+| Ship HTML/CSS only | Meets the boundary with less machinery but fails the approved interactive JavaScript goal. It remains the fail-closed behavior if no virtual engine passes the release gates. |
+| Give the iframe direct Chatbook endpoints | Any generated script would inherit excessive authority. Confirmed, typed bridge actions preserve least privilege. |
+| Protect only Canvas routes on remote `--serve` | The unauthenticated terminal websocket would still grant control of Chatbook, making Canvas-only authentication meaningless. |
+| Treat access tokens over HTTP as sufficient remote security | Tokens can be observed in transit. Authentication and transport confidentiality are separate requirements. |
+| Depend on browser process isolation for runaway JavaScript | Browser process assignment is not a reliable application boundary. Virtual execution uses engine interrupt/memory limits and a terminable worker instead. |
+
+## Consequences
+
+- A new Canvas domain/repository and schema migration are required, including
+  document identity, immutable revision lineage, origin bindings, revisioned
+  titles, and local reopen hints.
+- The Console turn-commit and temporary-promotion transactions gain a Canvas
+  participant so message and artifact history cannot partially commit.
+- The agent runtime gains a general, testable sensitive tool-call/result
+  projection seam. Canvas HTML is still necessarily visible to the selected
+  model/provider while it creates or reads the document; the guarantee is
+  that Chatbook does not create unnecessary local log/display copies.
+- `--serve` gains origin-wide authentication, a Chatbook-owned shell, and a
+  private parent/child Canvas control channel. This is a larger boundary than
+  adding a few aiohttp routes, but it is required for correct browser-session
+  isolation.
+- Canvas creation/update can succeed even when browser delivery fails; the
+  durable artifact and its preview availability have separate statuses.
+- Full snapshots consume storage and model tokens. Strict per-document,
+  decoded-asset, generated-download, submit, revision-count, Canvas-count, and
+  per-conversation quotas fail explicitly; committed history is never silently
+  pruned.
+- Soft-deleting a conversation hides its Canvases and denies new
+  capabilities. Existing hard-purge lifecycle cascades through Canvas rows.
+  Host-side deletion cannot retract bytes a browser has already rendered;
+  capability revocation and shell blanking are best effort for delivered
+  content.
+- Virtual-engine interrupt/memory limits and a terminable worker contain
+  ordinary runaway generated code. The shell still exposes reload, previous
+  revision, scripts-disabled reopening, source inspection, and a bounded "Ask
+  assistant to fix" draft for engine/compiler/browser failures.
+- Strict zero egress costs browser compatibility: generated pages target a
+  documented Canvas DOM/CSS subset rather than the ambient web platform.
+- The WebAssembly engine and render plan are derived runtime machinery, not
+  artifact truth. Immutable revisions retain original HTML and a runtime
+  profile; a security update may refuse unsafe legacy content without silently
+  changing its source.
+- No Canvas sync, publication, sharing gallery, browser automation, backend,
+  multi-route app, or multi-file virtual filesystem is included in V1.
+
+## Links
+
+- [Approved design spec](../../Docs/superpowers/specs/2026-09-03-chatbook-canvas-design.md)
+- [TASK-31003: Define server synchronization contract for Canvas artifacts](../tasks/task-31003%20-%20Define-server-synchronization-contract-for-Canvas-artifacts.md)
+- [ADR-069: Console project-instruction local state and preflight](069-console-project-instruction-local-state-and-preflight.md)
+- [ADR-032: Local agent tool permission boundary](032-local-agent-tool-permission-boundary.md)
+- [Claude Code artifacts](https://code.claude.com/docs/en/artifacts)
+- [Claude Code checkpointing](https://code.claude.com/docs/en/checkpointing)
+- [Claude Artifacts](https://support.claude.com/en/articles/9487310-what-are-artifacts-and-how-do-i-use-them)
+- [ChatGPT Visualizations](https://learn.chatgpt.com/docs/visualizations)
