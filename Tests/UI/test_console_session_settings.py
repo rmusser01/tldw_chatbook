@@ -92,6 +92,9 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
     _is_local_thinking_provider,
     _settings_screen_region,
 )
+from tldw_chatbook.Widgets.Console.console_provider_picker import (
+    ConsoleProviderPicker,
+)
 from tldw_chatbook.Widgets.Console.console_settings_summary import (
     ConsoleSettingsSummary,
 )
@@ -2242,7 +2245,9 @@ async def test_suspended_focus_falls_back_to_connection_provider_when_target_hid
                 suspended_draft=snapshot,
             )
         )
-        await _wait_for_focused_id(app, pilot, "console-settings-provider")
+        await _wait_for_focused_id(
+            app, pilot, "console-settings-provider-picker-input"
+        )
 
 
 @pytest.mark.asyncio
@@ -2274,9 +2279,13 @@ async def test_suspended_model_picker_focus_falls_back_when_ancestor_is_hidden()
         assert picker.parent is not None
         picker.parent.display = False
         assert picker.query_one("#model-search-picker-input", Input).focusable
-        assert modal.query_one("#console-settings-provider", Select).focusable
+        assert modal.query_one(
+            "#console-settings-provider-picker-input", Input
+        ).focusable
         modal._restore_suspended_scroll_and_focus(snapshot)
-        await _wait_for_focused_id(app, pilot, "console-settings-provider")
+        await _wait_for_focused_id(
+            app, pilot, "console-settings-provider-picker-input"
+        )
 
 
 @pytest.mark.asyncio
@@ -2312,7 +2321,9 @@ async def test_suspended_context_missing_or_transient_focus_reveals_connection_f
             suspended_draft=snapshot,
         )
         await app.push_screen(modal)
-        await _wait_for_focused_id(app, pilot, "console-settings-provider")
+        await _wait_for_focused_id(
+            app, pilot, "console-settings-provider-picker-input"
+        )
 
         assert modal._active_view == "model"
         assert all(section.display for section in modal.query(".console-settings-model-view"))
@@ -6378,9 +6389,8 @@ async def test_console_settings_modal_keyboard_selects_model_from_dropdown() -> 
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_keyboard_selects_provider_and_refreshes_models() -> (
-    None
-):
+async def test_console_settings_modal_searchable_provider_picker_preserves_drafts() -> None:
+    """Replacing the Select must retain provider-scoped model and endpoint drafts."""
     app = StyledModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -6400,27 +6410,72 @@ async def test_console_settings_modal_keyboard_selects_provider_and_refreshes_mo
         )
         await pilot.pause()
 
+        picker = app.screen.query_one(
+            "#console-settings-provider-picker", ConsoleProviderPicker
+        )
+        picker_input = picker.query_one(
+            "#console-settings-provider-picker-input", Input
+        )
         provider_select = app.screen.query_one("#console-settings-provider", Select)
         model_select = app.screen.query_one("#console-settings-model-select", Select)
+        base_url = app.screen.query_one("#console-settings-base-url", Input)
+        assert picker.value == "llama_cpp"
         assert provider_select.value == "llama_cpp"
+        assert provider_select.display is False
+        assert provider_select.disabled is True
+        assert provider_select.focusable is False
         assert model_select.value == "model-a"
 
-        provider_select.focus()
-        await pilot.press("enter")
-        assert provider_select.expanded is True
-
-        await pilot.press("down")
-        await pilot.press("enter")
-        assert provider_select.expanded is False
+        base_url.value = "http://llama-draft.invalid:9090"
+        picker.focus_input()
+        await pilot.pause()
+        picker_input.value = "legacy"
+        await pilot.pause()
+        await pilot.press("down", "enter")
+        await pilot.pause()
         assert provider_select.value == "local_llamacpp"
         assert model_select.disabled is False
         assert model_select.value == "local-model"
 
+        base_url.value = "http://legacy-draft.invalid:9091"
+        picker.focus_input()
+        await pilot.pause()
+        picker_input.value = "llama_cpp"
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert picker.value == "llama_cpp"
+        assert provider_select.value == "llama_cpp"
+        assert model_select.value == "model-a"
+        assert base_url.value == "http://llama-draft.invalid:9090"
+
         await pilot.click("#console-settings-save")
 
     assert app.saved_settings is not None
-    assert app.saved_settings.provider == "local_llamacpp"
-    assert app.saved_settings.model == "local-model"
+    assert app.saved_settings.provider == "llama_cpp"
+    assert app.saved_settings.model == "model-a"
+
+
+@pytest.mark.asyncio
+async def test_searchable_provider_picker_focus_round_trips_as_public_picker_target() -> None:
+    """Nested picker focus must not serialize the hidden compatibility Select."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        app,
+        providers_models={"openai": ["gpt-5"], "llama_cpp": ["model-a"]},
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        picker = modal.query_one(ConsoleProviderPicker)
+        picker.focus_input()
+        await pilot.pause()
+
+        snapshot = modal.capture_suspended_draft()
+        assert snapshot.focus_control_id == "console-settings-provider-picker"
+        assert snapshot.raw_values["console-settings-provider"] == "openai"
 
 
 @pytest.mark.asyncio
@@ -6446,13 +6501,15 @@ async def test_console_settings_modal_tabs_to_model_picker_after_provider_change
         )
         await pilot.pause()
 
+        provider_picker = app.screen.query_one(ConsoleProviderPicker)
         provider_select = app.screen.query_one("#console-settings-provider", Select)
         model_select = app.screen.query_one("#console-settings-model-select", Select)
         picker = app.screen.query_one(
             "#console-settings-model-picker", ModelSearchPicker
         )
 
-        provider_select.focus()
+        provider_picker.focus_input()
+        await pilot.pause()
         provider_select.value = "groq"
         await pilot.pause()
 
@@ -6472,7 +6529,7 @@ async def test_console_settings_modal_tabs_to_model_picker_after_provider_change
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_reopens_provider_select_after_input_edit() -> (
+async def test_console_settings_modal_reopens_provider_picker_after_input_edit() -> (
     None
 ):
     app = StyledModalHarness()
@@ -6495,20 +6552,22 @@ async def test_console_settings_modal_reopens_provider_select_after_input_edit()
         await pilot.pause()
 
         temperature = app.screen.query_one("#console-settings-temperature", Input)
-        provider_select = app.screen.query_one("#console-settings-provider", Select)
+        provider_picker = app.screen.query_one(ConsoleProviderPicker)
 
         temperature.focus()
         temperature.value = "0.22"
         await pilot.pause()
 
-        provider_select.focus()
-        await pilot.press("enter")
+        provider_picker.focus_input()
+        await pilot.pause()
 
-        assert provider_select.expanded is True
+        assert app.screen.query_one(
+            "#console-settings-provider-picker-results", OptionList
+        ).display
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_opens_provider_select_click_after_input_edit() -> (
+async def test_console_settings_modal_opens_provider_picker_click_after_input_edit() -> (
     None
 ):
     app = StyledModalHarness()
@@ -6533,18 +6592,23 @@ async def test_console_settings_modal_opens_provider_select_click_after_input_ed
         temperature = app.screen.query_one(
             "#console-settings-temperature", ConsoleSettingsInput
         )
-        provider_select = app.screen.query_one("#console-settings-provider", Select)
+        provider_input = app.screen.query_one(
+            "#console-settings-provider-picker-input", Input
+        )
 
         await pilot.click("#console-settings-temperature")
         temperature.value = "0.72"
         await pilot.pause()
-        await pilot.click("#console-settings-provider")
+        await pilot.click("#console-settings-provider-picker-input")
 
-        assert provider_select.expanded is True
+        assert provider_input.has_focus
+        assert app.screen.query_one(
+            "#console-settings-provider-picker-results", OptionList
+        ).display
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_opens_screen_routed_select_click_after_input_edit() -> (
+async def test_console_settings_modal_opens_screen_routed_provider_picker_click_after_input_edit() -> (
     None
 ):
     app = StyledModalHarness()
@@ -6569,13 +6633,15 @@ async def test_console_settings_modal_opens_screen_routed_select_click_after_inp
         temperature = app.screen.query_one(
             "#console-settings-temperature", ConsoleSettingsInput
         )
-        provider_select = app.screen.query_one("#console-settings-provider", Select)
+        provider_input = app.screen.query_one(
+            "#console-settings-provider-picker-input", Input
+        )
 
         temperature.focus()
         temperature.value = "0.72"
         await pilot.pause()
 
-        provider_region = _settings_screen_region(provider_select)
+        provider_region = _settings_screen_region(provider_input)
         click = events.Click(
             app.screen,
             x=0,
@@ -6591,8 +6657,9 @@ async def test_console_settings_modal_opens_screen_routed_select_click_after_inp
         )
 
         app.screen.on_click(click)
+        await pilot.pause()
 
-        assert provider_select.expanded is True
+        assert provider_input.has_focus
 
 
 @pytest.mark.asyncio
@@ -6628,7 +6695,7 @@ async def test_console_settings_input_releases_mouse_capture_after_click_to_repl
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_opens_provider_select_from_redirected_input_click(
+async def test_console_settings_modal_opens_provider_picker_from_redirected_input_click(
     monkeypatch,
 ) -> None:
     app = StyledModalHarness()
@@ -6652,18 +6719,20 @@ async def test_console_settings_modal_opens_provider_select_from_redirected_inpu
         temperature = app.screen.query_one(
             "#console-settings-temperature", ConsoleSettingsInput
         )
-        provider_select = app.screen.query_one("#console-settings-provider", Select)
+        provider_input = app.screen.query_one(
+            "#console-settings-provider-picker-input", Input
+        )
         temperature.capture_mouse()
         temperature.value = "0.22"
 
-        provider_screen_region = provider_select.region.translate((10, 0))
+        provider_screen_region = provider_input.region.translate((10, 0))
         monkeypatch.setattr(
-            Select,
+            Input,
             "screen_region",
             property(
                 lambda widget: (
                     provider_screen_region
-                    if widget is provider_select
+                    if widget is provider_input
                     else widget.region
                 )
             ),
@@ -6684,9 +6753,10 @@ async def test_console_settings_modal_opens_provider_select_from_redirected_inpu
         )
 
         temperature.on_click(click)
+        await pilot.pause()
 
         assert app.mouse_captured is None
-        assert provider_select.expanded is True
+        assert provider_input.has_focus
 
 
 @pytest.mark.asyncio

@@ -57,6 +57,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_SESSION_SETTINGS_SOURCES,
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
+    ConsoleSettingsOption,
     ConsoleSettingsReadiness,
     DEFAULT_LLAMACPP_BASE_URL,
     URL_BASED_PROVIDER_KEYS,
@@ -105,6 +106,7 @@ from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.model_capabilities import is_vision_capable
 from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
+from .console_provider_picker import ConsoleProviderPicker
 from .console_context_controls import (
     ConsoleContextControlState,
     build_console_context_control_state,
@@ -184,6 +186,7 @@ _SNAPSHOT_RAW_VALUE_IDS = frozenset(
 _SNAPSHOT_FOCUS_CONTROL_IDS = frozenset(
     {
         "console-settings-provider",
+        "console-settings-provider-picker",
         "console-settings-model-picker",
         "console-settings-model-custom",
         "console-settings-base-url",
@@ -1321,6 +1324,7 @@ class ConsoleSettingsModal(
         )
 
     def compose(self) -> ComposeResult:
+        provider_picker_options = self._provider_picker_options()
         provider_options = self._provider_select_options()
         provider_values = {value for _, value in provider_options}
         provider_value = (
@@ -1414,13 +1418,23 @@ class ConsoleSettingsModal(
                     yield Static("Provider and model", classes="destination-section")
                     with Horizontal(classes="console-settings-modal-row"):
                         yield self._modal_label("Provider")
-                        yield Select(
+                        yield ConsoleProviderPicker(
+                            provider_picker_options,
+                            current_provider=self._active_provider,
+                            id="console-settings-provider-picker",
+                            classes="console-settings-control",
+                        )
+                        provider_adapter = Select(
                             provider_options,
                             value=provider_value,
                             allow_blank=True,
                             id="console-settings-provider",
                             classes="console-settings-control",
+                            disabled=True,
                         )
+                        provider_adapter.display = False
+                        provider_adapter.can_focus = False
+                        yield provider_adapter
                     with Horizontal(classes="console-settings-modal-row"):
                         yield self._modal_label("Model")
                         yield ModelSearchPicker(
@@ -2195,7 +2209,18 @@ class ConsoleSettingsModal(
         if control_id is None:
             self._focus_connection_fallback()
             return
-        if control_id == "console-settings-model-picker":
+        if control_id == "console-settings-provider-picker":
+            try:
+                picker = self.query_one(f"#{control_id}", ConsoleProviderPicker)
+                picker_input = picker.query_one(
+                    "#console-settings-provider-picker-input", Input
+                )
+                if self._is_effectively_focusable(picker_input):
+                    picker.focus_input()
+                    return
+            except (NoMatches, QueryError):
+                pass
+        elif control_id == "console-settings-model-picker":
             try:
                 picker = self.query_one(f"#{control_id}", ModelSearchPicker)
                 picker_input = picker.query_one("#model-search-picker-input", Input)
@@ -2218,14 +2243,21 @@ class ConsoleSettingsModal(
         """Focus a live Connection control when an old logical target is unavailable."""
         self._show_settings_view("model")
         for selector, widget_type in (
-            ("#console-settings-provider", Select),
+            ("#console-settings-provider-picker", ConsoleProviderPicker),
             ("#console-settings-model-picker", ModelSearchPicker),
         ):
             try:
                 control = self.query_one(selector, widget_type)
             except (NoMatches, QueryError):
                 continue
-            if isinstance(control, ModelSearchPicker):
+            if isinstance(control, ConsoleProviderPicker):
+                picker_input = control.query_one(
+                    "#console-settings-provider-picker-input", Input
+                )
+                if not self._is_effectively_focusable(picker_input):
+                    continue
+                control.focus_input()
+            elif isinstance(control, ModelSearchPicker):
                 picker_input = control.query_one("#model-search-picker-input", Input)
                 if not self._is_effectively_focusable(picker_input):
                     continue
@@ -2273,6 +2305,9 @@ class ConsoleSettingsModal(
     def _synchronize_restored_provider_state(self) -> None:
         """Refresh dependent controls exactly once after suppressed rehydration."""
         provider = self._active_provider
+        self.query_one(
+            "#console-settings-provider-picker", ConsoleProviderPicker
+        ).set_provider(provider)
         self._sync_model_controls(provider, self._model_for_provider(provider))
         self._sync_base_url_control(provider, self._base_url_for_provider(provider))
         self._sync_model_discover_controls(provider)
@@ -2400,6 +2435,11 @@ class ConsoleSettingsModal(
         current = focused or self.focused or getattr(self.app, "focused", None)
         while current is not None:
             control_id = getattr(current, "id", None)
+            if control_id in {
+                "console-settings-provider-picker-input",
+                "console-settings-provider-picker-results",
+            }:
+                return "console-settings-provider-picker"
             if control_id in _SNAPSHOT_FOCUS_CONTROL_IDS:
                 return control_id
             if control_id == "model-search-picker-input":
@@ -2888,6 +2928,19 @@ class ConsoleSettingsModal(
 
         if event.button != 1 or event.screen_x is None or event.screen_y is None:
             return
+
+        try:
+            provider_input = self.query_one(
+                "#console-settings-provider-picker-input", Input
+            )
+        except (NoMatches, QueryError):
+            provider_input = None
+        if provider_input is not None and provider_input.display:
+            provider_region = _settings_screen_region(provider_input)
+            if provider_region.contains(event.screen_x, event.screen_y):
+                provider_input.focus()
+                event.stop()
+                return
 
         for select in self.query(Select):
             if select.disabled or not select.display:
@@ -3932,6 +3985,28 @@ class ConsoleSettingsModal(
         if self._restoring_suspended_draft:
             return
         provider = self._select_value_text(event.value)
+        self._switch_provider(provider)
+
+    @on(ConsoleProviderPicker.ProviderSelected)
+    def _provider_picker_selected(
+        self, event: ConsoleProviderPicker.ProviderSelected
+    ) -> None:
+        """Mirror a user selection into the legacy state adapter and switch."""
+        event.stop()
+        provider = event.provider
+        provider_adapter = self.query_one("#console-settings-provider", Select)
+        with provider_adapter.prevent(Select.Changed):
+            provider_adapter.value = provider
+        self._switch_provider(provider)
+
+    def _switch_provider(self, provider: str) -> None:
+        """Apply one known provider while preserving the outgoing raw drafts."""
+        try:
+            self.query_one(
+                "#console-settings-provider-picker", ConsoleProviderPicker
+            ).set_provider(provider)
+        except (NoMatches, QueryError):
+            pass
         if (
             self._updating_controls
             or self._rebase_event_guard
@@ -4398,18 +4473,24 @@ class ConsoleSettingsModal(
         option builder is preserved.
         """
         options: list[tuple[str, str]] = []
-        for option in build_console_provider_options(self._providers_models):
+        for option in self._provider_picker_options():
             label = provider_display_name(option.value)
             if option.label.endswith(" (WIP)"):
                 label = f"{label} (WIP)"
             options.append((label, option.value))
-        if self._settings.provider and self._settings.provider not in {
-            value for _, value in options
+        return options
+
+    def _provider_picker_options(self) -> list[ConsoleSettingsOption]:
+        """Return known options while retaining an existing draft provider."""
+        options = list(build_console_provider_options(self._providers_models))
+        current_provider = self._active_provider or self._settings.provider
+        if current_provider and current_provider not in {
+            option.value for option in options
         }:
             options.append(
-                (
-                    provider_display_name(self._settings.provider),
-                    self._settings.provider,
+                ConsoleSettingsOption(
+                    label=current_provider,
+                    value=current_provider,
                 )
             )
         return options
