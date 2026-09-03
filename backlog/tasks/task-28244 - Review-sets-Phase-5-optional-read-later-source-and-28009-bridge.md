@@ -1,11 +1,11 @@
 ---
 id: TASK-28244
 title: 'Review sets - Phase 5 (optional): read-later source and 28009 bridge'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-02 22:29'
-updated_date: '2026-09-03 05:03'
+updated_date: '2026-09-03 06:37'
 labels:
   - library
   - media-ux
@@ -23,7 +23,7 @@ Optional: build a review set from the read-later queue, and bridge done-marks to
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A 'Review read-later' entry builds a set from list_read_it_later_media_ids() (already ordered saved_at DESC)
+- [x] #1 A 'Review read-later' entry builds a set from list_read_it_later_media_ids() (already ordered saved_at DESC)
 - [ ] #2 If/when task-28009 adds a global media read marker, completing an item in a set optionally flips it; until then done-marks stay set-local
 <!-- AC:END -->
 
@@ -35,3 +35,9 @@ Optional: build a review set from the read-later queue, and bridge done-marks to
 3. AC#2 contingent on 28009 (not built): done-marks stay set-local - no code
 4. Docs stamp + live spot-check
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Shipped in PR #2340 (dev b8179f059). 'Review read-later' action in the set picker builds a set from list_read_it_later_media_ids (saved_at DESC, bounded by new limit param at REVIEW_SET_CAP+1), titles via the bounded id_allowlist query reordered client-side to the saved order, shared create+land path. AC#2 intentionally unchecked: contingent on task-28009's global read marker, which does not exist - done-marks stay set-local per design.
+<!-- SECTION:NOTES:END -->
