@@ -3202,38 +3202,39 @@ class ChatScreen(BaseAppScreen):
     ) -> bool:
         """Claim only the exact retained retry coordinate."""
 
-        claim = handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
-        if claim is None:
-            revision_status = handoffs.exact_revision_status(
-                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                target.return_revision,
-            )
-            if revision_status in {"pending", "in_flight"}:
-                return False
-            if revision_status == "superseded":
-                self._pending_conversation_settings_return_claim = None
-                self._pending_conversation_settings_return_target = None
+        revision_status = handoffs.exact_revision_status(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+            target.return_revision,
+        )
+        if revision_status == "in_flight":
+            return False
+        if revision_status == "superseded":
+            if self._clear_conversation_settings_return_target(target):
                 self._notify_conversation_settings_return(
                     "This return was superseded by a newer request. "
                     "Open Conversation settings again."
                 )
-                return False
+            return False
+        if revision_status == "settled":
             self._discard_conversation_settings_return(
+                target,
                 "Conversation settings return is no longer available. "
                 "Open Conversation settings again."
             )
+            return False
+        claim = handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+        if claim is None:
             return False
         if (
             claim.revision != target.return_revision
             or type(claim.value) is not ConversationSettingsReturnIntent
         ):
             handoffs.release(claim)
-            self._pending_conversation_settings_return_claim = None
-            self._pending_conversation_settings_return_target = None
-            self._notify_conversation_settings_return(
-                "This return was superseded by a newer request. "
-                "Open Conversation settings again."
-            )
+            if self._clear_conversation_settings_return_target(target):
+                self._notify_conversation_settings_return(
+                    "This return was superseded by a newer request. "
+                    "Open Conversation settings again."
+                )
             return False
         intent = claim.value
         if (
@@ -3245,12 +3246,18 @@ class ChatScreen(BaseAppScreen):
             self._reject_conversation_settings_return(
                 handoffs,
                 claim,
+                target,
                 "Conversation settings return was stale. The draft was not restored.",
             )
             return False
         rejection_copy = self._conversation_settings_return_rejection_copy(target)
         if rejection_copy is not None:
-            self._reject_conversation_settings_return(handoffs, claim, rejection_copy)
+            self._reject_conversation_settings_return(
+                handoffs,
+                claim,
+                target,
+                rejection_copy,
+            )
             return False
         self._pending_conversation_settings_return_claim = claim
         return True
@@ -3301,29 +3308,52 @@ class ChatScreen(BaseAppScreen):
         except Exception:
             logger.debug("Unable to show Conversation settings recovery notice")
 
-    def _discard_conversation_settings_return(self, message: str) -> None:
+    def _clear_conversation_settings_return_target(
+        self,
+        target: ConsoleSettingsReturnTarget,
+        *,
+        discard_snapshot: bool = False,
+    ) -> bool:
+        """Clear only the exact screen-local return captured by one consumer."""
+
+        if self._pending_conversation_settings_return_target is not target:
+            return False
+        self._pending_conversation_settings_return_target = None
+        if discard_snapshot:
+            self._suspended_conversation_settings = None
+            self._suspended_conversation_settings_token = None
+        return True
+
+    def _discard_conversation_settings_return(
+        self,
+        target: ConsoleSettingsReturnTarget,
+        message: str,
+    ) -> None:
         """Clear obsolete private state after a terminal unclaimed route."""
 
-        self._pending_conversation_settings_return_claim = None
-        self._pending_conversation_settings_return_target = None
-        self._suspended_conversation_settings = None
-        self._suspended_conversation_settings_token = None
-        self._notify_conversation_settings_return(message)
+        if self._clear_conversation_settings_return_target(
+            target,
+            discard_snapshot=True,
+        ):
+            self._notify_conversation_settings_return(message)
 
     def _reject_conversation_settings_return(
         self,
         handoffs: PendingHandoffStore,
         claim: HandoffClaim[ConversationSettingsReturnIntent],
+        target: ConsoleSettingsReturnTarget,
         message: str,
     ) -> None:
         """Settle one terminal rejection and discard its obsolete private draft."""
 
         handoffs.acknowledge(claim)
-        self._pending_conversation_settings_return_claim = None
-        self._pending_conversation_settings_return_target = None
-        self._suspended_conversation_settings = None
-        self._suspended_conversation_settings_token = None
-        self._notify_conversation_settings_return(message)
+        if self._pending_conversation_settings_return_claim is claim:
+            self._pending_conversation_settings_return_claim = None
+        if self._clear_conversation_settings_return_target(
+            target,
+            discard_snapshot=True,
+        ):
+            self._notify_conversation_settings_return(message)
 
     def _consume_pending_conversation_settings_return(self) -> None:
         """Schedule the mounted restore once, retaining transient failures."""
@@ -3350,6 +3380,26 @@ class ChatScreen(BaseAppScreen):
         handoffs = getattr(self.app_instance, "pending_handoffs", None)
         prior_active_session_id: str | None = None
         switched_session = False
+        selected_active_session_epoch: int | None = None
+
+        async def restore_prior_session_if_still_owned() -> None:
+            """Undo only this worker's exact active-session transition."""
+
+            if (
+                not switched_session
+                or prior_active_session_id is None
+                or selected_active_session_epoch is None
+            ):
+                return
+            store = self._ensure_console_chat_store()
+            if (
+                store.active_session_id != target.session_id
+                or store.active_session_epoch() != selected_active_session_epoch
+            ):
+                return
+            store.switch_session(prior_active_session_id)
+            await self._sync_native_console_chat_ui()
+
         try:
             if target is None or not isinstance(handoffs, PendingHandoffStore):
                 return
@@ -3362,16 +3412,19 @@ class ChatScreen(BaseAppScreen):
                 return
             if not handoffs.is_current_claim(claim):
                 handoffs.release(claim)
-                self._pending_conversation_settings_return_target = None
-                self._notify_conversation_settings_return(
-                    "This return was superseded by a newer request. "
-                    "Open Conversation settings again."
-                )
+                if self._clear_conversation_settings_return_target(target):
+                    self._notify_conversation_settings_return(
+                        "This return was superseded by a newer request. "
+                        "Open Conversation settings again."
+                    )
                 return
             rejection_copy = self._conversation_settings_return_rejection_copy(target)
             if rejection_copy is not None:
                 self._reject_conversation_settings_return(
-                    handoffs, claim, rejection_copy
+                    handoffs,
+                    claim,
+                    target,
+                    rejection_copy,
                 )
                 return
             snapshot = self._suspended_conversation_settings
@@ -3383,6 +3436,7 @@ class ChatScreen(BaseAppScreen):
                 self._reject_conversation_settings_return(
                     handoffs,
                     claim,
+                    target,
                     "Conversation settings return was stale. The draft was not restored.",
                 )
                 return
@@ -3395,11 +3449,13 @@ class ChatScreen(BaseAppScreen):
                     self._reject_conversation_settings_return(
                         handoffs,
                         claim,
+                        target,
                         "The original conversation closed. Its Conversation settings "
                         "draft was not restored.",
                     )
                     return
                 switched_session = True
+                selected_active_session_epoch = store.active_session_epoch()
                 await self._sync_native_console_chat_ui()
             await self._reopen_suspended_console_settings(
                 token,
@@ -3409,9 +3465,7 @@ class ChatScreen(BaseAppScreen):
             restored = self._suspended_conversation_settings is None
             if not restored:
                 handoffs.release(claim)
-                if switched_session and prior_active_session_id is not None:
-                    store.switch_session(prior_active_session_id)
-                    await self._sync_native_console_chat_ui()
+                await restore_prior_session_if_still_owned()
                 return
             try:
                 await self._mount_conversation_settings_return_status(
@@ -3424,17 +3478,14 @@ class ChatScreen(BaseAppScreen):
                     exc_info=True,
                 )
             handoffs.acknowledge(claim)
-            self._pending_conversation_settings_return_target = None
+            self._clear_conversation_settings_return_target(target)
         except asyncio.CancelledError:
             if isinstance(handoffs, PendingHandoffStore) and claim is not None:
                 handoffs.release(claim)
-            if switched_session and prior_active_session_id is not None:
-                try:
-                    store = self._ensure_console_chat_store()
-                    store.switch_session(prior_active_session_id)
-                    await self._sync_native_console_chat_ui()
-                except Exception:
-                    logger.debug("Unable to restore the prior Console session")
+            try:
+                await restore_prior_session_if_still_owned()
+            except Exception:
+                logger.debug("Unable to restore the prior Console session")
             raise
         except Exception:
             logger.debug(
@@ -3443,19 +3494,37 @@ class ChatScreen(BaseAppScreen):
             )
             if isinstance(handoffs, PendingHandoffStore) and claim is not None:
                 handoffs.release(claim)
-            if switched_session and prior_active_session_id is not None:
-                try:
-                    store = self._ensure_console_chat_store()
-                    store.switch_session(prior_active_session_id)
-                    await self._sync_native_console_chat_ui()
-                except Exception:
-                    logger.debug("Unable to restore the prior Console session")
+            try:
+                await restore_prior_session_if_still_owned()
+            except Exception:
+                logger.debug("Unable to restore the prior Console session")
         finally:
             if isinstance(handoffs, PendingHandoffStore) and claim is not None:
                 handoffs.release(claim)
             if self._pending_conversation_settings_return_claim is claim:
                 self._pending_conversation_settings_return_claim = None
             self._conversation_settings_return_restore_in_progress = False
+            replacement = self._pending_conversation_settings_return_target
+            replacement_is_pending = False
+            if isinstance(handoffs, PendingHandoffStore) and replacement is not None:
+                try:
+                    replacement_is_pending = handoffs.exact_revision_status(
+                        HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                        replacement.return_revision,
+                    ) == "pending"
+                except Exception:
+                    logger.debug(
+                        "Unable to inspect replacement Conversation settings return"
+                    )
+            if (
+                replacement_is_pending
+                and replacement is not target
+                and self.is_mounted
+                and self._owns_console_screen_stack()
+            ):
+                self.call_after_refresh(
+                    self._consume_pending_conversation_settings_return
+                )
 
     def _release_claimed_conversation_settings_return(self) -> None:
         """Release this screen's exact claim before its mounted lifetime ends."""

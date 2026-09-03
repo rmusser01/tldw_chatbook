@@ -10818,11 +10818,19 @@ class SettingsScreen(BaseAppScreen):
     def _return_to_conversation_settings(
         self,
         outcome: ConversationSettingsReturnOutcome,
+        *,
+        fence_already_held: bool = False,
     ) -> bool:
         """Post one typed Console return without retaining its private intent."""
 
-        if self._provider_return_navigation_in_progress:
+        if fence_already_held:
+            if not self._provider_return_navigation_in_progress:
+                return False
+        elif self._provider_return_navigation_in_progress:
             return False
+        else:
+            self._provider_return_navigation_in_progress = True
+            self._update_provider_return_widgets()
         claimed = self._claim_provider_return_intent()
         if claimed is None:
             self.app.notify(
@@ -10840,9 +10848,6 @@ class SettingsScreen(BaseAppScreen):
         if not store.release(claim):
             self._settle_provider_return_state()
             return False
-
-        self._provider_return_navigation_in_progress = True
-        self._update_provider_return_widgets()
 
         def settle_navigation(succeeded: bool) -> None:
             if succeeded:
@@ -24389,27 +24394,47 @@ class SettingsScreen(BaseAppScreen):
         """Reuse the category discard guard before returning unsaved."""
 
         event.stop()
-        if not self._provider_can_return_without_saving():
+        if (
+            self._provider_return_navigation_in_progress
+            or not self._provider_can_return_without_saving()
+        ):
             return
+        self._provider_return_navigation_in_progress = True
+        self._update_provider_return_widgets()
+
+        async def _cancel_return() -> None:
+            self._provider_return_navigation_in_progress = False
+            self._update_provider_return_widgets()
 
         async def _return_after_revert() -> None:
-            if self._category_has_unsaved_changes(
-                SettingsCategoryId.PROVIDERS_MODELS
-            ):
-                self._revert_category(SettingsCategoryId.PROVIDERS_MODELS)
-            self._return_to_conversation_settings(
-                ConversationSettingsReturnOutcome.WITHOUT_SAVING
-            )
+            try:
+                if self._category_has_unsaved_changes(
+                    SettingsCategoryId.PROVIDERS_MODELS
+                ):
+                    self._revert_category(SettingsCategoryId.PROVIDERS_MODELS)
+                self._return_to_conversation_settings(
+                    ConversationSettingsReturnOutcome.WITHOUT_SAVING,
+                    fence_already_held=True,
+                )
+            except Exception:
+                await _cancel_return()
+                raise
 
-        self.app.push_screen(
-            ConfirmationDialog(
-                title="Revert Settings changes",
-                message="Discard all unsaved changes to Providers & Models?",
-                confirm_label="Discard changes",
-                cancel_label="Keep editing",
-                confirm_callback=_return_after_revert,
+        try:
+            self.app.push_screen(
+                ConfirmationDialog(
+                    title="Revert Settings changes",
+                    message="Discard all unsaved changes to Providers & Models?",
+                    confirm_label="Discard changes",
+                    cancel_label="Keep editing",
+                    confirm_callback=_return_after_revert,
+                    cancel_callback=_cancel_return,
+                )
             )
-        )
+        except Exception:
+            self._provider_return_navigation_in_progress = False
+            self._update_provider_return_widgets()
+            raise
 
     @on(Input.Changed, "#settings-model-profile-temperature")
     def handle_model_profile_temperature_changed(self, event: Input.Changed) -> None:

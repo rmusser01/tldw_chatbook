@@ -7708,7 +7708,7 @@ async def test_conversation_settings_return_save_failure_retains_draft_and_hando
 
 
 @pytest.mark.asyncio
-async def test_conversation_settings_return_without_saving_uses_discard_guard():
+async def test_conversation_settings_return_without_saving_is_single_flight_on_confirm():
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
     app.app_config["api_settings"] = {"openai": {}}
@@ -7724,10 +7724,26 @@ async def test_conversation_settings_return_without_saving_uses_discard_guard():
             "DUMMY-UNSAVED-RETURN-KEY"
         )
         await pilot.pause()
-        screen.query_one("#settings-provider-return-without-save", Button).press()
+        return_without_save = screen.query_one(
+            "#settings-provider-return-without-save", Button
+        )
+        return_without_save.press()
         await pilot.pause()
         assert isinstance(host.screen_stack[-1], ConfirmationDialog)
         assert host.navigation_messages == []
+        screen.handle_provider_return_without_saving(
+            Button.Pressed(return_without_save)
+        )
+        screen.handle_provider_return_without_saving(
+            Button.Pressed(return_without_save)
+        )
+        await pilot.pause()
+        assert sum(
+            isinstance(candidate, ConfirmationDialog)
+            for candidate in host.screen_stack
+        ) == 1
+        assert screen._provider_return_navigation_in_progress is True
+        assert return_without_save.disabled is True
         host.screen_stack[-1].query_one("#confirm-button", Button).press()
         await pilot.pause()
         await pilot.pause()
@@ -7739,6 +7755,55 @@ async def test_conversation_settings_return_without_saving_uses_discard_guard():
         assert returned is not None
         assert returned.outcome is ConversationSettingsReturnOutcome.WITHOUT_SAVING
         assert SettingsCategoryId.PROVIDERS_MODELS not in screen._settings_drafts
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_without_saving_cancel_allows_retry():
+    """Cancel clears the pre-dialog fence so one later return can proceed."""
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    _intent, target = _stage_conversation_settings_return_intent(app)
+    host = ConversationReturnSettingsHarness(app)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        screen.query_one("#settings-provider-api-key", Input).value = (
+            "DUMMY-CANCELLED-RETURN-KEY"
+        )
+        await pilot.pause()
+        return_without_save = screen.query_one(
+            "#settings-provider-return-without-save", Button
+        )
+
+        screen.handle_provider_return_without_saving(
+            Button.Pressed(return_without_save)
+        )
+        await pilot.pause()
+        assert isinstance(host.screen_stack[-1], ConfirmationDialog)
+        assert screen._provider_return_navigation_in_progress is True
+        host.screen_stack[-1].query_one("#cancel-button", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert host.screen_stack[-1] is screen
+        assert screen._provider_return_navigation_in_progress is False
+        assert return_without_save.disabled is False
+        assert host.navigation_messages == []
+
+        screen.handle_provider_return_without_saving(
+            Button.Pressed(return_without_save)
+        )
+        await pilot.pause()
+        assert isinstance(host.screen_stack[-1], ConfirmationDialog)
+        assert sum(
+            isinstance(candidate, ConfirmationDialog)
+            for candidate in host.screen_stack
+        ) == 1
 
 
 @pytest.mark.asyncio

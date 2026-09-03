@@ -235,3 +235,108 @@ ADR paths: `backlog/decisions/012-provider-credential-settings-boundary.md` and
 
 Reason: this task directly implements the approved ownership, privacy, and
 single-slot handoff decisions without changing their boundaries.
+
+## Round-3 review fixes
+
+Resolved the three Important lifecycle findings without adding a state owner,
+store API, persistence change, or ADR:
+
+- Console now checks the captured return revision before claiming the channel,
+  clears local target/snapshot coordinates only when the exact captured target
+  object is still current, and schedules one retained replacement only when
+  that replacement's exact revision remains pending and the Console still owns
+  the mounted stack top. An older restore can settle or release only its own
+  claim; a replacement staged before claim, during terminal rejection, or
+  before a successful acknowledgement remains reclaimable.
+- Dirty **Return without saving** acquires the existing return-navigation fence
+  before opening its confirmation dialog. All return actions project the
+  disabled state, queued/direct duplicates are rejected, cancel clears the
+  fence, and confirm carries the same fence into the existing typed navigation
+  path without self-blocking or opening another dialog.
+- Transient, cancellation, and exception repair captures the existing
+  `ConsoleChatStore.active_session_epoch()` immediately after selecting the
+  origin session. It restores the prior active session only while both the
+  selected session ID and activation epoch still match, preserving a later
+  user or newer-target selection even across an A→C→A sequence.
+
+### Round-3 RED evidence
+
+Before production edits:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py Tests/UI/test_settings_configuration_hub.py -k 'replacement_before_claim_consumes_replacement or replacement_during_terminal_restore_is_consumed or success_preserves_replacement_staged_during_restore or transient_cleanup_preserves_new_session_selection or return_without_saving_is_single_flight_on_confirm or return_without_saving_cancel_allows_retry' -q --tb=line --show-capture=no
+6 failed, 698 deselected, 1 warning in 17.22s
+```
+
+The six failures were the expected product behaviors: no replacement modal
+after B arrived before A's claim; no replacement modal after B arrived during
+A's terminal settings-revision rejection; A success cleared B's local target;
+stale transient cleanup selected the prior session instead of C; duplicate
+direct dirty-return events stacked three confirmation dialogs; and cancel had
+no pre-dialog fence to clear. There were no fixture or collection failures.
+
+The first GREEN run reported four passes and two residual failures. Both were
+test-oracle timing defects: the assertions stopped when B's modal first mounted,
+before B's same worker completed status mounting, acknowledgement, and local
+target settlement. Waiting for both modal ownership and target settlement fixed
+the oracle without changing production behavior.
+
+### Round-3 GREEN evidence
+
+Exact review regressions:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_console_native_chat_flow.py Tests/UI/test_settings_configuration_hub.py -k 'replacement_before_claim_consumes_replacement or replacement_during_terminal_restore_is_consumed or success_preserves_replacement_staged_during_restore or transient_cleanup_preserves_new_session_selection or return_without_saving_is_single_flight_on_confirm or return_without_saving_cancel_allows_retry' -q --tb=short --show-capture=no
+6 passed, 698 deselected, 1 warning in 7.52s
+```
+
+Prior round-2 lifecycle plus discard-return regression slice:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_native_chat_flow.py -k 'single_flight_and_retries_after_failed_navigation or superseded_route_preserves_latest_handoff or router_failure_before_mount_keeps_handoff_pending or rapid_unmount_before_consumer_keeps_handoff_pending or unmount_releases_acquired_exact_claim or return_without_saving' -q --tb=short --show-capture=no
+7 passed, 697 deselected, 1 warning in 32.32s
+```
+
+Fresh cumulative Task 4 selection and complete handoff-store suite:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/State/test_pending_handoff_store.py Tests/State/test_screen_state_store.py Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_native_chat_flow.py Tests/UI/test_console_session_settings.py -k 'conversation_settings or provider_navigation or credential or screen_state' -q --tb=short --show-capture=no
+101 passed, 1025 deselected, 1 warning in 80.67s
+
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/State/test_pending_handoff_store.py -q --tb=short --show-capture=no
+90 passed, 1 warning in 0.47s
+```
+
+The warning is the already documented Requests dependency-version warning from
+the shared root virtualenv. No full suite was run, per repository and task
+instructions.
+
+Static verification:
+
+```text
+../../.venv/bin/python -m ruff check tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/UI/Screens/settings_screen.py Tests/UI/test_console_native_chat_flow.py Tests/UI/test_settings_configuration_hub.py
+All checks passed!
+
+../../.venv/bin/python -m py_compile tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/UI/Screens/settings_screen.py Tests/UI/test_console_native_chat_flow.py Tests/UI/test_settings_configuration_hub.py
+exit 0
+
+git diff --check
+exit 0
+```
+
+### Round-3 files and self-review
+
+- `tldw_chatbook/UI/Screens/chat_screen.py`
+- `tldw_chatbook/UI/Screens/settings_screen.py`
+- `Tests/UI/test_console_native_chat_flow.py`
+- `Tests/UI/test_settings_configuration_hub.py`
+- `.superpowers/sdd/2026-09-02-task-30010-conversation-settings-return-contract/task-4-report.md`
+
+Self-review confirmed that a same-target transient failure remains passive (no
+automatic retry loop), only a distinct exact pending replacement is scheduled,
+and modal ownership still prevents a replacement from opening over A's
+successfully mounted modal. The terminal replacement test advances the real
+session settings revision and exercises the production rejection classifier;
+the test doubles only inject otherwise unobservable interleaving points. The
+existing privacy/copy contract is unchanged. No general lesson or new ADR was
+needed.
