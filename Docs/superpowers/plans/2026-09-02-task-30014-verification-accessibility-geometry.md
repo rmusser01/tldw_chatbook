@@ -4,7 +4,7 @@
 
 **Goal:** Finish Conversation settings with honest live verification, deterministic keyboard/accessibility behavior, and usable compact-through-wide terminal layouts.
 
-**Architecture:** Reuse `settings_endpoint_probe.py` for supported non-generating `/models` checks and the Console gateway's `AuxiliaryCompletionRequest` for an explicitly confirmed, one-token paid generation check. Both publish through TASK-30011's exact-identity evidence store. The modal owns focus/announcements and toggles a compact class from measured width; visual verification uses isolated Textual apps and rendered frames.
+**Architecture:** Keep probe availability in the provider endpoint domain and inject ChatScreen-owned connection tests that reuse `settings_endpoint_probe.py`; the reusable modal never imports a Settings screen module. Reuse the Console gateway's `AuxiliaryCompletionRequest` for an explicitly confirmed, one-token paid generation check. Both operations publish through TASK-30011's exact-identity evidence store. The modal owns focus/announcements and toggles a compact class from measured width; visual verification uses isolated Textual apps and rendered frames.
 
 **Tech Stack:** Python 3.11, Textual 8.x workers/Pilot, existing endpoint probe and Console provider gateway, TCSS, pytest, Textual screenshot/export APIs.
 
@@ -22,47 +22,51 @@
 
 ---
 
-### Task 1: Expose only meaningful connection probes
+### Task 1: Unify model discovery with meaningful connection probes
 
 **Files:**
+- Modify: `tldw_chatbook/Chat/provider_endpoint_contract.py`
 - Modify: `tldw_chatbook/UI/Screens/settings_endpoint_probe.py`
+- Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
 - Modify: `tldw_chatbook/Widgets/Console/console_settings_modal.py`
+- Test: `Tests/Chat/test_provider_endpoint_contract.py`
 - Test: `Tests/UI/test_settings_endpoint_probe.py`
 - Test: `Tests/UI/test_console_session_settings.py`
 
 **Interfaces:**
 - Produces: `ConnectionProbeAvailability` values `models_route`, `unavailable`
 - Produces: `connection_probe_availability(provider: str, endpoint: str | None) -> ConnectionProbeAvailability`
+- Produces: injected `ConnectionTester = Callable[[ProviderDraftIdentity], Awaitable[ProviderProbeResult]]`
 - Consumes: `probe_settings_endpoint(..., purpose=SettingsEndpointProbePurpose.CHAT_CATALOG)`
 
 - [ ] **Step 1: Write red availability and result tests**
 
-Cover URL-based local/custom providers, cloud providers, missing/invalid URLs, reachable lists, listing-unavailable responses, timeouts, refusal, unauthorized/forbidden, cancellation, and identity edits during a request.
+Cover URL-based local/custom providers, cloud providers, missing/invalid URLs, reachable lists, listing-unavailable responses, timeouts, refusal, unauthorized/forbidden, cancellation, identity edits during a request, and absence of a duplicate Discover/Test action pair.
 
 - [ ] **Step 2: Verify tests fail**
 
-Run: `pytest Tests/UI/test_settings_endpoint_probe.py Tests/UI/test_console_session_settings.py -k 'connection_probe_availability or test_connection' -q`
+Run: `pytest Tests/Chat/test_provider_endpoint_contract.py Tests/UI/test_settings_endpoint_probe.py Tests/UI/test_console_session_settings.py -k 'connection_probe_availability or test_connection' -q`
 
 Expected: FAIL because the modal has discovery but no typed connection-probe availability.
 
 - [ ] **Step 3: Implement a pure availability adapter**
 
-Return `models_route` only when `resolve_provider_endpoint()` and existing provider contracts produce a valid bounded models-route probe. Return `unavailable` for providers without a meaningful non-generating route. Do not create another provider list.
+Implement availability in `provider_endpoint_contract.py`. Return `models_route` only when `resolve_provider_endpoint()` and existing provider contracts produce a valid bounded models-route probe; otherwise return `unavailable`. Do not create another provider list.
 
 - [ ] **Step 4: Add Test connection with honest fallback copy**
 
-For `models_route`, mount `Test connection`; otherwise mount no button and show `No non-billable live connection check is available for this provider.` Dispatch through an exclusive worker, capture TASK-30013 identity, cancel on close/edit, and publish only if identity still matches.
+For `models_route`, rename/reuse the existing discovery action as `Test connection & list models`; do not mount a second action for the same `/models` request. Otherwise mount no test button and show `No non-billable live connection check is available for this provider.` `ChatScreen` injects a tester that calls `probe_settings_endpoint()` with `CHAT_CATALOG`; the modal dispatches it through an exclusive worker, feeds its model IDs into TASK-30013 provenance handling, captures the exact identity, cancels on close/edit, and publishes only if identity still matches.
 
 - [ ] **Step 5: Verify supported/unsupported behavior**
 
-Run: `pytest Tests/UI/test_settings_endpoint_probe.py Tests/UI/test_console_session_settings.py -k 'connection or probe or stale' -q`
+Run: `pytest Tests/Chat/test_provider_endpoint_contract.py Tests/UI/test_settings_endpoint_probe.py Tests/UI/test_console_session_settings.py -k 'connection or probe or stale' -q`
 
 Expected: PASS.
 
 - [ ] **Step 6: Commit connection verification**
 
 ```bash
-git add tldw_chatbook/UI/Screens/settings_endpoint_probe.py tldw_chatbook/Widgets/Console/console_settings_modal.py Tests/UI/test_settings_endpoint_probe.py Tests/UI/test_console_session_settings.py
+git add tldw_chatbook/Chat/provider_endpoint_contract.py tldw_chatbook/UI/Screens/settings_endpoint_probe.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Widgets/Console/console_settings_modal.py Tests/Chat/test_provider_endpoint_contract.py Tests/UI/test_settings_endpoint_probe.py Tests/UI/test_console_session_settings.py
 git commit -m "feat: add honest Conversation connection tests"
 ```
 

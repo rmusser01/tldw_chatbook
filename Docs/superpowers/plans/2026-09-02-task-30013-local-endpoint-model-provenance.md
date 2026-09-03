@@ -180,7 +180,7 @@ git commit -m "fix: fence model discovery to the current endpoint"
 - Test: `Tests/UI/test_console_native_chat_flow.py`
 
 **Interfaces:**
-- Produces: `ConsoleSettingsPersistAndApply(settings, provider_setup_draft, expected_settings_revision)`
+- Produces: `ConsoleSettingsPersistAndApply(settings, provider: str, model: str, endpoint: str, expected_settings_revision: int)` with `settings` and `endpoint` excluded from repr
 - Consumes: `build_provider_setup_mutation()`, `bind_provider_setup_precondition()`, `persist_provider_setup()`, and `provider_setup_draft_identity()`
 - Produces: primary `Save endpoint & use model`
 
@@ -204,11 +204,11 @@ Expected: FAIL because the modal's defaults writer is not a typed provider-setup
 
 - [ ] **Step 3: Build the typed mutation without writing**
 
-The modal validates provider/model/endpoint and returns `ConsoleSettingsPersistAndApply`; it does not call config writers itself. `ChatScreen` captures expected settings revision, creates and binds the existing provider setup mutation against current config, and runs `persist_provider_setup()` off the application thread.
+The modal validates provider/model/endpoint and returns only those non-credential draft values in `ConsoleSettingsPersistAndApply`; it neither receives credentials nor calls config writers. `ChatScreen` captures expected settings revision, resolves the canonical credential source/revision from current config without exposing it to the modal, creates and binds the existing provider setup mutation against that config snapshot, and runs `persist_provider_setup()` off the application thread.
 
 - [ ] **Step 4: Settle persistence before application**
 
-On `ConfigMutationResult.applied=True`, reload canonical config, re-resolve readiness, verify session/revision, then call `_apply_console_settings_result()` and close. On failure, conflict, deletion, or revision mismatch, leave the session untouched, retain/reopen the same draft, and render fixed recovery copy.
+On `ConfigMutationResult.fully_applied=True`, reload canonical config, re-resolve readiness, verify session/revision, then call `_apply_console_settings_result()` and close. On failure, conflict, deletion, or revision mismatch, leave the session untouched, retain/reopen the same draft, and render fixed recovery copy.
 
 - [ ] **Step 5: Gate endpoint scope honestly**
 
