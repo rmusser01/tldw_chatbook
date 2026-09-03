@@ -1,7 +1,8 @@
 # TASK-28238 — Parallel sub-agent safety: stale-write guard + worktree isolation (design)
 
-Status: design approved 2026-09-02 (brainstorming). Two phases under one task,
-phase 1 first. Not yet planned/implemented.
+Status: design approved 2026-09-02 (brainstorming), then hardened by an
+adversarial design review against the code (same day; corrections folded in
+below). Two phases under one task, phase 1 first. Not yet planned/implemented.
 
 ## Problem
 
@@ -11,9 +12,14 @@ resolve against the same `workspace_root`. So two children editing the same file
 race — a later writer silently clobbers an earlier one's change, with no signal.
 The fs tools already confine to a `workspace_root` and check a root-level
 `root_identity`, but there is no per-file read-then-write guard, and no
-per-child tree isolation. (Optimistic locking exists only for notes today,
-`Tools/note_management_tools.py`; the fs `expected_sha256` is a different thing
-— the approval-time rug-pull check, not a disk-changed-since-read guard.)
+per-child tree isolation. (Optimistic locking exists for notes,
+`Tools/note_management_tools.py`, and — review finding — `fs_write` ALREADY has
+a model-opt-in atomic compare-and-swap: `write_file(expected_sha256=...)`
+refuses under a per-target lock when the on-disk digest changed
+(`Tools/local_tool_impls.py:468-476`). What's missing is (a) anything AUTOMATIC
+— the model must volunteer the param today, and never does; (b) any guard at all
+for `fs_edit`/`fs_patch`. A separate, promotion-only `expected_sha256`
+proposal-match exists in the agent-lesson path; do not confuse the two.)
 
 ## Goals
 
@@ -53,36 +59,76 @@ resolution) so read-via-symlink / write-via-`..` map to one entry.
 
 `ReadStamp` = `(sha256, size)` or the sentinel `ABSENT`.
 
-### Record (on read)
-On a successful `fs_read` of a path, store `ReadStamp`:
-- File present: `sha256` of the **whole file** captured at read time, plus size.
-  `fs_read` supports offset/windowed reads; the ledger must hash the whole file,
-  not the returned window, or a whole-file check at write can never match.
-- File absent (read of a missing path): store `ABSENT`.
+### Record (on read) — provider-side, never keyed off fs_read success
+Review CRITICAL: an fs_read of a missing path is NOT a success — it raises
+`LocalToolError`, and confinement/denylist refusals raise the SAME exception
+type (`local_tool_impls.py:337` vs the `resolve_workspace_path` refusals). So
+the ledger must never be stamped from fs_read's outcome. Instead, on an fs_read
+dispatch the PROVIDER resolves the path itself via `resolve_workspace_path`:
+- resolve raises (refused path) -> record NOTHING;
+- resolved + `is_file()` false -> record `ABSENT`;
+- resolved + present -> record `(sha256(whole file), size)`. `fs_read` windows
+  with offset/limit but `_read_relative_file` already reads the whole file
+  (`local_tool_impls.py:349`); the provider-side hash is a second read of the
+  file (accepted cost — keeps `local_tool_impls` stateless; noted as avoidable
+  later by recording inside the impl if large-file double-reads ever matter).
+- A binary-file refusal is an error -> record nothing.
 
 Only `fs_read` records — `fs_list`/`fs_glob`/`fs_grep` don't establish "I saw
 the content I'm about to base a write on."
 
+### Ledger home, lock, cap (review: reuse existing patterns in this file)
+An instance dict + `threading.Lock` on `LocalToolProvider`, mirroring
+`_inline_bytes_by_run`/`_spill_lock` (`local_tool_provider.py:718-719`): sibling
+fleet children run tools concurrently on daemon threads, so the read-modify-
+write must be locked (precedent: `RunToolPolicy._lock`). Bound growth with a
+per-run entry cap borrowing the `_MAX_PROMOTION_PROPOSALS_PER_RUN` pattern
+(`:722,727,1261`) — necessary because `build_server_local_provider`
+(`MCP/local_server_tools.py:366`) composes a LONG-LIVED provider where
+`current_run_id()` is always `""` and entries would otherwise accumulate for
+the server lifetime. A size cap, not an eviction subsystem.
+
 ### Check (on write/edit/patch)
-At EXECUTION time (after any approval card — the file can change between approval
-and execution too), for the target path:
-1. If no ledger entry for `(run_id, path)` → proceed (blind write / new file).
-2. If entry is a hash and current on-disk whole-file `sha256` ≠ recorded →
+At EXECUTION time (after any approval card — the file can change between
+approval and execution too). Insertion point: `_invoke_allowed`, after the gate
+resolves `allow`, before `selected_spec.handler(clean_args)`. (The promotion-
+only proposal-match is a separate sub-path and is untouched.)
+
+Decision per target path:
+1. No ledger entry for `(run_id, path)` → proceed (blind write / new file).
+2. Entry is a hash and current on-disk whole-file `sha256` ≠ recorded →
    REFUSE (`StaleWrite`): name the path, "changed since you read it (was
    `<sha8>`/`<size>`, now `<sha8>`/`<size>`); re-read and retry." No stored-
    content diff (storing every read file's content is memory bloat; the model
    re-reads to see the diff).
-3. If entry is `ABSENT` and the path now exists → REFUSE similarly
+3. Entry is `ABSENT` and the path now exists → REFUSE similarly
    (check-then-create race, symmetric).
 4. Otherwise → proceed.
 
-Runs alongside, and before, the existing approval rug-pull check
-(`expected_sha256` proposal-match): staleness check → rug-pull check → apply.
+Mechanism differs by tool (review finding — reuse the atomic CAS where it
+exists):
+- **fs_write**: when the model did not supply `expected_sha256` and the ledger
+  has a hash entry, the provider INJECTS `expected_sha256=<ledger hash>` into
+  the handler call, reusing `write_file`'s already-atomic, per-target-locked
+  compare-and-swap (`local_tool_impls.py:468-476`) — no TOCTOU window, minimal
+  new code. A model-supplied `expected_sha256` wins (explicit intent). The
+  `ABSENT` case maps to the CAS's absent-precondition equivalent, or a provider
+  pre-check if none exists.
+- **fs_edit / fs_patch**: no CAS parameter exists, so the provider pre-hashes
+  each target before dispatching the handler (the acknowledged tiny TOCTOU
+  window is acceptable for optimistic locking).
+- **fs_patch is MULTI-TARGET**: `parse_patch_targets` yields many files; check
+  EVERY target and refuse the whole patch if ANY is stale (the provider
+  preflight already loops the plans, `local_tool_provider.py:988-996`).
 
 ### Update (on successful write)
 On a successful `fs_write`/`fs_edit`/`fs_patch`, update `(run_id, path)` to the
 just-written content's hash, so the agent's own read→write→write chain never
-false-positives.
+false-positives. Review note: for `fs_edit`/`fs_patch` the handler itself
+reads+modifies+writes, so the Update hash is a POST-HANDLER RE-READ of the file
+(the provider cannot know the written bytes up front); for `fs_write` the hash
+can be computed from the content argument directly. fs_patch updates every
+patched target.
 
 ### Race flow
 A `fs_read(x)` → ledger[(A,x)]=h1; B `fs_write(x)` → disk=h2, ledger[(B,x)]=h2;
@@ -101,7 +147,11 @@ and the write is tiny and acceptable for optimistic locking.
   matches → proceeds unchanged; blind writes and creates proceed.
 - AC#4: a test races two writers (A reads, B writes, A writes → A refused with
   the conflict named); plus blind-write-proceeds, absent-then-created-refuses,
-  and no-false-positive-on-own-rewrite tests.
+  and no-false-positive-on-own-rewrite tests. Review confirmed no thread
+  harness is needed: bind identities sequentially with
+  `run_context.use_run_id("A")` / `use_run_id("B")` against the ONE shared
+  provider (precedent: `Tests/Agents/test_local_tool_provider.py:28,115`) —
+  the ledger keying is what is under test.
 
 ### Known limitations (state honestly)
 - Blind create-create collisions (neither side read first) are not caught —
@@ -144,6 +194,12 @@ Each worktree is a real checkout dir + git overhead per add (~200-500ms), so
 isolation stays opt-in for children that genuinely need write-isolation.
 
 ### Open questions for the phase-2 build (not resolved here)
+- **Dispatch wiring (review-found hole): all children share ONE registry with
+  ONE LocalToolProvider owning the fs tool names — a per-child
+  `workspace_root` has nowhere to plug in today.** Needs a per-child registry,
+  or a root that resolves per run_id. (The existing ROOT_CHANGED/root_identity
+  guard is NOT the obstacle — a per-child provider pinned to its scratch never
+  trips it.)
 - Base ref: HEAD vs the run-start commit.
 - Whether uncommitted shared-tree changes carry into the worktree.
 - How merge-back reconciles with the user's own concurrent edits.
