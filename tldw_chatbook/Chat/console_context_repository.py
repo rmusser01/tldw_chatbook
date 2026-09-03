@@ -276,9 +276,7 @@ class ConsoleMemorySelectionRecord:
         if self.event_kind is MemorySelectionKind.SELECT:
             if self.selected_memory_id is None:
                 raise ValueError("select event requires a selected memory")
-            _validate_bounded_text(
-                "selected_memory_id", self.selected_memory_id, 200
-            )
+            _validate_bounded_text("selected_memory_id", self.selected_memory_id, 200)
         else:
             if self.selected_memory_id is not None:
                 raise ValueError("reset event cannot carry a selected memory")
@@ -320,9 +318,7 @@ class MemorySelectionFence:
             self.selection_id,
             self.selection_revision,
         )
-        _validate_optional_revision_pair(
-            "memory", self.memory_id, self.memory_revision
-        )
+        _validate_optional_revision_pair("memory", self.memory_id, self.memory_revision)
 
 
 @dataclass(frozen=True, slots=True)
@@ -341,24 +337,18 @@ class PersistedLineageFenceRow:
     def __post_init__(self) -> None:
         _validate_bounded_text("message_id", self.message_id, 200)
         if self.parent_message_id is not None:
-            _validate_bounded_text(
-                "parent_message_id", self.parent_message_id, 200
-            )
+            _validate_bounded_text("parent_message_id", self.parent_message_id, 200)
         if type(self.version) is not int or self.version <= 0:
             raise ValueError("version must be a positive integer")
         if type(self.deleted) is not bool:
             raise ValueError("deleted must be a boolean")
         _validate_bounded_text("content_digest", self.content_digest, 256)
-        if (self.selected_variant_id is None) != (
-            self.selected_variant_index is None
-        ):
+        if (self.selected_variant_id is None) != (self.selected_variant_index is None):
             raise ValueError(
                 "selected variant id and index must both be present or absent"
             )
         if self.selected_variant_id is not None:
-            _validate_bounded_text(
-                "selected_variant_id", self.selected_variant_id, 200
-            )
+            _validate_bounded_text("selected_variant_id", self.selected_variant_id, 200)
             if (
                 type(self.selected_variant_index) is not int
                 or self.selected_variant_index < 0
@@ -400,9 +390,7 @@ class BranchMemoryCommit:
             or len(self.expected_cursor) != 2
         ):
             raise ValueError("expected_cursor must be a two-item tuple")
-        _validate_bounded_text(
-            "expected active leaf", self.expected_cursor[0], 200
-        )
+        _validate_bounded_text("expected active leaf", self.expected_cursor[0], 200)
         if self.expected_cursor[1] is not None:
             _validate_bounded_text(
                 "expected before message", self.expected_cursor[1], 200
@@ -707,9 +695,7 @@ class ConsoleContextRepository:
             _insert_memory(cursor, record)
         return True
 
-    def commit_memory_selection_if_current(
-        self, commit: BranchMemoryCommit
-    ) -> bool:
+    def commit_memory_selection_if_current(self, commit: BranchMemoryCommit) -> bool:
         """Atomically append memory, scope, and selection if every fence matches.
 
         Args:
@@ -739,8 +725,7 @@ class ConsoleContextRepository:
             if tuple(state.fence for state in lineage) != commit.durable_lineage:
                 return False
             positions = {
-                state.fence.message_id: index
-                for index, state in enumerate(lineage)
+                state.fence.message_id: index for index, state in enumerate(lineage)
             }
             boundary_index = positions.get(commit.memory.boundary_message_id)
             if (
@@ -772,9 +757,7 @@ class ConsoleContextRepository:
                 True
                 if commit.scope.origin_kind is MemoryOriginKind.MANUAL_REWIND
                 else (
-                    branch_head.suppresses_legacy
-                    if branch_head is not None
-                    else False
+                    branch_head.suppresses_legacy if branch_head is not None else False
                 )
             )
             selection = ConsoleMemorySelectionRecord(
@@ -812,9 +795,7 @@ class ConsoleContextRepository:
             durable_lineage=durable_lineage,
         )
         with self.db.transaction(immediate=True) as cursor:
-            persisted = _load_persisted_branch_state(
-                cursor, reset.conversation_id
-            )
+            persisted = _load_persisted_branch_state(cursor, reset.conversation_id)
             if persisted is None:
                 return None
             cursor_pair, conversation_row, lineage = persisted
@@ -932,9 +913,7 @@ class ConsoleContextRepository:
         with self.db.transaction() as cursor:
             _insert_memory_scope(cursor, record)
 
-    def load_memory_scope(
-        self, memory_id: str
-    ) -> ConsoleMemoryScopeRecord | None:
+    def load_memory_scope(self, memory_id: str) -> ConsoleMemoryScopeRecord | None:
         """Read one scope; corrupt derived metadata is ineligible."""
         _validate_bounded_text("memory_id", memory_id, 200)
         with self.db.transaction() as cursor:
@@ -1264,9 +1243,7 @@ def _validate_branch_memory_commit_ownership(commit: BranchMemoryCommit) -> None
     scope = commit.scope
     selection = commit.selection
     if not (
-        memory.conversation_id
-        == scope.conversation_id
-        == selection.conversation_id
+        memory.conversation_id == scope.conversation_id == selection.conversation_id
     ):
         raise ValueError("memory, scope, and selection must share a conversation")
     if scope.memory_id != memory.memory_id:
@@ -1353,12 +1330,8 @@ def _validate_branch_reset_input(
         _validate_bounded_text("expected before message", expected_cursor[1], 200)
     if not isinstance(durable_lineage, tuple) or not durable_lineage:
         raise ValueError("durable_lineage must be a non-empty tuple")
-    if any(
-        not isinstance(row, PersistedLineageFenceRow) for row in durable_lineage
-    ):
-        raise TypeError(
-            "durable_lineage must contain PersistedLineageFenceRow values"
-        )
+    if any(not isinstance(row, PersistedLineageFenceRow) for row in durable_lineage):
+        raise TypeError("durable_lineage must contain PersistedLineageFenceRow values")
     if (
         reset.activation_message_id != expected_cursor[0]
         or durable_lineage[-1].message_id != expected_cursor[0]
@@ -1369,11 +1342,14 @@ def _validate_branch_reset_input(
 def _load_persisted_branch_state(
     cursor: Any,
     conversation_id: str,
-) -> tuple[
-    tuple[str, str | None],
-    Mapping[str, Any],
-    tuple[_PersistedLineageState, ...],
-] | None:
+) -> (
+    tuple[
+        tuple[str, str | None],
+        Mapping[str, Any],
+        tuple[_PersistedLineageState, ...],
+    ]
+    | None
+):
     conversation = cursor.execute(
         """
         SELECT active_leaf_message_id, active_leaf_before_message_id,
@@ -1416,9 +1392,7 @@ def _load_persisted_branch_state(
             return None
         reversed_lineage.append(state)
         message_id = (
-            None
-            if row["parent_message_id"] is None
-            else str(row["parent_message_id"])
+            None if row["parent_message_id"] is None else str(row["parent_message_id"])
         )
     return (
         (leaf_id, before_message_id),
@@ -1600,9 +1574,7 @@ def _effective_memory_fence(
     branch_head: ConsoleMemorySelectionRecord | None,
     branch_head_fence: MemorySelectionFence,
 ) -> MemorySelectionFence:
-    positions = {
-        state.fence.message_id: index for index, state in enumerate(lineage)
-    }
+    positions = {state.fence.message_id: index for index, state in enumerate(lineage)}
     legacy_summary = conversation["context_summary"]
     legacy_boundary = conversation["summary_boundary_message_id"]
     valid_legacy = (
@@ -1611,9 +1583,7 @@ def _effective_memory_fence(
         and isinstance(legacy_boundary, str)
         and legacy_boundary in positions
     )
-    if valid_legacy and (
-        branch_head is None or not branch_head.suppresses_legacy
-    ):
+    if valid_legacy and (branch_head is None or not branch_head.suppresses_legacy):
         return MemorySelectionFence(
             effective_kind="legacy_prefix",
             legacy_boundary_message_id=legacy_boundary,
@@ -1673,16 +1643,17 @@ def _persisted_memory_is_valid(
     if (
         int(memory["active"]) != 1
         or memory["source_kind"] != "generated"
-        or memory["coverage_kind"] not in {
+        or memory["coverage_kind"]
+        not in {
             MemoryCoverageKind.PREFIX.value,
             MemoryCoverageKind.RANGE.value,
         }
-        or memory["origin_kind"] not in {
+        or memory["origin_kind"]
+        not in {
             MemoryOriginKind.AUTOMATIC.value,
             MemoryOriginKind.MANUAL_REWIND.value,
         }
-        or memory["captured_leaf_message_id"]
-        != branch_head.activation_message_id
+        or memory["captured_leaf_message_id"] != branch_head.activation_message_id
     ):
         return False
     boundary_index = positions.get(str(memory["boundary_message_id"]))
@@ -1878,9 +1849,7 @@ def _insert_memory_scope(cursor: Any, record: ConsoleMemoryScopeRecord) -> None:
     )
 
 
-def _insert_memory_selection(
-    cursor: Any, record: ConsoleMemorySelectionRecord
-) -> int:
+def _insert_memory_selection(cursor: Any, record: ConsoleMemorySelectionRecord) -> int:
     result = cursor.execute(
         """
         INSERT INTO console_conversation_memory_selections(
@@ -1914,9 +1883,7 @@ def _digest_json(value: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _validate_optional_pair(
-    name: str, first: str | None, second: str | None
-) -> None:
+def _validate_optional_pair(name: str, first: str | None, second: str | None) -> None:
     if (first is None) != (second is None):
         raise ValueError(f"{name} fields must both be present or absent")
     if first is not None:

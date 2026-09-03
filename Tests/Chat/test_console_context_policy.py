@@ -44,13 +44,9 @@ def test_policy_precedence_is_field_by_field() -> None:
     assert policy.compaction_representation is ContextCompactionRepresentation.HYBRID
     assert policy.trigger_ratio == 0.85
     assert policy.target_ratio == 0.60
+    assert policy.failure_behavior is CompactionFailureBehavior.OMIT_OLDER_CONTEXT
     assert (
-        policy.failure_behavior
-        is CompactionFailureBehavior.OMIT_OLDER_CONTEXT
-    )
-    assert (
-        policy.carry_forward_mode
-        is ContextCarryForwardMode.MEMORY_WITH_LATEST_EXCHANGE
+        policy.carry_forward_mode is ContextCarryForwardMode.MEMORY_WITH_LATEST_EXCHANGE
     )
     assert policy.summary_max_tokens == 1024
 
@@ -178,9 +174,7 @@ def test_sparse_serialization_round_trip_rejects_boolean_integer() -> None:
     assert ConsoleContextPolicyOverrides.from_mapping(original.to_dict()) == original
 
     with pytest.raises(ContextPolicyError, match="integer"):
-        ConsoleContextPolicyOverrides.from_mapping(
-            {"custom_budget_tokens": True}
-        )
+        ConsoleContextPolicyOverrides.from_mapping({"custom_budget_tokens": True})
 
     with pytest.raises(ContextPolicyError, match="ContextBudgetMode"):
         ConsoleContextPolicyOverrides(budget_mode="custom")  # type: ignore[arg-type]

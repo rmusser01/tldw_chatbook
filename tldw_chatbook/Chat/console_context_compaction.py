@@ -139,7 +139,10 @@ class LegacyMemorySnapshot:
             raise ValueError("legacy conversation_id must be non-empty")
         if not isinstance(self.summary_text, str) or not self.summary_text.strip():
             raise ValueError("legacy summary_text must be non-empty")
-        if not isinstance(self.boundary_message_id, str) or not self.boundary_message_id:
+        if (
+            not isinstance(self.boundary_message_id, str)
+            or not self.boundary_message_id
+        ):
             raise ValueError("legacy boundary_message_id must be non-empty")
 
 
@@ -184,9 +187,10 @@ class DurableVisualAttachment:
             or self.position < 0
         ):
             raise ValueError("Durable visual position must be a non-negative integer.")
-        if not isinstance(self.digest, str) or re.fullmatch(
-            r"[0-9a-f]{64}", self.digest
-        ) is None:
+        if (
+            not isinstance(self.digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", self.digest) is None
+        ):
             raise ValueError("Durable visual digest must be a SHA-256 identity fence.")
         if not isinstance(self.mime_type, str) or not self.mime_type.startswith(
             "image/"
@@ -282,8 +286,7 @@ class DurableMessageSnapshot:
         payload["content_digest"] = _digest_json(payload.pop("content"))
         tool_calls = payload.pop("tool_calls")
         payload["tool_call_ids"] = [
-            call.get("id") if isinstance(call, Mapping) else None
-            for call in tool_calls
+            call.get("id") if isinstance(call, Mapping) else None for call in tool_calls
         ]
         payload["tool_calls_digest"] = _digest_json(tool_calls)
         return payload
@@ -384,9 +387,9 @@ class ManualMemoryPlan:
     # and the unsteered messages the transaction retries with when the
     # steered summary comes back unusable (AC#5).
     focus_topic: str = ""
-    fallback_auxiliary_messages: (
-        tuple[Mapping[str, Any], ...] | None
-    ) = field(default=None, repr=False)
+    fallback_auxiliary_messages: tuple[Mapping[str, Any], ...] | None = field(
+        default=None, repr=False
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -569,7 +572,9 @@ def complete_durable_units(
     )
     if first_user is None:
         return ()
-    if any(message.role not in {"system", "assistant"} for message in rows[:first_user]):
+    if any(
+        message.role not in {"system", "assistant"} for message in rows[:first_user]
+    ):
         return ()
 
     units: list[DurableConversationUnit] = []
@@ -780,12 +785,16 @@ def select_effective_memory(
         ),
         None,
     )
-    if memory is None or scope is None or not _generated_memory_is_valid(
-        memory,
-        scope,
-        branch_head,
-        active_messages,
-        positions,
+    if (
+        memory is None
+        or scope is None
+        or not _generated_memory_is_valid(
+            memory,
+            scope,
+            branch_head,
+            active_messages,
+            positions,
+        )
     ):
         return EffectiveMemoryResult(
             EffectiveMemoryKind.RAW,
@@ -1054,9 +1063,7 @@ def _append_range_unit_parts(
             json.dumps(
                 {
                     "kind": "raw_unit",
-                    "messages": [
-                        message.digest_payload() for message in unit.messages
-                    ],
+                    "messages": [message.digest_payload() for message in unit.messages],
                 },
                 ensure_ascii=False,
                 sort_keys=True,
@@ -1128,9 +1135,7 @@ def _build_range_compaction_messages(
                 **marker,
                 "summary_text": memory.summary_text,
                 "provenance": {
-                    "selected_units_digest": _digest_json(
-                        memory.selected_units_json
-                    ),
+                    "selected_units_digest": _digest_json(memory.selected_units_json),
                     "summarized_prefix_digest": memory.summarized_prefix_digest,
                     "prompt_id": memory.prompt_id,
                     "prompt_revision": memory.prompt_revision,
@@ -1376,8 +1381,7 @@ def _plan_manual_memory(
 
     covered_raw_tokens = max(
         0,
-        before.accounting.compactable_tokens
-        - after.accounting.compactable_tokens,
+        before.accounting.compactable_tokens - after.accounting.compactable_tokens,
     )
     memory_tokens = after.accounting.memory_tokens
     ceiling = after.capacity.effective_input_ceiling_tokens
@@ -1473,9 +1477,7 @@ def _automatic_visual_input_reason(
     ):
         return "automatic_visual_input_unsupported"
     visual_count = sum(
-        len(message.visual_attachments)
-        for unit in units
-        for message in unit.messages
+        len(message.visual_attachments) for unit in units for message in unit.messages
     )
     if not visual_count:
         return None
@@ -1686,19 +1688,17 @@ def _plan_range_to_prefix_compaction(
             unit.messages[0].message_id == scope.selection_anchor_message_id
             for unit in units
         )
-        or not any(unit.boundary_message_id == memory.boundary_message_id for unit in units)
+        or not any(
+            unit.boundary_message_id == memory.boundary_message_id for unit in units
+        )
     ):
         return CompactionPlanResult(None, "invalid_effective_range_anchors")
 
     early = tuple(
-        unit
-        for unit in units
-        if positions[unit.boundary_message_id] < start_index
+        unit for unit in units if positions[unit.boundary_message_id] < start_index
     )
     later = tuple(
-        unit
-        for unit in units
-        if positions[unit.messages[0].message_id] > end_index
+        unit for unit in units if positions[unit.messages[0].message_id] > end_index
     )
     retained_count = len(early) + len(later)
     if retained_count > len(semantic.compactable):
@@ -1775,10 +1775,10 @@ def _plan_range_to_prefix_compaction(
             or auxiliary.accounting.total_input_tokens > ceiling
         ):
             continue
-        provenance = tuple(
-            unit.provenance_payload() for unit in early
-        ) + (marker,) + tuple(
-            unit.provenance_payload() for unit in selected_later
+        provenance = (
+            tuple(unit.provenance_payload() for unit in early)
+            + (marker,)
+            + tuple(unit.provenance_payload() for unit in selected_later)
         )
         boundary = (
             selected_later[-1].boundary_message_id
@@ -1852,9 +1852,7 @@ class ConsoleCompactionService:
         resolution: ConsoleProviderResolution,
         prompt: CompactionPromptSnapshot,
         current_admission: Callable[[], BranchMemoryCommit | None],
-        prepare_projection: Callable[
-            [PreparedConsoleRequest], PreparedProviderRequest
-        ],
+        prepare_projection: Callable[[PreparedConsoleRequest], PreparedProviderRequest],
     ) -> CompactionTransactionResult:
         """Execute one exact manual prefix/range summary and guarded commit."""
         if not _manual_admission_matches(
@@ -1958,10 +1956,7 @@ class ConsoleCompactionService:
             reported_output = (
                 completion.usage.output if completion.usage is not None else None
             )
-            if (
-                not summary
-                or _contains_reserved_envelope(summary)
-            ):
+            if not summary or _contains_reserved_envelope(summary):
                 self._finish(
                     operation_id,
                     AuxiliaryAttemptStatus.FAILED,
@@ -2102,9 +2097,7 @@ class ConsoleCompactionService:
             )
             commit = replace(admission, memory=memory)
             try:
-                committed = self._repository.commit_memory_selection_if_current(
-                    commit
-                )
+                committed = self._repository.commit_memory_selection_if_current(commit)
             except Exception as exc:
                 self._finish(
                     operation_id,
@@ -2308,8 +2301,7 @@ class ConsoleCompactionService:
                         reason="invalid_summary_output",
                     )
                 after_conversation = (
-                    after.accounting.memory_tokens
-                    + after.accounting.compactable_tokens
+                    after.accounting.memory_tokens + after.accounting.compactable_tokens
                 )
             except Exception as exc:
                 self._finish(
@@ -2373,9 +2365,7 @@ class ConsoleCompactionService:
             )
             commit = replace(branch_commit, memory=record)
             try:
-                committed = self._repository.commit_memory_selection_if_current(
-                    commit
-                )
+                committed = self._repository.commit_memory_selection_if_current(commit)
             except Exception:
                 self._finish(
                     operation_id,
@@ -2582,7 +2572,8 @@ def _automatic_admission_matches(
         and resolution.ready
         and admission.conversation_id == memory.conversation_id
         and admission.captured_leaf_message_id == memory.captured_leaf_message_id
-        and admission.lineage == tuple(row.message_id for row in branch_commit.durable_lineage)
+        and admission.lineage
+        == tuple(row.message_id for row in branch_commit.durable_lineage)
         and prefix_ids == admission.lineage[: len(prefix_ids)]
         and resolution.provider == memory.provider == admission.provider
         and (resolution.model or "") == memory.model == admission.model
@@ -2604,6 +2595,8 @@ def _automatic_admission_matches(
         and branch_commit.expected_cursor[0] == memory.captured_leaf_message_id
         and plan.requested_output_cap > 0
     )
+
+
 def _digest_json(value: Any) -> str:
     encoded = json.dumps(
         value,
