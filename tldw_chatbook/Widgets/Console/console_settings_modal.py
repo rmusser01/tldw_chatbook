@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field, fields, replace
 from enum import StrEnum
+from functools import partial
 import re
 from typing import Any, Awaitable, Callable, Mapping, Protocol
 from uuid import uuid4
@@ -151,11 +152,9 @@ MODEL_INPUT_PLACEHOLDER = "Enter model id"
 MODAL_BODY_MIN_HEIGHT = 0
 MODAL_CONTROL_HEIGHT = 3
 MODAL_LABEL_WIDTH = 23
-MODEL_CUSTOM_BUTTON_WIDTH = 18
 MODEL_DISCOVER_BUTTON_ID = "console-settings-model-discover"
 MODEL_DISCOVER_STATUS_ID = "console-settings-model-discover-status"
 MODEL_DISCOVER_BUTTON_LABEL = "Test connection & list models"
-MODEL_DISCOVER_BUTTON_WIDTH = 31
 MODEL_DISCOVER_SCOPE_COPY = (
     "Tests this endpoint by listing models; this does not test generation."
 )
@@ -888,6 +887,7 @@ CONSOLE_SETTINGS_ENDPOINT_SAVED_APPLY_UNCERTAIN_COPY = (
 #: rebuilds a full `ConsoleSessionSettings` draft from every form field and
 #: re-validates it, which must not happen on every keystroke (task-15476).
 CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS = 0.2
+_FOCUS_REVEAL_SETTLE_DELAY_SECONDS = 0.06
 # Draft fields persisted under [api_settings.<provider>] by Save as default.
 STREAMING_INHERIT_LABEL = "Inherit"
 _GENERATION_FIELD_BY_INPUT_ID = {
@@ -1408,6 +1408,11 @@ class ConsoleSettingsModal(
             checked=False,
         )
         self._restoring_suspended_draft = False
+        self._focus_reveal_generation = 0
+        self._suppress_focus_reveal = False
+        self._pending_suspended_scroll_restore: (
+            tuple[str | None, ScrollableContainer, int, int] | None
+        ) = None
         self._last_logical_focus_control_id = (
             suspended_draft.focus_control_id if suspended_draft is not None else None
         )
@@ -1814,9 +1819,6 @@ class ConsoleSettingsModal(
                                 id="console-settings-model-custom",
                                 disabled=False,
                             )
-                            model_custom.styles.width = MODEL_CUSTOM_BUTTON_WIDTH
-                            model_custom.styles.min_width = MODEL_CUSTOM_BUTTON_WIDTH
-                            model_custom.styles.max_width = MODEL_CUSTOM_BUTTON_WIDTH
                             model_custom.display = True
                             yield model_custom
                             supports_discovery = self._provider_supports_model_discovery(
@@ -1830,9 +1832,6 @@ class ConsoleSettingsModal(
                             model_discover.tooltip = (
                                 MODEL_DISCOVER_SCOPE_COPY
                             )
-                            model_discover.styles.width = MODEL_DISCOVER_BUTTON_WIDTH
-                            model_discover.styles.min_width = MODEL_DISCOVER_BUTTON_WIDTH
-                            model_discover.styles.max_width = MODEL_DISCOVER_BUTTON_WIDTH
                             model_discover.display = supports_discovery
                             yield model_discover
                             keep_unverified = Button(
@@ -2598,7 +2597,7 @@ class ConsoleSettingsModal(
         self._apply_accessible_control_metadata()
         if self._suspended_draft is None and not self._focus_model and self._active_view == "model":
             self.call_after_refresh(self._focus_highest_priority_connection)
-        self.call_after_refresh(self._sync_fold_hint)
+        self.call_after_refresh(self._sync_responsive_layout)
 
     def _finish_initial_control_sync(self) -> None:
         """Allow mounted control events after transferred state is projected."""
@@ -2727,40 +2726,87 @@ class ConsoleSettingsModal(
     ) -> None:
         """Restore only a current logical focus target and the saved body anchor."""
         body = self.query_one("#console-settings-body", ScrollableContainer)
-        body.scroll_to(y=snapshot.scroll_anchor, animate=False)
-        control_id = snapshot.focus_control_id
-        if control_id is None:
+        self._focus_reveal_generation += 1
+        restore_generation = self._focus_reveal_generation
+        self._suppress_focus_reveal = True
+        self._pending_suspended_scroll_restore = (
+            snapshot.focus_control_id,
+            body,
+            snapshot.scroll_anchor,
+            restore_generation,
+        )
+        try:
+            control_id = snapshot.focus_control_id
+            if control_id is None:
+                self._focus_connection_fallback()
+                return
+            if control_id == "console-settings-provider-picker":
+                try:
+                    picker = self.query_one(f"#{control_id}", ConsoleProviderPicker)
+                    picker_input = picker.query_one(
+                        "#console-settings-provider-picker-input", Input
+                    )
+                    if self._is_effectively_focusable(picker_input):
+                        picker.focus_input()
+                        return
+                except (NoMatches, QueryError):
+                    pass
+            elif control_id == "console-settings-model-picker":
+                try:
+                    picker = self.query_one(f"#{control_id}", ModelSearchPicker)
+                    picker_input = picker.query_one("#model-search-picker-input", Input)
+                    if self._is_effectively_focusable(picker_input):
+                        picker.focus_input()
+                        return
+                except (NoMatches, QueryError):
+                    pass
+            else:
+                try:
+                    control = self.query_one(f"#{control_id}")
+                    if self._is_effectively_focusable(control):
+                        control.focus()
+                        return
+                except (NoMatches, QueryError):
+                    pass
             self._focus_connection_fallback()
+        finally:
+            self._suppress_focus_reveal = False
+            body.scroll_to(y=snapshot.scroll_anchor, animate=False)
+            self.call_after_refresh(
+                self._finish_suspended_scroll_restore,
+                body,
+                snapshot.scroll_anchor,
+                restore_generation,
+            )
+
+    def _finish_suspended_scroll_restore(
+        self,
+        body: ScrollableContainer,
+        scroll_anchor: int,
+        restore_generation: int,
+    ) -> None:
+        """Keep the saved anchor unless a newer ordinary focus has taken over."""
+        if restore_generation != self._focus_reveal_generation or not body.is_mounted:
+            self._pending_suspended_scroll_restore = None
             return
-        if control_id == "console-settings-provider-picker":
-            try:
-                picker = self.query_one(f"#{control_id}", ConsoleProviderPicker)
-                picker_input = picker.query_one(
-                    "#console-settings-provider-picker-input", Input
-                )
-                if self._is_effectively_focusable(picker_input):
-                    picker.focus_input()
-                    return
-            except (NoMatches, QueryError):
-                pass
-        elif control_id == "console-settings-model-picker":
-            try:
-                picker = self.query_one(f"#{control_id}", ModelSearchPicker)
-                picker_input = picker.query_one("#model-search-picker-input", Input)
-                if self._is_effectively_focusable(picker_input):
-                    picker.focus_input()
-                    return
-            except (NoMatches, QueryError):
-                pass
-        else:
-            try:
-                control = self.query_one(f"#{control_id}")
-                if self._is_effectively_focusable(control):
-                    control.focus()
-                    return
-            except (NoMatches, QueryError):
-                pass
-        self._focus_connection_fallback()
+        body.scroll_to(y=scroll_anchor, animate=False)
+
+    def _complete_suspended_scroll_restore(
+        self,
+        body: ScrollableContainer,
+        scroll_anchor: int,
+        restore_generation: int,
+    ) -> None:
+        """Settle the anchor after the restored focus event reaches the modal."""
+        pending = self._pending_suspended_scroll_restore
+        if pending is None or pending[3] != restore_generation:
+            return
+        self._pending_suspended_scroll_restore = None
+        self._finish_suspended_scroll_restore(
+            body,
+            scroll_anchor,
+            restore_generation,
+        )
 
     def _focus_connection_fallback(self) -> None:
         """Focus a live Connection control when an old logical target is unavailable."""
@@ -2981,11 +3027,103 @@ class ConsoleSettingsModal(
             current = getattr(current, "parent", None)
         return None
 
+    def set_focus(
+        self,
+        widget: Widget | None,
+        scroll_visible: bool = True,
+        from_app_focus: bool = False,
+    ) -> None:
+        """Let one modal-owned reveal path scroll focused modal descendants."""
+        body_owns_reveal = False
+        if widget is not None:
+            try:
+                body = self.query_one(
+                    "#console-settings-body", ScrollableContainer
+                )
+            except NoMatches:
+                pass
+            else:
+                body_owns_reveal = body in widget.ancestors
+        super().set_focus(
+            widget,
+            scroll_visible=scroll_visible and not body_owns_reveal,
+            from_app_focus=from_app_focus,
+        )
+
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         """Remember the last draft control before an action button takes focus."""
+        if self.focused is not event.widget:
+            return
         logical_focus = self._logical_focus_control_id(event.widget)
+        pending = self._pending_suspended_scroll_restore
+        restored_focus = pending is not None and logical_focus == pending[0]
+        if restored_focus:
+            self.call_after_refresh(
+                self._complete_suspended_scroll_restore,
+                pending[1],
+                pending[2],
+                pending[3],
+            )
+        elif pending is not None:
+            self._pending_suspended_scroll_restore = None
+        if not (self._suppress_focus_reveal or restored_focus):
+            self._focus_reveal_generation += 1
+            reveal_generation = self._focus_reveal_generation
+            self.set_timer(
+                _FOCUS_REVEAL_SETTLE_DELAY_SECONDS,
+                partial(
+                    self._queue_focus_reveal_after_layout,
+                    event.widget,
+                    reveal_generation,
+                ),
+            )
         if logical_focus is not None:
             self._last_logical_focus_control_id = logical_focus
+
+    def _queue_focus_reveal_after_layout(
+        self,
+        widget: Widget,
+        reveal_generation: int,
+    ) -> None:
+        """Read focus geometry once after delayed compound-control reflow."""
+        if (
+            reveal_generation != self._focus_reveal_generation
+            or self.focused is not widget
+        ):
+            return
+        self.call_after_refresh(
+            self._reveal_focused_control,
+            widget,
+            reveal_generation,
+        )
+
+    def _reveal_focused_control(self, widget: Widget, reveal_generation: int) -> None:
+        """Scroll the sole body viewport when focus enters one of its descendants."""
+        if (
+            reveal_generation != self._focus_reveal_generation
+            or self.focused is not widget
+        ):
+            return
+        try:
+            body = self.query_one("#console-settings-body", ScrollableContainer)
+        except NoMatches:
+            return
+        if body not in widget.ancestors:
+            return
+        target_region = _settings_screen_region(widget)
+        viewport = body.content_region
+        if target_region.height > viewport.height or target_region.y < viewport.y:
+            delta_y = target_region.y - viewport.y
+        elif target_region.bottom > viewport.bottom:
+            delta_y = target_region.bottom - viewport.bottom
+        else:
+            return
+        body.scroll_relative(
+            y=delta_y,
+            animate=False,
+            force=True,
+            immediate=True,
+        )
 
     def credential_request(self) -> ConsoleSettingsCredentialRequest:
         """Build the modal result consumed by Console's credential recovery route."""
@@ -3438,6 +3576,21 @@ class ConsoleSettingsModal(
         hint.update("▼ more — scroll for the rest")
         hint.display = overflow
 
+    def _sync_responsive_layout(self) -> None:
+        """Derive compact layout from the measured modal-container width."""
+        try:
+            container = self.query_one("#console-settings-modal", Vertical)
+        except NoMatches:
+            return
+        compact = container.size.width < 100
+        self.set_class(compact, "-conversation-settings-compact")
+        label_width = 16 if compact else MODAL_LABEL_WIDTH
+        for label in self.query(".console-settings-modal-label"):
+            label.styles.width = label_width
+            label.styles.min_width = label_width
+            label.styles.max_width = label_width
+        self.call_after_refresh(self._sync_fold_hint)
+
     @on(Button.Pressed, "#console-settings-view-model")
     def _show_model_view(self, event: Button.Pressed) -> None:
         event.stop()
@@ -3714,7 +3867,10 @@ class ConsoleSettingsModal(
             index = targets.index(focused)
         except ValueError:
             index = -1 if direction > 0 else 0
-        targets[(index + direction) % len(targets)].focus()
+        self.set_focus(
+            targets[(index + direction) % len(targets)],
+            scroll_visible=False,
+        )
 
     def action_activate_primary(self) -> None:
         """Activate the sole visible enabled primary, or explain why none exists."""

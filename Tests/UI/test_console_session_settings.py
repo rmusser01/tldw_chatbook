@@ -12385,17 +12385,34 @@ async def test_console_settings_modal_tab_order_skips_collapsed_disclosure_child
         discover.focus()
 
         forward_parents: list[str | None] = []
-        for _ in range(3):
+        for _ in range(4):
             await pilot.press("tab")
             assert app.focused is not None
             forward_parents.append(getattr(app.focused.parent, "id", None))
         assert forward_parents == [
+            "console-settings-connection",
             "console-settings-generation-advanced",
             "console-settings-identity-advanced",
             "console-settings-request-estimate",
         ]
-        await pilot.press("tab")
-        assert app.focused is modal.query_one("#console-settings-cancel", Button)
+        for control_id in (
+            "console-settings-view-model",
+            "console-settings-view-context",
+            "console-settings-save-default",
+            "console-settings-save",
+            "console-settings-cancel",
+        ):
+            await pilot.press("tab")
+            assert app.focused is modal.query_one(f"#{control_id}")
+
+        for control_id in (
+            "console-settings-save",
+            "console-settings-save-default",
+            "console-settings-view-context",
+            "console-settings-view-model",
+        ):
+            await pilot.press("shift+tab")
+            assert app.focused is modal.query_one(f"#{control_id}")
 
         reverse_parents: list[str | None] = []
         for _ in range(3):
