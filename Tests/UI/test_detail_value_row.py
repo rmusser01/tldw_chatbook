@@ -35,17 +35,33 @@ def _painted_color(app: App, widget) -> object:
     raise AssertionError(f"no painted glyphs inside {widget.region!r}")
 
 
+def _relative_luminance(color) -> float:
+    """WCAG relative luminance of a compositor-painted colour (0=black,
+    1=white) -- same formula as `Tests/UI/test_model_artifact_widgets.py`'s
+    contrast helper. Lower means visually dimmer."""
+    triplet = color.get_truecolor()
+
+    def channel(value: int) -> float:
+        srgb = value / 255
+        return srgb / 12.92 if srgb <= 0.04045 else ((srgb + 0.055) / 1.055) ** 2.4
+
+    return (
+        0.2126 * channel(triplet.red)
+        + 0.7152 * channel(triplet.green)
+        + 0.0722 * channel(triplet.blue)
+    )
+
+
 class _RowHarness(ConsolidatedCSSApp):
     """Hosts one or more rows directly, mirroring the standalone-component
     harness pattern in `test_console_inspector_section.py`.
 
     `CSS_PATH` adds the app bundle (not just the screen sheets
-    `ConsolidatedCSSApp` loads by default) because `DetailValueRow`'s own
-    `BUNDLED_CSS` references `$ds-*` design tokens, which are only defined
-    inside `tldw_cli_modular.tcss` (`css/core/_variables.tcss`, concatenated
-    in first) -- Textual pools `$variable` definitions across every source
-    feeding one `Stylesheet`, so the token source and its usage must share
-    a harness. `ConsolidatedCSSApp.__init__` re-merges the screen sheets
+    `ConsolidatedCSSApp` loads by default) because `DetailValueRow`'s
+    styling lives in `css/features/_scheduling.tcss`, which is only part of
+    the app bundle (`tldw_cli_modular.tcss`, via `build_css.py`'s
+    `CSS_MODULES`) -- not the two screen sheets `ConsolidatedCSSApp` loads
+    on its own. `ConsolidatedCSSApp.__init__` re-merges the screen sheets
     around whatever `CSS_PATH` a subclass supplies.
     """
 
@@ -60,7 +76,8 @@ class _RowHarness(ConsolidatedCSSApp):
 
 
 class _GroupHarness(ConsolidatedCSSApp):
-    """See `_RowHarness` -- `DetailGroup`'s `BUNDLED_CSS` also uses `$ds-*`."""
+    """See `_RowHarness` -- `DetailGroup`'s styling lives in the same
+    `_scheduling.tcss` block."""
 
     CSS_PATH = str(BUNDLED_STYLESHEET)
 
@@ -97,9 +114,12 @@ async def test_affordance_glyph_is_painted_and_dimmer_than_the_value():
         affordance = with_affordance.query_one(".detail-value-row-affordance")
         value = with_affordance.query_one(".detail-value-row-value")
         assert affordance.render_line(0).text.strip() == "▾"
-        assert _painted_color(app, affordance) != _painted_color(app, value), (
-            "affordance glyph must be visually dimmer than the value it sits "
-            "beside, not the same colour"
+        affordance_luminance = _relative_luminance(_painted_color(app, affordance))
+        value_luminance = _relative_luminance(_painted_color(app, value))
+        assert affordance_luminance < value_luminance, (
+            "affordance glyph must be visually dimmer (lower luminance) than "
+            f"the value it sits beside: affordance={affordance_luminance:.3f} "
+            f"value={value_luminance:.3f}"
         )
         assert len(without_affordance.query(".detail-value-row-affordance")) == 0
 

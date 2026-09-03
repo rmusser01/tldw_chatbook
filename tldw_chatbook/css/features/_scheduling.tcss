@@ -297,3 +297,63 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
 #scheduling-workbench.compact #scheduling-list-header {
     display: none;
 }
+
+/* schedules-redesign PR-1, Task 1 (fix round 1): DetailValueRow /
+ * DetailGroup (`Widgets/detail_value_row.py`) live here per the task-1
+ * brief's file list rather than as BUNDLED_CSS on the widget classes --
+ * this module is concatenated into the boot-loaded app bundle in the same
+ * parse pass as core/_variables.tcss, so $ds-* tokens resolve directly,
+ * with no local alias workaround. Selectors are plain type/class
+ * (not scheduling-prefixed): the widgets are reusable beyond Scheduling,
+ * and this is just where the first consumer's CSS happens to ship;
+ * graduate to a shared features file if/when a non-scheduling consumer
+ * appears. */
+DetailValueRow {
+    height: auto;
+    min-height: 0;
+}
+
+DetailValueRow .detail-value-row-line {
+    height: 1;
+    min-height: 1;
+}
+
+DetailValueRow .detail-value-row-label {
+    color: $ds-text-muted;
+    width: auto;
+    min-width: 0;
+    height: 1;
+    padding: 0 1 0 0;
+}
+
+DetailValueRow .detail-value-row-value {
+    color: $ds-text-primary;
+    width: 1fr;
+    min-width: 0;
+    height: 1;
+    text-align: right;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+DetailValueRow .detail-value-row-affordance {
+    color: $ds-text-disabled-readable;
+    width: 2;
+    min-width: 2;
+    height: 1;
+    text-align: right;
+    padding: 0 0 0 1;
+}
+
+DetailValueRow .detail-value-row-error {
+    color: $ds-status-error-readable;
+    width: 1fr;
+    height: 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+DetailGroup {
+    background: $ds-surface-panel;
+    border-top: hkey $ds-grid-line;
+}
