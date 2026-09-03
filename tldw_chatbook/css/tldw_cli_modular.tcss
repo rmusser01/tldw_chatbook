@@ -2931,9 +2931,19 @@ LibraryFileNotesGitPanel #file-notes-git-commit-body:focus {
     max-width: 100%;
 }
 
+/* task-30043 (critique 2026-09-03 P1) supersedes task-28025's 1fr squeeze:
+   sharing the row width chopped every label to fragments (``t so E Tr R
+   Se``) and collapsed disabled bulk actions to bare "○" markers at the
+   pane's 40-col floor. The canvas now switches to a multi-row grammar
+   below its measured narrow threshold (library_media_canvas.py's
+   _resolve_narrow_actions), so buttons keep their CONTENT width (auto,
+   with min-width 0 lifting Textual Button's 16-cell floor -- six floors
+   alone would overflow any pane under 96 cols) and every label stays a
+   readable word; each row's label sum is budgeted to fit the 40-col
+   floor, which is what keeps task-28025's fit contract true. */
 #library-media-canvas > .ds-toolbar > .library-canvas-action,
 #library-media-canvas > .ds-toolbar > .library-toolbar-count {
-    width: 1fr;
+    width: auto;
     min-width: 0;
 }
 

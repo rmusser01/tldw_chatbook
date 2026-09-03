@@ -2829,6 +2829,20 @@
     }
 
 
+/* ===== WIDGET: LibraryMediaCanvas (Widgets/Library/library_media_canvas.py) ===== */
+
+    /* task-30043: the multi-row action grammar needs CONTENT-width buttons.
+     * Textual Button's 16-cell min-width floor alone would overflow the
+     * pane's 40-col floor (six floors = 96 cells); each row's label budget
+     * is what keeps task-28025's fit contract true. Baseline geometry lives
+     * here so harnesses without the app bundle lay out like the app. */
+    LibraryMediaCanvas .ds-toolbar > .library-canvas-action,
+    LibraryMediaCanvas .ds-toolbar > .library-toolbar-count {
+        width: auto;
+        min-width: 0;
+    }
+
+
 /* ===== WIDGET: LibraryNoteFolderNameDialog (Widgets/Library/library_note_folder_dialog.py) ===== */
 
 

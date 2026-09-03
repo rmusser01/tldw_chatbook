@@ -45,9 +45,22 @@ def _fake(select_mode):
         "message-1", "user", "now", "revision-1", 5, "hello"
     )
     fake = SimpleNamespace(
-        _library_conversation_freshness="fresh",
-        _library_conversations_select_mode=select_mode,
-        _library_conversations_row_selection=RowSelection("conversations"),
+        _conversations_state=SimpleNamespace(
+            freshness="fresh",
+            select_mode=select_mode,
+            row_selection=RowSelection("conversations"),
+            reader_state=ConversationReaderState(
+                selected_id="c1",
+                selected_version=1,
+                loaded_id="c1",
+                loaded_version=1,
+                loaded_generation=1,
+                generation=1,
+                messages=(loaded_message,),
+                message_total=1,
+                complete=True,
+            ),
+        ),
         _selected_conversation_id="",
         _library_selected_row_id="",
         _acknowledge_library_destination_change=lambda: None,
@@ -55,17 +68,6 @@ def _fake(select_mode):
         _opened=[],
         _reader_synced=0,
         _reader_started=[],
-        _library_conversation_reader_state=ConversationReaderState(
-            selected_id="c1",
-            selected_version=1,
-            loaded_id="c1",
-            loaded_version=1,
-            loaded_generation=1,
-            generation=1,
-            messages=(loaded_message,),
-            message_total=1,
-            complete=True,
-        ),
         _sync_library_conversation_reader=lambda: None,
         _start_library_conversation_reader_selection=lambda conversation_id: None,
     )
@@ -82,14 +84,14 @@ def test_convo_row_select_mode_toggles():
         button=SimpleNamespace(conversation_id="c5"), stop=lambda: None
     )
     LibraryScreen.handle_library_conversation_row(fake, ev)
-    assert fake._library_conversations_row_selection.is_selected("c5")
+    assert fake._conversations_state.row_selection.is_selected("c5")
     assert fake._selected_conversation_id == ""  # did NOT open/select the detail
     assert fake._refreshed == 1
-    assert fake._library_conversation_reader_state.bulk_selected_count == 1
-    assert fake._library_conversation_reader_state.loaded_id == "c1"
-    assert fake._library_conversation_reader_state.messages[0].text == "hello"
-    assert fake._library_conversation_reader_state.bulk_loaded_preview_selected is False
-    assert fake._library_conversation_reader_state.loaded_actions_eligible is False
+    assert fake._conversations_state.reader_state.bulk_selected_count == 1
+    assert fake._conversations_state.reader_state.loaded_id == "c1"
+    assert fake._conversations_state.reader_state.messages[0].text == "hello"
+    assert fake._conversations_state.reader_state.bulk_loaded_preview_selected is False
+    assert fake._conversations_state.reader_state.loaded_actions_eligible is False
 
 
 def test_convo_row_normal_mode_selects():
@@ -106,7 +108,7 @@ def test_convo_row_normal_mode_selects():
 @pytest.mark.asyncio
 async def test_convo_export_selected_scope():
     fake = _fake(True)
-    fake._library_conversations_row_selection.select_all(["c2", "c1"])
+    fake._conversations_state.row_selection.select_all(["c2", "c1"])
 
     async def _open(s):
         fake._opened.append(s)
@@ -281,7 +283,7 @@ def test_conversations_empty_console_uses_existing_live_work_route():
 def test_conversations_empty_clear_filter_requests_unfiltered_page_one():
     calls = []
     fake = SimpleNamespace(
-        _library_conversation_loading=False,
+        _conversations_state=SimpleNamespace(loading=False),
         _start_library_conversation_page_request=lambda page, query, **kwargs: (
             calls.append((page, query, kwargs))
         ),
@@ -377,7 +379,7 @@ async def test_zero_checked_select_mode_keeps_reader_read_only_until_done() -> N
         loaded_message = ConversationMessageView(
             "message-loaded", "user", "now", "revision-loaded", 5, "hello"
         )
-        screen._library_conversation_reader_state = ConversationReaderState(
+        screen._conversations_state.reader_state = ConversationReaderState(
             selected_id="chat-1",
             selected_version=1,
             loaded_id="chat-1",
@@ -390,13 +392,13 @@ async def test_zero_checked_select_mode_keeps_reader_read_only_until_done() -> N
         )
         screen._sync_library_conversation_reader()
         await pilot.pause()
-        transcript = screen._library_conversation_reader_state.messages
+        transcript = screen._conversations_state.reader_state.messages
         open_console = screen.query_one("#library-conversation-open-console", Button)
         assert not open_console.disabled
 
         screen.query_one("#library-conversations-select-toggle", Button).press()
         await pilot.pause()
-        state = screen._library_conversation_reader_state
+        state = screen._conversations_state.reader_state
         assert state.bulk_active and state.bulk_selected_count == 0
         assert not state.loaded_actions_eligible and open_console.disabled
         assert state.messages == transcript
@@ -404,19 +406,19 @@ async def test_zero_checked_select_mode_keeps_reader_read_only_until_done() -> N
         screen.query_one("#library-conversation-row-0", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_conversations_row_selection.count == 1,
+            lambda: screen._conversations_state.row_selection.count == 1,
             message="Conversation checkbox did not settle.",
         )
         screen.query_one("#library-conversations-select-clear", Button).press()
         await pilot.pause()
-        state = screen._library_conversation_reader_state
+        state = screen._conversations_state.reader_state
         assert state.bulk_active and state.bulk_selected_count == 0
         assert not state.loaded_actions_eligible and open_console.disabled
         assert state.messages == transcript
 
         screen.query_one("#library-conversations-select-toggle", Button).press()
         await pilot.pause()
-        state = screen._library_conversation_reader_state
+        state = screen._conversations_state.reader_state
         assert not state.bulk_active and state.loaded_actions_eligible
         assert not open_console.disabled
 
@@ -436,7 +438,7 @@ async def test_library_conversation_selection_clears_on_page_exit_and_cannot_exp
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_conversations_select_mode
+                screen._conversations_state.select_mode
                 and any(
                     str(row.label).startswith("☐")
                     for row in screen.query("#library-conversation-row-0")
@@ -447,20 +449,20 @@ async def test_library_conversation_selection_clears_on_page_exit_and_cannot_exp
         screen.query_one("#library-conversation-row-0", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_conversations_row_selection.count == 1,
+            lambda: screen._conversations_state.row_selection.count == 1,
             message="Conversation row was not selected.",
         )
 
         screen.query_one("#library-conversations-next", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_conversation_page == 2,
+            lambda: screen._conversations_state.page == 2,
             message="Conversation page exit never applied.",
         )
 
-        assert screen._library_conversations_select_mode is False
-        assert screen._library_conversations_row_selection.count == 0
-        assert screen._library_conversation_selection_notice == "Selection cleared."
+        assert screen._conversations_state.select_mode is False
+        assert screen._conversations_state.row_selection.count == 0
+        assert screen._conversations_state.selection_notice == "Selection cleared."
         assert (
             screen._build_library_conversations_state().selection_notice
             == "Selection cleared."
@@ -489,10 +491,10 @@ async def test_library_conversation_stale_state_disables_actions_but_allows_reco
         screen.query_one("#library-row-browse-conversations").press()
         await _wait_for_selector(screen, pilot, "#library-conversation-row-19")
         selected_before = screen._selected_conversation_id
-        screen._library_conversation_freshness = "stale"
-        screen._library_conversation_total_known = False
-        screen._library_conversation_stale_copy = "Source changed again; try again."
-        screen._library_conversation_error = ""
+        screen._conversations_state.freshness = "stale"
+        screen._conversations_state.total_known = False
+        screen._conversations_state.stale_copy = "Source changed again; try again."
+        screen._conversations_state.error = ""
         screen._sync_library_conversation_canvas()
         await _wait_for_condition(
             pilot,

@@ -741,8 +741,8 @@ async def test_single_item_handoff_gates_on_the_selected_row_not_the_aggregate()
             source_id="chat-local",
         )
         screen._selected_conversation_handoff_payload = lambda: payload
-        screen._library_conversation_freshness = "fresh"
-        screen._library_conversation_reader_state = ConversationReaderState(
+        screen._conversations_state.freshness = "fresh"
+        screen._conversations_state.reader_state = ConversationReaderState(
             selected_id="chat-local",
             selected_version=1,
             loaded_id="chat-local",

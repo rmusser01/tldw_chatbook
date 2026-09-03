@@ -75,6 +75,93 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: the final merged tree measures 16,966/563.
 _BUDGETS: dict[str, tuple[str, int, int]] = {
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 16966, 563),
+    #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
+    #: missing for the entire month in which library_screen.py tripled from
+    #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
+    #: New Library code belongs in tldw_chatbook/UI/Library_Modules/ — a
+    #: subsystem's controller file may be created BEFORE its extraction
+    #: series to receive new methods. See
+    #: Docs/superpowers/specs/2026-09-01-library-screen-decomposition-design.md.
+    #: Lowered at the reader-controller move (exemplar 2/4): 45134/1300 ->
+    #: 44715/1300 -- the recipe's lower-in-the-same-PR contract (§6), not
+    #: deferred to the cleanup task as originally (incorrectly) instructed.
+    # Lowered at the browse-controller move (exemplar 3/4, task 8):
+    # 44715/1300 -> 44084/1300 -- per the recipe's lower-in-the-same-PR
+    # contract (§6). Framed at the task level, not the intermediate one:
+    # this single PR's net movement is 44715 -> 44084, a lowering, same as
+    # every other entry in this ledger -- there is no raise-precedent here.
+    # Task 8 moved 40 method bodies to `LibraryConversationsController`,
+    # replaced by one-line delegators (a pure move nets zero methods -- the
+    # count is unchanged). 6 more names were moved and then reverted in
+    # this same task after test-suite evidence caught two distinct
+    # test-bypass shapes (5 via `-k "conversation and library"`'s fake-self
+    # `SimpleNamespace` calls; 1 via the paired-baseline xdist sweep's
+    # instance-attribute monkeypatch -- see that controller module's
+    # docstring) -- they stay real, full-body methods on `LibraryScreen`,
+    # which is why this measurement is a smaller shrink than a 46-method
+    # move would have produced. Mid-review, before this PR ever landed,
+    # that method-move alone measured 44060 -- an intra-task fix-round
+    # intermediate that was never intended to land on its own and never
+    # did: the same review round that produced it also caught the
+    # class-level `_safe_text` rebinding silently destroying the
+    # controller's own `_safe_text` property (a plain class-attribute
+    # assignment always overwrites a same-named class member, including a
+    # property descriptor); the fix removed the dead
+    # property/constructor-param/backing-attribute from the controller
+    # module and added an explanatory comment at the rebinding site plus
+    # one net wiring-call line removed here -- net +24 lines of
+    # documentation, no logic change, method count unchanged -- landing
+    # this PR's only committed measurement, 44084.
+    # Lowered at the cleanup PR (exemplar 4/4, task 9): 44084/1300 ->
+    # 43974/1282 -- the conversations state shim block (28 generated
+    # properties) is deleted wholesale, every remaining screen-side
+    # `_library_conversation*` reference is retargeted to
+    # `self._conversations_state.<field>`, and 18 of the 61 screen
+    # delegators (9 reader-cluster, 9 browse-cluster) were pruned after a
+    # repo-wide census proved zero references anywhere outside their own
+    # one-line body -- exactly 18 fewer `FunctionDef`s, matching the
+    # method-count drop 1-for-1 (a pure deletion, not a move: nothing
+    # replaces them). 11 of the ledger's stated 12 dead imports were
+    # genuinely removable; the 12th, `LIBRARY_CONVERSATION_READER_MAX_CHARS`,
+    # had to be added back -- it is pinned by PR 0a's OWN re-export
+    # contract (`test_screen_still_re_exports_every_moved_name` in
+    # `Tests/Architecture/test_library_support_layer_surface.py`), which
+    # requires `library_screen.py` to keep re-exporting every name Task 1
+    # moved to `Library_Modules/`, whether or not the screen's own logic
+    # still reads it. This is the conversations exemplar series' FINAL
+    # measurement (state PR, 2 controller PRs, cleanup PR complete) -- see
+    # backlog/docs/library-decomposition-recipe.md's updated §11 for the
+    # full pin trajectory, framed at the task level (each entry below is
+    # one PR's single landed measurement; 44060 was an intra-task-8
+    # fix-round intermediate, never itself a landed value, and is omitted
+    # here for that reason):
+    # 45134 -> 44715 -> 44084 -> 43974/1300 -> 1282.
+    # Lowered again at the final-review fix wave (outside the exemplar
+    # series proper): 43974 -> 43965 -- dead-import prune. The final
+    # reviewer AST-verified 15 more dead imports (`Enum`, `TypeAlias`,
+    # `AdaptiveReaderLayoutProfile`, `ConversationReaderRequest`,
+    # `NormalizedDatabaseNote`, `DatabaseNotePortLoadReply`,
+    # `DatabaseNotePortSaveReply`, the four `parse_*_prompts_from_content`
+    # names, `event_principal_id_from_active_context`, `is_gguf_file`,
+    # `Filters`, `PostRecomposeCallback`) that the cleanup PR's own
+    # 12-import ledger missed -- each confirmed single-occurrence (its own
+    # import line only), not pinned by
+    # `test_screen_still_re_exports_every_moved_name`, and not imported by
+    # anything outside this module. Method count unchanged (imports only).
+    # NOT lowered by the 2026-09-03 dev merge (~380 dev commits absorbed),
+    # same "concurrent growth outran the earned shrink" posture as the
+    # chat_screen wave-5 note above. The merge itself removed zero moved
+    # lines/methods from LibraryScreen (see the transplant list in
+    # merge-update-report.md) -- every net line/method added here is dev's
+    # review-sets phases 2-5, the media sort chooser, and the Reader
+    # accelerator keys, all genuinely new screen-owned code, landed on dev
+    # while this PR was in flight. Measured on the merged tree: 43965/1282
+    # -> 45439/1330.
+    #: Re-measured 2026-09-03 at the second dev catch-up merge (Reader
+    #: review-set banner + distill work landed on dev inside the budgeted
+    #: file): 45439/1330 -> 45522/1331. Post-merge re-measure per the
+    #: wave-5 precedent; the decomposition's own trajectory remains down.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 45522, 1331),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

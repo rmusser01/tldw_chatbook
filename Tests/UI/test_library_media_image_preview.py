@@ -33,6 +33,7 @@ from tldw_chatbook.Widgets.Library.library_media_image_preview import (
     build_media_image_widget,
     decode_media_image,
     image_preview_eligibility,
+    image_preview_expected,
 )
 
 
@@ -69,6 +70,22 @@ def test_ineligible_original_types_are_rejected_before_download(mime: str) -> No
 
     assert result.eligible is False
     assert result.reason == "unsupported"
+
+
+def test_preview_expected_only_for_image_typed_details() -> None:
+    """Failure chrome is honest only when an image was actually expected.
+
+    Critique 2026-09-03 P2 (task-30044): every plain document's Read tab led
+    with "Image preview unavailable" + a Retry button because the
+    ``unavailable`` reason stamped the status even with no image type hint.
+    """
+    assert image_preview_expected({"mime_type": "image/png"}) is True
+    assert image_preview_expected({"media_type": "image"}) is True
+    assert image_preview_expected({"type": "IMAGE"}) is True
+    assert image_preview_expected({"media_type": "document"}) is False
+    assert image_preview_expected({"mime_type": "text/plain"}) is False
+    assert image_preview_expected({}) is False
+    assert image_preview_expected(None) is False
 
 
 def test_remote_url_and_server_detail_are_never_eligible() -> None:
