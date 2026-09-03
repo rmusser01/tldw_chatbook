@@ -27,8 +27,25 @@
 2. Run `git diff --check` and inspect the final documentation diff.
 3. Commit the reviewed design and this execution plan on `codex/collections-followup-backlog`.
 4. Fetch Chatbook's `origin/dev` and rebase the Chatbook branch onto it.
-5. Fetch `origin/dev` separately in `tldw_server2`, then create an isolated Server worktree on branch `codex/collections-followup-backlog` from that refreshed ref; do not touch the dirty primary checkout.
-6. Before filing in each repository, build an occupied-ID census from every registered worktree plus every `refs/remotes/*` tree's `backlog/tasks`, `backlog/completed`, and `backlog/archive/tasks` buckets. Also search those trees for normalized title duplicates. Save the census outside the repositories, confirm the candidate branch itself passes its local duplicate-ID guard, and treat every newly allocated ID as provisional until the post-creation and pre-merge census repeats.
+5. After the rebase, repeat `git diff --check origin/dev...HEAD` and inspect the complete post-rebase documentation diff.
+6. Fetch `origin/dev` separately in `tldw_server2`, then create an isolated Server worktree on branch `codex/collections-followup-backlog` from that refreshed ref; do not touch the dirty primary checkout.
+7. Before filing in each repository, build an occupied-ID census from every registered worktree plus every `refs/remotes/*` tree's `backlog/tasks`, `backlog/completed`, and `backlog/archive/tasks` buckets. Also search those trees for normalized title duplicates. Save the census outside the repositories, confirm the candidate branch itself passes its local duplicate-ID guard, and treat every newly allocated ID as provisional until the post-creation and pre-merge census repeats.
+
+## Backlog CLI 1.44 safe filing sequence
+
+Use this sequence for every Server and Chatbook record:
+
+1. Create the record without a priority. Pass labels exactly once as one comma-separated value,
+   `-l "label-a,label-b,label-c"`, and pass only the first acceptance criterion with one `--ac`.
+2. Set priority separately with `backlog task edit <id> --priority <level>`.
+3. Append each remaining acceptance criterion with its own
+   `backlog task edit <id> --ac <criterion>` command.
+4. Use `--parent <id>` for a child task; never use the `-p` abbreviation.
+5. Read the record back with `backlog task <id> --plain` and verify its exact labels, priority,
+   parent, and acceptance-criterion count.
+
+This sequence avoids comma-joined and multi-value parsing ambiguity; correctness is established by
+the read-back counts rather than by assuming how repeated CLI flags are parsed.
 
 ## Task 2: File the six Server capability prerequisites
 
@@ -42,8 +59,12 @@
 - Create through Backlog.md CLI: `tldw_server2/backlog/tasks/task-<allocated> - Add Server-native Reading export re-import.md`
 
 1. Check the available tools for the official Backlog MCP workflow required by the Server repository. If no dedicated Backlog MCP tool is callable, record that result and use the documented Backlog.md CLI fallback.
-2. Create S1 through S5b in the design's order with status `To Do`, the exact priority and labels from the filing table, and the corresponding description and acceptance criteria from the approved design.
-3. Work around Backlog CLI 1.44's collapsed repeated-`--ac` behavior: create each record with exactly its first criterion, then append each remaining criterion with a separate `backlog task edit <id> --ac <criterion>` call. Verify the resulting criterion counts are S1=6, S2=5, S3=5, S4=6, S5a=6, and S5b=6.
+2. Create S1 through S5b in the design's order with status `To Do`, the corresponding description,
+   and exact labels from the filing table, following the safe filing sequence above: no priority on
+   create, one comma-separated `-l` value, and only the first acceptance criterion on create.
+3. Set each priority with a separate `backlog task edit <id> --priority <level>` command and append
+   one remaining criterion per `backlog task edit <id> --ac <criterion>` call. Read back and verify
+   the exact criterion counts: S1=6, S2=5, S3=5, S4=6, S5a=6, and S5b=6.
 4. Add stable textual references to `tldw_chatbook:TASK-18919` and the Chatbook design path in each description.
 5. Capture each CLI-assigned task ID immediately; make S5b depend on the actual S5a ID and do not add dependencies among the other Server tasks.
 6. Inspect every generated record with `backlog task <id> --plain`; verify title, description, acceptance criteria, labels, priority, status, and dependency.
@@ -62,11 +83,19 @@
 - Create through Backlog.md CLI: `backlog/tasks/task-<allocated> - Manage Server Reading import and export workflows.md`
 - Create through Backlog.md CLI: `backlog/tasks/task-<allocated> - Decide legacy Collections migration or retirement.md`
 
-1. Create C1, C2, and C3 with status `To Do`, exact design metadata, and `TASK-18919` as their same-repository prerequisite.
-2. Capture C3's allocated ID, then create C3a, C3b, and C3c as children of C3. Also give each child the completed `TASK-18919` prerequisite; do not make children depend on the tracking parent.
+1. Create C1, C2, and C3 with status `To Do`, exact design metadata, and `TASK-18919` as their
+   same-repository prerequisite. Follow the safe filing sequence: create without priority, pass
+   labels once as one comma-separated `-l` value, and include only the first acceptance criterion.
+   Then set priority and append each remaining criterion with separate edit commands.
+2. Capture C3's allocated ID, then create C3a, C3b, and C3c as children using
+   `--parent <C3-id>`; never use `-p`. Apply the same no-priority create, single comma-separated
+   label value, separate priority edit, and one-criterion-per-edit sequence. Also give each child
+   the completed `TASK-18919` prerequisite; do not make children depend on the tracking parent.
 3. Put the exact allocated `tldw_server:TASK-<id>` prerequisite identities in C1, C2, C3a, C3b, and C3c descriptions. Do not use same-repository dependency fields for those external tasks.
-4. Create C4 as a low-priority, decision-only task depending on `TASK-18919`; require a new ADR and prohibit production lifecycle mutation or real-user data inspection.
-5. Work around Backlog CLI 1.44's collapsed repeated-`--ac` behavior exactly as for the Server records. Verify criterion counts are C1=5, C2=5, C3=4, C3a=5, C3b=6, C3c=6, and C4=6.
+4. Create C4 as a decision-only task depending on `TASK-18919`, using the safe filing sequence;
+   set its low priority with a separate priority edit, require a new ADR, and prohibit production
+   lifecycle mutation or real-user data inspection.
+5. Read back and verify exact criterion counts: C1=5, C2=5, C3=4, C3a=5, C3b=6, C3c=6, and C4=6.
 6. Preserve the design's descriptions and acceptance criteria, reference ADR-107 and the approved design, and leave implementation plans absent while all records remain `To Do`.
 7. Inspect all seven records with `backlog task <id> --plain`; verify C3 child links, dependencies, external references, priorities, labels, and statuses.
 8. Repeat the all-remote-ref/all-worktree occupied-ID and normalized-title census. Resolve any provisional collision before commit.

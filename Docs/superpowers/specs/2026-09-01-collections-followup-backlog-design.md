@@ -117,6 +117,11 @@ portable-schema identifier and manifest consumed by S5b. Docs-info advertises ex
 `hasReadingExportJobsV1=true` only when complete-scope export, job lifecycle, artifact retention,
 and cleanup guarantees are active.
 
+S5a is one reviewable Server PR boundary because its routes, job state, managed store,
+request-key idempotency, private artifact lifecycle, and portable manifest form one new
+Server-native export-job aggregate; none is truthful or independently useful without the others.
+It excludes re-import, generic backup, UI work, Local behavior, and additional export formats.
+
 #### S5b. Add Server-native Reading export re-import
 
 Retain Pocket JSON and Instapaper CSV import, then add Server-native JSONL/ZIP admission for
@@ -202,6 +207,10 @@ a partial artifact as complete. Round-trip means the exact S5b portable field se
 Server-native export and import; Pocket/Instapaper are import-only compatibility formats.
 Production-shaped tests use more than one API page and verify collision idempotency. Local capture
 import/export is not inferred from the Server contract.
+
+C3c is one reviewable Chatbook PR boundary over the already-shipped S5a and S5b contracts because
+it adds one management surface and its service integration. It includes no Server implementation,
+Local parity, import parser, artifact storage, portable-schema, or database-schema work.
 
 ### `tldw_chatbook` legacy lifecycle decision
 
