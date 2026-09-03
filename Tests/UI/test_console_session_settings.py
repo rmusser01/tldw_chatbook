@@ -245,6 +245,80 @@ def test_suspended_draft_round_trips_raw_modal_values_and_sensitive_session_fiel
     assert restored.provider_model_drafts["openai"] == "gpt-5"
 
 
+def test_suspended_draft_allows_incomplete_connection_and_multiline_private_text() -> None:
+    """A suspended modal keeps editable blanks and private formatting verbatim."""
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="",
+            base_url="",
+            system_prompt="system line one\n\tsystem line two",
+            pinned_prefill="prefill line one\n\tprefill line two",
+        ),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={
+            "console-settings-provider": "llama_cpp",
+            "console-settings-model-picker": "",
+            "console-settings-base-url": "",
+        },
+        provider_model_drafts={"llama_cpp": ""},
+        provider_base_url_drafts={"llama_cpp": ""},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id="console-settings-model-picker",
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+
+    restored = ConsoleSettingsDraftSnapshot.from_mapping(snapshot.to_mapping())
+
+    assert restored is not None
+    assert restored.settings.model == ""
+    assert restored.settings.base_url == ""
+    assert restored.raw_values["console-settings-model-picker"] == ""
+    assert restored.raw_values["console-settings-base-url"] == ""
+    assert restored.provider_model_drafts == {"llama_cpp": ""}
+    assert restored.provider_base_url_drafts == {"llama_cpp": ""}
+    assert restored.settings.system_prompt == "system line one\n\tsystem line two"
+    assert restored.settings.pinned_prefill == "prefill line one\n\tprefill line two"
+
+
+def test_suspended_draft_rejects_equality_impersonating_view_and_focus() -> None:
+    """Schema choices are exact strings, not arbitrary equality-compatible objects."""
+
+    class Impersonator:
+        def __init__(self, value: str) -> None:
+            self.value = value
+
+        def __hash__(self) -> int:
+            return hash(self.value)
+
+        def __eq__(self, other: object) -> bool:
+            return other == self.value
+
+    common = dict(
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-model-picker": "gpt-5"},
+        provider_model_drafts={"openai": "gpt-5"},
+        provider_base_url_drafts={},
+        scroll_anchor=0,
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+
+    with pytest.raises(ValueError):
+        ConsoleSettingsDraftSnapshot(
+            **common,
+            active_view=Impersonator("model"),  # type: ignore[arg-type]
+            focus_control_id="console-settings-model-picker",
+        )
+    with pytest.raises(ValueError):
+        ConsoleSettingsDraftSnapshot(
+            **common,
+            active_view="model",
+            focus_control_id=Impersonator("console-settings-model-picker"),  # type: ignore[arg-type]
+        )
+
+
 def test_credential_request_rejects_values_the_navigation_target_would_reject() -> None:
     snapshot = ConsoleSettingsDraftSnapshot(
         settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
@@ -413,8 +487,174 @@ def test_credential_route_navigation_rejection_clears_exact_staged_return_slot()
     )
     messages[0].report_completion(False)
 
-    assert screen._suspended_conversation_settings is None
+    assert screen._suspended_conversation_settings == snapshot
     assert handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN) is None
+
+
+def test_credential_route_rejected_delivery_repairs_the_exact_slot() -> None:
+    """Textual refusing delivery uses the same source-safe failure settlement."""
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-model-picker": "gpt-5"},
+        provider_model_drafts={"openai": "gpt-5"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id="console-settings-model-picker",
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+    request = ConsoleSettingsCredentialRequest(snapshot, "openai", "gpt-5")
+    store = ConsoleChatStore()
+    session = store.create_session(settings=snapshot.settings)
+    screen = ChatScreen.__new__(ChatScreen)
+    handoffs = chat_screen_module.PendingHandoffStore()
+    screen.app_instance = SimpleNamespace(pending_handoffs=handoffs)
+    screen._ensure_console_chat_store = lambda: store
+    screen.post_message = lambda _message: False
+
+    ChatScreen._stage_console_settings_credential_request(
+        screen, request, session_id=session.id
+    )
+
+    assert screen._suspended_conversation_settings == snapshot
+    assert handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN) is None
+
+
+def test_credential_route_stale_identical_snapshot_cannot_reopen_newer_request(monkeypatch) -> None:
+    """An old rejection cannot repair a structurally identical newer suspension."""
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-model-picker": "gpt-5"},
+        provider_model_drafts={"openai": "gpt-5"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id="console-settings-model-picker",
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+    request = ConsoleSettingsCredentialRequest(snapshot, "openai", "gpt-5")
+    store = ConsoleChatStore()
+    session = store.create_session(settings=snapshot.settings)
+    screen = ChatScreen.__new__(ChatScreen)
+    handoffs = chat_screen_module.PendingHandoffStore()
+    messages: list[object] = []
+    scheduled: list[object] = []
+    fake_app = SimpleNamespace(screen_stack=(screen,))
+    monkeypatch.setattr(ChatScreen, "app", property(lambda _self: fake_app))
+    screen.app_instance = SimpleNamespace(pending_handoffs=handoffs)
+    screen._ensure_console_chat_store = lambda: store
+    screen.post_message = messages.append
+    screen.run_worker = lambda worker, **_kwargs: scheduled.append(worker)
+
+    ChatScreen._stage_console_settings_credential_request(
+        screen, request, session_id=session.id
+    )
+    first_navigation = messages[-1]
+    ChatScreen._stage_console_settings_credential_request(
+        screen, request, session_id=session.id
+    )
+    second_navigation = messages[-1]
+
+    first_navigation.report_completion(False)
+    assert scheduled == []
+    assert screen._suspended_conversation_settings_token == 2
+
+    second_navigation.report_completion(False)
+    assert len(scheduled) == 1
+    scheduled[0].close()
+
+
+@pytest.mark.asyncio
+async def test_failed_source_reopen_retains_suspended_snapshot_and_token(monkeypatch) -> None:
+    """A modal-push failure leaves the exact private draft available for retry."""
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-model-picker": "gpt-5"},
+        provider_model_drafts={"openai": "gpt-5"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id="console-settings-model-picker",
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+    screen = ChatScreen.__new__(ChatScreen)
+    fake_app = SimpleNamespace(screen_stack=(screen,))
+    monkeypatch.setattr(ChatScreen, "app", property(lambda _self: fake_app))
+    screen._suspended_conversation_settings = snapshot
+    screen._suspended_conversation_settings_token = 7
+
+    async def failed_open(**_kwargs):
+        return False
+
+    screen._open_console_settings = failed_open
+    await ChatScreen._reopen_suspended_console_settings(screen, 7)
+
+    assert screen._suspended_conversation_settings == snapshot
+    assert screen._suspended_conversation_settings_token == 7
+
+
+@pytest.mark.asyncio
+async def test_open_console_settings_real_callback_stages_typed_credential_route(
+    monkeypatch,
+) -> None:
+    """Production modal opening supplies the callback that stages its typed result."""
+    settings = ConsoleSessionSettings(provider="openai", model="gpt-5")
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=settings,
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-model-picker": "gpt-5"},
+        provider_model_drafts={"openai": "gpt-5"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id="console-settings-model-picker",
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+    store = ConsoleChatStore()
+    store.create_session(settings=settings)
+    screen = ChatScreen.__new__(ChatScreen)
+    staged_modal: list[object] = []
+    posted: list[object] = []
+    fake_app = SimpleNamespace(
+        push_screen=lambda modal, callback: staged_modal.extend((modal, callback))
+    )
+    monkeypatch.setattr(ChatScreen, "app", property(lambda _self: fake_app))
+    screen.app_instance = SimpleNamespace(
+        pending_handoffs=chat_screen_module.PendingHandoffStore()
+    )
+    screen._session = SimpleNamespace(
+        _ensure_active_console_session_settings=lambda: settings
+    )
+    screen._ensure_console_chat_store = lambda: store
+    screen._ensure_console_chat_controller = lambda: SimpleNamespace(
+        run_state=SimpleNamespace(is_send_allowed=True),
+        reset_active_context_memory=lambda _session_id: None,
+        undo_context_memory_reset=lambda: None,
+        reset_all_context_memories=lambda _session_id: None,
+        compact_context_now=lambda _session_id: None,
+    )
+    screen._active_console_settings_context_estimate = lambda: ConsoleSettingsContextEstimate(
+        10, 4096, "10 / 4k"
+    )
+    screen._active_console_context_control_state = lambda **_kwargs: None
+    screen._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
+    screen._global_chat_display_name = lambda: "Ada"
+
+    async def provider_models(*_args, **_kwargs):
+        return {"openai": ["gpt-5"]}
+
+    screen._providers_models_for_console_settings = provider_models
+    screen.post_message = posted.append
+
+    assert await ChatScreen._open_console_settings(screen) is True
+    callback = staged_modal[1]
+    callback(ConsoleSettingsCredentialRequest(snapshot, "openai", "gpt-5"))
+
+    assert len(posted) == 1
+    assert posted[0].screen_context["provider"] == "openai"
 
 
 class FakeConsoleModelDiscoveryScope:
@@ -754,6 +994,50 @@ async def test_mounted_suspended_draft_rehydrates_raw_provider_drafts_and_focus(
 
 
 @pytest.mark.asyncio
+async def test_mounted_suspended_draft_rehydrates_blank_connection_and_private_formatting() -> None:
+    """Mounted recovery leaves incomplete editable fields and private whitespace intact."""
+    app = ModalHarness()
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="",
+            base_url="",
+            system_prompt="system\n\tindented",
+            pinned_prefill="prefill\n\tindented",
+        ),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={
+            "console-settings-provider": "llama_cpp",
+            "console-settings-model-picker": "",
+            "console-settings-base-url": "",
+        },
+        provider_model_drafts={"llama_cpp": ""},
+        provider_base_url_drafts={"llama_cpp": ""},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id="console-settings-model-picker",
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = _basic_modal(
+            ConsoleSessionSettings(provider="llama_cpp", model="canonical"),
+            app,
+            providers_models={"llama_cpp": ["canonical"]},
+            suspended_draft=snapshot,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+        assert modal.query_one(
+            "#model-search-picker-input", Input
+        ).value == ""
+        assert modal.query_one("#console-settings-base-url", Input).value == ""
+        captured = modal.capture_suspended_draft()
+        assert captured.settings.system_prompt == "system\n\tindented"
+        assert captured.settings.pinned_prefill == "prefill\n\tindented"
+
+
+@pytest.mark.asyncio
 async def test_suspended_focus_falls_back_to_connection_provider_when_target_hidden() -> None:
     app = ModalHarness()
     app.app_config = {"api_settings": {"openai": {"api_key": "test-key"}}}
@@ -781,6 +1065,40 @@ async def test_suspended_focus_falls_back_to_connection_provider_when_target_hid
                 suspended_draft=snapshot,
             )
         )
+        await _wait_for_focused_id(app, pilot, "console-settings-provider")
+
+
+@pytest.mark.asyncio
+async def test_suspended_model_picker_focus_falls_back_when_ancestor_is_hidden() -> None:
+    """The logical picker target uses its input's effective focusability."""
+    app = ModalHarness()
+    app.app_config = {"api_settings": {"openai": {"api_key": "test-key"}}}
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-model-picker": "gpt-5"},
+        provider_model_drafts={"openai": "gpt-5"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id="console-settings-model-picker",
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = _basic_modal(
+            snapshot.settings,
+            app,
+            providers_models={"openai": ["gpt-5"]},
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+        picker = modal.query_one("#console-settings-model-picker", ModelSearchPicker)
+        assert picker.parent is not None
+        picker.parent.display = False
+        assert picker.query_one("#model-search-picker-input", Input).focusable
+        assert modal.query_one("#console-settings-provider", Select).focusable
+        modal._restore_suspended_scroll_and_focus(snapshot)
         await _wait_for_focused_id(app, pilot, "console-settings-provider")
 
 

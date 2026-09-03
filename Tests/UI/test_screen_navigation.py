@@ -828,9 +828,16 @@ async def test_navigation_completion_callback_settles_once_for_guard_veto_and_su
             return self.allow
 
     outgoing = FakeOutgoingScreen()
+    app._screen_stacks["_default"][:] = [object(), outgoing]
 
-    async def fake_switch_screen(screen):
+    def fake_switch_screen(screen):
         switched_screens.append(screen)
+        app._screen_stacks["_default"][-1] = screen
+
+        async def mounted():
+            return None
+
+        return mounted()
 
     monkeypatch.setattr(
         app,
@@ -851,6 +858,147 @@ async def test_navigation_completion_callback_settles_once_for_guard_veto_and_su
     await app.handle_screen_navigation(succeeded)
     assert outcomes == [False, True]
     assert len(switched_screens) == 1
+
+
+@pytest.mark.asyncio
+async def test_navigation_commit_settles_success_before_post_switch_failure(monkeypatch):
+    """Synchronous target stack ownership commits before an awaited mount failure."""
+    app = _build_test_app()
+    app._initial_screen_pushed = True
+    outcomes: list[bool] = []
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    class FakeOutgoingScreen:
+        screen_name = "library"
+
+        async def confirm_navigation(self):
+            return True
+
+    outgoing = FakeOutgoingScreen()
+    app._screen_stacks["_default"][:] = [object(), outgoing]
+
+    def synchronous_stack_transfer(screen):
+        app._screen_stacks["_default"][-1] = screen
+
+        async def mount_then_fail():
+            raise RuntimeError("mount completed after stack transfer")
+
+        return mount_then_fail()
+
+    monkeypatch.setattr(
+        app,
+        "_resolve_screen_navigation_target",
+        lambda _target: ("chat", "chat", FakeTargetScreen),
+    )
+    monkeypatch.setattr(app, "switch_screen", synchronous_stack_transfer)
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+
+    message = NavigateToScreen("chat", on_completion=outcomes.append)
+    await app.handle_screen_navigation(message)
+
+    assert outcomes == [True]
+    assert app._screen_stacks["_default"][-1].screen_name == "chat"
+
+
+@pytest.mark.asyncio
+async def test_navigation_lock_wait_cancellation_settles_source_failure() -> None:
+    """Cancellation before lock ownership still resolves the source callback once."""
+    app = _build_test_app()
+    outcomes: list[bool] = []
+    lock = app._screen_navigation_lock()
+    await lock.acquire()
+    try:
+        task = asyncio.create_task(
+            app.handle_screen_navigation(
+                NavigateToScreen("chat", on_completion=outcomes.append)
+            )
+        )
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        lock.release()
+
+    assert outcomes == [False]
+
+
+@pytest.mark.asyncio
+async def test_navigation_completion_reports_prestartup_and_unknown_failures(
+    monkeypatch,
+) -> None:
+    """Every pre-commit rejection leaves the source callback with one failure."""
+    app = _build_test_app()
+    outcomes: list[bool] = []
+
+    await app.handle_screen_navigation(
+        NavigateToScreen("chat", on_completion=outcomes.append)
+    )
+    app._initial_screen_pushed = True
+    outgoing = SimpleNamespace(screen_name="library")
+    app._screen_stacks["_default"][:] = [object(), outgoing]
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+    await app.handle_screen_navigation(
+        NavigateToScreen("not-a-real-route", on_completion=outcomes.append)
+    )
+
+    assert outcomes == [False, False]
+
+
+@pytest.mark.asyncio
+async def test_navigation_post_switch_bookkeeping_failure_keeps_committed_success(monkeypatch):
+    """A nav-bar/focus bookkeeping exception cannot roll back owned target success."""
+    app = _build_test_app()
+    app._initial_screen_pushed = True
+    outcomes: list[bool] = []
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    class FakeOutgoingScreen:
+        screen_name = "library"
+
+        async def confirm_navigation(self):
+            return True
+
+    outgoing = FakeOutgoingScreen()
+    app._screen_stacks["_default"][:] = [object(), outgoing]
+
+    def synchronous_stack_transfer(screen):
+        app._screen_stacks["_default"][-1] = screen
+
+        async def mounted():
+            return None
+
+        return mounted()
+
+    monkeypatch.setattr(
+        app,
+        "_resolve_screen_navigation_target",
+        lambda _target: ("chat", "chat", FakeTargetScreen),
+    )
+    monkeypatch.setattr(app, "switch_screen", synchronous_stack_transfer)
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+    monkeypatch.setattr(
+        app,
+        "_clear_focus_if_leaving_console",
+        lambda _route: (_ for _ in ()).throw(RuntimeError("bookkeeping failed")),
+    )
+
+    await app.handle_screen_navigation(
+        NavigateToScreen("chat", on_completion=outcomes.append)
+    )
+
+    assert outcomes == [True]
+    assert app._screen_stacks["_default"][-1].screen_name == "chat"
 
 
 @pytest.mark.asyncio

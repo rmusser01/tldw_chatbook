@@ -81,6 +81,19 @@ class NavigateToScreen(Message):
         self.screen_context = dict(screen_context or {})
         self._on_completion = on_completion
         self._completion_reported = False
+        self._target_ownership_committed = False
+
+    @property
+    def target_ownership_committed(self) -> bool:
+        """Whether the destination has synchronously taken the Textual stack."""
+        return self._target_ownership_committed
+
+    def commit_target_ownership(self) -> None:
+        """Commit successful navigation when the destination owns the stack."""
+        if self._target_ownership_committed:
+            return
+        self._target_ownership_committed = True
+        self.report_completion(True)
 
     def report_completion(self, succeeded: bool) -> None:
         """Settle one optional source callback after the route reaches a terminal state."""

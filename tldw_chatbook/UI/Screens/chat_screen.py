@@ -2867,14 +2867,14 @@ class ChatScreen(BaseAppScreen):
         focus_context: bool = False,
         transfer: ConsoleSettingsTransfer | None = None,
         suspended_draft: ConsoleSettingsDraftSnapshot | None = None,
-    ) -> None:
+    ) -> bool:
         """Open Console session settings for the active native session."""
         controller = self._ensure_console_chat_controller()
         store = self._ensure_console_chat_store()
         if transfer is None:
             session_id = store.active_session_id
             if session_id is None:
-                return
+                return False
             origin = store.capture_console_settings_origin(session_id)
             settings = (
                 suspended_draft.settings
@@ -2882,7 +2882,7 @@ class ChatScreen(BaseAppScreen):
                 else store.session_settings(session_id)
             )
             if settings is None:
-                return
+                return False
             initial_draft = self._console_settings_initial_draft(
                 settings,
                 suspended_draft.context_policy_overrides
@@ -2898,7 +2898,7 @@ class ChatScreen(BaseAppScreen):
         try:
             display_name = store.session_user_display_name_override(session_id)
         except KeyError:
-            return
+            return False
         effective_thinking_policy = (
             await controller.effective_thinking_history_policy_for_session(session_id)
         )
@@ -2955,7 +2955,11 @@ class ChatScreen(BaseAppScreen):
                 return
             self._dispatch_console_settings_submission(result)
 
-        self.app.push_screen(modal, callback=apply_origin_result)
+        try:
+            self.app.push_screen(modal, callback=apply_origin_result)
+        except Exception:
+            return False
+        return True
 
     def _stage_console_settings_credential_request(
         self,
@@ -3001,33 +3005,66 @@ class ChatScreen(BaseAppScreen):
             field="api_key",
             return_revision=handoff_revision,
         )
+        request_token = getattr(self, "_next_suspended_conversation_settings_token", 0) + 1
+        self._next_suspended_conversation_settings_token = request_token
         self._suspended_conversation_settings = request.snapshot
+        self._suspended_conversation_settings_token = request_token
 
         def settle_navigation(succeeded: bool) -> None:
             """Repair the source only when the existing route did not leave it."""
             if succeeded:
                 return
-            self.app_instance.pending_handoffs.discard_pending_exact(
+            discarded = self.app_instance.pending_handoffs.discard_pending_exact(
                 HandoffChannel.CONVERSATION_SETTINGS_RETURN,
                 handoff_revision,
                 intent,
             )
-            if self._suspended_conversation_settings != request.snapshot:
+            if not discarded:
                 return
-            self._suspended_conversation_settings = None
-            if getattr(self, "is_mounted", False):
+            if getattr(self, "_suspended_conversation_settings_token", None) != request_token:
+                return
+            if self._owns_console_screen_stack():
                 self.run_worker(
-                    self._open_console_settings(suspended_draft=request.snapshot),
+                    self._reopen_suspended_console_settings(request_token),
                     exclusive=False,
                 )
 
-        self.post_message(
-            NavigateToScreen(
-                TAB_SETTINGS,
-                target.to_context(),
-                on_completion=settle_navigation,
-            )
+        navigation = NavigateToScreen(
+            TAB_SETTINGS,
+            target.to_context(),
+            on_completion=settle_navigation,
         )
+        if self.post_message(navigation) is False:
+            navigation.report_completion(False)
+
+    def _owns_console_screen_stack(self) -> bool:
+        """Return whether this exact Console instance remains app-stack owned."""
+        try:
+            return any(screen is self for screen in self.app.screen_stack)
+        except Exception:
+            return False
+
+    async def _reopen_suspended_console_settings(self, request_token: int) -> None:
+        """Reopen the retained draft only after an exact failed source route."""
+        snapshot = getattr(self, "_suspended_conversation_settings", None)
+        if (
+            not isinstance(snapshot, ConsoleSettingsDraftSnapshot)
+            or getattr(self, "_suspended_conversation_settings_token", None)
+            != request_token
+            or not self._owns_console_screen_stack()
+        ):
+            return
+        try:
+            reopened = await self._open_console_settings(suspended_draft=snapshot)
+        except Exception:
+            return
+        if (
+            reopened
+            and getattr(self, "_suspended_conversation_settings_token", None)
+            == request_token
+        ):
+            self._suspended_conversation_settings = None
+            self._suspended_conversation_settings_token = None
 
     def _global_chat_display_name(self) -> str:
         """Return the live in-memory global chat label without touching disk."""
@@ -5825,6 +5862,8 @@ class ChatScreen(BaseAppScreen):
         self._handoff_consumption_in_progress = False
         self._pending_console_launch_context: Optional[ConsoleLiveWorkLaunch] = None
         self._suspended_conversation_settings: ConsoleSettingsDraftSnapshot | None = None
+        self._suspended_conversation_settings_token: int | None = None
+        self._next_suspended_conversation_settings_token = 0
         self._pending_console_launch_auto_open_inspector = False
         # PR-4/task-1: source count of the evidence the LAST send consumed,
         # kept only until the next thing happens (a new send, new staging, or
@@ -14073,6 +14112,9 @@ class ChatScreen(BaseAppScreen):
         pending_launch = getattr(self, "_pending_console_launch_context", None)
         sent_notice = getattr(self, "_console_evidence_sent_notice", None)
         suspended_settings = getattr(self, "_suspended_conversation_settings", None)
+        suspended_settings_token = getattr(
+            self, "_suspended_conversation_settings_token", None
+        )
 
         return {
             "version": NATIVE_CONSOLE_STATE_VERSION,
@@ -14110,6 +14152,15 @@ class ChatScreen(BaseAppScreen):
             "suspended_conversation_settings": (
                 suspended_settings.to_mapping()
                 if isinstance(suspended_settings, ConsoleSettingsDraftSnapshot)
+                else None
+            ),
+            "suspended_conversation_settings_token": (
+                suspended_settings_token
+                if (
+                    isinstance(suspended_settings, ConsoleSettingsDraftSnapshot)
+                    and type(suspended_settings_token) is int
+                    and suspended_settings_token > 0
+                )
                 else None
             ),
         }
@@ -14203,6 +14254,22 @@ class ChatScreen(BaseAppScreen):
             ConsoleSettingsDraftSnapshot.from_mapping(raw_suspended_settings)
             if isinstance(raw_suspended_settings, Mapping)
             else None
+        )
+        raw_suspended_settings_token = payload.get(
+            "suspended_conversation_settings_token"
+        )
+        self._suspended_conversation_settings_token = (
+            raw_suspended_settings_token
+            if (
+                self._suspended_conversation_settings is not None
+                and type(raw_suspended_settings_token) is int
+                and raw_suspended_settings_token > 0
+            )
+            else None
+        )
+        self._next_suspended_conversation_settings_token = max(
+            getattr(self, "_next_suspended_conversation_settings_token", 0),
+            self._suspended_conversation_settings_token or 0,
         )
 
     def _rehydrate_console_message_image(self, message: ConsoleChatMessage) -> None:

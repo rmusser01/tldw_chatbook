@@ -12599,27 +12599,32 @@ class TldwCli(
 
     async def handle_screen_navigation(self, message: NavigateToScreen) -> None:
         """Handle navigation to a different screen using switch_screen for better performance."""
-        async with self._screen_navigation_lock():
-            try:
+        try:
+            async with self._screen_navigation_lock():
                 succeeded = await self._handle_screen_navigation_locked(message)
-            except asyncio.CancelledError:
-                # A cancelled navigation worker is terminal from the source
-                # screen's perspective too; do not leave its one-shot route
-                # recovery callback pending.
-                message.report_completion(False)
-                raise
-            except Exception:
-                # task-2720: several steps in the locked body are legitimately
-                # unguarded (target resolution, runtime identity, snapshot
-                # restore, transition admission) and a transient error in any
-                # of them used to fail SILENTLY: no message, nav-bar highlight
-                # stuck on the destination, retry clicks no-opped. Recover the
-                # user-facing state, then re-raise so the worker hook still
-                # writes the `worker_failed` diagnostics line (ADR-029).
-                self._notify_navigation_failure(message.screen_name)
-                message.report_completion(False)
-                raise
-            message.report_completion(succeeded)
+        except asyncio.CancelledError:
+            # Waiting to acquire the FIFO lock is cancellable too. Once the
+            # destination owns Textual's stack, however, a later cancellation
+            # cannot make the source route failed again.
+            message.report_completion(message.target_ownership_committed)
+            if message.target_ownership_committed:
+                return
+            raise
+        except Exception:
+            if message.target_ownership_committed:
+                message.report_completion(True)
+                return
+            # task-2720: several steps in the locked body are legitimately
+            # unguarded (target resolution, runtime identity, snapshot
+            # restore, transition admission) and a transient error in any
+            # of them used to fail SILENTLY: no message, nav-bar highlight
+            # stuck on the destination, retry clicks no-opped. Recover the
+            # user-facing state, then re-raise so the worker hook still
+            # writes the `worker_failed` diagnostics line (ADR-029).
+            self._notify_navigation_failure(message.screen_name)
+            message.report_completion(False)
+            raise
+        message.report_completion(message.target_ownership_committed or succeeded)
 
     #: Bound on the dismiss-the-overlays loop below. Each pass removes one
     #: pushed screen, and dismissing one can legitimately reveal another
@@ -13155,9 +13160,12 @@ class TldwCli(
                 self._notify_navigation_failure(screen_name)
                 return False
 
-            # Use switch_screen to replace the current screen
+            # Textual replaces the top stack entry synchronously, then its
+            # awaitable finishes mounting/removing. The source callback must
+            # commit at that ownership transfer rather than after unrelated
+            # bookkeeping below.
             try:
-                await self.switch_screen(new_screen)
+                switch_result = self.switch_screen(new_screen)
             except Exception as exc:
                 # Sibling of the construction guard above: a screen can also
                 # fail while composing/mounting (the MCP audit canvas reads
@@ -13172,16 +13180,56 @@ class TldwCli(
                 self._notify_navigation_failure(screen_name)
                 return False
 
-            # Keep current_tab aligned to canonical tab ids even when routing uses aliases.
-            self.current_tab = current_tab_value
+            if self._navigation_target_owns_stack(new_screen):
+                message.commit_target_ownership()
 
-            # task-18812: the exit rule runs only once the switch has
-            # SUCCEEDED -- flush vetoes, confirmations, admission, and mount
-            # failures above all `return` with the Console still resident, so
-            # clearing earlier would desync the app flag from the mounted
-            # screen's -focus class (the next toggle would do the wrong
-            # visible action).
-            self._clear_focus_if_leaving_console(screen_name)
+            try:
+                await switch_result
+            except Exception as exc:
+                if message.target_ownership_committed:
+                    logger.warning(
+                        "Screen mount reported after target ownership "
+                        "(route=%s, exception_category=%s).",
+                        screen_name,
+                        type(exc).__name__,
+                    )
+                    return True
+                logger.opt(exception=True).error(
+                    "Screen mount failed (route={}, exception_category={}).",
+                    screen_name,
+                    type(exc).__name__,
+                )
+                self._notify_navigation_failure(screen_name)
+                return False
+
+            if self._navigation_target_owns_stack(new_screen):
+                message.commit_target_ownership()
+            if not message.target_ownership_committed:
+                logger.error(
+                    "Screen switch returned without target stack ownership (route=%s).",
+                    screen_name,
+                )
+                self._notify_navigation_failure(screen_name)
+                return False
+
+            try:
+                # Keep current_tab aligned to canonical tab ids even when routing uses aliases.
+                self.current_tab = current_tab_value
+
+                # task-18812: the exit rule runs only once the switch has
+                # SUCCEEDED -- flush vetoes, confirmations, admission, and mount
+                # failures above all `return` with the Console still resident, so
+                # clearing earlier would desync the app flag from the mounted
+                # screen's -focus class (the next toggle would do the wrong
+                # visible action).
+                self._clear_focus_if_leaving_console(screen_name)
+            except Exception as exc:
+                logger.warning(
+                    "Post-switch bookkeeping failed after target ownership "
+                    "(route=%s, exception_category=%s).",
+                    screen_name,
+                    type(exc).__name__,
+                )
 
             logger.info(f"Successfully switched to {screen_name} screen")
             return True
@@ -13200,6 +13248,14 @@ class TldwCli(
             )
             self._notify_navigation_failure(screen_name)
             return False
+
+    def _navigation_target_owns_stack(self, target_screen: Any) -> bool:
+        """Return whether Textual synchronously replaced the active stack target."""
+        try:
+            stack = self._screen_stack
+        except Exception:
+            return False
+        return bool(stack) and stack[-1] is target_screen
 
     @on(TTSRequestEvent)
     async def handle_tts_request_event(self, event: TTSRequestEvent) -> None:

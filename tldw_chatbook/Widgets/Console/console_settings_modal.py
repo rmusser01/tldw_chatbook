@@ -135,6 +135,9 @@ COMPACTION_CLOSE_WARNING = "Provider work may continue and may still be billed."
 _CONSOLE_SETTINGS_DRAFT_VERSION = 1
 _SNAPSHOT_PROVIDER_RE = re.compile(r"[a-z0-9][a-z0-9_]{0,127}\Z")
 _SNAPSHOT_SAFE_TEXT_RE = re.compile(r"[^\x00-\x1f\x7f\x80-\x9f]*\Z")
+_SNAPSHOT_PRIVATE_TEXT_RE = re.compile(
+    r"[^\x00-\x08\x0b-\x0c\x0e-\x1f\x7f\x80-\x9f]*\Z"
+)
 _SNAPSHOT_RAW_TEXT_LIMIT = 4096
 _SNAPSHOT_MODEL_TEXT_LIMIT = 512
 _SNAPSHOT_URL_TEXT_LIMIT = 2048
@@ -264,13 +267,18 @@ def _snapshot_text(
     *,
     limit: int,
     allow_blank: bool = True,
+    allow_private_formatting: bool = False,
 ) -> bool:
     """Validate bounded primitive text retained in the process-memory snapshot."""
     return (
         type(value) is str
         and (allow_blank or bool(value))
         and len(value) <= limit
-        and _SNAPSHOT_SAFE_TEXT_RE.fullmatch(value) is not None
+        and (
+            _SNAPSHOT_PRIVATE_TEXT_RE.fullmatch(value) is not None
+            if allow_private_formatting
+            else _SNAPSHOT_SAFE_TEXT_RE.fullmatch(value) is not None
+        )
     )
 
 
@@ -285,9 +293,11 @@ def _snapshot_provider(value: object) -> str | None:
     return value
 
 
-def _snapshot_model(value: object, *, allow_none: bool = False) -> bool:
+def _snapshot_model(
+    value: object, *, allow_none: bool = False, allow_blank: bool = False
+) -> bool:
     return (allow_none and value is None) or _snapshot_text(
-        value, limit=_SNAPSHOT_MODEL_TEXT_LIMIT, allow_blank=False
+        value, limit=_SNAPSHOT_MODEL_TEXT_LIMIT, allow_blank=allow_blank
     )
 
 
@@ -349,7 +359,11 @@ def _valid_snapshot_settings_mapping(source: Mapping[str, object]) -> bool:
                 if name == "base_url"
                 else _SNAPSHOT_MODEL_TEXT_LIMIT
             )
-            if value is not None and not _snapshot_text(value, limit=limit):
+            if value is not None and not _snapshot_text(
+                value,
+                limit=limit,
+                allow_private_formatting=name in {"system_prompt", "pinned_prefill"},
+            ):
                 return False
         elif name in _SNAPSHOT_OPTIONAL_INT_FIELDS:
             if value is not None and type(value) is not int:
@@ -411,13 +425,16 @@ class ConsoleSettingsDraftSnapshot:
             self.context_policy_overrides.to_dict()
         ):
             raise ValueError("context policy overrides are invalid")
-        if self.active_view not in {"model", "context"}:
+        if type(self.active_view) is not str or self.active_view not in {"model", "context"}:
             raise ValueError("active view is invalid")
         if type(self.scroll_anchor) is not int or self.scroll_anchor < 0:
             raise ValueError("scroll anchor is invalid")
         if (
             self.focus_control_id is not None
-            and self.focus_control_id not in _SNAPSHOT_FOCUS_CONTROL_IDS
+            and (
+                type(self.focus_control_id) is not str
+                or self.focus_control_id not in _SNAPSHOT_FOCUS_CONTROL_IDS
+            )
         ):
             raise ValueError("focus control is invalid")
         if not isinstance(self.raw_values, Mapping) or not set(self.raw_values).issubset(
@@ -435,7 +452,7 @@ class ConsoleSettingsDraftSnapshot:
                 if _snapshot_provider(value) is None:
                     raise ValueError("raw modal values are invalid")
             elif key == "console-settings-model-picker":
-                if not _snapshot_model(value):
+                if not _snapshot_model(value, allow_blank=True):
                     raise ValueError("raw modal values are invalid")
             elif key == "console-settings-base-url":
                 if not _snapshot_text(value, limit=_SNAPSHOT_URL_TEXT_LIMIT):
@@ -444,11 +461,12 @@ class ConsoleSettingsDraftSnapshot:
                 raise ValueError("raw modal values are invalid")
             raw_values[key] = value
         model_drafts = _copy_snapshot_string_mapping(
-            self.provider_model_drafts, allow_none=True
+            self.provider_model_drafts, allow_none=True, allow_blank=True
         )
         base_url_drafts = _copy_snapshot_string_mapping(
             self.provider_base_url_drafts,
             value_limit=_SNAPSHOT_URL_TEXT_LIMIT,
+            allow_blank=True,
         )
         if model_drafts is None or base_url_drafts is None:
             raise ValueError("provider drafts are invalid")
@@ -2109,7 +2127,8 @@ class ConsoleSettingsModal(
         if control_id == "console-settings-model-picker":
             try:
                 picker = self.query_one(f"#{control_id}", ModelSearchPicker)
-                if picker.display and not picker.disabled:
+                picker_input = picker.query_one("#model-search-picker-input", Input)
+                if self._is_effectively_focusable(picker_input):
                     picker.focus_input()
                     return
             except (NoMatches, QueryError):
@@ -2117,7 +2136,7 @@ class ConsoleSettingsModal(
         else:
             try:
                 control = self.query_one(f"#{control_id}")
-                if control.display and not control.disabled and control.can_focus:
+                if self._is_effectively_focusable(control):
                     control.focus()
                     return
             except (NoMatches, QueryError):
@@ -2134,15 +2153,29 @@ class ConsoleSettingsModal(
                 control = self.query_one(selector, widget_type)
             except (NoMatches, QueryError):
                 continue
-            if not control.display or control.disabled:
-                continue
             if isinstance(control, ModelSearchPicker):
+                picker_input = control.query_one("#model-search-picker-input", Input)
+                if not self._is_effectively_focusable(picker_input):
+                    continue
                 control.focus_input()
-            elif control.can_focus:
+            elif self._is_effectively_focusable(control):
                 control.focus()
             else:
                 continue
             return
+
+    @staticmethod
+    def _is_effectively_focusable(control: Widget) -> bool:
+        """Check the real target plus every mounted ancestor for focusability."""
+        if not control.focusable:
+            return False
+        current: Widget | None = control
+        while current is not None:
+            if not current.display or current.disabled:
+                return False
+            parent = current.parent
+            current = parent if isinstance(parent, Widget) else None
+        return True
 
     def _settings_for_active_provider(self) -> ConsoleSessionSettings:
         """Project the current provider's raw model/endpoint into readiness only."""
@@ -4103,6 +4136,7 @@ class ConsoleSettingsModal(
         model_select = self.query_one("#console-settings-model-select", Select)
         model_input = self.query_one("#console-settings-model-input", Input)
         model_custom = self.query_one("#console-settings-model-custom", Button)
+        raw_model_is_blank = type(current_model) is str and current_model == ""
         current_model = normalize_console_model_value(current_model)
         model_options = self._model_select_options(provider, current_model)
         if model_options:
@@ -4125,9 +4159,13 @@ class ConsoleSettingsModal(
             model_custom.label = "Custom model"
             model_custom.disabled = False
             model_custom.display = True
-            self.query_one(
+            picker = self.query_one(
                 "#console-settings-model-picker", ModelSearchPicker
-            ).refresh_provider(provider, current_model=selected)
+            )
+            picker.refresh_provider(
+                provider,
+                current_model="" if raw_model_is_blank else selected,
+            )
             return
 
         fallback = current_model or ""
@@ -4143,9 +4181,11 @@ class ConsoleSettingsModal(
         model_custom.label = "Custom model"
         model_custom.disabled = False
         model_custom.display = True
-        self.query_one(
-            "#console-settings-model-picker", ModelSearchPicker
-        ).refresh_provider(provider, current_model=fallback or None)
+        picker = self.query_one("#console-settings-model-picker", ModelSearchPicker)
+        picker.refresh_provider(
+            provider,
+            current_model="" if raw_model_is_blank else fallback or None,
+        )
 
     def _toggle_manual_model_input(self) -> None:
         model_select = self.query_one("#console-settings-model-select", Select)
@@ -4296,7 +4336,15 @@ class ConsoleSettingsModal(
 
     def _store_current_model_for_provider(self, provider: str) -> None:
         if provider:
-            self._set_provider_model_draft(provider, self._current_model_value())
+            picker = self.query_one(
+                "#console-settings-model-picker", ModelSearchPicker
+            )
+            picker_input = picker.query_one("#model-search-picker-input", Input)
+            current_model = self._current_model_value()
+            if current_model is None and picker_input.value == "":
+                self._provider_model_drafts[provider] = ""
+            else:
+                self._set_provider_model_draft(provider, current_model)
 
     def _store_current_base_url_for_provider(self, provider: str) -> None:
         if provider and self._provider_uses_base_url(provider):
@@ -4306,9 +4354,10 @@ class ConsoleSettingsModal(
 
     def _model_for_provider(self, provider: str) -> str | None:
         if provider in self._provider_model_drafts:
-            stored_model = normalize_console_model_value(
-                self._provider_model_drafts[provider]
-            )
+            stored_value = self._provider_model_drafts[provider]
+            if type(stored_value) is str and stored_value == "":
+                return ""
+            stored_model = normalize_console_model_value(stored_value)
             if stored_model:
                 return stored_model
         configured_model = self._default_model_for_provider(provider)

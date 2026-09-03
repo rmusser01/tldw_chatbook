@@ -159,6 +159,7 @@ def test_native_console_state_keeps_suspended_settings_draft_process_local() -> 
     store.create_session(settings=snapshot.settings)
     screen = bare_screen(store)
     screen._suspended_conversation_settings = snapshot
+    screen._suspended_conversation_settings_token = 19
 
     payload = screen._serialize_native_console_state()
 
@@ -168,11 +169,14 @@ def test_native_console_state_keeps_suspended_settings_draft_process_local() -> 
     assert retained["settings"]["system_prompt"] == "private system text"
     assert retained["settings"]["pinned_prefill"] == "private prefill text"
     assert retained["raw_values"]["console-settings-base-url"] == "http://127.0.0.1:9099"
+    assert payload["suspended_conversation_settings_token"] == 19
 
     restored = bare_screen(ConsoleChatStore())
     restored._restore_native_console_state(payload)
 
     assert restored._suspended_conversation_settings == snapshot
+    assert restored._suspended_conversation_settings_token == 19
+    assert restored._next_suspended_conversation_settings_token == 19
 
 
 def test_console_prompt_target_projection_is_minimal_frozen_and_safe() -> None:
