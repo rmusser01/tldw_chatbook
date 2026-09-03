@@ -93,6 +93,7 @@ class LibraryMediaViewer(Vertical):
         image_preview_hidden: bool = False,
         image_preview_available: bool = False,
         image_preview_source: Any = None,
+        review_banner: str = "",
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -117,6 +118,7 @@ class LibraryMediaViewer(Vertical):
         self.image_preview_hidden = image_preview_hidden
         self.image_preview_available = image_preview_available
         self.image_preview_source = image_preview_source
+        self.review_banner = review_banner
         # Fill the (already 13fr) canvas host, not an independent 13fr: an `fr`
         # width here breaks width:100% child resolution so long lines (analysis
         # summary, a long URL) clip instead of wrapping. 1fr fills the same
@@ -186,6 +188,16 @@ class LibraryMediaViewer(Vertical):
             id="library-media-reader-identity",
             markup=False,
         )
+        if self.review_banner:
+            # task-30045 (critique P2): the active review set is a workflow
+            # object -- its name, live progress, and the loaded item's own
+            # reviewed state frame the Reader, not just a footer string.
+            # markup=False: the set name derives from user input.
+            yield Static(
+                self.review_banner,
+                id="library-media-review-banner",
+                markup=False,
+            )
         yield Button("‹ Back", id="library-media-back", compact=True)
         yield Static(
             "Edit media details" if self.editing else self.viewer.title,

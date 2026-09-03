@@ -222,8 +222,9 @@ them one by one, with your place and progress saved between visits.
 - **Resume on entry** — opening the media area with a set active loads its
   current item into the Reader automatically (once per set per session;
   Escape back to the list and re-entering shows the list).
-- **Walk** — while a set is active the Reader footer shows your place ("2 of
-  14 · 1 reviewed"). `]` advances and marks the item you leave as reviewed;
+- **Walk** — while a set is active the Reader carries a banner naming the
+  set, your place, and the open item's own state ("Reviewing: All media — 2
+  of 14 · 1 reviewed · ✓ reviewed"), and the footer shows the same place. `]` advances and marks the item you leave as reviewed;
   `[` goes back without marking; `m` toggles the loaded item's reviewed mark;
   a final `]` on the last item marks it done in place. **Escape** leaves the
   Reader but keeps the set active — re-entering resumes at your cursor.

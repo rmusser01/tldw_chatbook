@@ -41985,6 +41985,66 @@ class LibraryScreen(BaseAppScreen):
             review_progress(review_set.items, review_set.cursor, is_live)
         )
 
+    def _active_review_set_banner(self) -> str | None:
+        """Build the Reader's one-line review-set banner (task-30045).
+
+        ``"Reviewing: <name> — X of M · N reviewed · ✓ reviewed"`` -- the
+        set's identity, its live progress, and (when the loaded item belongs
+        to the set) that item's own reviewed state, so ``m``'s effect is
+        visible at a glance instead of a counter diff. ``None`` when no set
+        is active; fails CLOSED on a storage error (the explicit gesture
+        paths carry the notices).
+
+        Returns:
+            The banner line, or ``None``.
+        """
+        service = self._review_set_service()
+        if service is None:
+            return None
+        try:
+            review_set = service.get_active_review_set()
+            if review_set is None:
+                return None
+            from tldw_chatbook.Library.review_set_state import (
+                format_review_progress,
+                review_progress,
+            )
+
+            live_ids = self._review_set_live_ids(
+                item.backing_media_id for item in review_set.items
+            )
+            progress = format_review_progress(
+                review_progress(
+                    review_set.items,
+                    review_set.cursor,
+                    lambda candidate: candidate in live_ids,
+                )
+            )
+            loaded = self._library_media_reader_session.loaded_backing_id
+            try:
+                loaded = int(loaded) if loaded is not None else None
+            except (TypeError, ValueError):
+                loaded = None
+            item_state = ""
+            current = next(
+                (
+                    item
+                    for item in review_set.items
+                    if item.backing_media_id == loaded
+                ),
+                None,
+            )
+            if current is not None:
+                item_state = (
+                    " · ✓ reviewed" if current.done else " · not yet reviewed"
+                )
+            return f"Reviewing: {review_set.name} — {progress}{item_state}"
+        except Exception:
+            logger.opt(exception=True).warning(
+                "review-set banner build failed; omitting the banner"
+            )
+            return None
+
     def _review_set_active(self) -> bool:
         """True when a review set is active (drives the Reader footer + gating).
 
@@ -43361,6 +43421,7 @@ class LibraryScreen(BaseAppScreen):
             image_preview_hidden=preview_hidden,
             image_preview_available=preview_available,
             image_preview_source=preview_source,
+            review_banner=self._active_review_set_banner() or "",
             id="library-media-viewer",
         )
         viewer._library_entry_arrival_note = arrival_note
@@ -43573,8 +43634,12 @@ class LibraryScreen(BaseAppScreen):
         # with byte-identical values must still compare EQUAL so the
         # document is not rebuilt (pinned by task-22207's alternating-focus
         # probe).
+        # task-30045: the review banner is a compose input like any other --
+        # without it here, m/walk syncs kept the stale (or absent) banner.
+        review_banner = self._active_review_set_banner() or ""
         unchanged = (
             (viewer.viewer is viewer_state or viewer.viewer == viewer_state)
+            and viewer.review_banner == review_banner
             and viewer.editing == self._library_media_editing
             and viewer.confirming_delete == self._library_media_confirming_delete
             and tuple(viewer.highlights) == highlights
@@ -43638,6 +43703,7 @@ class LibraryScreen(BaseAppScreen):
             viewer.image_preview_hidden = preview_hidden
             viewer.image_preview_available = preview_available
             viewer.image_preview_source = preview_source
+            viewer.review_banner = review_banner
             viewer.refresh(recompose=True)
         if detail is not None:
             self._library_media_composed_detail = detail
