@@ -412,6 +412,8 @@ from ...Library.library_shell_state import (
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
     LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP,
+    LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP,
+    LIBRARY_REVIEW_SELECTED_TOOLTIP,
     LIBRARY_ROW_BROWSE_COLLECTIONS,
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
@@ -1868,6 +1870,19 @@ def _apply_library_row_toggle(
                 else LIBRARY_DELETE_SELECTED_TOOLTIP
             )
             _patch_library_disabled_marker_label(delete_button)
+            # task-28242 (Qodo #2335): the "Review selected" bulk action flips
+            # in place too, or it stays disabled after the first row toggle
+            # until an unrelated full recompose.
+            review_button = screen.query_one(
+                "#library-media-review-selected", Button
+            )
+            review_button.disabled = selection.count == 0
+            review_button.tooltip = (
+                LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP
+                if review_button.disabled
+                else LIBRARY_REVIEW_SELECTED_TOOLTIP
+            )
+            _patch_library_disabled_marker_label(review_button)
         elif kind == "notes":
             work_panes = screen.query("#library-note-work-pane")
             if work_panes and screen._library_note_session.snapshot is not None:
@@ -42027,21 +42042,37 @@ class LibraryScreen(BaseAppScreen):
         )
 
     async def _review_these_worker(self) -> None:
-        """Page the whole filtered result, then create + open the set."""
-        scope = getattr(self._library_media_browse_controller, "applied_scope", None)
-        if scope is None:
-            return
-        pairs = await self._collect_review_pairs_from_scope(scope)
-        self._create_and_open_review_set(
-            self._review_these_name(scope), "browse", pairs
-        )
+        """Page the whole filtered result, then create + open the set.
+
+        Wrapped so a search/DB failure surfaces a notice instead of a silent
+        no-op (Qodo #2335) -- the worker runs with ``exit_on_error=False``.
+        """
+        try:
+            scope = getattr(
+                self._library_media_browse_controller, "applied_scope", None
+            )
+            if scope is None:
+                return
+            pairs = await self._collect_review_pairs_from_scope(scope)
+            self._create_and_open_review_set(
+                self._review_these_name(scope), "browse", pairs
+            )
+        except Exception:
+            self._notify_review_set(
+                "Couldn't build the review set.", severity="error"
+            )
 
     async def _review_selected_worker(self, backing_ids: tuple[int, ...]) -> None:
         """Order the selected ids by the browse sort, then create + open."""
-        pairs = await self._order_selected_review_pairs(backing_ids)
-        self._create_and_open_review_set(
-            f"{len(backing_ids)} selected items", "selection", pairs
-        )
+        try:
+            pairs = await self._order_selected_review_pairs(backing_ids)
+            self._create_and_open_review_set(
+                f"{len(backing_ids)} selected items", "selection", pairs
+            )
+        except Exception:
+            self._notify_review_set(
+                "Couldn't build the review set.", severity="error"
+            )
 
     async def _collect_review_pairs_from_scope(
         self, scope: Any
@@ -42059,6 +42090,8 @@ class LibraryScreen(BaseAppScreen):
         )
         if not callable(search):
             return []
+        from tldw_chatbook.Library.review_set_state import REVIEW_SET_CAP
+
         pairs: list[tuple[int, str]] = []
         page = 1
         page_size = scope.page_size
@@ -42080,7 +42113,11 @@ class LibraryScreen(BaseAppScreen):
             for item in items:
                 pairs.append((int(item["backing_media_id"]), str(item["title"])))
             total = int(payload.get("total", 0)) if isinstance(payload, Mapping) else 0
-            if not items or page * page_size >= total or len(pairs) > 500:
+            if (
+                not items
+                or page * page_size >= total
+                or len(pairs) > REVIEW_SET_CAP
+            ):
                 break
             page += 1
         return pairs
@@ -42101,17 +42138,22 @@ class LibraryScreen(BaseAppScreen):
         )
         if not callable(search):
             return []
+        from tldw_chatbook.Library.review_set_state import REVIEW_SET_CAP
+
         scope = getattr(self._library_media_browse_controller, "applied_scope", None)
         sort_by = scope.sort_by if scope is not None else "last_modified_desc"
+        # Qodo #2335: bound the query to the cap (+1 to flag overflow), not the
+        # unrestricted selection size.
+        ids = list(backing_ids)[: REVIEW_SET_CAP + 1]
         payload = await self._run_library_service_call(
             search,
             mode="local",
             query="",
             library_summary=True,
             isolate_in_worker=True,
-            id_allowlist=list(backing_ids),
+            id_allowlist=ids,
             sort_by=sort_by,
-            limit=len(backing_ids),
+            limit=len(ids),
             offset=0,
         )
         items = payload.get("items", []) if isinstance(payload, Mapping) else []
@@ -42139,9 +42181,12 @@ class LibraryScreen(BaseAppScreen):
             origin: ``'browse'`` or ``'selection'``.
             pairs: Ordered ``(backing_media_id, title)`` pairs.
         """
-        from tldw_chatbook.Library.review_set_state import build_pinned_items
+        from tldw_chatbook.Library.review_set_state import (
+            REVIEW_SET_CAP,
+            build_pinned_items,
+        )
 
-        items, truncated = build_pinned_items(pairs, cap=500)
+        items, truncated = build_pinned_items(pairs, cap=REVIEW_SET_CAP)
         if not items:
             self._notify_review_set(
                 "No media items to review.", severity="warning"
@@ -42153,7 +42198,8 @@ class LibraryScreen(BaseAppScreen):
         service.create_review_set(name, origin, items)
         if truncated:
             self._notify_review_set(
-                "Review set capped at the first 500 items.", severity="warning"
+                f"Review set capped at the first {REVIEW_SET_CAP} items.",
+                severity="warning",
             )
         else:
             self._notify_review_set(f"Reviewing {len(items)} items.")

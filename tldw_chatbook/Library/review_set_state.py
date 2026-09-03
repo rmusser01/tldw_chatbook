@@ -19,6 +19,10 @@ from typing import Callable, Iterable
 IsLive = Callable[[int], bool]
 """Predicate: does this backing media id still resolve to a live item?"""
 
+REVIEW_SET_CAP = 500
+"""Max distinct items a review set pins (task-28242). One source of truth for
+the collect/build/notify/query paths so they cannot disagree."""
+
 
 @dataclass(frozen=True)
 class ReviewSetItem:
@@ -287,7 +291,7 @@ def format_review_progress(progress: ReviewProgress) -> str:
 
 
 def build_pinned_items(
-    pairs: "Iterable[tuple[int, str]]", *, cap: int = 500
+    pairs: "Iterable[tuple[int, str]]", *, cap: int = REVIEW_SET_CAP
 ) -> tuple[list[tuple[int, str]], bool]:
     """Build the pinned ``(backing_media_id, title)`` list for a new set.
 

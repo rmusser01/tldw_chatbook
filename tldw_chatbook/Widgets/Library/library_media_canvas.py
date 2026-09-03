@@ -28,6 +28,8 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_DELETE_SELECTED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
+    LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP,
+    LIBRARY_REVIEW_SELECTED_TOOLTIP,
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
     library_choice_label,
     library_choice_tooltip,
@@ -614,9 +616,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     )
                     review_selected.disabled = review_disabled
                     review_selected.tooltip = (
-                        "Select items to review them one by one."
+                        LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP
                         if review_disabled
-                        else "Review the selected items, one by one."
+                        else LIBRARY_REVIEW_SELECTED_TOOLTIP
                     )
                     yield self._gate_stale_action(
                         review_selected, "Review selected"

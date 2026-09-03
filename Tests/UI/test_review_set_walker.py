@@ -11,6 +11,8 @@ from __future__ import annotations
 import itertools
 from types import MethodType, SimpleNamespace
 
+import pytest
+
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 from tldw_chatbook.Library.review_set_service import ReviewSetService
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
@@ -286,6 +288,101 @@ def test_create_and_open_review_set_warns_on_truncation(tmp_path):
     review_set = service.get_active_review_set()
     assert len(review_set.items) == 500
     assert any(severity == "warning" for _msg, severity in fake._notices)
+
+
+def _worker_fake(service, *, search_media, scope=None):
+    """Fake screen for the entry-point workers, wiring the real methods."""
+    fake = _entry_fake(service)
+    fake._library_media_browse_controller = SimpleNamespace(applied_scope=scope)
+    fake.app_instance.media_reading_scope_service = SimpleNamespace(
+        search_media=search_media
+    )
+
+    async def run_call(call, *args, isolate_in_worker=False, **kwargs):
+        return await call(*args, **kwargs)
+
+    fake._run_library_service_call = run_call
+    for name in (
+        "_collect_review_pairs_from_scope",
+        "_order_selected_review_pairs",
+        "_create_and_open_review_set",
+        "_review_these_worker",
+        "_review_selected_worker",
+    ):
+        setattr(fake, name, MethodType(getattr(LibraryScreen, name), fake))
+    fake._review_these_name = LibraryScreen._review_these_name
+    return fake
+
+
+@pytest.mark.asyncio
+async def test_review_these_worker_pages_the_whole_result_and_lands(tmp_path):
+    service = _service(tmp_path)
+    pages = {
+        0: [
+            {"backing_media_id": 10, "title": "A"},
+            {"backing_media_id": 11, "title": "B"},
+        ],
+        2: [{"backing_media_id": 12, "title": "C"}],
+    }
+
+    async def search_media(*, offset=0, **_kwargs):
+        return {"items": pages.get(offset, []), "total": 3}
+
+    scope = SimpleNamespace(
+        query="", media_type=None, sort_by="last_modified_desc", page_size=2
+    )
+    fake = _worker_fake(service, search_media=search_media, scope=scope)
+
+    await fake._review_these_worker()
+
+    review_set = service.get_active_review_set()
+    assert [item.backing_media_id for item in review_set.items] == [10, 11, 12]
+    assert review_set.origin == "browse"
+    assert fake._opened == ["local:media:10"]
+
+
+@pytest.mark.asyncio
+async def test_review_selected_worker_orders_via_the_id_allowlist(tmp_path):
+    service = _service(tmp_path)
+    seen_kwargs = {}
+
+    async def search_media(**kwargs):
+        seen_kwargs.update(kwargs)
+        # the service returns the allowlist in browse order (newest first).
+        return {
+            "items": [
+                {"backing_media_id": 30, "title": "Z"},
+                {"backing_media_id": 20, "title": "Y"},
+            ],
+            "total": 2,
+        }
+
+    fake = _worker_fake(service, search_media=search_media, scope=None)
+
+    await fake._review_selected_worker((20, 30))
+
+    review_set = service.get_active_review_set()
+    assert [item.backing_media_id for item in review_set.items] == [30, 20]
+    assert review_set.origin == "selection"
+    assert seen_kwargs["id_allowlist"] == [20, 30]  # bounded allowlist passed
+
+
+@pytest.mark.asyncio
+async def test_review_these_worker_notifies_on_failure(tmp_path):
+    service = _service(tmp_path)
+
+    async def search_media(**_kwargs):
+        raise RuntimeError("db exploded")
+
+    scope = SimpleNamespace(
+        query="", media_type=None, sort_by="last_modified_desc", page_size=2
+    )
+    fake = _worker_fake(service, search_media=search_media, scope=scope)
+
+    await fake._review_these_worker()  # must not raise
+
+    assert service.get_active_review_set() is None
+    assert any(severity == "error" for _msg, severity in fake._notices)
 
 
 def test_review_these_name_from_scope():
