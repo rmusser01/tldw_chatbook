@@ -23,6 +23,13 @@ from tldw_chatbook.Workspaces.git_workspace import (
 )
 
 _BRANCH_PREFIX = "agent/"
+# Finding 4 (Qodo round, Medium): named instead of repeated magic
+# literals. _MAX_GIT_ERROR_CHARS bounds every truncated git stderr
+# string surfaced in a WorktreeRefusal message; _RUN_ID_ABBREV_CHARS
+# is the short run-id prefix used in worktree dirnames, branch/commit
+# messages, and log-friendly identifiers.
+_MAX_GIT_ERROR_CHARS = 200
+_RUN_ID_ABBREV_CHARS = 8
 
 
 @dataclass(frozen=True)
@@ -87,11 +94,11 @@ def create_agent_worktree(repo_root: Path, run_id: str) -> AgentWorktree | Workt
         return WorktreeRefusal("git_unavailable", err)
     if code != 0:
         return WorktreeRefusal(
-            "worktree_create_failed", f"could not resolve HEAD: {err.strip()[:200]}"
+            "worktree_create_failed", f"could not resolve HEAD: {err.strip()[:_MAX_GIT_ERROR_CHARS]}"
         )
     base_sha = out.strip()
     branch = f"{_BRANCH_PREFIX}{run_id}"
-    dest = _worktrees_base() / f"agent-{run_id[:8]}"
+    dest = _worktrees_base() / f"agent-{run_id[:_RUN_ID_ABBREV_CHARS]}"
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -101,7 +108,7 @@ def create_agent_worktree(repo_root: Path, run_id: str) -> AgentWorktree | Workt
     code, out, err = _git(repo_root, "worktree", "add", str(dest), "-b", branch, "HEAD")
     if code != 0:
         return WorktreeRefusal(
-            "worktree_create_failed", f"git worktree add failed: {err.strip()[:200]}"
+            "worktree_create_failed", f"git worktree add failed: {err.strip()[:_MAX_GIT_ERROR_CHARS]}"
         )
     return AgentWorktree(run_id=run_id, worktree_path=dest, branch=branch, base_sha=base_sha)
 
@@ -142,6 +149,12 @@ def discard_agent_worktree(
             a successful removal, `git branch -d` (lowercase), which
             best-effort refuses to delete a branch not fully merged; the
             ref survives on purpose rather than losing the commit.
+
+    Returns:
+        ``None`` on a successful (or already-gone) removal; a
+        ``worktree_remove_failed`` ``WorktreeRefusal`` when the worktree
+        still exists and git refused to remove it (branch deletion is
+        always best-effort and never itself produces a refusal).
     """
     remove_args = (
         "worktree",
@@ -152,7 +165,7 @@ def discard_agent_worktree(
     code, _out, err = _git(repo_root, *remove_args)
     if code != 0 and wt.worktree_path.exists():
         return WorktreeRefusal(
-            "worktree_remove_failed", f"git worktree remove failed: {err.strip()[:200]}"
+            "worktree_remove_failed", f"git worktree remove failed: {err.strip()[:_MAX_GIT_ERROR_CHARS]}"
         )
     # best-effort; branch may be merged already (force) or unmerged (not force)
     _git(repo_root, "branch", "-D" if force else "-d", wt.branch)
@@ -187,7 +200,7 @@ def _conflicting_files(stderr: str) -> str:
             continue
         if name and name not in names:
             names.append(name)
-    return ", ".join(names) or stderr.strip()[:200]
+    return ", ".join(names) or stderr.strip()[:_MAX_GIT_ERROR_CHARS]
 
 
 def _apply_patch(repo_root: Path, patch: str, *, check_only: bool) -> WorktreeRefusal | None:
@@ -285,14 +298,14 @@ def merge_agent_worktree_changes(
     if code != 0:
         return WorktreeRefusal(
             "worktree_commit_failed",
-            f"could not read agent worktree state: {err.strip()[:200]}",
+            f"could not read agent worktree state: {err.strip()[:_MAX_GIT_ERROR_CHARS]}",
         )
     if out.strip():
         add_code, _add_out, add_err = _git(wt.worktree_path, "add", "-A")
         if add_code != 0:
             return WorktreeRefusal(
                 "worktree_commit_failed",
-                f"could not commit agent work: {add_err.strip()[:200]}",
+                f"could not commit agent work: {add_err.strip()[:_MAX_GIT_ERROR_CHARS]}",
             )
         # Explicit identity: the worktree may have no resolvable git user
         # (no ~/.gitconfig, no global identity) even though the shared repo
@@ -301,12 +314,12 @@ def merge_agent_worktree_changes(
             wt.worktree_path,
             "-c", "user.name=tldw-agent",
             "-c", "user.email=agent@tldw.local",
-            "commit", "-m", f"agent work ({wt.run_id[:8]})",
+            "commit", "-m", f"agent work ({wt.run_id[:_RUN_ID_ABBREV_CHARS]})",
         )
         if commit_code != 0:
             return WorktreeRefusal(
                 "worktree_commit_failed",
-                f"could not commit agent work: {commit_err.strip()[:200]}",
+                f"could not commit agent work: {commit_err.strip()[:_MAX_GIT_ERROR_CHARS]}",
             )
     code, out, _err = _git(repo_root, "diff", "--stat", f"{wt.base_sha}..{wt.branch}")
     diffstat = out.strip()
@@ -317,7 +330,7 @@ def merge_agent_worktree_changes(
     if mode == "apply":
         code, patch, err = _git(repo_root, "diff", "--binary", f"{wt.base_sha}..{wt.branch}")
         if code != 0:
-            return WorktreeRefusal("apply_conflict", f"diff failed: {err.strip()[:200]}")
+            return WorktreeRefusal("apply_conflict", f"diff failed: {err.strip()[:_MAX_GIT_ERROR_CHARS]}")
         refusal = _apply_patch(repo_root, patch, check_only=True)
         if refusal is not None:
             return refusal
@@ -327,12 +340,12 @@ def merge_agent_worktree_changes(
         return MergeOutcome(mode="apply", diffstat=diffstat, commit_sha=None)
     # mode == "merge"
     code, _out, err = _git(
-        repo_root, "merge", "--no-ff", wt.branch, "-m", f"Merge agent worktree {wt.run_id[:8]}"
+        repo_root, "merge", "--no-ff", wt.branch, "-m", f"Merge agent worktree {wt.run_id[:_RUN_ID_ABBREV_CHARS]}"
     )
     if code != 0:
         _code, files, _err2 = _git(repo_root, "diff", "--name-only", "--diff-filter=U")
         _git(repo_root, "merge", "--abort")
-        names = files.strip() or err.strip()[:200]
+        names = files.strip() or err.strip()[:_MAX_GIT_ERROR_CHARS]
         return WorktreeRefusal(
             "merge_conflict", f"merge conflicts; resolve manually: {names}"
         )
@@ -343,7 +356,26 @@ def merge_agent_worktree_changes(
 
 
 def prune_stale_agent_worktrees(repo_root: Path, live_run_ids: set[str]) -> int:
-    """Remove agent worktrees whose run is no longer live. Returns count removed."""
+    """Garbage-collect agent worktrees whose run is no longer live.
+
+    Lists every ``git worktree`` under ``repo_root``, filters to ones on
+    an ``agent/<run_id>`` branch (``_BRANCH_PREFIX``), and discards
+    (``force=False`` -- see ``discard_agent_worktree``'s own docstring)
+    every one whose ``run_id`` is not in ``live_run_ids``. A dirty
+    worktree is left on disk untouched (git itself refuses the removal);
+    a clean one whose branch carries unmerged commits is removed with its
+    branch ref surviving. Never raises: a ``git worktree list`` failure
+    is treated as nothing to prune.
+
+    Args:
+        repo_root: The shared workspace root (must be a git repo).
+        live_run_ids: Run ids that must NOT be pruned regardless of
+            whether their worktree looks clean -- the caller's own
+            liveness truth (e.g. ``AgentRunsDB.list_running_run_ids()``).
+
+    Returns:
+        The count of worktrees actually removed.
+    """
     code, out, _err = _git(repo_root, "worktree", "list", "--porcelain")
     if code != 0:
         return 0
