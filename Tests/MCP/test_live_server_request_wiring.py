@@ -198,3 +198,88 @@ def test_qodo2_oversized_sampling_request_refused(monkeypatch):
     huge = [{"role": "user", "content": "x" * 250_000}]
     with pytest.raises(ValueError):
         _run(complete(huge, 10, None))
+
+
+# --- TASK-28228: end-to-end through the REAL factory-built dispatcher ---
+# The per-component builders are covered above; these drive
+# build_server_request_dispatcher_factory(store)(server_id).handle(...) for a
+# real sampling and elicitation request, i.e. the "fulfilled and returned"
+# behavior AC#1/#2 describe, through the same object _get_client wires in prod.
+
+def _allow(monkeypatch, servers):
+    from tldw_chatbook.MCP import live_server_request_wiring as w
+    settings = {("mcp", "sampling_allowed_servers"): list(servers)}
+    monkeypatch.setattr(w, "get_cli_setting", lambda s, k, d=None: settings.get((s, k), d))
+
+
+def test_factory_dispatcher_fulfills_sampling_end_to_end(tmp_path, monkeypatch):
+    """AC#1: an allowlisted server's sampling request routes through the live
+    provider (chat_api_call) and comes back as a well-formed MCP result."""
+    from tldw_chatbook.MCP import live_server_request_wiring as w
+    _allow(monkeypatch, ["srv"])
+    seen = {}
+
+    def fake_chat_api_call(**kwargs):
+        seen.update(kwargs)
+        return {"choices": [{"message": {"content": "sampled-answer"}}]}
+
+    monkeypatch.setattr(w, "chat_api_call", fake_chat_api_call)
+    factory = build_server_request_dispatcher_factory(_store(tmp_path))
+    dispatcher = factory("srv")
+
+    result = _run(dispatcher.handle(
+        "sampling/createMessage",
+        {
+            "messages": [{"role": "user", "content": {"type": "text", "text": "hi there"}}],
+            "maxTokens": 32,
+        },
+    ))
+    assert isinstance(result, dict)
+    assert result["role"] == "assistant"
+    assert result["content"] == {"type": "text", "text": "sampled-answer"}
+    assert result["stopReason"] == "endTurn"
+    assert seen.get("streaming") is False  # non-streaming, bounded (AC#1)
+    assert seen.get("max_tokens") == 32
+
+
+def test_factory_dispatcher_denies_sampling_for_unlisted_server(tmp_path, monkeypatch):
+    """AC#3 end-to-end: default-deny stops a non-allowlisted server's sampling
+    request at the dispatcher, before the provider is ever called."""
+    from tldw_chatbook.MCP import live_server_request_wiring as w
+    from tldw_chatbook.MCP.server_request_handlers import JsonRpcError
+    _allow(monkeypatch, ["srv"])
+    monkeypatch.setattr(
+        w, "chat_api_call",
+        lambda **k: (_ for _ in ()).throw(AssertionError("provider must not be reached")),
+    )
+    dispatcher = build_server_request_dispatcher_factory(_store(tmp_path))("other")
+    result = _run(dispatcher.handle(
+        "sampling/createMessage",
+        {"messages": [{"role": "user", "content": {"type": "text", "text": "hi"}}], "maxTokens": 8},
+    ))
+    assert isinstance(result, JsonRpcError)
+    assert result.code == -32001  # request refused (policy deny)
+
+
+def test_factory_dispatcher_fulfills_elicitation_end_to_end(tmp_path):
+    """AC#2: an elicitation request routes through the live approval surface
+    (this store) and the out-of-band approval is returned to the server."""
+    store = _store(tmp_path)
+    # short poll so the test does not wait on the default cadence
+    factory = build_server_request_dispatcher_factory(store)
+    dispatcher = factory("srv")
+
+    async def drive():
+        task = asyncio.create_task(dispatcher.handle(
+            "elicitation/create", {"message": "Proceed?", "requestedSchema": {}}
+        ))
+        for _ in range(200):
+            pending = [r for r in store.list_approval_requests() if r.status == "pending"]
+            if pending:
+                store.resolve_approval_request(pending[0].request_id, "approved")
+                break
+            await asyncio.sleep(0.02)
+        return await task
+
+    result = _run(drive())
+    assert result == {"action": "accept", "content": {}}
