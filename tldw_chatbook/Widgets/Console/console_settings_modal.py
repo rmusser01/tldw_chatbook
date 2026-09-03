@@ -17,7 +17,15 @@ from textual.css.query import NoMatches, QueryError
 from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widget import Widget
-from textual.widgets import Button, Checkbox, Input, OptionList, Select, Static
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Collapsible,
+    Input,
+    OptionList,
+    Select,
+    Static,
+)
 
 from tldw_chatbook.Chat.provider_readiness import (
     get_provider_readiness,
@@ -107,7 +115,7 @@ from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.model_capabilities import is_vision_capable
 from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
-from .console_provider_picker import ConsoleProviderPicker
+from .console_provider_picker import ConsoleProviderPicker, ConsoleProviderPickerInput
 from .console_context_controls import (
     ConsoleContextControlState,
     build_console_context_control_state,
@@ -252,13 +260,11 @@ _SNAPSHOT_REQUIRED_FLOAT_FIELDS = frozenset({"temperature", "top_p"})
 _SNAPSHOT_REQUIRED_STRING_FIELDS = frozenset(
     {"provider", "character_label", "source"}
 )
-_SNAPSHOT_SETTING_CHOICE_DOMAINS = {
-    "reasoning_effort": frozenset(
-        {"none", "minimal", "low", "medium", "high", "xhigh"}
-    ),
-    "reasoning_summary": frozenset({"auto", "concise", "detailed", "none"}),
-    "verbosity": frozenset({"low", "medium", "high"}),
-    "thinking_effort": frozenset({"off", "low", "medium", "high", "xhigh", "max"}),
+_SNAPSHOT_SETTING_CHOICE_DOMAINS: dict[str, tuple[str, ...]] = {
+    "reasoning_effort": ("none", "minimal", "low", "medium", "high", "xhigh"),
+    "reasoning_summary": ("auto", "concise", "detailed", "none"),
+    "verbosity": ("low", "medium", "high"),
+    "thinking_effort": ("off", "low", "medium", "high", "xhigh", "max"),
 }
 _SNAPSHOT_FLOAT_BOUNDS = {
     "temperature": (0.0, 2.0),
@@ -656,25 +662,42 @@ class ConsoleSettingsResult:
     thinking_history_policy: ThinkingHistoryPolicy | None = None
 
 
-# (label, input id, accepted-values placeholder) - placeholders mirror the
-# Settings screen's enumerated hints for these provider-specific fields.
-PROVIDER_CHOICE_INPUTS = (
-    (
-        "Reasoning effort",
-        "console-settings-reasoning-effort",
-        "none, minimal, low, medium, high, xhigh",
-    ),
+_PROVIDER_CHOICE_CONTROLS: tuple[
+    tuple[str, str, ConsoleGenerationControl], ...
+] = (
+    ("Reasoning effort", "console-settings-reasoning-effort", "reasoning_effort"),
     (
         "Reasoning summary",
         "console-settings-reasoning-summary",
-        "auto, concise, detailed, none",
+        "reasoning_summary",
     ),
-    ("Verbosity", "console-settings-verbosity", "low, medium, high"),
-    (
-        "Thinking effort",
-        "console-settings-thinking-effort",
-        "off, low, medium, high, xhigh, max",
-    ),
+    ("Verbosity", "console-settings-verbosity", "verbosity"),
+    ("Thinking effort", "console-settings-thinking-effort", "thinking_effort"),
+)
+# Keep widget options and help copy in the same deterministic order as the one
+# canonical settings-field registry used by snapshot validation.
+_PROVIDER_CHOICE_VALUES: dict[str, tuple[str, ...]] = {
+    input_id: _SNAPSHOT_SETTING_CHOICE_DOMAINS[control]
+    for _label, input_id, control in _PROVIDER_CHOICE_CONTROLS
+}
+PROVIDER_CHOICE_INPUTS = tuple(
+    (label, input_id, ", ".join(_SNAPSHOT_SETTING_CHOICE_DOMAINS[control]))
+    for label, input_id, control in _PROVIDER_CHOICE_CONTROLS
+)
+_ADVANCED_GENERATION_FOCUS_IDS = frozenset(
+    {
+        "console-settings-temperature",
+        "console-settings-top-p",
+        "console-settings-min-p",
+        "console-settings-top-k",
+        "console-settings-max-tokens",
+        "console-settings-seed",
+        "console-settings-presence-penalty",
+        "console-settings-frequency-penalty",
+        "console-settings-streaming",
+        *_PROVIDER_CHOICE_VALUES,
+        "console-settings-thinking-budget-tokens",
+    }
 )
 PROVIDER_CHOICE_NO_EFFECT_SUFFIX = " (no effect on this provider)"
 GENERATION_CONTROL_UNKNOWN_COPY = "Support not verified for this model."
@@ -775,6 +798,21 @@ async def _default_model_prober(
         The probe result, including honest failure copy on error.
     """
     return await probe_models_endpoint(base_url, provider_key=provider_key)
+
+
+def _model_availability_copy(
+    count: int,
+    display: str,
+    *,
+    selected_model: str | None = None,
+) -> str:
+    """Return exact zero, singular, or plural discovery copy."""
+    if count == 0:
+        return f"No models available at {display}."
+    if count == 1:
+        suffix = f"; selected {selected_model}" if selected_model else ""
+        return f"1 model available at {display}{suffix}."
+    return f"{count} models available at {display}."
 
 
 class ConsoleSettingsInput(Input):
@@ -1047,16 +1085,33 @@ class ConsoleSettingsModal(
         self._memory_reset_token: tuple[str, int] | None = None
         self._confirm_reset_all = False
         self._context_overrides_reset = False
+        targeted_advanced_control = bool(
+            suspended_draft is not None
+            and suspended_draft.focus_control_id in _ADVANCED_GENERATION_FOCUS_IDS
+        )
         self._advanced_generation_disclosed = bool(
-            suspended_draft.disclosure_state["advanced_generation"]
-            if suspended_draft is not None
-            else False
+            targeted_advanced_control
+            or (
+                suspended_draft.disclosure_state["advanced_generation"]
+                if suspended_draft is not None
+                else False
+            )
         )
         self._connection_details_disclosed = bool(
             suspended_draft.disclosure_state["connection_details"]
             if suspended_draft is not None
             else False
         )
+        self._invalid_generation_choice_drafts: dict[str, str] = {}
+        if suspended_draft is not None:
+            for control_id, domain in _PROVIDER_CHOICE_VALUES.items():
+                raw_value = suspended_draft.raw_values.get(control_id)
+                if (
+                    isinstance(raw_value, str)
+                    and raw_value.strip()
+                    and raw_value.strip().lower() not in domain
+                ):
+                    self._invalid_generation_choice_drafts[control_id] = raw_value
         self._model_prober: ModelProber = model_prober or _default_model_prober
         self._draft_rebaser = draft_rebaser
         self._live_committer = live_committer
@@ -1291,6 +1346,36 @@ class ConsoleSettingsModal(
             dirty=dirty,
         )
 
+    def _generation_choice_select(
+        self,
+        control_id: str,
+        value: str | None,
+    ) -> Select[str]:
+        """Build one constrained generation control without coercing old drafts."""
+        options = _PROVIDER_CHOICE_VALUES[control_id]
+        normalized = str(value or "").strip().lower()
+        selected: object = (
+            normalized
+            if normalized in options and control_id not in self._invalid_generation_choice_drafts
+            else Select.NULL
+        )
+        select = Select(
+            [(choice.replace("xhigh", "x-high").title(), choice) for choice in options],
+            value=selected,
+            allow_blank=True,
+            id=control_id,
+            classes="console-settings-control",
+        )
+        select.tooltip = self._choice_placeholder(control_id)
+        return select
+
+    def _generation_choice_validation_copy(self, control_id: str) -> str:
+        """Return inline recovery copy for an obsolete restored enum value."""
+        if control_id not in self._invalid_generation_choice_drafts:
+            return ""
+        values = ", ".join(_PROVIDER_CHOICE_VALUES[control_id])
+        return f"Saved value is unavailable. Choose one of: {values}."
+
     def compose(self) -> ComposeResult:
         provider_picker_options = self._provider_picker_options()
         provider_options = self._provider_select_options()
@@ -1326,7 +1411,7 @@ class ConsoleSettingsModal(
         )
 
         with Vertical(id="console-settings-modal"):
-            yield Static("Console Settings", classes="console-modal-header")
+            yield Static("Conversation settings", classes="console-modal-header")
             with Horizontal(id="console-settings-view-tabs"):
                 yield Button(
                     "Model and generation",
@@ -1338,21 +1423,6 @@ class ConsoleSettingsModal(
                     id="console-settings-view-context",
                     variant="primary" if self._active_view == "context" else "default",
                 )
-            yield Static(
-                self._readiness_copy(readiness),
-                id="console-settings-readiness",
-                classes="console-settings-modal-row",
-                markup=False,
-            )
-            credential_action = Button(
-                "Configure credential…",
-                id="console-settings-configure-credential",
-                tooltip="Open F9 Settings > Providers & Models to configure this API key",
-            )
-            credential_action.display = self._missing_credential_recovery_available(
-                readiness
-            )
-            yield credential_action
             yield Static(
                 self._scope_copy(),
                 id="console-settings-scope",
@@ -1381,156 +1451,147 @@ class ConsoleSettingsModal(
             with body:
                 with Vertical(
                     id="console-settings-provider-model-section",
-                    classes=self._provider_model_section_classes(),
+                    classes="console-settings-model-view",
                 ):
-                    yield Static("Provider and model", classes="destination-section")
-                    with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label("Provider")
-                        yield ConsoleProviderPicker(
-                            provider_picker_options,
-                            current_provider=self._active_provider,
-                            id="console-settings-provider-picker",
-                            classes="console-settings-control",
+                    with Vertical(
+                        id="console-settings-connection",
+                        classes=self._provider_model_section_classes(),
+                    ):
+                        yield Static("Connection", classes="destination-section")
+                        with Horizontal(classes="console-settings-modal-row"):
+                            yield self._modal_label("Provider")
+                            yield ConsoleProviderPicker(
+                                provider_picker_options,
+                                current_provider=self._active_provider,
+                                id="console-settings-provider-picker",
+                                classes="console-settings-control",
+                            )
+                            provider_adapter = Select(
+                                provider_options,
+                                value=provider_value,
+                                allow_blank=True,
+                                id="console-settings-provider",
+                                classes="console-settings-control",
+                                disabled=True,
+                            )
+                            provider_adapter.display = False
+                            provider_adapter.can_focus = False
+                            yield provider_adapter
+                        credential_action = Button(
+                            "Configure credential…",
+                            id="console-settings-configure-credential",
+                            tooltip=(
+                                "Open F9 Settings > Providers & Models to configure "
+                                "this API key"
+                            ),
                         )
-                        provider_adapter = Select(
-                            provider_options,
-                            value=provider_value,
-                            allow_blank=True,
-                            id="console-settings-provider",
-                            classes="console-settings-control",
-                            disabled=True,
+                        credential_action.display = (
+                            self._missing_credential_recovery_available(readiness)
                         )
-                        provider_adapter.display = False
-                        provider_adapter.can_focus = False
-                        yield provider_adapter
-                    with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label("Model")
-                        yield ModelSearchPicker(
-                            id="console-settings-model-picker",
-                            provider_select_id="#console-settings-provider",
-                            current_model=selected_model,
-                            providers_models=self._providers_models,
-                            show_custom_button=False,
+                        yield credential_action
+                        with Horizontal(classes="console-settings-modal-row"):
+                            yield self._modal_label("Base URL")
+                            base_url_input = ConsoleSettingsInput(
+                                value=base_url or "",
+                                id="console-settings-base-url",
+                                disabled=not uses_base_url,
+                                classes="console-settings-control",
+                            )
+                            base_url_input.display = uses_base_url
+                            yield base_url_input
+                        with Horizontal(classes="console-settings-modal-row"):
+                            yield self._modal_label("Model")
+                            yield ModelSearchPicker(
+                                id="console-settings-model-picker",
+                                provider_select_id="#console-settings-provider",
+                                current_model=selected_model,
+                                providers_models=self._providers_models,
+                                show_custom_button=False,
+                            )
+                        legacy_model_row = Horizontal(
+                            id="console-settings-model-legacy-adapter"
                         )
-                    legacy_model_row = Horizontal(
-                        id="console-settings-model-legacy-adapter"
-                    )
-                    legacy_model_row.display = False
-                    with legacy_model_row:
-                        model_select = Select(
-                            model_select_options,
-                            value=model_select_value,
-                            allow_blank=True,
-                            id="console-settings-model-select",
-                            disabled=not use_model_select,
-                            classes="console-settings-control",
+                        legacy_model_row.display = False
+                        with legacy_model_row:
+                            model_select = Select(
+                                model_select_options,
+                                value=model_select_value,
+                                allow_blank=True,
+                                id="console-settings-model-select",
+                                disabled=not use_model_select,
+                                classes="console-settings-control",
+                            )
+                            model_select.styles.width = "1fr"
+                            model_select.styles.min_width = 0
+                            model_select.display = use_model_select
+                            yield model_select
+                            model_input = ConsoleSettingsInput(
+                                value=selected_model or "",
+                                placeholder=MODEL_INPUT_PLACEHOLDER,
+                                id="console-settings-model-input",
+                                disabled=has_model_options,
+                                classes="console-settings-control",
+                            )
+                            model_input.styles.width = "1fr"
+                            model_input.styles.min_width = 0
+                            model_input.display = not use_model_select
+                            yield model_input
+                        with Horizontal(
+                            id="console-settings-connection-actions",
+                            classes="console-settings-modal-row",
+                        ):
+                            yield self._modal_label("")
+                            model_custom = Button(
+                                "Custom model",
+                                id="console-settings-model-custom",
+                                disabled=False,
+                            )
+                            model_custom.styles.width = MODEL_CUSTOM_BUTTON_WIDTH
+                            model_custom.styles.min_width = MODEL_CUSTOM_BUTTON_WIDTH
+                            model_custom.styles.max_width = MODEL_CUSTOM_BUTTON_WIDTH
+                            model_custom.display = True
+                            yield model_custom
+                            supports_discovery = self._provider_supports_model_discovery(
+                                self._active_provider
+                            )
+                            model_discover = Button(
+                                MODEL_DISCOVER_BUTTON_LABEL,
+                                id=MODEL_DISCOVER_BUTTON_ID,
+                                disabled=not supports_discovery,
+                            )
+                            model_discover.tooltip = (
+                                "Lists models reported by this endpoint; does not test "
+                                "generation."
+                            )
+                            model_discover.styles.width = MODEL_DISCOVER_BUTTON_WIDTH
+                            model_discover.styles.min_width = MODEL_DISCOVER_BUTTON_WIDTH
+                            model_discover.styles.max_width = MODEL_DISCOVER_BUTTON_WIDTH
+                            model_discover.display = supports_discovery
+                            yield model_discover
+                        discover_status = Static(
+                            "",
+                            id=MODEL_DISCOVER_STATUS_ID,
+                            classes="console-settings-modal-row",
+                            markup=False,
                         )
-                        model_select.styles.width = "1fr"
-                        model_select.styles.min_width = 0
-                        model_select.display = use_model_select
-                        yield model_select
-                        model_input = ConsoleSettingsInput(
-                            value=selected_model or "",
-                            placeholder=MODEL_INPUT_PLACEHOLDER,
-                            id="console-settings-model-input",
-                            disabled=has_model_options,
-                            classes="console-settings-control",
-                        )
-                        model_input.styles.width = "1fr"
-                        model_input.styles.min_width = 0
-                        model_input.display = not use_model_select
-                        yield model_input
-                    with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label("")
-                        model_custom = Button(
-                            "Custom model",
-                            id="console-settings-model-custom",
-                            disabled=False,
-                        )
-                        model_custom.styles.width = MODEL_CUSTOM_BUTTON_WIDTH
-                        model_custom.styles.min_width = MODEL_CUSTOM_BUTTON_WIDTH
-                        model_custom.styles.max_width = MODEL_CUSTOM_BUTTON_WIDTH
-                        model_custom.display = True
-                        yield model_custom
-                        supports_discovery = self._provider_supports_model_discovery(
-                            self._active_provider
-                        )
-                        model_discover = Button(
-                            MODEL_DISCOVER_BUTTON_LABEL,
-                            id=MODEL_DISCOVER_BUTTON_ID,
-                            disabled=not supports_discovery,
-                        )
-                        model_discover.tooltip = (
-                            "List models served at the Base URL (/v1/models)"
-                        )
-                        model_discover.styles.width = MODEL_DISCOVER_BUTTON_WIDTH
-                        model_discover.styles.min_width = MODEL_DISCOVER_BUTTON_WIDTH
-                        model_discover.styles.max_width = MODEL_DISCOVER_BUTTON_WIDTH
-                        model_discover.display = supports_discovery
-                        yield model_discover
-                    # Directly under the button that produces it. Rendering this
-                    # below the Base URL row put four rows and an unrelated field
-                    # between action and feedback, which read as a dead button.
-                    discover_status = Static(
-                        "",
-                        id=MODEL_DISCOVER_STATUS_ID,
-                        classes="console-settings-modal-row",
-                        markup=False,
-                    )
-                    discover_status.display = False
-                    yield discover_status
-                    with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label("Base URL")
-                        base_url_input = ConsoleSettingsInput(
-                            value=base_url or "",
-                            id="console-settings-base-url",
-                            disabled=not uses_base_url,
-                            classes="console-settings-control",
-                        )
-                        base_url_input.display = uses_base_url
-                        yield base_url_input
-                    with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label("New-chat default")
-                        endpoint_checkbox = Checkbox(
-                            self._endpoint_save_copy(),
-                            value=self._endpoint_checkbox_value(),
-                            id="console-settings-save-endpoint",
-                            disabled=not self._endpoint_can_be_checked(),
-                        )
-                        endpoint_checkbox.display = uses_base_url
-                        yield endpoint_checkbox
-                    endpoint_status = Static(
-                        self._endpoint_status_copy(),
-                        id="console-settings-endpoint-status",
-                        classes="console-settings-modal-row",
-                        markup=False,
-                    )
-                    endpoint_status.display = uses_base_url
-                    yield endpoint_status
+                        discover_status.display = False
+                        yield discover_status
+                        with Vertical(id="console-settings-readiness-panel"):
+                            yield Static(
+                                self._readiness_copy(readiness),
+                                id="console-settings-readiness",
+                                classes="console-settings-modal-row",
+                                markup=False,
+                            )
 
-                with Vertical(
-                    classes="console-settings-modal-section console-settings-model-view"
+                with Collapsible(
+                    title="Advanced generation",
+                    collapsed=not self._advanced_generation_disclosed,
+                    id="console-settings-generation-advanced",
+                    classes=(
+                        "console-settings-modal-section console-settings-model-view"
+                    ),
                 ):
-                    yield Static("Chat identity", classes="destination-section")
-                    with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label("Your name in this chat")
-                        yield ConsoleSettingsInput(
-                            value=self._user_display_name_override or "",
-                            placeholder=self._global_user_display_name,
-                            id="console-settings-user-display-name",
-                            classes="console-settings-control",
-                        )
-                    yield Static(
-                        "Leave blank to use the global default.",
-                        id="console-settings-user-display-name-help",
-                        classes="console-settings-modal-row",
-                        markup=False,
-                    )
-
-                with Vertical(
-                    classes="console-settings-modal-section console-settings-model-view"
-                ):
-                    yield Static("Sampling", classes="destination-section")
                     with Horizontal(classes="console-settings-modal-row"):
                         yield self._modal_label("Temperature")
                         yield ConsoleSettingsInput(
@@ -1600,82 +1661,93 @@ class ConsoleSettingsModal(
                         streaming_toggle.styles.min_width = STREAMING_TOGGLE_WIDTH
                         streaming_toggle.styles.max_width = STREAMING_TOGGLE_WIDTH
                         yield streaming_toggle
-
-                with Vertical(
-                    classes="console-settings-modal-section console-settings-model-view"
-                ):
-                    yield Static("Provider-specific", classes="destination-section")
                     with Horizontal(
                         id="console-settings-reasoning-effort-row",
                         classes="console-settings-modal-row",
                     ):
                         yield self._modal_label("Reasoning")
-                        yield ConsoleSettingsInput(
-                            value=self._format_value(self._settings.reasoning_effort),
-                            placeholder=self._choice_placeholder(
-                                "console-settings-reasoning-effort"
-                            ),
-                            id="console-settings-reasoning-effort",
-                            classes="console-settings-control",
+                        yield self._generation_choice_select(
+                            "console-settings-reasoning-effort",
+                            self._settings.reasoning_effort,
                         )
                         yield Static(
                             GENERATION_CONTROL_UNKNOWN_COPY,
                             id="console-settings-reasoning-effort-support",
                             classes="console-settings-control-support",
                         )
+                        yield Static(
+                            self._generation_choice_validation_copy(
+                                "console-settings-reasoning-effort"
+                            ),
+                            id="console-settings-reasoning-effort-validation",
+                            classes="console-settings-error",
+                            markup=False,
+                        )
                     with Horizontal(
                         id="console-settings-reasoning-summary-row",
                         classes="console-settings-modal-row",
                     ):
                         yield self._modal_label("Summary")
-                        yield ConsoleSettingsInput(
-                            value=self._format_value(self._settings.reasoning_summary),
-                            placeholder=self._choice_placeholder(
-                                "console-settings-reasoning-summary"
-                            ),
-                            id="console-settings-reasoning-summary",
-                            classes="console-settings-control",
+                        yield self._generation_choice_select(
+                            "console-settings-reasoning-summary",
+                            self._settings.reasoning_summary,
                         )
                         yield Static(
                             GENERATION_CONTROL_UNKNOWN_COPY,
                             id="console-settings-reasoning-summary-support",
                             classes="console-settings-control-support",
                         )
+                        yield Static(
+                            self._generation_choice_validation_copy(
+                                "console-settings-reasoning-summary"
+                            ),
+                            id="console-settings-reasoning-summary-validation",
+                            classes="console-settings-error",
+                            markup=False,
+                        )
                     with Horizontal(
                         id="console-settings-verbosity-row",
                         classes="console-settings-modal-row",
                     ):
                         yield self._modal_label("Verbosity")
-                        yield ConsoleSettingsInput(
-                            value=self._format_value(self._settings.verbosity),
-                            placeholder=self._choice_placeholder(
-                                "console-settings-verbosity"
-                            ),
-                            id="console-settings-verbosity",
-                            classes="console-settings-control",
+                        yield self._generation_choice_select(
+                            "console-settings-verbosity",
+                            self._settings.verbosity,
                         )
                         yield Static(
                             GENERATION_CONTROL_UNKNOWN_COPY,
                             id="console-settings-verbosity-support",
                             classes="console-settings-control-support",
                         )
+                        yield Static(
+                            self._generation_choice_validation_copy(
+                                "console-settings-verbosity"
+                            ),
+                            id="console-settings-verbosity-validation",
+                            classes="console-settings-error",
+                            markup=False,
+                        )
                     with Horizontal(
                         id="console-settings-thinking-effort-row",
                         classes="console-settings-modal-row",
                     ):
                         yield self._modal_label("Thinking")
-                        yield ConsoleSettingsInput(
-                            value=self._format_value(self._settings.thinking_effort),
-                            placeholder=self._choice_placeholder(
-                                "console-settings-thinking-effort"
-                            ),
-                            id="console-settings-thinking-effort",
-                            classes="console-settings-control",
+                        yield self._generation_choice_select(
+                            "console-settings-thinking-effort",
+                            self._settings.thinking_effort,
                         )
                         yield Static(
                             GENERATION_CONTROL_UNKNOWN_COPY,
                             id="console-settings-thinking-effort-support",
                             classes="console-settings-control-support",
+                        )
+                        yield Static(
+                            self._generation_choice_validation_copy(
+                                "console-settings-thinking-effort"
+                            ),
+                            id="console-settings-thinking-effort-validation",
+                            classes="console-settings-error",
+                            markup=False,
                         )
                     with Horizontal(
                         id="console-settings-thinking-budget-tokens-row",
@@ -1695,10 +1767,43 @@ class ConsoleSettingsModal(
                             classes="console-settings-control-support",
                         )
 
-                with Vertical(
-                    classes="console-settings-modal-section console-settings-model-view"
+                with Collapsible(
+                    title="Conversation identity",
+                    collapsed=True,
+                    id="console-settings-identity-advanced",
+                    classes=(
+                        "console-settings-modal-section console-settings-model-view"
+                    ),
                 ):
-                    yield Static("Request preview", classes="destination-section")
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield self._modal_label("Your name in this chat")
+                        yield ConsoleSettingsInput(
+                            value=self._user_display_name_override or "",
+                            placeholder=self._global_user_display_name,
+                            id="console-settings-user-display-name",
+                            classes="console-settings-control",
+                        )
+                    yield Static(
+                        "Leave blank to use the global default.",
+                        id="console-settings-user-display-name-help",
+                        classes="console-settings-modal-row",
+                        markup=False,
+                    )
+                    yield Static(
+                        f"Current         {self._identity_current_label()}",
+                        id="console-settings-identity-current",
+                        classes="console-settings-modal-row",
+                        markup=False,
+                    )
+
+                with Collapsible(
+                    title="Request estimate",
+                    collapsed=True,
+                    id="console-settings-request-estimate",
+                    classes=(
+                        "console-settings-modal-section console-settings-model-view"
+                    ),
+                ):
                     yield Static(
                         f"Current         {self._context_label()}",
                         id="console-settings-context-current",
@@ -1715,17 +1820,6 @@ class ConsoleSettingsModal(
                         "Estimate only; no truncation changes in this version. "
                         "Open Context and memory to manage the conversation budget.",
                         id="console-settings-context-note",
-                        classes="console-settings-modal-row",
-                        markup=False,
-                    )
-
-                with Vertical(
-                    classes="console-settings-modal-section console-settings-model-view"
-                ):
-                    yield Static("Identity", classes="destination-section")
-                    yield Static(
-                        f"Current         {self._identity_current_label()}",
-                        id="console-settings-identity-current",
                         classes="console-settings-modal-row",
                         markup=False,
                     )
@@ -2157,6 +2251,8 @@ class ConsoleSettingsModal(
                 self._sync_visual_representation_availability()
                 self.call_after_refresh(self._focus_context_control)
         self._sync_generation_control_support()
+        if self._suspended_draft is None and not self._focus_model and self._active_view == "model":
+            self.call_after_refresh(self._focus_highest_priority_connection)
         self.call_after_refresh(self._sync_fold_hint)
 
     def _finish_initial_control_sync(self) -> None:
@@ -2169,6 +2265,54 @@ class ConsoleSettingsModal(
         """Allow feedback reveals after the initial mount/resize callback batch."""
 
         self._initial_feedback_sync = False
+
+    def _focus_highest_priority_connection(self) -> None:
+        """Focus the first actionable blocker, or Provider when ready."""
+        readiness = build_console_settings_readiness(
+            self._build_draft(),
+            app_config=self._app_config,
+            active_run=self._active_run,
+        )
+        if readiness.recovery_action == "configure_credential":
+            credential = self.query_one(
+                "#console-settings-configure-credential", Button
+            )
+            if self._is_effectively_focusable(credential):
+                credential.focus()
+                credential.scroll_visible(animate=False)
+                return
+        if readiness.recovery_action in {"configure_endpoint", "save_endpoint"}:
+            endpoint = self.query_one("#console-settings-base-url", Input)
+            if self._is_effectively_focusable(endpoint):
+                endpoint.focus()
+                endpoint.scroll_visible(animate=False)
+                return
+        if readiness.recovery_action == "select_model":
+            self._focus_model_control()
+            return
+        self._focus_connection_fallback()
+
+    @on(Collapsible.Expanded, "#console-settings-generation-advanced")
+    def _advanced_generation_expanded(self, event: Collapsible.Expanded) -> None:
+        """Retain this Console session's explicit Advanced disclosure state."""
+        event.stop()
+        self._advanced_generation_disclosed = True
+        self.call_after_refresh(self._sync_fold_hint)
+
+    @on(Collapsible.Collapsed, "#console-settings-generation-advanced")
+    def _advanced_generation_collapsed(self, event: Collapsible.Collapsed) -> None:
+        """Retain this Console session's explicit Advanced disclosure state."""
+        event.stop()
+        self._advanced_generation_disclosed = False
+        self.call_after_refresh(self._sync_fold_hint)
+
+    @on(ConsoleProviderPickerInput.EscapePressed)
+    def _provider_picker_escape_unhandled(
+        self, event: ConsoleProviderPickerInput.EscapePressed
+    ) -> None:
+        """Close after the picker has no filter or result state left to restore."""
+        event.stop()
+        self.action_dismiss()
 
     def _restore_suspended_draft(
         self, snapshot: ConsoleSettingsDraftSnapshot
@@ -2191,7 +2335,24 @@ class ConsoleSettingsModal(
                 if isinstance(control, Input) and type(value) is str:
                     control.value = value
                 elif isinstance(control, Select) and type(value) is str:
-                    control.value = value
+                    if control_id in _PROVIDER_CHOICE_VALUES:
+                        normalized = value.strip().lower()
+                        if not normalized:
+                            self._invalid_generation_choice_drafts.pop(
+                                control_id, None
+                            )
+                            control.value = Select.NULL
+                        elif normalized in _PROVIDER_CHOICE_VALUES[control_id]:
+                            self._invalid_generation_choice_drafts.pop(
+                                control_id, None
+                            )
+                            control.value = normalized
+                        else:
+                            self._invalid_generation_choice_drafts[control_id] = value
+                            control.value = Select.NULL
+                        self._sync_generation_choice_validation(control_id)
+                    else:
+                        control.value = value
             self._active_provider = self._select_value_text(
                 self.query_one("#console-settings-provider", Select).value
             )
@@ -2327,6 +2488,12 @@ class ConsoleSettingsModal(
 
     def capture_suspended_draft(self) -> ConsoleSettingsDraftSnapshot:
         """Capture the raw modal state before a credential-setup handoff."""
+        try:
+            self._advanced_generation_disclosed = not self.query_one(
+                "#console-settings-generation-advanced", Collapsible
+            ).collapsed
+        except (NoMatches, QueryError):
+            pass
         self._store_current_model_for_provider(self._active_provider)
         self._store_current_base_url_for_provider(self._active_provider)
         try:
@@ -2355,7 +2522,10 @@ class ConsoleSettingsModal(
             elif isinstance(control, Input):
                 raw_values[control_id] = control.value
             elif isinstance(control, Select):
-                raw_values[control_id] = self._select_value_text(control.value)
+                raw_values[control_id] = self._invalid_generation_choice_drafts.get(
+                    control_id,
+                    self._select_value_text(control.value),
+                )
         try:
             scroll_anchor = min(
                 _SNAPSHOT_SCROLL_ANCHOR_LIMIT,
@@ -3798,11 +3968,36 @@ class ConsoleSettingsModal(
         return ""
 
     def _sync_provider_choice_placeholders(self) -> None:
-        """Refresh choice-input placeholders after the provider changes."""
+        """Refresh constrained-choice help after the provider changes."""
         for _label, input_id, _placeholder in PROVIDER_CHOICE_INPUTS:
-            self.query_one(
-                f"#{input_id}", Input
-            ).placeholder = self._choice_placeholder(input_id)
+            self.query_one(f"#{input_id}", Select).tooltip = (
+                self._choice_placeholder(input_id)
+            )
+
+    def _sync_generation_choice_validation(self, control_id: str) -> None:
+        """Render an obsolete restored choice beside its constrained control."""
+        try:
+            validation = self.query_one(f"#{control_id}-validation", Static)
+        except (NoMatches, QueryError):
+            return
+        validation.update(self._generation_choice_validation_copy(control_id))
+
+    @on(
+        Select.Changed,
+        "#console-settings-reasoning-effort, "
+        "#console-settings-reasoning-summary, "
+        "#console-settings-verbosity, "
+        "#console-settings-thinking-effort",
+    )
+    def _generation_choice_changed(self, event: Select.Changed) -> None:
+        """A deliberate selection resolves any obsolete restored value."""
+        if self._restoring_suspended_draft:
+            return
+        control_id = event.select.id
+        if control_id is None:
+            return
+        self._invalid_generation_choice_drafts.pop(control_id, None)
+        self._sync_generation_choice_validation(control_id)
 
     def _sync_generation_control_support(self) -> None:
         """Apply authoritative support without rewriting retained draft values."""
@@ -4308,7 +4503,7 @@ class ConsoleSettingsModal(
             )
             return
         if not result.model_ids:
-            self._set_model_discover_status(f"No models reported at {display}.")
+            self._set_model_discover_status(_model_availability_copy(0, display))
             return
         self._discovered_model_ids[provider] = tuple(result.model_ids)
         picker = self.query_one("#console-settings-model-picker", ModelSearchPicker)
@@ -4329,10 +4524,16 @@ class ConsoleSettingsModal(
             picker.set_model_value(selected_model)
             self._set_provider_model_draft(provider, selected_model)
             self._set_model_discover_status(
-                f"Found 1 model at {display}; selected {result.model_ids[0]}."
+                _model_availability_copy(
+                    1,
+                    display,
+                    selected_model=result.model_ids[0],
+                )
             )
         else:
-            self._set_model_discover_status(f"Found {count} models at {display}.")
+            self._set_model_discover_status(
+                _model_availability_copy(count, display)
+            )
         self._sync_readiness_display()
         self._sync_generation_control_support()
 
@@ -4375,7 +4576,7 @@ class ConsoleSettingsModal(
         self._sync_provider_model_section_emphasis()
 
     def _sync_provider_model_section_emphasis(self) -> None:
-        section = self.query_one("#console-settings-provider-model-section", Vertical)
+        section = self.query_one("#console-settings-connection", Vertical)
         if self._is_model_setup_mode():
             section.add_class("console-settings-primary-section")
         else:
@@ -5129,13 +5330,16 @@ class ConsoleSettingsModal(
                 control,
             ) == "unsupported":
                 continue
-            raw_value = self.query_one(f"#{input_id}", Input).value.strip()
-            if raw_value and not validate_text_input(
-                raw_value,
-                max_length=PROVIDER_CHOICE_INPUT_MAX_LENGTH,
-                allow_html=False,
-            ):
-                errors.append(f"{label} contains unsupported text.")
+            raw_value = self._invalid_generation_choice_drafts.get(input_id)
+            if raw_value is not None:
+                if not validate_text_input(
+                    raw_value,
+                    max_length=PROVIDER_CHOICE_INPUT_MAX_LENGTH,
+                    allow_html=False,
+                ):
+                    errors.append(f"{label} contains unsupported text.")
+                else:
+                    errors.append(f"{label} has a saved value that is unavailable.")
         return errors
 
     def _parse_optional_float_input(self, input_id: str) -> object:
@@ -5160,8 +5364,10 @@ class ConsoleSettingsModal(
         raw_value = self.query_one(f"#{input_id}", Input).value.strip()
         return raw_value or None
 
-    def _parse_optional_choice_input(self, input_id: str) -> str | None:
-        raw_value = self._parse_optional_text_input(input_id)
+    def _parse_optional_choice_select(self, input_id: str) -> str | None:
+        raw_value = self._select_value_text(
+            self.query_one(f"#{input_id}", Select).value
+        ).strip()
         return raw_value.lower() if raw_value else None
 
     def _generation_choice_draft_value(
@@ -5170,12 +5376,17 @@ class ConsoleSettingsModal(
         input_id: str,
     ) -> str | None:
         """Retain a hidden choice unless its raw draft is not representable."""
-        value = self._parse_optional_choice_input(input_id)
         support = console_generation_control_support(
             self._active_provider,
             self._current_model_value(),
             control,
         )
+        invalid_value = self._invalid_generation_choice_drafts.get(input_id)
+        if invalid_value is not None:
+            if support == "unsupported":
+                return getattr(self._settings, control)
+            return invalid_value
+        value = self._parse_optional_choice_select(input_id)
         if support != "unsupported" or value is None:
             return value
         domain = _SNAPSHOT_SETTING_CHOICE_DOMAINS[control]

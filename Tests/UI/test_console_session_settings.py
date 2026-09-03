@@ -20,7 +20,15 @@ from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, ScrollableContainer
 from textual.geometry import Region
-from textual.widgets import Button, Input, OptionList, Select, Static, TextArea
+from textual.widgets import (
+    Button,
+    Collapsible,
+    Input,
+    OptionList,
+    Select,
+    Static,
+    TextArea,
+)
 
 import tldw_chatbook.UI.Console_Modules.session as session_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
@@ -1971,7 +1979,9 @@ async def test_mounted_suspended_draft_rehydrates_raw_provider_drafts_and_focus(
         )
         original.query_one("#console-settings-provider", Select).value = "llama_cpp"
         await pilot.pause()
-        original._advanced_generation_disclosed = True
+        original.query_one(
+            "#console-settings-generation-advanced", Collapsible
+        ).collapsed = False
         original._connection_details_disclosed = True
         original.query_one(ModelSearchPicker).focus_input()
         await pilot.pause()
@@ -4219,6 +4229,20 @@ def _select_values(select: Select) -> set[str]:
     return values
 
 
+def _select_ordered_values(select: Select) -> tuple[str, ...]:
+    options = getattr(select, "options", None)
+    if options is None:
+        options = getattr(select, "_options", [])
+    values: list[str] = []
+    for option in options:
+        value = getattr(option, "value", None)
+        if value is None and isinstance(option, tuple) and len(option) >= 2:
+            value = option[1]
+        if value is not None and value is not Select.NULL:
+            values.append(str(value))
+    return tuple(values)
+
+
 def _merged_model(
     model_id: str,
     *,
@@ -5144,6 +5168,10 @@ async def test_console_settings_modal_escape_dismisses_none() -> None:
             callback=app.capture_saved_settings,
         )
         await pilot.pause()
+        # First Escape belongs to the focused searchable picker and restores
+        # its committed value; the next one dismisses the modal.
+        await pilot.press("escape")
+        assert app.screen.query_one(ConsoleProviderPicker).value == "llama_cpp"
         await pilot.press("escape")
 
     assert app.saved_settings is None
@@ -5201,9 +5229,7 @@ async def test_console_settings_modal_save_returns_validated_settings() -> None:
         await app.push_screen(modal, callback=app.capture_saved_settings)
         await pilot.pause()
         readiness = app.screen.query_one("#console-settings-readiness", Static)
-        provider_model_section = app.screen.query_one(
-            "#console-settings-provider-model-section"
-        )
+        provider_model_section = app.screen.query_one("#console-settings-connection")
         assert "Choose a model to enable sending." not in str(readiness.renderable)
         assert (
             provider_model_section.has_class("console-settings-primary-section")
@@ -5247,9 +5273,20 @@ async def test_console_settings_modal_renders_current_chat_identity() -> None:
         await pilot.pause()
 
         identity = app.screen.query_one("#console-settings-user-display-name", Input)
+        identity_help = app.screen.query_one(
+            "#console-settings-user-display-name-help", Static
+        )
         assert identity.value == "Captain Rowan"
         assert identity.placeholder == "Default Name"
-        assert "Chat identity" in _visible_text(app)
+        assert "Conversation identity" in _visible_text(app)
+        assert app.screen._is_effectively_focusable(identity) is False
+        assert identity_help.region.height == 0
+
+        await pilot.click("#console-settings-identity-advanced CollapsibleTitle")
+        await pilot.pause()
+
+        assert app.screen._is_effectively_focusable(identity) is True
+        assert identity_help.region.height > 0
         assert "Leave blank to use the global default." in _visible_text(app)
 
 
@@ -5264,16 +5301,16 @@ async def test_console_settings_modal_local_provider_marks_no_effect_choices() -
         )
         await pilot.pause()
 
-        thinking = app.screen.query_one("#console-settings-thinking-effort", Input)
-        summary = app.screen.query_one("#console-settings-reasoning-summary", Input)
-        verbosity = app.screen.query_one("#console-settings-verbosity", Input)
-        effort = app.screen.query_one("#console-settings-reasoning-effort", Input)
-        # Local providers consume only the reasoning-effort level; the other
-        # provider-specific choice inputs say so right in the placeholder.
-        assert thinking.placeholder.endswith(PROVIDER_CHOICE_NO_EFFECT_SUFFIX)
-        assert summary.placeholder.endswith(PROVIDER_CHOICE_NO_EFFECT_SUFFIX)
-        assert verbosity.placeholder.endswith(PROVIDER_CHOICE_NO_EFFECT_SUFFIX)
-        assert PROVIDER_CHOICE_NO_EFFECT_SUFFIX not in effort.placeholder
+        thinking = app.screen.query_one("#console-settings-thinking-effort", Select)
+        summary = app.screen.query_one("#console-settings-reasoning-summary", Select)
+        verbosity = app.screen.query_one("#console-settings-verbosity", Select)
+        effort = app.screen.query_one("#console-settings-reasoning-effort", Select)
+        # Local providers consume reasoning effort, while authoritative
+        # no-effect choices are removed without rewriting retained values.
+        assert thinking.parent is not None and thinking.parent.display is False
+        assert summary.parent is not None and summary.parent.display is False
+        assert verbosity.parent is not None and verbosity.parent.display is False
+        assert effort.parent is not None and effort.parent.display is True
 
 
 @pytest.mark.asyncio
@@ -5291,8 +5328,8 @@ async def test_console_settings_modal_remote_provider_keeps_thinking_hint_plain(
         )
         await pilot.pause()
 
-        thinking = app.screen.query_one("#console-settings-thinking-effort", Input)
-        assert PROVIDER_CHOICE_NO_EFFECT_SUFFIX not in thinking.placeholder
+        thinking = app.screen.query_one("#console-settings-thinking-effort", Select)
+        assert thinking.parent is not None and thinking.parent.display is True
 
 
 @pytest.mark.asyncio
@@ -5311,15 +5348,13 @@ async def test_console_settings_modal_provider_switch_refreshes_choice_hints() -
         )
         await pilot.pause()
 
-        summary = app.screen.query_one("#console-settings-reasoning-summary", Input)
-        assert PROVIDER_CHOICE_NO_EFFECT_SUFFIX not in summary.placeholder
+        summary = app.screen.query_one("#console-settings-reasoning-summary", Select)
         assert summary.parent is not None and summary.parent.display is True
 
         provider_select = app.screen.query_one("#console-settings-provider", Select)
         provider_select.value = "llama_cpp"
         await pilot.pause()
 
-        assert summary.placeholder.endswith(PROVIDER_CHOICE_NO_EFFECT_SUFFIX)
         assert summary.parent is not None and summary.parent.display is False
 
 
@@ -5342,9 +5377,9 @@ async def test_console_settings_modal_hides_only_authoritatively_unsupported_con
         )
         await pilot.pause()
 
-        reasoning = app.screen.query_one("#console-settings-reasoning-effort", Input)
+        reasoning = app.screen.query_one("#console-settings-reasoning-effort", Select)
         budget = app.screen.query_one("#console-settings-thinking-budget-tokens", Input)
-        summary = app.screen.query_one("#console-settings-reasoning-summary", Input)
+        summary = app.screen.query_one("#console-settings-reasoning-summary", Select)
 
         assert reasoning.parent is not None and reasoning.parent.display is True
         assert budget.parent is not None and budget.parent.display is True
@@ -5380,7 +5415,7 @@ async def test_console_settings_modal_keeps_unknown_support_visible_with_neutral
         )
         await pilot.pause()
 
-        reasoning = app.screen.query_one("#console-settings-reasoning-effort", Input)
+        reasoning = app.screen.query_one("#console-settings-reasoning-effort", Select)
         note = app.screen.query_one(
             "#console-settings-reasoning-effort-support", Static
         )
@@ -5405,7 +5440,7 @@ async def test_console_settings_modal_tab_order_skips_hidden_support_rows() -> N
         )
         await pilot.pause()
 
-        reasoning = app.screen.query_one("#console-settings-reasoning-effort", Input)
+        reasoning = app.screen.query_one("#console-settings-reasoning-effort", Select)
         reasoning.focus()
         visited: list[str | None] = []
         for _ in range(8):
@@ -5681,6 +5716,10 @@ async def test_console_settings_modal_saves_replaced_temperature_input() -> None
             callback=app.capture_saved_settings,
         )
         await pilot.pause()
+        app.screen.query_one(
+            "#console-settings-generation-advanced", Collapsible
+        ).collapsed = False
+        await pilot.pause()
         temperature = app.screen.query_one("#console-settings-temperature", Input)
         body = app.screen.query_one("#console-settings-body")
         body.scroll_to_widget(temperature)
@@ -5719,6 +5758,10 @@ async def test_console_settings_modal_replaces_focused_sampling_input() -> None:
             ),
             callback=app.capture_saved_settings,
         )
+        await pilot.pause()
+        app.screen.query_one(
+            "#console-settings-generation-advanced", Collapsible
+        ).collapsed = False
         await pilot.pause()
         temperature = app.screen.query_one("#console-settings-temperature", Input)
         body = app.screen.query_one("#console-settings-body")
@@ -5775,11 +5818,15 @@ async def test_console_settings_modal_accepts_keyboard_edited_sampling_inputs(
             callback=app.capture_saved_settings,
         )
         await pilot.pause()
+        await pilot.click("#console-settings-generation-advanced CollapsibleTitle")
+        await pilot.pause()
         target_input = app.screen.query_one(f"#{field_id}", Input)
         body = app.screen.query_one("#console-settings-body")
         body.scroll_to_widget(target_input)
         await pilot.pause()
         await pilot.click(target_input)
+        target_input.focus()
+        await pilot.pause()
         await pilot.press("end")
         for _ in range(backspace_count):
             await pilot.press("backspace")
@@ -5861,14 +5908,15 @@ async def test_console_settings_modal_preserves_provider_specific_generation_con
             callback=app.capture_saved_settings,
         )
         await pilot.pause()
+        app.screen.query_one(
+            "#console-settings-generation-advanced", Collapsible
+        ).collapsed = False
+        await pilot.pause()
 
         for selector in (
             "#console-settings-seed",
             "#console-settings-presence-penalty",
             "#console-settings-frequency-penalty",
-            "#console-settings-reasoning-effort",
-            "#console-settings-reasoning-summary",
-            "#console-settings-verbosity",
         ):
             input_widget = app.screen.query_one(selector, Input)
             body = app.screen.query_one("#console-settings-body")
@@ -5881,10 +5929,28 @@ async def test_console_settings_modal_preserves_provider_specific_generation_con
             assert input_widget.content_region.height >= 1
 
         for selector in (
+            "#console-settings-reasoning-effort",
+            "#console-settings-reasoning-summary",
+            "#console-settings-verbosity",
+        ):
+            choice = app.screen.query_one(selector, Select)
+            body = app.screen.query_one("#console-settings-body")
+            body.scroll_to_widget(choice)
+            await pilot.pause()
+
+            assert choice.display is True
+            assert choice.disabled is False
+            assert choice.value is not Select.NULL
+            assert choice.content_region.height >= 1
+
+        for selector in (
             "#console-settings-thinking-effort",
             "#console-settings-thinking-budget-tokens",
         ):
-            input_widget = app.screen.query_one(selector, Input)
+            control_type = (
+                Input if selector == "#console-settings-thinking-budget-tokens" else Select
+            )
+            input_widget = app.screen.query_one(selector, control_type)
             assert input_widget.parent is not None
             assert input_widget.parent.display is False
 
@@ -5892,12 +5958,12 @@ async def test_console_settings_modal_preserves_provider_specific_generation_con
         app.screen.query_one("#console-settings-presence-penalty", Input).value = "0.6"
         app.screen.query_one("#console-settings-frequency-penalty", Input).value = "0.7"
         app.screen.query_one(
-            "#console-settings-reasoning-effort", Input
+            "#console-settings-reasoning-effort", Select
         ).value = "medium"
         app.screen.query_one(
-            "#console-settings-reasoning-summary", Input
+            "#console-settings-reasoning-summary", Select
         ).value = "concise"
-        app.screen.query_one("#console-settings-verbosity", Input).value = "high"
+        app.screen.query_one("#console-settings-verbosity", Select).value = "high"
         await pilot.click("#console-settings-save")
 
     assert app.saved_settings is not None
@@ -5939,13 +6005,15 @@ async def test_console_settings_modal_normalizes_provider_specific_choices() -> 
         await pilot.pause()
 
         app.screen.query_one(
-            "#console-settings-reasoning-effort", Input
-        ).value = " HIGH "
+            "#console-settings-reasoning-effort", Select
+        ).value = "high"
         app.screen.query_one(
-            "#console-settings-reasoning-summary", Input
-        ).value = " AUTO "
-        app.screen.query_one("#console-settings-verbosity", Input).value = " Medium "
-        app.screen.query_one("#console-settings-thinking-effort", Input).value = " LOW "
+            "#console-settings-reasoning-summary", Select
+        ).value = "auto"
+        app.screen.query_one("#console-settings-verbosity", Select).value = "medium"
+        app.screen.query_one(
+            "#console-settings-thinking-effort", Select
+        ).value = "low"
         await pilot.click("#console-settings-save")
 
     assert app.saved_settings is not None
@@ -6071,9 +6139,7 @@ async def test_console_settings_modal_focus_mode_uses_ready_copy_when_model_sele
         await pilot.pause()
 
         readiness = app.screen.query_one("#console-settings-readiness", Static)
-        provider_model_section = app.screen.query_one(
-            "#console-settings-provider-model-section"
-        )
+        provider_model_section = app.screen.query_one("#console-settings-connection")
         assert "Ready to send" in str(readiness.renderable)
         assert "Credential · Not required" in str(readiness.renderable)
         assert (
@@ -6104,9 +6170,7 @@ async def test_console_settings_modal_clears_setup_copy_when_dropdown_model_is_a
         await pilot.pause()
 
         readiness = app.screen.query_one("#console-settings-readiness", Static)
-        provider_model_section = app.screen.query_one(
-            "#console-settings-provider-model-section"
-        )
+        provider_model_section = app.screen.query_one("#console-settings-connection")
         model_select = app.screen.query_one("#console-settings-model-select", Select)
         readiness_copy = str(readiness.renderable)
         assert "Choose a model to enable sending." not in readiness_copy
@@ -6359,6 +6423,10 @@ async def test_console_settings_modal_inputs_keep_visible_content_row_when_unfoc
                 can_save=True,
             )
         )
+        await pilot.pause()
+        app.screen.query_one(
+            "#console-settings-generation-advanced", Collapsible
+        ).collapsed = False
         await pilot.pause()
 
         for selector in (
@@ -6680,6 +6748,10 @@ async def test_console_settings_modal_tabs_to_model_picker_after_provider_change
         assert model_select.value == "llama-3.3-70b-versatile"
         assert picker.value == "llama-3.3-70b-versatile"
 
+        await pilot.press("tab")
+        await _wait_for_focused_id(
+            app, pilot, "console-settings-configure-credential"
+        )
         await pilot.press("tab")
         await _wait_for_focused_id(app, pilot, "model-search-picker-input")
         await pilot.press("8")
@@ -7158,9 +7230,7 @@ async def test_console_settings_modal_refreshes_readiness_after_returning_to_mod
         assert picker.custom_mode is True
         model_input = app.screen.query_one("#console-settings-model-input", Input)
         readiness = app.screen.query_one("#console-settings-readiness", Static)
-        provider_model_section = app.screen.query_one(
-            "#console-settings-provider-model-section"
-        )
+        provider_model_section = app.screen.query_one("#console-settings-connection")
         model_input.value = ""
         # Debounced (task-15476): let the production `Input.Changed`
         # handler settle instead of forcing `_sync_readiness_display()`
@@ -9441,9 +9511,7 @@ async def test_console_missing_model_opens_console_settings_from_summary() -> No
         )
         assert modal_screen.query_one(ModelSearchPicker).value == "model-a"
         readiness = modal_screen.query_one("#console-settings-readiness", Static)
-        provider_model_section = modal_screen.query_one(
-            "#console-settings-provider-model-section"
-        )
+        provider_model_section = modal_screen.query_one("#console-settings-connection")
         assert "Ready to send" in str(readiness.renderable)
         assert "Credential · Not required" in str(readiness.renderable)
         assert (
@@ -10271,7 +10339,10 @@ async def test_console_settings_modal_enumerated_inputs_list_accepted_values() -
             ),
         }
         for input_id, expected in placeholders.items():
-            assert app.screen.query_one(f"#{input_id}", Input).placeholder == expected
+            control = app.screen.query_one(f"#{input_id}", Select)
+            accepted_copy = expected.removesuffix(PROVIDER_CHOICE_NO_EFFECT_SUFFIX)
+            assert _select_ordered_values(control) == tuple(accepted_copy.split(", "))
+            assert control.tooltip == expected
 
 
 @pytest.mark.asyncio
@@ -10690,7 +10761,7 @@ async def test_console_settings_modal_discover_models_success_swaps_input_for_se
 
         app.screen.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button).press()
         await _wait_for_discover_status(
-            app, pilot, "Found 2 models at http://127.0.0.1:9099."
+            app, pilot, "2 models available at http://127.0.0.1:9099."
         )
 
         assert prober.calls == [("http://127.0.0.1:9099", "llama_cpp")]
@@ -10835,13 +10906,13 @@ def test_discovery_status_renders_next_to_the_discover_button() -> None:
     )
     text = source.read_text()
 
-    status_pos = text.index("id=MODEL_DISCOVER_STATUS_ID,")
     base_url_pos = text.index('id="console-settings-base-url"')
+    model_pos = text.index('id="console-settings-model-picker"')
+    actions_pos = text.index('id="console-settings-connection-actions"')
+    status_pos = text.index("id=MODEL_DISCOVER_STATUS_ID,")
+    readiness_pos = text.index('id="console-settings-readiness-panel"')
 
-    assert status_pos < base_url_pos, (
-        "discovery status is composed after the Base URL row, so it renders "
-        "detached from the button that produced it"
-    )
+    assert base_url_pos < model_pos < actions_pos < status_pos < readiness_pos
 
 
 @pytest.mark.asyncio
@@ -10920,7 +10991,7 @@ async def test_single_model_discovery_refreshes_generation_control_support(
     async with app.run_test(size=(120, 40)) as pilot:
         await app.push_screen(modal)
         await pilot.pause()
-        verbosity = modal.query_one("#console-settings-verbosity", Input)
+        verbosity = modal.query_one("#console-settings-verbosity", Select)
         assert verbosity.parent is not None and verbosity.parent.display is True
 
         picker = modal.query_one(ModelSearchPicker)
@@ -10939,3 +11010,388 @@ async def test_single_model_discovery_refreshes_generation_control_support(
         await pilot.pause()
 
         assert verbosity.parent is not None and verbosity.parent.display is False
+
+
+# --- task-30012.3: connection-first composition and deliberate disclosure ---
+
+
+def _task_30012_suspended_modal_draft(
+    *,
+    focus_control_id: str,
+    advanced_generation: bool,
+    raw_values: dict[str, str | bool] | None = None,
+) -> ConsoleSettingsDraftSnapshot:
+    settings = ConsoleSessionSettings(provider="openai", model="gpt-5.6-terra")
+    return ConsoleSettingsDraftSnapshot(
+        settings=settings,
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={
+            "console-settings-provider": "openai",
+            "console-settings-model-picker": "gpt-5.6-terra",
+            **(raw_values or {}),
+        },
+        provider_model_drafts={"openai": "gpt-5.6-terra"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id=focus_control_id,
+        disclosure_state={
+            "advanced_generation": advanced_generation,
+            "connection_details": False,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_connection_first_hierarchy_and_title() -> None:
+    """Moving connection controls below tuning would break setup scanning order."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"), app
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        assert (
+            str(modal.query_one(".console-modal-header", Static).renderable)
+            == "Conversation settings"
+        )
+        section_ids = [
+            section.id
+            for section in modal.query(".console-settings-modal-section")
+            if section.id is not None
+        ]
+        assert section_ids[:4] == [
+            "console-settings-connection",
+            "console-settings-generation-advanced",
+            "console-settings-identity-advanced",
+            "console-settings-request-estimate",
+        ]
+
+        connection = modal.query_one("#console-settings-connection")
+        connection_ids = [
+            widget.id for widget in connection.query("*") if widget.id is not None
+        ]
+        assert connection_ids.index("console-settings-provider-picker") < (
+            connection_ids.index("console-settings-base-url")
+        )
+        assert connection_ids.index("console-settings-base-url") < (
+            connection_ids.index("console-settings-model-picker")
+        )
+        assert connection_ids.index("console-settings-model-picker") < (
+            connection_ids.index("console-settings-connection-actions")
+        )
+        assert connection_ids.index("console-settings-connection-actions") < (
+            connection_ids.index("console-settings-readiness-panel")
+        )
+        assert modal.query_one("#console-settings-configure-credential").parent is (
+            connection
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_new_and_blocked_disclosures_start_closed() -> None:
+    """First-run tuning must not compete with the incomplete connection path."""
+    app = ModalHarness()
+    app.app_config["api_settings"]["openai"] = {}
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="openai", model="gpt-5.6-terra"),
+        app,
+        providers_models={"openai": ["gpt-5.6-terra"]},
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        assert modal.query_one(
+            "#console-settings-generation-advanced", Collapsible
+        ).collapsed is True
+        assert modal.query_one(
+            "#console-settings-identity-advanced", Collapsible
+        ).collapsed is True
+        assert modal.query_one(
+            "#console-settings-request-estimate", Collapsible
+        ).collapsed is True
+        assert app.focused is modal.query_one(
+            "#console-settings-configure-credential", Button
+        )
+        assert modal._is_effectively_focusable(
+            modal.query_one("#console-settings-temperature", Input)
+        ) is False
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_setup_emphasis_clears_on_connection_when_ready() -> (
+    None
+):
+    """The setup cue belongs to Connection and must clear after model recovery."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="llama_cpp", model=None),
+        app,
+        providers_models={"llama_cpp": []},
+        focus_model=True,
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        connection = modal.query_one("#console-settings-connection")
+        compatibility_wrapper = modal.query_one(
+            "#console-settings-provider-model-section"
+        )
+        assert connection.has_class("console-settings-primary-section") is True
+        assert (
+            compatibility_wrapper.has_class("console-settings-primary-section")
+            is False
+        )
+
+        modal.query_one("#console-settings-model-custom", Button).press()
+        await pilot.pause()
+        manual_model = modal.query_one("#console-settings-model-input", Input)
+        manual_model.value = "model-a"
+        await pilot.pause(CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS + 0.1)
+
+        assert connection.has_class("console-settings-primary-section") is False
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_tab_order_skips_collapsed_disclosure_children() -> (
+    None
+):
+    """Both traversal directions reach headers, never hidden descendants."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"), app
+    )
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        discover = modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        discover.focus()
+
+        forward_parents: list[str | None] = []
+        for _ in range(3):
+            await pilot.press("tab")
+            assert app.focused is not None
+            forward_parents.append(getattr(app.focused.parent, "id", None))
+        assert forward_parents == [
+            "console-settings-generation-advanced",
+            "console-settings-identity-advanced",
+            "console-settings-request-estimate",
+        ]
+        await pilot.press("tab")
+        assert app.focused is modal.query_one("#console-settings-cancel", Button)
+
+        reverse_parents: list[str | None] = []
+        for _ in range(3):
+            await pilot.press("shift+tab")
+            assert app.focused is not None
+            reverse_parents.append(getattr(app.focused.parent, "id", None))
+        assert reverse_parents == [
+            "console-settings-request-estimate",
+            "console-settings-identity-advanced",
+            "console-settings-generation-advanced",
+        ]
+
+        advanced = modal.query_one(
+            "#console-settings-generation-advanced", Collapsible
+        )
+        await pilot.press("enter")
+        await pilot.pause()
+        assert advanced.collapsed is False
+        await pilot.press("tab")
+        assert app.focused is modal.query_one("#console-settings-temperature", Input)
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_targeted_advanced_control_opens_disclosure() -> None:
+    """A deep-linked advanced target must never restore into hidden content."""
+    app = ModalHarness()
+    snapshot = _task_30012_suspended_modal_draft(
+        focus_control_id="console-settings-reasoning-effort",
+        advanced_generation=False,
+    )
+    modal = _basic_modal(
+        snapshot.settings,
+        app,
+        providers_models={"openai": ["gpt-5.6-terra"]},
+        suspended_draft=snapshot,
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        advanced = modal.query_one(
+            "#console-settings-generation-advanced", Collapsible
+        )
+        target = modal.query_one("#console-settings-reasoning-effort", Select)
+        assert advanced.collapsed is False
+        assert app.focused is target
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_restores_non_targeted_disclosure_snapshot() -> None:
+    """Returning users keep the disclosure state they explicitly chose."""
+    app = ModalHarness()
+    snapshot = _task_30012_suspended_modal_draft(
+        focus_control_id="console-settings-provider-picker",
+        advanced_generation=True,
+    )
+    modal = _basic_modal(
+        snapshot.settings,
+        app,
+        providers_models={"openai": ["gpt-5.6-terra"]},
+        suspended_draft=snapshot,
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        assert modal.query_one(
+            "#console-settings-generation-advanced", Collapsible
+        ).collapsed is False
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_generation_choices_are_constrained_selects() -> None:
+    """Free-text provider choices allow values the generation API rejects."""
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="openai",
+        model="gpt-5.6-terra",
+        reasoning_effort="high",
+        reasoning_summary="auto",
+        verbosity="medium",
+    )
+    modal = _basic_modal(
+        settings,
+        app,
+        providers_models={"openai": ["gpt-5.6-terra"]},
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal, callback=app.capture_saved_settings)
+        await pilot.pause()
+
+        expected_domains = {
+            "console-settings-reasoning-effort": {
+                "none",
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+            },
+            "console-settings-reasoning-summary": {
+                "auto",
+                "concise",
+                "detailed",
+                "none",
+            },
+            "console-settings-verbosity": {"low", "medium", "high"},
+            "console-settings-thinking-effort": {
+                "off",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max",
+            },
+        }
+        for control_id, expected in expected_domains.items():
+            control = modal.query_one(f"#{control_id}", Select)
+            assert _select_values(control) == expected
+
+        modal.query_one(
+            "#console-settings-reasoning-effort", Select
+        ).value = Select.NULL
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.reasoning_effort is None
+
+
+@pytest.mark.parametrize("terminal_size", [(120, 60), (80, 24)])
+@pytest.mark.asyncio
+async def test_console_settings_modal_invalid_restored_choice_stays_inline_until_fixed(
+    terminal_size: tuple[int, int],
+) -> None:
+    """An obsolete saved choice must be visible and cannot be silently erased."""
+    app = ModalHarness()
+    snapshot = _task_30012_suspended_modal_draft(
+        focus_control_id="console-settings-provider-picker",
+        advanced_generation=True,
+        raw_values={"console-settings-reasoning-effort": "obsolete-effort"},
+    )
+    modal = _basic_modal(
+        snapshot.settings,
+        app,
+        providers_models={"openai": ["gpt-5.6-terra"]},
+        suspended_draft=snapshot,
+    )
+
+    async with app.run_test(size=terminal_size) as pilot:
+        await app.push_screen(modal, callback=app.capture_saved_settings)
+        await pilot.pause()
+
+        choice = modal.query_one("#console-settings-reasoning-effort", Select)
+        validation = modal.query_one(
+            "#console-settings-reasoning-effort-validation", Static
+        )
+        assert choice.value is Select.NULL
+        assert "Saved value is unavailable" in str(validation.renderable)
+        assert modal.capture_suspended_draft().raw_values[
+            "console-settings-reasoning-effort"
+        ] == "obsolete-effort"
+
+        await pilot.click("#console-settings-save-default")
+        assert app.screen is modal
+        assert app.saved_settings is None
+        assert (
+            modal.query_one("#console-settings-save-default", Button).has_class(
+                "-active"
+            )
+            is False
+        )
+
+        await pilot.click("#console-settings-save")
+        assert app.screen is modal
+        assert app.saved_settings is None
+
+        choice.value = "low"
+        await pilot.pause()
+        assert str(validation.renderable) == ""
+        await pilot.click("#console-settings-save")
+        await pilot.pause()
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.reasoning_effort == "low"
+
+
+def test_console_settings_modal_discovery_uses_exact_model_count_copy() -> None:
+    """Discovery status must not use a plural noun for a single model."""
+    endpoint = "http://127.0.0.1:9099"
+
+    assert (
+        settings_modal_module._model_availability_copy(0, endpoint)
+        == "No models available at http://127.0.0.1:9099."
+    )
+    assert (
+        settings_modal_module._model_availability_copy(
+            1,
+            endpoint,
+            selected_model="only-model",
+        )
+        == "1 model available at http://127.0.0.1:9099; selected only-model."
+    )
+    assert (
+        settings_modal_module._model_availability_copy(2, endpoint)
+        == "2 models available at http://127.0.0.1:9099."
+    )
