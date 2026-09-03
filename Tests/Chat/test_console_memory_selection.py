@@ -137,19 +137,26 @@ def test_generated_prefix_requires_a_live_boundary_and_matching_digest() -> None
     valid = _memory("prefix")
     head = _selection(1, "prefix")
 
-    assert _select(
-        memories=(valid,), scopes=(_scope("prefix"),), selections=(head,)
-    ).kind is EffectiveMemoryKind.GENERATED_PREFIX
-    assert _select(
-        memories=(replace(valid, boundary_message_id="sibling"),),
-        scopes=(_scope("prefix"),),
-        selections=(head,),
-    ).kind is EffectiveMemoryKind.RAW
-    assert _select(
-        memories=(replace(valid, summarized_prefix_digest="0" * 64),),
-        scopes=(_scope("prefix"),),
-        selections=(head,),
-    ).kind is EffectiveMemoryKind.RAW
+    assert (
+        _select(memories=(valid,), scopes=(_scope("prefix"),), selections=(head,)).kind
+        is EffectiveMemoryKind.GENERATED_PREFIX
+    )
+    assert (
+        _select(
+            memories=(replace(valid, boundary_message_id="sibling"),),
+            scopes=(_scope("prefix"),),
+            selections=(head,),
+        ).kind
+        is EffectiveMemoryKind.RAW
+    )
+    assert (
+        _select(
+            memories=(replace(valid, summarized_prefix_digest="0" * 64),),
+            scopes=(_scope("prefix"),),
+            selections=(head,),
+        ).kind
+        is EffectiveMemoryKind.RAW
+    )
 
 
 def test_generated_range_requires_both_ordered_anchors_and_prefix_digest() -> None:
@@ -162,9 +169,7 @@ def test_generated_range_requires_both_ordered_anchors_and_prefix_digest() -> No
         anchor="u2",
     )
 
-    result = _select(
-        memories=(memory,), scopes=(valid_scope,), selections=(head,)
-    )
+    result = _select(memories=(memory,), scopes=(valid_scope,), selections=(head,))
     assert result.kind is EffectiveMemoryKind.GENERATED_RANGE
     assert result.memory == memory
     assert result.branch_head == head
@@ -255,7 +260,10 @@ def test_valid_legacy_wins_without_a_suppressing_branch_head(with_head: bool) ->
 @pytest.mark.parametrize(
     ("head", "expected"),
     [
-        (_selection(1, "generated", suppresses_legacy=True), EffectiveMemoryKind.GENERATED_PREFIX),
+        (
+            _selection(1, "generated", suppresses_legacy=True),
+            EffectiveMemoryKind.GENERATED_PREFIX,
+        ),
         (_selection(1, None, suppresses_legacy=True), EffectiveMemoryKind.RAW),
     ],
 )
@@ -434,6 +442,25 @@ def _repository_database(_tmp_path, name: str):
     return db, ConsoleContextRepository(db), conversation_id, root_id, leaf_id
 
 
+def _raw_semantic_corruption(
+    db: CharactersRAGDB,
+    message_id: str,
+    sql: str,
+    params: tuple[object, ...] = (),
+) -> None:
+    """Authorize one deliberate inconsistent-row fixture write only."""
+
+    with db.transaction() as cursor:
+        authorization = db._semantic_mutation_authorization_for_coordinator(
+            cursor.connection
+        )
+        with authorization._authorize(
+            message_id=message_id,
+            operations={"message_update"},
+        ):
+            cursor.execute(sql, params)
+
+
 def _persisted_lineage(
     root_id: str,
     leaf_id: str,
@@ -508,9 +535,7 @@ def _branch_commit(
         prompt_revision=1,
         prompt_digest="p" * 64,
         selected_units_json="[]",
-        summarized_prefix_digest=_prefix_digest(
-            root_id, leaf_id, through_leaf=manual
-        ),
+        summarized_prefix_digest=_prefix_digest(root_id, leaf_id, through_leaf=manual),
         input_tokens=20,
         output_tokens=5,
         before_tokens=100,
@@ -595,7 +620,9 @@ def _derived_row_snapshot(db: CharactersRAGDB, conversation_id: str):
     )
 
 
-def test_two_jobs_admitted_without_memory_allow_only_one_atomic_commit(tmp_path) -> None:
+def test_two_jobs_admitted_without_memory_allow_only_one_atomic_commit(
+    tmp_path,
+) -> None:
     db, repository, conversation_id, root_id, leaf_id = _repository_database(
         tmp_path, "no-memory-race"
     )
@@ -622,9 +649,9 @@ def test_two_jobs_admitted_without_memory_allow_only_one_atomic_commit(tmp_path)
         (("memory-first", "prefix", "automatic"),),
         (("selection-first", 1, 1),),
     )
-    assert not repository.list_active_memory_selections(
-        conversation_id
-    )[0].suppresses_legacy
+    assert not repository.list_active_memory_selections(conversation_id)[
+        0
+    ].suppresses_legacy
 
 
 def test_manual_selection_forces_legacy_suppression_without_clearing_legacy(
@@ -694,9 +721,7 @@ def test_automatic_replacement_inherits_suppression_and_ignores_hidden_legacy(
         )
     )
     current = repository.list_active_memory_selections(conversation_id)[0]
-    effective, head = _generated_fences(
-        current, effective_kind="generated_range"
-    )
+    effective, head = _generated_fences(current, effective_kind="generated_range")
     replacement = _branch_commit(
         conversation_id,
         root_id,
@@ -794,9 +819,7 @@ def test_exact_legacy_boundary_and_summary_digest_mismatch_is_stale(
         expected_effective=legacy,
     )
     if legacy_mutation == "boundary":
-        db.set_conversation_context_summary(
-            conversation_id, "Legacy facts.", leaf_id
-        )
+        db.set_conversation_context_summary(conversation_id, "Legacy facts.", leaf_id)
     else:
         db.set_conversation_context_summary(
             conversation_id, "Changed legacy facts.", root_id
@@ -834,11 +857,12 @@ def test_changed_persisted_cursor_leaf_or_parent_rejects_without_writes(
             before_message_id=root_id,
         )
     else:
-        db.get_connection().execute(
+        _raw_semantic_corruption(
+            db,
+            leaf_id,
             "UPDATE messages SET parent_message_id = NULL WHERE id = ?",
             (leaf_id,),
         )
-        db.get_connection().commit()
 
     assert not repository.commit_memory_selection_if_current(stale)
     assert _derived_row_snapshot(db, conversation_id) == ((), (), ())
@@ -876,12 +900,12 @@ def test_selected_variant_image_is_fenced_from_the_persisted_variant_row(
         root_id, "selected variant content", is_selected=True
     )
     assert variant_id is not None
-    connection = db.get_connection()
-    connection.execute(
+    _raw_semantic_corruption(
+        db,
+        variant_id,
         "UPDATE messages SET image_data = ?, image_mime_type = ? WHERE id = ?",
         (b"variant image", "image/png", variant_id),
     )
-    connection.commit()
     image_digest = persisted_attachment_digest(
         position=0,
         mime_type="image/png",
@@ -933,14 +957,18 @@ def test_non_fork_position_zero_runtime_label_normalizes_to_persisted_facts(
         tmp_path, "ordinary-position-zero-label"
     )
     connection = db.get_connection()
-    connection.execute(
+    _raw_semantic_corruption(
+        db,
+        root_id,
         "UPDATE messages SET image_data = ?, image_mime_type = ? WHERE id = ?",
         (b"ordinary image", "image/png", root_id),
     )
-    connection.commit()
-    assert connection.execute(
-        "SELECT metadata_json FROM messages WHERE id = ?", (root_id,)
-    ).fetchone()["metadata_json"] is None
+    assert (
+        connection.execute(
+            "SELECT metadata_json FROM messages WHERE id = ?", (root_id,)
+        ).fetchone()["metadata_json"]
+        is None
+    )
 
     runtime_digest = persisted_attachment_digest(
         position=0,
@@ -1022,11 +1050,12 @@ def test_changed_durable_message_fact_rejects_without_partial_insert(
         durable_lineage=durable_lineage,
     )
     if durable_mutation == "content":
-        db.get_connection().execute(
+        _raw_semantic_corruption(
+            db,
+            root_id,
             "UPDATE messages SET content = 'changed content' WHERE id = ?",
             (root_id,),
         )
-        db.get_connection().commit()
     elif durable_mutation == "version":
         db.get_connection().execute(
             "UPDATE messages SET version = 2 WHERE id = ?",
@@ -1040,9 +1069,7 @@ def test_changed_durable_message_fact_rejects_without_partial_insert(
         )
         db.get_connection().commit()
     elif durable_mutation == "variant":
-        assert db.create_message_variant(
-            root_id, "selected variant", is_selected=True
-        )
+        assert db.create_message_variant(root_id, "selected variant", is_selected=True)
     else:
         db.set_message_attachments(
             root_id,
@@ -1149,9 +1176,7 @@ def _manual_memory_with_legacy(tmp_path, name: str):
         )
     )
     current = repository.list_active_memory_selections(conversation_id)[0]
-    effective, head = _generated_fences(
-        current, effective_kind="generated_range"
-    )
+    effective, head = _generated_fences(current, effective_kind="generated_range")
     return (
         db,
         repository,
@@ -1196,15 +1221,18 @@ def test_current_reset_appends_exact_tombstone_without_mutating_memory_or_legacy
     )
 
     assert token == ("current-reset-tombstone", 1)
-    assert tuple(
-        db.get_connection()
-        .execute(
-            "SELECT id, active, revision, reset_at FROM "
-            "console_conversation_memories WHERE conversation_id = ?",
-            (conversation_id,),
+    assert (
+        tuple(
+            db.get_connection()
+            .execute(
+                "SELECT id, active, revision, reset_at FROM "
+                "console_conversation_memories WHERE conversation_id = ?",
+                (conversation_id,),
+            )
+            .fetchone()
         )
-        .fetchone()
-    ) == before_memory
+        == before_memory
+    )
     assert db.get_conversation_context_summary(conversation_id) == (
         "Legacy facts.",
         root_id,
@@ -1250,20 +1278,28 @@ def test_undo_deactivates_only_exact_current_tombstone_at_expected_revision(
         expected_revision=token[1],
     )
 
-    rows = db.get_connection().execute(
-        "SELECT selection_id, active, revision FROM "
-        "console_conversation_memory_selections WHERE conversation_id = ? "
-        "ORDER BY sequence",
-        (conversation_id,),
-    ).fetchall()
+    rows = (
+        db.get_connection()
+        .execute(
+            "SELECT selection_id, active, revision FROM "
+            "console_conversation_memory_selections WHERE conversation_id = ? "
+            "ORDER BY sequence",
+            (conversation_id,),
+        )
+        .fetchall()
+    )
     assert [tuple(row) for row in rows] == [
         ("manual-current-selection", 1, 1),
         ("undo-tombstone", 0, 2),
     ]
-    memory = db.get_connection().execute(
-        "SELECT active, revision FROM console_conversation_memories "
-        "WHERE id = 'manual-current-memory'"
-    ).fetchone()
+    memory = (
+        db.get_connection()
+        .execute(
+            "SELECT active, revision FROM console_conversation_memories "
+            "WHERE id = 'manual-current-memory'"
+        )
+        .fetchone()
+    )
     assert tuple(memory) == (1, 1)
 
 
@@ -1282,9 +1318,7 @@ def test_later_applicable_select_or_reset_expires_undo_token(
         head,
     ) = _manual_memory_with_legacy(tmp_path, f"undo-expiry-{later_event_kind}")
     token = repository.append_current_branch_reset_if_current(
-        _reset_selection(
-            conversation_id, leaf_id, selection_id="expiring-tombstone"
-        ),
+        _reset_selection(conversation_id, leaf_id, selection_id="expiring-tombstone"),
         expected_effective=effective,
         expected_branch_head=head,
         expected_cursor=(leaf_id, None),
@@ -1304,9 +1338,7 @@ def test_later_applicable_select_or_reset_expires_undo_token(
                 created_at="2026-08-28T00:00:03Z",
             )
             if later_event_kind == "select"
-            else _reset_selection(
-                conversation_id, leaf_id, selection_id="later-reset"
-            )
+            else _reset_selection(conversation_id, leaf_id, selection_id="later-reset")
         )
     )
 
@@ -1315,9 +1347,13 @@ def test_later_applicable_select_or_reset_expires_undo_token(
         selection_id=token[0],
         expected_revision=token[1],
     )
-    expired = db.get_connection().execute(
-        "SELECT active, revision FROM console_conversation_memory_selections "
-        "WHERE selection_id = ?",
-        (token[0],),
-    ).fetchone()
+    expired = (
+        db.get_connection()
+        .execute(
+            "SELECT active, revision FROM console_conversation_memory_selections "
+            "WHERE selection_id = ?",
+            (token[0],),
+        )
+        .fetchone()
+    )
     assert tuple(expired) == (1, 1)
