@@ -3947,9 +3947,9 @@ class AgentService:
                 agent_worktree.discard_agent_worktree(provider.workspace_root, wt)
 
     def _sweep_stale_agent_worktrees(self) -> None:
-        """End-of-turn GC: remove agent worktrees this service no longer
-        considers live -- force=False, so git itself refuses to touch a
-        dirty one (see `discard_agent_worktree`'s own docstring).
+        """End-of-turn GC: remove agent worktrees no longer live in the DB
+        -- force=False, so git itself refuses to touch a dirty one (see
+        `discard_agent_worktree`'s own docstring).
 
         I3 (TASK-28238 P2 T7 final fix wave). `prune_stale_agent_worktrees`
         has existed since Task 4 but nothing ever called it: every
@@ -3957,17 +3957,32 @@ class AgentService:
         turn ended without an explicit merge/discard. Called from
         `run_turn`'s teardown, after `_settle_fleet`.
 
-        `live_run_ids` reuses `live_subagent_handles` -- the same
-        turn-scoped "is this still my responsibility" view `_settle_fleet`
-        itself is built on (`self._fleet_cancels`) -- so a survivor
-        (`subagents_outlive_turn`, the default) is never swept out from
-        under its own still-running thread just because ITS turn ended;
-        only a handle this service has already stopped tracking (or
-        driven terminal) is eligible.
+        `live_run_ids` reads `AgentRunsDB.list_running_run_ids()` --
+        process-wide, crash-safe truth -- NOT any in-memory,
+        coordinator-scoped source (an earlier version used
+        `live_subagent_handles()`, which filters on THIS instance's own
+        `self._fleet_cancels`; production constructs a fresh `AgentService`
+        per turn sharing only the `FleetCoordinator`, so that view made a
+        later turn's sweep see an EARLIER turn's still-`RUN_RUNNING`
+        `subagents_outlive_turn` survivor as "not mine" and reap its clean
+        worktree out from under its own running thread -- a real,
+        reproduced HIGH). The DB is correct regardless of which service
+        instance or even which CONVERSATION spawned the run (a different
+        conversation's live child sharing this workspace root is invisible
+        to any coordinator-scoped source). Ordering guarantees this can
+        never race a run's own start: `create_run` always fires before
+        `_admit_agent_worktree`, so a worktree can never exist before its
+        run row does. `reconcile_orphaned_runs` terminalizing a crashed
+        run at process start is what makes ITS worktree GC-able on a
+        later sweep, rather than leaking it forever.
 
-        Never raises: GC must not cost a turn its outcome, and this
-        deliberately adds no new logging -- a missed sweep is invisible
-        by design, not a signal an operator needs paged on.
+        Fails safe: if reading liveness raises ANYTHING, the whole sweep
+        is aborted without pruning -- over-retention is acceptable,
+        deleting live work is not. The outer containment below still
+        applies on top of that (GC must never break a turn regardless of
+        cause), and this deliberately adds no new logging either way -- a
+        missed sweep is invisible by design, not a signal an operator
+        needs paged on.
         """
         try:
             from tldw_chatbook.Agents import agent_worktree
@@ -3977,11 +3992,10 @@ class AgentService:
             provider = owner[1] if owner is not None else None
             if not isinstance(provider, LocalToolProvider):
                 return
-            live_run_ids = {
-                handle.run_id
-                for handle in self.live_subagent_handles()
-                if handle.run_id is not None
-            }
+            try:
+                live_run_ids = self.db.list_running_run_ids()
+            except Exception:  # noqa: BLE001 — never prune on unknown liveness
+                return
             agent_worktree.prune_stale_agent_worktrees(
                 provider.workspace_root, live_run_ids
             )
@@ -4735,13 +4749,17 @@ class AgentService:
             if isolation == "worktree":
                 refusal = self._admit_agent_worktree(handle, child_run_id)
                 if refusal is not None:
-                    fleet.finish(handle.handle_id, RUN_ERROR, error=refusal)
                     # I1 (TASK-28238 P2 T7 final fix wave): `db.create_run`
-                    # above already wrote this row as "running" -- attach_run
-                    # (below) never happens on this path, so nothing else
-                    # ever marks it terminal. Match the sibling thread-
-                    # start-failure path's call shape exactly.
-                    self._set_terminal_status(child_run_id, RUN_ERROR)
+                    # above already wrote this row as "running" --
+                    # attach_run (below) never happens on this path, so
+                    # nothing else ever marks it terminal. Matches the
+                    # sibling thread-start-failure path's try/except shape
+                    # exactly (round 2, item 4).
+                    try:
+                        fleet.finish(handle.handle_id, RUN_ERROR, error=refusal)
+                        self._set_terminal_status(child_run_id, RUN_ERROR)
+                    except Exception:  # noqa: BLE001 — refusal must reach parent
+                        logger.warning("could not persist failed sub-agent launch")
                     sub_agent_spawns -= 1
                     return None, ToolResult(ok=False, error=refusal)
             child_kwargs["lifecycle_owner_seq_start"] = owner_seq

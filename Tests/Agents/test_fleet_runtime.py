@@ -3822,6 +3822,151 @@ def test_end_of_turn_gc_sweeps_a_clean_never_merged_worktree_but_spares_a_dirty_
     assert (dirty_wt.worktree_path / "d.txt").read_text() == "dirty\n"
 
 
+def test_a_later_service_instances_sweep_does_not_reap_an_earlier_ones_survivor(
+    db, git_repo
+):
+    """I3 round 2 (TASK-28238 P2 T7 final fix wave, HIGH from re-review):
+    mirrors `test_a_later_turns_settle_does_not_reach_an_earlier_turns_
+    survivor`'s two-service/shared-coordinator pattern, applied to
+    `_sweep_stale_agent_worktrees` instead of `_settle_fleet`.
+
+    Production constructs a FRESH `AgentService` per turn
+    (`console_agent_bridge.py`), sharing only the `FleetCoordinator` --
+    never `self._fleet_cancels`, which is per-instance and reset every
+    turn. The now-fixed bug: deriving sweep liveness from
+    `self.live_subagent_handles()` (filtered by `_fleet_cancels`
+    membership) made service_2's end-of-turn sweep see service_1's still-
+    `RUN_RUNNING` `subagents_outlive_turn` survivor as "not mine" and
+    reap its CLEAN worktree out from under its own running thread. The
+    fix derives liveness from the DB's run status directly (process-wide,
+    crash-safe, and correct regardless of which service instance --or
+    conversation-- spawned the run).
+    """
+    released = threading.Event()
+
+    def blocked_child():
+        released.wait(10.0)
+        return "released"
+
+    provider_1 = _fs_local_provider(git_repo)
+    provider_2 = _fs_local_provider(git_repo)
+    registry_1 = ToolCatalogRegistry()
+    registry_1.register_provider(BuiltinToolProvider())
+    registry_1.register_provider(provider_1)
+    registry_2 = ToolCatalogRegistry()
+    registry_2.register_provider(BuiltinToolProvider())
+    registry_2.register_provider(provider_2)
+    fleet = FleetCoordinator(max_live=3, clock=time.monotonic)
+    chat_1 = FleetChat(
+        [fence(SPAWN_TOOL_NAME, {"task": "survivor", "isolation": "worktree"}), "turn 1 done"],
+        {"survivor": [blocked_child]},
+    )
+    chat_2 = FleetChat(["turn 2 done"])
+    service_1 = AgentService(
+        db=db, registry=registry_1, chat_call=chat_1, fleet_coordinator=fleet
+    )
+    service_2 = AgentService(
+        db=db, registry=registry_2, chat_call=chat_2, fleet_coordinator=fleet
+    )
+    try:
+        _run_id_1, outcome_1 = service_1.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go 1"}],
+            config=ISO_CFG,
+            api_endpoint="llama_cpp",
+        )
+        assert outcome_1.status == RUN_DONE
+        _wait_until(
+            lambda: len([h for h in fleet.snapshot() if h.status == RUN_RUNNING]) == 1,
+            "turn 1's isolated child never started running",
+        )
+        survivor = next(h for h in fleet.snapshot() if h.status == RUN_RUNNING)
+        wt = service_1._agent_worktrees[survivor.handle_id]
+        assert wt.worktree_path.is_dir()  # sanity: it exists before service_2 runs
+
+        # service_2's own (unrelated) turn -- its OWN end-of-turn sweep
+        # must not touch turn 1's still-live survivor's worktree.
+        _run_id_2, outcome_2 = service_2.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go 2"}],
+            config=ISO_CFG,
+            api_endpoint="llama_cpp",
+        )
+        assert outcome_2.status == RUN_DONE
+        assert wt.worktree_path.is_dir(), (
+            "service_2's sweep reaped a DIFFERENT service instance's "
+            "still-running survivor's worktree"
+        )
+
+        # Now the survivor finishes for real.
+        released.set()
+        _wait_until(
+            lambda: fleet.get(survivor.handle_id).status == RUN_DONE,
+            "the survivor never completed after being released",
+        )
+        db.set_status(survivor.run_id, RUN_DONE, result="released")
+
+        # A later sweep (any service instance, any conversation) now
+        # correctly reaps it -- the DB says it is terminal.
+        chat_3 = FleetChat(["turn 3 done"])
+        provider_3 = _fs_local_provider(git_repo)
+        registry_3 = ToolCatalogRegistry()
+        registry_3.register_provider(BuiltinToolProvider())
+        registry_3.register_provider(provider_3)
+        service_3 = AgentService(
+            db=db, registry=registry_3, chat_call=chat_3, fleet_coordinator=fleet
+        )
+        _run_id_3, outcome_3 = service_3.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go 3"}],
+            config=ISO_CFG,
+            api_endpoint="llama_cpp",
+        )
+        assert outcome_3.status == RUN_DONE
+        assert not wt.worktree_path.exists(), (
+            "a terminal run's clean worktree should be GC-eligible once "
+            "the DB says so"
+        )
+    finally:
+        released.set()
+
+
+def test_sweep_prunes_nothing_when_the_liveness_read_fails(db, git_repo, monkeypatch):
+    """I3 round 2, item 2: a liveness-read failure must abort the WHOLE
+    sweep, not prune with an empty/partial `live_run_ids` -- over-
+    retention is acceptable, deletion of live work is not."""
+    provider = _fs_local_provider(git_repo)
+    service, chat, coordinator = make_fleet_service(
+        db,
+        parent_replies=[
+            fence(SPAWN_TOOL_NAME, {"task": "clean task", "isolation": "worktree"}),
+            "spawned it",
+        ],
+        child_replies={"clean task": ["nothing to do here"]},
+        providers=(provider,),
+    )
+
+    def boom():
+        raise RuntimeError("db unavailable")
+
+    monkeypatch.setattr(db, "list_running_run_ids", boom)
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=ISO_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    join_fleet_children(service)
+
+    handle = next(h for h in coordinator.snapshot() if h.task == "clean task")
+    wt = service._agent_worktrees[handle.handle_id]
+    # Would otherwise have been swept (it is clean and terminal) -- the
+    # liveness-read failure must have aborted pruning entirely instead.
+    assert wt.worktree_path.is_dir()
+
+
 def test_isolated_spawn_refuses_on_non_git_workspace(db, tmp_path):
     """AC#2 (TASK-28238 P2 T4): isolation="worktree" against a workspace
     root that is not a git repo is an honest refusal naming the reason,
