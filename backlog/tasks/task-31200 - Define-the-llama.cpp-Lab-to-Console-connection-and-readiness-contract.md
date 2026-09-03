@@ -46,7 +46,7 @@ ADR required: yes
 ADR path: backlog/decisions/114-llamacpp-lab-console-connection-authority.md
 Reason: TASK-31200 changes the provider/runtime boundary, cross-screen state ownership, persistence scope, privacy boundary, and long-lived setup flow.
 
-1. Author ADR-114 with the sanitized LlamaCppConnectionTarget, separate runtime/connection/product states, explicit action ownership, canonical absent-value port 8080 policy, compatibility rules, and verification obligations.
+1. Author ADR-114 with the sanitized LlamaCppConnectionTarget, stable path-independent Lab launch alias, fail-closed external model identity rule, separate runtime/connection/product states, explicit action ownership, canonical absent-value port 8080 policy, compatibility rules, and verification obligations.
 2. Reconcile ADR-002 exact-endpoint discovery, ADR-025 GGUF/process-lease authority, ADR-095 Console/default ownership, and TASK-16473/TASK-16476/TASK-26837 behavior.
 3. Index ADR-114 and link it from the approved handoff wireframe, this implementation plan, and TASK-31200.
 4. Self-review the contract against all six acceptance criteria, reject placeholders and ambiguous ownership, and verify documentation integrity without changing or testing production code.
@@ -56,5 +56,5 @@ Reason: TASK-31200 changes the provider/runtime boundary, cross-screen state own
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Accepted ADR-114 to separate llama.cpp process ownership, HTTP and model readiness, active Console adoption, and explicit provider-default persistence. Selected the absent-value loopback default at port 8080, defined the sanitized generation-fenced handoff target, preserved ADR-025 GGUF authority and ADR-095 settings ownership, and linked the verification obligations for TASK-31201 through TASK-31206. Modified the canonical ADR index, handoff wireframe, plan, and TASK-31200 metadata; no production code or tests changed.
+Accepted ADR-114 to separate llama.cpp process ownership, HTTP and model readiness, active Console adoption, and explicit provider-default persistence. Selected the absent-value loopback default at port 8080, reserved a stable path-independent alias for Lab launches, made path-identifying existing-server model IDs fail closed, and scoped the cross-surface privacy allowlist while preserving bounded Lab-local diagnostics. Preserved ADR-025 GGUF authority and ADR-095 settings ownership and linked the verification obligations for TASK-31201 through TASK-31206. Modified the canonical ADR index, handoff wireframe, plan, and TASK-31200 metadata; no production code or tests changed.
 <!-- SECTION:NOTES:END -->

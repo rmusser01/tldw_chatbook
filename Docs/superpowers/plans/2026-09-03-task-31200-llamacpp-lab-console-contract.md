@@ -4,7 +4,7 @@
 
 **Goal:** Establish and accept the architectural contract that lets Lab verify a llama.cpp destination and hand it to the active Console session without conflating process liveness, API readiness, session adoption, or durable defaults.
 
-**Architecture:** Create ADR-114 as a documentation-only decision. It extends the existing endpoint normalization, managed/external GGUF authority, and Console settings ownership decisions; it selects `http://127.0.0.1:8080` as the absent-value llama.cpp default, defines a sanitized cross-surface connection descriptor, and assigns each lifecycle and persistence transition to one existing owner. No production behavior changes in TASK-31200.
+**Architecture:** Create ADR-114 as a documentation-only decision. It extends the existing endpoint normalization, managed/external GGUF authority, and Console settings ownership decisions; it selects `http://127.0.0.1:8080` as the absent-value llama.cpp default, reserves `chatbook-llamacpp` as the safe API model alias for Lab-owned launches, defines a sanitized cross-surface connection descriptor, and assigns each lifecycle and persistence transition to one existing owner. Existing servers with path-identifying model IDs fail closed before handoff. No production behavior changes in TASK-31200.
 
 **Tech Stack:** Markdown ADRs, Backlog.md, Python 3.11 application contracts, Textual 8.x UI terminology, OpenAI-compatible llama.cpp HTTP endpoints.
 
@@ -20,6 +20,9 @@
 - Preserve ADR-095: ordinary Console session Apply does not persist endpoints; only the explicit full Settings default action may persist an explicitly edited checked endpoint.
 - Preserve TASK-16476 behavior: adopting a local server never silently overwrites a different configured endpoint.
 - Credentials, executable paths, GGUF paths, query strings, fragments, and raw logs never enter the cross-surface descriptor or conversation metadata.
+- Lab-owned launch construction emits exactly one `--alias chatbook-llamacpp`; raw/expert arguments cannot replace or duplicate it.
+- Existing-server model IDs with unambiguous filesystem markers fail closed without display, logging, or copy; an interior `/` alone remains valid for namespace-style IDs.
+- The narrow cross-surface display allowlist does not prevent Lab from owning and rendering its executable/GGUF selection, PID, expert configuration, redacted command/arguments, or bounded sanitized diagnostics.
 - Existing explicit user endpoints remain authoritative; the canonical `8080` choice applies only when no explicit or configured value exists.
 - Keep this contract llama.cpp-specific until TASK-31201 proves it; do not introduce a universal local-runtime framework.
 
@@ -96,6 +99,7 @@ In Context, cite the exact current divergence:
 - configured provider and local discovery default: `8080` in `config.py` and `local_server_discovery.py`.
 - Console direct-path fallback: `9099` in `console_session_settings.py`.
 - subprocess liveness currently drives running presentation while stdout and stderr are discarded.
+- the Lab command builder supplies `--model` without a reserved `--alias`, so llama.cpp's default `/v1/models` ID is the selected filesystem path.
 - Console detected-server adoption already has safe session application and configured-endpoint preservation, but its default-persistence behavior is not the Lab handoff contract.
 - TASK-16473 already requires a warning when an active Console endpoint will not survive restart; Lab handoff must retain that session-only truth rather than imply persistence.
 - TASK-26837 records a provider-setup path that can report success without a durable `api_settings` entry; Make default must not inherit or normalize that false-success behavior.
@@ -108,7 +112,7 @@ Put this normative shape in the Decision section:
 LlamaCppConnectionTarget
   provider_key: canonical llama_cpp identity
   base_url: canonical credential-free persisted endpoint root
-  model_id: exact model ID returned by the verified endpoint
+  model_id: exact non-path-identifying model ID returned by the verified endpoint
   runtime_owner: lab_process | external_server
   verification_generation: process-local opaque generation
 ```
@@ -117,9 +121,13 @@ State explicitly:
 
 - `base_url` is produced by `resolve_provider_endpoint`; the descriptor never carries a chat-completions suffix.
 - `model_id` is endpoint-reported identity, not a GGUF path, managed artifact path, or filename-derived global identity.
+- every Lab-owned launch emits the stable reserved `--alias chatbook-llamacpp`, and readiness requires the endpoint to report that exact alias.
+- raw arguments reject every separated or equals-attached `-a` and `--alias` form so they cannot replace or duplicate the reserved alias.
+- existing-server IDs are rejected as path-identifying only for unambiguous filesystem markers: file URIs; absolute, explicit-relative, home-relative, drive-root, or UNC prefixes; backslashes; dot path segments; or a final `.gguf` component. An interior forward slash alone remains valid for `owner/model` identities.
+- a rejected existing-server ID fails before selector, descriptor, display, copy, log, or adoption and produces only generic recovery to configure `llama-server --alias`.
 - `runtime_owner` is informational lifecycle provenance, not authority for Console to stop a process.
 - `verification_generation` exists only to reject stale probes and is never persisted.
-- executable path, external GGUF path, managed store path, credentials, raw command, and raw log output remain Lab-owned and are excluded.
+- executable path, external GGUF path, and managed store path remain Lab-owned; credentials, raw command, and raw log output are excluded, with Lab retention/rendering governed by the narrow observability exception.
 
 - [ ] **Step 4: Define distinct lifecycle and product states**
 
@@ -156,7 +164,7 @@ Also record:
 
 - existing explicit `8001`, `9099`, LAN, HTTPS, and reverse-proxy-prefix endpoints remain valid and are not migrated or rewritten.
 - new Lab launch defaults to loopback `127.0.0.1:8080` only when the user has not supplied a value.
-- API ready requires a successful health-compatible probe and successful `/v1/models` response containing the selected exact model ID.
+- API ready requires a successful health-compatible probe and successful `/v1/models` response containing the selected exact admissible model ID: the reserved alias for a Lab-owned launch or an accepted non-path-identifying ID for an existing server.
 - a user-entered existing-server check is an explicit, exact-endpoint exception to ADR-002's configured-provider-only discovery rule; it does not enable ambient LAN scanning or background remote discovery.
 - a port collision may offer Connect to it only after that exact endpoint passes the llama.cpp-compatible health and model checks.
 
@@ -192,9 +200,11 @@ State that every probe and handoff carries the exact verification generation. Ca
 
 Define observability:
 
-- UI may show the canonical credential-free endpoint, endpoint-reported model ID, coarse lifecycle state, and bounded failure category.
+- the narrow display allowlist applies to cross-surface UI, Console, app-global metadata, and application/unrestricted logs: canonical provider identity and credential-free endpoint, accepted endpoint model ID, coarse lifecycle state, and bounded failure category.
+- Lab may retain/render its own executable/GGUF selections, PID, expert configuration, redacted command/arguments, and bounded sanitized runtime diagnostics; user-entered arguments appear only in their owning editor and derived presentations are redacted.
 - app-global state and logs must not retain raw executable/model paths, credentials, raw command arguments, or unbounded process output.
-- TASK-31206 may add bounded sanitized diagnostics within Lab, but those diagnostics do not enter the handoff descriptor.
+- TASK-31206 diagnostics and copy remain bounded, sanitized, and Lab-local; they do not enter the handoff descriptor, Console, conversation metadata, app-global metadata, or application logs.
+- rejected path-identifying endpoint IDs are suppressed before every render, copy, or log projection.
 
 Rollback rule: disable the new Lab handoff and fall back to existing Console Settings/discovery; retain existing explicit config and do not synthesize migrations.
 
@@ -216,7 +226,7 @@ Consequences must name the follow-on work: TASK-31201 implements the app-scoped 
 Run:
 
 ```bash
-rg -n 'LlamaCppConnectionTarget|127\.0\.0\.1:8080|Use in Console|Make default|process_alive|model_available|verification_generation|ADR-002|ADR-025|ADR-095|TASK-16473|TASK-16476|TASK-26837' backlog/decisions/114-llamacpp-lab-console-connection-authority.md
+rg -n -- 'LlamaCppConnectionTarget|127\.0\.0\.1:8080|--alias|path-identifying|Use in Console|Make default|process_alive|model_available|verification_generation|ADR-002|ADR-025|ADR-095|TASK-16473|TASK-16476|TASK-26837' backlog/decisions/114-llamacpp-lab-console-connection-authority.md
 ```
 
 Expected: every required term appears in its normative section; no requirement relies only on the Context narrative.
@@ -319,6 +329,12 @@ git commit -m "docs: link llama.cpp handoff contract"
 
 - [ ] **Step 1: Add the follow-on verification matrix to ADR-114**
 
+Before the matrix, require future launch-construction tests for exact reserved-alias
+emission and raw-argument override prevention. Require existing-server tests that
+reject path-identifying IDs before selector, descriptor, display, copy, log, or
+adoption; prove the rejected sentinel is absent from every projection; and accept an
+ordinary namespace ID containing one forward slash.
+
 The `## Verification obligations` table must contain these rows:
 
 | Contract | Required future evidence |
@@ -346,7 +362,7 @@ Expected mapping:
 1. Descriptor and default policy: Decision plus Default and compatibility policy.
 2. Six distinct truth states: Ownership and state transitions.
 3. Four explicit actions and no silent overwrite: action table.
-4. Cross-surface privacy: Privacy and observability boundary.
+4. Cross-surface privacy and the narrow Lab-owned diagnostics exception: Privacy and observability boundary.
 5. Existing ADR/task reconciliation: Context, Decision, and Links.
 6. Sequence, settlement, observability, verification: Ownership, Privacy, Rollback, and Verification obligations.
 
@@ -391,7 +407,7 @@ Use Backlog.md:
 backlog task edit 31200 \
   --check-ac 1 --check-ac 2 --check-ac 3 \
   --check-ac 4 --check-ac 5 --check-ac 6 \
-  --notes "Accepted ADR-114 to separate llama.cpp process ownership, HTTP and model readiness, active Console adoption, and explicit provider-default persistence. Selected the absent-value loopback default at port 8080, defined the sanitized generation-fenced handoff target, preserved ADR-025 GGUF authority and ADR-095 settings ownership, and linked the verification obligations for TASK-31201 through TASK-31206. Modified the canonical ADR index, handoff wireframe, plan, and TASK-31200 metadata; no production code or tests changed." \
+  --notes "Accepted ADR-114 to separate llama.cpp process ownership, HTTP and model readiness, active Console adoption, and explicit provider-default persistence. Selected the absent-value loopback default at port 8080, reserved a stable path-independent alias for Lab launches, made path-identifying existing-server model IDs fail closed, and scoped the cross-surface privacy allowlist while preserving bounded Lab-local diagnostics. Preserved ADR-025 GGUF authority and ADR-095 settings ownership and linked the verification obligations for TASK-31201 through TASK-31206. Modified the canonical ADR index, handoff wireframe, plan, and TASK-31200 metadata; no production code or tests changed." \
   --plain
 ```
 
@@ -422,8 +438,9 @@ git commit -m "docs: accept llama.cpp connection contract"
 Run:
 
 ```bash
-git diff --check HEAD~3..HEAD
-git diff --name-only HEAD~3..HEAD
+base_sha=$(git merge-base origin/dev HEAD)
+git diff --check "$base_sha..HEAD"
+git diff --name-only "$base_sha..HEAD"
 ```
 
 Expected changed paths are limited to ADR-114, the decisions index, the handoff wireframe, this plan, and TASK-31200. No Python, TCSS, TOML, schema, migration, test, or generated CSS file may appear.

@@ -55,6 +55,7 @@ Behavior:
 - Find a model opens Remote and preserves return intent for the exact llama.cpp setup.
 - Start & check preflights the executable, model, and endpoint; it becomes available only when the adjacent reason is satisfied.
 - Expert launch settings contains host binding, port override, context/hardware presets, raw arguments, and command preview.
+- Every Lab-owned start reserves the stable API model alias `chatbook-llamacpp`; expert arguments cannot replace or duplicate it.
 
 ## First-run — connect to an existing server
 
@@ -67,7 +68,7 @@ Behavior:
 │                [ http://127.0.0.1:8080_____________________ ] [ Check ]         │
 │                                                                                 │
 │                Checking…  Health endpoint reached                              │
-│                Model       [ gemma-3-4b-it-q4_k_m.gguf              ▾ ]         │
+│                Model       [ community/gemma-3-4b-it                 ▾ ]         │
 │                                                                                 │
 │                This changes the current Console session only.                   │
 │                Your saved endpoint remains unchanged.                           │
@@ -78,6 +79,11 @@ Behavior:
 
 This path never asks for a local executable or GGUF path.
 
+An existing server that exposes a filesystem- or GGUF-path model ID fails before the
+ID is offered or copied. Recovery says to configure `llama-server --alias` and check
+again without echoing the rejected value. A forward slash by itself remains valid
+for namespace-style model IDs such as `community/gemma-3-4b-it`.
+
 ## Verified handoff
 
 ```text
@@ -85,7 +91,7 @@ This path never asks for a local executable or GGUF path.
 │                llama.cpp is ready for Chatbook                                │
 │                                                                                │
 │                Endpoint     http://127.0.0.1:8080                              │
-│                Model        gemma-3-4b-it-q4_k_m.gguf                         │
+│                Model        chatbook-llamacpp                                  │
 │                Runtime      Local process · PID 4812                           │
 │                Health       API healthy · model available                      │
 │                Console      Not connected                                      │
@@ -99,7 +105,7 @@ This path never asks for a local executable or GGUF path.
                               ↓ Use in Console
 
 ┌ CONSOLE ─ New chat                                      llama.cpp · Connected ┐
-│ Model: gemma-3-4b-it-q4_k_m.gguf                                           [⌄] │
+│ Model: chatbook-llamacpp                                                   [⌄] │
 │ Endpoint: 127.0.0.1:8080 · Session only                                      │
 │                                                                                │
 │ Try a message to verify generation.                                            │
@@ -170,6 +176,8 @@ The provider catalog and Inspector collapse before the setup column. Nothing rel
 - Do not auto-start a runtime on app launch.
 - Do not auto-persist discovered endpoints or models.
 - Do not copy executable or GGUF paths into Console session metadata.
+- Do not project Lab-owned executable/GGUF selection, PID, expert arguments, command preview, or diagnostics into the handoff descriptor, Console, conversation metadata, or app-global metadata.
+- Do not display, log, or copy a rejected path-identifying endpoint model ID; show generic `--alias` recovery instead.
 - Do not generalize the first implementation into a universal local-server framework before the llama.cpp contract is proven.
 - Do not expose unbounded or unsanitized subprocess output.
 

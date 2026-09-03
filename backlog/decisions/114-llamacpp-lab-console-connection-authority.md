@@ -14,7 +14,7 @@ process-local descriptor:
 LlamaCppConnectionTarget
   provider_key: canonical llama_cpp identity
   base_url: canonical credential-free persisted endpoint root
-  model_id: exact model ID returned by the verified endpoint
+  model_id: exact non-path-identifying model ID returned by the verified endpoint
   runtime_owner: lab_process | external_server
   verification_generation: process-local opaque generation
 ```
@@ -24,8 +24,35 @@ a chat-completions suffix. `model_id` is endpoint-reported identity, not a GGUF
 path, managed artifact path, or filename-derived global identity. `runtime_owner`
 is informational lifecycle provenance, not authority for Console to stop a process.
 `verification_generation` exists only to reject stale probes and is never persisted.
-Executable paths, external GGUF paths, managed store paths, credentials, raw
-commands, and raw log output remain Lab-owned and are excluded from the descriptor.
+Executable paths, external GGUF paths, and managed store paths remain Lab-owned.
+Credentials, raw commands, and raw log output are also excluded from the descriptor;
+the Privacy and observability boundary below governs what Lab may retain or render.
+
+For every Lab-owned llama.cpp launch, Chatbook reserves the stable model alias
+`chatbook-llamacpp`. The launch builder emits exactly one
+`--alias chatbook-llamacpp`; the value is never derived from the selected GGUF path
+or filename. Expert/raw arguments cannot supply any `-a` or `--alias` option,
+including `-a=...` and `--alias=...` attached-value forms; they cannot replace the
+reserved value or add another model alias. A Lab-owned endpoint is model-ready only
+when `/v1/models` reports that exact reserved alias.
+
+For an existing server, Chatbook preserves an accepted selected model ID exactly,
+but first classifies it without publishing it. An ID is path-identifying only when
+its raw text, viewed with surrounding ASCII whitespace removed for classification,
+has an unambiguous filesystem marker: a case-insensitive `file:` URI; a POSIX
+absolute, explicit relative, or home-relative prefix (`/`, `./`, `../`, or `~/`); a
+Windows drive-root prefix such as `C:\` or `C:/`; a UNC prefix (`\\` or `//`);
+any backslash path separator; a `.` or `..` path segment; or a final path
+component ending in `.gguf` case-insensitively. An interior forward slash alone is
+not path-identifying, so ordinary namespace-style IDs such as `owner/model` remain
+valid.
+
+A path-identifying candidate never enters a model selector, descriptor, handoff,
+display, copy payload, or log. If the selected existing-server identity is
+path-identifying, verification fails closed before descriptor creation or adoption
+and shows only a bounded recovery message directing the user to restart or configure
+`llama-server` with a non-path `--alias`, then check again. The rejected value is
+never interpolated into that message.
 
 The descriptor uses `canonical_connection_identity` wherever a provider and endpoint
 must be compared. Its GGUF boundary remains governed by ADR-025: managed artifacts
@@ -44,9 +71,11 @@ Product state: not_configured | checking | starting | loading_model | api_ready 
 
 `process_alive` alone may project to `starting` or `loading_model`; it can never
 project to `api_ready`. API ready requires both a successful health-compatible probe
-and a successful `/v1/models` response containing the selected exact model ID. A
-port collision may offer **Connect to it** only after that exact endpoint passes the
-same llama.cpp-compatible health and model checks.
+and a successful `/v1/models` response containing the selected exact admissible
+model ID: the reserved alias for a Lab-owned launch or the non-path-identifying exact
+ID selected from an existing server. A port collision may offer **Connect to it**
+only after that exact endpoint passes the same llama.cpp-compatible health and model
+checks.
 
 Every probe and handoff carries the exact `verification_generation`. Cancellation,
 process death, target edit, model change, screen recomposition, or a newer probe
@@ -61,6 +90,12 @@ discovery defaults use port `8080` in `config.py` and `local_server_discovery.py
 and the Console direct-path fallback is port `9099` in
 `console_session_settings.py`. This makes the same absent user value resolve to
 different servers depending on the entry point.
+
+The current Lab command builder supplies the selected file through `--model` but
+does not force an alias. llama.cpp consequently reports that model path as the
+default `/v1/models` ID; its documented `--alias` option replaces the API identity.
+Without a reserved alias, requiring an exact endpoint-reported ID would copy the
+very filesystem identity this descriptor prohibits.
 
 Subprocess liveness currently drives the running presentation while stdout and
 stderr are discarded. A live process therefore supplies no evidence that the API is
@@ -164,15 +199,25 @@ durable change remains an explicit Settings action under ADR-002 and this decisi
 
 ## Privacy and observability boundary
 
-The UI may show only the canonical credential-free endpoint, endpoint-reported model
-ID, coarse lifecycle state, and a bounded failure category. App-global state and
-logs must not retain raw executable or model paths, credentials, raw command
-arguments, or unbounded process output. Query strings and fragments never enter
-`LlamaCppConnectionTarget` or Console conversation metadata.
+The narrow display allowlist governs every projection out of Lab into cross-surface
+UI, Console, app-global metadata, or application/unrestricted logs. Those projections
+may carry or show only canonical provider identity, the canonical credential-free
+endpoint, an accepted endpoint-reported model ID, coarse lifecycle state, and a
+bounded failure category. App-global state and logs must not retain raw executable
+or model paths, credentials, raw command arguments, or unbounded process output.
+Query strings and fragments never enter `LlamaCppConnectionTarget` or Console
+conversation metadata.
 
-TASK-31206 may add bounded, sanitized diagnostics within Lab. Those diagnostics
-remain Lab-local and do not enter `LlamaCppConnectionTarget`, Console conversation
-metadata, app-global connection state, or unrestricted logs.
+Lab itself may retain and render its surface-owned executable and GGUF selections,
+the owned process PID, and expert launch configuration. User-entered arguments may
+appear in their owning editor; every derived command or argument presentation is
+redacted. TASK-31206 may add a bounded, sanitized runtime diagnostic tail and
+sanitized copy action within Lab. The same bound and redaction apply before render or
+copy, including suppression of any rejected endpoint model ID.
+
+These Lab-local details never enter `LlamaCppConnectionTarget`, Console, active
+session or conversation metadata, app-global connection metadata, or application
+logs. Lab's bounded diagnostic buffer is not an unrestricted application log sink.
 
 ## Alternatives Considered
 
@@ -201,6 +246,8 @@ metadata, app-global connection state, or unrestricted logs.
   absent values, so no endpoint migration or synthesized configuration is required.
 - Readiness now requires network evidence and exact model identity, adding probe,
   cancellation, and stale-result handling to the local launch workflow.
+- Lab-owned launches now carry one stable Chatbook-reserved model alias, while an
+  existing server must expose a non-path-identifying model ID before handoff.
 
 ## Rollback plan
 
@@ -228,9 +275,18 @@ stop unrelated processes, alter active Console sessions, or rewrite defaults.
 - Persistence tests must prove **Make default** reports success only after the
   normalized endpoint exists in the durable `api_settings` layer consumed on
   restart, while preserving TASK-16473, TASK-16476, and TASK-26837 protections.
+- Lab launch-construction tests must prove starts and restarts using distinct GGUF
+  paths each emit exactly one `--alias chatbook-llamacpp`, and that separated and
+  equals-attached `-a` and `--alias` raw-argument forms are rejected before they can
+  replace or duplicate it.
+- Existing-server tests must prove path-identifying IDs fail closed before selector,
+  descriptor, display, copy, log, or adoption; the recovery names `--alias` without
+  echoing a sentinel path. The same tests must accept ordinary namespace-style IDs
+  such as `owner/model` and preserve accepted IDs exactly.
 - Privacy tests must prove the descriptor, app-global state, logs, and Console
   metadata exclude executable/model paths, credentials, raw commands, and unbounded
-  process output. They must also prove that query strings and fragments never enter
+  process output while Lab retains only its explicitly permitted bounded local
+  diagnostics. They must also prove that query strings and fragments never enter
   `LlamaCppConnectionTarget` or Console conversation metadata.
 
 | Contract | Required future evidence |
@@ -252,3 +308,4 @@ stop unrelated processes, alter active Console sessions, or rewrite defaults.
 - [TASK-16473: Warn when a Console endpoint will not survive restart](../tasks/task-16473%20-%20Console-warn-when-a-saved-provider-endpoint-will-not-survive-restart.md)
 - [TASK-16476: Preserve a configured endpoint during server adoption](../tasks/task-16476%20-%20Console-server-adoption-must-not-clobber-a-configured-endpoint.md)
 - [TASK-26837: Provider setup can omit durable API settings](../tasks/task-26837%20-%20Provider-setup-can-report-a-successful-connection-test-yet-write-no-api_settings-block.md)
+- [llama.cpp HTTP server README: model IDs and `--alias`](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#get-v1models-openai-compatible-model-info-api)
