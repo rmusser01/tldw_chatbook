@@ -21,7 +21,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from textual.widgets import DataTable, TabbedContent
+from textual.widgets import Button, DataTable, TabbedContent
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.schedules_test_helpers import rendered_row_cells
@@ -667,6 +667,47 @@ async def test_mark_all_read_fans_out_per_row(results_db):
         assert db.get_automation_result(r3)["review_state"] == "read"
         notifications = list(pilot.app._notifications)
         assert any("Marked 2 result" in n.message for n in notifications)
+
+
+@pytest.mark.asyncio
+async def test_rail_mark_all_read_button_fans_out_without_switching_tabs(results_db):
+    """redesign PR-2, Task 3: unlike the `a` keybinding (Results-tab-only,
+    see `test_results_actions_refuse_off_the_results_tab`), the rail's
+    `Mark all read` button on the Queue tab reuses the SAME per-row
+    fan-out (`_dispatch_mark_all_results_read`) without a tab switch
+    first, then refreshes the Queue's own unread dots so the button hides
+    itself again once nothing is unread."""
+    db = results_db
+    definition_id = _seed_definition(db)
+    r1 = _seed_result(db, definition_id=definition_id, dedupe_key="d1")
+    r2 = _seed_result(db, definition_id=definition_id, dedupe_key="d2")
+
+    app = ResultsWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = pilot.app.screen
+
+        # Still on the Queue tab -- the `a` keybinding would refuse here.
+        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
+        assert tabs.active == "scheduling-queue-tab"
+
+        button = workbench.query_one("#scheduling-mark-all-read", Button)
+        assert button.display is True
+
+        button.press()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert db.get_automation_result(r1)["review_state"] == "read"
+        assert db.get_automation_result(r2)["review_state"] == "read"
+        notifications = list(pilot.app._notifications)
+        assert any("Marked 2 result" in n.message for n in notifications)
+
+        assert button.display is False
 
 
 @pytest.mark.asyncio

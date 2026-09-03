@@ -408,12 +408,6 @@ class SchedulesWorkbench(BaseAppScreen):
                 id="scheduling-recovery",
             )
         with Vertical(id="schedules-shell"):
-            yield SyncStatusWidget(
-                id="scheduling-sync-status",
-                current_owner=owner_id,
-                active_server_id=active_server_id,
-                server_available=server_available,
-            )
             # TASK-26025: scheduler liveness -- a stale heartbeat reads
             # distinctly from an empty queue and a never-started loop.
             yield Static("", id="scheduling-liveness")
@@ -421,6 +415,14 @@ class SchedulesWorkbench(BaseAppScreen):
                 with TabPane("Queue", id="scheduling-queue-tab"):
                     with Horizontal(id="scheduling-workbench"):
                         with Vertical(id="scheduling-list-pane"):
+                            # redesign PR-2, Task 3: the rail header --
+                            # `Create ▾` is the pre-existing 2-choice
+                            # chooser button (`scheduling-new-task`,
+                            # unchanged id/handler, relabeled/repositioned
+                            # here); `Mark all read` is new, and only shown
+                            # once `_update_mark_all_read_visibility` finds
+                            # unread rows (default hidden below, mirrors
+                            # `SyncStatusWidget`'s own Clear-button idiom).
                             with Horizontal(id="scheduling-list-header"):
                                 yield Static(
                                     "Schedule Queue",
@@ -428,10 +430,15 @@ class SchedulesWorkbench(BaseAppScreen):
                                     classes="scheduling-column-title",
                                 )
                                 yield Button(
-                                    "+ New",
+                                    "Create ▾",
                                     id="scheduling-new-task",
                                     variant="primary",
                                     tooltip="Schedule a new task (c).",
+                                )
+                                yield Button(
+                                    "Mark all read",
+                                    id="scheduling-mark-all-read",
+                                    tooltip="Mark every unread automation result read (a).",
                                 )
                             # redesign PR-2, Task 2: the chip row (spec S3)
                             # -- one of the four buttons always carries
@@ -529,6 +536,29 @@ class SchedulesWorkbench(BaseAppScreen):
                     )
                 with TabPane("Results", id="scheduling-results-tab"):
                     yield ResultsTab(id="scheduling-results")
+            # redesign PR-2, Task 3: the bottom status strip (plan ruling
+            # 4) -- shared across every tab (not Queue-specific, so it
+            # sits below the TabbedContent rather than inside one
+            # TabPane), hosting the existing `SyncStatusWidget` (owner
+            # indicator + sync health, now with a width-compact styling
+            # path -- see `_sync_responsive_workbench`) and a conflicts
+            # badge chip that switches to the Conflicts tab.
+            with Horizontal(id="scheduling-status-strip"):
+                yield SyncStatusWidget(
+                    id="scheduling-sync-status",
+                    current_owner=owner_id,
+                    active_server_id=active_server_id,
+                    server_available=server_available,
+                )
+                yield Button(
+                    "Conflicts",
+                    id="scheduling-conflicts-badge",
+                    classes="scheduling-queue-chip",
+                    tooltip=(
+                        "Sync conflicts for the current owner's scheduled "
+                        "tasks only. Click to open the Conflicts tab."
+                    ),
+                )
 
     def _service(self) -> "SchedulingService | None":
         """Return the app's scheduling service, if available."""
@@ -548,6 +578,10 @@ class SchedulesWorkbench(BaseAppScreen):
         self._refresh_owner_select()
         self._refresh_conflicts_tab()
         self._refresh_results_tab()
+        # redesign PR-2, Task 3: hidden until `load_tasks` finds unread
+        # rows (mirrors `SyncStatusWidget`'s own Clear-button idiom of
+        # starting hidden rather than flashing visible-then-hidden).
+        self.query_one("#scheduling-mark-all-read", Button).display = False
         # redesign PR-2, Task 2: glyph/title/subtitle (spec S4) replaces
         # the old Title/Type/Status/Next-Run shape -- a single primitive's
         # column set no longer fits a mixed reminder+definition list.
@@ -892,10 +926,18 @@ class SchedulesWorkbench(BaseAppScreen):
 
     def _sync_responsive_workbench(self) -> None:
         """Keep the primary queue and detail action visible at narrow widths."""
-        self.set_class(
-            self.size.width <= SCHEDULES_COMPACT_WORKBENCH_MAX_WIDTH,
-            "schedules-workbench-compact",
-        )
+        compact = self.size.width <= SCHEDULES_COMPACT_WORKBENCH_MAX_WIDTH
+        self.set_class(compact, "schedules-workbench-compact")
+        # redesign PR-2, Task 3: the strip's own width-triggered compact
+        # path -- additive, independent of `_apply_collapse`'s owner/
+        # server-based collapse; reuses this same threshold rather than
+        # inventing a second one.
+        try:
+            self.query_one("#scheduling-sync-status", SyncStatusWidget).set_compact(
+                compact
+            )
+        except Exception:  # noqa: BLE001 - not mounted yet
+            pass
 
     def _request_tasks_refresh(self, *, refresh_definitions: bool = True) -> None:
         """Schedule the task loader through its exclusive worker group.
@@ -928,6 +970,18 @@ class SchedulesWorkbench(BaseAppScreen):
         of re-fetching them (redesign PR-2 Task 2 review, finding 3).
         """
         return [row.source_row for row in self._all_rows if row.kind == "definition"]
+
+    def _update_mark_all_read_visibility(self) -> None:
+        """Rail `Mark all read` visibility (redesign PR-2, Task 3): shown
+        only when the unified rows carry unread automation results in
+        total. `UnifiedRow.unread_count` is always 0 for a reminder row
+        (reminders never produce results) so this sum is effectively the
+        definitions' own unread total -- no separate query."""
+        try:
+            button = self.query_one("#scheduling-mark-all-read", Button)
+        except Exception:  # noqa: BLE001 - not mounted yet
+            return
+        button.display = sum(row.unread_count for row in self._all_rows) > 0
 
     @on(TabbedContent.TabActivated, pane="#scheduling-queue-tab")
     def _on_queue_tab_activated(self, event: TabbedContent.TabActivated) -> None:
@@ -1000,6 +1054,7 @@ class SchedulesWorkbench(BaseAppScreen):
             )
             self._tasks = []
             self._all_rows = []
+            self._update_mark_all_read_visibility()
             table = self.query_one("#scheduling-task-table", DataTable)
             table.clear()
             self.query_one("#scheduling-task-detail", TaskDetail).set_task(
@@ -1018,6 +1073,7 @@ class SchedulesWorkbench(BaseAppScreen):
         # linger as an invisible mark a bulk verb would act on.
         self._marked_ids.intersection_update({task.id for task in self._tasks})
         self._all_rows = all_rows
+        self._update_mark_all_read_visibility()
         self._render_table()
         await self._refresh_console_context()
 
@@ -1745,6 +1801,23 @@ class SchedulesWorkbench(BaseAppScreen):
     def _on_new_automation_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self.action_create_automation()
+
+    @on(Button.Pressed, "#scheduling-mark-all-read")
+    def _on_mark_all_read_pressed(self, event: Button.Pressed) -> None:
+        """Rail `Mark all read` (redesign PR-2, Task 3) -- reachable from
+        the Queue tab, unlike the `a` keybinding which requires the
+        Results tab active."""
+        event.stop()
+        self._rail_mark_all_read()
+
+    @on(Button.Pressed, "#scheduling-conflicts-badge")
+    def _on_conflicts_badge_pressed(self, event: Button.Pressed) -> None:
+        """Status-strip conflicts badge (redesign PR-2, Task 3, plan
+        ruling 4) -- switches to the Conflicts tab, no overlay."""
+        event.stop()
+        self.query_one("#scheduling-tabs", TabbedContent).active = (
+            "scheduling-conflicts-tab"
+        )
 
     @on(Button.Pressed, "#schedules-follow-in-console")
     def follow_latest_schedule_run_in_console(self, event: Button.Pressed) -> None:
@@ -3259,11 +3332,42 @@ class SchedulesWorkbench(BaseAppScreen):
             _mark_solved, exclusive=True, group="schedules-mark-solved"
         )  # type: ignore[arg-type]
 
+    def _unread_result_ids(self) -> list[str]:
+        """Currently-loaded unread result ids, Results-tab's own listing
+        (already refreshed independently of which tab is active)."""
+        results_tab = self.query_one("#scheduling-results", ResultsTab)
+        return [
+            result["id"]
+            for result in results_tab.results()
+            if result.get("review_state") == "unread"
+        ]
+
+    async def _dispatch_mark_all_results_read(
+        self, service: "SchedulingService", unread_ids: list[str]
+    ) -> None:
+        """Per-row `review_automation_result` fan-out for a batch of
+        result ids -- there is no bulk DB primitive for this (spec's
+        documented fan-out, mirroring `_on_bulk_delete_confirmed`'s
+        loop-and-count shape). Shared by the Results tab's `a` keybinding
+        and the rail's `Mark all read` button (redesign PR-2, Task 3).
+        """
+        errors = 0
+        for result_id in unread_ids:
+            if not await service.review_automation_result(result_id, "read"):
+                errors += 1
+        count = len(unread_ids) - errors
+        self.app_instance.notify(
+            f"Marked {count} result{'s' if count != 1 else ''} read"
+            + (f" ({errors} failed)" if errors else "")
+            + ".",
+            severity="information" if not errors else "warning",
+        )
+        self._refresh_results_tab()
+
     def action_mark_all_results_read(self) -> None:
         """a key: mark every currently-loaded unread result read,
-        Results-tab only. Per-row `review_automation_result` calls -- there
-        is no bulk DB primitive for this (spec's documented fan-out),
-        mirroring `_on_bulk_delete_confirmed`'s loop-and-count shape.
+        Results-tab only (the rail's `Mark all read` button reaches the
+        same fan-out from the Queue tab, see `_rail_mark_all_read`).
         """
         if not self._is_results_tab_active():
             self.app_instance.notify(
@@ -3277,29 +3381,43 @@ class SchedulesWorkbench(BaseAppScreen):
                 "Scheduling service is unavailable.", severity="warning"
             )
             return
-        results_tab = self.query_one("#scheduling-results", ResultsTab)
-        unread_ids = [
-            result["id"]
-            for result in results_tab.results()
-            if result.get("review_state") == "unread"
-        ]
+        unread_ids = self._unread_result_ids()
         if not unread_ids:
             self.app_instance.notify("Nothing unread.", severity="information")
             return
 
         async def _mark_all() -> None:
-            errors = 0
-            for result_id in unread_ids:
-                if not await service.review_automation_result(result_id, "read"):
-                    errors += 1
-            count = len(unread_ids) - errors
+            await self._dispatch_mark_all_results_read(service, unread_ids)
+
+        self.run_worker(
+            _mark_all, exclusive=True, group="schedules-mark-all-read"
+        )  # type: ignore[arg-type]
+
+    def _rail_mark_all_read(self) -> None:
+        """Rail `Mark all read` (redesign PR-2, Task 3): reuses the exact
+        same per-row fan-out as the `a` keybinding above, but reachable
+        without switching to the Results tab first -- the whole point of
+        a rail-level affordance for it. Also refreshes the Queue's own
+        unified rows afterward so the per-row unread dots and this
+        button's own visibility drop immediately (`refresh_definitions=
+        False`: definitions did not change, only result review state
+        did -- results are always re-fetched regardless, same reminder-
+        only-refresh shape Task 2 review established).
+        """
+        service = self._service()
+        if service is None:
             self.app_instance.notify(
-                f"Marked {count} result{'s' if count != 1 else ''} read"
-                + (f" ({errors} failed)" if errors else "")
-                + ".",
-                severity="information" if not errors else "warning",
+                "Scheduling service is unavailable.", severity="warning"
             )
-            self._refresh_results_tab()
+            return
+        unread_ids = self._unread_result_ids()
+        if not unread_ids:
+            self.app_instance.notify("Nothing unread.", severity="information")
+            return
+
+        async def _mark_all() -> None:
+            await self._dispatch_mark_all_results_read(service, unread_ids)
+            self._request_tasks_refresh(refresh_definitions=False)
 
         self.run_worker(
             _mark_all, exclusive=True, group="schedules-mark-all-read"
@@ -3551,11 +3669,15 @@ class SchedulesWorkbench(BaseAppScreen):
             service.owner_id, primitive="reminder_task"
         )
         conflicts_tab.populate(conflicts)
+        label = f"Conflicts ({len(conflicts)})" if conflicts else "Conflicts"
         # Surface the conflict count on the tab label itself (UX-063).
-        self._set_tab_label(
-            "scheduling-conflicts-tab",
-            f"Conflicts ({len(conflicts)})" if conflicts else "Conflicts",
-        )
+        self._set_tab_label("scheduling-conflicts-tab", label)
+        # redesign PR-2, Task 3: same count, mirrored onto the status
+        # strip's badge (plan ruling 4) -- no new query.
+        try:
+            self.query_one("#scheduling-conflicts-badge", Button).label = label
+        except Exception:  # noqa: BLE001 - strip not mounted yet
+            pass
 
     def _set_tab_label(self, pane_id: str, label: str) -> None:
         """Relabel one tab in the workbench's `TabbedContent`.

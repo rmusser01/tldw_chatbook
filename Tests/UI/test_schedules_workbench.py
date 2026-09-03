@@ -10,7 +10,7 @@ import pytest
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
-from textual.widgets import Button, DataTable, Input, Select, Static
+from textual.widgets import Button, DataTable, Input, Select, Static, TabbedContent
 from textual.widgets._collapsible import CollapsibleTitle
 
 from tldw_chatbook.Scheduling.events import (
@@ -1527,3 +1527,152 @@ async def test_sync_strip_fields_do_not_abut():
         assert push.region.right < error.region.x, (
             f"push {push.region} abuts error {error.region}"
         )
+
+
+# --- redesign PR-2, Task 3: rail chrome + bottom status strip --------------
+
+
+def _definition_row(
+    def_id: str, *, name: str = "Digest", lifecycle: str = "configured"
+) -> dict:
+    return {
+        "id": def_id,
+        "server_id": None,
+        "owner_id": "local",
+        "name": name,
+        "lifecycle": lifecycle,
+        "schedule": {"kind": "one_time", "run_at": "2099-01-01T00:00:00+00:00"},
+        "input": {"question": "What changed?"},
+        "updated_at": "2026-08-01T00:00:00+00:00",
+    }
+
+
+class _RailService(_MockSchedulingServiceMixin):
+    """One definition, optionally carrying an unread result -- drives the
+    rail's `Mark all read` visibility (redesign PR-2, Task 3)."""
+
+    def __init__(self, *, unread: bool = False, conflicts: list | None = None) -> None:
+        self.owner_id = "local"
+        self.db = _MockSchedulingDB(
+            conflicts=conflicts,
+            automation_definitions=[_definition_row("def-1")],
+            automation_results=(
+                [
+                    {
+                        "id": "result-1",
+                        "definition_id": "def-1",
+                        "owner_id": "local",
+                        "review_state": "unread",
+                        "kind": "finding",
+                        "created_at": "2026-08-20T00:00:00+00:00",
+                    }
+                ]
+                if unread
+                else []
+            ),
+        )
+
+    async def list_tasks(self, owner_id=None, include_projections=True):
+        return []
+
+
+class _RailTestApp(ConsolidatedCSSApp):
+    def __init__(self, service: _RailService, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.scheduling_service = service
+
+
+@pytest.mark.asyncio
+async def test_mark_all_read_hidden_when_nothing_unread():
+    app = _RailTestApp(_RailService(unread=False))
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        button = pilot.app.screen.query_one("#scheduling-mark-all-read", Button)
+        assert button.display is False
+
+
+@pytest.mark.asyncio
+async def test_mark_all_read_visible_when_a_definition_has_unread_results():
+    """redesign PR-2, Task 3: the rail action is shown only once the
+    unified rows' total unread count is > 0 -- summed across
+    `UnifiedRow.unread_count`, not a new query."""
+    app = _RailTestApp(_RailService(unread=True))
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        button = pilot.app.screen.query_one("#scheduling-mark-all-read", Button)
+        assert button.display is True
+
+
+@pytest.mark.asyncio
+async def test_conflicts_badge_shows_count_and_switches_to_conflicts_tab():
+    """redesign PR-2, Task 3, plan ruling 4: the status strip's conflicts
+    badge mirrors `_refresh_conflicts_tab`'s own existing count (no new
+    query) and switches to the Conflicts tab on click -- no overlay."""
+    app = _RailTestApp(
+        _RailService(conflicts=[{"id": "c1"}, {"id": "c2"}])
+    )
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+
+        badge = workbench.query_one("#scheduling-conflicts-badge", Button)
+        assert str(badge.label) == "Conflicts (2)"
+        assert "scheduled task" in str(badge.tooltip).lower()
+
+        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
+        assert tabs.active != "scheduling-conflicts-tab"
+
+        badge.press()
+        await pilot.pause()
+
+        assert tabs.active == "scheduling-conflicts-tab"
+
+
+@pytest.mark.asyncio
+async def test_conflicts_badge_defaults_to_no_count():
+    app = _RailTestApp(_RailService())
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        badge = pilot.app.screen.query_one("#scheduling-conflicts-badge", Button)
+        assert str(badge.label) == "Conflicts"
+
+
+@pytest.mark.asyncio
+async def test_status_strip_sync_widget_is_compact_at_narrow_width():
+    """redesign PR-2, Task 3: the strip's width-triggered compact path --
+    the default (80, 24) test size is well under `SCHEDULES_COMPACT_
+    WORKBENCH_MAX_WIDTH` (120), so `_sync_responsive_workbench` (run at
+    `on_mount`) should already have applied it."""
+    app = _RailTestApp(_RailService())
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        sync_status = pilot.app.screen.query_one(
+            "#scheduling-sync-status", SyncStatusWidget
+        )
+        assert "compact" in sync_status.classes
+
+
+@pytest.mark.asyncio
+async def test_status_strip_sync_widget_is_not_compact_at_wide_width():
+    app = _RailTestApp(_RailService())
+    async with app.run_test(size=(200, 40)) as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        sync_status = pilot.app.screen.query_one(
+            "#scheduling-sync-status", SyncStatusWidget
+        )
+        assert "compact" not in sync_status.classes
