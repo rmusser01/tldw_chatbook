@@ -261,7 +261,19 @@ surfaces.
 Clicking Move opens a confirmation listing anything worth knowing before
 you commit: an imminent or already-passed one-time run time ("server
 behavior this close to run time is unverified"), and, for a reminder,
-that its per-run timeout is local-only and will not transfer. Confirming
+that its per-run timeout is local-only and will not transfer.
+
+What the server actually does with an already-passed one-time run was
+measured on 2026-09-02: it **accepts the transfer and parks the task
+disabled** — no catch-up run, no error, no rejection — and leaves it
+that way. This screen mirrors it as a Disabled row carrying the
+missed-while-away marker. The warning above is still worth reading,
+because a run time only *seconds* away is a different race, but an
+overdue one-time reminder does not fire twice by being moved. (Note the
+device keeps ownership until the server accepts, so an overdue task will
+usually have already fired here first.)
+
+Confirming
 a **local → server** move only queues it — the task keeps running on
 this device until the server actually accepts the transfer, the toast
 says so, and the queue row shows "(Moving to server…)" for as long as
@@ -356,6 +368,15 @@ device" automation shows up here immediately (the tab refreshes after
 every save). With no server connected the tab shows local automations
 alone instead of an empty list.
 
+> **Known gap (live verification, 2026-09-02).** The `[<server id>]` half
+> of that prefix does not reach the screen: the table's text formatter
+> reads a leading `[http…]` as styling markup and drops it, so a server
+> row shows its name with no prefix while local rows still show
+> `[This device]`. The pane's count line underneath ("1 automation on the
+> server. 1 on this device.") stays correct and is the reliable reading.
+> Ownership *routing* is unaffected — **r** does dispatch a server
+> automation on the server, and **m** does move it here.
+
 Press **r** on a highlighted definition to run it immediately — a real
 dispatch, not a preview, routed by that row's own owner. A local
 automation runs through the same claim/spawn machinery the scheduler's
@@ -445,6 +466,15 @@ refuses honestly ("…this action requires a server connection") rather
 than silently queuing something that might already be stale by the time
 it would send.
 
+> **Known gap (live verification, 2026-09-02).** That same "requires a
+> server connection" wording is currently used for *every* server-side
+> refusal that is not a policy denial — including a definite one like
+> "this definition is archived", which the server reports as
+> non-retryable. So a connected session can be told to check its network
+> when the real reason is something the server already explained. If the
+> action refuses while everything else on the screen is syncing normally,
+> the connection is not the problem; check the automation's lifecycle.
+
 ## Execution timeouts
 
 A scheduled task's handler is bounded: if it is still running after its
@@ -470,15 +500,22 @@ server owner; server-owned results syncing down as unread with the
 kind/owner/created/review-state columns and the answer/evidence/review
 detail pane; `r` marking a result read and that read reaching the server
 (`review_state: read` + `reviewed_at`); and the Results tab refreshing
-on a server finish notification with no `s` pressed. Not verified in
-that run: reminder transfer round-trips, including the past-`run_at`
-one-time case — the create form could not be driven to Save. The three defects that
-run found — every server automation reading as `[This device]` (and the
-`r`/`m` refusals that followed from it), the inert Results/Conflicts
+on a server finish notification with no `s` pressed. The three defects
+that run found — every server automation reading as `[This device]` (and
+the `r`/`m` refusals that followed from it), the inert Results/Conflicts
 unread badge, and mark-solved never becoming eligible for a synced
-result — were fixed in the same-day live-fix round; the fixes are pinned
-by tests but have NOT themselves been re-driven against a live server
-yet. Full record:
+result — were fixed the same day and **re-driven live in a second round**,
+which confirmed all three: `r` on a server automation now dispatches on
+the server, the badge renders "Results (2)" and drops to "Results (1)"
+after a read, and a result carrying the server's definition id now reads
+"Solve: eligible". Round 2 also cleared the legs round 1 could not
+reach — moving a server automation to this device (dormant → server
+archives its copy → armed → local run-now), a reminder round-trip whose
+`link_type`/`link_id` are visible server-side, and the past-`run_at`
+question: **the server accepts such a transfer and parks the task
+disabled** (`status: "disabled"`, `enabled: false`, no catch-up run),
+which this screen mirrors as a Disabled row. The two "Known gap"
+callouts above are what round 2 found. Full record:
 `.superpowers/sdd/plan-2026-09-02-schedules-handoff-pr6/task-6-report.md`
 and `live-fix-report.md` beside it.
 Supersedes the same-day PR-6 task

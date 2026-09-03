@@ -1788,3 +1788,74 @@ A test that asserts on the same attribute it set proves the assignment ran, noth
 more; the assertion has to read the rendered surface (or at minimum the widget the
 framework really renders from). And "the neighbouring feature does it this way" is
 a precedent for the *shape* of the code, never evidence that the shape works.
+
+---
+
+## A detached tmux session renders the app but never feeds it input — and that reads exactly like a hung app (schedules-handoff PR-6 task 6 round 2, 2026-09-02)
+
+**What happened.** Round 1 of the PR-6 live gate ended with a defect filed as "the UI froze after
+saving a reminder": the screen stopped repainting, no injected key or click had any effect, the process
+sat at 0% CPU while its background DB threads kept logging. It was recorded as uncharacterised because
+`py-spy dump` needs root on this machine. Round 2 reproduced it **at boot**, before any interaction,
+which made it diagnosable:
+
+1. **The app was never hung.** This app registers `SIGUSR2` for an on-demand all-threads dump
+   (`Logging_Config.py`, `faulthandler.register(..., all_threads=True)`) — non-destructive and needing
+   no privileges, unlike `SIGABRT` or `py-spy`. The dump showed the main thread idle in
+   `asyncio.base_events._run_once` → `selectors.select`, Textual's input thread parked in `select`
+   inside `linux_driver.run_input_thread`, and the `WriterThread` idle in `queue.get`. A healthy,
+   *idle* loop — not the output-queue deadlock that `Utils/fd_protection.py` documents.
+2. **The harness was the cause.** `tmux -L x new-session -d` with no client attached rendered the app
+   fine but delivered it nothing: `Ctrl+Q` was ignored, and writing SGR bytes straight to the pane's
+   `/dev/ttys018` was ignored too. A stock 15-line Textual app in the *same* tmux server, venv and
+   terminal answered an injected key immediately (`GOT KEY: z`), proving tmux, Textual and the OS were
+   fine. Starting a client — `tmux -L outer new-session -d 'tmux -L verify6b attach'` — made the very
+   next keypress land, and everything worked for the rest of the session. (Round 1 was also detached
+   and did work for ~25 minutes, so the delivery is flaky rather than absolutely broken, which is worse:
+   it fails partway through a session and looks like a regression in whatever you just did.)
+
+**What to do.** Attach a client before driving the TUI: run `tmux -L <inner> attach` inside a second
+tmux server. Before concluding "the app froze", send `SIGUSR2` and read
+`<profile>/faulthandler.log` — an idle `run_forever` frame means the app is waiting for input it never
+got, not deadlocked. And keep one trivial Textual app around as a harness control; it separates "our app
+is broken" from "the harness is not delivering" in under a minute.
+
+---
+
+## A placeholder that reads like a value turns a working button into a phantom defect (schedules-handoff PR-6 task 6 round 2, 2026-09-02)
+
+**What happened.** The reminder create form's Save button appeared inert across two rounds and roughly
+a dozen attempts — recomputed SGR coordinates, a preceding mouse-move event, `Enter` on the focused
+button, both "Runs on" values, all fields filled. It was nearly filed as a defect. It was working the
+whole time: the form was rejecting the submission with `Run At is required for one-time tasks`, because
+the `Run at` field *displays* `2026-08-28 09:00` as its **placeholder** — a string identical to the help
+text underneath it — so it looks populated while `.value` is empty. Typing a real value made the same
+click save instantly. The error line sits directly above the button row and was never in the
+`capture-pane | cut -c110-235` windows being used, so two rounds of captures showed a blank modal.
+
+**What to do.** When a control "does nothing", capture the WHOLE pane before concluding anything — an
+inline validation message is the single most likely explanation and it is usually rendered next to the
+control you are blaming. Read the handler (`_save`, `on_button_pressed`) and check what it validates
+before theorising about click delivery. And treat a placeholder that is indistinguishable from a real
+value as a finding in its own right: in a terminal there is no greyed-out affordance to tell them apart.
+
+---
+
+## The right escape function depends on the surface, not the app — and one widget can undo another's fix (schedules-handoff PR-6 task 6 round 2, 2026-09-02)
+
+**What happened.** A fix round replaced `rich.markup.escape` with an escape-every-`[` helper because the
+detail pane renders through `Content.from_markup`, which consumes ANY `[...]` token — that fix verified
+live. The same round explicitly scoped out the results **table**, whose cells go through
+`rich.text.Text.from_markup` (lowercase-initial tags only), on the grounds that the bracketed content it
+had seen (`[PR-6]`) survives there. Round 2 then found the Automations table silently eating the owner
+prefix it had just fixed the routing for: `automation_name_cell` emits
+`[http://127.0.0.1:8020] <name>`, and `http` starts with a lowercase letter, so `Text.from_markup`
+swallows the whole prefix. Local rows keep `[This device]` (capital T) and server rows show nothing —
+one pane where the count line says "1 automation on the server" and every row claims to be local. The
+pre-fix fixture value `server:42` would have been swallowed identically, so no fixture shape could have
+caught it either.
+
+**What to do.** Enumerate every widget a string reaches and the parser each one uses before deciding a
+string is safe; "this particular example survives" is not the same as "this surface is escaped". Be
+especially suspicious of generated prefixes — URLs, ids, scope labels — because whether they trip a
+markup parser depends on their first character, which is data, not code.
