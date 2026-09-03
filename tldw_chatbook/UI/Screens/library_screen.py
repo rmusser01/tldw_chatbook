@@ -42247,8 +42247,13 @@ class LibraryScreen(BaseAppScreen):
             decision = await self._push_review_set_picker(rows)
             if decision is None:
                 return
+            from tldw_chatbook.Widgets.Library.library_review_set_picker import (
+                PICKER_DISMISS,
+                PICKER_OPEN,
+            )
+
             action, set_id = decision
-            if action == "dismiss":
+            if action == PICKER_DISMISS:
                 await self._run_library_service_call(
                     service.dismiss, set_id, isolate_in_worker=True
                 )
@@ -42258,7 +42263,7 @@ class LibraryScreen(BaseAppScreen):
                 # after the set was gone (live-verified 2026-09-02).
                 self._sync_library_media_viewer_or_recompose()
                 return
-            if action != "open":
+            if action != PICKER_OPEN:
                 return
             landing = await self._run_library_service_call(
                 self._activate_review_set, set_id, isolate_in_worker=True
@@ -42346,6 +42351,11 @@ class LibraryScreen(BaseAppScreen):
         if review_set.completed_at is not None:
             service.reopen(set_id)
         service.activate(set_id)
+        if resolved != review_set.cursor:
+            # Persist the tombstone resolve (the walker does the same on
+            # resume) so a later restore of the deleted item cannot yank a
+            # subsequent resume back to the stale cursor (Qodo #2337).
+            service.set_cursor(set_id, resolved)
         return landing.backing_media_id
 
     def _focus_library_media_items_pane(self) -> None:

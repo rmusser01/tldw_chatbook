@@ -113,6 +113,29 @@ async def test_escape_cancels_with_none() -> None:
 
 
 @pytest.mark.asyncio
+async def test_many_rows_scroll_and_close_stays_reachable() -> None:
+    # Qodo #2337: rows must live in a scrolling region so a long set list
+    # cannot push lower rows and the Close action past the modal's height cap.
+    rows = [
+        (f"s{n}", f"Set {n}", "1 of 1 · 0 reviewed", False) for n in range(40)
+    ]
+    app = ModalHarness(rows)
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.show()
+        await pilot.pause()
+        modal = app.screen
+        scroll = modal.query_one("#library-review-set-picker-rows")
+        assert len(scroll.query(".library-review-set-row")) == 40
+        actions = modal.query_one("#library-review-set-picker-actions")
+        assert scroll not in actions.ancestors  # Close is outside the scroll
+
+        close = modal.query_one("#library-review-set-picker-close", Button)
+        close.press()
+        await pilot.pause()
+        assert app.results == [None]
+
+
+@pytest.mark.asyncio
 async def test_markup_in_set_names_renders_literally() -> None:
     # Set names derive from user search queries -- hostile markup must not
     # style the label or crash compose (home/library escape_markup lesson).

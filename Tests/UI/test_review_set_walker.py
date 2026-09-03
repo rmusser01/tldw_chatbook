@@ -462,6 +462,24 @@ async def test_picker_worker_open_reopens_a_completed_set(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_picker_worker_open_persists_a_resolved_tombstoned_cursor(tmp_path):
+    # Qodo #2337: the cursor sat on a tombstone; opening resolves to the next
+    # live item AND persists that position, so a later restore of the deleted
+    # item cannot yank a subsequent resume back to the stale cursor.
+    service = _service(tmp_path)
+    set_id = service.create_review_set(
+        "X", origin="browse", items=[(10, "A"), (11, "B")]
+    )
+    service.create_review_set("Other", origin="browse", items=[(20, "C")])
+    fake = _picker_fake(service, decision=("open", set_id), live_ids={11, 20})
+
+    await fake._review_set_picker_worker()
+
+    assert fake._opened == ["local:media:11"]
+    assert service.get_review_set(set_id).cursor == 1  # persisted resolve
+
+
+@pytest.mark.asyncio
 async def test_picker_worker_dismiss_soft_deletes_without_opening(tmp_path):
     service = _service(tmp_path)
     set_id = service.create_review_set("X", origin="browse", items=[(10, "A")])
