@@ -157,7 +157,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # accelerator keys, all genuinely new screen-owned code, landed on dev
     # while this PR was in flight. Measured on the merged tree: 43965/1282
     # -> 45439/1330.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 45439, 1330),
+    #: Re-measured 2026-09-03 at the second dev catch-up merge (Reader
+    #: review-set banner + distill work landed on dev inside the budgeted
+    #: file): 45439/1330 -> 45522/1331. Post-merge re-measure per the
+    #: wave-5 precedent; the decomposition's own trajectory remains down.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 45522, 1331),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide
