@@ -436,6 +436,19 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
             review_btn.display = not select_mode
             yield self._gate_stale_action(review_btn, "Review these")
+            # task-28243: "Sets" opens the saved review-set picker (resume /
+            # switch / dismiss). Read-only until a pick, so it needs no
+            # stale-page gate; hidden in select mode like the other
+            # list-level actions.
+            sets_btn = Button(
+                "Sets",
+                id="library-media-review-sets",
+                classes="library-canvas-action",
+                compact=True,
+                tooltip="Resume, switch, or dismiss saved review sets.",
+            )
+            sets_btn.display = not select_mode
+            yield sets_btn
             # Disable only when there's nothing to select AND we're not
             # already in select mode -- in select mode the button is "Done"
             # and must always be pressable so the user can exit even if the

@@ -324,6 +324,34 @@ def build_pinned_items(
     return items, truncated
 
 
+def build_picker_rows(
+    sets: "Iterable[ReviewSet]", is_live: IsLive
+) -> list[tuple[str, str, str, bool]]:
+    """Build the set-picker's display rows (task-28243).
+
+    Args:
+        sets: Review sets in display order (the service lists newest-activity
+            first).
+        is_live: Liveness predicate covering every backing id in ``sets``.
+
+    Returns:
+        ``(set_id, name, progress_label, active)`` per set, where
+        ``progress_label`` is :func:`format_review_progress` over the set's
+        live items.
+    """
+    return [
+        (
+            review_set.set_id,
+            review_set.name,
+            format_review_progress(
+                review_progress(review_set.items, review_set.cursor, is_live)
+            ),
+            review_set.active,
+        )
+        for review_set in sets
+    ]
+
+
 def is_empty(items: tuple[ReviewSetItem, ...], is_live: IsLive) -> bool:
     """True when the set has no live items (every pinned item is a tombstone).
 

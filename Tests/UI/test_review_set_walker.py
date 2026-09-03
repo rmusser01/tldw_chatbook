@@ -385,6 +385,137 @@ async def test_review_these_worker_notifies_on_failure(tmp_path):
     assert any(severity == "error" for _msg, severity in fake._notices)
 
 
+def _picker_fake(service, *, decision, live_ids=None):
+    """Fake screen for the set-picker worker (task-28243).
+
+    ``decision`` is what the (stubbed) modal resolves to; the real service,
+    row collector, and activation run against the tmp DB.
+    """
+    fake = _entry_fake(service)
+    fake._review_set_live_ids = (
+        (lambda ids: {int(i) for i in ids})
+        if live_ids is None
+        else (lambda ids: set(live_ids))
+    )
+
+    async def run_call(call, *args, isolate_in_worker=False, **kwargs):
+        result = call(*args, **kwargs)
+        return await result if hasattr(result, "__await__") else result
+
+    fake._run_library_service_call = run_call
+    pushed: list = []
+
+    async def push(rows):
+        pushed.append(rows)
+        return decision
+
+    fake._push_review_set_picker = push
+    fake._pushed = pushed
+    for name in (
+        "_review_set_picker_worker",
+        "_collect_review_set_picker_rows",
+        "_activate_review_set",
+    ):
+        setattr(fake, name, MethodType(getattr(LibraryScreen, name), fake))
+    return fake
+
+
+@pytest.mark.asyncio
+async def test_picker_worker_lists_rows_and_opens_the_chosen_set(tmp_path):
+    service = _service(tmp_path)
+    first = service.create_review_set("First", origin="browse", items=[(10, "A")])
+    second = service.create_review_set(
+        "Second", origin="browse", items=[(20, "B"), (21, "C")]
+    )
+    fake = _picker_fake(service, decision=("open", first))
+
+    await fake._review_set_picker_worker()
+
+    rows = fake._pushed[0]
+    assert {row[0] for row in rows} == {first, second}
+    by_id = {row[0]: row for row in rows}
+    assert by_id[second][3] is True  # newest set was the active one
+    assert by_id[first][2] == "1 of 1 · 0 reviewed"
+    active = service.get_active_review_set()
+    assert active is not None and active.set_id == first  # switched (one-active)
+    assert fake._opened == ["local:media:10"]  # landed at its cursor
+
+
+@pytest.mark.asyncio
+async def test_picker_worker_open_reopens_a_completed_set(tmp_path):
+    service = _service(tmp_path)
+    done_set = service.create_review_set("Done", origin="browse", items=[(10, "A")])
+    service.mark_item_done(done_set, 10, True)
+    service.refresh_completion(done_set, lambda _id: True)
+    service.create_review_set("Other", origin="browse", items=[(20, "B")])
+    fake = _picker_fake(service, decision=("open", done_set))
+
+    await fake._review_set_picker_worker()
+
+    reopened = service.get_review_set(done_set)
+    assert reopened.completed_at is None  # AC#2: reopened
+    assert reopened.active is True
+    assert fake._opened == ["local:media:10"]
+
+
+@pytest.mark.asyncio
+async def test_picker_worker_dismiss_soft_deletes_without_opening(tmp_path):
+    service = _service(tmp_path)
+    set_id = service.create_review_set("X", origin="browse", items=[(10, "A")])
+    fake = _picker_fake(service, decision=("dismiss", set_id))
+
+    await fake._review_set_picker_worker()
+
+    assert service.list_review_sets() == ()
+    assert fake._opened == []
+    assert fake._notices  # the dismissal is confirmed
+
+
+@pytest.mark.asyncio
+async def test_picker_worker_cancel_changes_nothing(tmp_path):
+    service = _service(tmp_path)
+    set_id = service.create_review_set("X", origin="browse", items=[(10, "A")])
+    fake = _picker_fake(service, decision=None)
+
+    await fake._review_set_picker_worker()
+
+    active = service.get_active_review_set()
+    assert active is not None and active.set_id == set_id
+    assert fake._opened == [] and fake._notices == []
+
+
+@pytest.mark.asyncio
+async def test_picker_worker_open_all_tombstoned_notifies_without_activating(
+    tmp_path,
+):
+    service = _service(tmp_path)
+    gone = service.create_review_set("Gone", origin="browse", items=[(10, "A")])
+    keep = service.create_review_set("Keep", origin="browse", items=[(20, "B")])
+    fake = _picker_fake(service, decision=("open", gone), live_ids={20})
+
+    await fake._review_set_picker_worker()
+
+    active = service.get_active_review_set()
+    assert active is not None and active.set_id == keep  # unchanged
+    assert fake._opened == []
+    assert any(severity == "warning" for _msg, severity in fake._notices)
+
+
+@pytest.mark.asyncio
+async def test_picker_worker_failure_notifies(tmp_path):
+    service = _service(tmp_path)
+    fake = _picker_fake(service, decision=None)
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("db exploded")
+
+    fake._collect_review_set_picker_rows = boom
+
+    await fake._review_set_picker_worker()  # must not raise
+
+    assert any(severity == "error" for _msg, severity in fake._notices)
+
+
 def test_review_these_name_from_scope():
     assert (
         LibraryScreen._review_these_name(
