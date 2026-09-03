@@ -5,10 +5,6 @@ Status: User-approved design, amended after architecture and UX self-review
 Primary surface: `tldw_chatbook/Widgets/Console/console_settings_modal.py`
 Related tasks: TASK-145, TASK-178, TASK-191, TASK-366, TASK-14812, TASK-14811.3, TASK-2154.7
 Related ADRs: ADR-006, ADR-011, ADR-012, ADR-020, ADR-033
-Status: User-approved design direction
-Primary surface: `tldw_chatbook/Widgets/Console/console_settings_modal.py`
-Related tasks: TASK-145, TASK-178, TASK-191, TASK-366, TASK-14812, TASK-14811.3, TASK-2154.7
-Related ADRs: ADR-006, ADR-011, ADR-012, ADR-020
 
 ## Summary
 
@@ -19,7 +15,6 @@ credentials remain owned by **F9 Settings > Providers & Models**. When a cloud
 credential is missing, Conversation Settings deep-links to that exact field and
 offers a return path that restores the exact Console-owned conversation draft
 and focus without putting prompt content in the navigation handoff.
-offers a return path that restores the non-secret conversation draft and focus.
 
 Local-hosting setup remains available in Conversation Settings, but endpoint
 persistence becomes an explicit connection action. Model discovery reports
@@ -104,20 +99,6 @@ The active provider, endpoint authority, credential source (never the secret),
 selected model provenance, and verification scope remain visible beside the
 operability status. A user returning from canonical Settings sees the exact
 Console-owned conversation draft they left and a refreshed readiness result.
-Success is not “the modal accepted the draft.” Success is one of these explicit
-states:
-
-1. **Ready to send** — all mandatory local checks pass and no known runtime
-   blocker remains.
-2. **Ready; credential unverified** — configuration is complete, but the user
-   has not run an authenticated network check.
-3. **Not ready** — the UI names the single highest-priority blocker, its impact,
-   and one direct recovery action.
-
-The active provider, endpoint authority, credential source (never the secret),
-selected model provenance, and verification scope remain visible beside the
-status. A user returning from canonical Settings sees the exact conversation
-draft they left and a refreshed readiness result.
 
 ## Ownership And Architectural Boundaries
 
@@ -131,8 +112,6 @@ draft they left and a refreshed readiness result.
   provider/default write path;
 - capturing a suspended modal draft into Console-owned screen state before
   targeted Settings navigation and reopening it after a valid return handoff.
-- creation and consumption of a non-secret return intent for targeted Settings
-  recovery.
 
 ### Settings > Providers & Models owns
 
@@ -191,9 +170,6 @@ cross-visit snapshots and destination handoffs to `ScreenStateStore` and
 not add a storage, credential, provider, or runtime owner. If implementation
 cannot preserve ADR-033's single-slot, consume-once semantics, planning must
 stop and amend that ADR before code changes begin.
-recovery, and ADR-020 owns cloud catalog authority. The return intent and modal
-restructure implement those accepted boundaries without adding a new storage,
-credential, provider, or runtime owner.
 
 ## Information Architecture
 
@@ -230,17 +206,6 @@ the selected provider or model cannot consume it. Unknown support remains in
 Advanced with neutral explanatory copy; this work does not invent a new model-
 capability registry. Controls with a constrained vocabulary use a Select or
 equivalent enumerated control rather than free text.
-This section is always first and remains above the fold at the minimum supported
-terminal size. It uses the same compact structure for cloud, local, and custom
-providers while changing only the applicable connection control and recovery
-action.
-
-### Advanced generation
-
-Collapsed by default. Contains sampling, response limits, streaming, reasoning,
-thinking, and provider-specific controls. Controls the selected provider/model
-does not consume are omitted. Controls with a constrained vocabulary use a
-Select or equivalent enumerated control rather than free text.
 
 ### Conversation identity
 
@@ -274,9 +239,6 @@ Custom OpenAI-compatible · qwen-local
 Ready to send · Endpoint reachable
 Model served now · Generation not tested
 [Connection details]
-Endpoint reachable · Model served now · Generation not tested
-Ready; generation unverified
-[Test generation]  [Connection details]
 ```
 
 The component exposes, where applicable:
@@ -291,7 +253,6 @@ The component exposes, where applicable:
   custom/unverified;
 - generation verification, when that optional check is supported: not tested,
   testing, succeeded, or failed;
-- generation verification: not tested, testing, succeeded, or failed;
 - one primary recovery action for the highest-priority blocker.
 
 Internal provider keys, config paths, raw exception prose, headers, credentials,
@@ -326,20 +287,6 @@ The handoff and Settings navigation context must not contain an API key,
 resolved credential value, request headers, provider response, prompt, prefill,
 transcript body, raw Base URL, or other secret/content. They are never written
 to config, database, logs, crash metadata, or navigation labels.
-credential…**. Activating it creates a process-memory return intent containing
-only:
-
-- origin Console conversation/session identity;
-- the non-secret Conversation Settings draft;
-- active modal destination, scroll anchor, and focused logical control;
-- provider/model intent;
-- an origin revision used to reject stale restoration;
-- a single-use opaque return-intent identifier.
-
-The intent must not contain an API key, resolved credential value, request
-headers, provider response, prompt, transcript body, or other secret/content.
-It is never written to config, database, logs, crash metadata, or navigation
-labels.
 
 ### Settings destination
 
@@ -371,9 +318,6 @@ restored. If Providers & Models already has unsaved changes:
   changes**, **Discard changes and configure _Provider_**, and **Return to
   conversation settings**;
 - no branch merges, saves, or discards unrelated Settings edits implicitly.
-
-return_intent = opaque id
-```
 
 Settings focuses the API-key field and presents its existing two credential
 paths:
@@ -409,23 +353,6 @@ On return:
      changed;
    - **Returned without saving — readiness unchanged** after confirmed discard.
 7. Acknowledge the return handoff so refresh/re-entry cannot replay it.
-After successful credential Save, Settings presents **Return to conversation
-settings** as the primary continuation. A secondary **Stay in Settings** action
-is available. Cancel/back from credential editing also offers return without
-claiming success.
-
-On return:
-
-1. Resolve the single-use intent.
-2. Verify that the origin conversation still exists and its revision is
-   compatible.
-3. Reopen Conversation Settings with the non-secret draft restored.
-4. Restore the logical focus/anchor when still applicable; otherwise focus the
-   Connection section.
-5. Reload provider configuration and credential readiness from canonical state.
-6. Announce **Credential saved — checking readiness** followed by the resulting
-   status.
-7. Consume the return intent so refresh/re-entry cannot replay it.
 
 If the origin is missing or stale, do not apply the draft elsewhere. Return to
 Console safely, retain the credential change, and report that the original
@@ -455,7 +382,6 @@ example: **Saves this endpoint for Ollama and future conversations.** The config
 write must fully apply before the session selection changes or the modal
 dismisses. Failure retains the draft, leaves the current session unchanged, and
 offers a sanitized retry; it never produces a partially applied “success.”
-behind “Save model defaults.”
 
 A conversation-only endpoint action appears only for execution paths that truly
 support a session endpoint. Its label is **Use for this conversation**, and its
@@ -485,7 +411,6 @@ served model or explicitly confirming **Keep unverified model**. That
 confirmation is valid only for the current provider/endpoint/model draft
 generation; editing any of those identities invalidates it. Ordinary unrelated
 edits do not repeatedly challenge an established user.
-served model or explicitly confirming **Keep unverified model**.
 
 Singular/plural copy is correct: **1 model available**, **2 models available**.
 Changing provider or endpoint invalidates only the corresponding transient
@@ -503,13 +428,6 @@ The UI treats these as separate evidence claims:
 4. **Test generation** — optional explicit minimal generation request that may
    incur provider usage. It is a later workstream and never gates the core
    configuration/deep-link release or the ability to attempt a normal send.
-The UI treats these as separate claims:
-
-1. **Check configuration** — local validation only; no network request.
-2. **Test connection** — explicit bounded endpoint/authentication request.
-3. **Discover models** — explicit model-list request.
-4. **Test generation** — explicit minimal generation request that may incur
-   provider usage.
 
 No result says “Provider test passed” when only local field validation ran. A
 cloud provider whose credential is present but untested reads **Configuration
@@ -523,10 +441,6 @@ confirmation. It is implemented only for providers covered by a documented
 request/response and billing-risk matrix. All network tests use bounded
 timeouts, support cancellation, redact secrets and credential-bearing URLs,
 and preserve the draft on failure.
-Generation testing is never automatic. Before the first paid cloud generation
-test, copy states that the request may incur API usage. All network tests use
-bounded timeouts, support cancellation, redact secrets and credential-bearing
-URLs, and preserve the draft on failure.
 
 ## Save And Scope Contract
 
@@ -541,7 +455,6 @@ The fixed footer exposes only actions that are valid for the current draft:
 - **Save endpoint & use model** — shown when endpoint persistence is the missing
   completion step; persistent adjacent text states that it changes the provider
   endpoint used by future conversations.
-  completion step.
 
 Exactly one completion action is visually primary. Disabled actions include a
 persistent text reason, for example **Available when the current run finishes**.
@@ -569,8 +482,6 @@ compete with the single primary completion action.
 - Advanced sections default closed for first-time/blocked setup, open when
   explicitly targeted, and remember disclosure state in the current Console
   session snapshot. No new global preference is introduced.
-- Advanced sections remember disclosure state for the current app session, not
-  globally per provider unless an existing preference owner is adopted.
 
 ## Accessibility And Terminal Behavior
 
@@ -588,13 +499,6 @@ compete with the single primary completion action.
   actions fit without horizontal clipping at 80x24, 100x30, and 160x40. At
   compact widths, action rows stack or wrap while retaining their full labels;
   the modal never depends on horizontal scrolling.
-- Each editable control has a programmatic label association or equivalent
-  accessible description, not only a neighboring `Static`.
-- Readiness, validation, discovery, test, and return results are announced once
-  without stealing focus.
-- Focus remains visibly distinct at all supported terminal sizes.
-- The Connection section, readiness, fold hint when needed, and fixed actions
-  fit at the minimum supported viewport without horizontal clipping.
 - Placeholder/help and disabled text meet the project's measured contrast
   rules in a real terminal; screenshots alone are insufficient proof.
 - Long provider/model names truncate with an inspectable full value and never
@@ -629,10 +533,6 @@ compete with the single primary completion action.
 - Return handoff is superseded, consumed, abandoned, or targets a deleted or
   revision-mismatched conversation: return safely to Console with explicit
   recovery copy.
-- Temporary conversation: return intent is process-memory only; if navigation
-  destroys the origin, fail closed rather than attaching the draft elsewhere.
-- Return intent expires, is consumed, or targets a deleted conversation: return
-  safely to Console with explicit recovery copy.
 
 ## Copy Contract
 
@@ -685,16 +585,6 @@ The implementation extends existing seams rather than adding parallel state:
   `ConsoleSettingsDraftRevision`; draft restoration compares that revision
   rather than inventing a conversation timestamp or relying only on object
   identity.
-## Implementation Consequences
-
-The implementation should extend existing seams rather than add parallel state:
-
-- `ConsoleSettingsModal` gains the readiness-led composition, disclosure, and
-  explicit save variants.
-- `ChatScreen` or its existing navigation owner creates/consumes the bounded
-  return intent and reopens the origin conversation settings.
-- `SettingsScreen` consumes the existing provider/model/field deep-link plus an
-  opaque return intent, and emits a return action after save/cancel.
 - provider readiness exposes structured facts/reason codes; screens own copy.
 - model search receives provenance-aware options from the existing catalog and
   local-discovery owners.
@@ -733,13 +623,6 @@ typed readiness and return seams from workstreams 1 and 2; workstream 4 builds o
 the connection-first structure and readiness evidence; workstream 5 follows the
 relevant provider/service contracts. Each task repeats this ADR check and links
 ADR-033.
-Workstream 1 is foundational. Workstreams 2 and 3 may follow it independently;
-workstream 4 depends on structured readiness; workstream 5 follows the relevant
-provider/service contracts. Each task repeats this ADR check and links ADR-033.
-If no existing process-memory navigation-context owner can safely hold the
-single-use return intent, implementation planning must stop and either extend
-the accepted application-session-state owner or amend the applicable ADR before
-code changes begin. It must not create an unreviewed module-level cache.
 
 ## Acceptance Criteria
 
@@ -768,16 +651,6 @@ code changes begin. It must not create an unreviewed module-level cache.
 - [ ] An endpoint that must be persisted exposes **Save endpoint & use model**;
   its global/future-conversation impact is visible, persistence precedes session
   application, and failure retains the unchanged session plus modal draft.
-  Conversation Settings draft; return restores non-secret values and refreshes
-  readiness.
-- [ ] Stale, consumed, deleted-origin, temporary-origin, and failed-save return
-  states fail closed without applying a draft to another conversation.
-- [ ] The primary connection flow fits above the fold and advanced generation is
-  collapsed by default.
-- [ ] Unsupported/no-effect generation controls are omitted, and enumerated
-  values use constrained controls.
-- [ ] An endpoint that must be persisted exposes **Save endpoint & use model**;
-  ordinary Save cannot silently leave the selected setup blocked.
 - [ ] Conversation-only endpoint actions appear only where runtime supports
   them.
 - [ ] Discovered, saved, current, and custom models have visible provenance; an
@@ -790,10 +663,6 @@ code changes begin. It must not create an unreviewed module-level cache.
   generation check requires provider-matrix coverage plus confirmation.
 - [ ] Saving only an absent environment-variable name returns a blocked state
   with an export/relaunch recovery instruction.
-- [ ] Configuration validation, reachability, model discovery, credential
-  verification, and generation verification never overclaim one another.
-- [ ] Network verification is explicit, cancellable, bounded, sanitized, and a
-  potentially paid generation check is labeled before execution.
 - [ ] The full modal is named **Conversation settings** across every entry point,
   status, guide, and test.
 - [ ] Provider display names replace internal provider keys in visible copy.
@@ -813,13 +682,6 @@ code changes begin. It must not create an unreviewed module-level cache.
   logs, screenshots, or persisted test artifacts.
 - [ ] The programme is delivered through the five bounded workstreams rather
   than one cross-cutting implementation task.
-- [ ] Status changes are announced accessibly, controls are programmatically
-  labeled, and minimum-viewport/contrast checks pass in a real terminal.
-- [ ] Minor copy defects are fixed: singular model counts, no orphan Base URL
-  label, and honest token-default/estimate labels.
-- [ ] API keys, credential values, headers, raw provider error bodies, and
-  credential-bearing URLs never enter the return intent, logs, screenshots, or
-  persisted test artifacts.
 
 ## Testing And Verification
 
@@ -839,10 +701,6 @@ separately requests a full sweep.
   detachment, and stale-origin/revision rejection;
 - authoritative-supported, authoritative-unsupported, and unknown generation-
   control capability behavior;
-- endpoint persistence requirements by provider execution path;
-- model provenance grouping and stale-result rejection;
-- single-use return-intent creation, expiry, consumption, redaction, and stale
-  origin rejection;
 - verification outcome separation and sanitized failures.
 
 ### Textual tests
@@ -861,8 +719,6 @@ separately requests a full sweep.
 - keyboard order, modal accelerator, focus restoration, 80x24/100x30/160x40
   geometry, stacked compact actions, long provider/model values, accessible
   names/descriptions, and status announcements;
-- keyboard order, modal accelerator, focus restoration, minimum viewport, long
-  provider/model values, and status announcements;
 - validation retains input and scrolls the highest-priority error into view.
 
 ### Security checks
@@ -872,8 +728,6 @@ separately requests a full sweep.
   isolated expected write;
 - system prompt and pinned prefill survive an exact snapshot/return round trip
   but never enter the handoff, Settings context, or diagnostics;
-- sentinel fake keys are absent from rendered text, logs, return intents,
-  snapshots, and persisted config fixtures outside the isolated expected write;
 - Settings masking and clear behavior remain intact;
 - endpoint display strips credentials, query strings, and sensitive paths where
   applicable.
@@ -888,7 +742,6 @@ fixture. A real paid provider check is optional, separately authorized, and its
 credential remains environment-only.
 
 Capture proof at 80x24, 100x30, and 160x40 for:
-Capture proof at minimum and typical terminal sizes for:
 
 1. cloud missing credential;
 2. targeted credential field;
