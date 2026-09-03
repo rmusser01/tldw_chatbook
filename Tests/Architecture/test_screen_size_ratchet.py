@@ -210,7 +210,18 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # call any of them back. Fresh post-cleanup measurement: 42411 lines,
     # 1267 methods (1281 - 14 pruned `FunctionDef`s, exactly) -- lowered
     # in this same commit per recipe §6 (never deferred to a later task).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 42411, 1267),
+    # Raised 2026-09-03 by the wave-2 final review's fix wave: +9
+    # documentation-only lines (a construction-order sentinel comment on
+    # the `LibraryExportController` construction site, finding 3 of the
+    # review) pushed the file to 42420/1267 (methods unchanged -- comment
+    # lines only, no code). Re-measured and raised in this same commit per
+    # the foundation run's own task-8 precedent (a strengthened comment
+    # there pushed the file 24 lines over its just-set ceiling; the fix
+    # was to re-measure and raise with a dated justification comment, not
+    # to leave the ceiling red or strip the comment to fit). Net wave-2
+    # trajectory is still down: 43965 (wave-2 start) -> 42420, a shrink of
+    # 1545 lines despite this fix wave's own small increase.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 42420, 1267),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

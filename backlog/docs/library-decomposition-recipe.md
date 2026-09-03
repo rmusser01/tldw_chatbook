@@ -1715,3 +1715,35 @@ already documents, not a new regression from this wave's moves.
    present in that commit. Cost if this reading is wrong: slightly weaker
    RED purity; the criterion that actually matters — screen untouched,
    tests red at the parent commit — is preserved either way.
+5. **The wiring cluster constants are not self-defending — this is a
+   known, deliberately-unclosed gap, not an oversight.**
+   `_EXPORT_CLUSTER_METHOD_NAMES` (`Tests/Architecture/
+   test_library_export_wiring.py`, 22 entries) and
+   `_COLLECTIONS_CLUSTER_METHOD_NAMES` (`Tests/Architecture/
+   test_library_collections_wiring.py`, 64 entries) are hand-written
+   Python tuples, frozen at the PR that derived them from a one-time
+   `ast` census of every `LibraryScreen` method whose name contained
+   "export"/"collection" (Task 3, Task 6) followed by reading each
+   candidate's body to decide true ownership. Nothing re-runs that census
+   at test time and diffs it against the tuple. Concretely: a future 23rd
+   export-named method, or 65th collections-named method, added to
+   `LibraryScreen` — whether genuinely subsystem-owned or a same-named
+   coincidence from another subsystem, exactly the ambiguity Task 3/6 had
+   to resolve by hand — is invisible to every wiring and architecture
+   test this recipe has. It is not flagged as needing a cluster-
+   membership decision, not required to move, not required to be
+   excluded-with-reason; it simply sits on the screen, unaccounted for,
+   and every existing test still passes. This is a different axis than
+   the recompose census's own anti-slack guard (§16, `Tests/UI/
+   test_library_recompose_ratchet.py::test_census_pin_is_not_left_slack`,
+   task-27019): that guard catches the PIN drifting stale relative to a
+   count that's re-measured on every run; no equivalent re-measurement
+   exists for cluster membership itself. First noted as a deferred minor
+   during Task 3 (export, "cluster constants not self-defending against a
+   23rd export method — canon-consistent"); the wave-2 final review
+   extended the observation to collections and named it Important enough
+   to record durably rather than leave buried in a git-ignored ledger.
+   Deferred, not fixed, by design — closing it needs an active guard (an
+   AST re-census compared against the frozen tuple, failing when the two
+   diverge) that no task in wave 2 was scoped to build; a candidate for
+   wave 3 or a dedicated follow-up task.

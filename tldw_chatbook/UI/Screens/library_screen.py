@@ -2273,6 +2273,15 @@ class LibraryScreen(BaseAppScreen):
                 lambda: self._selected_conversation_handoff_payload()
             ),
         )
+        # Sentinel: `self._export_state` does NOT exist yet at this point in
+        # `__init__` -- it is constructed later, at ~:3288, specifically to
+        # preserve the computed `form` default's original `__init__`
+        # evaluation position (see `LibraryExportState`'s module docstring).
+        # Every dependency below is a lazy accessor (a `lambda`, not a bound
+        # value), and no controller method may run during `__init__` -- an
+        # eager `export_state_accessor()` call made from here would raise
+        # `AttributeError: 'LibraryScreen' object has no attribute
+        # '_export_state'`.
         self._export_controller = LibraryExportController(
             self,
             export_state_accessor=lambda: self._export_state,

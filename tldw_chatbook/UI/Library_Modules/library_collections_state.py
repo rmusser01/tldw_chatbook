@@ -129,10 +129,14 @@ class LibraryCollectionsState:
     action_status: str = ""
     action_content: str = ""
 
-    # Placeholder defaults only -- see module docstring: the original
-    # `__init__` line for each of these three still runs, under the
-    # original `_library_collections_<field>` name, routed into this
-    # dataclass's field by the screen's property shim.
+    # Placeholder defaults only -- see module docstring. Post-cleanup
+    # (wave-2 task 7 deleted the screen-side property shim), each of
+    # these three is written directly onto this dataclass's own
+    # instance in `LibraryScreen.__init__` -- `reader_preferences` via
+    # the shared `_load_library_reader_preference_snapshot()` tuple-
+    # unpack, `reader_layout` and `reader_persistence_locks` via later
+    # direct `self._collections_state.<field> = ...` assignments -- not
+    # routed through any shim, since none exists anymore.
     reader_preferences: AdaptiveReaderLayoutPreferences = field(
         default_factory=AdaptiveReaderLayoutPreferences
     )

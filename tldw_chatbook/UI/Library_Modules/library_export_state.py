@@ -38,8 +38,10 @@ Export-owned methods (``_open_library_export_canvas``,
 ``action_library_export_back``). Per the recipe §2 ownership script,
 shell/plumbing-only non-subsystem consumers still move with the
 subsystem; the class-level attribute is removed and this dataclass's own
-default (``""``) supplies the identical value through the generated
-property shim.
+default (``""``) supplies the identical value directly. Post-cleanup
+(wave-2 task 4 deleted the screen-side property shim), the two shell/
+plumbing readers and the two Export-owned writers all reach it as
+``self._export_state.origin_row_id`` -- no shim in the path anymore.
 
 One field, ``form``, has a genuinely computed (not static-literal) default
 in the original code -- ``self._default_library_export_form()``, a
@@ -146,5 +148,7 @@ class LibraryExportState:
     # that class-level annotation, so it has no matching entry in
     # `LibraryScreen.__init__`'s constructor call; this dataclass's own
     # default below supplies the same value the class-level attribute
-    # used to, through the generated property shim.)
+    # used to. Post-cleanup (wave-2 task 4 deleted the screen-side
+    # property shim), `LibraryScreen` reads/writes it directly as
+    # `self._export_state.origin_row_id` -- no shim in the path anymore.)
     origin_row_id: str = ""
