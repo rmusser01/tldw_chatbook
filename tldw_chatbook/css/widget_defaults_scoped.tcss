@@ -2841,6 +2841,17 @@
         width: auto;
         min-width: 0;
     }
+    /* task-31224: Textual Input defaults to width 100%, which consumed the
+     * whole filter row and pushed "Clear filter" off-screen -- the one
+     * honest recovery for a filter miss was invisible (live: it never
+     * rendered at any width). Share the row instead. */
+    LibraryMediaCanvas #library-media-filter {
+        width: 1fr;
+    }
+    LibraryMediaCanvas #library-media-filter-clear {
+        width: auto;
+        min-width: 0;
+    }
 
 
 /* ===== WIDGET: LibraryNoteFolderNameDialog (Widgets/Library/library_note_folder_dialog.py) ===== */

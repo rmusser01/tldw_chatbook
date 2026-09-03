@@ -3634,11 +3634,7 @@ class LibraryScreen(BaseAppScreen):
                         # task-28241: in a review set, ] / [ walk the pinned set
                         # (whole thing, not the page), and the footer carries
                         # the progress plus an exit-review key.
-                        shortcuts.append(("]", "next in set"))
-                        shortcuts.append(("[", "prev in set"))
-                        shortcuts.append(("m", "toggle reviewed"))
-                        shortcuts.append(("R", "exit review"))
-                        shortcuts.append(("", progress))
+                        shortcuts.extend(self._review_footer_entries(progress))
                     else:
                         if self._library_media_adjacent_row(1) is not None:
                             shortcuts.append(("]", "next item"))
@@ -3681,11 +3677,54 @@ class LibraryScreen(BaseAppScreen):
             return self.LIBRARY_LIST_SHORTCUTS
         return self.LIBRARY_GENERAL_SHORTCUTS
 
+    @staticmethod
+    def _review_footer_entries(progress: str) -> tuple[tuple[str, str], ...]:
+        """The Reader footer's review-set segment for one progress line.
+
+        task-31225 (re-critique P2): on a COMPLETE set the final ``]`` is an
+        idempotent no-op, so advertising it violates the honest-footer rule
+        (task-28005). Completion keeps ``m`` (un-marking resumes the walk)
+        and names ``R`` as the next step. The completion check reads the
+        canonical ``format_review_progress`` "All N reviewed" form.
+
+        Args:
+            progress: The formatted live progress line.
+
+        Returns:
+            ``(key, label)`` entries for the footer.
+        """
+        if progress.startswith("All "):
+            return (
+                ("m", "toggle reviewed"),
+                ("R", "finish review"),
+                ("", progress),
+            )
+        return (
+            ("]", "next in set"),
+            ("[", "prev in set"),
+            ("m", "toggle reviewed"),
+            ("R", "exit review"),
+            ("", progress),
+        )
+
     def _library_footer_shortcuts_for_current_state(
         self,
     ) -> tuple[tuple[str, str], ...]:
         """Hide rail-search hints while the compact rail has no search box."""
         shortcuts = self._library_route_shortcuts_for_current_state()
+        # task-31223 (re-critique P1): while a text field holds focus, every
+        # single printable key is INSERTED AS TEXT, so advertising "] next
+        # in set" or "s select" is the footer lying -- live, a stray "]"
+        # went into the filter and produced a zero-match list. Drop the
+        # swallowed keys, keep the ones that still work (esc / enter /
+        # F-keys) and the informational chips, and announce the swap.
+        focused = self.focused
+        if isinstance(focused, (Input, TextArea)):
+            shortcuts = (("", "typing in field"),) + tuple(
+                pair
+                for pair in shortcuts
+                if not (len(pair[0]) == 1 and pair[0].isprintable())
+            )
         emergency = self._library_emergency_return_eligibility()
         if emergency.enabled:
             shortcuts = tuple(pair for pair in shortcuts if pair[0] != "esc") + (
@@ -10531,6 +10570,14 @@ class LibraryScreen(BaseAppScreen):
             if self._library_notes_programmatic_focus_target is focused:
                 self._library_notes_programmatic_focus_target = None
             return
+        # task-31223: the footer's typing-context swap (drop keys a text
+        # field will swallow) must follow focus, not just route changes.
+        # Re-register only on a context FLIP so ordinary focus moves stay
+        # free of footer churn.
+        typing = isinstance(focused, (Input, TextArea))
+        if typing != getattr(self, "_library_footer_typing_context", False):
+            self._library_footer_typing_context = typing
+            self._register_footer_shortcuts()
         self._remember_library_notes_authority_focus(focused)
         target_restore = self._library_notes_programmatic_focus_target is focused
         pending_receipt = self._library_pending_list_entry_media_return
@@ -39487,6 +39534,10 @@ class LibraryScreen(BaseAppScreen):
             if self._review_set_service() is None:
                 if not getattr(self, "_review_set_storage_warned", False):
                     self._review_set_storage_warned = True
+                    # Deliberately WARNING where the explicit gestures use
+                    # ERROR (task-31225 rider): this fires ambiently on
+                    # media entry, not in answer to a press -- ambient
+                    # severity stays a notch below gesture severity.
                     self._notify_review_set(
                         self._REVIEW_SET_STORAGE_UNAVAILABLE,
                         severity="warning",
