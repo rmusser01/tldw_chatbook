@@ -5336,6 +5336,15 @@ Button.console-inspector-action:disabled {
     scrollbar-size-horizontal: 0;
 }
 
+/* TASK-28028: 1-cell ‹ › hints at the strip row's edges, shown only while
+   tabs are hidden past that edge (display toggled from Python). */
+#console-tab-overflow-left,
+#console-tab-overflow-right {
+    color: $ds-text-muted;
+    text-style: none;
+    background: transparent;
+}
+
 .console-session-tab,
 #console-new-chat-tab,
 #console-new-temporary-tab {

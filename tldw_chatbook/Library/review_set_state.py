@@ -14,10 +14,14 @@ LIVE items only; the cursor is an absolute position that survives deletions.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Iterable
 
 IsLive = Callable[[int], bool]
 """Predicate: does this backing media id still resolve to a live item?"""
+
+REVIEW_SET_CAP = 500
+"""Max distinct items a review set pins (task-28242). One source of truth for
+the collect/build/notify/query paths so they cannot disagree."""
 
 
 @dataclass(frozen=True)
@@ -284,6 +288,68 @@ def format_review_progress(progress: ReviewProgress) -> str:
     if progress.reviewed >= progress.total:
         return f"All {progress.total} reviewed"
     return f"{progress.index} of {progress.total} · {progress.reviewed} reviewed"
+
+
+def build_pinned_items(
+    pairs: "Iterable[tuple[int, str]]", *, cap: int = REVIEW_SET_CAP
+) -> tuple[list[tuple[int, str]], bool]:
+    """Build the pinned ``(backing_media_id, title)`` list for a new set.
+
+    task-28242: a set is a snapshot, so the entry points pin an ordered list at
+    creation. Duplicates by backing id are dropped keeping the first
+    occurrence, and the list is capped at ``cap`` items (a several-thousand-item
+    "review set" is not a review set). Duplicates that follow the cap are *not*
+    counted as truncation -- only distinct items actually dropped are.
+
+    Args:
+        pairs: Ordered ``(backing_media_id, title)`` pairs (order is preserved).
+        cap: Maximum distinct items to pin.
+
+    Returns:
+        ``(items, truncated)`` -- the pinned pairs, and whether the cap dropped
+        at least one distinct item.
+    """
+    seen: set[int] = set()
+    items: list[tuple[int, str]] = []
+    truncated = False
+    for backing_media_id, title in pairs:
+        bid = int(backing_media_id)
+        if bid in seen:
+            continue
+        if len(items) >= cap:
+            truncated = True
+            break
+        seen.add(bid)
+        items.append((bid, str(title)))
+    return items, truncated
+
+
+def build_picker_rows(
+    sets: "Iterable[ReviewSet]", is_live: IsLive
+) -> list[tuple[str, str, str, bool]]:
+    """Build the set-picker's display rows (task-28243).
+
+    Args:
+        sets: Review sets in display order (the service lists newest-activity
+            first).
+        is_live: Liveness predicate covering every backing id in ``sets``.
+
+    Returns:
+        ``(set_id, name, progress_label, active)`` per set, where
+        ``progress_label`` is :func:`format_review_progress` over the set's
+        live items.
+    """
+    return [
+        (
+            review_set.set_id,
+            review_set.name,
+            format_review_progress(
+                review_progress(review_set.items, review_set.cursor, is_live)
+            ),
+            review_set.active,
+        )
+        for review_set in sets
+    ]
 
 
 def is_empty(items: tuple[ReviewSetItem, ...], is_live: IsLive) -> bool:

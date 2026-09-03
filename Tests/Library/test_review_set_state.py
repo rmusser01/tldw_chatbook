@@ -11,8 +11,11 @@ from __future__ import annotations
 
 from tldw_chatbook.Library.review_set_state import (
     ReviewProgress,
+    ReviewSet,
     ReviewSetItem,
     advance_cursor,
+    build_picker_rows,
+    build_pinned_items,
     format_review_progress,
     is_complete,
     is_empty,
@@ -201,3 +204,89 @@ def test_format_progress_empty_set():
         format_review_progress(ReviewProgress(index=0, total=0, reviewed=0))
         == "No items to review"
     )
+
+
+# --- building the pinned item list (entry points, task-28242) ----------------
+
+
+def test_build_pinned_items_dedupes_by_id_keeping_first():
+    items, truncated = build_pinned_items([(10, "A"), (11, "B"), (10, "A-again")])
+    assert items == [(10, "A"), (11, "B")]
+    assert truncated is False
+
+
+def test_build_pinned_items_caps_and_flags_truncation():
+    items, truncated = build_pinned_items(
+        [(index, f"t{index}") for index in range(600)], cap=500
+    )
+    assert len(items) == 500
+    assert items[0] == (0, "t0") and items[-1] == (499, "t499")
+    assert truncated is True
+
+
+def test_build_pinned_items_dups_past_cap_do_not_flag_truncation():
+    pairs = [(index, f"t{index}") for index in range(500)] + [(0, "dup")] * 50
+    items, truncated = build_pinned_items(pairs, cap=500)
+    assert len(items) == 500
+    assert truncated is False  # only duplicates followed the cap, nothing dropped
+
+
+def test_build_pinned_items_coerces_types():
+    items, _ = build_pinned_items([("10", 42)])
+    assert items == [(10, "42")]
+
+
+# --- picker rows (set picker, task-28243) ------------------------------------
+
+
+def _review_set(
+    set_id: str,
+    name: str,
+    items: tuple[ReviewSetItem, ...],
+    *,
+    cursor: int = 0,
+    active: bool = False,
+) -> ReviewSet:
+    return ReviewSet(
+        set_id=set_id,
+        name=name,
+        origin="browse",
+        cursor=cursor,
+        active=active,
+        completed_at=None,
+        items=items,
+        created_at="2026-09-01T00:00:00Z",
+        updated_at="2026-09-01T00:00:00Z",
+    )
+
+
+def test_picker_rows_carry_id_name_progress_and_active_in_order():
+    sets = (
+        _review_set(
+            "s1", "All media", _items((10, True), (11, False)), cursor=1, active=True
+        ),
+        _review_set("s2", "pdf items", _items((20, False))),
+    )
+    rows = build_picker_rows(sets, is_live=_live())
+
+    assert rows == [
+        ("s1", "All media", "2 of 2 · 1 reviewed", True),
+        ("s2", "pdf items", "1 of 1 · 0 reviewed", False),
+    ]
+
+
+def test_picker_rows_progress_is_live_only():
+    # id 11 tombstoned: total counts live items, done tombstones don't count.
+    sets = (_review_set("s1", "Set", _items((10, False), (11, True))),)
+    rows = build_picker_rows(sets, is_live=_live(11))
+    assert rows == [("s1", "Set", "1 of 1 · 0 reviewed", False)]
+
+
+def test_picker_rows_completed_and_empty_labels():
+    sets = (
+        _review_set("done", "Done set", _items((10, True), (11, True))),
+        _review_set("gone", "Gone set", _items((20, False))),
+    )
+    rows = build_picker_rows(sets, is_live=_live(20))
+    assert rows[0][2] == "All 2 reviewed"
+    assert rows[1][2] == "No items to review"

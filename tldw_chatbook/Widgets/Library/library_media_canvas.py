@@ -28,6 +28,8 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_DELETE_SELECTED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
+    LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP,
+    LIBRARY_REVIEW_SELECTED_TOOLTIP,
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
     library_choice_label,
     library_choice_tooltip,
@@ -288,7 +290,47 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         """
         title_count = self.pager.title_count if self.pager is not None else self.canvas.count
         title = "Media" if title_count is None else f"Media ({title_count})"
-        yield Static(title, id="library-media-title")
+        select_mode = getattr(self.canvas, "select_mode", False)
+        fresh_zero = (
+            self.pager is not None
+            and title_count == 0
+            and not self.canvas.rows
+            and not select_mode
+            and not self.canvas.delete_receipt_count
+            and not self.stale_action_reason
+            and not self.mutation_action_reason
+            and not self.pager.status_copy
+            and not self.pager.retry_visible
+        )
+        # task-28243: the "Sets" picker opener lives on the TITLE row, not the
+        # action toolbar -- that toolbar already overflows the narrow items
+        # pane (task-28025) and one more button pushed a squeezed Button into
+        # rich's zero-width chop_cells crash (live-verified 2026-09-02). The
+        # title row carries ~9 chars in a min-width-40 pane, so both widgets
+        # always render at full width. Auto-width Static + fixed compact
+        # Button only (task-4023's render-safe grammar: no 1fr sibling).
+        # Hidden in select mode like the other list-level actions; on the
+        # fresh-empty page it is not composed at all -- that page pins
+        # exactly ONE recovery action (and display:none still matches DOM
+        # queries).
+        title_row = Horizontal(id="library-media-title-row")
+        title_row.styles.height = "auto"
+        with title_row:
+            title_static = Static(title, id="library-media-title")
+            # A Static defaults to 1fr inside a Horizontal and would swallow
+            # the whole row, pushing the button out of view (live-verified).
+            title_static.styles.width = "auto"
+            yield title_static
+            if not fresh_zero:
+                sets_btn = Button(
+                    "Sets",
+                    id="library-media-review-sets",
+                    classes="library-canvas-action",
+                    compact=True,
+                    tooltip="Resume, switch, or dismiss saved review sets.",
+                )
+                sets_btn.display = not select_mode
+                yield sets_btn
         filter_row = Horizontal(classes="ds-toolbar")
         filter_row.styles.height = "auto"
         with filter_row:
@@ -304,18 +346,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
             clear_filter.disabled = not bool(self.canvas.query)
             yield clear_filter
-        select_mode = getattr(self.canvas, "select_mode", False)
-        if (
-            self.pager is not None
-            and title_count == 0
-            and not self.canvas.rows
-            and not select_mode
-            and not self.canvas.delete_receipt_count
-            and not self.stale_action_reason
-            and not self.mutation_action_reason
-            and not self.pager.status_copy
-            and not self.pager.retry_visible
-        ):
+        if fresh_zero:
             yield Static(
                 self.canvas.empty_copy,
                 id="library-media-status",
@@ -422,6 +453,18 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
             trash_btn.display = not select_mode
             yield trash_btn
+            # task-28242: "Review these" pins the WHOLE filtered result as an
+            # ordered review set and walks it in the Reader. A list-level
+            # action, hidden in select mode like Export/Trash.
+            review_btn = Button(
+                "Review these",
+                id="library-media-review",
+                classes="library-canvas-action",
+                compact=True,
+                tooltip="Review every item in this list, one by one.",
+            )
+            review_btn.display = not select_mode
+            yield self._gate_stale_action(review_btn, "Review these")
             # Disable only when there's nothing to select AND we're not
             # already in select mode -- in select mode the button is "Done"
             # and must always be pressable so the user can exit even if the
@@ -584,6 +627,30 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     )
                     yield self._gate_stale_action(
                         export_selected, "Export selected"
+                    )
+                    # task-28242: the third real bulk action -- "Review
+                    # selected" -- pins the selection as an ordered review set.
+                    # Sits between Export and the far-end danger Delete.
+                    review_disabled = self.canvas.selected_count == 0
+                    review_selected = Button(
+                        library_disabled_action_label(
+                            "Review selected", review_disabled
+                        ),
+                        id="library-media-review-selected",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    review_selected._library_disabled_marker_base = (
+                        "Review selected"
+                    )
+                    review_selected.disabled = review_disabled
+                    review_selected.tooltip = (
+                        LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP
+                        if review_disabled
+                        else LIBRARY_REVIEW_SELECTED_TOOLTIP
+                    )
+                    yield self._gate_stale_action(
+                        review_selected, "Review selected"
                     )
                     # task-2853: the second real bulk action -- "Delete
                     # selected" -- pushed to the far end (CSS margin, same

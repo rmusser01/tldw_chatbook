@@ -9,7 +9,9 @@ and the per-item actuator is recorded rather than mounting a Reader.
 from __future__ import annotations
 
 import itertools
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
+
+import pytest
 
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 from tldw_chatbook.Library.review_set_service import ReviewSetService
@@ -228,6 +230,336 @@ def test_review_set_live_ids_treats_ids_live_when_media_db_absent():
         _REVIEW_SET_LIVENESS_BATCH=LibraryScreen._REVIEW_SET_LIVENESS_BATCH,
     )
     assert LibraryScreen._review_set_live_ids(fake, [1, 2, 3]) == {1, 2, 3}
+
+
+def _entry_fake(service):
+    opened: list[str] = []
+    notices: list[tuple[str, str]] = []
+    fake = SimpleNamespace(
+        _review_set_service=lambda: service,
+        _open_library_media_viewer=lambda media_id: opened.append(media_id),
+        app_instance=SimpleNamespace(
+            notify=lambda message, severity="information": notices.append(
+                (message, severity)
+            )
+        ),
+    )
+    fake._notify_review_set = MethodType(
+        LibraryScreen._notify_review_set, fake
+    )
+    fake._opened = opened
+    fake._notices = notices
+    return fake
+
+
+def test_create_and_open_review_set_creates_activates_and_lands(tmp_path):
+    service = _service(tmp_path)
+    fake = _entry_fake(service)
+
+    LibraryScreen._create_and_open_review_set(
+        fake, "Talks", "browse", [(10, "A"), (11, "B")]
+    )
+
+    review_set = service.get_active_review_set()
+    assert review_set is not None
+    assert [item.backing_media_id for item in review_set.items] == [10, 11]
+    assert fake._opened == ["local:media:10"]  # landed on the first item
+
+
+def test_create_and_open_review_set_empty_notifies_and_makes_no_set(tmp_path):
+    service = _service(tmp_path)
+    fake = _entry_fake(service)
+
+    LibraryScreen._create_and_open_review_set(fake, "X", "browse", [])
+
+    assert service.get_active_review_set() is None
+    assert fake._opened == []
+    assert fake._notices and fake._notices[0][1] == "warning"
+
+
+def test_create_and_open_review_set_warns_on_truncation(tmp_path):
+    service = _service(tmp_path)
+    fake = _entry_fake(service)
+
+    LibraryScreen._create_and_open_review_set(
+        fake, "X", "browse", [(index, f"t{index}") for index in range(600)]
+    )
+
+    review_set = service.get_active_review_set()
+    assert len(review_set.items) == 500
+    assert any(severity == "warning" for _msg, severity in fake._notices)
+
+
+def _worker_fake(service, *, search_media, scope=None):
+    """Fake screen for the entry-point workers, wiring the real methods."""
+    fake = _entry_fake(service)
+    fake._library_media_browse_controller = SimpleNamespace(applied_scope=scope)
+    fake.app_instance.media_reading_scope_service = SimpleNamespace(
+        search_media=search_media
+    )
+
+    async def run_call(call, *args, isolate_in_worker=False, **kwargs):
+        return await call(*args, **kwargs)
+
+    fake._run_library_service_call = run_call
+    for name in (
+        "_collect_review_pairs_from_scope",
+        "_order_selected_review_pairs",
+        "_create_and_open_review_set",
+        "_review_these_worker",
+        "_review_selected_worker",
+    ):
+        setattr(fake, name, MethodType(getattr(LibraryScreen, name), fake))
+    fake._review_these_name = LibraryScreen._review_these_name
+    return fake
+
+
+@pytest.mark.asyncio
+async def test_review_these_worker_pages_the_whole_result_and_lands(tmp_path):
+    service = _service(tmp_path)
+    pages = {
+        0: [
+            {"backing_media_id": 10, "title": "A"},
+            {"backing_media_id": 11, "title": "B"},
+        ],
+        2: [{"backing_media_id": 12, "title": "C"}],
+    }
+
+    async def search_media(*, offset=0, **_kwargs):
+        return {"items": pages.get(offset, []), "total": 3}
+
+    scope = SimpleNamespace(
+        query="", media_type=None, sort_by="last_modified_desc", page_size=2
+    )
+    fake = _worker_fake(service, search_media=search_media, scope=scope)
+
+    await fake._review_these_worker()
+
+    review_set = service.get_active_review_set()
+    assert [item.backing_media_id for item in review_set.items] == [10, 11, 12]
+    assert review_set.origin == "browse"
+    assert fake._opened == ["local:media:10"]
+
+
+@pytest.mark.asyncio
+async def test_review_selected_worker_orders_via_the_id_allowlist(tmp_path):
+    service = _service(tmp_path)
+    seen_kwargs = {}
+
+    async def search_media(**kwargs):
+        seen_kwargs.update(kwargs)
+        # the service returns the allowlist in browse order (newest first).
+        return {
+            "items": [
+                {"backing_media_id": 30, "title": "Z"},
+                {"backing_media_id": 20, "title": "Y"},
+            ],
+            "total": 2,
+        }
+
+    fake = _worker_fake(service, search_media=search_media, scope=None)
+
+    await fake._review_selected_worker((20, 30))
+
+    review_set = service.get_active_review_set()
+    assert [item.backing_media_id for item in review_set.items] == [30, 20]
+    assert review_set.origin == "selection"
+    assert seen_kwargs["id_allowlist"] == [20, 30]  # bounded allowlist passed
+
+
+@pytest.mark.asyncio
+async def test_review_these_worker_notifies_on_failure(tmp_path):
+    service = _service(tmp_path)
+
+    async def search_media(**_kwargs):
+        raise RuntimeError("db exploded")
+
+    scope = SimpleNamespace(
+        query="", media_type=None, sort_by="last_modified_desc", page_size=2
+    )
+    fake = _worker_fake(service, search_media=search_media, scope=scope)
+
+    await fake._review_these_worker()  # must not raise
+
+    assert service.get_active_review_set() is None
+    assert any(severity == "error" for _msg, severity in fake._notices)
+
+
+def _picker_fake(service, *, decision, live_ids=None):
+    """Fake screen for the set-picker worker (task-28243).
+
+    ``decision`` is what the (stubbed) modal resolves to; the real service,
+    row collector, and activation run against the tmp DB.
+    """
+    fake = _entry_fake(service)
+    fake._review_set_live_ids = (
+        (lambda ids: {int(i) for i in ids})
+        if live_ids is None
+        else (lambda ids: set(live_ids))
+    )
+
+    async def run_call(call, *args, isolate_in_worker=False, **kwargs):
+        result = call(*args, **kwargs)
+        return await result if hasattr(result, "__await__") else result
+
+    fake._run_library_service_call = run_call
+    pushed: list = []
+
+    async def push(rows):
+        pushed.append(rows)
+        return decision
+
+    fake._push_review_set_picker = push
+    fake._pushed = pushed
+    syncs: list[bool] = []
+    fake._sync_library_media_viewer_or_recompose = lambda: syncs.append(True)
+    fake._syncs = syncs
+    for name in (
+        "_review_set_picker_worker",
+        "_collect_review_set_picker_rows",
+        "_activate_review_set",
+    ):
+        setattr(fake, name, MethodType(getattr(LibraryScreen, name), fake))
+    return fake
+
+
+@pytest.mark.asyncio
+async def test_picker_worker_lists_rows_and_opens_the_chosen_set(tmp_path):
+    service = _service(tmp_path)
+    first = service.create_review_set("First", origin="browse", items=[(10, "A")])
+    second = service.create_review_set(
+        "Second", origin="browse", items=[(20, "B"), (21, "C")]
+    )
+    fake = _picker_fake(service, decision=("open", first))
+
+    await fake._review_set_picker_worker()
+
+    rows = fake._pushed[0]
+    assert {row[0] for row in rows} == {first, second}
+    by_id = {row[0]: row for row in rows}
+    assert by_id[second][3] is True  # newest set was the active one
+    assert by_id[first][2] == "1 of 1 · 0 reviewed"
+    active = service.get_active_review_set()
+    assert active is not None and active.set_id == first  # switched (one-active)
+    assert fake._opened == ["local:media:10"]  # landed at its cursor
+
+
+@pytest.mark.asyncio
+async def test_picker_worker_open_reopens_a_completed_set(tmp_path):
+    service = _service(tmp_path)
+    done_set = service.create_review_set("Done", origin="browse", items=[(10, "A")])
+    service.mark_item_done(done_set, 10, True)
+    service.refresh_completion(done_set, lambda _id: True)
+    service.create_review_set("Other", origin="browse", items=[(20, "B")])
+    fake = _picker_fake(service, decision=("open", done_set))
+
+    await fake._review_set_picker_worker()
+
+    reopened = service.get_review_set(done_set)
+    assert reopened.completed_at is None  # AC#2: reopened
+    assert reopened.active is True
+    assert fake._opened == ["local:media:10"]
+
+
+@pytest.mark.asyncio
+async def test_picker_worker_open_persists_a_resolved_tombstoned_cursor(tmp_path):
+    # Qodo #2337: the cursor sat on a tombstone; opening resolves to the next
+    # live item AND persists that position, so a later restore of the deleted
+    # item cannot yank a subsequent resume back to the stale cursor.
+    service = _service(tmp_path)
+    set_id = service.create_review_set(
+        "X", origin="browse", items=[(10, "A"), (11, "B")]
+    )
+    service.create_review_set("Other", origin="browse", items=[(20, "C")])
+    fake = _picker_fake(service, decision=("open", set_id), live_ids={11, 20})
+
+    await fake._review_set_picker_worker()
+
+    assert fake._opened == ["local:media:11"]
+    assert service.get_review_set(set_id).cursor == 1  # persisted resolve
+
+
+@pytest.mark.asyncio
+async def test_picker_worker_dismiss_soft_deletes_without_opening(tmp_path):
+    service = _service(tmp_path)
+    set_id = service.create_review_set("X", origin="browse", items=[(10, "A")])
+    fake = _picker_fake(service, decision=("dismiss", set_id))
+
+    await fake._review_set_picker_worker()
+
+    assert service.list_review_sets() == ()
+    assert fake._opened == []
+    assert fake._notices  # the dismissal is confirmed
+    # Dismissing the ACTIVE set must refresh the Reader chrome -- the footer
+    # kept advertising "] next in set · 1 of 3" after a live dismissal
+    # (live-verified 2026-09-02).
+    assert fake._syncs == [True]
+
+
+@pytest.mark.asyncio
+async def test_picker_worker_cancel_changes_nothing(tmp_path):
+    service = _service(tmp_path)
+    set_id = service.create_review_set("X", origin="browse", items=[(10, "A")])
+    fake = _picker_fake(service, decision=None)
+
+    await fake._review_set_picker_worker()
+
+    active = service.get_active_review_set()
+    assert active is not None and active.set_id == set_id
+    assert fake._opened == [] and fake._notices == []
+
+
+@pytest.mark.asyncio
+async def test_picker_worker_open_all_tombstoned_notifies_without_activating(
+    tmp_path,
+):
+    service = _service(tmp_path)
+    gone = service.create_review_set("Gone", origin="browse", items=[(10, "A")])
+    keep = service.create_review_set("Keep", origin="browse", items=[(20, "B")])
+    fake = _picker_fake(service, decision=("open", gone), live_ids={20})
+
+    await fake._review_set_picker_worker()
+
+    active = service.get_active_review_set()
+    assert active is not None and active.set_id == keep  # unchanged
+    assert fake._opened == []
+    assert any(severity == "warning" for _msg, severity in fake._notices)
+
+
+@pytest.mark.asyncio
+async def test_picker_worker_failure_notifies(tmp_path):
+    service = _service(tmp_path)
+    fake = _picker_fake(service, decision=None)
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("db exploded")
+
+    fake._collect_review_set_picker_rows = boom
+
+    await fake._review_set_picker_worker()  # must not raise
+
+    assert any(severity == "error" for _msg, severity in fake._notices)
+
+
+def test_review_these_name_from_scope():
+    assert (
+        LibraryScreen._review_these_name(
+            SimpleNamespace(query="cats", media_type=None)
+        )
+        == 'Search: "cats"'
+    )
+    assert (
+        LibraryScreen._review_these_name(
+            SimpleNamespace(query="", media_type="video")
+        )
+        == "video items"
+    )
+    assert (
+        LibraryScreen._review_these_name(
+            SimpleNamespace(query="", media_type=None)
+        )
+        == "All media"
+    )
 
 
 def test_review_set_active_reflects_the_service(tmp_path):

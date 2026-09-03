@@ -324,15 +324,11 @@ def test_memory_wire_projection_is_unique_owned_and_private_anchor_free(
         apply_safety_window=False,
     )
 
-    wire = "\n".join(
-        str(row.get("content", "")) for row in prepared.messages_payload
-    )
+    wire = "\n".join(str(row.get("content", "")) for row in prepared.messages_payload)
     if prepared.system_message:
         wire = prepared.system_message + "\n" + wire
     assert wire.count("PROJECTED-MEMORY-CANARY") == 1
-    assert wire.index("ORIGINAL-SYSTEM-CANARY") < wire.index(
-        "PROJECTED-MEMORY-CANARY"
-    )
+    assert wire.index("ORIGINAL-SYSTEM-CANARY") < wire.index("PROJECTED-MEMORY-CANARY")
     assert all(
         prepared_request.PERSISTED_MESSAGE_ID_KEY not in row
         and prepared_request.PERSISTED_CONVERSATION_ID_KEY not in row
@@ -930,9 +926,7 @@ def test_tool_schemas_split_out_of_mandatory_by_construction() -> None:
         }
     ]
     with_tools = prepare_provider_request(
-        build_console_request(
-            [{"role": "user", "content": "describe"}], tools=tools
-        ),
+        build_console_request([{"role": "user", "content": "describe"}], tools=tools),
         wire_style="distinct_roles",
         model="gpt-4o",
         capacity=_capacity(None),

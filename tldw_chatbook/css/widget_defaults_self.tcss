@@ -2398,6 +2398,18 @@
     }
 
 
+/* ===== WIDGET: LibraryReviewSetPickerDialog (Widgets/Library/library_review_set_picker.py) ===== */
+
+    LibraryReviewSetPickerDialog { align: center middle; }
+    /* ID subject, not `... > Vertical`: an ancestor-scoped bare-type rule
+     * would trip the CSS fast-path ratchet (275 > 274, UI latency CI). */
+
+
+
+
+
+
+
 /* ===== WIDGET: ModelInstallProgress (Widgets/ModelArtifacts/install_progress.py) ===== */
 
     ModelInstallProgress {

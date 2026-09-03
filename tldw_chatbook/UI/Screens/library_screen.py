@@ -412,6 +412,8 @@ from ...Library.library_shell_state import (
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
     LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP,
+    LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP,
+    LIBRARY_REVIEW_SELECTED_TOOLTIP,
     LIBRARY_ROW_BROWSE_COLLECTIONS,
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
@@ -1868,6 +1870,19 @@ def _apply_library_row_toggle(
                 else LIBRARY_DELETE_SELECTED_TOOLTIP
             )
             _patch_library_disabled_marker_label(delete_button)
+            # task-28242 (Qodo #2335): the "Review selected" bulk action flips
+            # in place too, or it stays disabled after the first row toggle
+            # until an unrelated full recompose.
+            review_button = screen.query_one(
+                "#library-media-review-selected", Button
+            )
+            review_button.disabled = selection.count == 0
+            review_button.tooltip = (
+                LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP
+                if review_button.disabled
+                else LIBRARY_REVIEW_SELECTED_TOOLTIP
+            )
+            _patch_library_disabled_marker_label(review_button)
         elif kind == "notes":
             work_panes = screen.query("#library-note-work-pane")
             if work_panes and screen._library_note_session.snapshot is not None:
@@ -41980,6 +41995,368 @@ class LibraryScreen(BaseAppScreen):
             review_set.set_id, lambda candidate: candidate in live_ids
         )
         self._sync_library_media_viewer_or_recompose()
+
+    # -- review-set entry points (task-28242) --------------------------------
+
+    @on(Button.Pressed, "#library-media-review")
+    def handle_library_media_review_these(self, event: Button.Pressed) -> None:
+        """Pin the WHOLE filtered list as a review set and open it.
+
+        Args:
+            event: The "Review these" button press.
+        """
+        event.stop()
+        self.run_worker(
+            self._review_these_worker(),
+            group="library_review_set",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    @on(Button.Pressed, "#library-media-review-selected")
+    def handle_library_media_review_selected(self, event: Button.Pressed) -> None:
+        """Pin the current Select-mode selection as a review set and open it.
+
+        Args:
+            event: The "Review selected" bulk-action button press.
+        """
+        event.stop()
+        if getattr(self, "_library_media_bulk_delete_in_flight", False):
+            return
+        selection = self._library_media_row_selection
+        if not selection.count:
+            return
+        backing_ids: list[int] = []
+        for canonical_id in selection.ids:
+            try:
+                backing_ids.append(int(str(canonical_id).rsplit(":", 1)[-1]))
+            except (ValueError, TypeError):
+                continue
+        if not backing_ids:
+            return
+        self.run_worker(
+            self._review_selected_worker(tuple(backing_ids)),
+            group="library_review_set",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _review_these_worker(self) -> None:
+        """Page the whole filtered result, then create + open the set.
+
+        Wrapped so a search/DB failure surfaces a notice instead of a silent
+        no-op (Qodo #2335) -- the worker runs with ``exit_on_error=False``.
+        """
+        try:
+            scope = getattr(
+                self._library_media_browse_controller, "applied_scope", None
+            )
+            if scope is None:
+                return
+            pairs = await self._collect_review_pairs_from_scope(scope)
+            self._create_and_open_review_set(
+                self._review_these_name(scope), "browse", pairs
+            )
+        except Exception:
+            self._notify_review_set(
+                "Couldn't build the review set.", severity="error"
+            )
+
+    async def _review_selected_worker(self, backing_ids: tuple[int, ...]) -> None:
+        """Order the selected ids by the browse sort, then create + open."""
+        try:
+            pairs = await self._order_selected_review_pairs(backing_ids)
+            self._create_and_open_review_set(
+                f"{len(backing_ids)} selected items", "selection", pairs
+            )
+        except Exception:
+            self._notify_review_set(
+                "Couldn't build the review set.", severity="error"
+            )
+
+    async def _collect_review_pairs_from_scope(
+        self, scope: Any
+    ) -> list[tuple[int, str]]:
+        """Page the whole filtered result into ordered (backing_id, title) pairs.
+
+        Reads the raw ``search_media`` envelope page by page (off the event
+        loop) in browse-sort order, stopping at the total, an empty page, or one
+        past the 500 cap (so ``build_pinned_items`` can flag truncation).
+        """
+        search = getattr(
+            getattr(self.app_instance, "media_reading_scope_service", None),
+            "search_media",
+            None,
+        )
+        if not callable(search):
+            return []
+        from tldw_chatbook.Library.review_set_state import REVIEW_SET_CAP
+
+        pairs: list[tuple[int, str]] = []
+        page = 1
+        page_size = scope.page_size
+        while True:
+            filters: dict[str, Any] = {"sort_by": scope.sort_by}
+            if scope.media_type:
+                filters["media_types"] = [scope.media_type]
+            payload = await self._run_library_service_call(
+                search,
+                mode="local",
+                query=scope.query,
+                limit=page_size,
+                offset=(page - 1) * page_size,
+                library_summary=True,
+                isolate_in_worker=True,
+                **filters,
+            )
+            items = payload.get("items", []) if isinstance(payload, Mapping) else []
+            for item in items:
+                pairs.append((int(item["backing_media_id"]), str(item["title"])))
+            total = int(payload.get("total", 0)) if isinstance(payload, Mapping) else 0
+            if (
+                not items
+                or page * page_size >= total
+                or len(pairs) > REVIEW_SET_CAP
+            ):
+                break
+            page += 1
+        return pairs
+
+    async def _order_selected_review_pairs(
+        self, backing_ids: tuple[int, ...]
+    ) -> list[tuple[int, str]]:
+        """Order selected backing ids by the browse sort (deterministic).
+
+        Uses ``search_media``'s ``id_allowlist`` so the selection reads in the
+        same order the user saw, regardless of which pages it spanned -- NOT the
+        unordered RowSelection set.
+        """
+        search = getattr(
+            getattr(self.app_instance, "media_reading_scope_service", None),
+            "search_media",
+            None,
+        )
+        if not callable(search):
+            return []
+        from tldw_chatbook.Library.review_set_state import REVIEW_SET_CAP
+
+        scope = getattr(self._library_media_browse_controller, "applied_scope", None)
+        sort_by = scope.sort_by if scope is not None else "last_modified_desc"
+        # Qodo #2335: bound the query to the cap (+1 to flag overflow), not the
+        # unrestricted selection size.
+        ids = list(backing_ids)[: REVIEW_SET_CAP + 1]
+        payload = await self._run_library_service_call(
+            search,
+            mode="local",
+            query="",
+            library_summary=True,
+            isolate_in_worker=True,
+            id_allowlist=ids,
+            sort_by=sort_by,
+            limit=len(ids),
+            offset=0,
+        )
+        items = payload.get("items", []) if isinstance(payload, Mapping) else []
+        return [(int(item["backing_media_id"]), str(item["title"])) for item in items]
+
+    @staticmethod
+    def _review_these_name(scope: Any) -> str:
+        """A human name for a browse-derived review set."""
+        if scope.query:
+            return f'Search: "{scope.query}"'
+        if scope.media_type:
+            return f"{scope.media_type} items"
+        return "All media"
+
+    def _create_and_open_review_set(
+        self, name: str, origin: str, pairs: list[tuple[int, str]]
+    ) -> None:
+        """Create the set from pinned pairs, activate it, and open it in Reader.
+
+        A no-op (with a notice) when nothing resolved; warns when the 500 cap
+        dropped items.
+
+        Args:
+            name: Human label for the set.
+            origin: ``'browse'`` or ``'selection'``.
+            pairs: Ordered ``(backing_media_id, title)`` pairs.
+        """
+        from tldw_chatbook.Library.review_set_state import (
+            REVIEW_SET_CAP,
+            build_pinned_items,
+        )
+
+        items, truncated = build_pinned_items(pairs, cap=REVIEW_SET_CAP)
+        if not items:
+            self._notify_review_set(
+                "No media items to review.", severity="warning"
+            )
+            return
+        service = self._review_set_service()
+        if service is None:
+            return
+        service.create_review_set(name, origin, items)
+        if truncated:
+            self._notify_review_set(
+                f"Review set capped at the first {REVIEW_SET_CAP} items.",
+                severity="warning",
+            )
+        else:
+            self._notify_review_set(f"Reviewing {len(items)} items.")
+        self._open_library_media_viewer(f"local:media:{items[0][0]}")
+
+    def _notify_review_set(
+        self, message: str, *, severity: str = "information"
+    ) -> None:
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity=severity)
+
+    # -- review-set picker (task-28243) ---------------------------------------
+
+    @on(Button.Pressed, "#library-media-review-sets")
+    def handle_library_media_review_sets(self, event: Button.Pressed) -> None:
+        """Open the saved review-set picker (resume / switch / dismiss).
+
+        Args:
+            event: The "Sets" toolbar button press.
+        """
+        event.stop()
+        self.run_worker(
+            self._review_set_picker_worker(),
+            group="library_review_set",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _review_set_picker_worker(self) -> None:
+        """List saved sets, await one picker decision, and apply it.
+
+        One decision per open (lean v1): resume/switch loads the chosen set at
+        its cursor, dismiss soft-deletes it. Wrapped so a DB failure surfaces a
+        notice instead of a silent no-op (the worker runs with
+        ``exit_on_error=False``).
+        """
+        try:
+            service = self._review_set_service()
+            if service is None:
+                return
+            rows = await self._run_library_service_call(
+                self._collect_review_set_picker_rows, isolate_in_worker=True
+            )
+            decision = await self._push_review_set_picker(rows)
+            if decision is None:
+                return
+            from tldw_chatbook.Widgets.Library.library_review_set_picker import (
+                PICKER_DISMISS,
+                PICKER_OPEN,
+            )
+
+            action, set_id = decision
+            if action == PICKER_DISMISS:
+                await self._run_library_service_call(
+                    service.dismiss, set_id, isolate_in_worker=True
+                )
+                self._notify_review_set("Review set dismissed.")
+                # Dismissing the ACTIVE set must drop the Reader's set chrome
+                # -- without this the footer kept advertising "] next in set"
+                # after the set was gone (live-verified 2026-09-02).
+                self._sync_library_media_viewer_or_recompose()
+                return
+            if action != PICKER_OPEN:
+                return
+            landing = await self._run_library_service_call(
+                self._activate_review_set, set_id, isolate_in_worker=True
+            )
+            if landing is None:
+                self._notify_review_set(
+                    "All items in this set were removed.", severity="warning"
+                )
+                return
+            self._open_library_media_viewer(f"local:media:{landing}")
+        except Exception:
+            self._notify_review_set(
+                "Couldn't open review sets.", severity="error"
+            )
+
+    def _collect_review_set_picker_rows(
+        self,
+    ) -> list[tuple[str, str, str, bool]]:
+        """Build the picker's display rows with live progress (off the loop).
+
+        One liveness resolve covers the union of every listed set's backing
+        ids, so per-set progress shares a single chunked Media-DB query.
+        """
+        from tldw_chatbook.Library.review_set_state import build_picker_rows
+
+        service = self._review_set_service()
+        if service is None:
+            return []
+        sets = service.list_review_sets()
+        live_ids = self._review_set_live_ids(
+            item.backing_media_id
+            for review_set in sets
+            for item in review_set.items
+        )
+        return build_picker_rows(sets, lambda candidate: candidate in live_ids)
+
+    async def _push_review_set_picker(
+        self, rows: list[tuple[str, str, str, bool]]
+    ) -> tuple[str, str] | None:
+        """Push the picker modal and await its decision.
+
+        Returns:
+            ``("open", set_id)`` | ``("dismiss", set_id)``, or ``None`` on
+            cancel (or when the host cannot push modals).
+        """
+        push_screen_wait = getattr(self.app, "push_screen_wait", None)
+        if not callable(push_screen_wait):
+            return None
+        from tldw_chatbook.Widgets.Library.library_review_set_picker import (
+            LibraryReviewSetPickerDialog,
+        )
+
+        return await push_screen_wait(LibraryReviewSetPickerDialog(rows))
+
+    def _activate_review_set(self, set_id: str) -> int | None:
+        """Activate ``set_id`` and return its landing backing id (off-loop).
+
+        Reopens a completed set first (AC#2); activation deactivates any other
+        active set (the service's one-active invariant). An all-tombstoned set
+        is NOT activated -- the caller shows the empty notice instead (design
+        §7: an empty set is empty, never resumable).
+
+        Returns:
+            The live backing id at the set's resolved cursor, or ``None``.
+        """
+        from tldw_chatbook.Library.review_set_state import resolve_cursor
+
+        service = self._review_set_service()
+        if service is None:
+            return None
+        review_set = service.get_review_set(set_id)
+        if review_set is None:
+            return None
+        live_ids = self._review_set_live_ids(
+            item.backing_media_id for item in review_set.items
+        )
+        resolved = resolve_cursor(
+            review_set.items,
+            review_set.cursor,
+            lambda candidate: candidate in live_ids,
+        )
+        landing = {item.position: item for item in review_set.items}.get(resolved)
+        if landing is None or landing.backing_media_id not in live_ids:
+            return None
+        if review_set.completed_at is not None:
+            service.reopen(set_id)
+        service.activate(set_id)
+        if resolved != review_set.cursor:
+            # Persist the tombstone resolve (the walker does the same on
+            # resume) so a later restore of the deleted item cannot yank a
+            # subsequent resume back to the stale cursor (Qodo #2337).
+            service.set_cursor(set_id, resolved)
+        return landing.backing_media_id
 
     def _focus_library_media_items_pane(self) -> None:
         """Focus the Items pane at its most useful control (task-28004).
