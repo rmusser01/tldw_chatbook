@@ -9,7 +9,12 @@ consumption boundary is sufficient and does not need to see raw bytes:
 
 - Only real items (content, thinking, tool-call deltas) reach the consumer, so
   only they reset the clock -- keep-alives inherently cannot (AC#2).
-- It terminates a contentless stream regardless of transport bytes (AC#1).
+- It terminates a contentless stream regardless of transport bytes (AC#1),
+  freeing the run. NOTE: it closes the item source, which unwinds the
+  consumer -- but a sync provider whose worker thread is blocked inside a
+  single wedged read is not aborted by that close (the read ends only when
+  the connection drops). Bounding the RUN is the guarantee here; truly
+  aborting a blocked provider read is TASK-30015.
 - A slow-but-productive stream keeps yielding items, so it never trips (AC#5).
 
 The stall is reported as a distinct exception so callers can tell it apart from
@@ -86,10 +91,10 @@ async def watch_content_stalls(
                 return
             except asyncio.TimeoutError:
                 # No content for the whole window while the stream is still
-                # open -> stall. Close the source so the underlying worker /
-                # HTTP stream is cancelled, then report it distinctly.
-                with contextlib.suppress(Exception):
-                    await it.aclose()  # type: ignore[attr-defined]
+                # open -> stall. Report it distinctly; the `finally` closes the
+                # source, which unwinds an async-generator consumer. (A sync
+                # provider blocked inside a wedged read is not aborted by that
+                # close -- see TASK-30015; the run is freed regardless.)
                 raise StreamStallError(timeout_seconds, provider)
             yield item
     finally:
@@ -143,6 +148,10 @@ class StallTracker:
 # only actively-stalling sessions hold one (small) tracker.
 
 _SESSION_TRACKERS: dict[str, StallTracker] = {}
+#: Bound on tracked sessions. A stalled run never reaches the reset path, so
+#: without a cap a very long-lived process could accumulate one small tracker
+#: per distinct stall-then-die session. Evict the oldest on overflow.
+_MAX_TRACKED_SESSIONS = 512
 
 
 def record_session_stall(
@@ -166,6 +175,11 @@ def record_session_stall(
     key = str(session_id or "")
     tracker = _SESSION_TRACKERS.get(key)
     if tracker is None:
+        if len(_SESSION_TRACKERS) >= _MAX_TRACKED_SESSIONS:
+            # dict preserves insertion order; drop the oldest tracked session.
+            oldest = next(iter(_SESSION_TRACKERS), None)
+            if oldest is not None:
+                _SESSION_TRACKERS.pop(oldest, None)
         tracker = StallTracker(warn_threshold)
         _SESSION_TRACKERS[key] = tracker
     return tracker.record_stall(provider)

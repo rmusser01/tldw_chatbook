@@ -3081,18 +3081,16 @@ class _StreamingModelAdapter:
             # and from a user cancel. AC#4: repeated stalls against the same
             # provider in a session surface a warning instead of silent retries.
             provider_label = self._resolution.provider
-            if record_session_stall(_stall_session_id, provider_label):
-                logger.warning(
-                    "provider stream stalled repeatedly this session "
-                    "(provider={}); surfacing rather than retrying silently",
-                    provider_label,
-                )
-            else:
-                logger.warning(
-                    "provider stream stalled: no content within the stall window "
-                    "(provider={})",
-                    provider_label,
-                )
+            repeated = record_session_stall(_stall_session_id, provider_label)
+            # A stall is terminal for the turn (StreamStallError is non-transient,
+            # so the run loop does not retry it). The threshold branch just marks
+            # a provider that keeps stalling across turns in this session (AC#4).
+            logger.warning(
+                "provider stream stalled: no content within the stall window "
+                "(provider={}, repeated_this_session={})",
+                provider_label,
+                repeated,
+            )
             raise
         # A productive turn clears this session's stall streak (AC#4).
         reset_session_stalls(_stall_session_id, self._resolution.provider)

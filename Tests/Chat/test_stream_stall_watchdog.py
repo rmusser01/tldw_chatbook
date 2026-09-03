@@ -180,3 +180,22 @@ def test_reset_session_stalls_none_drops_whole_session():
     w.reset_session_stalls("s")  # productive turn, drop all
     assert "s" not in w._SESSION_TRACKERS
     w._SESSION_TRACKERS.clear()
+
+
+def test_session_registry_is_capped():
+    """M3: a long-lived process cannot grow the registry without bound."""
+    import tldw_chatbook.Chat.stream_stall_watchdog as w
+    w._SESSION_TRACKERS.clear()
+    monkeypatch_cap = 8
+    orig = w._MAX_TRACKED_SESSIONS
+    w._MAX_TRACKED_SESSIONS = monkeypatch_cap
+    try:
+        for i in range(monkeypatch_cap + 5):
+            w.record_session_stall(f"sess-{i}", "acme")
+        assert len(w._SESSION_TRACKERS) <= monkeypatch_cap
+        # the newest session survived; the oldest was evicted
+        assert f"sess-{monkeypatch_cap + 4}" in w._SESSION_TRACKERS
+        assert "sess-0" not in w._SESSION_TRACKERS
+    finally:
+        w._MAX_TRACKED_SESSIONS = orig
+        w._SESSION_TRACKERS.clear()
