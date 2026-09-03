@@ -24,6 +24,7 @@ from functools import partial
 from types import MappingProxyType
 from typing import Any, Optional, TYPE_CHECKING
 import asyncio
+from datetime import datetime, timezone
 import inspect
 import time
 
@@ -40,6 +41,19 @@ from ...Chat.console_chat_models import (
 )
 from ...Chat.console_display_state import evidence_bundle_from_launch
 from ...Chat.console_live_work import ConsoleLiveWorkLaunch
+from ...Chat.console_switcher_state import (
+    CONSOLE_SWITCHER_PAGE_LIMIT,
+    ConsoleSwitcherActivitySignal,
+    ConsoleSwitcherEntry,
+    ConsoleSwitcherHistoryPage,
+    ConsoleSwitcherTarget,
+    SwitcherTargetKind,
+    build_console_active_results,
+    group_console_history_entries,
+    parse_console_switcher_instant,
+    plan_console_history_query,
+    resolve_console_history_timezone,
+)
 from ...Chat.console_conversation_hydration import (
     ConversationLoadFailed,
     ConversationServiceUnavailable,
@@ -77,6 +91,10 @@ from ...Workspaces import (
     console_persisted_row_updated_sort,
     overlay_console_conversation_markers,
 )
+from ...Workspaces.conversation_browser_state import (
+    console_conversation_status_detail,
+    format_console_relative_age,
+)
 from ...Workspaces.display_state import (
     CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
     ConsoleWorkspaceContextState,
@@ -85,7 +103,12 @@ from ...Workspaces.display_state import (
     build_console_workspace_state,
     console_workspace_conversation_result_copy,
 )
-from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Utils.input_validation import (
+    CONSOLE_SWITCHER_QUERY_MAX_LENGTH,
+    sanitize_string,
+    validate_console_switcher_query,
+    validate_text_input,
+)
 from ...Workspaces.registry_service import (
     WorkspaceNotFound,
     WorkspaceRegistryServiceError,
@@ -2537,6 +2560,78 @@ class ConsoleWorkspaceController:
             rows.append(self._apply_console_browser_star_state(row, starred_ids))
         return rows
 
+    def _native_console_switcher_rows(
+        self,
+        cached_rows: Iterable[ConsoleConversationBrowserInputRow] = (),
+    ) -> list[ConsoleConversationBrowserInputRow]:
+        """Project open sessions for Active using only app-lifetime memory.
+
+        Cached workspace rows may contribute display labels and star state,
+        but this path never calls a registry, mark store, or conversation
+        service. Controller activity is merged separately as memory signals.
+        """
+        store = self._console_chat_store
+        if store is None:
+            return []
+        cached = tuple(cached_rows)
+        labels = {
+            str(row.workspace_id): str(row.workspace_label or row.workspace_id)
+            for row in cached
+            if row.workspace_id and row.workspace_label
+        }
+        cached_by_conversation = {
+            str(row.conversation_id): row
+            for row in cached
+            if row.conversation_id
+        }
+        active_session_id = store.active_session_id
+        controller = self._console_chat_controller
+        rows: list[ConsoleConversationBrowserInputRow] = []
+        for session in store.sessions():
+            session_workspace_id = str(session.workspace_id or "").strip()
+            scope_type = (
+                "global"
+                if session_workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
+                else "workspace"
+            )
+            workspace_id = None if scope_type == "global" else session_workspace_id
+            persisted_id = str(session.persisted_conversation_id or "").strip()
+            cached_row = cached_by_conversation.get(persisted_id)
+            workspace_label = (
+                "Chats"
+                if not workspace_id or workspace_id == DEFAULT_WORKSPACE_ID
+                else labels.get(workspace_id, workspace_id)
+            )
+            queued_count = 0
+            if controller is not None:
+                try:
+                    queued_count = controller.activity_for(session.id).queued_count
+                except Exception:  # noqa: BLE001 - keep the open shell usable
+                    queued_count = 0
+            rows.append(
+                ConsoleConversationBrowserInputRow(
+                    row_key=persisted_id or f"native:{session.id}",
+                    conversation_id=persisted_id or None,
+                    native_session_id=session.id,
+                    title=str(session.title or "Untitled conversation"),
+                    scope_type=scope_type,
+                    workspace_id=workspace_id,
+                    workspace_label=workspace_label,
+                    status=(
+                        "active session"
+                        if session.id == active_session_id
+                        else "open session"
+                    ),
+                    selected=session.id == active_session_id,
+                    source_kind="native",
+                    updated_sort=str(session.updated_at or ""),
+                    queued_count=queued_count,
+                    starred=bool(getattr(cached_row, "starred", False)),
+                    star_enabled=bool(persisted_id),
+                )
+            )
+        return rows
+
     def _membership_console_browser_rows(
         self,
         current_conversation_id: str | None = None,
@@ -2612,70 +2707,303 @@ class ConsoleWorkspaceController:
                 rows.append(self._apply_console_browser_star_state(row, starred_ids))
         return rows
 
-    async def _load_flat_conversation_history_rows(
-        self,
-        current_conversation_id: str | None = None,
-    ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
-        """Load complete Default/unassigned history for one Ctrl+K open."""
+    def _console_switcher_authority(self) -> tuple[str, str]:
+        """Return stable production authority with a safe harness fallback."""
+        runtime = getattr(self.app_instance, "console_runtime", None)
+        profile = str(getattr(runtime, "profile_authority", "") or "").strip()
+        token = str(getattr(runtime, "authority_token", "") or "").strip()
+        store = self._console_chat_store
+        fallback = f"ephemeral:{id(store) if store is not None else id(self)}"
+        return profile or fallback, token or fallback
 
-        rows: tuple[ConsoleConversationBrowserInputRow, ...] = ()
-        for scope in (
-            ("global", None),
-            ("workspace", DEFAULT_WORKSPACE_ID),
-        ):
-            offset = 0
-            while True:
-                page, total, error = await self._persisted_console_browser_rows(
-                    current_conversation_id=current_conversation_id,
-                    scopes=(scope,),
-                    offset=offset,
-                )
-                if error:
-                    break
-                rows = self._merge_console_browser_rows(rows, page)
-                offset += CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT
-                if not page or total is None or offset >= total:
-                    break
-        return rows
-
-    async def console_session_switcher_rows(
-        self,
-    ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
-        """Return complete history plus live rows for the Ctrl+K switcher.
-
-        The complete membership scan happens only on this explicit action;
-        ordinary rail projection stays bounded to expanded/search/page state.
-        """
-
-        current_conversation_id = self._current_console_conversation_id()
-        native_rows = self._native_console_browser_rows(current_conversation_id)
-        membership_rows = self._membership_console_browser_rows(current_conversation_id)
-        persisted_rows = await self._load_flat_conversation_history_rows(
-            current_conversation_id
-        )
-        # Resolve ownership from weakest to strongest evidence. Persisted flat
-        # history supersedes stale session observations after a move out of a
-        # named workspace; complete registry membership remains authoritative
-        # when both services still expose the same conversation temporarily.
-        self._record_canonical_owner_rows(native_rows)
-        self._record_canonical_owner_rows(persisted_rows)
-        self._record_canonical_owner_rows(membership_rows)
-        named_rows = self._merge_console_browser_rows(
+    def console_session_switcher_active_entries(self) -> tuple[Any, ...]:
+        """Return the immediate memory-only canonical Active projection."""
+        cached_named_rows = self._merge_console_switcher_memory_rows(
             self._workspace_tree_search.rows,
             self._workspace_tree_search.settled_rows,
             *(attempt.rows for attempt in self._workspace_page_attempts.values()),
             *self._workspace_membership_rows.values(),
         )
-        rows = self._merge_console_browser_rows(
-            native_rows,
-            membership_rows,
-            named_rows,
-            persisted_rows,
+        native_rows = self._native_console_switcher_rows(cached_named_rows)
+        rows = self._merge_console_switcher_memory_rows(
+            native_rows, cached_named_rows
         )
-        rows = self._rows_with_latest_canonical_owner(rows)
-        return self._overlay_current_console_browser_markers(
+        profile, token = self._console_switcher_authority()
+        runtime = getattr(self.app_instance, "console_runtime", None)
+        receipt_service = getattr(runtime, "activity_receipts", None)
+        receipts = (
+            receipt_service.unseen_snapshot()
+            if receipt_service is not None
+            else ()
+        )
+        controller = self._console_chat_controller
+        signals: list[ConsoleSwitcherActivitySignal] = []
+        if controller is not None:
+            for row in native_rows:
+                session_id = str(row.native_session_id or "").strip()
+                if not session_id:
+                    continue
+                try:
+                    activity = controller.activity_for(session_id)
+                    run_state = controller.run_state_for(session_id)
+                except Exception:  # noqa: BLE001 - open shell remains available
+                    continue
+                state = ""
+                if activity.needs_approval:
+                    state = "approval"
+                elif activity.queue_paused:
+                    state = "paused"
+                elif str(getattr(run_state.status, "value", run_state.status)) not in {
+                    "idle",
+                    "completed",
+                    "failed",
+                    "stopped",
+                }:
+                    state = str(getattr(run_state.status, "value", run_state.status))
+                elif activity.queued_count:
+                    state = "queued"
+                if state:
+                    signals.append(
+                        ConsoleSwitcherActivitySignal(
+                            source_key=f"controller:native:{session_id}:{state}",
+                            state=state,
+                            session_id=session_id,
+                            conversation_id=row.conversation_id,
+                            occurred_at=row.updated_sort,
+                        )
+                    )
+        return build_console_active_results(
             rows,
-            current_conversation_id=current_conversation_id,
+            receipts=receipts,
+            controller_signals=signals,
+            profile_authority=profile,
+            authority_token=token,
+        )
+
+    async def load_console_session_switcher_history(
+        self,
+        *,
+        query: str,
+        offset: int,
+        limit: int,
+    ) -> ConsoleSwitcherHistoryPage:
+        """Load one validated, bounded all-local History page off the event loop.
+
+        Args:
+            query: Exact switcher query from the UI validation boundary.
+            offset: Requested zero-based result offset.
+            limit: Requested maximum result count.
+
+        Returns:
+            One bounded History page. Invalid queries return an empty page with
+            the same recovery copy used by the switcher input.
+        """
+        bounded_limit = min(CONSOLE_SWITCHER_PAGE_LIMIT, max(1, int(limit)))
+        bounded_offset = max(0, int(offset))
+        try:
+            validated_query = validate_console_switcher_query(query)
+        except ValueError:
+            return ConsoleSwitcherHistoryPage(
+                (),
+                bounded_offset,
+                bounded_limit,
+                0,
+                f"Search is limited to {CONSOLE_SWITCHER_QUERY_MAX_LENGTH} characters.",
+            )
+        query_plan = plan_console_history_query(validated_query)
+        if not query_plan.can_match:
+            return ConsoleSwitcherHistoryPage((), bounded_offset, bounded_limit, 0)
+        service = getattr(
+            self.app_instance, "local_chat_conversation_service", None
+        )
+        include_mode = False
+        if service is None:
+            service = getattr(
+                self.app_instance, "chat_conversation_scope_service", None
+            )
+            include_mode = service is not None
+        list_conversations = getattr(service, "list_conversations", None)
+        if not callable(list_conversations):
+            return ConsoleSwitcherHistoryPage(
+                (), bounded_offset, bounded_limit, 0, "History is unavailable."
+            )
+        labels = self._console_browser_workspace_labels()
+        consumed_text_indexes: set[int] = set()
+        workspace_terms: list[str] = []
+        for index, term in enumerate(query_plan.ordered_terms):
+            if term.kind != "workspace":
+                continue
+            phrase_terms = [term.value]
+            following_index = index + 1
+            while (
+                following_index < len(query_plan.ordered_terms)
+                and query_plan.ordered_terms[following_index].kind == "text"
+            ):
+                following_term = query_plan.ordered_terms[following_index].value
+                extended_terms = (*phrase_terms, following_term)
+                if not any(
+                    all(
+                        value.casefold() in str(label or "").casefold()
+                        for value in extended_terms
+                    )
+                    for label in labels.values()
+                ):
+                    break
+                phrase_terms.append(following_term)
+                consumed_text_indexes.add(following_index)
+                following_index += 1
+            workspace_terms.extend(phrase_terms)
+        text_terms = [
+            term.value
+            for index, term in enumerate(query_plan.ordered_terms)
+            if term.kind == "text" and index not in consumed_text_indexes
+        ]
+
+        text_query = " ".join(text_terms)
+        kwargs: dict[str, Any] = {
+            "query": text_query,
+            "scope_type": "all",
+            "limit": bounded_limit,
+            "offset": bounded_offset,
+        }
+        if workspace_terms:
+            workspace_ids = tuple(
+                workspace_id
+                for workspace_id, label in labels.items()
+                if all(
+                    term in str(label or "").casefold()
+                    for term in (item.casefold() for item in workspace_terms)
+                )
+            )
+            include_global_scope = all(
+                term.casefold() in "chats" for term in workspace_terms
+            )
+            if not workspace_ids and not include_global_scope:
+                return ConsoleSwitcherHistoryPage((), bounded_offset, bounded_limit, 0)
+            if workspace_ids:
+                kwargs["workspace_ids"] = workspace_ids
+            if include_global_scope:
+                kwargs["include_global_scope"] = True
+        if text_terms:
+            kwargs["query_terms"] = tuple(text_terms)
+            kwargs["query_workspace_ids_by_term"] = tuple(
+                tuple(
+                    workspace_id
+                    for workspace_id, label in labels.items()
+                    if term.casefold() in str(label or "").casefold()
+                )
+                for term in text_terms
+            )
+            kwargs["query_include_global_scope_by_term"] = tuple(
+                term.casefold() in "chats" for term in text_terms
+            )
+        if include_mode:
+            kwargs["mode"] = "local"
+        try:
+            db = getattr(service, "db", None)
+            if inspect.iscoroutinefunction(list_conversations):
+                payload = await list_conversations(**kwargs)
+            elif bool(getattr(db, "is_memory_db", False)):
+                payload = list_conversations(**kwargs)
+            else:
+                payload = await asyncio.to_thread(list_conversations, **kwargs)
+            if inspect.isawaitable(payload):
+                payload = await payload
+        except Exception as exc:  # noqa: BLE001 - History degrades independently
+            logger.warning(
+                "Console switcher History load failed (exception_type={})",
+                type(exc).__name__,
+            )
+            return ConsoleSwitcherHistoryPage(
+                (), bounded_offset, bounded_limit, 0, "History is unavailable."
+            )
+        if not isinstance(payload, Mapping):
+            payload = {}
+        items = payload.get("items")
+        if not isinstance(items, list):
+            items = []
+        pagination = payload.get("pagination")
+        total_value = (
+            pagination.get("total") if isinstance(pagination, Mapping) else None
+        )
+        if total_value is None:
+            total_value = payload.get("total")
+        try:
+            total = max(len(items), int(total_value))
+        except (TypeError, ValueError):
+            total = len(items)
+        profile, token = self._console_switcher_authority()
+        labels = self._console_browser_workspace_labels()
+        history_now = datetime.now(timezone.utc)
+        entries: list[ConsoleSwitcherEntry] = []
+        for item in items[:bounded_limit]:
+            if not isinstance(item, Mapping):
+                continue
+            conversation_id = str(item.get("id") or "").strip()
+            if not conversation_id:
+                continue
+            scope_type = str(item.get("scope_type") or "workspace")
+            workspace_id = (
+                None
+                if scope_type == "global"
+                else str(item.get("workspace_id") or DEFAULT_WORKSPACE_ID)
+            )
+            updated = parse_console_switcher_instant(
+                console_persisted_row_updated_sort(item)
+            )
+            target = ConsoleSwitcherTarget(
+                kind=SwitcherTargetKind.PERSISTED_CONVERSATION,
+                profile_authority=profile,
+                authority_token=token,
+                session_id=None,
+                conversation_id=conversation_id,
+                scope_type=scope_type,
+                workspace_id=workspace_id,
+            )
+            lifecycle = str(item.get("state") or "workspace-thread")
+            workspace_label = self._console_browser_workspace_label(
+                workspace_id, labels
+            )
+            entries.append(
+                ConsoleSwitcherEntry(
+                    row_key=f"conversation:{profile}:{conversation_id}",
+                    title=str(item.get("title") or "Untitled conversation"),
+                    subtitle=" · ".join(
+                        part
+                        for part in (
+                            workspace_label,
+                            console_conversation_status_detail(lifecycle),
+                            format_console_relative_age(
+                                updated.isoformat() if updated else "",
+                                now=history_now,
+                            ),
+                        )
+                        if part
+                    ),
+                    native_session_id=None,
+                    conversation_id=conversation_id,
+                    scope_type=scope_type,
+                    workspace_id=workspace_id,
+                    is_active=False,
+                    target=target,
+                    latest_at=updated,
+                    workspace_label=workspace_label,
+                    lifecycle=lifecycle,
+                )
+            )
+        local_timezone = resolve_console_history_timezone(
+            getattr(self.app_instance, "local_timezone_name", None)
+        )
+        grouped = group_console_history_entries(
+            entries,
+            now=history_now,
+            local_timezone=local_timezone,
+        )
+        return ConsoleSwitcherHistoryPage(
+            grouped,
+            bounded_offset,
+            bounded_limit,
+            total,
         )
 
     def _console_browser_unseen_marker(self, conversation_id: str | None) -> str:
@@ -2990,6 +3318,22 @@ class ConsoleWorkspaceController:
         for group in row_groups:
             for raw_row in group:
                 row = self._apply_console_browser_star_state(raw_row, starred_ids)
+                identity = self._console_browser_display_identity(row)
+                if not identity[-1] or identity in seen:
+                    continue
+                seen.add(identity)
+                merged.append(row)
+        return tuple(merged)
+
+    def _merge_console_switcher_memory_rows(
+        self,
+        *row_groups: Iterable[ConsoleConversationBrowserInputRow],
+    ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
+        """Dedupe already-cached switcher rows without refreshing star state."""
+        merged: list[ConsoleConversationBrowserInputRow] = []
+        seen: set[tuple[str, ...]] = set()
+        for group in row_groups:
+            for row in group:
                 identity = self._console_browser_display_identity(row)
                 if not identity[-1] or identity in seen:
                     continue

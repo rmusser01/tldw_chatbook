@@ -981,9 +981,14 @@ from .server_notifications_schemas import (
     ServerNotificationStreamEvent,
 )
 from .scheduled_tasks_automation_schemas import (
+    ScheduledTaskAutomationDefinition,
     ScheduledTaskAutomationDefinitionList,
     ScheduledTaskAutomationRunNowResponse,
     ScheduledTaskAuditList,
+    ScheduledTaskDefinitionCreateRequest,
+    ScheduledTaskDefinitionUpdateRequest,
+    ScheduledTaskPreview,
+    ScheduledTaskPreviewCreateRequest,
     ScheduledTaskResult,
     ScheduledTaskResultList,
 )
@@ -1364,6 +1369,29 @@ class TLDWAPIClient:
                         error_detail = f"Validation Error: {response_data['detail'][0].get('msg', '')} for field '{'.'.join(map(str, response_data['detail'][0].get('loc', [])))}'"
                     elif isinstance(response_data["detail"], str):
                         error_detail = response_data["detail"]
+                    elif isinstance(response_data["detail"], dict):
+                        # Structured refusal: tldw_server returns
+                        # `{"detail": {"code", "message", "details",
+                        # "retryable"}}` for its deterministic 4xx
+                        # refusals. Without this branch `error_detail`
+                        # stayed the raw httpx text ("Client error '409
+                        # Conflict' for url ... For more information
+                        # check: https://developer.mozilla.org/..."), so
+                        # the server's own explanation was dropped on the
+                        # floor and callers could only report a generic
+                        # failure -- exactly what made a 409
+                        # `scheduled_task_definition_archived` surface to
+                        # the user as "this action requires a server
+                        # connection" (schedules task 6 round 2, D9).
+                        # `message` is the human sentence, `code` the
+                        # machine token; prefer the former, fall back to
+                        # the latter, and only then to the raw text.
+                        detail_obj = response_data["detail"]
+                        error_detail = str(
+                            detail_obj.get("message")
+                            or detail_obj.get("code")
+                            or error_detail
+                        )
             except ValueError:
                 pass  # Ignore if response is not JSON or detail not found
 
@@ -8098,6 +8126,119 @@ class TLDWAPIClient:
         )
         return ScheduledTaskAutomationRunNowResponse.model_validate(response)
 
+    async def pause_scheduled_task_definition(
+        self, definition_id: str
+    ) -> ScheduledTaskAutomationDefinition:
+        """Pause a server-side automation definition (spec §5.1 lifecycle).
+
+        Args:
+            definition_id: The server definition to pause.
+
+        Returns:
+            The definition row with its post-pause lifecycle state.
+        """
+        response = await self._request(
+            "POST",
+            f"/api/v1/scheduled-tasks/definitions/{definition_id}/pause",
+        )
+        return ScheduledTaskAutomationDefinition.model_validate(response)
+
+    async def resume_scheduled_task_definition(
+        self, definition_id: str
+    ) -> ScheduledTaskAutomationDefinition:
+        """Resume a paused server-side automation definition.
+
+        Args:
+            definition_id: The server definition to resume.
+
+        Returns:
+            The definition row with its post-resume lifecycle state.
+        """
+        response = await self._request(
+            "POST",
+            f"/api/v1/scheduled-tasks/definitions/{definition_id}/resume",
+        )
+        return ScheduledTaskAutomationDefinition.model_validate(response)
+
+    async def archive_scheduled_task_definition(
+        self, definition_id: str
+    ) -> ScheduledTaskAutomationDefinition:
+        """Archive a server-side automation definition.
+
+        Args:
+            definition_id: The server definition to archive.
+
+        Returns:
+            The definition row with its post-archive lifecycle state
+            (``lifecycle="archived"``, ``archived_at`` set).
+        """
+        response = await self._request(
+            "POST",
+            f"/api/v1/scheduled-tasks/definitions/{definition_id}/archive",
+        )
+        return ScheduledTaskAutomationDefinition.model_validate(response)
+
+    async def mark_scheduled_task_definition_solved(
+        self, definition_id: str, *, result_id: str | None = None
+    ) -> ScheduledTaskAutomationDefinition:
+        """Mark a Recurring Question definition solved (spec §4.3 / PR-6 Task 2).
+
+        Mirrors the server's ``ScheduledTaskMarkSolvedRequest`` (one field,
+        ``resolved_result_id``).
+
+        Args:
+            definition_id: The server definition to mark solved.
+            result_id: The server result id that triggered the resolution,
+                if any.
+
+        Returns:
+            The definition row with its post-solve resolution state
+            (``resolution_state="solved"``, ``resolved_at``/``resolved_by``/
+            ``resolved_result_id`` set). Idempotent server-side: marking an
+            already-solved definition solved again is a no-op that returns
+            the current row unchanged, not an error.
+        """
+        response = await self._request(
+            "POST",
+            f"/api/v1/scheduled-tasks/definitions/{definition_id}/mark-solved",
+            json_data={"resolved_result_id": result_id},
+        )
+        return ScheduledTaskAutomationDefinition.model_validate(response)
+
+    async def reopen_scheduled_task_definition(
+        self,
+        definition_id: str,
+        *,
+        target_lifecycle: str = "paused",
+        reason: str | None = None,
+    ) -> ScheduledTaskAutomationDefinition:
+        """Reopen a solved Recurring Question definition (spec §4.3 / PR-6 Task 2).
+
+        Mirrors the server's ``ScheduledTaskReopenRequest`` (``target_
+        lifecycle`` -- ``"configured"`` or ``"paused"``, default
+        ``"paused"`` -- plus an optional free-text ``reason``).
+
+        Args:
+            definition_id: The server definition to reopen.
+            target_lifecycle: Lifecycle to restore the definition to.
+            reason: Optional free-text reason recorded on the audit event.
+
+        Returns:
+            The definition row with ``resolution_state="open"`` and
+            ``resolved_at``/``resolved_by``/``resolved_result_id`` cleared.
+
+        Raises:
+            APIResponseError: If the definition is not currently solved
+                (the server refuses the transition -- reopening is NOT a
+                no-op like mark-solved).
+        """
+        response = await self._request(
+            "POST",
+            f"/api/v1/scheduled-tasks/definitions/{definition_id}/reopen",
+            json_data={"target_lifecycle": target_lifecycle, "reason": reason},
+        )
+        return ScheduledTaskAutomationDefinition.model_validate(response)
+
     async def list_scheduled_task_automation_definition_audit(
         self,
         definition_id: str,
@@ -8183,6 +8324,75 @@ class TLDWAPIClient:
             json_data={"review_state": review_state, "review_note": review_note},
         )
         return ScheduledTaskResult.model_validate(response)
+
+    async def preview_scheduled_task_definition(
+        self, request: ScheduledTaskPreviewCreateRequest
+    ) -> ScheduledTaskPreview:
+        """Create a server-side authoring preview (spec §5.1).
+
+        Args:
+            request: The preview request (mode/family/config/schedule/etc).
+
+        Returns:
+            The created preview, including ``status``, ``validation_errors``,
+            ``warnings``, and the ``normalized_config`` the server would
+            persist if the preview were consumed.
+        """
+        response = await self._request(
+            "POST",
+            "/api/v1/scheduled-tasks/previews",
+            json_data=request.model_dump(exclude_none=True, mode="json"),
+        )
+        return ScheduledTaskPreview.model_validate(response)
+
+    async def create_scheduled_task_definition(
+        self,
+        preview_id: str,
+        *,
+        initial_lifecycle: str = "configured",
+    ) -> ScheduledTaskAutomationDefinition:
+        """Create a server-side automation definition from a consumed preview.
+
+        Args:
+            preview_id: The valid create-mode preview to consume
+                (``ScheduledTaskPreview.id``).
+            initial_lifecycle: Starting lifecycle -- ``"configured"``
+                (default) or ``"paused"``.
+
+        Returns:
+            The created definition row.
+        """
+        request = ScheduledTaskDefinitionCreateRequest(
+            preview_id=preview_id, initial_lifecycle=initial_lifecycle
+        )
+        response = await self._request(
+            "POST",
+            "/api/v1/scheduled-tasks/definitions",
+            json_data=request.model_dump(mode="json"),
+        )
+        return ScheduledTaskAutomationDefinition.model_validate(response)
+
+    async def update_scheduled_task_definition(
+        self,
+        definition_id: str,
+        preview_id: str,
+    ) -> ScheduledTaskAutomationDefinition:
+        """Apply a consumed update-mode preview to an existing definition.
+
+        Args:
+            definition_id: The definition to update.
+            preview_id: The valid update-mode preview to consume.
+
+        Returns:
+            The updated definition row.
+        """
+        request = ScheduledTaskDefinitionUpdateRequest(preview_id=preview_id)
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/scheduled-tasks/definitions/{definition_id}",
+            json_data=request.model_dump(mode="json"),
+        )
+        return ScheduledTaskAutomationDefinition.model_validate(response)
 
     async def list_output_templates(
         self,

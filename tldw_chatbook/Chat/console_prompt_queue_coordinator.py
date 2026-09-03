@@ -70,6 +70,7 @@ class _PromptChain:
     accepted_live_turn: bool = False
     current_entry_id: str | None = None
     last_terminal_status: ConsoleRunStatus | None = None
+    logical_outcome_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +108,8 @@ class ConsolePromptQueueCoordinator:
         on_queued_accepted: Callable[[ConsoleQueuedAcceptanceEvent], None]
         | None = None,
         on_activity_changed: Callable[[str], None] | None = None,
-        on_chain_terminal: Callable[[str, ConsoleRunStatus], None] | None = None,
+        on_chain_terminal: Callable[[str, ConsoleRunStatus, str | None], None]
+        | None = None,
     ) -> None:
         self.registry = registry
         self._context_epoch = context_epoch
@@ -122,6 +124,7 @@ class ConsolePromptQueueCoordinator:
         self._chains: dict[str, _PromptChain] = {}
         self._queue_snapshots: dict[str, PromptQueueSnapshot] = {}
         self._dispatch_recoveries: dict[str, _RecoveredQueueOwner] = {}
+        self._recovered_logical_outcomes: dict[str, str] = {}
         self._settled_dispatch_recoveries: OrderedDict[tuple[str, str, str], None] = (
             OrderedDict()
         )
@@ -248,6 +251,9 @@ class ConsolePromptQueueCoordinator:
         if current is not None and current != owner:
             return False
         self._dispatch_recoveries[session_id] = owner
+        self._recovered_logical_outcomes[session_id] = (
+            f"queue-chain:{preparation_id}"
+        )
         snapshot = self.registry.snapshot(session_id)
         if snapshot.total_count and snapshot.mode is not PromptQueueMode.PAUSED:
             paused = self.registry.pause(
@@ -426,6 +432,7 @@ class ConsolePromptQueueCoordinator:
         origin: ConsoleSubmissionOrigin,
         context_epoch: int,
         entry_id: str | None = None,
+        preparation_id: str | None = None,
         defer_queued_settlement: bool = False,
     ) -> None:
         """Commit the accepted boundary and settle a queued claim exactly once."""
@@ -471,6 +478,8 @@ class ConsolePromptQueueCoordinator:
             if not defer_queued_settlement:
                 self._settle_queued_claim(session_id, entry_id)
         chain.accepted_live_turn = True
+        if preparation_id:
+            chain.logical_outcome_id = f"queue-chain:{preparation_id}"
         self._changed(session_id)
 
     def acknowledge_durable_acceptance(
@@ -512,6 +521,7 @@ class ConsolePromptQueueCoordinator:
                     return False
         if chain is not None:
             chain.accepted_live_turn = True
+            chain.logical_outcome_id = f"queue-chain:{preparation_id}"
             if chain.current_entry_id == entry_id:
                 chain.current_entry_id = None
             self._changed(session_id)
@@ -758,13 +768,19 @@ class ConsolePromptQueueCoordinator:
         self, session_id: str, status: ConsoleRunStatus
     ) -> None:
         chain = self._chains.get(session_id)
+        logical_outcome_id = (
+            chain.logical_outcome_id
+            if chain is not None
+            else self._recovered_logical_outcomes.get(session_id)
+        )
         if chain is not None:
             chain.accepted_live_turn = False
         self._chains.pop(session_id, None)
+        self._recovered_logical_outcomes.pop(session_id, None)
         self._changed(session_id)
         callback = self.on_chain_terminal
         if callback is not None and status in self._TERMINAL:
-            callback(session_id, status)
+            callback(session_id, status, logical_outcome_id)
 
     def resume(self, session_id: str) -> PromptQueueMutationResult:
         """Reacquire a slot and resume a manually/dispatch-paused queue."""
@@ -801,7 +817,9 @@ class ConsolePromptQueueCoordinator:
             session_id, expected_revision=reserved.snapshot.revision
         )
         if resumed.applied:
-            self._chains[session_id] = _PromptChain()
+            self._chains[session_id] = _PromptChain(
+                logical_outcome_id=self._recovered_logical_outcomes.get(session_id)
+            )
             self._changed(session_id)
         return resumed
 

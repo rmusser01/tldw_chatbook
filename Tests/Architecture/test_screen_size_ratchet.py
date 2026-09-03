@@ -148,7 +148,16 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # import line only), not pinned by
     # `test_screen_still_re_exports_every_moved_name`, and not imported by
     # anything outside this module. Method count unchanged (imports only).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43965, 1282),
+    # NOT lowered by the 2026-09-03 dev merge (~380 dev commits absorbed),
+    # same "concurrent growth outran the earned shrink" posture as the
+    # chat_screen wave-5 note above. The merge itself removed zero moved
+    # lines/methods from LibraryScreen (see the transplant list in
+    # merge-update-report.md) -- every net line/method added here is dev's
+    # review-sets phases 2-5, the media sort chooser, and the Reader
+    # accelerator keys, all genuinely new screen-owned code, landed on dev
+    # while this PR was in flight. Measured on the merged tree: 43965/1282
+    # -> 45439/1330.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 45439, 1330),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

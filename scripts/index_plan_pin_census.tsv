@@ -48,6 +48,7 @@ idx_collection_capture_note_links_by_item	plan-pinned	Tests/DB/test_library_coll
 idx_collection_capture_offline_by_item	plan-pinned	Tests/DB/test_library_collections_capture_migration.py
 idx_collection_capture_offline_by_state	plan-pinned	Tests/DB/test_library_collections_capture_migration.py
 idx_console_aux_attempts_conversation_started	pre-convention	plan never captured without stats
+idx_console_activity_receipts_unseen	plan-pinned	Tests/DB/test_agent_runs_db.py
 idx_console_dispatch_checkpoint_conversation	pre-convention	plan never captured without stats
 idx_console_memories_boundary	pre-convention	plan never captured without stats
 idx_console_memories_conversation_active	pre-convention	plan never captured without stats
@@ -280,3 +281,4 @@ uq_note_folder_memberships_active_owner	pre-convention	plan never captured witho
 uq_note_folders_active_normalized_path	pre-convention	plan never captured without stats
 uq_note_folders_sync_id	plan-pinned	Tests/DB/test_chachanotes_notes_organization_migration.py
 uq_note_organization_receipts_unresolved_note	plan-pinned	Tests/DB/test_chachanotes_note_organization_receipts_migration.py
+review_sets_one_active	pre-convention	partial UNIQUE constraint (one active review set); enforcer, not a query index to plan-pin

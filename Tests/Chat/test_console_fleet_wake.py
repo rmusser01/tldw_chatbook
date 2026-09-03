@@ -847,7 +847,7 @@ async def test_a_queue_owned_session_defers_the_wake(tmp_path):
         controller.prompt_queue_coordinator.controls_generation = lambda sid: False
         # Chain end fires the production retry hook.
         controller._publish_queue_chain_terminal(
-            session.id, ConsoleRunStatus.COMPLETED
+            session.id, ConsoleRunStatus.COMPLETED, None
         )
         assert await _settle(lambda: gateway.payloads), (
             "queue-chain end never retried the deferred wake"

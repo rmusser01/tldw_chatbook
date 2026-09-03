@@ -45,10 +45,10 @@ hand back the same object. Patch a controller on the module that defines it;
 do not reintroduce a re-export in `chat_screen.py` to patch through.
 """
 
+import threading
 from collections.abc import Callable
 from pathlib import Path
-import threading
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from textual.css.query import QueryError
 
@@ -59,24 +59,22 @@ from tldw_chatbook.Chat.console_fleet_attention import (
     fleet_unseen_conversation_ids,
 )
 from tldw_chatbook.Chat.console_runtime import leave_console_runtime
-from tldw_chatbook.Terminal.launch import discover_shell_choices
-from tldw_chatbook.Workspaces.models import RuntimeBindingStatus
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     ConsoleAutoSpeakCoordinator,
 )
 from tldw_chatbook.Widgets.Console.console_control_bar import ConsoleControlBar
-from tldw_chatbook.Widgets.Console.console_speech_controls import (
-    ConsoleSpeechControls,
-)
 from tldw_chatbook.Widgets.Console.console_feedback_comment_modal import (
     ConsoleFeedbackCommentModal,
 )
-from tldw_chatbook.Widgets.Console.console_terminal_workspace import (
-    ConsoleTerminalWorkspace,
+from tldw_chatbook.Widgets.Console.console_speech_controls import (
+    ConsoleSpeechControls,
 )
+from tldw_chatbook.Workspaces.models import RuntimeBindingStatus
 
+from ..Screens.settings_library_rag_defaults import load_direct_library_tools
 from .agent import ConsoleAgentController
+from .capture_policy_bindings import build_capture_policy_bindings
 from .character import ConsoleCharacterController
 from .dictation import ConsoleDictationController
 from .fleet import ConsoleFleetLifecycleController
@@ -93,23 +91,20 @@ from .prompts import ConsolePromptsController
 from .raw_cli import ConsoleRawCliController, restore_refused_raw_cli_stash
 from .reaction_preview import get_console_reaction_preview_coordinator
 from .realtime import ConsoleRealtimeController
+from .retrieval import ConsoleRetrievalController
 from .review_selection import (
     ConsoleReviewSelectionController,
     ConsoleTrajectoryLaunch,
 )
-from .capture_policy_bindings import build_capture_policy_bindings
-from .retrieval import ConsoleRetrievalController
 from .send_price import ConsoleSendPriceController
 from .session import ConsoleSessionController
 from .skill import ConsoleSkillController
-from .terminal import ConsoleTerminalController
 from .transcript import ConsoleChangeReviewProjection
 from .video import ConsoleVideoController
 from .workspace import (
     ConsoleWorkspaceController,
     persist_console_workspace_tree_expansion_preferences,
 )
-from ..Screens.settings_library_rag_defaults import load_direct_library_tools
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..Screens.chat_screen import ChatScreen
@@ -441,6 +436,76 @@ async def _wait_for_terminal_screen_result(screen: Any, modal: Any) -> Any:
         exit_on_error=False,
     )
     return await worker.wait()
+
+
+class _DeferredConsoleTerminalController:
+    """Keep Terminal's user-only controller graph behind its explicit action."""
+
+    def __init__(self, screen: Any) -> None:
+        self._screen = screen
+
+    def _resolve(self) -> Any:
+        screen = self._screen
+        current = screen._terminal
+        if current is not self:
+            return current
+
+        from tldw_chatbook.Terminal.launch import discover_shell_choices
+        from tldw_chatbook.Widgets.Console.console_terminal_workspace import (
+            ConsoleTerminalWorkspace,
+        )
+
+        from .terminal import ConsoleTerminalController
+
+        screen._console_terminal_workspace = ConsoleTerminalWorkspace(
+            id="console-main-column"
+        )
+        controller = ConsoleTerminalController(
+            terminal_runtime=lambda: screen.app_instance.terminal_session_manager,
+            workspace_accessor=lambda: screen._console_terminal_workspace,
+            selected_local_root=lambda: _selected_console_local_root(screen),
+            account_home=lambda: Path.home(),
+            open_privacy_settings=lambda: screen._open_terminal_privacy_settings(),
+            confirm=lambda title, message: _wait_for_terminal_screen_result(
+                screen,
+                ConfirmationDialog(title=title, message=message),
+            ),
+            present_session_modal=lambda modal: _wait_for_terminal_screen_result(
+                screen, modal
+            ),
+            marshal_to_ui=lambda callback: _marshal_terminal_to_ui(screen, callback),
+            schedule_frame=lambda callback: screen.call_after_refresh(callback),
+            shell_choices=discover_shell_choices,
+        )
+        screen._terminal = controller
+        return controller
+
+    @property
+    def is_open(self) -> bool:
+        """Return false without importing Terminal until the controller exists."""
+        current = self._screen._terminal
+        return False if current is self else bool(current.is_open)
+
+    def open_workspace(self) -> bool:
+        """Create the Terminal UI graph and attach its app-owned view."""
+        return bool(self._resolve().open_workspace())
+
+    def detach_workspace(self) -> bool:
+        """Detach an existing view without resolving an unused controller."""
+        current = self._screen._terminal
+        return False if current is self else bool(current.detach_workspace())
+
+    async def handle_action(self, action: Any, session_id: str | None) -> bool:
+        """Forward a direct-user action to the resolved controller."""
+        return bool(await self._resolve().handle_action(action, session_id))
+
+    def send_key(self, data: bytes) -> bool:
+        """Forward focused terminal input to the resolved controller."""
+        return bool(self._resolve().send_key(data))
+
+    async def request_resize(self, columns: int, rows: int) -> bool:
+        """Forward a painted viewport allocation to the resolved controller."""
+        return bool(await self._resolve().request_resize(columns, rows))
 
 
 def build_console_controllers(
@@ -1113,6 +1178,11 @@ def build_console_controllers(
                 session
             )
         ),
+        session_surface_accessor=lambda: screen.console_session_surface,
+        switcher_authority_accessor=(
+            lambda: screen._workspace._console_switcher_authority()
+        ),
+        console_runtime_accessor=lambda: screen._console_runtime(),
         # Session<->workspace seam (design spec: "a named callable
         # between them; design it deliberately, never a back-door
         # through the screen"). `self._workspace` was constructed just
@@ -1672,26 +1742,8 @@ def build_console_controllers(
             lambda: screen._sync_native_console_chat_ui
         ),
     )
-    screen._console_terminal_workspace = ConsoleTerminalWorkspace(
-        id="console-main-column"
-    )
-    screen._terminal = ConsoleTerminalController(
-        terminal_runtime=lambda: screen.app_instance.terminal_session_manager,
-        workspace_accessor=lambda: screen._console_terminal_workspace,
-        selected_local_root=lambda: _selected_console_local_root(screen),
-        account_home=lambda: Path.home(),
-        open_privacy_settings=lambda: screen._open_terminal_privacy_settings(),
-        confirm=lambda title, message: _wait_for_terminal_screen_result(
-            screen,
-            ConfirmationDialog(title=title, message=message),
-        ),
-        present_session_modal=lambda modal: _wait_for_terminal_screen_result(
-            screen, modal
-        ),
-        marshal_to_ui=lambda callback: _marshal_terminal_to_ui(screen, callback),
-        schedule_frame=lambda callback: screen.call_after_refresh(callback),
-        shell_choices=discover_shell_choices,
-    )
+    screen._console_terminal_workspace = None
+    screen._terminal = _DeferredConsoleTerminalController(screen)
     screen._raw_cli = ConsoleRawCliController(
         raw_cli_runtime=lambda: screen.app_instance.raw_cli_runtime,
         active_session_id=lambda: _raw_cli_active_session_id(screen),

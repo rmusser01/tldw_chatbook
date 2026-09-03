@@ -17,14 +17,15 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     ExchangeCapture,
     capture_to_blob,
 )
-from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+from tldw_chatbook.Chat.console_trace_metrics import TraceCompatibilityMetrics
 from tldw_chatbook.Chat.console_trace_projection import (
     ConsoleTraceProjection,
     LegacyExchangeCall,
     NormalizedTraceCall,
     project_capture_for_viewer,
 )
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
 
 
@@ -199,15 +200,24 @@ def test_unverified_normalized_call_falls_back_to_matching_legacy_exchange() -> 
         normalized=(_normalized(unverified, call_id="call-1", verified=False),),
         legacy=(_legacy_row(legacy, abandoned=True),),
     )
+    metrics = TraceCompatibilityMetrics()
     projection = ConsoleTraceProjection(
         normalized_reader=readers.read_normalized,
         legacy_reader=readers.read_legacy,
         normalized_reads_enabled=True,
+        compatibility_metrics=metrics,
     )
 
     result = projection.read_calls("message-1")
 
     assert result == (LegacyExchangeCall(capture=legacy, abandoned=True),)
+    assert dict(metrics.snapshot()) == {
+        "normalized_write": 0,
+        "normalized_read": 0,
+        "legacy_read": 1,
+        "fallback_read": 1,
+        "incomplete": 1,
+    }
 
 
 def test_missing_normalized_call_falls_back_to_legacy_exchange() -> None:
@@ -224,6 +234,33 @@ def test_missing_normalized_call_falls_back_to_legacy_exchange() -> None:
     assert projection.read_calls("message-1") == (
         LegacyExchangeCall(capture=legacy, abandoned=False),
     )
+
+
+def test_read_calls_snapshots_normalized_gate_for_fallback_metrics() -> None:
+    legacy = _capture(
+        run_tag="run-1",
+        seq=0,
+        created_at="2026-08-28T10:00:00Z",
+        model="legacy",
+    )
+    reads = 0
+
+    def changing_gate() -> bool:
+        nonlocal reads
+        reads += 1
+        return reads == 1
+
+    metrics = TraceCompatibilityMetrics()
+    projection = ConsoleTraceProjection(
+        normalized_reader=lambda _message_id: (),
+        legacy_reader=lambda _message_id: (_legacy_row(legacy),),
+        normalized_reads_enabled=changing_gate,
+        compatibility_metrics=metrics,
+    )
+
+    assert projection.read_calls("message-1") == (LegacyExchangeCall(legacy, False),)
+    assert reads == 1
+    assert dict(metrics.snapshot())["fallback_read"] == 1
 
 
 def test_mixed_calls_have_stable_semantic_order_without_duplicates() -> None:
@@ -286,6 +323,48 @@ def test_normalized_read_gate_is_off_by_default() -> None:
     assert result == (LegacyExchangeCall(capture=legacy, abandoned=False),)
     assert readers.normalized_calls == []
     assert projection.normalized_writes_enabled is False
+
+
+def test_normalized_write_gate_is_independent_of_read_gate() -> None:
+    projection = ConsoleTraceProjection(
+        legacy_reader=lambda _message_id: (),
+        normalized_reader=lambda _message_id: (),
+        normalized_reads_enabled=False,
+        normalized_writes_enabled=True,
+    )
+
+    assert projection.normalized_reads_enabled is False
+    assert projection.normalized_writes_enabled is True
+
+
+def test_projection_reports_content_free_compatibility_paths() -> None:
+    normalized = _capture(
+        run_tag="run-1", seq=0, created_at="2026-08-28T10:00:00Z", model="normalized"
+    )
+    legacy = _capture(
+        run_tag="run-2", seq=0, created_at="2026-08-28T10:00:01Z", model="legacy"
+    )
+    readers = _Readers(
+        normalized=(_normalized(normalized, call_id="call-1", verified=True),),
+        legacy=(_legacy_row(legacy),),
+    )
+    metrics = TraceCompatibilityMetrics()
+    projection = ConsoleTraceProjection(
+        normalized_reader=readers.read_normalized,
+        legacy_reader=readers.read_legacy,
+        normalized_reads_enabled=True,
+        compatibility_metrics=metrics,
+    )
+
+    projection.read_calls("message-1")
+
+    assert dict(metrics.snapshot()) == {
+        "normalized_write": 0,
+        "normalized_read": 1,
+        "legacy_read": 1,
+        "fallback_read": 1,
+        "incomplete": 0,
+    }
 
 
 def test_corrupt_legacy_row_is_isolated_from_valid_siblings() -> None:
@@ -888,7 +967,7 @@ def test_store_exposes_injected_projection_without_database_access() -> None:
     )
 
 
-def test_runtime_injects_legacy_projection_with_normalized_writes_off() -> None:
+def test_runtime_injects_legacy_projection_with_rollout_write_default_on() -> None:
     class _DB:
         def get_message_exchanges(self, message_id: str) -> Sequence[dict]:
             assert message_id == "persisted-1"
@@ -907,11 +986,11 @@ def test_runtime_injects_legacy_projection_with_normalized_writes_off() -> None:
 
     assert isinstance(store.trace_projection, ConsoleTraceProjection)
     assert store.trace_projection.normalized_reads_enabled is False
-    assert store.trace_projection.normalized_writes_enabled is False
+    assert store.trace_projection.normalized_writes_enabled is True
     assert store.projected_trace_calls("persisted-1") == ()
 
 
-def test_runtime_builds_legacy_normalizer_only_on_first_normalized_read(
+def test_runtime_builds_normalized_readers_only_on_first_normalized_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class _DB:
@@ -922,11 +1001,11 @@ def test_runtime_builds_legacy_normalizer_only_on_first_normalized_read(
             assert message_id == "persisted-1"
             return ()
 
-    constructed: list[object] = []
+    constructed: list[tuple[str, object]] = []
 
     class _Normalizer:
         def __init__(self, database: object) -> None:
-            constructed.append(database)
+            constructed.append(("legacy", database))
 
         def read_calls(self, message_id: str) -> tuple[()]:
             assert message_id == "persisted-1"
@@ -935,6 +1014,18 @@ def test_runtime_builds_legacy_normalizer_only_on_first_normalized_read(
     module = ModuleType("tldw_chatbook.Chat.console_trace_legacy")
     module.LegacyTraceNormalizer = _Normalizer  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, module.__name__, module)
+
+    class _NativeReader:
+        def __init__(self, database: object, **_kwargs: object) -> None:
+            constructed.append(("native", database))
+
+        def read_calls(self, message_id: str) -> tuple[()]:
+            assert message_id == "persisted-1"
+            return ()
+
+    native_module = ModuleType("tldw_chatbook.Chat.console_trace_native_reader")
+    native_module.ConsoleTraceNativeReader = _NativeReader  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, native_module.__name__, native_module)
     monkeypatch.setattr(
         "tldw_chatbook.Chat.console_runtime.recover_console_trace_calls",
         lambda _database: (),
@@ -954,7 +1045,7 @@ def test_runtime_builds_legacy_normalizer_only_on_first_normalized_read(
 
     assert constructed == []
     assert store.projected_trace_calls("persisted-1") == ()
-    assert constructed == [database]
+    assert constructed == [("native", database), ("legacy", database)]
 
 
 @pytest.mark.asyncio
@@ -1009,6 +1100,158 @@ def test_legacy_trace_maintenance_keeps_a_post_mount_settling_delay() -> None:
     )
 
     assert LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS >= 5.0
+
+
+@pytest.mark.asyncio
+async def test_runtime_runs_gc_then_physical_maintenance_after_normalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    class _Maintenance:
+        def __init__(self, _database: object, **_kwargs: object) -> None:
+            pass
+
+        def run_batch(self) -> SimpleNamespace:
+            return SimpleNamespace(logical_complete=True, admitted=True)
+
+    class _Collector:
+        def __init__(self, _database: object) -> None:
+            pass
+
+        def current_graph_epoch(self) -> int:
+            return 7
+
+        def collect(self, *, request_id: str) -> object:
+            assert request_id.startswith("auto-")
+            events.append("gc")
+            return SimpleNamespace(marked_epoch=7)
+
+    class _Compactor:
+        def __init__(self, _database: object, **kwargs: object) -> None:
+            assert callable(kwargs["pause_dispatch"])
+            assert callable(kwargs["resume_dispatch"])
+            assert kwargs["idle_seconds"]() == 47.0  # type: ignore[operator]
+            events.append("compactor")
+
+        def run_after_gc(self, _result: object) -> SimpleNamespace:
+            events.append("vacuum")
+            return SimpleNamespace(completed=True, reason_code="complete")
+
+    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
+    module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
+    module.TraceGarbageCollector = _Collector  # type: ignore[attr-defined]
+    module.PhysicalTraceCompactor = _Compactor  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    monkeypatch.setattr(
+        "tldw_chatbook.config.resolve_trace_compaction_policy",
+        lambda _config: object(),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_runtime."
+        "LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS",
+        0.0,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_runtime."
+        "TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS",
+        0.0,
+    )
+    controller = SimpleNamespace(
+        _active_stream_tasks={},
+        pause_trace_maintenance_dispatch=lambda: events.append("pause"),
+        resume_trace_maintenance_dispatch=lambda: events.append("resume"),
+        trace_maintenance_idle_seconds=lambda: 47.0,
+    )
+    runtime = ConsoleRuntime(
+        SimpleNamespace(
+            _ui_ready=True,
+            persona_buddy_controller=None,
+            app_config={"console": {}},
+        )
+    )
+    runtime._chat_controller = controller
+
+    runtime._schedule_legacy_trace_maintenance(object(), object)
+    await asyncio.sleep(1.08)
+
+    assert events[:3] == ["gc", "compactor", "vacuum"]
+    assert events.count("gc") == 1
+    await runtime.dispose()
+
+
+@pytest.mark.asyncio
+async def test_runtime_rechecks_thresholds_without_creating_another_gc_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    class _Maintenance:
+        def __init__(self, _database: object, **_kwargs: object) -> None:
+            pass
+
+        def run_batch(self) -> SimpleNamespace:
+            return SimpleNamespace(logical_complete=True, admitted=True)
+
+    class _Collector:
+        def __init__(self, _database: object) -> None:
+            pass
+
+        def current_graph_epoch(self) -> int:
+            return 11
+
+        def collect(self, *, request_id: str) -> object:
+            assert request_id.startswith("auto-")
+            events.append("gc")
+            return SimpleNamespace(marked_epoch=11)
+
+    class _Compactor:
+        def __init__(self, _database: object, **_kwargs: object) -> None:
+            pass
+
+        def run_after_gc(self, _result: object) -> SimpleNamespace:
+            events.append("threshold-check")
+            if events.count("threshold-check") == 1:
+                return SimpleNamespace(
+                    completed=False,
+                    reason_code="database_threshold",
+                )
+            return SimpleNamespace(completed=True, reason_code="complete")
+
+    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
+    module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
+    module.TraceGarbageCollector = _Collector  # type: ignore[attr-defined]
+    module.PhysicalTraceCompactor = _Compactor  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    monkeypatch.setattr(
+        "tldw_chatbook.config.resolve_trace_compaction_policy",
+        lambda _config: object(),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_runtime."
+        "LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS",
+        0.0,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_runtime."
+        "TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS",
+        0.0,
+    )
+    runtime = ConsoleRuntime(
+        SimpleNamespace(
+            _ui_ready=True,
+            persona_buddy_controller=None,
+            app_config={"console": {}},
+        )
+    )
+    runtime._chat_controller = SimpleNamespace(_active_stream_tasks={})
+
+    runtime._schedule_legacy_trace_maintenance(object(), object)
+    await asyncio.sleep(2.1)
+
+    assert events.count("gc") == 1
+    assert events.count("threshold-check") >= 2
+    await runtime.dispose()
 
 
 @pytest.mark.asyncio

@@ -598,14 +598,14 @@ async def test_switcher_enter_activates_first_result():
 
 
 @pytest.mark.asyncio
-async def test_switcher_f2_requests_rename_for_native_entry():
+async def test_switcher_f2_does_not_fall_back_from_search_to_native_entry():
     app = _SwitcherApp()
     async with app.run_test(size=(90, 30)) as pilot:
         await pilot.press("f2")
         await pilot.pause()
-        assert isinstance(app.result, ConsoleSwitcherChoice)
-        assert app.result.kind == "rename"
-        assert app.result.entry.native_session_id == "sess-1"
+        assert app.result == "unset"
+        feedback = app.screen.query_one("#console-switcher-feedback", Static)
+        assert "focus an open agent result" in str(feedback.renderable).lower()
 
 
 def _two_native_switcher_rows() -> tuple[ConsoleConversationBrowserInputRow, ...]:

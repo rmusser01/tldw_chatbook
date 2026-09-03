@@ -1215,11 +1215,54 @@ separate identities. A session grant may cover later calls in that same live
 Console session, but it is held in process memory only and is cleared by
 Disarm, locking raw CLI, shutdown, or restart.
 
+Tool discovery got two upgrades: `find_tools` now matches paraphrases
+(stemmed-token overlap ranks below the exact/prefix/substring tiers, so
+"find files by name" surfaces `fs_glob`), and when the catalog is too large
+to disclose directly, `find_tools`' own description names the available
+tools — degrading to prefix groups (`fs_* (7), git_* (5)`) when even the
+name list would be too long — so the model can never conclude a present
+capability is absent.
+
+Oversized local tool results no longer lose their tail: in Console runs
+(where a private scratch root exists) a result over the 32 KiB ceiling is
+written **in full** to a restricted file under the scratch's `tool-spill/`
+directory — atomically, `0600`, sharing the scratch lifecycle as its
+retention bound — and the model receives the usual 32 KiB preview plus the
+pre-truncation size and a relative path it can hand straight to `fs_read`.
+Once a run's cumulative returned output passes an aggregate budget
+(256 KiB), results above a 4 KiB floor spill even under the ceiling.
+Standalone providers without a scratch root keep today's truncation exactly.
+
+For ordinary MCP/catalog tools, the approval card offers **Always allow
+this exact input** alongside the existing choices: it saves an allow scoped
+to exactly the arguments displayed on the card — the same tool called with
+different arguments still asks. Argument-scoped rules obey the same
+definition-hash rug-pull guard as whole-tool allows (a changed tool
+definition silently invalidates them), never quiet a high-risk-tagged tool,
+and can be extended by hand in `mcp_permissions.json` with
+`{"field": …, "pattern": …}` glob rules. Raw shell does not offer this
+option.
+
+Beneath all of this sits an **unbypassable hardline floor**: a small set of
+catastrophic command shapes — recursive root delete (`rm -rf /`, `~`,
+`$HOME`), `mkfs`, `dd` onto a block device, fork bombs, and
+shutdown/poweroff/reboot — is refused at request validation, before any
+permission state or session grant is consulted, for both the user path and
+model `shell_exec`. Detection resists trivial obfuscation (quoting,
+whitespace padding, variable indirection on the command word), the refusal
+names the rule that fired and states it is not a user denial, and the floor
+is not configurable off. It is a floor under the approval card, not a
+replacement for it.
+
 Both paths are one-shot and non-interactive: shell profiles are disabled,
 standard input is closed, and no terminal or PTY is provided. Output streams
 into the Console, is bounded and sanitized, and follows the shared timeout,
 Stop, Disarm, and best-effort process-tree cleanup contract. Detached
-descendants may outlive cleanup. Model `shell_exec` results enter ordinary
+descendants may outlive cleanup. A non-zero exit whose output matches a known failure shape (command not
+found, permission denied, missing module, network refusal, …) gains one
+appended `[tool hint]` recovery line — the original output is never
+altered, and unrecognized failures return exactly as before. Model
+`shell_exec` results enter ordinary
 bounded agent tool history and local run logs; they do not create a
 `local_command` record. Generic diagnostics retain content-free execution
 metadata rather than command or output bodies.

@@ -68,7 +68,7 @@ class _MixedService(MockSchedulingServiceMixin):
             _projection(),
         ]
 
-    async def create_reminder(self, payload: dict):
+    async def create_reminder(self, payload: dict, *, owner_id: str | None = None):
         self.created.append(payload)
 
 

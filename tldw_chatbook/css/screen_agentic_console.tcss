@@ -1222,6 +1222,11 @@ ConsoleTerminalWorkspace#console-main-column {
 }
 
 #console-workspace-tree:focus {
+    /* TASK-28226: this tree can be only two rows tall. The global four-sided
+       focus outline overpaints both rows after an action menu restores focus;
+       the focus-specific cursor below supplies the content-safe high-contrast
+       cue while this tint reinforces which compact region owns focus. */
+    outline: none;
     background: $ds-action-focus 12%;
 }
 
@@ -1879,6 +1884,15 @@ Button.console-inspector-action:disabled {
    is hidden because the strip is a single row tall. */
 #console-native-tab-strip {
     scrollbar-size-horizontal: 0;
+}
+
+/* TASK-28028: 1-cell ‹ › hints at the strip row's edges, shown only while
+   tabs are hidden past that edge (display toggled from Python). */
+#console-tab-overflow-left,
+#console-tab-overflow-right {
+    color: $ds-text-muted;
+    text-style: none;
+    background: transparent;
 }
 
 .console-session-tab,

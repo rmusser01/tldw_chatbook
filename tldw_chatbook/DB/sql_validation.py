@@ -79,6 +79,7 @@ VALID_TABLES = {
         "console_dispatch_checkpoints",
         "console_trace_artifacts",
         "console_trace_calls",
+        "console_trace_compaction_state",
         "console_trace_events",
         "console_trace_graph_epoch",
         "console_trace_gc_marks",

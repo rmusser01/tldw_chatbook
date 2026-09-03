@@ -69,7 +69,11 @@ from .models import (
     WorkspaceSyncStatus,
     WorkspaceTransferPolicy,
 )
-from .registry_service import BindingNotFound, LocalWorkspaceRegistryService
+from .registry_service import (
+    BindingNotFound,
+    DeferredWorkspaceToolProfileGuard,
+    LocalWorkspaceRegistryService,
+)
 from .workspace_tree_state import (
     WorkspaceTreeConversation,
     WorkspaceTreeWorkspace,
@@ -84,6 +88,7 @@ __all__ = [
     "CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES",
     "CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT",
     "BindingNotFound",
+    "DeferredWorkspaceToolProfileGuard",
     "ChangeReviewAdmission",
     "ChangeReviewCapability",
     "ChangeReviewConsent",

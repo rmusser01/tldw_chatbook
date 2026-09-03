@@ -1,7 +1,7 @@
 # Console Session Switcher Activity Views Design
 
 **Date:** 2026-08-23
-**Status:** Approved by independent specification review and user; implementation gated by TASK-20937
+**Status:** Approved by independent specification review and user; implementation-start gate explicitly waived by the user on 2026-09-02, with TASK-20937.6 retained as a final parity-evidence gate
 **Task:** TASK-21351
 **Surface:** Console `Ctrl+K` session switcher
 
@@ -67,6 +67,10 @@ This specification requires:
   with one manual exception: a vanished session-only destination clears only
   through its receipt-keyed `Session unavailable` / `Mark seen` action;
 - complete persisted-conversation History search;
+- blank-query Enter targeting the most-recently-used other open tab, while
+  explicit navigation and nonblank search activate the highlighted result;
+- inline first-use and recovery onboarding with no blocking tutorial modal;
+- deterministic domain-semantic search over safe switcher metadata and state;
 - deterministic ordering, bounded paging, safe async search, and stable focus;
 - a 35-total-row modal ceiling; and
 - iTerm2/Windows Terminal parity evidence inherited from TASK-20937.6.
@@ -101,16 +105,22 @@ rows to Ctrl+K.
 
 ## Evidence and incumbent seams
 
-The current switcher:
+TASK-28125 established the trust baseline that this redesign must preserve. The
+current switcher now:
 
 - mounts at most 20 two-row buttons;
-- sorts the selected row before recency;
+- groups open agent tabs before saved chats;
 - receives an eagerly assembled mixed tuple;
 - waits for persisted rows before opening;
-- identifies result widgets positionally;
+- tracks one explicit keyboard candidate and scrolls it into view;
 - uses offset-based conversation pagination;
-- has no mode, authority, activity, or typed activation target; and
-- lets F2 fall back to an unrelated first native session.
+- submits an exact just-edited query without trusting stale debounce results;
+- makes F2 refuse saved rows instead of falling back to another tab;
+- exposes current/run/queue/unavailable state and basic state filters; and
+- targets the most-recently-used other open tab on blank-query Enter.
+
+It still has no Active/History mode, durable acknowledgement receipts, canonical
+activity aggregation, bounded lazy History loader, or typed activation target.
 
 Local activity signals already exist but are fragmented:
 
@@ -204,6 +214,26 @@ For a nonblank query:
 
 Closing the modal discards its query and mode. This preserves activity-first
 browsing without adding an F3 tax to ordinary historical lookup.
+
+### Domain-semantic search
+
+Search is semantic within the switcher's safe operational vocabulary; it does
+not inspect transcript bodies or use embeddings. Plain-language aliases and
+explicit filters normalize to the same deterministic predicates:
+
+- `waiting`, `needs attention`, and `waiting on me` match Waiting for you;
+- `working`, `running`, and `queued` match Working;
+- `new`, `new results`, `failed`, `finished`, and `cancelled` match their
+  effective activity state;
+- `current`, `open`, `saved`, and `unavailable` match destination/openability;
+- `is:<state>` selects the same state explicitly; and
+- `workspace:<text>` matches the literal-safe workspace label.
+
+Title and workspace text remain ordinary case-insensitive substring search.
+Every query token must match after phrase normalization. Unsupported `is:`
+values produce zero matches and recovery guidance rather than silently becoming
+title text. This grammar is local, bounded, explainable, and adds no model,
+vector index, network call, or transcript-content disclosure.
 
 ## Normalized local projection
 
@@ -582,8 +612,14 @@ reader API is assumed.
 - `F3`: toggle Active/History and retain the query within the modal.
 - `Up`/`Down`: move through selectable rows without wrapping; Up from the first
   result returns to search.
-- `Enter`: activate the focused conversation row. From search, Enter activates
-  the top current-query conversation result; when the top result is an
+- `Enter`: activate the focused conversation row. With a blank query and no
+  explicit result navigation, Enter activates the most-recently-used other open
+  native tab when one exists; a restored process with no navigation history
+  falls back to the most recently updated other open tab. The current tab stays
+  visibly labeled and is never the blank-query default while another open tab
+  exists. Explicit result navigation overrides the MRU candidate. From a
+  nonblank search, Enter activates the top current-query conversation result;
+  when the top result is an
   unavailable-session notice, it moves focus to that notice's explicit
   `Mark seen` action and updates the status line without acknowledging. Only a
   subsequent Enter on the focused `Mark seen` action (or its pointer click)
@@ -597,6 +633,16 @@ Pointer activation matches keyboard activation. Group/status rows are not
 focusable. Modal-scoped F3 must be documented as an explicit ADR-031 exception
 or the ADR wording updated before implementation; footer hints advertise only
 implemented actions.
+
+### Inline onboarding
+
+Onboarding is contextual and nonblocking. The search placeholder names title,
+workspace, and state. An empty first-use Active view explains that `Ctrl+T`
+creates an agent tab and `F3` opens History. A zero-match state explains the
+state vocabulary with short examples and preserves the query. Mode controls,
+selection status, and truthful key hints teach the power-user grammar in place.
+No tutorial modal, persisted onboarding flag, telemetry event, or separate help
+framework is added.
 
 ### Safe asynchronous search and live updates
 
@@ -951,11 +997,13 @@ revise, and own them together with the corresponding contract.
 1. Approve this revised written specification.
 2. Update TASK-21351 acceptance criteria to make the local release independently
    complete and releasable.
-3. Complete TASK-20937 and its terminal-parity dependency.
-4. Keep TASK-21351 In Progress as the design/umbrella owner. Create one atomic
-   Chatbook child for the local projection, receipts, modal, and acknowledgement
-   notice; copy the Phase 1 implementation criteria, link the spec/plan/ADR, and
-   put the child In Progress only when adding its plan.
+3. The user explicitly waived TASK-20937 as an implementation-start gate on
+   2026-09-02. TASK-20937.6 remains the owner of required final equal-cell
+   terminal parity evidence and still blocks final closeout, not coding.
+4. Keep TASK-21351 In Progress as the design/umbrella owner. TASK-21351.1 is the
+   atomic Chatbook child for the local projection, receipts, modal, and
+   acknowledgement notice; it links the spec/plan/ADR and carries the Phase 1
+   implementation criteria.
 5. Implement, verify, and merge the local child before starting server work.
 6. File a separate correlated-server companion task/ADR and Chatbook integration
    child for Phase 2.

@@ -85,6 +85,8 @@ class FakeMCPService:
         self.local_service = SimpleNamespace(get_inventory=lambda: self.inventory)
         self.session_approvals: set[tuple[str, str]] = set()
         self.set_tool_state_calls: list[tuple] = []
+        self.add_arg_rule_calls: list = []
+        self.arg_rule_matches: list = []
         self.approve_for_session_calls: list[tuple] = []
         self.record_tool_decision_calls: list[tuple] = []
         self.execute_calls: list[tuple] = []
@@ -119,6 +121,15 @@ class FakeMCPService:
 
     def is_session_approved(self, server_key: str, tool_name: str) -> bool:
         return (server_key, tool_name) in self.session_approvals
+
+    # TASK-26012: exact-args allow rules
+    def arg_rule_allows_call(self, tool, args, *, profile_id="default") -> bool:
+        return dict(args) in getattr(self, "arg_rule_matches", [])
+
+    def add_tool_arg_rule(
+        self, server_key, tool_name, *, args, tool=None, profile_id="default"
+    ) -> None:
+        self.add_arg_rule_calls.append((server_key, tool_name, dict(args), tool))
 
     def set_tool_state(
         self, server_key: str, tool_name: str, ui_state, *, tool=None
@@ -1596,3 +1607,68 @@ def test_compose_catalog_exclusion_set_stored_immutably():
     names = {entry.name for entry in provider.list_catalog()}
     assert "mcp__tldw_chatbook__library_list_media" not in names
     assert "mcp__tldw_chatbook__chat_with_llm" in names
+
+
+# ---------------------------------------------------------------------------
+# TASK-26012: per-argument allow rules
+# ---------------------------------------------------------------------------
+
+
+def test_matching_arg_rule_quiets_the_ask_without_a_card(running_loop):
+    """AC#2: a call matching the stored rule executes; a different call for
+    the SAME tool still prompts."""
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    service.arg_rule_matches = [{"q": "quiet"}]
+    prompts: list = []
+
+    def approval_callback(pending: list[MCPPendingCall]) -> dict[str, str]:
+        prompts.append(pending)
+        return {p.llm_name: "approve_once" for p in pending}
+
+    provider = MCPToolProvider(
+        service=service, main_loop=running_loop, approval_callback=approval_callback
+    )
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+
+    quiet = provider.invoke(tool_id, {"q": "quiet"})
+    loud = provider.invoke(tool_id, {"q": "different"})
+
+    assert quiet.ok is True and loud.ok is True
+    assert prompts and len(prompts) == 1, "only the non-matching call prompts"
+    assert prompts[0][0].arguments == {"q": "different"}
+    assert service.execute_calls[0][4] == "allowed"
+    # the pending gate agrees: no card row for the matching call
+    assert provider.pending_gate_for(tool_id, {"q": "quiet"}) is None
+    assert provider.pending_gate_for(tool_id, {"q": "different"}) is not None
+
+
+def test_allow_matching_verdict_persists_the_exact_args_rule(running_loop):
+    """AC#1/#3: the saved rule is exactly the displayed call's arguments."""
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    provider = MCPToolProvider(
+        service=service,
+        main_loop=running_loop,
+        approval_callback=lambda pending: {
+            p.llm_name: "allow_matching" for p in pending
+        },
+    )
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+
+    result = provider.invoke(tool_id, {"q": "site status"})
+
+    assert result.ok is True
+    assert len(service.add_arg_rule_calls) == 1
+    server_key, tool_name, args, tool = service.add_arg_rule_calls[0]
+    assert (server_key, tool_name) == ("local:srv", "run")
+    assert args == {"q": "site status"}
+    assert isinstance(tool, HubTool)
+    assert service.set_tool_state_calls == [], (
+        "an arg rule must not widen into a whole-tool allow"
+    )
+    assert service.execute_calls[0][4] == "approved"

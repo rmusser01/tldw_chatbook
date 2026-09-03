@@ -1,0 +1,67 @@
+TASK-20937.6 session-switcher terminal CLI preflight
+Captured: 2026-09-02 13:44:55 PDT
+Classification: preflight only; NOT iTerm2 or Windows Terminal acceptance evidence
+
+Source and environment
+----------------------
+Commit: cf3741447bf65a29e1b0b3ce8147957af851e55b
+Worktree before launch: clean
+macOS: 26.5.2 (25F84)
+Python: 3.12.11
+Textual: 8.2.8
+tmux: 3.6a
+PTY: 235 columns x 52 rows
+tmux window-size: latest (client-following)
+Socket/session: task20937-6-20260902 / console
+Disposable profile: /tmp/tldw-task20937.6-iterm.PHdk5V
+
+Synthetic fixture inventory
+---------------------------
+- Research Lab: 6 owned saved conversations
+- Roleplay Tavern: 2 owned saved character conversations
+- Writing Room: 1 owned saved conversation
+- Default/global Chats: 2 saved conversations
+- Character fixtures: Tall Portrait (120x360) and Wide Landscape (480x120)
+- No provider request was sent. The profile contains only a deliberately
+  nonfunctional QA credential and has model-catalog/background subscription
+  refresh disabled.
+
+Observed CLI walkthrough
+------------------------
+- The production Console rendered both edge rails and one divider at each main
+  content boundary. The collapsed Inspector handle was present at the right
+  application edge; the earlier clipped-client reproduction did not recur.
+- Ctrl+K opened Switch Session at 235x52. The modal exposed Active and History
+  modes, the unified search input, current-target copy, selection position,
+  rename/movement/history keyboard help, and Cancel.
+- With one tab, Active reported Active (1) and CURRENT Research Lab Chat.
+- Two Ctrl+T actions produced Active (3): CURRENT Chat 3 plus OTHER OPEN Chat 2
+  and Research Lab Chat. Enter targeted Chat 2, the most recently used other
+  tab.
+- After Enter switched to Chat 2, reopening Ctrl+K made Chat 3 the selected
+  OTHER OPEN row and changed the trust copy to "Enter switches to: Chat 3",
+  confirming reciprocal MRU behavior.
+- F3 changed to History and projected 11 saved chats grouped under TODAY with
+  workspace labels and Saved chat status. The Enter action changed from
+  "switch" to "open" and F3 help changed back to Active.
+- Typing "roleplay" filtered History to exactly Landscape roleplay scene and
+  Portrait roleplay scene under Roleplay Tavern. Enter opened Landscape
+  roleplay scene and restored its persisted transcript in a new tab.
+
+Native capture blocker
+----------------------
+`cua-driver diagnose` reported:
+- accessibility (AXIsProcessTrusted): false
+- screen recording (SCShareableContent): true
+
+Therefore no native iTerm2 screenshot was captured and AC #4 remains open.
+Grant Accessibility to CuaDriver.app in macOS System Settings, then restart the
+native capture from this prepared session. A manual operator may instead attach
+from iTerm2 after sizing the terminal to 235x52 cells:
+
+    tmux -L task20937-6-20260902 attach -t console
+
+Detach with Ctrl+B then D. Because `window-size latest` is enabled, verify
+`tmux display-message -p '#{window_width}x#{window_height}'` still reports
+235x52 after attachment before recording evidence. Windows Terminal must use
+the same source commit (or explicit source-equivalence proof) and cell matrix.

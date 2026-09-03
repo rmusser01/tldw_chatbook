@@ -9,6 +9,114 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## SQLite progress handlers must not query their active connection
+
+**TASK-23113.11, 2026-09-02.** The first physical trace-compaction worker
+queried `page_count` and `freelist_count` on the same connection from SQLite's
+VACUUM progress handler. The small real fixture happened to pass, but a
+connection double that rejected SQL while VACUUM was active reproduced the
+re-entrant call deterministically. Capturing the content-free byte snapshot
+before installing the handler preserved progress reporting without recursively
+using a connection in the middle of a statement.
+
+**What to do.** Treat SQLite progress, authorizer, collation, and scalar-function
+callbacks as non-reentrant unless the API explicitly guarantees otherwise. Read
+needed metrics before the long statement, keep callbacks bounded and in-memory,
+and verify the behavior against a real file-backed SQLite database.
+
+## SQLite quiescence must cover result consumption and database identity
+
+**TASK-23113.11, 2026-09-02.** Review of the first physical-compaction barrier
+found two holes that transaction-only tests did not expose. A direct SELECT was
+no longer in a native transaction after `execute()` returned, even though its
+cursor still had unread rows, so the barrier could close that live connection.
+Separately, two `CharactersRAGDB` objects for the same file owned independent
+registries, allowing one object to open a handle while the other compacted.
+Real cursor and same-file-instance tests reproduced both races.
+
+**What to do.** Key process-local SQLite maintenance coordination by canonical
+database identity, not wrapper-object identity. Track synchronous operations
+and cursor result consumption through exhaustion or explicit close; acquisition
+and transaction boundaries alone are insufficient evidence that a handle is
+idle.
+
+## Periodic maintenance must deduplicate work by the state it processed
+
+**TASK-23113.11, 2026-09-02.** The initial automatic compaction loop generated a
+new opaque logical-GC request every minute after legacy normalization completed.
+Because completed GC request rows are durable idempotency records, an unchanged
+database would have accumulated a new result row on every poll. An accelerated
+runtime test observed two collections for the same graph epoch. Caching the
+processed epoch and retaining a retryable completed result reduced unchanged
+epochs to one durable collection while still retrying interrupted compaction
+and rechecking size/free-page thresholds against live SQLite metrics.
+
+**What to do.** A recurring maintenance timer is only a wake-up signal. Before
+creating a new durable request, compare the source's monotonic change token (or
+equivalent exact state identity) with the last processed token. Reuse the exact
+successful prerequisite while a downstream retry is pending, and clear it only
+after success or a genuinely terminal decision. Thresholds based on mutable
+storage metrics are retryable, not terminal.
+
+---
+
+## POSIX availability does not prove a memory limit is enforceable
+
+**TASK-23113.10, 2026-09-01.** The custom-PII worker initially treated Python's
+`resource` module as evidence that its memory cap was active on every POSIX
+host. Real-process tests on macOS showed that `RLIMIT_RSS`, `RLIMIT_DATA`, and
+`RLIMIT_AS` were present, but every attempt to lower their effectively-unlimited
+values failed with `ValueError: current limit exceeds maximum limit`. CPU and
+output-file limits were enforceable there; the address-space limit was
+enforceable in the Linux qualification path. Reporting the memory cap merely
+because the constants existed would have made the security evidence false.
+
+**What to do.** Treat an OS resource bound as enforced only after the child
+successfully applies it, return content-free metadata naming the limits that
+actually took effect, and assert platform capabilities in a real child process.
+Keep parent-enforced deadline and byte/count ceilings on every platform; qualify
+memory enforcement only where the host proves it can apply the limit.
+
+---
+
+## Durable masking evidence must remove the detector before every read path
+
+**TASK-23113.10 review, 2026-09-01.** Custom-PII tests proved that ordinary
+message revisions and generic provider artifacts retained irreversible masks,
+but a saved provider-continuation sidecar still used a revision reference. The
+native viewer reran the process-local custom ruleset when reconstructing that
+sidecar. After a restart or registry eviction, the trace therefore omitted a
+continuation that had been successfully captured, even though the surrounding
+message remained readable. The domain-specific read path escaped tests that
+covered the same policy at a different storage owner.
+
+**What to do.** For every privacy transform claimed to be durable, enumerate
+each persisted source domain—not just messages versus artifacts, but their
+sidecars—and read it after the detector, key, registry, or worker has been
+removed. Viewer, copy, and export must consume the stored masked projection;
+they may fail closed when that durable projection is absent, but must not rerun
+an ephemeral detector to recreate it.
+
+---
+
+## Sectioned projections must sort by section before row priority
+
+**TASK-28125, 2026-09-02.** The Ctrl+K switcher initially pinned every selected
+row ahead of every other row, then inserted `OPEN AGENT TABS` and `SAVED CHATS`
+headings while walking that order. A selected persisted conversation therefore
+produced `saved → open → saved`, mounted the Saved heading twice with the same
+widget ID, and could fail even though ordinary all-open and all-saved fixtures
+passed. A cross-section selected-row regression forced the sort to make section
+the primary key and selection the priority only inside each section.
+
+**What to do.** For a projection rendered as keyed sections, assert that each
+section key forms one contiguous run before mounting headings. Include a
+high-priority or selected row from a later section in the fixture; row-level
+priority must not split a section unless repeated section identities are an
+explicit part of the rendering contract.
+
+---
+
 ## Current-version repair hooks must gate on the schema that introduced their columns
 
 **TASK-23113.8, 2026-08-31.** The trace-GC migration matrix reopened a genuine
@@ -10517,6 +10625,44 @@ subject, assert the generated semantic keys are unique, and run at least one
 end-to-end test that answers and commits every question in the real pack. This
 is especially important when a compact topic label also participates in record
 identity.
+---
+
+## Active surface order can diverge from append sequence after compaction
+
+**Incident.** TASK-23113.9, 2026-08-31. The semantic-trace replacement benchmark
+passed its first context compaction and failed on the second. The planner treated
+the first and last changed entries in active display order as the numeric
+replacement range. After the first compaction, however, a newly appended summary
+occupied an older display ordinal with a newer sequence number, so display order
+was no longer sequence-number order. The next range unintentionally swept an
+unchanged active node.
+
+**What to do.** For an append-only structure with bounded replacement records,
+derive a replacement's numeric bounds from every changed active entry, then
+explicitly reject the range if any unchanged active entry lies inside those
+bounds. Do not infer persisted sequence bounds from the endpoints of a projected
+display slice. A replacement-heavy test must compact the same surface at least
+twice; a single compaction cannot expose this ordering divergence.
+
+---
+
+## A short post-ready timer is not a first-paint boundary
+
+**Incident.** TASK-23113.9, 2026-08-31. After rebasing the trace rollout, the
+UI-ready census repeatedly found Notes organization and Sync modules that were
+supposed to load after the first interactive frame. The callback was scheduled
+only after `_ui_ready` became true, but its 0.1-second timer started before the
+rest of the synchronous post-ready setup completed. On a slow start, the delay
+expired before the census task regained the event loop, so the callback and its
+imports won the race. Merely moving the timer later reduced the remaining work
+but did not establish a deterministic boundary.
+
+**What to do.** Treat a short elapsed-time delay as load shedding, not as proof
+that work happens after first paint. If a startup import must be absent at the
+readiness boundary, use a comfortably separated idle-maintenance window (or an
+explicit paint/phase signal) and enforce the absence in the real UI-ready
+census. Keep first-use owners lazy as well: app-lifetime ownership does not
+require eager construction.
 
 ---
 
@@ -10692,3 +10838,116 @@ after the shell reaper has fired and a complete ownership scan observes no owned
 process. Until then it is backpressure, not proof. Keep the stronger two-scan,
 deadline-bounded process and stream proof in the cleanup owner, and test delayed
 descendant output through the production reader rather than a manually paused one.
+
+---
+
+## Hidden precomposition can move a Textual first-open race instead of removing it
+
+**TASK-26840, 2026-09-01.** The first approval-card optimization precomposed a
+hidden ordinary row so the first permission prompt could reveal an existing
+subtree. Its mounted identity regression passed, but the production first-open
+paint test intermittently rendered the title and tool details with the action
+bar clipped. The hidden row still lived below flexible, initially hidden
+containers, so precomposition changed when the widgets were registered without
+giving Textual stable first-open geometry. Reverting that approach and retaining
+the existing first-mount path restored the prior behavior; reusing the real row
+only after its first successful mount delivered the steady-state speedup without
+adding a new hidden-tree layout dependency.
+
+**What to do.** Treat mount identity and first visible geometry as separate
+contracts. When optimizing a Textual subtree that begins hidden, keep a
+production-hierarchy first-open paint test and do not infer layout readiness from
+precomposition alone. Prefer reusing a subtree after one successful visible
+mount unless its hidden ancestors already have deterministic geometry.
+## SQLite cursor wrappers invalidate exact-type ownership guards
+
+**TASK-23113.11, 2026-09-02.** Quiescence tracking correctly moved the primary
+database connection onto a `sqlite3.Connection`/`sqlite3.Cursor` subclass pair,
+but Character insert and update ownership checks still required
+`type(cursor) is sqlite3.Cursor`. Fresh-profile Samira seeding therefore rejected
+the application's own tracked cursor. The ordinary character lifecycle test
+caught the failed insert directly; the warm-start module census caught its less
+obvious consequence, because every later boot retried the missing seed and kept
+three parser modules resident.
+
+**What to do.** When a database boundary intentionally supplies a standard-library
+subclass, ownership checks must accept `isinstance(cursor, sqlite3.Cursor)` and
+prove authority with connection identity and active transaction state. Exercise
+at least one real startup or domain write through the wrapped factory; isolated
+wrapper tests cannot expose an exact-type guard in a distant repository method.
+
+## A pre-replace identity check cannot prove post-replace destination truth
+
+**TASK-27038, 2026-09-01.** The first Tool Pack publication implementation
+captured the parent and target inode, revalidated both immediately before an
+atomic descriptor-relative replace, and reconciled parent-fsync failures. Review
+still found two deterministic authorization/truth gaps. An incumbent could be
+rewritten in place without changing its inode, so an old overwrite token remained
+accepted; and a parent rename performed inside the replacement boundary published
+through the still-valid old directory descriptor but returned ordinary success for
+a pathname that no longer named the result. The same review also found that the
+capability gate checked directory-descriptor support on `os.rename` while the code
+actually called `os.replace`.
+
+**PR #2324 follow-up, 2026-09-02.** A later review exposed the remaining gap:
+even inode-plus-digest revalidation occurs before `os.replace`, so a concurrent
+writer can still substitute the name between the check and mutation. No amount of
+pre-replace observation turns an unconditional rename into compare-and-swap.
+Tool Pack V1 therefore disabled existing-file overwrite and changed absent-target
+publication to descriptor-relative `link`, whose create-only result is atomic.
+
+**What to do.** A captured identity authorizes replacement only when the mutation
+primitive atomically compares that identity. Without such a primitive, fail closed
+for existing targets; for absent targets, use an atomic create-only operation rather
+than check-then-replace. Probe the exact callable and exact parameters that the
+mutation path will invoke. After any point where publication may have occurred,
+keep the authenticated parent descriptor open and reconcile the currently named
+parent, target identity, and content digest before claiming ordinary success; a
+named-parent mismatch is an uncertain committed state, not proof the old file
+survived. Tests must inject a competing create and parent rename inside the atomic
+publication call itself—checking only the phase before it leaves the decisive race
+untested.
+## A method inserted above a decorated method steals the decorator -- and the symptom is a silently dead handler (task-31000, 2026-09-02)
+
+**What happened.** While wiring `TldwCli.on_key` (forward startup-splash
+skips), the new method was inserted directly above
+`on_splash_screen_closed` -- between the pre-existing
+`@on(SplashScreen.Closed)` decorator line and the function it decorated.
+Python happily decorated the new `on_key` instead. Textual marks decorated
+handlers with `_textual_on` metadata and then *excludes them from
+name-based dispatch*, so the "new" `on_key` had become a Closed-message
+handler that ignored its event, and no keypress ever reached it. The trap
+cost a long debugging detour because monkeypatching `TldwCli.on_key` at
+runtime (a fresh, undecorated function) made the skip *work*, while the
+identical class-defined method stayed dead -- the discrepancy was only
+explained by printing `getattr(fn, "_textual_on", None)`, which showed the
+stolen `SplashScreen.Closed` binding. A duplicated-decorator syntax error
+would have failed loudly; this fails silently at runtime.
+
+Rule: when inserting a method into a class with `@on(...)`/decorated
+handlers, check the insertion point is not between a decorator and its
+function. When a Textual event handler is inexplicably never invoked,
+print its `_textual_on` attribute before blaming dispatch order or focus --
+a non-empty value means the decorator attached to the wrong function.
+
+## Textual `set_interval` skips missed ticks, so wall-clock-paced animation jumps under load (task-31000, 2026-09-02)
+
+**What happened.** The startup splash was intermittently jumpy or skipped
+from an early frame straight to its end. Measurement (headless `run_test`
+probe with a controllable `time.sleep` blocker on the app's event loop)
+showed the mechanism: `Timer` defaults to `skip=True`, so callbacks that
+could not run while the loop was blocked are *permanently skipped* (one
+callback fires after the delay, not a catch-up burst), and the splash
+effects derive their progression from `time.time() - effect.start_time`.
+A 1.2s block right after arming made the first visible frame land at 1.22s
+of a 2.5s reveal; a block longer than the splash duration let the
+auto-close timer beat every frame. The fix re-anchors the effect clock per
+*rendered* frame (virtual elapsed = frames x interval), so contention
+slows the animation instead of skipping it ahead.
+
+Rule: anything animated by `set_interval` in this repo (splash effects,
+console background, tamagotchi, activity-log timestamps) must advance its
+state per rendered callback, never from wall-clock elapsed, or it will
+jump whenever the event loop stalls. Verify pacing behavior with a
+deliberate blocker on the loop, not by watching an idle machine where
+everything looks smooth.

@@ -492,36 +492,75 @@ def test_otel_concurrent_start_publishes_only_complete_state(
     assert otel_metrics._initialization_result is True
 
 
+def _enable_metrics(monkeypatch: pytest.MonkeyPatch, **overrides: object) -> None:
+    """Opt the listener in.
+
+    Since TASK-25914 the listener is gated on ``[metrics] enabled``, so a test
+    that wants to reach the binding path has to say so. Without this the
+    function short-circuits at the gate and these tests would pass while
+    exercising nothing.
+    """
+    resolved = {"enabled": True, "port": 8000, "bind_address": "127.0.0.1"}
+    resolved.update(overrides)
+    monkeypatch.setattr(
+        prometheus_metrics, "_metrics_server_config", lambda: dict(resolved)
+    )
+
+
 def test_prometheus_unavailable_returns_false_and_reports_info(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    _enable_metrics(monkeypatch)
     monkeypatch.setattr(prometheus_metrics, "PROMETHEUS_AVAILABLE", False)
 
     with caplog.at_level(logging.INFO):
-        assert prometheus_metrics.init_metrics_server(8000) is False
+        assert prometheus_metrics.init_metrics_server() is False
 
     messages = [record.getMessage() for record in caplog.records]
     assert messages == [
-        "Prometheus metrics are unavailable. "
-        "Install tldw_chatbook[debugging] to enable them."
+        "Prometheus metrics listener is enabled in config but the optional "
+        "dependency is missing. Install tldw_chatbook[debugging] to use it."
     ]
+
+
+def test_disabled_listener_is_silent_at_info(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A feature the user never enabled must not narrate itself at startup."""
+    monkeypatch.setattr(
+        prometheus_metrics,
+        "_metrics_server_config",
+        lambda: {"enabled": False, "port": 8000, "bind_address": "127.0.0.1"},
+    )
+    monkeypatch.setattr(prometheus_metrics, "PROMETHEUS_AVAILABLE", False)
+
+    with caplog.at_level(logging.INFO):
+        assert prometheus_metrics.init_metrics_server() is False
+
+    assert [record.getMessage() for record in caplog.records] == []
 
 
 def test_prometheus_available_returns_true_without_real_listener(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    calls: list[int] = []
+    calls: list[tuple[int, str]] = []
+
+    def record_start(port: int, addr: str = "0.0.0.0") -> None:
+        calls.append((port, addr))
+
+    _enable_metrics(monkeypatch)
     monkeypatch.setattr(prometheus_metrics, "PROMETHEUS_AVAILABLE", True)
-    monkeypatch.setattr(prometheus_metrics, "start_http_server", calls.append)
+    monkeypatch.setattr(prometheus_metrics, "start_http_server", record_start)
 
     with caplog.at_level(logging.INFO):
         assert prometheus_metrics.init_metrics_server(8123) is True
 
-    assert calls == [8123]
+    assert calls == [(8123, "127.0.0.1")]
     assert [record.getMessage() for record in caplog.records] == [
-        "Prometheus metrics server started on port 8123"
+        "Prometheus metrics listener started on 127.0.0.1:8123"
     ]
 
 
@@ -531,10 +570,11 @@ def test_prometheus_server_start_failure_propagates_without_success(
 ) -> None:
     failure = RuntimeError("PROMETHEUS-START-FAILURE-SENTINEL")
 
-    def fail_start(port: int) -> None:
+    def fail_start(port: int, addr: str = "0.0.0.0") -> None:
         assert port == 8124
         raise failure
 
+    _enable_metrics(monkeypatch)
     monkeypatch.setattr(prometheus_metrics, "PROMETHEUS_AVAILABLE", True)
     monkeypatch.setattr(prometheus_metrics, "start_http_server", fail_start)
 

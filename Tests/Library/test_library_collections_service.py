@@ -189,7 +189,7 @@ def test_collections_user_content_evidence_counts_only_active_local_collections(
 def test_schema_version_and_foreign_keys_are_initialized(tmp_path: Path) -> None:
     db = LibraryCollectionsDB(":memory:")
 
-    assert db.get_schema_version() == 3
+    assert db.get_schema_version() == 4
     with db.connection() as conn:
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
@@ -272,7 +272,6 @@ SUPPORTED_MEMBER_SOURCE_TYPES = (
     "prompt",
     "skill",
     "conversation",
-    "collection",
 )
 
 

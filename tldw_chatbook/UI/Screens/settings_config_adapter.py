@@ -236,4 +236,15 @@ class SettingsConfigAdapter:
                 False, "top-level TOML value must be a table"
             )
 
-        return SettingsValidationResult(True, "Config file TOML is valid")
+        # TASK-26039: advisory unknown/deprecated key report. Never affects
+        # validity -- a typo or a stale key must not block startup.
+        from tldw_chatbook.config import (
+            validate_config_keys,
+            format_config_key_report,
+        )
+
+        advisory = format_config_key_report(validate_config_keys(parsed))
+        message = "Config file TOML is valid"
+        if advisory:
+            message = f"{message}. {advisory}"
+        return SettingsValidationResult(True, message)

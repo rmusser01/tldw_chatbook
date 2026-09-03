@@ -1088,3 +1088,83 @@ async def test_quick_popover_mounts_with_no_model_selected() -> None:
 
         model_select = app.screen.query_one("#console-popover-model", Select)
         assert model_select.value is Select.NULL
+
+
+# --- TASK-26019: context breakdown by category ------------------------------
+
+
+def _accounting(**overrides):
+    from tldw_chatbook.Chat.console_prepared_request import (
+        ConsoleRequestTokenAccounting,
+    )
+
+    values = dict(
+        total_input_tokens=10_000,
+        system_tokens=1_000,
+        memory_tokens=500,
+        mandatory_tokens=2_000,
+        compactable_tokens=4_000,
+        active_request_tokens=1_500,
+        tool_schema_tokens=1_000,
+        rag_context_tokens=0,
+        rag_attributed=False,
+        attachment_tokens=0,
+    )
+    values.update(overrides)
+    return ConsoleRequestTokenAccounting(**values)
+
+
+def test_breakdown_partitions_the_exact_total() -> None:
+    """AC#2: category figures come from the request accounting and sum to
+    its total -- a mismatch is impossible by construction."""
+    from tldw_chatbook.Widgets.Console.console_context_controls import (
+        build_context_breakdown,
+    )
+
+    rows = build_context_breakdown(
+        _accounting(
+            rag_context_tokens=800, rag_attributed=True, attachment_tokens=1_600
+        )
+    )
+    labels = {row.label: row.tokens for row in rows}
+
+    assert labels["System prompt"] == 1_000
+    assert labels["Tool schemas"] == 1_000
+    assert labels["Memory summary"] == 500
+    assert labels["Retrieved context"] == 800
+    assert labels["Attachments"] == 1_600
+    assert labels["Conversation"] == 4_000 + 1_500 - 1_600
+    assert sum(row.tokens for row in rows) == 10_000
+
+
+def test_unattributed_bucket_is_explicit_not_silent() -> None:
+    """AC#3: capture off -> RAG cannot be split; mandatory shows as an
+    explicitly unattributed bucket, never folded into a named one."""
+    from tldw_chatbook.Widgets.Console.console_context_controls import (
+        build_context_breakdown,
+    )
+
+    rows = build_context_breakdown(_accounting())
+    labels = {row.label: row.tokens for row in rows}
+
+    assert "Retrieved context" not in labels
+    unattributed = [row for row in rows if "unattributed" in row.label.lower()]
+    assert len(unattributed) == 1
+    assert unattributed[0].tokens == 2_000
+    assert sum(row.tokens for row in rows) == 10_000
+
+
+def test_actionable_categories_name_their_lever() -> None:
+    """AC#6: a big bucket names the action that shrinks it."""
+    from tldw_chatbook.Widgets.Console.console_context_controls import (
+        build_context_breakdown,
+    )
+
+    rows = build_context_breakdown(_accounting(attachment_tokens=1_600))
+    by_label = {row.label: row for row in rows}
+
+    assert "summarize" in by_label["Conversation"].hint.lower()
+    assert "retire_stale_images" in by_label["Attachments"].hint
+    # zero rows are dropped so the surface stays scannable
+    assert "Memory summary" in by_label
+    assert all(row.tokens > 0 for row in rows)

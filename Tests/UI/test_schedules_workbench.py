@@ -9,9 +9,10 @@ import pytest
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from textual.containers import Horizontal
-from textual.widgets import Button, DataTable, Input, Static
+from textual.widgets import Button, DataTable, Input, Select, Static
+from textual.widgets._collapsible import CollapsibleTitle
 
 from tldw_chatbook.Scheduling.events import (
     DeleteTaskRequested,
@@ -25,6 +26,9 @@ from tldw_chatbook.Scheduling.models import (
     TaskStatus,
 )
 from tldw_chatbook.UI.Screens.scheduling.conflicts_tab import ConflictsTab
+from tldw_chatbook.UI.Screens.scheduling.definition_detail import (
+    _definition_owner_label,
+)
 from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import ReminderForm
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
 from tldw_chatbook.UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
@@ -71,6 +75,10 @@ class MockSchedulingService(_MockSchedulingServiceMixin):
         self.updated: list[tuple[str, dict]] = []
         self.created: list[dict] = []
         self.deleted_ids: list[str] = []
+        # Mirrors the real signature's threaded owner (never a `set_owner`
+        # flip), so a cross-owner save is observable here.
+        self.created_owners: list[str | None] = []
+        self.updated_owners: list[str | None] = []
 
     async def list_reminders(self):
         return [
@@ -86,12 +94,16 @@ class MockSchedulingService(_MockSchedulingServiceMixin):
     async def list_tasks(self):
         return await self.list_reminders()
 
-    async def create_reminder(self, payload: dict):
+    async def create_reminder(self, payload: dict, *, owner_id: str | None = None):
         self.created.append(payload)
+        self.created_owners.append(owner_id)
         return ReminderTask(**payload)
 
-    async def update_reminder(self, task_id: str, fields: dict):
+    async def update_reminder(
+        self, task_id: str, fields: dict, *, owner_id: str | None = None
+    ):
         self.updated.append((task_id, fields))
+        self.updated_owners.append(owner_id)
         reminders = await self.list_reminders()
         task = reminders[0]
         for key, value in fields.items():
@@ -229,9 +241,7 @@ async def test_task_detail_renders_selected_task():
 
         detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
         title = detail.query_one("#scheduling-task-detail-title", Static)
-        kind = detail.query_one("#scheduling-task-detail-type", Static)
         status_badge = detail.query_one("#scheduling-task-status-badge", Static)
-        schedule = detail.query_one("#scheduling-task-detail-schedule", Static)
         next_run = detail.query_one("#scheduling-task-detail-next-run", Static)
         enable_button = detail.query_one("#scheduling-enable-task", Button)
         disable_button = detail.query_one("#scheduling-disable-task", Button)
@@ -239,14 +249,185 @@ async def test_task_detail_renders_selected_task():
         follow_button = detail.query_one("#schedules-follow-in-console", Button)
 
         assert "Test" in title.visual.plain
-        assert "One-time" in kind.visual.plain
         assert "Waiting" in status_badge.visual.plain
-        assert "One-time at" in schedule.visual.plain
         assert "UTC" in next_run.visual.plain
         assert enable_button.label.plain == "Enable"
         assert disable_button.label.plain == "Disable"
         assert delete_button.label.plain == "Delete"
         assert follow_button.label.plain == "Follow 'Test' in Console"
+
+        # schedules-redesign PR-1, task 3: the old combined Type/Schedule
+        # rows are hidden for a reminder now (they only remain visible for
+        # a `ScheduledTask` projection); the same "One-time"/"One-time at"
+        # facts render through the new Frequency group's Repeat/At rows
+        # instead -- painted-output assertions, not stored-attribute ones
+        # (last program's lesson), since a hidden widget's stored text
+        # would pass even if nothing were actually on screen.
+        legacy_fields = detail.query_one("#scheduling-task-detail-legacy-fields")
+        groups = detail.query_one("#scheduling-task-detail-groups")
+        assert legacy_fields.display is False
+        assert groups.display is True
+        repeat_value = detail.query_one("#scheduling-detail-repeat", Static)
+        at_value = detail.query_one("#scheduling-detail-at", Static)
+        assert "One-time" in repeat_value.render_line(0).text
+        assert "One-time at" in at_value.render_line(0).text
+
+
+class _BareTaskDetailApp(ConsolidatedCSSApp):
+    """Bare app mounting one `TaskDetail` (schedules-redesign PR-1, task 3),
+    matching `test_schedules_missed_notice.py`'s `_DetailHarnessApp`
+    pattern. `CSS_PATH` is pinned to the app bundle (not just the screen
+    sheets `ConsolidatedCSSApp` loads by default) so `DetailValueRow`/
+    `DetailGroup`'s real `css/features/_scheduling.tcss` styling resolves
+    -- Task 1's own harness precedent (`test_detail_value_row.py`).
+    """
+
+    CSS_PATH = str(BUNDLED_STYLESHEET)
+
+    def compose(self):
+        yield TaskDetail()
+
+
+def _frequency_reminder(**kwargs) -> ReminderTask:
+    """A representative recurring reminder covering every §5 Frequency/
+    Details/History value: weekly cadence, a non-UTC timezone, and a
+    recorded last dispatch."""
+    defaults = dict(
+        id="task-freq",
+        title="Weekly digest",
+        schedule_kind=ScheduleKind.RECURRING,
+        cron="0 9 * * 1",
+        timezone="America/New_York",
+        last_run_at=datetime(2026, 8, 24, 9, 0, tzinfo=timezone.utc),
+        last_status=TaskStatus.COMPLETED,
+    )
+    defaults.update(kwargs)
+    return ReminderTask(**defaults)
+
+
+@pytest.mark.asyncio
+async def test_task_detail_groups_render_every_frequency_and_details_value():
+    """Every §5 reminder-column value paints through the new grouped rows
+    for a representative recurring reminder (task-3 brief AC)."""
+    async with _BareTaskDetailApp().run_test() as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder())
+        await pilot.pause()
+
+        def _text(widget_id: str) -> str:
+            return detail.query_one(f"#{widget_id}", Static).render_line(0).text.strip()
+
+        # Final review F6/F7: the prose owner vocabulary, shared with the
+        # definitions pane (`owner_display_label`) -- not the raw metadata
+        # string this row used to render.
+        assert _text("scheduling-detail-runs-on") == "This device"
+        assert _text("scheduling-detail-repeat") == "Recurring"
+        assert _text("scheduling-detail-at") == "Weekly on Monday at 09:00 America/New_York"
+        assert _text("scheduling-detail-timezone") == "America/New_York"
+        assert _text("scheduling-detail-notifications") == "Inbox + toast"
+
+        # The History group starts collapsed (spec §5); expand it to read
+        # the painted "Last fire" value.
+        history_group = detail.query_one("#scheduling-detail-group-history")
+        assert history_group.collapsed is True
+        history_group.collapsed = False
+        await pilot.pause()
+        assert _text("scheduling-detail-last-fire") == "2026-08-24 09:00 UTC — Completed"
+        assert _text("scheduling-detail-history-link") == "See list below"
+
+
+@pytest.mark.asyncio
+async def test_task_detail_history_group_starts_collapsed_and_expands_on_click():
+    """The collapsed History group hides its rows; a real click on its
+    title expands it and repaints them (task-3 brief AC)."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder())
+        await pilot.pause()
+
+        history_group = detail.query_one("#scheduling-detail-group-history")
+        last_fire_row = detail.query_one("#scheduling-detail-last-fire", Static)
+        assert history_group.collapsed is True
+        assert last_fire_row.region.height == 0
+
+        await pilot.click(history_group.query_one(CollapsibleTitle))
+        await pilot.pause()
+        assert history_group.collapsed is False
+        assert last_fire_row.region.height > 0
+        assert "Completed" in last_fire_row.render_line(0).text
+
+        await pilot.click(history_group.query_one(CollapsibleTitle))
+        await pilot.pause()
+        assert history_group.collapsed is True
+        assert last_fire_row.region.height == 0
+
+
+@pytest.mark.asyncio
+async def test_task_detail_runs_on_shows_transfer_badge_when_in_flight():
+    """'Runs on' appends the existing in-flight transfer badge text to the
+    owner label, same wording as the queue row's transfer suffix
+    (task-3 brief: 'the existing badge text joins the value')."""
+    async with _BareTaskDetailApp().run_test() as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder(transfer_state="to_server_pending"))
+        await pilot.pause()
+
+        runs_on = detail.query_one("#scheduling-detail-runs-on", Static)
+        assert (
+            runs_on.render_line(0).text.strip()
+            == "This device (Moving to server\u2026)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_task_detail_runs_on_speaks_the_definitions_pane_vocabulary():
+    """Final review F6/F7: one owner vocabulary across BOTH detail panes.
+
+    The reminder pane rendered the raw metadata string (`local`,
+    `server:1 / server <id>`) while the definitions pane rendered
+    `This device` / the bare server id -- two dialects for the flagship
+    row of the redesign, and the User Guide described only the second.
+    Both now go through `task_detail.owner_display_label`; this pins the
+    reminder side against the definitions side's own helper.
+    """
+    async with _BareTaskDetailApp().run_test() as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+
+        detail.set_task(
+            _frequency_reminder(owner_id="server:srv-9", server_id="remote-42")
+        )
+        await pilot.pause()
+        runs_on = detail.query_one("#scheduling-detail-runs-on", Static)
+        assert runs_on.render_line(0).text.strip() == "srv-9"
+        assert runs_on.render_line(0).text.strip() == _definition_owner_label(
+            {"owner_id": "server:srv-9"}
+        )
+
+        detail.set_task(_frequency_reminder(owner_id="local"))
+        await pilot.pause()
+        assert runs_on.render_line(0).text.strip() == _definition_owner_label(
+            {"owner_id": "local"}
+        )
+
+
+@pytest.mark.asyncio
+async def test_task_detail_shows_the_reminder_body_card():
+    """Final review F10: spec §5 wants the body text in a card above the
+    groups (the definitions pane has had one all along); `ReminderTask.
+    body` was rendered nowhere. Brackets stay literal, and a body-less
+    reminder shows no empty card."""
+    async with _BareTaskDetailApp().run_test() as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder(body="Ship the [bold] digest"))
+        await pilot.pause()
+
+        card = detail.query_one("#scheduling-task-detail-body-card", Static)
+        assert card.display is True
+        assert card.render_line(0).text.strip() == "Ship the [bold] digest"
+
+        detail.set_task(_frequency_reminder(body=None))
+        await pilot.pause()
+        assert card.display is False
 
 
 @pytest.mark.asyncio
@@ -941,7 +1122,10 @@ async def test_create_reminder_action_saves_new_reminder():
         assert len(service.created) == 1
         assert service.created[0]["title"] == "New reminder"
         assert service.created[0]["schedule_kind"] == "one_time"
+        # Owner threaded through the call, never a `set_owner` flip.
+        assert service.created_owners == [service.owner_id]
         notifications = list(pilot.app._notifications)
+        # Same-owner save: the plain toast, no "switch owner" hint.
         assert any(n.message == "Scheduled task created." for n in notifications)
 
 
@@ -974,6 +1158,88 @@ async def test_edit_reminder_action_updates_existing_reminder():
         assert service.updated[0][1]["title"] == "Updated title"
         notifications = list(pilot.app._notifications)
         assert any(n.message == "Scheduled task updated." for n in notifications)
+
+
+@pytest.mark.asyncio
+async def test_create_reminder_for_a_different_runs_on_owner_queues_a_mutation(
+    tmp_path,
+):
+    """task-5: picking a non-default "Runs on" owner in the create form
+    rides the EXISTING `create_reminder` server-fallback/mutation path
+    (no new persistence code) -- and the service's shared `owner_id` is
+    never repointed at the owner that was only meant for this one save
+    (Qodo HIGH: the owner is threaded through the call, so no concurrent
+    worker can observe a temporary flip).
+
+    The toast is also checked here (Qodo MEDIUM): this list is owner-scoped,
+    so a reminder created for another owner cannot appear in it -- a bare
+    "Scheduled task created." reads as a lost save."""
+    from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+    from tldw_chatbook.Scheduling.services.scheduling_service import SchedulingService
+    from tldw_chatbook.Scheduling.services.server_client import ServerUnavailableError
+
+    db = ScheduledTasksDB(tmp_path / "scheduled_tasks.db")
+    server_client = AsyncMock()
+    server_client.notifications_service = object()
+    server_client.create_reminder.side_effect = ServerUnavailableError("offline")
+    # A "server available" app also triggers the (unrelated) Automations-tab
+    # load on mount; give it a real return value so it settles cleanly
+    # instead of leaving an un-awaited AsyncMock coroutine at teardown.
+    server_client.list_automation_definitions = AsyncMock(
+        return_value={"items": [], "total": 0}
+    )
+    service = SchedulingService(db=db, server_client=server_client, runtime_source="local")
+
+    app = WorkbenchTestApp()
+    app.scheduling_service = service
+    app.runtime_policy = SimpleNamespace(
+        state=SimpleNamespace(active_server_id="example.com")
+    )
+    try:
+        async with app.run_test() as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+
+            pilot.app.screen.action_create_reminder()
+            await pilot.pause()
+            assert isinstance(pilot.app.screen, ReminderForm)
+
+            runs_on = pilot.app.screen.query_one("#reminder-runs-on", Select)
+            option_values = [value for _label, value in runs_on._options]
+            assert option_values == ["local", "server:example.com"]
+            assert runs_on.value == "local"  # default = current screen owner
+            runs_on.value = "server:example.com"
+
+            pilot.app.screen.query_one("#reminder-title", Input).value = "Server reminder"
+            pilot.app.screen.query_one(
+                "#reminder-run-at", Input
+            ).value = "2099-08-28 09:00"
+
+            await pilot.click("#reminder-save")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            toasts = [n.message for n in pilot.app._notifications]
+            assert any(
+                "Server (example.com)" in message
+                and "switch to that owner" in message
+                for message in toasts
+            ), f"the toast must name the owner it was created for; got {toasts}"
+
+        assert service.owner_id == "local"  # never repointed by the save
+        assert service.sync_engine.owner_id == "local"
+        pending = db.get_pending_mutations(
+            "server:example.com", primitive="reminder_task"
+        )
+        assert len(pending) == 1
+        assert pending[0]["payload"]["action"] == "create"
+        rows = db.list_reminder_tasks(owner_id="server:example.com")
+        assert len(rows) == 1
+        assert rows[0]["title"] == "Server reminder"
+        assert db.list_reminder_tasks(owner_id="local") == []
+    finally:
+        db.close()
 
 
 def test_sync_completed_event():

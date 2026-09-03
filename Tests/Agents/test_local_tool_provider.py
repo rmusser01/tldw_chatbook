@@ -2166,6 +2166,75 @@ def test_callback_approve_session_persists(tmp_path):
     assert persisted == [("fs_list", "approve_session")]
 
 
+def test_console_local_callbacks_capture_the_exact_named_profile(tmp_path):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    class RecordingService:
+        def __init__(self):
+            self.calls = []
+
+        def get_kill_switch(self):
+            return False
+
+        def gate_tool_test_for_profile(self, hub, profile_id):
+            self.calls.append(("gate", hub.server_key, hub.name, profile_id))
+            return ASK
+
+        def is_session_approved(
+            self, server_key, tool_name, *, profile_id="default"
+        ):
+            self.calls.append(("read", server_key, tool_name, profile_id))
+            return False
+
+        def approve_for_session(
+            self, server_key, tool_name, *, profile_id="default"
+        ):
+            self.calls.append(("session", server_key, tool_name, profile_id))
+
+        def set_tool_state(
+            self,
+            server_key,
+            tool_name,
+            state,
+            *,
+            tool,
+            profile_id="default",
+        ):
+            self.calls.append(
+                ("persistent", server_key, tool_name, state, profile_id)
+            )
+
+        def record_tool_decision(self, *args, **kwargs):
+            return None
+
+    service = RecordingService()
+    controller = object.__new__(ConsoleChatController)
+    controller.app = SimpleNamespace(unified_mcp_service=service)
+    context = SimpleNamespace(
+        tool_configuration={"local_tools_enabled": True},
+        tool_policy_profile_id="research",
+        persona_policy_rules=None,
+    )
+
+    provider, _review = controller._compose_local_provider(
+        turn_context=context, project_root=tmp_path
+    )
+    hub = provider.hub_tool_for("fs_list")
+    provider._resolve_state(hub)
+    provider._is_session_approved_safe(hub)
+    provider._persist_approval_safe(hub, "approve_session")
+    provider._persist_approval_safe(hub, "always_allow")
+
+    assert service.calls == [
+        ("gate", "local:__local__", "fs_list", "research"),
+        ("read", "local:__local__", "fs_list", "research"),
+        ("session", "local:__local__", "fs_list", "research"),
+        ("persistent", "local:__local__", "fs_list", "allow", "research"),
+    ]
+
+
 def test_persist_failure_does_not_block_execution(tmp_path):
     (tmp_path / "a.txt").write_text("a")
 
@@ -3734,3 +3803,447 @@ def test_timeout_for_falls_back_on_malformed_deep_search_timeout_s(
 
     monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
     assert p.timeout_for("local:web_deep_search") == 290.0
+
+
+# --- TASK-28238 phase 1: stale-write guard -- record-on-read ---
+
+def _guard_provider(tmp_path):
+    """Real-executor provider rooted at tmp_path for guard tests."""
+    return make_provider(root=tmp_path, use_default_executor=True, allow_write=True)
+
+
+def test_fs_read_records_whole_file_hash(tmp_path):
+    import hashlib
+    from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
+
+    target = tmp_path / "a.txt"
+    target.write_text("line1\nline2\nline3\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        result = provider.invoke("local:fs_read", {"path": "a.txt", "limit": 1})
+    assert result.ok
+    key = canonical_ledger_key(target.resolve())
+    stamp = provider._read_ledger.stamp_for("run-a", key)
+    assert stamp is not None
+    # whole-file hash, not the windowed first line
+    assert stamp.sha256 == hashlib.sha256(target.read_bytes()).hexdigest()
+
+
+def test_fs_read_of_missing_path_records_absent(tmp_path):
+    from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
+
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        result = provider.invoke("local:fs_read", {"path": "nope.txt"})
+    assert not result.ok  # fs_read itself still errors as today
+    key = canonical_ledger_key((tmp_path / "nope.txt").resolve())
+    stamp = provider._read_ledger.stamp_for("run-a", key)
+    assert stamp is not None and stamp.is_absent
+
+
+def test_fs_read_of_refused_path_records_nothing(tmp_path):
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        result = provider.invoke("local:fs_read", {"path": "../outside.txt"})
+    assert not result.ok
+    # nothing recorded under this run at all
+    assert provider._read_ledger._by_run.get("run-a") in (None, {})
+
+
+# --- TASK-28238 phase 1: fs_write staleness (CAS injection) ---
+
+
+def test_two_writer_race_refuses_second_writer(tmp_path):
+    """AC#4: A reads, B writes, A's write refuses naming the conflict."""
+    target = tmp_path / "shared.txt"
+    target.write_text("original\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        assert provider.invoke("local:fs_read", {"path": "shared.txt"}).ok
+    with use_run_id("run-b"):
+        assert provider.invoke(
+            "local:fs_write", {"path": "shared.txt", "content": "B's version\n"}
+        ).ok
+    with use_run_id("run-a"):
+        result = provider.invoke(
+            "local:fs_write", {"path": "shared.txt", "content": "A's version\n"}
+        )
+    assert not result.ok
+    # NOTE (ruling 2): ToolResult.blocked(...) stores the refusal on
+    # .error, not .content -- adapted from the brief's literal text.
+    text = str(result.error)
+    assert "Stale write refused" in text and "shared.txt" in text
+    # B's content survived; A did not clobber
+    assert target.read_text() == "B's version\n"
+
+
+def test_own_read_write_write_chain_never_false_positives(tmp_path):
+    target = tmp_path / "mine.txt"
+    target.write_text("v1\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        assert provider.invoke("local:fs_read", {"path": "mine.txt"}).ok
+        assert provider.invoke(
+            "local:fs_write", {"path": "mine.txt", "content": "v2\n"}
+        ).ok
+        assert provider.invoke(
+            "local:fs_write", {"path": "mine.txt", "content": "v3\n"}
+        ).ok
+    assert target.read_text() == "v3\n"
+
+
+def test_blind_write_proceeds_unchanged(tmp_path):
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        result = provider.invoke(
+            "local:fs_write", {"path": "new.txt", "content": "hello\n"}
+        )
+    assert result.ok
+    assert (tmp_path / "new.txt").read_text() == "hello\n"
+
+
+def test_absent_then_created_by_peer_refuses(tmp_path):
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        provider.invoke("local:fs_read", {"path": "soon.txt"})  # records ABSENT
+    with use_run_id("run-b"):
+        assert provider.invoke(
+            "local:fs_write", {"path": "soon.txt", "content": "B first\n"}
+        ).ok
+    with use_run_id("run-a"):
+        result = provider.invoke(
+            "local:fs_write", {"path": "soon.txt", "content": "A's create\n"}
+        )
+    assert not result.ok
+    assert "Stale write refused" in str(result.error)
+    assert (tmp_path / "soon.txt").read_text() == "B first\n"
+
+
+def test_model_supplied_precondition_wins_over_ledger(tmp_path):
+    import hashlib
+
+    target = tmp_path / "explicit.txt"
+    target.write_text("old\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        provider.invoke("local:fs_read", {"path": "explicit.txt"})
+    # peer changes the file
+    target.write_text("peer\n")
+    current = hashlib.sha256(target.read_bytes()).hexdigest()
+    with use_run_id("run-a"):
+        result = provider.invoke(
+            "local:fs_write",
+            {"path": "explicit.txt", "content": "mine\n", "expected_sha256": current},
+        )
+    # model's explicit (correct, current) precondition wins -> write proceeds
+    assert result.ok
+    assert target.read_text() == "mine\n"
+
+
+# --- TASK-28238 phase 1: fs_edit / fs_patch staleness (pre-hash) ---
+
+
+def test_edit_race_refuses_second_writer(tmp_path):
+    target = tmp_path / "shared.py"
+    target.write_text("x = 1\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        assert provider.invoke("local:fs_read", {"path": "shared.py"}).ok
+    with use_run_id("run-b"):
+        assert provider.invoke(
+            "local:fs_write", {"path": "shared.py", "content": "x = 2\n"}
+        ).ok
+    with use_run_id("run-a"):
+        result = provider.invoke(
+            "local:fs_edit",
+            {"path": "shared.py", "old_string": "x = 1", "new_string": "x = 99"},
+        )
+    assert not result.ok
+    # NOTE (ruling 2, same as Task 3): ToolResult.blocked(...) stores the
+    # refusal on .error, not .content -- adapted from the brief's literal
+    # text.
+    assert "Stale write refused" in str(result.error)
+    assert target.read_text() == "x = 2\n"
+
+
+def test_edit_without_prior_read_proceeds(tmp_path):
+    target = tmp_path / "blind.py"
+    target.write_text("y = 1\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        result = provider.invoke(
+            "local:fs_edit", {"path": "blind.py", "old_string": "y = 1", "new_string": "y = 2"}
+        )
+    assert result.ok
+    assert target.read_text() == "y = 2\n"
+
+
+def test_patch_with_one_stale_target_refuses_whole_patch(tmp_path):
+    a = tmp_path / "a.txt"
+    b = tmp_path / "b.txt"
+    a.write_text("alpha\n")
+    b.write_text("beta\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        assert provider.invoke("local:fs_read", {"path": "a.txt"}).ok
+        assert provider.invoke("local:fs_read", {"path": "b.txt"}).ok
+    with use_run_id("run-b"):
+        assert provider.invoke(
+            "local:fs_write", {"path": "b.txt", "content": "beta CHANGED\n"}
+        ).ok
+    diff = (
+        "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-alpha\n+alpha2\n"
+        "--- a/b.txt\n+++ b/b.txt\n@@ -1 +1 @@\n-beta\n+beta2\n"
+    )
+    with use_run_id("run-a"):
+        result = provider.invoke("local:fs_patch", {"diff": diff})
+    assert not result.ok
+    assert "Stale write refused" in str(result.error)
+    # NEITHER file was touched -- whole patch refused
+    assert a.read_text() == "alpha\n"
+    assert b.read_text() == "beta CHANGED\n"
+
+
+# --- TASK-28238 phase 1: update-after-write ---
+
+
+def test_read_edit_edit_chain_never_false_positives(tmp_path):
+    target = tmp_path / "chain.py"
+    target.write_text("n = 1\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        assert provider.invoke("local:fs_read", {"path": "chain.py"}).ok
+        assert provider.invoke(
+            "local:fs_edit", {"path": "chain.py", "old_string": "n = 1", "new_string": "n = 2"}
+        ).ok
+        second = provider.invoke(
+            "local:fs_edit", {"path": "chain.py", "old_string": "n = 2", "new_string": "n = 3"}
+        )
+    assert second.ok, str(second.error)
+    assert target.read_text() == "n = 3\n"
+
+
+def test_write_updates_ledger_so_peer_race_still_detected_after(tmp_path):
+    """After my own write, a PEER's change is still caught on my next write."""
+    target = tmp_path / "then.txt"
+    target.write_text("v1\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        provider.invoke("local:fs_read", {"path": "then.txt"})
+        assert provider.invoke(
+            "local:fs_write", {"path": "then.txt", "content": "v2\n"}
+        ).ok
+    with use_run_id("run-b"):
+        assert provider.invoke(
+            "local:fs_write", {"path": "then.txt", "content": "peer\n"}
+        ).ok
+    with use_run_id("run-a"):
+        result = provider.invoke(
+            "local:fs_write", {"path": "then.txt", "content": "v3\n"}
+        )
+    assert not result.ok
+    assert "Stale write refused" in str(result.error)
+
+
+def test_fs_write_stamps_ledger_from_content_argument(tmp_path):
+    """M2: the post-write stamp is the CONTENT ARG hash, not a disk re-read.
+
+    Closes the microsecond window between our atomic replace and a re-read
+    where a peer's write in between would get misrecorded as ours.
+    """
+    import hashlib
+
+    from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
+
+    target = tmp_path / "stamped.txt"
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        assert provider.invoke(
+            "local:fs_write", {"path": "stamped.txt", "content": "hello\n"}
+        ).ok
+    key = canonical_ledger_key(target.resolve())
+    stamp = provider._read_ledger.stamp_for("run-a", key)
+    assert stamp is not None
+    encoded = "hello\n".encode("utf-8")
+    assert stamp.sha256 == hashlib.sha256(encoded).hexdigest()
+    assert stamp.size == len(encoded)
+
+
+# --- TASK-28238 final-review fix wave (I1/M1/M4) ---
+
+
+def test_fs_read_of_file_in_unreadable_dir_returns_error_not_raise(tmp_path):
+    """I1: ``Path.is_file()`` re-raises OSError (e.g. EACCES) instead of
+    swallowing it -- confirmed empirically: a chmod-0 parent dir makes
+    ``resolve()`` succeed (no stat needed) but ``is_file()`` raise
+    PermissionError. That must surface as a normal ToolResult error, not
+    escape ``invoke()`` with an unredacted absolute path, and must record
+    nothing in the ledger.
+    """
+    if os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0):
+        pytest.skip("chmod 0o000 does not block root or apply on Windows")
+    blocked_dir = tmp_path / "locked"
+    blocked_dir.mkdir()
+    target = blocked_dir / "secret.txt"
+    target.write_text("hidden\n")
+    blocked_dir.chmod(0o000)
+    provider = _guard_provider(tmp_path)
+    try:
+        with use_run_id("run-a"):
+            result = provider.invoke(
+                "local:fs_read", {"path": "locked/secret.txt"}
+            )
+    finally:
+        blocked_dir.chmod(0o755)
+    assert not result.ok
+    assert provider._read_ledger._by_run.get("run-a") in (None, {})
+
+
+def test_cas_precondition_predicate_excludes_lock_contention():
+    """M1: the two genuine CAS refusals match; portalocker contention does
+    not, even though all three share the "write precondition failed: "
+    prefix.
+    """
+    is_cas = local_tool_provider._is_cas_precondition_failure
+    assert is_cas("write precondition failed: target digest changed")
+    assert is_cas("write precondition failed: target is present")
+    assert not is_cas("write precondition failed: target is being modified")
+
+
+def test_lock_contention_is_not_relabeled_stale_write(tmp_path):
+    """M1: a WorkspaceToolExecutionError for lock contention must surface
+    as the generic worker error, not get relabeled "Stale write refused"
+    just because a stale_guard happened to be armed.
+    """
+    import dataclasses
+
+    from tldw_chatbook.Tools.workspace_tool_executor import (
+        WorkspaceToolExecutionError,
+    )
+
+    target = tmp_path / "contended.txt"
+    target.write_text("v1\n")
+    provider = _guard_provider(tmp_path)
+
+    def _raise_contention(*_args, **_kwargs):
+        # "tool_failure" is the real code the worker maps a LocalToolError
+        # to (Tools/workspace_tool_worker.py) -- the code under which
+        # _workspace_execution_error_result passes the message through
+        # unchanged rather than substituting a fixed refusal string.
+        raise WorkspaceToolExecutionError(
+            "tool_failure", "write precondition failed: target is being modified"
+        )
+
+    with use_run_id("run-a"):
+        assert provider.invoke("local:fs_read", {"path": "contended.txt"}).ok
+        # LocalToolSpec is frozen -- swap the whole spec, not the attr.
+        original_spec = provider._specs["fs_write"]
+        provider._specs["fs_write"] = dataclasses.replace(
+            original_spec, handler=_raise_contention
+        )
+        try:
+            result = provider.invoke(
+                "local:fs_write", {"path": "contended.txt", "content": "v2\n"}
+            )
+        finally:
+            provider._specs["fs_write"] = original_spec
+    assert not result.ok
+    assert "Stale write refused" not in str(result.error)
+    assert "target is being modified" in str(result.error)
+
+
+def test_fs_write_dry_run_previews_even_with_stale_stamp(tmp_path):
+    """M4: dry_run must preview, not stale-refuse -- nothing is written so
+    there is no clobber risk.
+    """
+    target = tmp_path / "preview.txt"
+    target.write_text("original\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        assert provider.invoke("local:fs_read", {"path": "preview.txt"}).ok
+    with use_run_id("run-b"):
+        assert provider.invoke(
+            "local:fs_write", {"path": "preview.txt", "content": "B's version\n"}
+        ).ok
+    with use_run_id("run-a"):
+        result = provider.invoke(
+            "local:fs_write",
+            {"path": "preview.txt", "content": "A's preview\n", "dry_run": True},
+        )
+    assert result.ok, str(result.error)
+    assert "Stale write refused" not in str(result.content)
+    # nothing written
+    assert target.read_text() == "B's version\n"
+
+
+# --- Qodo round (PR #2341): empty run_id disables the ledger ---
+
+
+def test_fs_read_without_run_binding_records_nothing(tmp_path):
+    """An empty run_id (current_run_id() == "") means no run identity --
+    the process-lived MCP server provider serves MANY independent clients
+    that would otherwise all share the SAME "" bucket, so one client's
+    write would refresh the stamp another client read. No identity ->
+    nothing recorded. ``use_run_id("")`` reproduces that condition (the
+    module's autouse ``_dispatching_run`` fixture otherwise always binds a
+    real run id, so an inner ``use_run_id("")`` is how this module gets to
+    "no run identity" rather than by never binding at all).
+    """
+    target = tmp_path / "a.txt"
+    target.write_text("line1\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id(""):
+        result = provider.invoke("local:fs_read", {"path": "a.txt"})
+    assert result.ok
+    assert provider._read_ledger._by_run == {}
+
+
+def test_write_without_run_binding_is_not_guarded(tmp_path):
+    """With no run identity bound, a read-then-peer-write-then-write
+    sequence is NOT guarded -- pre-feature behavior for callers with no
+    run identity (e.g. the MCP server provider)."""
+    target = tmp_path / "shared.txt"
+    target.write_text("original\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id(""):
+        assert provider.invoke("local:fs_read", {"path": "shared.txt"}).ok
+    with use_run_id("run-b"):
+        assert provider.invoke(
+            "local:fs_write", {"path": "shared.txt", "content": "B's version\n"}
+        ).ok
+    with use_run_id(""):
+        result = provider.invoke(
+            "local:fs_write", {"path": "shared.txt", "content": "unguarded\n"}
+        )
+    assert result.ok, str(result.error)
+    assert target.read_text() == "unguarded\n"
+
+
+# --- Qodo round (PR #2341): dry-run previews bypass the pre-check ---
+
+
+def test_fs_patch_dry_run_previews_even_with_stale_stamp(tmp_path):
+    """fs_patch's dry_run must preview, not stale-refuse -- a preview never
+    writes, so there is no clobber risk for the pre-check to guard against
+    (fs_write's own injection already skips on dry_run; the fs_edit/fs_patch
+    pre-check must skip the same way). The diff's own context matches the
+    CURRENT disk content ("beta"), not the stale ledger stamp ("alpha"), so
+    a failure here can only come from the pre-check, not a genuine
+    diff/content mismatch.
+    """
+    target = tmp_path / "stale.txt"
+    target.write_text("alpha\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        assert provider.invoke("local:fs_read", {"path": "stale.txt"}).ok
+    with use_run_id("run-b"):
+        assert provider.invoke(
+            "local:fs_write", {"path": "stale.txt", "content": "beta\n"}
+        ).ok
+    diff = "--- a/stale.txt\n+++ b/stale.txt\n@@ -1 +1 @@\n-beta\n+beta2\n"
+    with use_run_id("run-a"):
+        result = provider.invoke("local:fs_patch", {"diff": diff, "dry_run": True})
+    assert result.ok, str(result.error)
+    assert "Stale write refused" not in str(result.content)
+    # disk untouched by the preview
+    assert target.read_text() == "beta\n"

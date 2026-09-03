@@ -28,6 +28,10 @@ if TYPE_CHECKING:
     from .run_log import RunLogWriter
 
 from tldw_chatbook.Chat.console_history_budget import (
+    StaleImageSettings,
+    ToolResultPruneSettings,
+    prune_stale_tool_results,
+    retire_stale_images,
     ProviderContinuationSidecar,
     provider_continuation_owner_groups,
 )
@@ -50,6 +54,8 @@ from .agent_models import (
     CONTROL_CAPTURE_INDEX_BASE,
     DIRECT_DISCLOSURE_CONTEXT_FRACTION,
     MAX_STEERING_CHARS,
+    STEERING_SOURCE_REDIRECT,
+    STEERING_SOURCE_USER,
     RUN_CANCELLED,
     RUN_DONE,
     RUN_ERROR,
@@ -110,6 +116,7 @@ from .agent_runtime import (
     run_agent_loop,
     safe_utc_timestamp,
 )
+# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (fallback_chain imports at the resolve site.)
 from .fleet_coordinator import (
     DEFAULT_RETAINED_TRANSCRIPT_MAX_CHARS,
     DEFAULT_RETAINED_TRANSCRIPTS,
@@ -125,10 +132,12 @@ from .native_tools import (
 )
 from .run_context import CurrentRunActor, use_run_actor, use_tool_call_id
 from .run_log import _setting
+from tldw_chatbook.config import coerce_bool_setting, coerce_int_setting
 from .run_log_eviction import (
     DEFAULT_MIN_RECENT_ROUNDS,
     RUN_LOG_EVICT_ENABLED_KEY,
     RUN_LOG_EVICT_MIN_RECENT_ROUNDS_KEY,
+    _make_round_boundary,
     bound_history_for_send,
     coerce_min_recent_rounds,
 )
@@ -150,6 +159,7 @@ from .project_instruction_runtime import (
 from .tool_catalog import (
     CHECK_AGENTS_SCHEMA,
     FIND_TOOLS_SCHEMA,
+    build_find_tools_schema,
     INSTALL_SKILL_TOOL_SCHEMA,
     PREPARE_MANAGED_SKILL_PROMOTION_TOOL_SCHEMA,
     LOAD_TOOLS_SCHEMA,
@@ -669,6 +679,18 @@ def build_first_request_schema_plan(
     direct_prompt = direct_system_prompt or config.system_prompt
     discovery_prompt = discovery_system_prompt or config.system_prompt
 
+    def _deferred_names() -> tuple[str, ...]:
+        try:
+            entries = registry.list_catalog()
+        except Exception:  # noqa: BLE001 -- an unreadable catalog lists nothing
+            return ()
+        allowed = frozenset(allowed_tools)
+        return tuple(
+            entry.name
+            for entry in entries
+            if not allowed or entry.name in allowed
+        )
+
     def make_plan(
         active: tuple[ToolSchema, ...], offer_find_load: bool, system_prompt: str
     ) -> FirstRequestSchemaPlan:
@@ -680,7 +702,14 @@ def build_first_request_schema_plan(
                 (WAIT_AGENTS_SCHEMA, CHECK_AGENTS_SCHEMA, SEND_TO_AGENT_SCHEMA)
             )
         if offer_find_load:
-            runtime.extend((FIND_TOOLS_SCHEMA, LOAD_TOOLS_SCHEMA))
+            # TASK-26007: the deferred surface NAMES what exists -- the
+            # model must never conclude a present capability is absent.
+            runtime.extend(
+                (
+                    build_find_tools_schema(_deferred_names()),
+                    LOAD_TOOLS_SCHEMA,
+                )
+            )
         if skill_file_enabled:
             runtime.append(SKILL_FILE_TOOL_SCHEMA)
         if install_skill_enabled and agent_kind == AGENT_KIND_PRIMARY:
@@ -1527,12 +1556,55 @@ def _usage_total_tokens(resp) -> int | None:
 _CANCEL_POLL_SECONDS = 0.5
 
 
+def _effective_tool_timeout(
+    configured: float,
+    run_started: float,
+    wall_budget: float | None,
+    clock: Callable[[], float],
+) -> tuple[float | None, bool]:
+    """Bound a tool call by the lesser of its ceiling and the run's remainder.
+
+    `max_wall_seconds` is only checked at the top of the loop, so without this
+    a single long call runs to its own ceiling -- 3600s under Console's config --
+    regardless of how little of the run's budget is left (TASK-25913).
+
+    Computed once, at dispatch: a human approval wait that happens afterwards
+    must not shrink a call that is already running, which is what ADR-067's
+    refcounted marks protect inside `_call_with_timeout`.
+
+    Args:
+        configured: The per-call ceiling.
+        run_started: Clock reading from when this run's dispatch was built.
+        wall_budget: The run's `max_wall_seconds`, or falsy for unbounded.
+        clock: Monotonic clock, injectable for tests.
+
+    Returns:
+        ``(seconds, clamped_by_wall_budget)``, where ``seconds`` is None when
+        the budget is already spent and the call must NOT be dispatched. A tiny
+        positive bound was the first attempt and was wrong: it still starts the
+        tool on a daemon thread and abandons it, and an abandoned worker "may
+        still complete and act for real" after a timeout is reported. For a
+        tool that writes files or spends money, that is worse than the overrun
+        this clamp exists to prevent.
+    """
+    if not wall_budget or wall_budget <= 0:
+        return configured, False
+    remaining = wall_budget - (clock() - run_started)
+    if remaining <= 0:
+        return None, True
+    if remaining < configured:
+        return remaining, True
+    return configured, False
+
+
 def _call_with_timeout(
     fn: Callable[[], ToolResult],
     seconds: float,
     tool_name: str,
     should_cancel: Callable[[], bool] = lambda: False,
     pauses_deadline: Callable[[], bool] = lambda: False,
+    *,
+    clamped_by_wall_budget: bool = False,
 ) -> ToolResult:
     """Run ``fn`` on a daemon thread, bounded by ``seconds`` of EXECUTION time.
 
@@ -1601,7 +1673,14 @@ def _call_with_timeout(
     if worker.is_alive():
         return ToolResult(
             ok=False,
-            error=f"tool call timed out after {seconds:g}s: {tool_name}",
+            error=(
+                # Distinct causes read differently: one means the tool is slow,
+                # the other means the RUN is nearly over (TASK-25913 AC#2).
+                f"tool call stopped after {seconds:g}s: {tool_name} "
+                "(the run's wall-clock budget was about to expire)"
+                if clamped_by_wall_budget
+                else f"tool call timed out after {seconds:g}s: {tool_name}"
+            ),
             outcome=TOOL_OUTCOME_TIMEOUT,
         )
     if "error" in box:
@@ -1649,6 +1728,29 @@ class AgentService:
         before_tool_dispatch: (
             Callable[[list[ToolCall], frozenset[str]], None] | None
         ) = None,
+        post_tool_dispatch: (
+            Callable[[ToolCall, ToolResult, float, str], None] | None
+        ) = None,
+        on_primary_steer_ready: (
+            Callable[[Callable[[str], str | None]], None] | None
+        ) = None,
+        # TASK-28227: fired at primary-mailbox registration with
+        # (redirect_fn, abort_probe). redirect_fn posts a plain-user
+        # correction AND raises the run's abort flag; abort_probe is what the
+        # bridge ORs into its STREAM-cancel predicate only -- never into
+        # LoopDeps.should_cancel, or a redirect would kill the run.
+        on_primary_redirect_ready: (
+            Callable[
+                [Callable[[str], str | None], Callable[[], bool]], None
+            ]
+            | None
+        ) = None,
+        # TASK-25911: explicit prune settings override config resolution
+        # (None = resolve from [agents] config; the config default is OFF).
+        tool_result_pruning: "ToolResultPruneSettings | None" = None,
+        # TASK-25912: same override pattern; None = resolve from config
+        # ([agents] retire_stale_images, default OFF).
+        stale_image_retirement: "StaleImageSettings | None" = None,
         review_state_scope: Callable[[str], "contextlib.AbstractContextManager"]
         | None = None,
         install_skill_tool: Callable[[str], ToolResult] | None = None,
@@ -1724,6 +1826,33 @@ class AgentService:
         # and this is where a run's identity reaches the review hook that
         # writes them.
         self.review_tool_calls = review_tool_calls
+        #: TASK-26010: observational post-completion seam -- (call, result,
+        #: duration_seconds, run_id) after EVERY tool call completes, whatever
+        #: the outcome. Strictly observational: a raising hook costs nothing
+        #: but its own observation. None (the default) leaves every closure
+        #: unwrapped, so an unconfigured install pays nothing.
+        self.post_tool_dispatch = post_tool_dispatch
+        #: TASK-25903: fired when a PRIMARY run's steering mailbox is
+        #: registered, handing the caller a `steer(text) -> refusal | None`
+        #: bound to that run -- the Console never needs to learn run ids,
+        #: which are minted inside run_turn.
+        self.on_primary_steer_ready = on_primary_steer_ready
+        self.on_primary_redirect_ready = on_primary_redirect_ready
+        self._primary_steering_lock = threading.Lock()
+        self._primary_mailboxes: dict[str, list[tuple[str, str]]] = {}
+        # TASK-28227: per-run abort flag, raised by redirect_primary and
+        # cleared by the drain that consumes the redirect entry -- one lock,
+        # one source of truth for both the stream predicate and the loop's
+        # has_pending_redirect probe.
+        self._primary_redirect_flags: dict[str, threading.Event] = {}
+        # Review F1: run ids whose CURRENT model call rides an in-flight
+        # provider-continuation checkpoint. The bridge's abort probe reads
+        # False for them -- cutting such a call truncates a chain the
+        # provider persists, which the loop must classify as a
+        # continuation-contract violation (RUN_ERROR). The redirect
+        # degrades to steering instead. Plain set, no lock: single writer
+        # (the run's own worker thread), racing readers just poll again.
+        self._primary_cut_suppress: set[str] = set()
         self.before_tool_dispatch = before_tool_dispatch
         # C1 (probe-verified security regression, pre-merge review of the
         # Phase 5 chat bridge): an optional, generically-shaped seam a
@@ -1910,6 +2039,53 @@ class AgentService:
         self._run_log_requested = bool(
             run_log_request_plan.requested if run_log_request_plan else False
         )
+        # TASK-25911: deterministic stale tool-result pruning, applied to
+        # the send payload before run-log eviction. None = disabled (the
+        # config default) = today's behavior exactly (AC#6). An explicit
+        # constructor value overrides config, mirroring RunLogWriter.
+        if tool_result_pruning is not None:
+            self._tool_result_pruning = tool_result_pruning
+        elif coerce_bool_setting(
+            _setting("prune_stale_tool_results", False), default=False
+        ):
+            self._tool_result_pruning = ToolResultPruneSettings(
+                keep_recent_turns=coerce_int_setting(
+                    _setting("prune_keep_recent_turns", 4), default=4, minimum=1
+                ),
+                min_result_chars=coerce_int_setting(
+                    _setting("prune_min_result_chars", 4000),
+                    default=4000,
+                    minimum=1,
+                ),
+                # Review #4: floor 16 = len("Tool result for ") -- a
+                # smaller head would destroy the fence-result prefix and
+                # let run-log eviction mistake a pruned result for the
+                # task row (the exact amnesia that module guards against).
+                head_chars=coerce_int_setting(
+                    _setting("prune_head_chars", 1000), default=1000, minimum=16
+                ),
+                min_reclaim_chars=coerce_int_setting(
+                    _setting("prune_min_reclaim_chars", 8000),
+                    default=8000,
+                    minimum=0,
+                ),
+            )
+        else:
+            self._tool_result_pruning = None
+        if stale_image_retirement is not None:
+            self._stale_image_retirement = stale_image_retirement
+        elif coerce_bool_setting(
+            _setting("retire_stale_images", False), default=False
+        ):
+            self._stale_image_retirement = StaleImageSettings(
+                keep_recent_turns=coerce_int_setting(
+                    _setting("retire_images_keep_recent_turns", 4),
+                    default=4,
+                    minimum=1,
+                ),
+            )
+        else:
+            self._stale_image_retirement = None
         self._run_log_evict_enabled = bool(
             run_log_request_plan.eviction_enabled if run_log_request_plan else False
         )
@@ -1976,6 +2152,7 @@ class AgentService:
             system_content, config.personal_context_block
         )
         raw_payload = [{"role": "system", "content": system_content}, *messages]
+        raw_payload = self._prune_send_payload(raw_payload, native=native)
         evict_enabled = log_active and self._run_log_evict_enabled
         min_recent_rounds = self._run_log_min_recent_rounds
         payload = bound_history_for_send(
@@ -2185,6 +2362,58 @@ class AgentService:
         )
         return request, snapshot
 
+    def _provider_is_ready(self, provider: str) -> bool:
+        """Readiness for a fallback candidate, reusing the Chat check."""
+        from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+        from tldw_chatbook.config import load_cli_config_and_ensure_existence
+
+        return bool(
+            get_provider_readiness(
+                provider, load_cli_config_and_ensure_existence()
+            ).ready
+        )
+
+    def _prune_send_payload(
+        self, payload: list[dict], *, native: bool
+    ) -> list[dict]:
+        """TASK-25911: shrink large stale tool results before eviction.
+
+        Deterministic, LLM-free, and OFF unless configured. The stats log
+        line is the accounting surface (AC#5) beside the in-row notes; the
+        protocol-aware round boundary keeps native pairs whole across the
+        recency fence.
+        """
+        if (
+            self._tool_result_pruning is None
+            and self._stale_image_retirement is None
+        ):
+            return payload
+        boundary = _make_round_boundary(native=native)
+        if self._tool_result_pruning is not None:
+            payload, stats = prune_stale_tool_results(
+                payload,
+                settings=self._tool_result_pruning,
+                is_turn_boundary=boundary,
+            )
+            if stats.pruned_rows:
+                logger.info(
+                    "tool_result_prune rows={} chars_removed={}",
+                    stats.pruned_rows,
+                    stats.chars_removed,
+                )
+        if self._stale_image_retirement is not None:
+            payload, image_stats = retire_stale_images(
+                payload,
+                settings=self._stale_image_retirement,
+                is_turn_boundary=boundary,
+            )
+            if image_stats.retired_images:
+                logger.info(
+                    "stale_image_retirement images={}",
+                    image_stats.retired_images,
+                )
+        return payload
+
     def _make_call_model(
         self,
         config: AgentConfig,
@@ -2202,6 +2431,7 @@ class AgentService:
         staged_delivery: dict[str, InstructionDeliveryReceipt] | None = None,
         on_context_assembled: Callable[[tuple[str, ...]], None] | None = None,
         first_request_fits: bool = True,
+        run_id: str | None = None,
     ):
         native = config.native_tools and provider_supports_native_tools(api_endpoint)
         initial_context_checked = False
@@ -2361,6 +2591,7 @@ class AgentService:
             raw_payload = [
                 {"role": "system", "content": system_content}
             ] + payload_messages
+            raw_payload = self._prune_send_payload(raw_payload, native=native)
             gateway_prepares_continuation = bool(
                 effective_groups and self.prepare_provider_continuation_request
             )
@@ -2432,13 +2663,22 @@ class AgentService:
                 except Exception:  # noqa: BLE001 — capture never fails a request
                     logger.warning("agent_context_capture_failed")
                 context_observed = True
-            resp = self.chat_call(
-                api_endpoint=api_endpoint,
-                messages_payload=payload,
-                streaming=False,
-                model=config.model,
-                **call_kwargs,
-            )
+            # Review F1: while a checkpointed call is on the wire the
+            # redirect stream-cut is disarmed (see _primary_cut_suppress).
+            suppress_cut = current_continuation is not None and run_id is not None
+            if suppress_cut:
+                self._primary_cut_suppress.add(run_id)
+            try:
+                resp = self.chat_call(
+                    api_endpoint=api_endpoint,
+                    messages_payload=payload,
+                    streaming=False,
+                    model=config.model,
+                    **call_kwargs,
+                )
+            finally:
+                if suppress_cut:
+                    self._primary_cut_suppress.discard(run_id)
             text = _response_text(resp)
             # TASK-18603: cache-aware. Identical to the flat sum whenever
             # this turn read nothing from a prompt cache.
@@ -2538,6 +2778,190 @@ class AgentService:
             trusted_role=trusted_role,
         )
 
+    def steer_primary(self, run_id: str, text: str) -> str | None:
+        """Deliver user text into a LIVE primary run's next model call.
+
+        TASK-25903. Validation mirrors the fleet `send_to_agent` path exactly
+        (AC#6): stripped, non-empty, capped at MAX_STEERING_CHARS. Delivery
+        rides the existing drain seam, which consumes the mailbox at the one
+        protocol-coherent point -- before a model call, after the budget and
+        cancel checks -- so steered text can never split a native
+        tool_calls/role:"tool" pair.
+
+        Returns:
+            None when accepted; a human-readable refusal otherwise. A run
+            that has finished (its mailbox is unregistered) refuses honestly
+            rather than dropping the text (AC#5).
+        """
+        stripped = str(text or "").strip()
+        if not stripped:
+            return "steering text is empty; there is nothing to deliver"
+        if len(stripped) > MAX_STEERING_CHARS:
+            return (
+                f"steering text is too long ({len(stripped)} chars; the cap "
+                f"is {MAX_STEERING_CHARS}). Shorten it and send it again."
+            )
+        with self._primary_steering_lock:
+            mailbox = self._primary_mailboxes.get(run_id)
+            if mailbox is None:
+                return "that run is not running (finished, cancelled, or unknown)"
+            mailbox.append((STEERING_SOURCE_USER, stripped))
+        return None
+
+    def redirect_primary(self, run_id: str, text: str) -> str | None:
+        """Cut off a LIVE primary run's current model response and re-ask.
+
+        TASK-28227. Same mailbox and validation as `steer_primary`, plus the
+        abort flag: the bridge's stream predicate sees it and returns the
+        partial early; the loop's redirect branch then keeps completed tool
+        results and the visible partial, appends this text as a PLAIN user
+        message, and re-runs the turn. Posting the entry and raising the flag
+        happen under one lock so the loop can never observe one without the
+        other.
+
+        Returns:
+            None when accepted; a human-readable refusal otherwise.
+        """
+        stripped = str(text or "").strip()
+        if not stripped:
+            return "redirect text is empty; there is nothing to deliver"
+        if len(stripped) > MAX_STEERING_CHARS:
+            return (
+                f"redirect text is too long ({len(stripped)} chars; the cap "
+                f"is {MAX_STEERING_CHARS}). Shorten it and send it again."
+            )
+        with self._primary_steering_lock:
+            mailbox = self._primary_mailboxes.get(run_id)
+            if mailbox is None:
+                return "that run is not running (finished, cancelled, or unknown)"
+            mailbox.append((STEERING_SOURCE_REDIRECT, stripped))
+            flag = self._primary_redirect_flags.get(run_id)
+            if flag is not None:
+                flag.set()
+        return None
+
+    def _primary_redirect_pending(self, run_id: str) -> bool:
+        """True between redirect_primary and the drain that consumes it."""
+        flag = self._primary_redirect_flags.get(run_id)
+        return flag is not None and flag.is_set()
+
+    def _primary_drain_for(self, run_id: str):
+        """The drain closure alone -- safe to hand to LoopDeps before the
+        mailbox exists (it just returns [] until registration)."""
+
+        def drain() -> list[tuple[str, str]]:
+            with self._primary_steering_lock:
+                mailbox = self._primary_mailboxes.get(run_id)
+                if not mailbox:
+                    return []
+                drained, mailbox[:] = list(mailbox), []
+                # TASK-28227: a consumed redirect lowers the abort flag --
+                # the NEXT model call must not be cut by a correction that
+                # was already delivered. Same lock as the post, so no gap.
+                if any(
+                    source == STEERING_SOURCE_REDIRECT for source, _ in drained
+                ):
+                    flag = self._primary_redirect_flags.get(run_id)
+                    if flag is not None:
+                        flag.clear()
+                return drained
+
+        return drain
+
+    def _register_primary_mailbox(self, run_id: str):
+        """Create the run's mailbox; return its drain (tests use the return;
+        production wires LoopDeps from `_primary_drain_for` instead).
+
+        Also fires `on_primary_steer_ready` with a bound steer callable, so
+        the Console can steer without knowing the run id. Review M-4: called
+        INSIDE the try whose finally unregisters -- registering earlier (at
+        deps construction) meant a raise in between leaked the mailbox and
+        left a steer hook that ACCEPTED text that would never be delivered,
+        the one path where the honest-refusal contract silently failed.
+        """
+        with self._primary_steering_lock:
+            self._primary_mailboxes[run_id] = []
+            self._primary_redirect_flags[run_id] = threading.Event()
+        drain = self._primary_drain_for(run_id)
+        if self.on_primary_redirect_ready is not None:
+            try:
+                self.on_primary_redirect_ready(
+                    lambda text: self.redirect_primary(run_id, text),
+                    # Review F1: mid-continuation calls suppress the cut --
+                    # the redirect entry stays queued and degrades to the
+                    # next steering drain instead of corrupting the chain.
+                    lambda: (
+                        self._primary_redirect_pending(run_id)
+                        and run_id not in self._primary_cut_suppress
+                    ),
+                )
+            except Exception:  # noqa: BLE001 -- a broken observer costs nothing
+                logger.opt(exception=True).debug(
+                    "on_primary_redirect_ready raised; redirect hook lost"
+                )
+        if self.on_primary_steer_ready is not None:
+            try:
+                self.on_primary_steer_ready(
+                    lambda text: self.steer_primary(run_id, text)
+                )
+            except Exception:  # noqa: BLE001 -- a broken observer costs nothing
+                logger.opt(exception=True).debug(
+                    "on_primary_steer_ready raised; steering entry lost"
+                )
+        return drain
+
+    def _unregister_primary_mailbox(self, run_id: str) -> None:
+        """After this, `steer_primary(run_id, ...)` refuses honestly."""
+        with self._primary_steering_lock:
+            self._primary_mailboxes.pop(run_id, None)
+            self._primary_redirect_flags.pop(run_id, None)
+
+    def _fire_post_tool_dispatch(
+        self, call: ToolCall, result: ToolResult, duration: float, run_id: str
+    ) -> None:
+        """Deliver one completion to the observer; never let it break the run."""
+        hook = self.post_tool_dispatch
+        if hook is None:
+            return
+        try:
+            hook(call, result, duration, run_id)
+        except Exception:  # noqa: BLE001 -- observational by contract
+            logger.opt(exception=True).debug(
+                "post_tool_dispatch hook raised for {}; observation lost",
+                call.name,
+            )
+
+    def _wrap_review_with_observation(self, review, run_id: str):
+        """Report review-hook denials through the post-dispatch seam.
+
+        A call the review hook refuses never dispatches, but its refusal IS
+        its completion -- without this, a denial-heavy run would look silent
+        to an observer that watches only dispatches (TASK-26010 AC#3). The
+        synthetic result carries outcome "review_denied" so it is never
+        mistaken for a gate denial or a provider failure. Duration is 0.0:
+        nothing ran.
+        """
+        if self.post_tool_dispatch is None or review is None:
+            return review
+
+        def observed(calls):
+            verdicts = review(calls) or {}
+            for call in calls:
+                key = call.call_id or call.name
+                verdict = verdicts.get(key, verdicts.get(call.name, "proceed"))
+                if verdict != "proceed":
+                    self._fire_post_tool_dispatch(
+                        call,
+                        ToolResult(
+                            ok=False, error=str(verdict), outcome="review_denied"
+                        ),
+                        0.0,
+                        run_id,
+                    )
+            return verdicts
+
+        return observed
+
     def _make_invoke_tool(
         self,
         config: AgentConfig,
@@ -2570,6 +2994,10 @@ class AgentService:
                 for want of a stamp it can no longer find -- instead of
                 a loud ``TypeError`` at the call site.
         """
+        # Captured as the deps are built, which is immediately before the
+        # loop records its own `started`. Being marginally early makes the
+        # remaining-budget clamp conservative, which is the safe direction.
+        run_started = self.clock()
 
         actor = run_actor or CurrentRunActor("primary", run_id, None)
 
@@ -2627,6 +3055,28 @@ class AgentService:
                 config.budget.max_tool_call_seconds
             )
             if timeout and timeout > 0:
+                # TASK-25913: the loop only checks max_wall_seconds between
+                # iterations, so a call left on its own ceiling could outlive
+                # the run's budget by nearly an hour under Console's config.
+                # Resolved once here, at dispatch -- an approval wait that
+                # happens afterwards must not shrink a running call.
+                timeout, clamped_by_wall_budget = _effective_tool_timeout(
+                    timeout,
+                    run_started,
+                    getattr(config.budget, "max_wall_seconds", 0),
+                    self.clock,
+                )
+                if timeout is None:
+                    # Budget already spent: refuse rather than start work that
+                    # would be abandoned mid-flight and could still take effect.
+                    return ToolResult(
+                        ok=False,
+                        error=(
+                            f"tool call not started: {call.name} "
+                            "(the run's wall-clock budget is exhausted)"
+                        ),
+                        outcome=TOOL_OUTCOME_TIMEOUT,
+                    )
                 return _call_with_timeout(
                     _invoke,
                     timeout,
@@ -2636,10 +3086,24 @@ class AgentService:
                     # decision is pending for THIS run, so an approval/
                     # confirm wait inside the invoke outlives the ceiling.
                     pauses_deadline=lambda: human_input_wait_active(run_id),
+                    clamped_by_wall_budget=clamped_by_wall_budget,
                 )
             return _invoke()
 
-        return invoke_tool
+        if self.post_tool_dispatch is None:
+            # AC#5: no observer, no wrapper -- the closure above is returned
+            # untouched, so an unconfigured install pays nothing.
+            return invoke_tool
+
+        def observed_invoke_tool(call: ToolCall) -> ToolResult:
+            observation_started = self.clock()
+            result = invoke_tool(call)
+            self._fire_post_tool_dispatch(
+                call, result, self.clock() - observation_started, run_id
+            )
+            return result
+
+        return observed_invoke_tool
 
     # -- fleet helpers (PR2a Task 6) --------------------------------------
 
@@ -2749,6 +3213,33 @@ class AgentService:
             callback(run_id, call_key, tool_name, result)
         except BaseException:  # noqa: BLE001 - observer cannot escape boundary
             logger.warning("could not report definitive tool result")
+
+    def _maybe_emit_run_webhook(self, run_id: str, status: str) -> None:
+        """TASK-26031: fire a signed lifecycle webhook on a fresh terminal
+        transition. Best-effort and fire-and-forget: never delays or breaks
+        terminal persistence (AC#4), disabled unless the user configured an
+        endpoint (AC#7)."""
+        event = {RUN_DONE: "completed", RUN_ERROR: "failed", RUN_STUCK: "failed"}.get(
+            status
+        )
+        if event is None:
+            return
+        try:
+            from tldw_chatbook.config import load_settings
+            from tldw_chatbook.Agents.run_webhooks import (
+                schedule_run_webhook,
+                webhook_config_from_settings,
+            )
+
+            config = webhook_config_from_settings(load_settings())
+            schedule_run_webhook(
+                config,
+                event,
+                run_id,
+                timestamp=safe_utc_timestamp(self.wall_clock),
+            )
+        except Exception as exc:  # noqa: BLE001 - observer cannot break persistence
+            logger.warning("could not emit run lifecycle webhook: {!r}", exc)
 
     def _notify_run_terminal(self, run_id: str) -> None:
         """Sweep approved-but-never-dispatched definitive card rows."""
@@ -3260,7 +3751,10 @@ class AgentService:
                 _safe_exception_type(exc),
             )
             try:
-                return self.db.set_status(run_id, status, result)
+                persisted = self.db.set_status(run_id, status, result)
+                if persisted:
+                    self._maybe_emit_run_webhook(run_id, status)
+                return persisted
             except Exception as status_exc:  # noqa: BLE001 — bounded containment
                 logger.warning(
                     "could not persist terminal status without observation "
@@ -3271,9 +3765,12 @@ class AgentService:
                 return False
         for attempt in range(2):
             try:
-                return self.db.set_terminal_with_step(
+                persisted = self.db.set_terminal_with_step(
                     run_id, status, result, record
                 )
+                if persisted:
+                    self._maybe_emit_run_webhook(run_id, status)
+                return persisted
             except Exception as exc:  # noqa: BLE001 — bounded containment
                 logger.warning(
                     "could not persist atomic terminal state "
@@ -4474,6 +4971,10 @@ class AgentService:
                     )
             child_config = AgentConfig(
                 model=child_model,
+                # Children report provider-level faults against the same
+                # provider the parent is using (review minor, 2026-08-31 --
+                # previously they reported "unknown provider").
+                provider=config.provider,
                 system_prompt=child_system_prompt,
                 allowed_tools=child_allowed_tools,
                 budget=child_budget,
@@ -4889,6 +5390,10 @@ class AgentService:
                     )
             child_config = AgentConfig(
                 model=child_model,
+                # Children report provider-level faults against the same
+                # provider the parent is using (review minor, 2026-08-31 --
+                # previously they reported "unknown provider").
+                provider=config.provider,
                 system_prompt=child_system_prompt,
                 allowed_tools=child_allowed_tools,
                 budget=child_budget,
@@ -5186,6 +5691,28 @@ class AgentService:
             if self.skill_runner is not None and self.skill_runner.is_skill_tool(
                 call.name
             ):
+                # TASK-26010 review I-5: skill calls exit here before the
+                # observed registry closure, so they must report their own
+                # completions or the "fires after every tool call" contract
+                # is quietly false for exactly the calls users script.
+                # Gated for symmetry with the registry path's no-wrapper rule
+                # (review A-6): no observer, no clock reads.
+                if self.post_tool_dispatch is not None:
+                    skill_observation_started = self.clock()
+
+                    def _observed_skill_result(result: ToolResult) -> ToolResult:
+                        self._fire_post_tool_dispatch(
+                            call,
+                            result,
+                            self.clock() - skill_observation_started,
+                            run_id,
+                        )
+                        return result
+                else:
+
+                    def _observed_skill_result(result: ToolResult) -> ToolResult:
+                        return result
+
                 # Task-12 review Finding 1: a skill tool must pass the SAME
                 # two-part gate as an ordinary catalog tool (mirrors
                 # _make_invoke_tool above) -- allowed_tools is the
@@ -5199,7 +5726,9 @@ class AgentService:
                     call.name not in config.allowed_tools
                     or call.name not in disclosed_names
                 ):
-                    return ToolResult.blocked(f"Tool not permitted: {call.name}")
+                    return _observed_skill_result(
+                        ToolResult.blocked(f"Tool not permitted: {call.name}")
+                    )
                 # Cheap early exit before rendering the skill: the
                 # authoritative check-and-increment lives in `spawn` itself
                 # (shared with the native spawn_subagent path), so the
@@ -5207,7 +5736,9 @@ class AgentService:
                 # without this line -- it only saves an unnecessary
                 # render/trust round-trip once the shared budget is spent.
                 if sub_agent_spawns >= config.budget.max_subagents:
-                    return ToolResult(ok=False, error="sub-agent budget exhausted")
+                    return _observed_skill_result(
+                        ToolResult(ok=False, error="sub-agent budget exhausted")
+                    )
                 # PR2a Task 6.5: a SKILL call runs its child INLINE even
                 # when the fleet is on, so it still returns the skill's
                 # OUTPUT rather than a handle. `spawn_subagent` is a
@@ -5230,14 +5761,16 @@ class AgentService:
                 # silently get the fleet. A runner cannot get this wrong
                 # because it never chooses -- it just calls what it was
                 # given.
-                return self.skill_runner.run(
-                    call.name,
-                    str(call.args.get("args", "")),
-                    functools.partial(
-                        spawn,
-                        inline=True,
-                        spawn_step_index=trace_step_index,
-                    ),
+                return _observed_skill_result(
+                    self.skill_runner.run(
+                        call.name,
+                        str(call.args.get("args", "")),
+                        functools.partial(
+                            spawn,
+                            inline=True,
+                            spawn_step_index=trace_step_index,
+                        ),
+                    )
                 )
             dispatch_call = call
             if dispatch_call_id and call.call_id != dispatch_call_id:
@@ -5772,6 +6305,7 @@ class AgentService:
             continuation_groups,
             continuation_owner_key,
             continuation_owner_message_id,
+            run_id=run_id,
             trusted_role=trusted_guidance_role,
             project_instruction_context=project_context,
             chain_id=chain_id,
@@ -5782,6 +6316,70 @@ class AgentService:
             ),
             first_request_fits=schema_plan.request_fits,
         )
+
+        # ADR-110 (loop-owned after the 2026-08-31 review): the LOOP executes
+        # the switch -- composition after retry, stickiness, projection of its
+        # own messages, and the trace step. The service supplies only the
+        # impure halves here: the readiness-resolved chain and a builder that
+        # returns a per-candidate closure. A NEW closure per provider is
+        # required (shaping and the protocol-text cache resolve at build
+        # time), but LoopDeps itself is never rebuilt -- TASK-25913's
+        # wall-budget origin is untouched by a switch.
+        def _build_for_candidate(candidate_endpoint: str):
+            try:
+                # The candidate runs ITS OWN configured model, not the
+                # primary's -- an anthropic model id sent verbatim to cohere
+                # is a guaranteed invalid-model failure (review C3b). Empty
+                # means "let the handler use its provider default", the same
+                # resolution the rest of the app applies.
+                from tldw_chatbook.config import get_cli_setting
+
+                candidate_model = str(
+                    get_cli_setting(
+                        f"api_settings.{candidate_endpoint}", "model", ""
+                    )
+                    or ""
+                )
+                candidate_config = dataclasses.replace(
+                    config,
+                    model=candidate_model,
+                    provider=candidate_endpoint,
+                )
+                return self._make_call_model(
+                    candidate_config,
+                    candidate_endpoint,
+                    runtime_schemas,
+                    log_active,
+                    continuation_groups,
+                    continuation_owner_key,
+                    continuation_owner_message_id,
+                    run_id=run_id,
+                    trusted_role=trusted_guidance_role,
+                    project_instruction_context=project_context,
+                    chain_id=chain_id,
+                    payload_state=payload_state,
+                    staged_delivery=staged_delivery,
+                    on_context_assembled=lambda categories: context_callback_ref[
+                        "callback"
+                    ](categories),
+                    first_request_fits=schema_plan.request_fits,
+                )
+            except Exception:  # noqa: BLE001 -- a broken candidate is skipped
+                return None
+
+        fallback_runtime = None
+        from .fallback_chain import FallbackRuntime, resolve_fallback_chain  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+
+        resolved_chain = resolve_fallback_chain(
+            getattr(config, "fallback_providers", None),
+            api_endpoint,
+            self._provider_is_ready,
+        )
+        if resolved_chain:
+            fallback_runtime = FallbackRuntime(
+                candidates=tuple(resolved_chain),
+                build=_build_for_candidate,
+            )
 
         def observe_step(step: AgentStep) -> None:
             try:
@@ -5910,11 +6508,41 @@ class AgentService:
                 entries.extend(
                     (source, text, None) for source, text in drain_mailbox()
                 )
+            # Review F5 (defensive): today this closure is wired for
+            # subagents only, but if seeded causal steering is ever extended
+            # to a primary, a drain that bypassed _primary_drain_for would
+            # leave the abort flag up forever -- every re-ask cut until
+            # EMPTY_TURN_LIMIT. Clearing here keeps the invariant "a drain
+            # that consumed a redirect entry lowers the flag" wiring-proof.
+            if any(
+                source == STEERING_SOURCE_REDIRECT for source, _t, _c in entries
+            ):
+                flag = self._primary_redirect_flags.get(run_id)
+                if flag is not None:
+                    flag.clear()
             return entries
 
+        # TASK-25903: the drain closure is safe before the mailbox exists
+        # (empty drains); actual REGISTRATION -- which is what hands the
+        # Console an accepting steer hook -- happens inside the try below,
+        # so a raise during deps construction cannot leave a hook that
+        # accepts undeliverable text (review M-4).
+        primary_steering_drain = (
+            self._primary_drain_for(run_id)
+            if agent_kind == AGENT_KIND_PRIMARY
+            else None
+        )
         deps = LoopDeps(
             call_model=call_model,
             call_model_with_continuation=call_model,
+            fallback=fallback_runtime,
+            # TASK-28227: primary runs only -- children have no redirect
+            # producer (the Console redirects the run it is watching).
+            has_pending_redirect=(
+                (lambda: self._primary_redirect_pending(run_id))
+                if agent_kind == AGENT_KIND_PRIMARY
+                else None
+            ),
             invoke_tool=invoke_tool,
             spawn=spawn,
             invoke_tool_at_step=lambda call, step_index, call_id: invoke_tool(
@@ -5949,10 +6577,11 @@ class AgentService:
             # whole loop below, so the approval bridge this hook calls can
             # record which run armed each card -- see the `use_run_actor`
             # wrapper on `run_agent_loop`.)
-            review_tool_calls=(
+            review_tool_calls=self._wrap_review_with_observation(
                 (lambda calls: self.review_tool_calls(calls, run_id))
                 if self.review_tool_calls is not None
-                else None
+                else None,
+                run_id,
             ),
             before_tool_dispatch=self.before_tool_dispatch,
             prepare_tool_calls=(
@@ -6008,10 +6637,22 @@ class AgentService:
             )
             if fleet_active
             else None,
-            # PR3b Task 1: non-None ONLY for a threaded fleet child (see
-            # the parameter's own comment above); the pure loop drains it
-            # at its protocol-coherent pre-model-call point.
-            drain_mailbox=drain_mailbox,
+            # PR3b Task 1: a threaded fleet child's coordinator mailbox --
+            # and, since TASK-25903, the PRIMARY run's user-steering mailbox
+            # (registered below). Both ride the same protocol-coherent
+            # pre-model-call drain; inline (turn-scoped) children still get
+            # None. The old "None for a primary by design" stance is
+            # deliberately superseded: the design reason was that no producer
+            # existed, and steer_primary is now that producer.
+            drain_mailbox=(
+                drain_mailbox
+                if drain_mailbox is not None
+                else (
+                    primary_steering_drain
+                    if agent_kind == AGENT_KIND_PRIMARY
+                    else None
+                )
+            ),
             drain_mailbox_with_causes=(
                 drain_causal_steering
                 if seeded_steering_with_causes or drain_mailbox_with_causes is not None
@@ -6085,13 +6726,21 @@ class AgentService:
                 if resume_provider_continuation:
                     continuation_kwargs["resume_provider_continuation"] = True
                 with use_run_actor(run_actor):
-                    outcome = run_agent_loop(
-                        config,
-                        run_messages,
-                        active,
-                        deps,
-                        **continuation_kwargs,
-                    )
+                    try:
+                        if agent_kind == AGENT_KIND_PRIMARY:
+                            self._register_primary_mailbox(run_id)
+                        outcome = run_agent_loop(
+                            config,
+                            run_messages,
+                            active,
+                            deps,
+                            **continuation_kwargs,
+                        )
+                    finally:
+                        # TASK-25903: after this, steer_primary refuses with
+                        # "not running" -- the honest-refusal contract for a
+                        # finished or crashed run (AC#5).
+                        self._unregister_primary_mailbox(run_id)
             except _ProjectInstructionPayloadError as error:
                 outcome = RunOutcome(
                     status=RUN_ERROR,

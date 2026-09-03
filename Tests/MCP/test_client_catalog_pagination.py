@@ -108,7 +108,7 @@ class _ConnectSession:
     server_info: dict[str, Any] = {}
     server_capabilities: dict[str, Any] = {}
 
-    def __init__(self, process: _Process, *, client_name: str) -> None:
+    def __init__(self, process: _Process, *, client_name: str, server_request_dispatcher: object | None = None) -> None:
         self.process = process
         self._on_transport_failure: Callable[[], Any] | None = None
 
@@ -238,7 +238,7 @@ async def test_init_failure_retains_private_owner_until_retry_reaps_child(
     created_session: object | None = None
 
     class Session:
-        def __init__(self, created_process: object, *, client_name: str) -> None:
+        def __init__(self, created_process: object, *, client_name: str, server_request_dispatcher: object | None = None) -> None:
             nonlocal created_session
             assert created_process is process
             assert client_name == "pending-init-client"
@@ -298,7 +298,7 @@ async def test_discovery_does_not_publish_half_initialized_session(
         server_info: dict[str, Any] = {}
         server_capabilities: dict[str, Any] = {}
 
-        def __init__(self, created_process: object, *, client_name: str) -> None:
+        def __init__(self, created_process: object, *, client_name: str, server_request_dispatcher: object | None = None) -> None:
             assert created_process is process
             self.process = created_process
 
@@ -451,7 +451,7 @@ async def test_pending_transport_failure_reaps_without_publication(
         server_info: dict[str, Any] = {}
         server_capabilities: dict[str, Any] = {}
 
-        def __init__(self, created_process: object, *, client_name: str) -> None:
+        def __init__(self, created_process: object, *, client_name: str, server_request_dispatcher: object | None = None) -> None:
             assert created_process is process
             self.process = created_process
             self._on_transport_failure: Callable[[], Any] | None = None
@@ -557,7 +557,7 @@ async def test_same_id_collision_during_failed_init_retains_retryable_owner(
         return process
 
     class Session:
-        def __init__(self, process: _Process, *, client_name: str) -> None:
+        def __init__(self, process: _Process, *, client_name: str, server_request_dispatcher: object | None = None) -> None:
             self.process = process
 
         async def initialize(self) -> None:
@@ -780,7 +780,7 @@ async def test_connect_cancellation_closes_child_and_removes_partial_session(
         server_info: dict[str, Any] = {}
         server_capabilities: dict[str, Any] = {}
 
-        def __init__(self, created_process: object, *, client_name: str) -> None:
+        def __init__(self, created_process: object, *, client_name: str, server_request_dispatcher: object | None = None) -> None:
             assert created_process is process
             assert client_name == "cancel-client"
             self.process = created_process
@@ -851,7 +851,7 @@ async def test_connect_cancellation_forces_hung_cleanup_and_removes_state(
         server_info: dict[str, Any] = {}
         server_capabilities: dict[str, Any] = {}
 
-        def __init__(self, created_process: object, *, client_name: str) -> None:
+        def __init__(self, created_process: object, *, client_name: str, server_request_dispatcher: object | None = None) -> None:
             assert created_process is process
             self.process = created_process
 
@@ -1533,7 +1533,7 @@ async def test_connect_uses_one_deadline_and_cleans_near_timeout_child(
         server_info: dict[str, Any] = {}
         server_capabilities: dict[str, Any] = {}
 
-        def __init__(self, created_process: object, *, client_name: str) -> None:
+        def __init__(self, created_process: object, *, client_name: str, server_request_dispatcher: object | None = None) -> None:
             assert created_process is process
             self.process = created_process
 
@@ -2419,7 +2419,7 @@ async def test_connect_cancellation_retains_pending_owner_when_reap_fails(
     logged: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
     class Session:
-        def __init__(self, created_process: object, *, client_name: str) -> None:
+        def __init__(self, created_process: object, *, client_name: str, server_request_dispatcher: object | None = None) -> None:
             assert created_process is process
             self.process = created_process
 

@@ -496,6 +496,28 @@ DEFAULT_CONSOLE_RUN_BUDGET = RunBudget(
 CONSOLE_RUN_BUDGET = DEFAULT_CONSOLE_RUN_BUDGET
 
 
+def console_fallback_providers() -> tuple[str, ...]:
+    """The user's ordered provider fallback chain; empty means off.
+
+    TASK-25902 review C3a: the first implementation declared
+    `fallback_providers` on AgentConfig and never wrote it from anywhere, so
+    the fallback feature was unreachable in the shipped app -- an AC marked
+    "configurable" that no user could configure. Accepts a TOML array or a
+    comma-separated string under `[console] agent_fallback_providers`.
+    """
+    try:
+        from tldw_chatbook.config import get_cli_setting
+
+        raw = get_cli_setting("console", "agent_fallback_providers", "")
+    except Exception:  # noqa: BLE001 -- config must never break a run
+        return ()
+    if isinstance(raw, (list, tuple)):
+        items = [str(item) for item in raw]
+    else:
+        items = str(raw or "").split(",")
+    return tuple(p.strip() for p in items if p and p.strip())
+
+
 def console_run_budget() -> RunBudget:
     """Resolve this run's budget from `[console]`, falling back to defaults.
 
@@ -523,11 +545,15 @@ def console_run_budget() -> RunBudget:
         from tldw_chatbook.config import (
             DEFAULT_CONSOLE_AGENT_MAX_MODEL_TURNS,
             DEFAULT_CONSOLE_AGENT_MAX_STEPS,
+            DEFAULT_CONSOLE_AGENT_BUDGET_WARNING_FRACTION,
+            DEFAULT_CONSOLE_AGENT_MAX_MODEL_RETRIES,
             DEFAULT_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
             DEFAULT_CONSOLE_AGENT_MAX_TOTAL_TOKENS,
             DEFAULT_CONSOLE_AGENT_MAX_WALL_SECONDS,
             MIN_CONSOLE_AGENT_MAX_MODEL_TURNS,
             MIN_CONSOLE_AGENT_MAX_STEPS,
+            MIN_CONSOLE_AGENT_BUDGET_WARNING_FRACTION,
+            MIN_CONSOLE_AGENT_MAX_MODEL_RETRIES,
             MIN_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
             MIN_CONSOLE_AGENT_MAX_TOTAL_TOKENS,
             MIN_CONSOLE_AGENT_MAX_WALL_SECONDS,
@@ -593,6 +619,25 @@ def console_run_budget() -> RunBudget:
             "agent_max_tool_call_seconds",
             DEFAULT_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
             MIN_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
+        ),
+        # TASK-25901: 0 disables retry and restores the pre-retry behaviour of
+        # ending the run on the first transient failure.
+        max_model_retries=_int(
+            "agent_max_model_retries",
+            DEFAULT_CONSOLE_AGENT_MAX_MODEL_RETRIES,
+            MIN_CONSOLE_AGENT_MAX_MODEL_RETRIES,
+        ),
+        # TASK-26001 review I-4: "configurable fraction" must mean a USER can
+        # configure it -- the same defect class (C3a) that reopened 25902.
+        # Clamped to <=1.0; 1.0 disables the warning (exhaustion arrives
+        # with it).
+        budget_warning_fraction=min(
+            1.0,
+            _float(
+                "agent_budget_warning_fraction",
+                DEFAULT_CONSOLE_AGENT_BUDGET_WARNING_FRACTION,
+                MIN_CONSOLE_AGENT_BUDGET_WARNING_FRACTION,
+            ),
         ),
     )
 
@@ -1924,6 +1969,7 @@ class FleetDrained:
 
     conversation_id: str
     children: tuple[SettledChild, ...]
+    drain_id: str = field(default_factory=lambda: str(uuid4()))
 
 
 class FleetDrainFanout:
@@ -2532,6 +2578,62 @@ class ConsoleAgentTraceRequestFactory:
         )
 
 
+def _stall_timeout_seconds() -> float:
+    """Content-stall ceiling for streamed turns (TASK-26003).
+
+    Precedence follows the project rule env -> config.toml -> default:
+    ``TLDW_STREAM_STALL_TIMEOUT_SECONDS`` first, then ``[chat_defaults]
+    stream_stall_timeout_seconds``, then :data:`DEFAULT_STALL_TIMEOUT_SECONDS`.
+    A non-positive value disables the watchdog; a non-finite or unparseable
+    value falls back to the default. Read per turn so a config edit takes effect
+    without a restart.
+
+    Returns:
+        The content-idle ceiling in seconds (<= 0 disables the watchdog).
+    """
+    import math
+    import os
+
+    from tldw_chatbook.config import get_cli_setting
+    from tldw_chatbook.Chat.stream_stall_watchdog import (
+        DEFAULT_STALL_TIMEOUT_SECONDS,
+    )
+
+    raw: Any = os.environ.get("TLDW_STREAM_STALL_TIMEOUT_SECONDS")
+    if raw is None or not str(raw).strip():
+        raw = get_cli_setting(
+            "chat_defaults",
+            "stream_stall_timeout_seconds",
+            DEFAULT_STALL_TIMEOUT_SECONDS,
+        )
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_STALL_TIMEOUT_SECONDS
+    if not math.isfinite(value):
+        return DEFAULT_STALL_TIMEOUT_SECONDS
+    return value
+
+
+def record_session_stall(*args: Any, **kwargs: Any) -> bool:
+    """Deferred proxy to keep stream_stall_watchdog off the boot import graph
+    (ADR-097 ratchet) while remaining a patchable module attribute for tests."""
+    from tldw_chatbook.Chat.stream_stall_watchdog import (
+        record_session_stall as _impl,
+    )
+
+    return _impl(*args, **kwargs)
+
+
+def reset_session_stalls(*args: Any, **kwargs: Any) -> None:
+    """Deferred proxy (see record_session_stall)."""
+    from tldw_chatbook.Chat.stream_stall_watchdog import (
+        reset_session_stalls as _impl,
+    )
+
+    _impl(*args, **kwargs)
+
+
 class _StreamingModelAdapter:
     """chat_call-compatible adapter that streams every PRIMARY turn live.
 
@@ -2620,6 +2722,9 @@ class _StreamingModelAdapter:
         self._resolution = resolution
         self._assistant_message_id = assistant_message_id
         self._should_cancel = should_cancel
+        # TASK-28227: armed by run_reply's redirect-ready hook; cuts the
+        # PRIMARY's in-flight stream only (see stream_cut in chat_call).
+        self._primary_stream_abort: Callable[[], bool] = lambda: False
         self._loop = loop
         self._native_tools = native_tools
         self._provider_stream_signals = provider_stream_signals
@@ -2758,6 +2863,17 @@ class _StreamingModelAdapter:
             messages_payload, native_tools=self._native_tools
         )
         is_subagent = self._is_subagent(transport_messages)
+        # TASK-28227: a redirect aborts only the PRIMARY's in-flight
+        # model stream. Children keep the plain cancel predicate --
+        # cutting a fleet child's stream on a primary redirect would
+        # truncate its turn with no redirect entry in ITS mailbox to
+        # explain it. Never wired into LoopDeps.should_cancel: aborting
+        # is not cancelling.
+        stream_cut = (
+            self._should_cancel
+            if is_subagent
+            else (lambda: self._should_cancel() or self._primary_stream_abort())
+        )
         request_count = int(getattr(self._thread_loop, "request_count", 0))
         self._thread_loop.request_count = request_count + 1
         route = (
@@ -2899,7 +3015,11 @@ class _StreamingModelAdapter:
                     getattr(self._resolution, "may_emit_thinking", False)
                 ),
             )
-            async for chunk in self._gateway.stream_chat(
+            from tldw_chatbook.Chat.stream_stall_watchdog import (
+                watch_content_stalls,
+            )
+
+            async for chunk in watch_content_stalls(self._gateway.stream_chat(
                 self._resolution,
                 dispatch_messages,
                 route=route,
@@ -2907,7 +3027,7 @@ class _StreamingModelAdapter:
                 route_chain_id=route_chain_id,
                 capture_mode=self._capture_mode,
                 **stream_kwargs,
-            ):
+            ), _stall_timeout_seconds(), provider=self._resolution.provider):
                 if terminal_metadata is not None:
                     raise ValueError("Provider terminal metadata must be final.")
                 if isinstance(
@@ -2922,7 +3042,7 @@ class _StreamingModelAdapter:
                                 update.envelope,
                                 generation_token=self._generation_token,
                             )
-                    if self._should_cancel():
+                    if stream_cut():
                         break
                     continue
                 if isinstance(chunk, ProviderToolCalls):
@@ -2936,7 +3056,7 @@ class _StreamingModelAdapter:
                         terminal_metadata = chunk.metadata
                     if not is_subagent:
                         self._thinking_capture.observe(chunk)
-                    if self._should_cancel():
+                    if stream_cut():
                         break
                     continue
                 visible = gate.feed(chunk)
@@ -2944,7 +3064,7 @@ class _StreamingModelAdapter:
                     self._thinking_capture.observe_answer(visible)
                     self._store.append_stream_chunk(self._assistant_message_id, visible)
                     any_streamed = True
-                if self._should_cancel():
+                if stream_cut():
                     break
             tail = gate.flush_tail()
             if tail and not is_subagent:
@@ -2978,7 +3098,12 @@ class _StreamingModelAdapter:
         # `child_lifeline`), so `run_reply`'s end-of-turn teardown of the
         # TURN's loop can no longer strand a child mid-call -- the case the
         # timeout above was the last line of defence against.
+        from tldw_chatbook.Chat.stream_stall_watchdog import StreamStallError
+
         future = asyncio.run_coroutine_threadsafe(_consume(), self._submit_loop)
+        _stall_session_id = self._store.session_id_for_message(
+            self._assistant_message_id
+        )
         try:
             future.result(timeout=_CHAT_CALL_TIMEOUT_SECONDS)
         except FuturesTimeoutError:
@@ -2986,6 +3111,24 @@ class _StreamingModelAdapter:
             raise TimeoutError(
                 f"provider turn did not complete within {_CHAT_CALL_TIMEOUT_SECONDS}s"
             ) from None
+        except StreamStallError:
+            # AC#3: a content stall is reported distinctly from a network error
+            # and from a user cancel. AC#4: repeated stalls against the same
+            # provider in a session surface a warning instead of silent retries.
+            provider_label = self._resolution.provider
+            repeated = record_session_stall(_stall_session_id, provider_label)
+            # A stall is terminal for the turn (StreamStallError is non-transient,
+            # so the run loop does not retry it). The threshold branch just marks
+            # a provider that keeps stalling across turns in this session (AC#4).
+            logger.warning(
+                "provider stream stalled: no content within the stall window "
+                "(provider={}, repeated_this_session={})",
+                provider_label,
+                repeated,
+            )
+            raise
+        # A productive turn clears this session's stall streak (AC#4).
+        reset_session_stalls(_stall_session_id, self._resolution.provider)
         _visible, tool_call = gate.result()
         if tool_call is not None and not native_calls and not is_subagent:
             self._thinking_capture.observe_tool()
@@ -3001,6 +3144,13 @@ class _StreamingModelAdapter:
             # ProviderToolCalls sentinel arrived must be reset the same way.
             if tool_call is not None or native_calls:
                 self._store.reset_stream_content(self._assistant_message_id)
+            elif self._primary_stream_abort():
+                # TASK-28227 review F2: this prose turn was cut by a
+                # redirect and the re-asked turn will stream into the SAME
+                # message -- without a separator the transcript glues
+                # "...theRight — ..." together. The loop drains the redirect
+                # only after this call returns, so the flag is still up here.
+                self._store.append_stream_chunk(self._assistant_message_id, "\n\n")
         message: dict = {"content": gate.full_text}
         if native_calls:
             message["tool_calls"] = native_calls
@@ -3806,6 +3956,14 @@ def build_console_first_request_plan(
     config = AgentConfig(
         model=resolved_model,
         system_prompt=direct_prompt,
+        # TASK-26002: so the loop can name the provider when it reports a
+        # provider-level fault (an empty-response run is otherwise
+        # indistinguishable from the agent deciding it was finished).
+        # Reuses `api_endpoint` above rather than re-deriving it -- that is the
+        # key the request is actually sent under, and it already carries the
+        # execution_key -> provider -> "agent" fallback.
+        provider=api_endpoint,
+        fallback_providers=console_fallback_providers(),
         allowed_tools=allowed_tools,
         budget=run_budget or console_run_budget(),
         native_tools=native_tools,
@@ -4516,6 +4674,13 @@ class ConsoleAgentBridge:
         # `AgentService(review_tool_calls=...)`, which binds each run's own
         # id in before handing it to `LoopDeps`.
         review_tool_calls: Callable[[list[ToolCall], str], dict[str, str]]
+        | None = None,
+        on_steer_ready: Callable[[Callable[[str], str | None]], None]
+        | None = None,
+        # TASK-28227: fired once the run's mailbox registers, with a bound
+        # `redirect(text) -> refusal | None` -- the Redirect button's and
+        # /redirect's hook, exactly like on_steer_ready is /steer's.
+        on_redirect_ready: Callable[[Callable[[str], str | None]], None]
         | None = None,
         change_roots: Sequence[Path] | None = None,
         change_root_aliases: Sequence[str] = (),
@@ -5684,12 +5849,27 @@ class ConsoleAgentBridge:
                     status,
                 )
 
+        def _redirect_ready(redirect_fn, abort_probe):
+            # TASK-28227: arm the primary stream's abort probe,
+            # then hand the Console its redirect hook. The probe
+            # reaches ONLY the adapter's stream_cut predicate --
+            # LoopDeps.should_cancel never sees it, so a
+            # redirect can never kill the run.
+            adapter._primary_stream_abort = abort_probe
+            if on_redirect_ready is not None:
+                on_redirect_ready(redirect_fn)
+        
         service = AgentService(
             self._db,
             registry,
             chat_call=adapter.chat_call,
             clock=self._clock,
             on_step=on_step,
+            # TASK-25903: hands the controller a steer(text) bound to THIS
+            # run once its mailbox registers -- run ids are minted inside
+            # run_turn, so the caller cannot key by one.
+            on_primary_steer_ready=on_steer_ready,
+            on_primary_redirect_ready=_redirect_ready,
             skill_runner=skill_runner,
             skill_file_bindings=skill_file_bindings,
             review_tool_calls=review_tool_calls,

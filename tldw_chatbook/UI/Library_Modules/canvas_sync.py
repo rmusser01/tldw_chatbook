@@ -24,6 +24,8 @@ from ...Library.library_shell_state import (
     LIBRARY_DELETE_SELECTED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
+    LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP,
+    LIBRARY_REVIEW_SELECTED_TOOLTIP,
     build_library_shell_state,
     library_disabled_action_label,
 )
@@ -265,6 +267,19 @@ def _apply_library_row_toggle(
                 else LIBRARY_DELETE_SELECTED_TOOLTIP
             )
             _patch_library_disabled_marker_label(delete_button)
+            # task-28242 (Qodo #2335): the "Review selected" bulk action flips
+            # in place too, or it stays disabled after the first row toggle
+            # until an unrelated full recompose.
+            review_button = screen.query_one(
+                "#library-media-review-selected", Button
+            )
+            review_button.disabled = selection.count == 0
+            review_button.tooltip = (
+                LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP
+                if review_button.disabled
+                else LIBRARY_REVIEW_SELECTED_TOOLTIP
+            )
+            _patch_library_disabled_marker_label(review_button)
         elif kind == "notes":
             work_panes = screen.query("#library-note-work-pane")
             if work_panes and screen._library_note_session.snapshot is not None:

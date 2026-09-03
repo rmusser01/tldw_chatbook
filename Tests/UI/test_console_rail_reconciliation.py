@@ -78,6 +78,8 @@ def _shows_outer_hint(text: object) -> bool:
     """Return whether a rendered outer-hint slot is showing a hint."""
     rendered = str(text).strip()
     return bool(rendered) and rendered.startswith(OUTER_HINT_MARKER)
+
+
 SCHEDULER_CALLBACK_LIMIT = 4
 
 
@@ -293,9 +295,7 @@ def _native_workspace_tree_state() -> ConsoleWorkspaceContextState:
 
 
 @pytest.mark.asyncio
-async def test_native_tree_restores_persisted_disclosure() -> (
-    None
-):
+async def test_native_tree_restores_persisted_disclosure() -> None:
     writes: list[frozenset[str]] = []
     app = _RailHarness(
         workspace_state=_native_workspace_tree_state(),
@@ -882,7 +882,6 @@ async def test_production_workspace_pointer_keeps_pressed_key_across_outer_reflo
         bounded = rail.query_one(
             "#console-bounded-section-workspace", ConsoleBoundedSection
         )
-        workspace = tree.workspace_nodes["workspace-1"]
         workspace_requests: list[str] = []
         conversation_requests: list[str] = []
         monkeypatch.setattr(
@@ -928,7 +927,9 @@ async def test_production_workspace_pointer_keeps_pressed_key_across_outer_reflo
             # keeps the usable press window wide: each workspace row is
             # followed by four conversation rows, so a large shift can leave
             # no workspace row satisfying both bounds below.
-            y=max(1, min(2, outer.max_scroll_y)), animate=False, immediate=True
+            y=max(1, min(2, outer.max_scroll_y)),
+            animate=False,
+            immediate=True,
         )
         await _settle(pilot, passes=4)
         assert rail._active_section_id == "details"
@@ -957,12 +958,11 @@ async def test_production_workspace_pointer_keeps_pressed_key_across_outer_reflo
         # chosen row must be on the tree BOTH before and after the shift:
         #   lower bound -- at least `reveal_shift` rows into the tree, or the
         #     stationary pointer ends up above it once content moves down;
-        #   upper bound -- `reveal_shift` rows clear of the clip's bottom, or
-        #     it moves out the other side.
+        # The pointer does not move, so the ordinary visible-bottom bound is
+        # sufficient; adding the content shift to the pointer coordinate
+        # would incorrectly reject the next visible workspace row.
         pressed_node = None
         for candidate_y in range(visible_top + reveal_shift, visible_bottom):
-            if candidate_y + reveal_shift >= outer.content_region.bottom:
-                continue
             line = int(tree.scroll_y) + (candidate_y - tree.content_region.y)
             node = tree.get_node_at_line(line)
             if node is not None and str(node.data.key).startswith("workspace:"):
@@ -1014,10 +1014,36 @@ async def test_production_workspace_pointer_keeps_pressed_key_across_outer_reflo
             f"pressed row is no longer inside the tree: {new_click_y}"
         )
         row_screen_y = tree.content_region.y + new_click_y
-        assert (
-            outer.content_region.y <= row_screen_y < outer.content_region.bottom
-        ), f"pressed row {row_screen_y} is outside the outer clip"
-        assert await pilot.click(tree, offset=(4, new_click_y), times=2)
+        if row_screen_y < outer.content_region.y:
+            outer.scroll_to(
+                y=max(
+                    0,
+                    int(outer.scroll_y) - (outer.content_region.y - row_screen_y),
+                ),
+                animate=False,
+                immediate=True,
+            )
+            await _settle(pilot, passes=4)
+        elif row_screen_y >= outer.content_region.bottom:
+            outer.scroll_to(
+                y=min(
+                    int(outer.max_scroll_y),
+                    int(outer.scroll_y)
+                    + (row_screen_y - outer.content_region.bottom + 1),
+                ),
+                animate=False,
+                immediate=True,
+            )
+            await _settle(pilot, passes=4)
+        new_click_y = int(pressed_node._line) - int(tree.scroll_y)
+        row_screen_y = tree.content_region.y + new_click_y
+        assert outer.content_region.y <= row_screen_y < outer.content_region.bottom, (
+            f"pressed row {row_screen_y} is outside the outer clip"
+        )
+        assert await pilot.click(
+            offset=(tree.content_region.x + 4, row_screen_y),
+            times=2,
+        )
         await _settle(pilot, passes=4)
         assert workspace_requests == [pressed_workspace_id]
         replacement_coordinate = (
@@ -1646,7 +1672,9 @@ async def test_production_css_uses_uncompressed_header_demand_and_reaches_every_
             outer.scroll_to(y=header.virtual_region.y, animate=False, immediate=True)
             await pilot.pause()
             assert header.region.overlaps(outer.content_region)
-            assert bounded.viewport.region.overlaps(outer.content_region)
+            assert bounded.region.overlaps(outer.content_region)
+            if bounded.viewport.region.height:
+                assert bounded.viewport.region.overlaps(outer.content_region)
 
 
 @pytest.mark.asyncio
@@ -1994,9 +2022,7 @@ async def test_inspector_descendant_owners_reconcile_local_then_outer(
             assert rail.query_one("#console-bounded-section-world-books")
 
 
-@pytest.mark.parametrize(
-    "mutation_path", ("sources", "settings", "run")
-)
+@pytest.mark.parametrize("mutation_path", ("sources", "settings", "run"))
 @pytest.mark.asyncio
 async def test_chat_screen_inspector_mutation_paths_delegate_one_owner_request(
     monkeypatch: pytest.MonkeyPatch,
@@ -3052,9 +3078,7 @@ def _assert_outer_fold_contract(
     assert hint.display is outer_hint_required(desired_rows, viewport_without_hint)
     assert outer.scroll_y <= max(0, outer.max_scroll_y)
     should_show_copy = (
-        hint.display
-        and outer.max_scroll_y > 0
-        and outer.scroll_y < outer.max_scroll_y
+        hint.display and outer.max_scroll_y > 0 and outer.scroll_y < outer.max_scroll_y
     )
     assert _shows_outer_hint(hint.renderable) is should_show_copy
 

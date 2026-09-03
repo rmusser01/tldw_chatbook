@@ -2,7 +2,7 @@
   "items": [
     {
       "id": "res_01J5RHPQWXYZ1234567890AB",
-      "owner_id": "server:42",
+      "owner_id": "1",
       "definition_id": "def_01J5RHPQWXYZ1234567890AB",
       "run_id": "run_01J5RHPQWXYZ1234567890AB",
       "kind": "finding",
@@ -30,7 +30,7 @@
     },
     {
       "id": "res_01J5RHPQWXYZ1234567890CD",
-      "owner_id": "server:42",
+      "owner_id": "1",
       "definition_id": "def_01J5RHPQWXYZ1234567890CD",
       "run_id": "run_01J5RHPQWXYZ1234567890CD",
       "kind": "failure",

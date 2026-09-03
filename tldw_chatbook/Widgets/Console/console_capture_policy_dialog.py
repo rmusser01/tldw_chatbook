@@ -851,7 +851,8 @@ class ConsoleTracePrivacyDialog(SafeModalDismissMixin, ModalScreen[None]):
                 yield Static(
                     "Capture and PII masking are independent. PII masking is "
                     "irreversible for provider traces and does not alter the saved "
-                    "conversation. Safe/Full is chosen in the trace viewer.",
+                    "conversation. New traces reference saved messages instead of "
+                    "copying them. Safe/Full is chosen in the trace viewer.",
                     id="trace-privacy-help",
                     markup=False,
                 )

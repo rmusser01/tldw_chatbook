@@ -11,6 +11,10 @@ import sqlite3
 from typing import Protocol, cast
 
 from tldw_chatbook.Chat.console_trace_models import new_opaque_id
+from tldw_chatbook.Chat.console_trace_custom_pii import (
+    custom_pii_ruleset_for_revision,
+    redact_pii_value_for_ruleset_revision,
+)
 from tldw_chatbook.Chat.console_trace_redaction import (
     BUILTIN_PII_RULESET_REVISION_ID,
     CREDENTIAL_FILTER_VERSION,
@@ -20,7 +24,6 @@ from tldw_chatbook.Chat.console_trace_redaction import (
     CredentialSanitizer,
     CredentialSanitizationResult,
     apply_frozen_pii_masks,
-    redact_pii_value,
 )
 from tldw_chatbook.Chat.console_trace_repository import (
     ConsoleTraceRepository,
@@ -765,8 +768,17 @@ class SemanticRevisionCoordinator:
                 )
                 or (
                     policy.pii_redaction_enabled
-                    and policy.pii_ruleset_revision_id
-                    == BUILTIN_PII_RULESET_REVISION_ID
+                    and (
+                        policy.pii_ruleset_revision_id
+                        == BUILTIN_PII_RULESET_REVISION_ID
+                        or (
+                            policy.pii_ruleset_revision_id is not None
+                            and custom_pii_ruleset_for_revision(
+                                policy.pii_ruleset_revision_id
+                            )
+                            is not None
+                        )
+                    )
                 )
             )
         )
@@ -817,7 +829,11 @@ class SemanticRevisionCoordinator:
             projected = result.value
             pii_redaction = None
             if policy.pii_redaction_enabled:
-                pii_redaction = redact_pii_value(projected)
+                assert policy.pii_ruleset_revision_id is not None
+                pii_redaction = redact_pii_value_for_ruleset_revision(
+                    projected,
+                    policy.pii_ruleset_revision_id,
+                )
                 if not pii_redaction.available:
                     cursor.execute(
                         """INSERT INTO console_trace_revision_bindings(
@@ -827,7 +843,8 @@ class SemanticRevisionCoordinator:
                         (
                             revision_id,
                             policy.policy_id,
-                            PII_DETECTOR_UNAVAILABLE,
+                            pii_redaction.omission_reason_code
+                            or PII_DETECTOR_UNAVAILABLE,
                         ),
                     )
                     continue

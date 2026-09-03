@@ -6,7 +6,6 @@ from tldw_chatbook.UI.Screens.settings_privacy_security import (
 )
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 
-
 DUMMY_ENV_SECRET = "env-secret-value-that-must-not-render"
 DUMMY_CONFIG_SECRET = "config-secret-value-that-must-not-render"
 DUMMY_SERVER_SECRET = "server-secret-value-that-must-not-render"
@@ -124,6 +123,106 @@ def test_privacy_posture_fails_safe_for_malformed_trace_privacy_fields():
     assert posture.trace_viewer_profile == "safe"
 
 
+def test_privacy_posture_reports_compact_trace_rollout_without_content():
+    posture = build_settings_privacy_posture(
+        {
+            "console": {
+                "trace_normalized_writes": True,
+                "trace_normalized_reads": True,
+                "trace_legacy_writes": False,
+            }
+        },
+        environ={},
+    )
+
+    rows = build_privacy_posture_rows(posture)
+
+    assert "Trace storage: compact ledger for new calls; no transcript copies" in rows
+    assert "Trace history: compact and legacy traces are readable" in rows
+
+
+def test_privacy_posture_reports_custom_pii_rules_without_pattern_text():
+    secret_pattern = r"private-prefix-\d{8}"
+    posture = build_settings_privacy_posture(
+        {
+            "console": {
+                "trace_custom_pii_rules": {
+                    "version": 1,
+                    "revision_id": "11111111-1111-4111-8111-111111111111",
+                    "rules": [
+                        {
+                            "id": "customer-id",
+                            "label": "Customer ID",
+                            "category": "customer_id",
+                            "pattern": secret_pattern,
+                            "flags": [],
+                            "enabled": True,
+                            "priority": 10,
+                        },
+                        {
+                            "id": "invalid-rule",
+                            "label": "Invalid",
+                            "category": "customer_id",
+                            "pattern": "(",
+                            "flags": [],
+                            "enabled": True,
+                            "priority": 20,
+                        },
+                    ],
+                }
+            }
+        },
+        environ={},
+    )
+
+    rows = build_privacy_posture_rows(posture)
+    rendered = "\n".join(rows)
+
+    assert "Custom PII rules: 1 enabled, 0 disabled, 1 invalid" in rows
+    assert "invalid-rule: invalid_pattern" in rendered
+    assert secret_pattern not in rendered
+
+
+def test_privacy_posture_coerces_string_trace_rollout_settings():
+    posture = build_settings_privacy_posture(
+        {
+            "console": {
+                "exchange_capture": "false",
+                "trace_normalized_writes": "false",
+                "trace_normalized_reads": "true",
+                "trace_legacy_writes": "true",
+            }
+        },
+        environ={},
+    )
+
+    assert posture.trace_capture_enabled is False
+    assert posture.trace_normalized_writes_enabled is False
+    assert posture.trace_normalized_reads_enabled is True
+    assert posture.trace_legacy_writes_enabled is True
+
+
+def test_privacy_posture_prefers_trace_rollout_environment_overrides():
+    posture = build_settings_privacy_posture(
+        {
+            "console": {
+                "trace_normalized_writes": True,
+                "trace_normalized_reads": False,
+                "trace_legacy_writes": False,
+            }
+        },
+        environ={
+            "TLDW_CONSOLE_TRACE_NORMALIZED_WRITES": "false",
+            "TLDW_CONSOLE_TRACE_NORMALIZED_READS": "true",
+            "TLDW_CONSOLE_TRACE_LEGACY_WRITES": "true",
+        },
+    )
+
+    assert posture.trace_normalized_writes_enabled is False
+    assert posture.trace_normalized_reads_enabled is True
+    assert posture.trace_legacy_writes_enabled is True
+
+
 def test_privacy_posture_reports_skill_trust_without_leaking_paths():
     posture = build_settings_privacy_posture(
         {"encryption": {"enabled": True}},
@@ -219,3 +318,20 @@ def test_settings_screen_skill_trust_posture_handles_status_errors_safely():
         "keyring_convenience_enabled": False,
         "reduced_rollback_protection": False,
     }
+
+
+def test_passive_terminal_status_does_not_construct_lazy_manager():
+    class App:
+        def __init__(self) -> None:
+            self.app_config = {}
+            self._terminal_session_manager = None
+
+        @property
+        def terminal_session_manager(self):
+            raise AssertionError("passive Settings status constructed Terminal")
+
+    screen = SettingsScreen(App())
+
+    assert screen._terminal_runtime() is None
+    assert screen._terminal_is_armed() is False
+    assert screen._terminal_live_session_count() == 0

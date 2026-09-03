@@ -10328,10 +10328,12 @@ async def test_library_shell_media_viewer_shows_analysis_from_latest_version():
         screen.query_one("#library-media-row-1").press()
         await _wait_for_selector(screen, pilot, "#library-media-reader-select-analysis")
         screen.query_one("#library-media-reader-select-analysis", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-media-viewer-analysis-text")
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
 
+        # task-28026: a non-empty analysis renders in the searchable content
+        # body (its raw text is on ``.content``), not the plain Static.
         analysis_text = str(
-            screen.query_one("#library-media-viewer-analysis-text").renderable
+            screen.query_one("#library-media-viewer-content").content
         )
         assert analysis_text == "Roadmap analysis"
 
@@ -10421,8 +10423,10 @@ async def test_library_shell_media_analysis_save_persists_and_exits_edit_mode():
 
         assert screen._library_media_editing_analysis is False
         assert not screen.query("#library-media-analysis-edit-text")
+        # task-28026: a non-empty analysis renders in the searchable content
+        # body (its raw text is on ``.content``), not the plain Static.
         analysis_text = str(
-            screen.query_one("#library-media-viewer-analysis-text").renderable
+            screen.query_one("#library-media-viewer-content").content
         )
         assert analysis_text == "Revised analysis"
 
@@ -10462,13 +10466,140 @@ async def test_library_shell_media_analysis_cancel_discards():
 
         assert screen._library_media_editing_analysis is False
         assert not screen.query("#library-media-analysis-edit-text")
+        # task-28026: a non-empty analysis renders in the searchable content
+        # body (its raw text is on ``.content``), not the plain Static.
         analysis_text = str(
-            screen.query_one("#library-media-viewer-analysis-text").renderable
+            screen.query_one("#library-media-viewer-content").content
         )
         assert analysis_text == "Existing analysis"
 
         service = app.media_reading_scope_service
         assert service.analysis_calls == []
+
+
+@pytest.mark.asyncio
+async def test_library_media_generate_analysis_dispatches_and_persists():
+    """task-28006: Generate resolves the provider, dispatches, and saves the result."""
+    import tldw_chatbook.UI.Screens.library_screen as library_screen_module
+    from tldw_chatbook.Library.ingest_analysis import IngestAnalysisResolution
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    ready = IngestAnalysisResolution(
+        provider="OpenAI",
+        api_key="sk-test",
+        ready=True,
+        short_reason="",
+        hint="",
+        dispatch_name="openai",
+        model="gpt-4o",
+    )
+    dispatched: dict = {}
+
+    def _fake_dispatch(**kwargs):
+        dispatched.update(kwargs)
+        return "Generated summary of the interview."
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(
+            screen, pilot, "#library-media-reader-select-analysis"
+        )
+        screen.query_one("#library-media-reader-select-analysis", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-analysis-generate")
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                library_screen_module,
+                "resolve_ingest_analysis_provider",
+                lambda *a, **k: ready,
+            )
+            mp.setattr(library_screen_module, "chat_api_call", _fake_dispatch)
+            screen.query_one("#library-media-analysis-generate", Button).press()
+
+            service = app.media_reading_scope_service
+            for _ in range(200):
+                if service.analysis_calls:
+                    break
+                await pilot.pause(0.02)
+            else:
+                raise AssertionError(
+                    f"Generate never persisted. Visible: {_visible_text(screen)}"
+                )
+
+        assert dispatched.get("api_endpoint") == "openai"
+        assert dispatched.get("api_key") == "sk-test"
+        call = service.analysis_calls[-1]
+        assert call["analysis_content"] == "Generated summary of the interview."
+        assert call["media_id"] == 1
+        assert screen._library_media_generating_analysis is False
+
+
+@pytest.mark.asyncio
+async def test_library_media_generate_analysis_without_provider_notifies_and_skips():
+    """task-28006: with no ready provider, Generate warns and never dispatches or saves."""
+    import tldw_chatbook.UI.Screens.library_screen as library_screen_module
+    from tldw_chatbook.Library.ingest_analysis import (
+        IngestAnalysisResolution,
+        NO_ANALYSIS_PROVIDER_REASON,
+    )
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    not_ready = IngestAnalysisResolution(
+        provider="",
+        api_key=None,
+        ready=False,
+        short_reason=NO_ANALYSIS_PROVIDER_REASON,
+        hint="No analysis provider is configured — set one in Settings.",
+    )
+    dispatched: list = []
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        notify = Mock()
+        screen.app_instance.notify = notify
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(
+            screen, pilot, "#library-media-reader-select-analysis"
+        )
+        screen.query_one("#library-media-reader-select-analysis", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-analysis-generate")
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                library_screen_module,
+                "resolve_ingest_analysis_provider",
+                lambda *a, **k: not_ready,
+            )
+            mp.setattr(
+                library_screen_module,
+                "chat_api_call",
+                lambda **k: dispatched.append(k) or "should not run",
+            )
+            screen.query_one("#library-media-analysis-generate", Button).press()
+            await pilot.pause()
+            await pilot.pause()
+
+        assert dispatched == []
+        assert app.media_reading_scope_service.analysis_calls == []
+        assert screen._library_media_generating_analysis is False
+        assert notify.called
+        message = str(notify.call_args[0][0]) if notify.call_args[0] else ""
+        assert "provider" in message.lower()
 
 
 def _media_item_with_multiline_content():
@@ -10512,6 +10643,79 @@ async def _open_media_viewer(screen, pilot):
     await _wait_for_selector(screen, pilot, "#library-media-content-search")
 
 
+@pytest.mark.asyncio
+async def test_library_media_sort_chooser_applies_the_selected_order():
+    """task-28013: the media sort chooser re-fetches page one under the new order."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-sort")
+        service = app.media_reading_scope_service
+
+        # Open the sort chooser; its direct-pick strip replaces the toolbar.
+        screen.query_one("#library-media-sort", Button).press()
+        await _wait_for_selector(screen, pilot, ".library-media-sort-choice")
+        assert screen._library_media_sort_choices_visible is True
+
+        # Pick "Title A-Z" -> the strip closes and a page-one fetch runs
+        # under sort_by=title_asc.
+        screen.query_one("#library-media-sort-title_asc", Button).press()
+        for _ in range(150):
+            if service.search_calls and service.search_calls[-1].get(
+                "sort_by"
+            ) == "title_asc":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                f"Sort was never applied. Calls: {service.search_calls[-3:]}"
+            )
+        assert screen._library_media_sort_choices_visible is False
+        last = service.search_calls[-1]
+        assert last["sort_by"] == "title_asc"
+        assert last.get("page", 1) == 1
+
+
+@pytest.mark.asyncio
+async def test_library_media_sort_and_type_choosers_are_mutually_exclusive():
+    """task-28013: opening one chooser closes the other; Escape closes the strip."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-sort")
+
+        # Open the type chooser, then the sort chooser: only sort stays open.
+        screen.query_one("#library-media-type-filter", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-type-choices")
+        screen.query_one("#library-media-sort", Button).press()
+        await _wait_for_selector(screen, pilot, ".library-media-sort-choice")
+        assert screen._library_media_sort_choices_visible is True
+        assert screen._library_media_type_choices_visible is False
+
+        # The open strip advertises its own footer keys through the shared seam.
+        footer = screen._library_footer_shortcuts_for_current_state()
+        assert ("enter", "choose sort") in footer
+        assert ("esc", "cancel") in footer
+
+        # Escape closes the strip.
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen._library_media_sort_choices_visible is False
+        assert not screen.query(".library-media-sort-choice")
+
+
 async def _submit_content_search_query(screen, pilot, query):
     """Type ``query`` into the open viewer's content search box and press Enter."""
     search_input = screen.query_one("#library-media-content-search", Input)
@@ -10545,9 +10749,11 @@ async def test_library_shell_media_content_search_no_query_hides_status_and_nav(
         await _open_media_viewer(screen, pilot)
 
         assert screen.query_one("#library-media-content-search")
-        assert not screen.query("#library-media-content-search-status")
-        assert not screen.query("#library-media-content-search-prev")
-        assert not screen.query("#library-media-content-search-next")
+        # task-28002: the status line and the prev/next nav container persist
+        # display-gated (tearing them down recomposed away the focused Input)
+        # -- with no active query they are hidden, not removed.
+        assert not screen.query_one("#library-media-content-search-status").display
+        assert not screen.query_one("#library-media-content-search-nav").display
 
 
 @pytest.mark.asyncio
@@ -10570,6 +10776,38 @@ async def test_library_shell_media_content_search_shows_match_count():
         )
         assert status == "Match 1 of 2 matches"
         assert screen._library_media_content_query == "budget"
+        assert screen._library_media_content_match_index == 0
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_content_search_enter_advances_to_next_match():
+    """task-28011: re-pressing Enter on the same query walks to the next match."""
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), media=_media_item_with_multiline_content()
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await _open_media_viewer_and_submit_content_search(screen, pilot, "budget")
+        assert screen._library_media_content_match_index == 0
+
+        # Same query, Enter again -> advance (find-bar convention).
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_media_content_match_index == 1
+        assert str(
+            screen.query_one("#library-media-content-search-status").renderable
+        ) == "Match 2 of 2 matches"
+
+        # Wraps back to the first match.
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
         assert screen._library_media_content_match_index == 0
 
 
@@ -10668,12 +10906,12 @@ async def test_library_shell_media_content_search_empty_query_hides_status_and_n
 
         await _submit_content_search_query(screen, pilot, "")
 
-        # With no active query, the status line and prev/next toolbar are not
-        # rendered at all -- they aren't just blank, they're gone -- so the
-        # orphaned nav doesn't linger under the search box.
-        assert not screen.query("#library-media-content-search-status")
-        assert not screen.query("#library-media-content-search-prev")
-        assert not screen.query("#library-media-content-search-next")
+        # task-28002: with no active query the status line and prev/next
+        # nav container are hidden (display:false), not removed -- the
+        # children persist so a first submit can never recompose away the
+        # focused Input. Hidden means the orphaned nav still does not linger.
+        assert not screen.query_one("#library-media-content-search-status").display
+        assert not screen.query_one("#library-media-content-search-nav").display
         assert screen._library_media_content_query == ""
 
 
@@ -10791,7 +11029,9 @@ async def test_library_shell_media_viewer_inplace_search_applies_only_on_enter()
 
         assert screen._library_media_content_query == ""
         assert screen.query_one("#library-media-content-search", Input) is search_input
-        assert not screen.query("#library-media-content-search-status")
+        # task-28002: the status child persists display-gated (tearing it
+        # down recomposed away the focused Input); "inactive" means hidden.
+        assert not screen.query_one("#library-media-content-search-status").display
 
 
 @pytest.mark.asyncio
@@ -11569,6 +11809,46 @@ async def test_library_shell_media_viewer_defaults_markdown_item_to_rendered():
         raw_button = screen.query_one("#library-media-content-mode-raw", Button)
         assert "(selected)" in str(rendered_button.label)
         assert "(selected)" not in str(raw_button.label)
+
+
+@pytest.mark.asyncio
+async def test_library_media_rendered_content_is_keyboard_focusable_for_scroll():
+    """task-28003 (Qodo #2307): rendered-Markdown content is F6-reachable.
+
+    In rendered mode the raw ScrollView (#library-media-viewer-content-text)
+    is absent, so keyboard scrolling has to land on the content body itself.
+    It must be a focusable, scrolling container and it must be the pane's
+    resolved F6 target once the raw view is gone.
+    """
+    from tldw_chatbook.Widgets.Library.library_media_content import (
+        LibraryMediaContentBody,
+    )
+    from tldw_chatbook.Widgets import workbench_focus
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_markdown_media_item())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_media_viewer(screen, pilot)
+
+        assert screen._library_media_content_mode == "rendered"
+        assert not screen.query("#library-media-viewer-content-text")
+
+        body = screen.query_one("#library-media-viewer-content", LibraryMediaContentBody)
+        assert body.can_focus, "rendered content body must be keyboard-focusable"
+
+        # The media viewer pane's F6 target resolves to the content body when
+        # the raw view is absent (rendered mode).
+        resolved = {
+            pane.id: target
+            for pane, target in workbench_focus._available_targets(
+                screen, screen._MEDIA_WORKBENCH_FOCUS_TARGETS
+            )
+        }
+        assert resolved.get("library-media-viewer") is body
 
 
 @pytest.mark.asyncio
@@ -33451,3 +33731,103 @@ async def test_commit_line_stays_visible_and_synced_while_a_gate_blocks(
         await pilot.pause()
         assert summary.display is True
         assert "1 will import" in str(summary.renderable)
+
+
+def _media_item_with_multiline_analysis():
+    """A media item whose analysis has two lines containing "budget"."""
+    items = _two_media_items()
+    items[0]["versions"] = [
+        {
+            "version_number": 1,
+            "analysis_content": "\n".join(
+                [
+                    "Summary intro line.",
+                    "The budget outlook is covered here.",
+                    "A neutral middle line.",
+                    "Second budget mention appears here too.",
+                ]
+            ),
+        }
+    ]
+    return items
+
+
+@pytest.mark.asyncio
+async def test_library_media_analysis_tab_is_searchable():
+    """task-28026: the Analysis tab has a search box that finds analysis matches."""
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), media=_media_item_with_multiline_analysis()
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(
+            screen, pilot, "#library-media-reader-select-analysis"
+        )
+        screen.query_one("#library-media-reader-select-analysis", Button).press()
+        # Wait for the analysis tab to settle (its Edit action is the stable
+        # signal the existing analysis tests use) before searching.
+        await _wait_for_selector(screen, pilot, "#library-media-analysis-edit")
+        search = screen.query_one("#library-media-content-search", Input)
+
+        search.value = "budget"
+        search.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(
+                screen.query("#library-media-content-search-status")
+            )
+            and str(
+                screen.query("#library-media-content-search-status")
+                .first()
+                .renderable
+            )
+            == "Match 1 of 2 matches",
+            message="Analysis-tab search did not report its two matches.",
+        )
+        # Two analysis lines contain "budget" -> the search corpus is the
+        # analysis text, not the (empty here) transcript.
+
+
+@pytest.mark.asyncio
+async def test_library_media_switching_tabs_clears_the_search():
+    """task-28026: switching Reader tabs re-scopes -- the search does not carry over."""
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), media=_media_item_with_multiline_analysis()
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        # Read tab: search the transcript.
+        search = await _wait_for_selector(
+            screen, pilot, "#library-media-content-search"
+        )
+        search.value = "roadmap"
+        search.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert screen._library_media_content_query == "roadmap"
+
+        # Switching to the Analysis tab drops the transcript search rather than
+        # carrying its query/highlights onto the analysis text.
+        screen.query_one("#library-media-reader-select-analysis", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-analysis-edit")
+        assert screen._library_media_content_query == ""
+        assert screen._library_media_content_match_index == 0

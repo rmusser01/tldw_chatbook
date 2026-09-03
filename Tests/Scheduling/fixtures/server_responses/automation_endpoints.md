@@ -30,6 +30,8 @@ Returns availability and action capabilities for each automation family (`recurr
 | POST | `/api/v1/scheduled-tasks/definitions/{definition_id}/pause` | `tasks.control` | — | `ScheduledTaskDefinitionResponse` |
 | POST | `/api/v1/scheduled-tasks/definitions/{definition_id}/resume` | `tasks.control` | — | `ScheduledTaskDefinitionResponse` |
 | POST | `/api/v1/scheduled-tasks/definitions/{definition_id}/archive` | `tasks.control` | — | `ScheduledTaskDefinitionResponse` |
+| POST | `/api/v1/scheduled-tasks/definitions/{definition_id}/mark-solved` | `tasks.control` | `ScheduledTaskMarkSolvedRequest` | `ScheduledTaskDefinitionResponse` |
+| POST | `/api/v1/scheduled-tasks/definitions/{definition_id}/reopen` | `tasks.control` | `ScheduledTaskReopenRequest` | `ScheduledTaskDefinitionResponse` |
 | POST | `/api/v1/scheduled-tasks/definitions/{definition_id}/duplicate` | `tasks.control` | `ScheduledTaskDuplicateRequest` | `ScheduledTaskDefinitionResponse` |
 | POST | `/api/v1/scheduled-tasks/definitions/{definition_id}/run` | `tasks.control` | — (optional `Idempotency-Key` header) | `ScheduledTaskRunNowResponse` |
 
@@ -40,6 +42,19 @@ semantics. Lifecycle refusals reuse the error codes below; the response
 carries the created run reference (`definition_id`, `run_slot_utc`,
 `job_id`, `deduped`) for correlating with the eventual result
 notification.
+
+`mark-solved` (`ScheduledTaskAutomationService.mark_solved`) is idempotent:
+marking an already-solved definition solved again returns the current row
+unchanged, no audit event recorded. `reopen` (`.reopen_definition`) is NOT
+idempotent -- it only accepts the transition FROM `resolution_state=
+"solved"` and raises `definition_resolution_transition_invalid` (409) once
+the row is already `"open"`. Both refuse on `lifecycle in {"archived",
+"disabled"}` (`definition_archived`/`definition_disabled`); `reopen` also
+refuses a `target_lifecycle` outside `{"configured", "paused"}` and a
+`family != "recurring_question"` definition (`definition_family_mismatch`).
+`mark_solved` with an unresolvable `resolved_result_id` raises
+`result_not_found`. (Audited from `scheduled_task_automation_service.py`'s
+`_mark_solved_definition`/`_reopen_definition`, origin/dev.)
 
 ## Runs & results (recurring-question service)
 
@@ -72,6 +87,7 @@ while `POST …/run` dispatches any automation family through
 - `ScheduledTaskDefinitionCreateLifecycle`: `"configured"` | `"paused"`
 - `ScheduledTaskDefinitionHealth`: `"ready"` | `"execution_unavailable"` | `"capability_unavailable"` | `"needs_attention"` | `"permission_required"`
 - `ScheduledTaskDefinitionDisabledLockKind`: `"none"` | `"admin"` | `"security"` | `"system"`
+- `ScheduledTaskDefinitionResolutionState`: `"open"` | `"solved"`
 - `ScheduledTaskAutomationActionStatus`: `"available"` | `"unavailable"` | `"planned"` | `"disabled"`
 - `ScheduledTaskAutomationFamilyAvailability`: `"available"` | `"planned"` | `"unavailable"` | `"degraded"`
 
@@ -113,6 +129,19 @@ while `POST …/run` dispatches any automation family through
 |-------|------|----------|-------|
 | `name` | `str` (1-255) | no | override name for the duplicate |
 | `description` | `str` | no | override description |
+
+### `ScheduledTaskMarkSolvedRequest`
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `resolved_result_id` | `str` | no | the server result id that triggered the resolution |
+
+### `ScheduledTaskReopenRequest`
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `target_lifecycle` | `ScheduledTaskDefinitionCreateLifecycle` | no | default `"paused"` |
+| `reason` | `str` | no | free-text, recorded on the audit event |
 
 ## Response schemas
 
@@ -167,6 +196,12 @@ while `POST …/run` dispatches any automation family through
 | `created_at` | `datetime` | nullable |
 | `updated_at` | `datetime` | nullable |
 | `archived_at` | `datetime` | nullable |
+| `resolution_state` | `ScheduledTaskDefinitionResolutionState` | default `"open"` |
+| `resolved_at` | `datetime` | nullable |
+| `resolved_by` | `str` | nullable |
+| `resolved_result_id` | `str` | nullable |
+| `finding_policy` | `dict[str, Any]` | default `{"preset": "balanced_findings"}` |
+| `retention_policy` | `dict[str, Any]` | default `{"mode": "default"}` |
 
 ### `ScheduledTaskAuditEventResponse`
 
@@ -260,3 +295,17 @@ Common automation error codes mapped by the server:
 - Date-time filters (`created_from`, `created_to`) must include a timezone; the server normalizes to UTC.
 - Mutating endpoints accept an optional `Idempotency-Key` request header.
 - The `capabilities` endpoint is synchronous (`def`, not `async def`) and returns the current server-side capability matrix.
+
+## Fixtures
+
+- `automation_preview_response.json` (task-1, schedules-handoff PR-4) holds
+  hand-assembled `ScheduledTaskPreviewCreateRequest`/`ScheduledTaskPreviewResponse`
+  pairs for `tldw_chatbook.Scheduling.automation_preview.preview_automation_definition`
+  (a pure local port of the server's preview-assembly logic above — no
+  server round trip). Two cases: a valid `recurring_question` create-preview,
+  and one with an unsupported `schedule.kind`. Each case pins a `now` value
+  so its `schedule_preview.next_occurrences` is deterministic —
+  `next_occurrences` is a **local addition**, not part of the server's
+  response (the server's `schedule_preview` is just the bare normalized
+  `schedule` dict; see `_create_preview`'s `schedule_preview=normalized["schedule"]`
+  in `scheduled_task_automation_service.py`).

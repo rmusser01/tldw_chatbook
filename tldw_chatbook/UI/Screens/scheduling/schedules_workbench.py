@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -25,22 +26,58 @@ from ...Workbench.workbench_state import (
 )
 from ...Workbench.workbench_widgets import DestinationHeader, RecoveryCallout
 from ....runtime_policy.bootstrap import set_authoritative_runtime_source
+from ....Scheduling.automation_health import compute_local_health
 from ....Scheduling.events import (
+    CancelTransferRequested,
     DeleteTaskRequested,
     DisableTaskRequested,
+    AcknowledgeIncidentRequested,
     EditTaskRequested,
     EnableTaskRequested,
+    RetryTransferRequested,
     RunReminderNowRequested,
     SyncCompleted,
     SyncFailed,
+    TransferToLocalRequested,
+    TransferToServerRequested,
 )
 from ....Scheduling.models import ReminderTask, ScheduledTask
 from ....Scheduling.services.server_client import (
     ServerClientError,
     ServerClientValidationError,
 )
+from ....Scheduling.services.sync_engine import (
+    _RESULTS_PAGE_SIZE,
+    _SYNC_MAX_PAGES,
+)
 from ....UI.Screens.scheduling.conflicts_tab import ConflictsTab
+from ....UI.Screens.scheduling.results_tab import (
+    ResultsTab,
+    definition_for_result,
+    # NOT `rich.markup.escape`: this dialog copy is rendered by a
+    # Textual `Label` -> `Content.from_markup`, whose tokenizer eats ANY
+    # `[...]`, while rich's escape only covers `[a-z#/@]...` tags (task 6
+    # round 1). Same parser, same escape as the results detail pane.
+    escape_markup,
+    index_definitions_by_id,
+    solved_eligibility,
+)
 from ....UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
+from ....Widgets.confirmation_dialog import ConfirmationDialog
+# schedules-redesign PR-1, Task 4: `automation_execution_target_label`/
+# `automation_name_cell` moved to `definition_detail.py` (that leaf
+# module's own "Model"/"Runs on" row formatters need them and importing
+# them back from here would be circular) -- re-exported via this import
+# so the DataTable render call site below and the pre-existing
+# `test_execution_target_label_matrix` test (which imports
+# `automation_execution_target_label` from THIS module) keep working.
+from .definition_detail import (
+    DefinitionDetail,
+    automation_execution_target_label,
+    automation_name_cell,
+)
+from .forms.automation_definition_form import AutomationDefinitionForm
+from .forms.new_task_choice_modal import NewTaskChoiceModal
 from .forms.reminder_form import ReminderForm
 from .task_detail import (
     SCHEDULES_EMPTY_CONSOLE_RECOVERY,
@@ -48,15 +85,21 @@ from .task_detail import (
     TaskInspector,
     _format_next_run,
     _managed_elsewhere_notice,
+    _queue_owner_suffix,
     _task_status,
     _task_type_label,
+    _transfer_row_suffix,
     _underlying_status,
     _was_missed_while_away,
     status_badge_text,
+    transfer_row_dict,
 )
 
 if TYPE_CHECKING:
-    from tldw_chatbook.Scheduling.services.scheduling_service import SchedulingService
+    from tldw_chatbook.Scheduling.services.scheduling_service import (
+        SchedulingService,
+        TransferOutcome,
+    )
     from tldw_chatbook.app import TldwCli
 
 
@@ -79,38 +122,52 @@ NEXT_RUN_REFRESH_SECONDS = 60.0
 #: not to render unbounded rows.
 AUTOMATIONS_LOAD_MAX_ROWS = 500
 
+#: Debounce before acting on a notification-triggered results pull
+#: (schedules-handoff PR-6 task 4) -- a burst of `automation_run_*` events
+#: collapses into ONE pull (plan ruling 3), same stop-and-restart timer
+#: shape as the queue filter's own debounce above.
+RESULTS_PULL_DEBOUNCE_SECONDS = 0.3
 
-def automation_execution_target_label(definition: dict[str, Any]) -> str:
-    """Render one definition's per-task execution target (ADR-077 AC#7).
+#: How many results the inbox lists. The DB default (50) silently hid older
+#: rows while the badge counted EVERY unread one, so the tab could read
+#: "Results (120)" over 50 rows. This is the sync-mirrored window --
+#: exactly the newest-pages walk `SyncEngine._pull_results` performs -- so
+#: the inbox shows everything a pull could have brought down and nothing it
+#: could not. Beyond the cap the tab says so out loud (`ResultsTab.
+#: populate`'s `total`); deliberately no pagination machinery.
+RESULTS_INBOX_LIMIT = _RESULTS_PAGE_SIZE * _SYNC_MAX_PAGES
 
-    ``input.provider``/``input.model`` ride the definition payload and the
-    server executor honors them. The column shows what was PINNED here:
-    when neither key is set the label is ``auto`` -- the definition pins
-    nothing, and the server resolves the run target from its own
-    automation-config executor defaults (``[Scheduled_Tasks_Automation]
-    executor_provider``/``executor_model``) falling back to the server
-    default. Those layers live in server config, not the payload, so
-    ``auto`` is the honest client-side rendering, not a claim about which
-    server layer actually won.
+#: How many transport reconnects `EventObserver.run()` absorbs internally
+#: (its own built-in exponential backoff, capped at 5s per attempt) before
+#: giving up and raising back to `_run_server_notification_observer`. That
+#: outer loop is the real "never give up for the life of this screen"
+#: layer -- see its docstring for the full failure-mode read.
+_NOTIFICATION_OBSERVER_MAX_RECONNECTS = 5
 
-    Args:
-        definition: One row from the server's definition list, as the raw
-            dict the scheduling server client returns.
+#: Flat delay before `_run_server_notification_observer` restarts a fresh
+#: `observe()` call after one gave up (matches the inner backoff's own
+#: 5s cap -- no need to reimplement exponential backoff a second time for
+#: a rare outer-level restart). Interrupted immediately by unmount via
+#: `cancel_event`, never a blind sleep.
+_NOTIFICATION_OBSERVER_RESTART_DELAY_SECONDS = 5.0
 
-    Returns:
-        A short cell label: ``provider/model``, either part alone, or
-        ``auto`` when neither is set.
+
+def _cancel_toast_text(name: str) -> str:
+    """Honest cancel confirmation (final review L13).
+
+    The old copy ("Transfer cancelled for 'X'.") and the docs beside it
+    promised "no server-side effect", which spec §6.3's own table does
+    not support: `from_server_pending` also covers a release whose
+    server-side delete already landed but whose ack was lost, and that
+    delete cannot be undone from here. What IS true in every cancellable
+    state is that the queued mutation is gone, so nothing further goes
+    out -- which is what this now says.
     """
-    source = definition.get("input") if isinstance(definition.get("input"), dict) else {}
-    provider = str(source.get("provider") or "").strip()
-    model = str(source.get("model") or "").strip()
-    if provider and model:
-        return f"{provider}/{model}"
-    if provider:
-        return provider
-    if model:
-        return model
-    return "auto"
+    return (
+        f"Transfer cancelled for '{name}' — nothing further will be sent "
+        "to the server."
+    )
+
 
 #: Delayed second fetch of the run-history pane after a Run-now dispatch:
 #: the terminal audit event lands only after the server finishes executing
@@ -130,6 +187,23 @@ class SchedulesWorkbench(BaseAppScreen):
         Binding("x", "mark_task", "Mark"),
         Binding("escape", "clear_marks", "Clear marks"),
         Binding("s", "sync_now", "Sync"),
+        # Automations-tab-only (schedules-handoff PR-5 task 7 fix round):
+        # the tab has no per-row detail widget, so its actions are
+        # keybindings routed by active tab -- same idiom as r/e above,
+        # not new buttons (mirrors _edit_selected_automation/
+        # _run_automation_now, the tab's existing action grammar).
+        Binding("m", "move_automation_to_local", "Move to local"),
+        Binding("M", "move_automation_to_server", "Move to server"),
+        Binding("y", "retry_automation_transfer", "Retry transfer"),
+        Binding("k", "cancel_automation_transfer", "Cancel transfer"),
+        # Results-tab-only (schedules-handoff PR-6 task 3): read/dismiss
+        # reuse r/d via the SAME active-tab routing action_run_task_now/
+        # action_delete already do for Automations -- r=Read and d=Dismiss
+        # are natural readings of those same keys on this tab. Mark
+        # solved/Mark all read have no existing-key mnemonic to reuse, so
+        # they get fresh letters (o/a), guarded the same way m/M/y/k are.
+        Binding("o", "mark_result_solved", "Mark solved"),
+        Binding("a", "mark_all_results_read", "Mark all read"),
     ]
 
     # Footer hints must stay 1:1 with BINDINGS and only advertise implemented
@@ -143,6 +217,12 @@ class SchedulesWorkbench(BaseAppScreen):
         ("d", "delete"),
         ("x", "mark"),
         ("s", "sync"),
+        ("m", "move to local"),
+        ("M", "move to server"),
+        ("y", "retry transfer"),
+        ("k", "cancel transfer"),
+        ("o", "mark solved"),
+        ("a", "mark all read"),
     )
 
     def __init__(
@@ -174,6 +254,15 @@ class SchedulesWorkbench(BaseAppScreen):
         self._latest_console_follow_item_id: str | None = None
         self._latest_console_launch_kwargs: dict[str, Any] | None = None
         self._latest_console_context_loaded = False
+        # schedules-handoff PR-6 task 4: notification-triggered results
+        # pull (single-flight -- `_results_pull_running` guards concurrent
+        # pulls, `_results_pull_rerun_requested` queues at most one
+        # follow-up) and the SSE observer's stop signal, workbench-scoped
+        # per plan ruling 3 (started in on_mount, cancelled in on_unmount).
+        self._results_pull_debounce_timer: Timer | None = None
+        self._results_pull_running = False
+        self._results_pull_rerun_requested = False
+        self._notification_cancel_event: asyncio.Event | None = None
 
     def _active_server_id(self) -> str | None:
         runtime_policy = getattr(self.app_instance, "runtime_policy", None)
@@ -232,6 +321,9 @@ class SchedulesWorkbench(BaseAppScreen):
                 active_server_id=active_server_id,
                 server_available=server_available,
             )
+            # TASK-26025: scheduler liveness -- a stale heartbeat reads
+            # distinctly from an empty queue and a never-started loop.
+            yield Static("", id="scheduling-liveness")
             with TabbedContent(id="scheduling-tabs"):
                 with TabPane("Queue", id="scheduling-queue-tab"):
                     with Horizontal(id="scheduling-workbench"):
@@ -263,15 +355,30 @@ class SchedulesWorkbench(BaseAppScreen):
                 with TabPane("Automations", id="scheduling-automations-tab"):
                     with Horizontal(id="scheduling-automations-split"):
                         with Vertical(id="scheduling-automations-pane"):
-                            yield Static(
-                                "Server Automations",
-                                id="scheduling-automations-title",
-                                classes="scheduling-column-title",
-                            )
+                            with Horizontal(id="scheduling-automations-header"):
+                                yield Static(
+                                    "Server Automations",
+                                    id="scheduling-automations-title",
+                                    classes="scheduling-column-title",
+                                )
+                                yield Button(
+                                    "+ New",
+                                    id="scheduling-new-automation",
+                                    variant="primary",
+                                    tooltip="Schedule a new recurring question.",
+                                )
                             yield DataTable(
                                 id="scheduling-automations-table", cursor_type="row"
                             )
                             yield Static("", id="scheduling-automations-notice")
+                        # schedules-redesign PR-1, Task 4: the definitions
+                        # detail pane -- the first per-row detail widget the
+                        # Automations tab has had (see redesign-pr1-survey.md
+                        # section 1's "no per-row detail widget" finding).
+                        # Third pane alongside list|history, matching the
+                        # Queue tab's list|detail|inspector idiom.
+                        with Vertical(id="scheduling-automations-detail-pane"):
+                            yield DefinitionDetail(id="scheduling-automation-detail")
                         with Vertical(id="scheduling-automation-history-pane"):
                             yield Static(
                                 "Run history",
@@ -291,6 +398,8 @@ class SchedulesWorkbench(BaseAppScreen):
                         id="scheduling-conflicts",
                         sync_engine=service.sync_engine if service else None,
                     )
+                with TabPane("Results", id="scheduling-results-tab"):
+                    yield ResultsTab(id="scheduling-results")
 
     def _service(self) -> "SchedulingService | None":
         """Return the app's scheduling service, if available."""
@@ -309,6 +418,7 @@ class SchedulesWorkbench(BaseAppScreen):
         self._register_footer_shortcuts()
         self._refresh_owner_select()
         self._refresh_conflicts_tab()
+        self._refresh_results_tab()
         table = self.query_one("#scheduling-task-table", DataTable)
         table.add_columns("Title", "Type", "Status", "Next Run")
         automations_table = self.query_one("#scheduling-automations-table", DataTable)
@@ -326,9 +436,286 @@ class SchedulesWorkbench(BaseAppScreen):
         )
         self._request_tasks_refresh()
         self._request_automations_refresh()
+        self._refresh_scheduler_liveness()
+        self._start_server_notification_observer()
+        self._schedule_catch_up_results_pull()
+
+    def on_unmount(self) -> None:
+        """Stop the notification observer + any pending pull debounce.
+
+        Workbench-scoped lifecycle (plan ruling 3): neither must outlive
+        this screen -- setting the cancel event is the observer's own
+        documented stop signal (`EventObserver.run` checks it at every
+        await point), so the background worker unwinds on its own instead
+        of being force-cancelled mid-stream.
+        """
+        if self._notification_cancel_event is not None:
+            self._notification_cancel_event.set()
+        self._notification_cancel_event = None
+        if self._results_pull_debounce_timer is not None:
+            self._results_pull_debounce_timer.stop()
+            self._results_pull_debounce_timer = None
+        super().on_unmount()
+
+    def _start_server_notification_observer(self) -> None:
+        """Start the SSE notification observer (schedules-handoff PR-6
+        task 4) -- workbench-scoped per plan ruling 3: begins here when a
+        server connection is configured; `on_unmount` above stops it.
+
+        This is the first real caller of
+        `ServerNotificationEventObserver.observe()` --
+        `NotificationsScopeService.observe_server_feed_events` has existed
+        since 18940 slice 3 with nothing invoking it (survey §3).
+        """
+        service = self._service()
+        scope_service = getattr(self.app_instance, "notifications_scope_service", None)
+        if (
+            service is None
+            or scope_service is None
+            or not self._server_available(service, self._active_server_id())
+        ):
+            return
+        self._notification_cancel_event = asyncio.Event()
+        self.run_worker(
+            self._run_server_notification_observer,
+            exclusive=True,
+            group="schedules-notification-observer",
+            exit_on_error=False,
+        )
+
+    async def _run_server_notification_observer(self) -> None:
+        """Supervise the SSE notification observer for this screen's life.
+
+        Reading `EventObserver.run()` end to end (event_observer.py),
+        `observe()` can leave us in exactly four ways:
+
+        1. **Cancelled** -- `cancel_event` was set (our `on_unmount`
+           signal). `run()` returns cleanly, `result.cancelled is True`,
+           checked at every await point (mid-stream-read AND mid-backoff-
+           sleep), so this is near-immediate. We return -- no retry.
+        2. **Clean stream end** -- the transport's async generator raises
+           `StopAsyncIteration` (the server closed the SSE connection
+           without error). `run()` returns normally, `cancelled=False`.
+           Not fatal for a long-lived feed; we restart `observe()` after
+           the flat backoff below.
+        3. **Stale/unsupported cursor exhausted** -- `StaleCursorError`/
+           `UnsupportedCursorError` are retried internally (with reset +
+           backoff) up to `max_reconnects` times; once exhausted, `run()`
+           STILL returns normally (`cancelled=False`) rather than raising.
+           Same handling as case 2: restart.
+        4. **Sustained transport failure** -- any other `Exception` from
+           the transport is retried internally the same way, but once
+           `max_reconnects` is exhausted `run()` RE-RAISES (after
+           `observe()` records status="error" via `_record_status`). This
+           is the one case that reaches our `except` below; we log and
+           restart after the same backoff, so a down/flaky server
+           degrades to "resumes once reachable again", never a
+           permanently dead observer for the rest of this screen's life.
+
+        A handler exception (case 5, hypothetical -- `_on_server_
+        notification_event` performs no I/O and cannot realistically
+        raise) would surface identically to case 4: `run()`'s inner loop
+        has no handler-specific try/except, so it falls into the same
+        generic `except Exception` path.
+
+        `exit_on_error=False` on the `run_worker` call that invokes this
+        coroutine is the backstop against a bug here still crashing the
+        app (the established run_worker(exit_on_error) trap).
+
+        Log discipline (fix round 1 -- a sustained failure used to dump a
+        full ERROR-level traceback every ~5s restart, worst in the
+        accepted profile-vanished edge case where `_resolve_server_
+        event_scope` raises synchronously and the inner 5-reconnect
+        absorption in `EventObserver.run()` never even engages): the
+        FIRST failure of a given exception class logs one `warning` with
+        just the exception summary (no traceback); identical-class
+        repeats log at `debug`; a class change re-warns (a
+        `ServerEventScopeRequiredError` outage turning into a genuine
+        network error, say, is worth a fresh heads-up); a subsequent
+        success logs one `info` and clears the remembered class.
+        """
+        scope_service = getattr(self.app_instance, "notifications_scope_service", None)
+        cancel_event = self._notification_cancel_event
+        if scope_service is None or cancel_event is None:
+            return
+        last_failure_class: type[BaseException] | None = None
+        while not cancel_event.is_set():
+            try:
+                result = await scope_service.observe_server_feed_events(
+                    handler=self._on_server_notification_event,
+                    cancel_event=cancel_event,
+                    max_reconnects=_NOTIFICATION_OBSERVER_MAX_RECONNECTS,
+                )
+            except Exception as exc:  # noqa: BLE001 - case 4/5 above, never fatal here
+                if type(exc) is last_failure_class:
+                    logger.debug(
+                        f"Schedules notification observer still failing "
+                        f"({exc.__class__.__name__}: {exc}); retrying"
+                    )
+                else:
+                    logger.warning(
+                        f"Schedules notification observer connection failed "
+                        f"({exc.__class__.__name__}: {exc}); retrying"
+                    )
+                    last_failure_class = type(exc)
+            else:
+                if result.cancelled:
+                    return
+                if last_failure_class is not None:
+                    logger.info("Schedules notification observer reconnected")
+                    last_failure_class = None
+            if cancel_event.is_set():
+                return
+            try:
+                await asyncio.wait_for(
+                    cancel_event.wait(),
+                    timeout=_NOTIFICATION_OBSERVER_RESTART_DELAY_SECONDS,
+                )
+            except TimeoutError:
+                pass
+
+    async def _on_server_notification_event(self, event: Any) -> bool:
+        """ACK every server notification; `automation_run_*` kinds
+        schedule a debounced results pull (plan ruling 3).
+
+        Always returns True (ack): a kind this screen doesn't act on must
+        still advance the observer's durable cursor, or an unrelated
+        notification stream would replay forever (`EventObserver.run`'s
+        ack-then-advance contract). The server puts the automation_run_*
+        vocabulary at `payload["data"]["kind"]` (ADR-077 phase-1
+        pass-back, survey §3) -- `event_kind`/`payload_kind` are the SSE
+        envelope's own generic fields, not this.
+        """
+        payload = getattr(event, "payload", None)
+        data = payload.get("data") if isinstance(payload, Mapping) else None
+        kind = data.get("kind") if isinstance(data, Mapping) else None
+        if isinstance(kind, str) and kind.startswith("automation_run_"):
+            self._schedule_results_pull()
+        return True
+
+    def _schedule_catch_up_results_pull(self) -> None:
+        """Recover results whose notification was acked while unmounted.
+
+        `_on_server_notification_event` acks EVERY event before the pull
+        it schedules has run (it must -- the observer's ack-then-advance
+        contract is what stops an unrelated stream replaying forever), so
+        an event acked just before this screen went away advances the
+        durable cursor and is never redelivered. Re-timing the ack is the
+        wrong lever: the pull is a newest-window walk keyed on nothing but
+        "what does the server have now", i.e. idempotent, so one pull at
+        mount recovers whatever the lost event would have fetched -- and
+        any number of lost events, not just one.
+
+        Goes through the same debounced single-flight path as a live
+        event, so mounting into an event burst still costs exactly one
+        pull. Gated on a configured server for the same reason
+        `_start_server_notification_observer` is: with no server there is
+        nothing to pull and `_run_phase` would only record a sync error.
+        """
+        service = self._service()
+        if service is None or not self._server_available(
+            service, self._active_server_id()
+        ):
+            return
+        self._schedule_results_pull()
+
+    def _schedule_results_pull(self) -> None:
+        """Debounce a notification-triggered results pull (plan ruling
+        3): a burst of `automation_run_*` events collapses into ONE
+        pull, same stop-and-restart timer shape as the queue filter's
+        own debounce.
+        """
+        if self._results_pull_debounce_timer is not None:
+            self._results_pull_debounce_timer.stop()
+        self._results_pull_debounce_timer = self.set_timer(
+            RESULTS_PULL_DEBOUNCE_SECONDS, self._start_results_pull
+        )
+
+    def _start_results_pull(self) -> None:
+        self._results_pull_debounce_timer = None
+        if self._results_pull_running:
+            # A pull from an earlier debounce window is still in flight --
+            # absorb this trigger into a single follow-up pull instead of
+            # running two pulls concurrently (single-flight, no pile-up;
+            # the worker-collision lesson).
+            self._results_pull_rerun_requested = True
+            return
+        self._results_pull_running = True
+        self.run_worker(
+            self._pull_results_worker,
+            exclusive=True,
+            group="schedules-results-pull",
+            exit_on_error=False,
+        )
+
+    async def _pull_results_worker(self) -> None:
+        """Pull automation results once, then once more if a trigger
+        landed while the first pull was running (rerun flag) -- never
+        more than one queued follow-up.
+
+        Reuses `SyncEngine._run_phase` -- the same containment `sync_now`
+        uses for this exact phase (survey §2) -- rather than a full sync
+        (the brief: "the narrowest callable, not a full sync").
+        `_run_phase` never raises: a failure is recorded via
+        `_record_sync_error` onto the persisted sync-error state
+        `_refresh_owner_select` already renders, so a pull failure here
+        surfaces exactly like a failed "s" sync (the existing sync-error
+        path) -- and can never reach the observer's own coroutine, which
+        is a wholly separate worker/group.
+        """
+        try:
+            while True:
+                service = self._service()
+                if service is not None:
+                    await service.sync_engine._run_phase(
+                        service.owner_id,
+                        "Automation results pull (notification)",
+                        service.sync_engine._pull_results,
+                    )
+                    self._refresh_owner_select()
+                    self._refresh_results_tab()
+                if not self._results_pull_rerun_requested:
+                    return
+                self._results_pull_rerun_requested = False
+        finally:
+            self._results_pull_running = False
+
+    def _refresh_scheduler_liveness(self) -> None:
+        """Update the scheduler-liveness line from the durable heartbeat
+        (TASK-26025). Never raises -- a diagnostics read must not break the
+        screen."""
+        try:
+            from datetime import datetime, timezone
+
+            from ....config import get_cli_setting
+            from ....Scheduling.constants import SCHEDULER_POLL_INTERVAL_SECONDS
+            from ....Scheduling.scheduler_heartbeat import (
+                default_heartbeat_path,
+                read_heartbeat,
+                scheduler_liveness_line,
+            )
+
+            poll = get_cli_setting(
+                "scheduling",
+                "scheduler_poll_interval_seconds",
+                SCHEDULER_POLL_INTERVAL_SECONDS,
+            )
+            line = scheduler_liveness_line(
+                read_heartbeat(default_heartbeat_path()),
+                now=datetime.now(timezone.utc),
+                poll_interval=float(poll or SCHEDULER_POLL_INTERVAL_SECONDS),
+            )
+            self._update_static_content(
+                self.query_one("#scheduling-liveness", Static), line
+            )
+        except Exception:  # noqa: BLE001 -- liveness display never breaks the screen
+            pass
 
     def _refresh_next_run_rendering(self) -> None:
         """Re-render the queue so relative next-run text stays honest.
+
+        Also refreshes the scheduler-liveness line (TASK-26025) so a loop
+        that dies while the screen is open turns visibly stale.
 
         Skips unless this screen is the top of the stack. (Textual's
         ``is_current`` also counts screens behind the top one --
@@ -339,7 +726,12 @@ class SchedulesWorkbench(BaseAppScreen):
         nothing to refresh, and the no-service path must keep its own
         detail-pane copy.
         """
-        if self.app.screen is not self or not self._visible_tasks:
+        if self.app.screen is not self:
+            return
+        # TASK-26025: refresh liveness even on an empty queue -- a stall
+        # with nothing queued is exactly the case AC#2 must distinguish.
+        self._refresh_scheduler_liveness()
+        if not self._visible_tasks:
             return
         self._render_table()
 
@@ -445,11 +837,25 @@ class SchedulesWorkbench(BaseAppScreen):
             # user asking "what went wrong while I wasn't looking".
             or (_was_missed_while_away(task) and "missed" in text)
         ]
-        rows: list[tuple[str, str, Text, str]] = [
+        # Owner suffix (plan ruling 4): hidden at compact width, evaluated
+        # once per render pass -- `_sync_responsive_workbench` (on_mount/
+        # on_resize) always runs before this, so `self.size` is current.
+        compact_owner_suffix = self.size.width <= SCHEDULES_COMPACT_WORKBENCH_MAX_WIDTH
+        rows: list[tuple[Text, str, Text, str]] = [
             (
-                ("● " if task.id in self._marked_ids else "")
-                + ("◇ " if _was_missed_while_away(task) else "")
-                + task.title,
+                # `Text`: the title is user-authored, so it must never be
+                # re-parsed as markup by the DataTable cell formatter
+                # (D8's class -- the owner suffix here happens to use
+                # parens and survived live, but `[bold]` in a reminder
+                # title would not have). The other two str cells are built
+                # from this module's own vocabulary, not outside text.
+                Text(
+                    ("● " if task.id in self._marked_ids else "")
+                    + ("◇ " if _was_missed_while_away(task) else "")
+                    + task.title
+                    + _transfer_row_suffix(task)
+                    + _queue_owner_suffix(task, compact=compact_owner_suffix)
+                ),
                 _task_type_label(task),
                 status_badge_text(_task_status(task)),
                 # Compact: same relative form as the detail pane, without
@@ -513,6 +919,41 @@ class SchedulesWorkbench(BaseAppScreen):
         """Update the detail pane when the user highlights a task row."""
         self._update_detail_for_index(event.cursor_row)
 
+    def _incidents_for(self, task_id) -> list:
+        """TASK-26027: the selected task's failure incidents (fail-safe).
+
+        Reminders key their incidents by the raw task id; briefings (whose
+        failures the briefing handler records) key by "briefing:<id>", so
+        both spellings are queried.
+        """
+        db = getattr(self._scheduling_service, "db", None)
+        reader = getattr(db, "list_task_incidents", None)
+        if not callable(reader):
+            return []
+        rows: list = []
+        for key in (str(task_id), f"briefing:{task_id}"):
+            try:
+                rows.extend(reader(key, limit=10))
+            except Exception:  # noqa: BLE001 -- never breaks the pane
+                pass
+        return rows
+
+    def _run_history_for(self, task_id) -> list:
+        """TASK-26026: the selected task's durable run history, newest first.
+
+        Fail-safe: a missing service/method or a read error yields an empty
+        history rather than breaking the detail pane.
+        """
+        service = self._scheduling_service
+        db = getattr(service, "db", None)
+        reader = getattr(db, "list_task_runs", None)
+        if not callable(reader):
+            return []
+        try:
+            return list(reader(str(task_id), limit=8))
+        except Exception:  # noqa: BLE001 -- history read never breaks the pane
+            return []
+
     def _update_detail_for_index(self, index: int) -> None:
         """Render task details in the detail and inspector panes."""
         if not (0 <= index < len(self._visible_tasks)):
@@ -525,8 +966,108 @@ class SchedulesWorkbench(BaseAppScreen):
 
         task = self._visible_tasks[index]
         self._selected_task_id = task.id
-        self.query_one("#scheduling-task-detail", TaskDetail).set_task(task)
+        task_detail = self.query_one("#scheduling-task-detail", TaskDetail)
+        task_detail.set_task(
+            task,
+            run_history=self._run_history_for(task.id),
+            incidents=self._incidents_for(task.id),
+        )
+        self._update_transfer_actions(task_detail, task)
         self.query_one("#scheduling-task-inspector", TaskInspector).set_task(task)
+
+    def _update_transfer_actions(
+        self, task_detail: TaskDetail, task: ReminderTask | ScheduledTask
+    ) -> None:
+        """Compute Move/Retry/Cancel disabled-reasons for the detail pane.
+
+        Reasons come straight from `SchedulingService.transfer_refusal`/
+        `cancel_refusal` (spec §6.4/§6.3) so the UI never re-derives the
+        refusal rules itself (health quoting included, and -- fix round
+        finding 1 -- cancel's own state branching too) -- each reason is
+        only computed for the button `TaskDetail.set_task` already
+        decided is structurally relevant (e.g. `to_local_reason` is never
+        computed for a local row, which would always trivially refuse
+        with "not server-owned" noise).
+        """
+        service = self._scheduling_service
+        if service is None or not isinstance(task, ReminderTask):
+            task_detail.set_transfer_reasons(
+                to_server_reason=None,
+                to_local_reason=None,
+                retry_reason=None,
+                cancel_reason=None,
+                retry_errors=[],
+            )
+            task_detail.set_lifecycle_lock(None)
+            return
+
+        row = transfer_row_dict(task)
+        is_server_owned = str(task.owner_id or "").startswith("server:")
+        transfer_state = task.transfer_state
+
+        # `transfer_refusal` already returns None for `to_server_failed`
+        # (Task 6's retry leg deliberately excludes it from "already in
+        # progress"), so this needs no extra state carve-out -- the same
+        # call also backs the Retry button below.
+        to_server_reason = (
+            service.transfer_refusal(row, "to_server") if not is_server_owned else None
+        )
+        to_local_reason = (
+            service.transfer_refusal(row, "to_local") if is_server_owned else None
+        )
+        cancel_reason = service.cancel_refusal(row)
+
+        # A `to_server_failed` row is never server-owned, so this is the
+        # exact same call `to_server_reason` already made above -- reused
+        # rather than repeated.
+        retry_reason: str | None = None
+        retry_errors: list[str] = []
+        if transfer_state == "to_server_failed":
+            retry_reason = to_server_reason
+            # fix round finding 3: keyed off the mutation's OWN owner_id
+            # column, not a guess via "today's active server" -- a
+            # `to_server_failed` row's mutation was recorded under
+            # whatever server was active at the time of the failed
+            # attempt, which silently stops matching after a server
+            # switch if guessed instead of read.
+            mutation = service.db.get_pending_mutation_for_local_id(
+                task.id, "reminder_task"
+            )
+            if mutation is not None:
+                payload = mutation.get("payload") or {}
+                errors = payload.get("transfer_errors")
+                if errors:
+                    retry_errors = list(errors)
+
+        task_detail.set_transfer_reasons(
+            to_server_reason=to_server_reason,
+            to_local_reason=to_local_reason,
+            retry_reason=retry_reason,
+            cancel_reason=cancel_reason,
+            retry_errors=retry_errors,
+        )
+        # spec §6.3 read-only-except-cancel (final review I7). Applied
+        # AFTER set_transfer_reasons, which owns the same reason Static.
+        task_detail.set_lifecycle_lock(service.transfer_lock_reason(row))
+
+    def _refuse_if_transfer_locked(self, task: Any, verb: str) -> bool:
+        """Notify and return True when ``task`` is read-only mid-transfer.
+
+        Spec §6.3 (final review I7): the key-bound Edit / Delete /
+        Enable-Disable verbs share the detail pane's lock, so pressing
+        `e`/`d`/`space` on an in-flight row says why instead of silently
+        no-oping against the facade's own guard. The reason string comes
+        from `SchedulingService.transfer_lock_reason` -- never re-derived
+        here.
+        """
+        service = self._scheduling_service
+        if service is None or not isinstance(task, ReminderTask):
+            return False
+        reason = service.transfer_lock_reason(transfer_row_dict(task))
+        if reason is None:
+            return False
+        self.app_instance.notify(f"Cannot {verb}: {reason}", severity="warning")
+        return True
 
     async def _refresh_console_context(self) -> None:
         """Load the latest Schedules Console-follow context."""
@@ -683,10 +1224,213 @@ class SchedulesWorkbench(BaseAppScreen):
             group="schedules-delete-task",
         )  # type: ignore[arg-type]
 
+    @on(TransferToServerRequested)
+    def _on_transfer_to_server_requested(
+        self, event: TransferToServerRequested
+    ) -> None:
+        event.stop()
+        self._begin_transfer(event.task, "to_server")
+
+    @on(TransferToLocalRequested)
+    def _on_transfer_to_local_requested(
+        self, event: TransferToLocalRequested
+    ) -> None:
+        event.stop()
+        self._begin_transfer(event.task, "to_local")
+
+    @on(RetryTransferRequested)
+    def _on_retry_transfer_requested(self, event: RetryTransferRequested) -> None:
+        # Obligation (f)/spec §6.1.5: retrying a `to_server_failed` row is
+        # the SAME facade call as a first-time begin -- `transfer_refusal`
+        # deliberately narrows its "already in progress" check to exclude
+        # `to_server_failed`, and `begin_transfer_to_server`'s CAS accepts
+        # both `None` and `to_server_failed` as its starting state.
+        event.stop()
+        self._begin_transfer(event.task, "to_server")
+
+    @on(CancelTransferRequested)
+    def _on_cancel_transfer_requested(self, event: CancelTransferRequested) -> None:
+        event.stop()
+        self._cancel_transfer(event.task)
+
+    @staticmethod
+    def _transfer_confirm_dialog(
+        name: str, direction: str, warnings: list[str]
+    ) -> ConfirmationDialog:
+        """Build the Move confirm dialog (spec §6.1/§6.2/§6.4) -- shared by
+        the reminder (`_begin_transfer`) and Automations-tab
+        (`_begin_automation_transfer`) flows (Task 7 fix round item 1: two
+        near-identical call sites, one copy of the confirm-dialog copy)."""
+        destination_label = "the server" if direction == "to_server" else "this device"
+        lines = [f'Move "{escape_markup(name)}" to {destination_label}?']
+        if warnings:
+            lines.append("")
+            lines.extend(f"- {escape_markup(warning)}" for warning in warnings)
+        if direction == "to_server":
+            lines.append("")
+            lines.append(
+                "It keeps running on this device until the server accepts "
+                "the transfer -- nothing goes dark while this is only "
+                "queued."
+            )
+        return ConfirmationDialog(
+            title="Move to server" if direction == "to_server" else "Move to local",
+            message="\n".join(lines),
+            confirm_label="Move",
+            cancel_label="Cancel",
+        )
+
+    @staticmethod
+    def _transfer_pending_toast_text(name: str, direction: str) -> str:
+        """Honest §6.1.1 "still runs here" / dormant-copy copy, shared by
+        the reminder and Automations-tab transfer flows."""
+        if direction == "to_server":
+            return (
+                f"'{name}' is queued to move to the server -- it still "
+                "runs on this device until the server accepts it."
+            )
+        return (
+            f"'{name}' is queued to move to this device -- a dormant copy "
+            "is ready and will arm once the server releases it."
+        )
+
+    def _begin_transfer(self, task: ReminderTask, direction: str) -> None:
+        """Confirm, then start a transfer for ``task`` (spec §6.1/§6.2).
+
+        Always confirms first -- Move is not a casual action, and the
+        dialog is the one place `transfer_warnings` (imminent one-time
+        `run_at`, non-transferring `timeout_seconds`) actually reaches the
+        user before they commit, not only when something happens to be
+        wrong. `transfer_refusal` is checked again defensively (the
+        button should already be disabled when refused) before ever
+        opening the dialog.
+        """
+        service = self._scheduling_service
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot start a transfer.",
+                severity="warning",
+            )
+            return
+
+        row = transfer_row_dict(task)
+        reason = service.transfer_refusal(row, direction)
+        if reason is not None:
+            self.app_instance.notify(reason, severity="warning")
+            return
+        warnings = service.transfer_warnings(row, direction)
+        dialog = self._transfer_confirm_dialog(task.title, direction, warnings)
+
+        async def _confirm_and_begin() -> None:
+            confirmed = await self.app.push_screen_wait(dialog)
+            if not confirmed:
+                return
+            try:
+                if direction == "to_server":
+                    outcome = await service.begin_transfer_to_server(
+                        "reminder_task", task.id
+                    )
+                else:
+                    outcome = await service.begin_transfer_to_local(
+                        "reminder_task", task.id
+                    )
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to begin transfer for {}", task.id)
+                self.app_instance.notify(
+                    f"Failed to start the transfer for '{task.title}'.",
+                    severity="error",
+                )
+                self._request_tasks_refresh()
+                return
+            self._notify_transfer_outcome(task, direction, outcome)
+            self._request_tasks_refresh()
+
+        self.run_worker(
+            _confirm_and_begin,
+            exclusive=True,
+            group="schedules-transfer",
+        )  # type: ignore[arg-type]
+
+    def _notify_transfer_outcome(
+        self, task: ReminderTask, direction: str, outcome: "TransferOutcome"
+    ) -> None:
+        """Toast a transfer's result -- honest about what actually happened
+        (spec §6.1.1: a queued-not-sent transfer never claims the task
+        stopped running here)."""
+        if outcome.status == "pending":
+            self.app_instance.notify(
+                self._transfer_pending_toast_text(task.title, direction),
+                severity="information",
+            )
+        elif outcome.status == "refused":
+            self.app_instance.notify(
+                outcome.reason or f"Could not move '{task.title}'.",
+                severity="warning",
+            )
+        elif outcome.status == "not_found":
+            self.app_instance.notify(
+                f"'{task.title}' no longer exists.", severity="warning"
+            )
+
+    def _cancel_transfer(self, task: ReminderTask) -> None:
+        """Cancel ``task``'s in-progress transfer immediately.
+
+        No confirm dialog: cancel is the escape hatch spec §6.3 exists
+        for, and gating the escape hatch behind its own confirmation
+        fights the point of it. `task.id` is whichever row is currently
+        selected -- for a release's dormant local copy that is already
+        the copy's OWN id (it is a first-class queue row, not reached
+        through the mirror), which is exactly the id `cancel_transfer`
+        needs for that leg (Task 6 handoff note).
+        """
+        service = self._scheduling_service
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot cancel the "
+                "transfer.",
+                severity="warning",
+            )
+            return
+
+        async def _cancel_and_refresh() -> None:
+            try:
+                outcome = await service.cancel_transfer("reminder_task", task.id)
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to cancel transfer for {}", task.id)
+                self.app_instance.notify(
+                    f"Failed to cancel the transfer for '{task.title}'.",
+                    severity="error",
+                )
+                self._request_tasks_refresh()
+                return
+            if outcome.status == "cancelled":
+                self.app_instance.notify(
+                    _cancel_toast_text(task.title),
+                    severity="information",
+                )
+            else:
+                self.app_instance.notify(
+                    outcome.reason
+                    or f"Could not cancel the transfer for '{task.title}'.",
+                    severity="warning",
+                )
+            self._request_tasks_refresh()
+
+        self.run_worker(
+            _cancel_and_refresh,
+            exclusive=True,
+            group="schedules-transfer",
+        )  # type: ignore[arg-type]
+
     @on(Button.Pressed, "#scheduling-new-task")
     def _on_new_task_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        self.action_create_reminder()
+        self._open_new_task_chooser()
+
+    @on(Button.Pressed, "#scheduling-new-automation")
+    def _on_new_automation_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.action_create_automation()
 
     @on(Button.Pressed, "#schedules-follow-in-console")
     def follow_latest_schedule_run_in_console(self, event: Button.Pressed) -> None:
@@ -739,12 +1483,90 @@ class SchedulesWorkbench(BaseAppScreen):
                 zones.append(zone)
         return zones
 
+    def _runs_on_options(self) -> tuple[list[tuple[str, str]], str]:
+        """Runs-on choices for the reminder/automation forms.
+
+        The current screen owner leads and is always the default (spec
+        sec 8); "Server (<id>)" is offered only when a server owner is
+        actually connected (mirrors `_server_available`'s own gate). The
+        owner might not literally be "local" or match the offered server
+        option (e.g. it drifted to a different server id) -- appended as
+        a labeled fallback so the Select never receives a value outside
+        its own options (same precedent as the reminder form's timezone
+        selector, review F4).
+        """
+        service = self._service()
+        owner_id = service.owner_id if service else "local"
+        options: list[tuple[str, str]] = [("This device", "local")]
+        active_server_id = self._active_server_id()
+        if self._server_available(service, active_server_id):
+            options.append((f"Server ({active_server_id})", f"server:{active_server_id}"))
+        if owner_id not in {value for _, value in options}:
+            options.append((owner_id, owner_id))
+        return options, owner_id
+
     def action_create_reminder(self) -> None:
         """Open the create-reminder form."""
+        options, default_owner = self._runs_on_options()
         self.app.push_screen(
-            ReminderForm(known_timezones=self._task_timezones()),
+            ReminderForm(
+                known_timezones=self._task_timezones(),
+                available_owners=options,
+                default_owner=default_owner,
+            ),
             callback=self._on_reminder_form_result,
         )
+
+    def action_create_automation(self) -> None:
+        """Open the create-recurring-question-automation form (task-5)."""
+        service = self._scheduling_service
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot create an automation.",
+                severity="warning",
+            )
+            return
+        options, default_owner = self._runs_on_options()
+        self.app.push_screen(
+            AutomationDefinitionForm(
+                service, available_owners=options, default_owner=default_owner
+            ),
+            callback=self._on_automation_form_result,
+        )
+
+    def _open_new_task_chooser(self) -> None:
+        """Ask which kind of scheduled task to create (task-5)."""
+        self.app.push_screen(NewTaskChoiceModal(), callback=self._on_new_task_choice)
+
+    def _on_new_task_choice(self, choice: str | None) -> None:
+        if choice == "reminder":
+            self.action_create_reminder()
+        elif choice == "recurring_question":
+            self.action_create_automation()
+
+    def _on_automation_form_result(
+        self, outcome: Any | None, *, was_edit: bool = False
+    ) -> None:
+        """Notify and refresh the Automations list after a definition save.
+
+        `was_edit` only changes the toast wording ("updated" vs
+        "created") -- an edit reusing the create-mode "created" copy
+        would misreport what actually happened.
+        """
+        if outcome is None:
+            return
+        status = getattr(outcome, "status", None)
+        verb = "updated" if was_edit else "created"
+        if status == "saved":
+            self.app_instance.notify(
+                f"Automation {verb}.", severity="information"
+            )
+        elif status == "queued":
+            self.app_instance.notify(
+                f"Automation {verb} locally — it will sync to the server.",
+                severity="information",
+            )
+        self._request_automations_refresh()
 
     def _on_reminder_form_result(
         self, form_data: dict[str, Any] | None, task_id: str | None = None
@@ -761,15 +1583,39 @@ class SchedulesWorkbench(BaseAppScreen):
             )
             return
 
+        # Routing only (task-5): which owner the reminder is written under,
+        # not a ReminderTask field. Defaults to the service's current owner
+        # so a form built before this selector existed (or a caller that
+        # omits it) behaves exactly as before.
+        target_owner = form_data.pop("owner_id", None) or service.owner_id
+        # This list is owner-scoped, so a save aimed elsewhere cannot appear
+        # in it -- say where it went instead of a bare "created" that reads
+        # as a lost save. Label, not raw id: same vocabulary as the "Runs on"
+        # selector the owner was picked from.
+        owner_label = {
+            value: label for label, value in self._runs_on_options()[0]
+        }.get(target_owner, target_owner)
+        created_message = (
+            "Scheduled task created."
+            if target_owner == service.owner_id
+            else f"Scheduled task created for {owner_label} — switch to that "
+            "owner to see it."
+        )
+
         async def _save_and_refresh() -> None:
+            # The owner is threaded through the call rather than flipped onto
+            # the service around it: `service.owner_id` is shared mutable
+            # state that the sync/refresh/run-now workers also read, and a
+            # flip held across an awaited network round-trip is visible to
+            # every one of them.
             try:
                 if task_id is None:
-                    await service.create_reminder(form_data)
-                    self.app_instance.notify(
-                        "Scheduled task created.", severity="information"
-                    )
+                    await service.create_reminder(form_data, owner_id=target_owner)
+                    self.app_instance.notify(created_message, severity="information")
                 else:
-                    await service.update_reminder(task_id, form_data)
+                    await service.update_reminder(
+                        task_id, form_data, owner_id=target_owner
+                    )
                     self.app_instance.notify(
                         "Scheduled task updated.", severity="information"
                     )
@@ -787,12 +1633,41 @@ class SchedulesWorkbench(BaseAppScreen):
             group="schedules-save-reminder",
         )  # type: ignore[arg-type]
 
+    @on(AcknowledgeIncidentRequested)
+    def _on_acknowledge_incident(self, event) -> None:
+        """TASK-26027: acknowledge one incident, then refresh the detail."""
+        event.stop()
+        db = getattr(self._scheduling_service, "db", None)
+        ack = getattr(db, "acknowledge_incident", None)
+        if not callable(ack):
+            return
+        try:
+            from datetime import datetime, timezone
+
+            ack(int(event.incident_id), datetime.now(timezone.utc))
+        except Exception:  # noqa: BLE001 -- ack failure never breaks the screen
+            logger.debug("acknowledge_incident failed")
+            return
+        # re-render the detail so the acked incident drops out of the
+        # alerting set and the button hides.
+        if self._selected_task_id is not None:
+            for index, task in enumerate(self._visible_tasks):
+                if task.id == self._selected_task_id:
+                    self._update_detail_for_index(index)
+                    break
+
     @on(EditTaskRequested)
     def _on_edit_task_requested(self, event: EditTaskRequested) -> None:
         """Open the reminder form pre-filled for editing."""
         event.stop()
+        options, default_owner = self._runs_on_options()
         self.app.push_screen(
-            ReminderForm(event.task, known_timezones=self._task_timezones()),
+            ReminderForm(
+                event.task,
+                known_timezones=self._task_timezones(),
+                available_owners=options,
+                default_owner=default_owner,
+            ),
             callback=lambda result: self._on_reminder_form_result(
                 result, event.task.id
             ),
@@ -820,8 +1695,11 @@ class SchedulesWorkbench(BaseAppScreen):
         """Run the highlighted task immediately (``r`` key).
 
         Routes by active tab: the Automations tab's ``r`` dispatches a
-        server-side run (ADR-077 -- the server owns execution); everywhere
-        else it is the local reminder Run-now (task-18938).
+        server-side run (ADR-077 -- the server owns execution); the
+        Results tab's ``r`` marks the selected result read instead
+        (schedules-handoff PR-6 task 3 -- a natural reading of the same
+        key); everywhere else it is the local reminder Run-now
+        (task-18938).
         """
         try:
             active_pane = self.query_one("#scheduling-tabs", TabbedContent).active
@@ -831,6 +1709,9 @@ class SchedulesWorkbench(BaseAppScreen):
             definition = self._selected_automation()
             if definition is not None:
                 self._run_automation_now(definition)
+            return
+        if active_pane == "scheduling-results-tab":
+            self._review_selected_result("read")
             return
         task = self._selected_reminder_task()
         if task is not None:
@@ -918,14 +1799,17 @@ class SchedulesWorkbench(BaseAppScreen):
         )  # type: ignore[arg-type]
 
     async def load_automations(self) -> None:
-        """Fetch server automation definitions for the Automations tab."""
+        """Fetch and merge local + server automation definitions (task-5 fix round).
+
+        This tab used to be server-only: a locally-saved recurring
+        question had no on-screen home. Local rows are now merged in
+        (owner distinguished via `automation_name_cell`'s Name-cell
+        prefix) so a local save's refresh actually shows the new row.
+        """
         notice = self.query_one("#scheduling-automations-notice", Static)
         table = self.query_one("#scheduling-automations-table", DataTable)
         service = self._scheduling_service
-        server_client = getattr(service, "server_client", None) if service else None
-        if server_client is None or not self._server_available(
-            service, self._active_server_id()
-        ):
+        if service is None:
             self._automations = []
             self._selected_automation_id = None
             table.clear()
@@ -935,57 +1819,62 @@ class SchedulesWorkbench(BaseAppScreen):
             self._clear_automation_history(
                 "Run history needs a connected server."
             )
+            self.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            ).set_definition(None)
             return
+
         # task-15476 discipline: a rebuild must reconcile the selection by
         # id -- keep the cursor on the same definition when it survives the
-        # refresh, and clear it when it does not, so `r` can never act on a
-        # row the user is no longer looking at.
+        # refresh, and clear it when it does not, so `r`/`e` can never act
+        # on a row the user is no longer looking at.
         previous_selection = self._selected_automation_id
-        try:
-            # Follow `has_more` pages so the tab never silently hides the
-            # tail of a large definition list; the cap is a defensive bound,
-            # not an expected cliff.
-            items: list[dict[str, Any]] = []
-            total = 0
-            offset = 0
-            while True:
-                response = await server_client.list_automation_definitions(
-                    limit=50, offset=offset
+
+        local_items = await self._load_local_automations(service)
+
+        server_client = getattr(service, "server_client", None)
+        server_available = server_client is not None and self._server_available(
+            service, self._active_server_id()
+        )
+        server_items: list[dict[str, Any]] = []
+        total_server = 0
+        server_error = False
+        if server_available:
+            try:
+                server_items, total_server = await self._load_server_automations(
+                    server_client
                 )
-                page = list(response.get("items", []))
-                items.extend(page)
-                total = int(response.get("total", len(items)) or 0)
-                offset += len(page)
-                if (
-                    not page
-                    or not response.get("has_more")
-                    or len(items) >= AUTOMATIONS_LOAD_MAX_ROWS
-                ):
-                    break
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                "Failed to load server automations (server_id={})",
-                self._active_server_id(),
-            )
-            self._automations = []
-            self._selected_automation_id = None
-            table.clear()
-            self._update_static_content(
-                notice, "Could not load server automations — see the log."
-            )
-            self._clear_automation_history(
-                "Run history unavailable — the definition list failed to load."
-            )
-            return
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Failed to load server automations (server_id={})",
+                    self._active_server_id(),
+                )
+                server_error = True
+
+        items = local_items + server_items
         self._automations = items
         table.clear()
         for definition in items:
+            # Every cell goes in as `Text`, never `str` (task 6 round 2,
+            # D8). `DataTable` runs string cells through `rich.text.Text.
+            # from_markup`, whose tag regex matches `\[[a-z#/@]...]` -- so
+            # a server row's own owner prefix, `[http://127.0.0.1:8020]
+            # ...`, was consumed whole and server automations rendered
+            # with NO ownership prefix while the pane's own count line
+            # still said "1 automation on the server". (The old
+            # `server:42` fixture value would have been eaten identically,
+            # so no fixture shape could have caught this.) The cell
+            # formatter returns a `Text` untouched, so nothing re-parses
+            # content that came from outside this module -- structural,
+            # rather than depending on picking the right escape for
+            # whichever parser consumes the cell, which is the mistake
+            # this saga has now made three times.
             table.add_row(
-                str(definition.get("name") or definition.get("id")),
-                str(definition.get("family", "?")),
-                str(definition.get("lifecycle", "?")),
-                str(definition.get("health", "?")),
-                automation_execution_target_label(definition),
+                Text(automation_name_cell(definition)),
+                Text(str(definition.get("family", "?"))),
+                Text(str(definition.get("lifecycle", "?"))),
+                Text(str(definition.get("health", "?"))),
+                Text(automation_execution_target_label(definition)),
                 key=str(definition.get("id")),
             )
         row_keys = [str(definition.get("id")) for definition in items]
@@ -993,17 +1882,147 @@ class SchedulesWorkbench(BaseAppScreen):
             # Restoring the cursor fires RowHighlighted, which re-records
             # the same id -- belt and braces, set both explicitly.
             table.cursor_coordinate = (row_keys.index(previous_selection), 0)
+            # ...and that RowHighlighted hits the unchanged-id early
+            # return, so the pane would keep painting the PRE-refresh row
+            # (final review F4: edit a definition's model/cron/sources and
+            # save -- the table cell updated, the detail pane beside it
+            # did not, until the user selected another row and came back).
+            # The row DATA changed even though its id did not, so re-feed
+            # the pane explicitly. The detail worker is exclusive within
+            # its own group, so repeated refreshes are latest-wins, never
+            # a pile-up.
+            self._request_automation_detail(previous_selection)
         else:
             self._selected_automation_id = None
             self._clear_automation_history("Select an automation to see its history.")
-        shown = len(items)
-        suffix = f" (showing {shown} of {total})" if total > shown else ""
-        self._update_static_content(
-            notice,
-            f"{shown} automation{'' if shown == 1 else 's'} on the server{suffix}."
-            if shown
-            else "No automations on the server yet.",
+            self.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            ).set_definition(None)
+
+        notice_text = self._automations_notice_text(
+            local_items, server_items, server_available, total_server, server_error
         )
+        self._update_static_content(notice, notice_text)
+
+    async def _load_local_automations(
+        self, service: "SchedulingService"
+    ) -> list[dict[str, Any]]:
+        """Every definition that exists ONLY on this device, off the event loop.
+
+        That is not the same as `owner_id="local"`: an automation authored
+        offline with "Runs on: Server" is stored under `owner_id=
+        "server:<id>"` with `server_id IS NULL` until a sync pushes it, so
+        filtering on the local owner hid it from this half while the
+        server half could not know about it either -- it appeared in
+        NEITHER list (final review I5). Any row with no `server_id`
+        belongs here, whoever owns it; rows that HAVE a `server_id` are the
+        server half's by construction, so the two halves cannot duplicate.
+
+        Rows in that pending state are stamped `pending_sync` so the
+        renderer can say so (`automation_name_cell`) and the actions that
+        need a real server id can refuse honestly rather than calling the
+        server with a local uuid.
+
+        Health is never persisted (`automation_health.py`'s own docstring)
+        -- it is computed fresh here the same way `run_automation_now`
+        computes it before dispatching, so the column never shows the
+        create-time placeholder (`execution_unavailable`) as if it were
+        live.
+        """
+        from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
+
+        try:
+            all_rows = await asyncio.to_thread(service.db.list_automation_definitions)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to load local automation definitions")
+            return []
+        rows = [row for row in all_rows if not row.get("server_id")]
+        for row in rows:
+            if is_server_scoped_owner(row.get("owner_id")):
+                row["pending_sync"] = True
+            health, _reason = compute_local_health(self.app_instance, row)
+            row["health"] = health
+        return rows
+
+    async def _load_server_automations(
+        self, server_client: Any
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Follow `has_more` pages so the tab never silently hides the tail
+        of a large definition list; the cap is a defensive bound, not an
+        expected cliff.
+
+        Every item's `owner_id` is OVERWRITTEN with this connection's
+        `server:<active-server-id>` scope -- never read from the payload.
+        These rows are server-scoped by construction (this IS the server
+        fetch), and a server's self-reported `owner_id` is its own raw
+        user id, which has no reason to match our scoping convention:
+        live verification against a real tldw_server (task 6, D1) got
+        `"owner_id": "1"`, so the older stamp-only-when-absent guard
+        passed a present, non-prefixed value straight through. Every
+        downstream consumer (`is_server_scoped_owner`, the Name-cell
+        prefix, run-now routing, `_resolve_local_definition_id`'s mirror
+        lookup, transfer refusals) then read the row as LOCAL: server
+        automations rendered `[This device]`, `r` refused with the
+        local-health message, and `m` refused with "This automation no
+        longer exists."
+
+        This is the only ingestion boundary that needed the fix: both DB
+        mirror upserts (`upsert_automation_definitions_from_server`,
+        `upsert_automation_results_from_server`) already exclude the
+        payload's `owner_id` and stamp the caller's owner scope instead.
+        """
+        items: list[dict[str, Any]] = []
+        total = 0
+        offset = 0
+        while True:
+            response = await server_client.list_automation_definitions(
+                limit=50, offset=offset
+            )
+            page = list(response.get("items", []))
+            items.extend(page)
+            total = int(response.get("total", len(items)) or 0)
+            offset += len(page)
+            if (
+                not page
+                or not response.get("has_more")
+                or len(items) >= AUTOMATIONS_LOAD_MAX_ROWS
+            ):
+                break
+        owner_id = f"server:{self._active_server_id()}"
+        for item in items:
+            item["owner_id"] = owner_id
+        return items, total
+
+    @staticmethod
+    def _automations_notice_text(
+        local_items: list[dict[str, Any]],
+        server_items: list[dict[str, Any]],
+        server_available: bool,
+        total_server: int,
+        server_error: bool,
+    ) -> str:
+        """Compose the Automations-pane notice honestly from what actually loaded.
+
+        A server failure never hides local rows that DID load -- the two
+        sources degrade independently, so the server segment reports its
+        own outcome and a local-count addendum is appended only when there
+        is one to report.
+        """
+        if server_error:
+            base = "Could not load server automations — see the log."
+        elif server_available:
+            shown = len(server_items)
+            suffix = f" (showing {shown} of {total_server})" if total_server > shown else ""
+            base = (
+                f"{shown} automation{'' if shown == 1 else 's'} on the server{suffix}."
+                if shown
+                else "No automations on the server yet."
+            )
+        else:
+            base = "Server automations need a connected server."
+        if local_items:
+            base += f" {len(local_items)} on this device."
+        return base
 
     def _clear_automation_history(self, notice_text: str) -> None:
         """Reset the run-history pane to an explanatory notice."""
@@ -1043,6 +2062,30 @@ class SchedulesWorkbench(BaseAppScreen):
         # must never leave another definition's trail under the new title.
         table.clear()
         self._update_static_content(notice, "Loading run history…")
+
+        from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
+
+        owner_id = (definition or {}).get("owner_id")
+        if (definition or {}).get("pending_sync"):
+            # Never synced: the audit endpoint has no id to look up, and
+            # asking it with a local uuid would render a bare error.
+            table.clear()
+            self._update_static_content(
+                notice,
+                "This automation hasn't synced to the server yet, so it has "
+                "no run history.",
+            )
+            return
+        if not is_server_scoped_owner(owner_id):
+            # Honest gap (task-5 fix round): local automation runs are not
+            # tracked in a durable audit trail yet -- only the server side
+            # is. Never claim a server-shaped history for a local row.
+            table.clear()
+            self._update_static_content(
+                notice, "Local automation history isn't available yet."
+            )
+            return
+
         service = self._scheduling_service
         server_client = getattr(service, "server_client", None) if service else None
         if server_client is None:
@@ -1076,10 +2119,14 @@ class SchedulesWorkbench(BaseAppScreen):
             # no microseconds or timezone noise in a table cell.
             stamp = created[:16].replace("T", " ") if created else "?"
             summary = str(event.get("summary") or "")
+            # `Text`, not `str` -- same D8 rule as the definitions table
+            # above. `summary` is free-form server text ("Run failed:
+            # ChatConfigurationError: ..."), the likeliest of all these
+            # cells to carry a bracket token.
             table.add_row(
-                stamp,
-                str(event.get("event_type") or "?"),
-                summary,
+                Text(stamp),
+                Text(str(event.get("event_type") or "?")),
+                Text(summary),
             )
         suffix = f" of {total}" if total > len(items) else ""
         self._update_static_content(
@@ -1089,11 +2136,86 @@ class SchedulesWorkbench(BaseAppScreen):
             else "No recorded events for this automation yet.",
         )
 
+    def _request_automation_detail(self, definition_id: str) -> None:
+        """Schedule the definitions detail pane's DB reads through their
+        own exclusive worker group (schedules-redesign PR-1, Task 4): the
+        pane's counts are local-only sqlite reads, taken off the event
+        loop the same way `_load_local_automations` already reads
+        `service.db.*` from inside a worker coroutine."""
+        # run_worker takes no worker arguments in Textual 8.x -- bind the id
+        # in a closure (same shape as _request_automation_history's _load).
+        async def _load() -> None:
+            await self._load_automation_detail(definition_id)
+
+        self.run_worker(
+            _load,
+            exclusive=True,
+            group="schedules-load-automation-detail",
+        )  # type: ignore[arg-type]
+
+    async def _load_automation_detail(self, definition_id: str) -> None:
+        """Paint the definitions detail pane for `definition_id`.
+
+        `DefinitionDetail.set_definition` performs no I/O itself; this
+        method fetches the Task 2 count seams off the event loop
+        (`asyncio.to_thread`) and passes the results in.
+        """
+        detail = self.query_one("#scheduling-automation-detail", DefinitionDetail)
+        definition = self._selected_automation()
+        # A newer selection may have won the race with this worker; render
+        # nothing for a stale definition id (same guard `_load_automation_
+        # history` uses).
+        if definition is None or definition_id != self._selected_automation_id:
+            return
+        service = self._scheduling_service
+        if service is None:
+            detail.set_definition(
+                definition, run_count=0, last_run=None, unread_count=0
+            )
+            return
+
+        def _read_counts() -> tuple[int, dict[str, Any] | None, int]:
+            # Both run reads are owner-scoped (final review F11): they sit
+            # in one group on screen, and `convert_row_to_server_mirror`'s
+            # "converted" path rewrites `owner_id` while keeping the local
+            # id -- an unscoped count beside a scoped last-run rendered
+            # "Run count: 3" next to "Last run: Never run".
+            owner_id = str(definition.get("owner_id") or "local")
+            run_count = service.db.count_automation_runs(definition_id, owner_id)
+            runs = service.db.list_automation_runs(owner_id, definition_id, limit=1)
+            unread_count = service.db.count_unread_results(
+                owner_id=None, definition_id=definition_id
+            )
+            return run_count, (runs[0] if runs else None), unread_count
+
+        history_error = False
+        try:
+            run_count, last_run, unread_count = await asyncio.to_thread(_read_counts)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Failed to load automation detail counts (definition_id={})",
+                definition_id,
+            )
+            # Never paint 0/Never run off a read that blew up (F14): the
+            # pane says the read failed, matching how `_load_automation_
+            # history` reports its own read failure.
+            run_count, last_run, unread_count, history_error = 0, None, 0, True
+        if definition_id != self._selected_automation_id:
+            return
+        detail.set_definition(
+            definition,
+            run_count=run_count,
+            last_run=last_run,
+            unread_count=unread_count,
+            history_error=history_error,
+        )
+
     @on(DataTable.RowHighlighted, "#scheduling-automations-table")
     def _on_automations_row_highlighted(
         self, event: DataTable.RowHighlighted
     ) -> None:
-        """Track the highlighted definition for Run-now and its history pane."""
+        """Track the highlighted definition for Run-now, its history pane,
+        and its detail pane (schedules-redesign PR-1, Task 4)."""
         new_id = (
             str(event.row_key.value) if event.row_key and event.row_key.value else None
         )
@@ -1102,8 +2224,12 @@ class SchedulesWorkbench(BaseAppScreen):
         self._selected_automation_id = new_id
         if new_id is None:
             self._clear_automation_history("Select an automation to see its history.")
+            self.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            ).set_definition(None)
         else:
             self._request_automation_history(new_id)
+            self._request_automation_detail(new_id)
 
     def _selected_automation(self) -> dict[str, Any] | None:
         """Return the highlighted automation definition, if any."""
@@ -1113,6 +2239,78 @@ class SchedulesWorkbench(BaseAppScreen):
         return None
 
     def _run_automation_now(self, definition: dict[str, Any]) -> None:
+        """Dispatch one automation definition now, routed by its owner.
+
+        Local rows use the existing PR-2 `SchedulingService.run_automation_
+        now` seam (the same claim/spawn machinery the scheduled dispatch
+        path uses); server rows keep the existing control-plane dispatch.
+        Never both -- ADR-077 decision 1, one executor per owner.
+        """
+        from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
+
+        if definition.get("pending_sync"):
+            # Server-owned but never pushed: the server has no id for it,
+            # and this side must not run a server-owned definition (§3).
+            self.app_instance.notify(
+                "This automation hasn't synced to the server yet — it will "
+                "run there after the next successful sync.",
+                severity="warning",
+            )
+            return
+        if is_server_scoped_owner(definition.get("owner_id")):
+            self._run_automation_now_server(definition)
+        else:
+            self._run_automation_now_local(definition)
+
+    def _run_automation_now_local(self, definition: dict[str, Any]) -> None:
+        """Dispatch a local automation through the existing run-now seam."""
+        service = self._scheduling_service
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot run the automation.",
+                severity="warning",
+            )
+            return
+        definition_id = str(definition.get("id"))
+        name = str(definition.get("name") or definition_id)
+
+        async def _run() -> None:
+            try:
+                result = await service.run_automation_now(definition_id)
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Local automation run-now failed for definition {}",
+                    definition_id,
+                )
+                self.app_instance.notify(
+                    f"Failed to run '{name}'.", severity="error"
+                )
+                return
+            if result is None:
+                self.app_instance.notify(
+                    f"'{name}' did not run — it is missing, paused/"
+                    "archived, mid-transfer, or its health is not ready "
+                    "(the definition's own state shows which).",
+                    severity="warning",
+                )
+                return
+            deduped = (
+                " — deduped, a run was already in flight"
+                if result.get("deduped")
+                else ""
+            )
+            self.app_instance.notify(
+                f"'{name}' ran now{deduped}.", severity="information"
+            )
+            self._request_automations_refresh()
+
+        self.run_worker(
+            _run,
+            exclusive=True,
+            group="schedules-run-automation-now",
+        )  # type: ignore[arg-type]
+
+    def _run_automation_now_server(self, definition: dict[str, Any]) -> None:
         """Dispatch one server automation through the control-plane run endpoint."""
         service = self._scheduling_service
         server_client = getattr(service, "server_client", None) if service else None
@@ -1175,6 +2373,518 @@ class SchedulesWorkbench(BaseAppScreen):
             _run,
             exclusive=True,
             group="schedules-run-automation-now",
+        )  # type: ignore[arg-type]
+
+    def _edit_selected_automation(self) -> None:
+        """Open the selected automation definition for editing (e key).
+
+        `agent_task` rows are excluded -- only `recurring_question`
+        authoring exists (the same v1 scope guard `save_definition`
+        itself enforces via `_reject_unsupported_family`).
+        """
+        definition = self._selected_automation()
+        if definition is None:
+            self.app_instance.notify(
+                "Nothing to edit — select an automation first.",
+                severity="warning",
+            )
+            return
+        if definition.get("family") != "recurring_question":
+            self.app_instance.notify(
+                "Only recurring-question automations can be edited here "
+                "(agent-task authoring is not yet available).",
+                severity="warning",
+            )
+            return
+        service = self._scheduling_service
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot edit the automation.",
+                severity="warning",
+            )
+            return
+
+        async def _open() -> None:
+            definition_id = await self._resolve_local_definition_id(
+                service, definition
+            )
+            if definition_id is None:
+                self.app_instance.notify(
+                    "Could not prepare this automation for editing — see "
+                    "the log.",
+                    severity="error",
+                )
+                return
+            owner_id = str(definition.get("owner_id") or "local")
+            options, _default = self._runs_on_options()
+            if owner_id not in {value for _, value in options}:
+                # Same defensive fallback as the reminder form's timezone/
+                # owner selectors: the row's real owner always round-trips
+                # even when it is not among the currently offered choices
+                # (e.g. a server owner other than the active one).
+                options = [*options, (owner_id, owner_id)]
+            self.app.push_screen(
+                AutomationDefinitionForm(
+                    service,
+                    definition_row=definition,
+                    definition_id=definition_id,
+                    available_owners=options,
+                    default_owner=owner_id,
+                ),
+                callback=lambda outcome: self._on_automation_form_result(
+                    outcome, was_edit=True
+                ),
+            )
+
+        self.run_worker(_open, exclusive=True, group="schedules-edit-automation")
+
+    async def _resolve_local_definition_id(
+        self, service: "SchedulingService", definition: dict[str, Any]
+    ) -> str | None:
+        """Return the LOCAL row id `save_definition`'s `definition_id` needs.
+
+        `save_definition`'s `definition_id` parameter is always a LOCAL
+        id (Task 4's own contract). A row shown here from a pure server
+        fetch may have no local shadow yet (nothing has synced or saved
+        it locally before) -- editing it still needs one, so this mirrors
+        it in place via the same `upsert_automation_definitions_from_
+        server` the sync pull and `save_definition`'s own online-create
+        path already use, rather than inventing a second mirroring path.
+        """
+        from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
+
+        owner_id = str(definition.get("owner_id") or "local")
+        if definition.get("pending_sync") or not is_server_scoped_owner(owner_id):
+            # A `pending_sync` row IS a local row (server-owned, never
+            # synced): its `id` is already the local one, and treating it
+            # as a server id here would mirror it back as a SECOND row
+            # keyed by that uuid.
+            local_id = definition.get("id")
+            return str(local_id) if local_id else None
+
+        server_id = str(definition.get("id"))
+        existing = await asyncio.to_thread(
+            service.db.get_automation_definition_by_server_id, owner_id, server_id
+        )
+        if existing is not None:
+            return existing.get("id")
+        try:
+            await asyncio.to_thread(
+                service.db.upsert_automation_definitions_from_server,
+                owner_id,
+                [definition],
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Failed to mirror server automation {} before editing",
+                server_id,
+            )
+            return None
+        mirrored = await asyncio.to_thread(
+            service.db.get_automation_definition_by_server_id, owner_id, server_id
+        )
+        return mirrored.get("id") if mirrored else None
+
+    # -- Automations-tab transfer actions (schedules-handoff spec §6,
+    # PR-5 task 7 fix round item 1) -----------------------------------
+    #
+    # With PR-5 as first shipped, `begin_transfer_to_server`/`begin_
+    # transfer_to_local`/`cancel_transfer` had no UI call site at all for
+    # `table_kind="automation_definition"` -- the facade fully supports
+    # it (Task 6), but nothing let a user ever start, cancel, or retry a
+    # definition's transfer. The tab has no per-row detail widget (no
+    # `TaskDetail` equivalent), so these are keybindings routed by active
+    # tab -- the SAME idiom `action_run_task_now`/`action_edit_task`
+    # already use for this tab's Run-now/Edit, not new buttons. A
+    # refusal renders inline in the tab's own notice Static (its only
+    # existing status affordance -- reused rather than adding a second
+    # one); an allowed Move reuses the same `ConfirmationDialog` +
+    # honest-toast shape the Queue tab's reminder flow already
+    # established. Move to server (`M`) and Retry (`y`) share one call:
+    # a retry IS a re-begin, so the difference is the label and which
+    # state each is offered in, not the code path.
+
+    def action_move_automation_to_local(self) -> None:
+        """m key: queue a server-owned automation mirror to move here
+        (spec §6.2), Automations-tab only."""
+        self._begin_automation_transfer("to_local")
+
+    def action_move_automation_to_server(self) -> None:
+        """M key: queue a LOCAL automation definition to move to the
+        server (spec §6.1), Automations-tab only.
+
+        The missing half of the definitions transfer UI (final review
+        M8): `y`/Retry already reached `begin_transfer_to_server`, but
+        only ever as a retry beside a failed transfer, so a plain local
+        definition had no way to start one. Same facade call -- a retry
+        IS a re-begin (`transfer_refusal` excludes `to_server_failed`
+        from "in progress", and the CAS accepts both `None` and
+        `to_server_failed`) -- given its own honest label and key, rather
+        than teaching users that "Retry" means "Move".
+        """
+        self._begin_automation_transfer("to_server")
+
+    def action_retry_automation_transfer(self) -> None:
+        """y key: retry a definitively-failed local -> server automation
+        transfer (spec §6.1.5), Automations-tab only."""
+        self._begin_automation_transfer("to_server")
+
+    def action_cancel_automation_transfer(self) -> None:
+        """k key: cancel the selected automation's in-progress transfer
+        (spec §6.3), Automations-tab only."""
+        self._cancel_automation_transfer()
+
+    def _is_automations_tab_active(self) -> bool:
+        try:
+            return (
+                self.query_one("#scheduling-tabs", TabbedContent).active
+                == "scheduling-automations-tab"
+            )
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _show_automations_inline_reason(self, reason: str) -> None:
+        """Surface a transfer refusal/failure inline (fix round item 1's
+        "refusal -> inline reason" flow) -- the Automations pane's notice
+        Static is the tab's only existing status affordance
+        (`_automations_notice_text`'s own home), reused rather than
+        adding a second one. The next `load_automations()` (any other
+        action, or a completed transfer's own reload) naturally replaces
+        it with the aggregate summary again.
+        """
+        try:
+            notice = self.query_one("#scheduling-automations-notice", Static)
+        except Exception:  # noqa: BLE001
+            return
+        self._update_static_content(notice, reason)
+
+    def _begin_automation_transfer(self, direction: str) -> None:
+        """Move-to-local / Retry for the selected automation (spec
+        §6.1/§6.2), Automations-tab only. Same flow as the Queue tab's
+        `_begin_transfer`: refusal -> inline reason; allowed ->
+        `ConfirmationDialog` listing `transfer_warnings`; honest toast on
+        completion; reload via the tab's existing `_request_automations_
+        refresh` wiring.
+        """
+        if not self._is_automations_tab_active():
+            self.app_instance.notify(
+                "Switch to the Automations tab to move or retry an "
+                "automation's transfer.",
+                severity="warning",
+            )
+            return
+        definition = self._selected_automation()
+        if definition is None:
+            self.app_instance.notify(
+                "Nothing selected — select an automation first.",
+                severity="warning",
+            )
+            return
+        service = self._scheduling_service
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot start a transfer.",
+                severity="warning",
+            )
+            return
+
+        async def _resolve_and_begin() -> None:
+            local_id = await self._resolve_local_definition_id(service, definition)
+            if local_id is None:
+                self.app_instance.notify(
+                    "Could not prepare this automation for transfer — see "
+                    "the log.",
+                    severity="error",
+                )
+                return
+            row = await asyncio.to_thread(
+                service.db.get_automation_definition, local_id
+            )
+            if row is None:
+                self.app_instance.notify(
+                    "This automation no longer exists.", severity="warning"
+                )
+                self._request_automations_refresh()
+                return
+            name = str(row.get("name") or definition.get("name") or local_id)
+            reason = service.transfer_refusal(row, direction)
+            if reason is not None:
+                self._show_automations_inline_reason(reason)
+                return
+            warnings = service.transfer_warnings(row, direction)
+            dialog = self._transfer_confirm_dialog(name, direction, warnings)
+            confirmed = await self.app.push_screen_wait(dialog)
+            if not confirmed:
+                return
+            try:
+                if direction == "to_server":
+                    outcome = await service.begin_transfer_to_server(
+                        "automation_definition", local_id
+                    )
+                else:
+                    outcome = await service.begin_transfer_to_local(
+                        "automation_definition", local_id
+                    )
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Failed to begin automation transfer for {}", local_id
+                )
+                self.app_instance.notify(
+                    f"Failed to start the transfer for '{name}'.",
+                    severity="error",
+                )
+                self._request_automations_refresh()
+                return
+            if outcome.status == "pending":
+                self.app_instance.notify(
+                    self._transfer_pending_toast_text(name, direction),
+                    severity="information",
+                )
+            elif outcome.status == "refused":
+                self._show_automations_inline_reason(
+                    outcome.reason or f"Could not move '{name}'."
+                )
+            elif outcome.status == "not_found":
+                self.app_instance.notify(
+                    f"'{name}' no longer exists.", severity="warning"
+                )
+            self._request_automations_refresh()
+
+        self.run_worker(
+            _resolve_and_begin,
+            exclusive=True,
+            group="schedules-automation-transfer",
+        )  # type: ignore[arg-type]
+
+    def _cancel_automation_transfer(self) -> None:
+        """Cancel the selected automation's in-progress transfer (spec
+        §6.3), Automations-tab only. No confirm dialog -- same rationale
+        as the Queue tab's cancel: it is the escape hatch, gating it
+        behind its own confirmation fights the point. The resolved LOCAL
+        row id is already the dormant copy's own id for a release in
+        progress -- `_load_local_automations` shows that copy directly (a
+        `server_id`-less local row), never through the mirror, so
+        resolution never routes to the mirror's id for that leg (same
+        construction as the reminder side's cancel).
+        """
+        if not self._is_automations_tab_active():
+            self.app_instance.notify(
+                "Switch to the Automations tab to cancel an automation's "
+                "transfer.",
+                severity="warning",
+            )
+            return
+        definition = self._selected_automation()
+        if definition is None:
+            self.app_instance.notify(
+                "Nothing selected — select an automation first.",
+                severity="warning",
+            )
+            return
+        service = self._scheduling_service
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot cancel the "
+                "transfer.",
+                severity="warning",
+            )
+            return
+
+        async def _resolve_and_cancel() -> None:
+            local_id = await self._resolve_local_definition_id(service, definition)
+            if local_id is None:
+                self.app_instance.notify(
+                    "Could not resolve this automation locally — see the "
+                    "log.",
+                    severity="error",
+                )
+                return
+            name = str(definition.get("name") or local_id)
+            try:
+                outcome = await service.cancel_transfer(
+                    "automation_definition", local_id
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Failed to cancel automation transfer for {}", local_id
+                )
+                self.app_instance.notify(
+                    f"Failed to cancel the transfer for '{name}'.",
+                    severity="error",
+                )
+                self._request_automations_refresh()
+                return
+            if outcome.status == "cancelled":
+                self.app_instance.notify(
+                    _cancel_toast_text(name), severity="information"
+                )
+            else:
+                self._show_automations_inline_reason(
+                    outcome.reason
+                    or f"Could not cancel the transfer for '{name}'."
+                )
+            self._request_automations_refresh()
+
+        self.run_worker(
+            _resolve_and_cancel,
+            exclusive=True,
+            group="schedules-automation-transfer",
+        )  # type: ignore[arg-type]
+
+    # -- Results-tab actions (schedules-handoff PR-6 task 3) ---------------
+    #
+    # Read/dismiss reuse r/d via action_run_task_now/action_delete's own
+    # tab routing above. Mark-solved/Mark-all-read get fresh keys (o/a),
+    # guarded the same way m/M/y/k refuse off the Automations tab.
+
+    def _is_results_tab_active(self) -> bool:
+        try:
+            return (
+                self.query_one("#scheduling-tabs", TabbedContent).active
+                == "scheduling-results-tab"
+            )
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _review_selected_result(self, review_state: str) -> None:
+        """r/d on the Results tab: read/dismiss the selected result.
+
+        `SchedulingService.review_automation_result` writes the local row
+        and, for a server mirror, queues the PR-3 pushback mutation in the
+        SAME DB transaction -- nothing extra to do here for that half.
+        """
+        service = self._service()
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable.", severity="warning"
+            )
+            return
+        results_tab = self.query_one("#scheduling-results", ResultsTab)
+        result = results_tab.selected_result()
+        if result is None:
+            self.app_instance.notify("Select a result first.", severity="warning")
+            return
+
+        async def _review() -> None:
+            updated = await service.review_automation_result(
+                result["id"], review_state
+            )
+            if not updated:
+                self.app_instance.notify(
+                    "Could not update this result — see the log.",
+                    severity="error",
+                )
+            self._refresh_results_tab()
+
+        self.run_worker(
+            _review, exclusive=True, group="schedules-review-result"
+        )  # type: ignore[arg-type]
+
+    def action_mark_result_solved(self) -> None:
+        """o key: mark the selected finding's definition solved (Task 2's
+        facade), Results-tab only. Refused client-side for a row `solved_
+        eligibility` already rules out (wrong kind, already solved, or an
+        unknown definition); a still-eligible row can still be refused by
+        the facade itself (transfer lock, offline+server-owned -- UX-073),
+        surfaced from `ResolveOutcome.reason`.
+        """
+        if not self._is_results_tab_active():
+            self.app_instance.notify(
+                "Switch to the Results tab to mark a result solved.",
+                severity="warning",
+            )
+            return
+        service = self._service()
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable.", severity="warning"
+            )
+            return
+        results_tab = self.query_one("#scheduling-results", ResultsTab)
+        result = results_tab.selected_result()
+        if result is None:
+            self.app_instance.notify("Select a result first.", severity="warning")
+            return
+        eligible, reason = solved_eligibility(result, results_tab.definitions_by_id)
+        if not eligible:
+            self.app_instance.notify(
+                reason or "This result cannot be marked solved.",
+                severity="warning",
+            )
+            return
+        # `resolve_definition` takes a LOCAL definition id (its own
+        # contract), but a synced result's `definition_id` is the SERVER's
+        # id -- passing it through unresolved refused with "Automation
+        # definition <server id> was not found" on exactly the rows the
+        # action exists for (live verification task 6, D3). The gate above
+        # already resolved the row across both id spaces; reuse it rather
+        # than re-deriving the id a second, divergent way. Non-None here
+        # by construction: `solved_eligibility` returns ineligible when
+        # the same lookup misses.
+        definition = definition_for_result(result, results_tab.definitions_by_id)
+        local_definition_id = str((definition or {}).get("id") or "")
+
+        async def _mark_solved() -> None:
+            outcome = await service.resolve_definition(
+                local_definition_id, solved=True, result_id=result["id"]
+            )
+            if outcome.status == "saved":
+                self.app_instance.notify("Marked solved.", severity="information")
+            else:
+                self.app_instance.notify(
+                    outcome.reason or "Could not mark this result solved.",
+                    severity="warning",
+                )
+            self._refresh_results_tab()
+
+        self.run_worker(
+            _mark_solved, exclusive=True, group="schedules-mark-solved"
+        )  # type: ignore[arg-type]
+
+    def action_mark_all_results_read(self) -> None:
+        """a key: mark every currently-loaded unread result read,
+        Results-tab only. Per-row `review_automation_result` calls -- there
+        is no bulk DB primitive for this (spec's documented fan-out),
+        mirroring `_on_bulk_delete_confirmed`'s loop-and-count shape.
+        """
+        if not self._is_results_tab_active():
+            self.app_instance.notify(
+                "Switch to the Results tab to mark all results read.",
+                severity="warning",
+            )
+            return
+        service = self._service()
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable.", severity="warning"
+            )
+            return
+        results_tab = self.query_one("#scheduling-results", ResultsTab)
+        unread_ids = [
+            result["id"]
+            for result in results_tab.results()
+            if result.get("review_state") == "unread"
+        ]
+        if not unread_ids:
+            self.app_instance.notify("Nothing unread.", severity="information")
+            return
+
+        async def _mark_all() -> None:
+            errors = 0
+            for result_id in unread_ids:
+                if not await service.review_automation_result(result_id, "read"):
+                    errors += 1
+            count = len(unread_ids) - errors
+            self.app_instance.notify(
+                f"Marked {count} result{'s' if count != 1 else ''} read"
+                + (f" ({errors} failed)" if errors else "")
+                + ".",
+                severity="information" if not errors else "warning",
+            )
+            self._refresh_results_tab()
+
+        self.run_worker(
+            _mark_all, exclusive=True, group="schedules-mark-all-read"
         )  # type: ignore[arg-type]
 
     def _set_reminder_enabled(self, task: ReminderTask, enabled: bool) -> None:
@@ -1292,6 +3002,16 @@ class SchedulesWorkbench(BaseAppScreen):
         else:
             self._resize_notice = ""
         self._update_pane_notice()
+        # schedules-redesign PR-1, Task 4: the Automations tab's detail
+        # pane hides at the same width the Queue tab's own detail pane
+        # does -- same mechanism (`pane-hidden`), separate try/except so a
+        # missing pane here (e.g. before the Automations TabPane mounts)
+        # never short-circuits the Queue-pane handling above.
+        try:
+            automations_detail = self.query_one("#scheduling-automations-detail-pane")
+        except Exception:  # noqa: BLE001 - pane not mounted yet
+            return
+        automations_detail.set_class(hide_detail, "pane-hidden")
 
     def _update_pane_notice(self) -> None:
         """Compose the queue-pane notice: hidden panes, marks, glyph legend.
@@ -1387,6 +3107,7 @@ class SchedulesWorkbench(BaseAppScreen):
         self._request_tasks_refresh()
         self._request_automations_refresh()
         self._refresh_conflicts_tab()
+        self._refresh_results_tab()
 
     @on(SyncFailed)
     def _on_sync_failed(self, event: SyncFailed) -> None:
@@ -1396,6 +3117,7 @@ class SchedulesWorkbench(BaseAppScreen):
         self._request_tasks_refresh()
         self._request_automations_refresh()
         self._refresh_conflicts_tab()
+        self._refresh_results_tab()
 
     @on(ConflictsTab.ConflictResolved)
     def _on_conflict_resolved(self, event: ConflictsTab.ConflictResolved) -> None:
@@ -1412,19 +3134,80 @@ class SchedulesWorkbench(BaseAppScreen):
         )
         conflicts_tab.populate(conflicts)
         # Surface the conflict count on the tab label itself (UX-063).
+        self._set_tab_label(
+            "scheduling-conflicts-tab",
+            f"Conflicts ({len(conflicts)})" if conflicts else "Conflicts",
+        )
+
+    def _set_tab_label(self, pane_id: str, label: str) -> None:
+        """Relabel one tab in the workbench's `TabbedContent`.
+
+        `TabPane.label` does not exist in Textual 8.x -- a pane stores its
+        title in `_title` and exposes no `label` reactive, so the previous
+        `pane.label = ...` assignment silently created an inert Python
+        attribute and the rendered tab text never changed (live
+        verification task 6, D2: both the Results unread badge and the
+        Conflicts badge it was copied from were no-ops on screen while
+        their tests passed by reading the attribute back). The real seam
+        is `TabbedContent.get_tab(pane_id)` -> the `Tab` widget's own
+        `label` setter, which calls `Tab.update` and repaints.
+        """
         try:
-            pane = self.query_one("#scheduling-conflicts-tab", TabPane)
-            pane.label = f"Conflicts ({len(conflicts)})" if conflicts else "Conflicts"
-        except Exception:  # noqa: BLE001 - pane not mounted
-            pass
+            tab = self.query_one("#scheduling-tabs", TabbedContent).get_tab(pane_id)
+        except Exception:  # noqa: BLE001 - tabs/pane not mounted yet
+            return
+        tab.label = label
+
+    def _refresh_results_tab(self) -> None:
+        """Reload the Results tab and its unread badge (schedules-handoff
+        PR-6 task 3). Mirrors `_refresh_conflicts_tab`'s shape: direct
+        `service.db.*` calls (list_automation_results/count_unread_
+        results span every owner -- Task 1), no worker -- this is a local
+        DB-only read, same cost class as `get_conflicts`. Also called
+        after Task 4's notification-triggered pull and after every
+        read/dismiss/mark-solved/mark-all-read action below.
+
+        Lists `RESULTS_INBOX_LIMIT` rows, not the DB's own default 50: the
+        badge counts EVERY unread result, so a 50-row listing made the two
+        numbers disagree and quietly hid the rest. `total` is passed so the
+        tab can say "showing newest N of M" once the cap bites.
+        """
+        service = self._service()
+        if service is None:
+            return
+        results_tab = self.query_one("#scheduling-results", ResultsTab)
+        results = service.db.list_automation_results(
+            owner_id=None, limit=RESULTS_INBOX_LIMIT
+        )
+        unread = service.db.count_unread_results(owner_id=None)
+        total = service.db.count_automation_results(owner_id=None)
+        definitions_by_id = index_definitions_by_id(
+            service.db.list_automation_definitions(owner_id=None)
+        )
+        results_tab.populate(results, definitions_by_id, total=total)
+        # Surface the unread count on the tab label itself (spec §4's
+        # inbox badge, same UX-063 idiom as the Conflicts tab above).
+        self._set_tab_label(
+            "scheduling-results-tab",
+            f"Results ({unread})" if unread else "Results",
+        )
 
     def action_delete(self) -> None:
         """Delete marked tasks in bulk, else the selected one (confirmed).
 
         While ANY mark exists, d never falls through to the highlighted,
         unmarked row (task-23107 review F1): acting on a row the user
-        never marked is worse than refusing.
+        never marked is worse than refusing. On the Results tab, ``d``
+        dismisses the selected result instead (schedules-handoff PR-6
+        task 3) -- same key, the tab-appropriate "remove from view" verb.
         """
+        try:
+            active_pane = self.query_one("#scheduling-tabs", TabbedContent).active
+        except Exception:  # noqa: BLE001
+            active_pane = None
+        if active_pane == "scheduling-results-tab":
+            self._review_selected_result("dismissed")
+            return
         if self._marked_ids:
             marked = self._marked_reminder_tasks()
             if not marked:
@@ -1460,6 +3243,8 @@ class SchedulesWorkbench(BaseAppScreen):
                 severity="warning",
             )
             return
+        if self._refuse_if_transfer_locked(self._selected_task(), "delete this task"):
+            return
         self.query_one("#scheduling-task-detail", TaskDetail).request_delete()
 
     def _on_bulk_delete_confirmed(self, confirmed, marked: list[ReminderTask]) -> None:
@@ -1478,7 +3263,12 @@ class SchedulesWorkbench(BaseAppScreen):
             errors = 0
             for task in marked:
                 try:
-                    await service.delete_reminder(task.id)
+                    # A False return is a refusal, not a crash (e.g. the
+                    # transfer read-only guard, final review I7) -- count
+                    # it, so the toast never claims a delete that the
+                    # facade declined.
+                    if not await service.delete_reminder(task.id):
+                        errors += 1
                 except Exception:  # noqa: BLE001
                     logger.exception("Failed to delete reminder {}", task.id)
                     errors += 1
@@ -1509,7 +3299,20 @@ class SchedulesWorkbench(BaseAppScreen):
         return self._visible_tasks[row]
 
     def action_edit_task(self) -> None:
-        """Open the highlighted task in the edit form (e key)."""
+        """Open the highlighted task/definition in its edit form (e key).
+
+        Routes by active tab, same shape as `action_run_task_now`: the
+        Automations tab's `e` opens `AutomationDefinitionForm` pre-filled
+        for a `recurring_question` row (either owner); everywhere else it
+        is the existing reminder edit flow.
+        """
+        try:
+            active_pane = self.query_one("#scheduling-tabs", TabbedContent).active
+        except Exception:  # noqa: BLE001
+            active_pane = None
+        if active_pane == "scheduling-automations-tab":
+            self._edit_selected_automation()
+            return
         task = self._selected_task()
         if task is None:
             self.app_instance.notify(
@@ -1524,6 +3327,8 @@ class SchedulesWorkbench(BaseAppScreen):
                 _managed_elsewhere_notice(task, verb="edit"),
                 severity="warning",
             )
+            return
+        if self._refuse_if_transfer_locked(task, "edit this task"):
             return
         self.post_message(EditTaskRequested(task))
 
@@ -1603,6 +3408,8 @@ class SchedulesWorkbench(BaseAppScreen):
                 severity="warning",
             )
             return
+        if self._refuse_if_transfer_locked(task, "enable or disable this task"):
+            return
         self._set_reminder_enabled(task, not task.enabled)
 
     def _bulk_toggle_marked(self, marked: list[ReminderTask]) -> None:
@@ -1619,9 +3426,12 @@ class SchedulesWorkbench(BaseAppScreen):
             errors = 0
             for task in marked:
                 try:
-                    await service.update_reminder(
+                    # A None return is a refusal, not a crash -- same
+                    # reasoning as the bulk delete above.
+                    if await service.update_reminder(
                         task.id, {"enabled": not task.enabled}
-                    )
+                    ) is None:
+                        errors += 1
                 except Exception:  # noqa: BLE001
                     logger.exception("Failed to toggle reminder {}", task.id)
                     errors += 1

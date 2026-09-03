@@ -121,6 +121,8 @@ def test_every_key_is_configurable(monkeypatch):
             "agent_max_wall_seconds": 90.5,
             "agent_max_total_tokens": 1234,
             "agent_max_tool_call_seconds": 11.0,
+            "agent_max_model_retries": 4,
+            "agent_budget_warning_fraction": 0.5,
         },
     )
     budget = console_run_budget()
@@ -129,6 +131,23 @@ def test_every_key_is_configurable(monkeypatch):
     assert budget.max_wall_seconds == 90.5
     assert budget.max_total_tokens == 1234
     assert budget.max_tool_call_seconds == 11.0
+    assert budget.max_model_retries == 4
+    assert budget.budget_warning_fraction == 0.5
+
+
+def test_budget_warning_fraction_is_clamped_to_one(monkeypatch):
+    """Review A-5: an inert or typo'd key name would be invisible without a
+    real-config test -- the exact defect class (C3a) that reopened 25902.
+    A fraction above 1.0 clamps rather than disabling exhaustion handling."""
+    _pin_console(monkeypatch, {"agent_budget_warning_fraction": 3.5})
+
+    assert console_run_budget().budget_warning_fraction == 1.0
+
+
+def test_budget_warning_fraction_rejects_garbage(monkeypatch):
+    _pin_console(monkeypatch, {"agent_budget_warning_fraction": "soon"})
+
+    assert console_run_budget().budget_warning_fraction == 0.8
 
 
 def test_step_limit_is_capped_below_the_trace_storage_band(monkeypatch):

@@ -513,3 +513,58 @@ def test_provider_generated_native_id_cannot_collide_with_model_supplied_id(
         "printf approved"
     ]
     assert runtime.execute_calls[0].invocation_id == "call_1#1"
+
+
+def test_hardline_floor_survives_an_active_session_grant(tmp_path: Path) -> None:
+    """TASK-25905 AC#2: approve_session authorizes ordinary commands for the
+    rest of the session -- the hardline floor still refuses, names its rule,
+    and is distinguishable from a user denial."""
+    provider, runtime, _gates = _provider(tmp_path)
+    runtime.grant_model_session("console-session")
+
+    with use_run_id("run-1"), use_tool_call_id("call-hardline"):
+        ordinary = provider.invoke("shell_exec", {"command": "printf fine"})
+        blocked = provider.invoke("shell_exec", {"command": "rm -rf /"})
+
+    assert ordinary.ok is True
+    assert blocked.ok is False
+    assert blocked.outcome == "blocked"
+    assert "hardline" in (blocked.error or "")
+    assert "recursive-root-delete" in (blocked.error or "")
+    assert "denial" not in (blocked.error or "").split("not a user")[0]
+    assert len(runtime.execute_calls) == 1, "the hardline command reached the runtime"
+
+
+def test_nonzero_exit_result_carries_one_labeled_hint(tmp_path: Path) -> None:
+    """TASK-26006: the hint rides AFTER the untouched output, exactly once."""
+    provider, runtime, _gates = _provider(tmp_path)
+    runtime.grant_model_session("console-session")
+    runtime.exit_code = 127
+    runtime.stderr = "bash: pyest: command not found"
+
+    with use_run_id("run-1"), use_tool_call_id("call-hint"):
+        result = provider.invoke("shell_exec", {"command": "pyest -q"})
+
+    assert result.ok is False
+    assert "bash: pyest: command not found" in (result.error or ""), (
+        "original output must be intact"
+    )
+    assert (result.error or "").count("[tool hint]") == 1
+    assert (result.error or "").index("command not found") < (
+        result.error or ""
+    ).index("[tool hint]"), "hint is appended, never interleaved"
+
+
+def test_zero_exit_and_unknown_failures_get_no_hint(tmp_path: Path) -> None:
+    provider, runtime, _gates = _provider(tmp_path)
+    runtime.grant_model_session("console-session")
+
+    with use_run_id("run-1"), use_tool_call_id("call-ok"):
+        ok = provider.invoke("shell_exec", {"command": "printf fine"})
+    runtime.exit_code = 3
+    runtime.stderr = "a completely novel failure"
+    with use_run_id("run-1"), use_tool_call_id("call-novel"):
+        novel = provider.invoke("shell_exec", {"command": "printf hmm"})
+
+    assert "[tool hint]" not in (ok.content or "")
+    assert "[tool hint]" not in (novel.error or "")

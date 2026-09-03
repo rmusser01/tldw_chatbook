@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 import base64
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
 from secrets import token_urlsafe
 import sqlite3
-from typing import Any, Protocol
+import threading
+from typing import Any, ContextManager, Protocol
 from uuid import NAMESPACE_URL, RFC_4122, UUID, uuid4, uuid5
 
 from loguru import logger
@@ -73,7 +75,11 @@ def _future_timestamp(value: str, seconds: int) -> str:
 
 
 def _monotonic_timestamp(previous: str, candidate: str) -> str:
-    return previous if _parse_utc_timestamp(previous) >= _parse_utc_timestamp(candidate) else candidate
+    return (
+        previous
+        if _parse_utc_timestamp(previous) >= _parse_utc_timestamp(candidate)
+        else candidate
+    )
 
 
 def _length_prefixed_identity(*axes: str) -> str:
@@ -113,6 +119,96 @@ class _ChangeReviewBindingOwner(Protocol):
         workspace_id: str,
         binding: WorkspaceRuntimeBinding,
     ) -> None: ...
+
+
+class WorkspaceToolProfileGuard(Protocol):
+    """Dependency-inverted lifecycle boundary for assistant-default writes."""
+
+    def mutation_scope(
+        self,
+        *,
+        action: str,
+        workspace_id: str,
+        current_defaults: WorkspaceAssistantDefaults | None,
+        intended_defaults: WorkspaceAssistantDefaults | None,
+        confirmation_token: str | None,
+    ) -> ContextManager[None]: ...
+
+
+class DeferredWorkspaceToolProfileGuard:
+    """Fail closed until the deferred portable-profile authority is complete.
+
+    Ordinary assistant-default edits that leave the Tool Profile reference
+    unchanged may proceed during startup. Any create, replace, or clear that
+    changes that reference is rejected until one complete lifecycle guard is
+    activated. Activation validates before assignment and cannot replace a
+    different active guard.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._active_guard: WorkspaceToolProfileGuard | None = None
+
+    @property
+    def active_guard(self) -> WorkspaceToolProfileGuard | None:
+        """Return the complete delegate, or ``None`` while fail-closed."""
+        with self._lock:
+            return self._active_guard
+
+    def activate(self, guard: WorkspaceToolProfileGuard) -> bool:
+        """Install the complete guard once after validating its interface."""
+        if guard is self or not callable(getattr(guard, "mutation_scope", None)):
+            raise WorkspaceRegistryServiceError(
+                "Tool profile authority is unavailable."
+            )
+        with self._lock:
+            if self._active_guard is guard:
+                return False
+            if self._active_guard is not None:
+                raise WorkspaceRegistryServiceError(
+                    "Tool profile authority is already active."
+                )
+            self._active_guard = guard
+        return True
+
+    @contextmanager
+    def mutation_scope(
+        self,
+        *,
+        action: str,
+        workspace_id: str,
+        current_defaults: WorkspaceAssistantDefaults | None,
+        intended_defaults: WorkspaceAssistantDefaults | None,
+        confirmation_token: str | None,
+    ):
+        """Delegate when ready; otherwise reject Tool Profile changes."""
+        with self._lock:
+            active = self._active_guard
+        if active is None:
+            current_profile = (
+                current_defaults.tool_policy_profile_id
+                if current_defaults is not None
+                else None
+            )
+            intended_profile = (
+                intended_defaults.tool_policy_profile_id
+                if intended_defaults is not None
+                else None
+            )
+            if current_profile != intended_profile:
+                raise WorkspaceRegistryServiceError(
+                    "Tool profile authority is unavailable."
+                )
+            yield
+            return
+        with active.mutation_scope(
+            action=action,
+            workspace_id=workspace_id,
+            current_defaults=current_defaults,
+            intended_defaults=intended_defaults,
+            confirmation_token=confirmation_token,
+        ):
+            yield
 
 
 def _filesystem_binding_missing(locator: str) -> bool:
@@ -275,7 +371,9 @@ class LocalWorkspaceRegistryService:
         id_factory: Callable[[], str] | None = None,
         now_factory: Callable[[], str] | None = None,
         receipt_token_factory: Callable[[], str] | None = None,
-        agent_provisioner: Callable[[WorkspaceRecord], WorkspaceAssistantDefaults | None]
+        agent_provisioner: Callable[
+            [WorkspaceRecord], WorkspaceAssistantDefaults | None
+        ]
         | None = None,
     ) -> None:
         self.db = db
@@ -287,6 +385,7 @@ class LocalWorkspaceRegistryService:
             lambda: token_urlsafe(32)
         )
         self._agent_provisioner = agent_provisioner
+        self._tool_profile_guard: WorkspaceToolProfileGuard | None = None
 
     @property
     def mutation_generation(self) -> int:
@@ -335,6 +434,37 @@ class LocalWorkspaceRegistryService:
         """Attach the app-owned Change Review binding lifecycle observer."""
         self._change_review_binding_owner = service
 
+    def attach_tool_profile_guard(
+        self, guard: WorkspaceToolProfileGuard | None
+    ) -> None:
+        """Attach the app-owned Tool Profile lifecycle guard."""
+        self._tool_profile_guard = guard
+
+    @property
+    def tool_profile_guard(self) -> WorkspaceToolProfileGuard | None:
+        """Return the currently attached app-owned lifecycle boundary."""
+        return self._tool_profile_guard
+
+    def _tool_profile_mutation_scope(
+        self,
+        *,
+        action: str,
+        workspace_id: str,
+        current_defaults: WorkspaceAssistantDefaults | None,
+        intended_defaults: WorkspaceAssistantDefaults | None,
+        confirmation_token: str | None,
+    ) -> ContextManager[None]:
+        guard = self._tool_profile_guard
+        if guard is None:
+            return nullcontext()
+        return guard.mutation_scope(
+            action=action,
+            workspace_id=workspace_id,
+            current_defaults=current_defaults,
+            intended_defaults=intended_defaults,
+            confirmation_token=confirmation_token,
+        )
+
     def set_agent_provisioner(
         self,
         hook: Callable[[WorkspaceRecord], WorkspaceAssistantDefaults | None] | None,
@@ -362,9 +492,20 @@ class LocalWorkspaceRegistryService:
         authority: WorkspaceAuthority | str = WorkspaceAuthority.LOCAL_ONLY,
         sync_status: WorkspaceSyncStatus | str = WorkspaceSyncStatus.NOT_CONFIGURED,
         assistant_defaults: WorkspaceAssistantDefaults | None = None,
+        confirm_read_write: bool = False,
+        tool_profile_confirmation_token: str | None = None,
     ) -> WorkspaceRecord:
         """Create a local workspace record."""
 
+        if (
+            assistant_defaults is not None
+            and assistant_defaults.persona_memory_mode == "read_write"
+            and not confirm_read_write
+        ):
+            raise WorkspaceRegistryServiceError(
+                "read_write persona memory requires explicit confirmation "
+                "(pass confirm_read_write=True)."
+            )
         now = self._now_factory()
         record = WorkspaceRecord(
             workspace_id=workspace_id,
@@ -378,36 +519,43 @@ class LocalWorkspaceRegistryService:
         )
         self._reject_duplicate_name(record.name)
         try:
-            with self.db.transaction() as conn:
-                conn.execute(
-                    """
-                    INSERT INTO workspace_records (
-                        workspace_id,
-                        name,
-                        description,
-                        authority,
-                        sync_status,
-                        active,
-                        archived,
-                        assistant_defaults,
-                        created_at,
-                        updated_at
+            with self._tool_profile_mutation_scope(
+                action="create",
+                workspace_id=record.workspace_id,
+                current_defaults=None,
+                intended_defaults=record.assistant_defaults,
+                confirmation_token=tool_profile_confirmation_token,
+            ):
+                with self.db.transaction() as conn:
+                    conn.execute(
+                        """
+                        INSERT INTO workspace_records (
+                            workspace_id,
+                            name,
+                            description,
+                            authority,
+                            sync_status,
+                            active,
+                            archived,
+                            assistant_defaults,
+                            created_at,
+                            updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            record.workspace_id,
+                            record.name,
+                            record.description,
+                            record.authority.value,
+                            record.sync_status.value,
+                            int(record.active),
+                            int(record.archived),
+                            _assistant_defaults_to_json(record.assistant_defaults),
+                            record.created_at,
+                            record.updated_at,
+                        ),
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        record.workspace_id,
-                        record.name,
-                        record.description,
-                        record.authority.value,
-                        record.sync_status.value,
-                        int(record.active),
-                        int(record.archived),
-                        _assistant_defaults_to_json(record.assistant_defaults),
-                        record.created_at,
-                        record.updated_at,
-                    ),
-                )
         except sqlite3.IntegrityError as exc:
             if "idx_workspace_records_name_ci" in str(exc):
                 raise WorkspaceRegistryServiceError(
@@ -653,6 +801,7 @@ class LocalWorkspaceRegistryService:
         defaults: WorkspaceAssistantDefaults,
         *,
         confirm_read_write: bool = False,
+        tool_profile_confirmation_token: str | None = None,
     ) -> WorkspaceRecord:
         """Persist a workspace's reference-backed default assistant.
 
@@ -680,20 +829,29 @@ class LocalWorkspaceRegistryService:
                 "read_write persona memory requires explicit confirmation "
                 "(pass confirm_read_write=True)."
             )
-        if self.get_workspace(safe_workspace_id) is None:
+        current = self.get_workspace(safe_workspace_id)
+        if current is None:
             raise WorkspaceNotFound(safe_workspace_id)
+        action = "set" if current.assistant_defaults is None else "replace"
         payload = _assistant_defaults_to_json(defaults)
         now = self._now_factory()
         try:
-            with self.db.transaction() as conn:
-                conn.execute(
-                    """
-                    UPDATE workspace_records
-                    SET assistant_defaults = ?, updated_at = ?
-                    WHERE workspace_id = ?
-                    """,
-                    (payload, now, safe_workspace_id),
-                )
+            with self._tool_profile_mutation_scope(
+                action=action,
+                workspace_id=safe_workspace_id,
+                current_defaults=current.assistant_defaults,
+                intended_defaults=defaults,
+                confirmation_token=tool_profile_confirmation_token,
+            ):
+                with self.db.transaction() as conn:
+                    conn.execute(
+                        """
+                        UPDATE workspace_records
+                        SET assistant_defaults = ?, updated_at = ?
+                        WHERE workspace_id = ?
+                        """,
+                        (payload, now, safe_workspace_id),
+                    )
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         updated = self.get_workspace(safe_workspace_id)
@@ -715,19 +873,27 @@ class LocalWorkspaceRegistryService:
             WorkspaceRegistryServiceError: Storage failure.
         """
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
-        if self.get_workspace(safe_workspace_id) is None:
+        current = self.get_workspace(safe_workspace_id)
+        if current is None:
             raise WorkspaceNotFound(safe_workspace_id)
         now = self._now_factory()
         try:
-            with self.db.transaction() as conn:
-                conn.execute(
-                    """
-                    UPDATE workspace_records
-                    SET assistant_defaults = NULL, updated_at = ?
-                    WHERE workspace_id = ?
-                    """,
-                    (now, safe_workspace_id),
-                )
+            with self._tool_profile_mutation_scope(
+                action="clear",
+                workspace_id=safe_workspace_id,
+                current_defaults=current.assistant_defaults,
+                intended_defaults=None,
+                confirmation_token=None,
+            ):
+                with self.db.transaction() as conn:
+                    conn.execute(
+                        """
+                        UPDATE workspace_records
+                        SET assistant_defaults = NULL, updated_at = ?
+                        WHERE workspace_id = ?
+                        """,
+                        (now, safe_workspace_id),
+                    )
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         updated = self.get_workspace(safe_workspace_id)
@@ -1220,12 +1386,8 @@ class LocalWorkspaceRegistryService:
             kind="create",
         )
         now = self._now_factory()
-        owner_proof = _opaque_receipt_token(
-            self._receipt_token_factory, "owner_proof"
-        )
-        lease_token = _opaque_receipt_token(
-            self._receipt_token_factory, "lease_token"
-        )
+        owner_proof = _opaque_receipt_token(self._receipt_token_factory, "owner_proof")
+        lease_token = _opaque_receipt_token(self._receipt_token_factory, "lease_token")
         lease_expires_at = _future_timestamp(now, _QUICK_NOTE_LEASE_SECONDS)
         abandon_after = _future_timestamp(now, _QUICK_NOTE_ABANDON_SECONDS)
         try:
@@ -1339,9 +1501,9 @@ class LocalWorkspaceRegistryService:
             safe_note_id,
             str(expected_version),
         )
-        operation_token = "research-note-delete-" + uuid5(
-            NAMESPACE_URL, delete_seed
-        ).hex
+        operation_token = (
+            "research-note-delete-" + uuid5(NAMESPACE_URL, delete_seed).hex
+        )
         receipt_id, _ = self._quick_note_identity(
             workspace_id=safe_workspace_id,
             local_user_id=safe_user_id,
@@ -1349,12 +1511,8 @@ class LocalWorkspaceRegistryService:
             kind="delete",
         )
         now = self._now_factory()
-        owner_proof = _opaque_receipt_token(
-            self._receipt_token_factory, "owner_proof"
-        )
-        lease_token = _opaque_receipt_token(
-            self._receipt_token_factory, "lease_token"
-        )
+        owner_proof = _opaque_receipt_token(self._receipt_token_factory, "owner_proof")
+        lease_token = _opaque_receipt_token(self._receipt_token_factory, "lease_token")
         lease_expires_at = _future_timestamp(now, _QUICK_NOTE_LEASE_SECONDS)
         abandon_after = _future_timestamp(now, _QUICK_NOTE_ABANDON_SECONDS)
         try:
@@ -1817,7 +1975,9 @@ class LocalWorkspaceRegistryService:
                 updated_at = _monotonic_timestamp(str(current["updated_at"]), now)
                 next_retry_at = _future_timestamp(
                     updated_at,
-                    300 if reason_code == "owner_missing" else min(300, 2**failure_count),
+                    300
+                    if reason_code == "owner_missing"
+                    else min(300, 2**failure_count),
                 )
                 conn.execute(
                     """
@@ -2096,9 +2256,7 @@ class LocalWorkspaceRegistryService:
         """Return one source membership by its association identity."""
 
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
-        safe_membership_id = _normalize_required_text(
-            membership_id, "membership_id"
-        )
+        safe_membership_id = _normalize_required_text(membership_id, "membership_id")
         try:
             with self.db.connection() as conn:
                 row = conn.execute(

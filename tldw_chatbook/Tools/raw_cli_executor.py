@@ -13,6 +13,8 @@ import os
 from pathlib import Path
 import posixpath
 import queue
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -141,6 +143,295 @@ class RawCliResult:
     cleanup_proven: bool
 
 
+# ---------------------------------------------------------------------------
+# TASK-25905: the unbypassable hardline command floor.
+#
+# A deliberately SMALL set of catastrophic command shapes is refused at this
+# validation boundary -- before any permission state, approval stamp, or
+# session grant is consulted, for BOTH callers. This is a floor under the
+# approval card, not a replacement for it. It is not configurable: the rule
+# tuple is a module constant and nothing reads config here (AC#5); any
+# user-supplied deny list elsewhere is additive on top.
+#
+# Detection philosophy: normalize away TRIVIAL obfuscation (quotes,
+# backslashes, whitespace padding) and match argument SHAPES anchored to
+# command position, so `$X -rf /` trips on the arguments even when the
+# command word is hidden behind a variable. A determined adversary can
+# still evade a static floor; the approval card remains the real gate.
+
+#: Fork bomb: a function that pipes into itself and backgrounds, then calls
+#: itself (the classic ``:(){ :|:& };:`` and named variants). Matched on the
+#: RAW text because shlex cannot tokenize it -- and its pattern is specific
+#: enough to carry no false-positive risk.
+_FORK_BOMB_RE = re.compile(
+    r"(\S+)\s*\(\s*\)\s*\{[^}]*\1[^}]*\|[^}]*\1[^}]*&[^}]*\}\s*;\s*\1"
+)
+
+#: Block-device targets for a `dd of=` catastrophe. Includes rdisk (macOS
+#: raw disk -- this app's own platform), md/dm-/mapper (RAID/LVM).
+_DD_BLOCK_DEVICE_RE = re.compile(
+    r"^/dev/(?:sd|hd|nvme|disk|rdisk|mmcblk|vd|xvd|loop|md|dm-|mapper/)"
+)
+
+#: Catastrophic delete targets: filesystem root and home in their common
+#: literal and variable forms (shlex does not expand, so these stay literal).
+_HARDLINE_ROOT_TARGETS = frozenset({"/", "//", "/*", "~", "~/", "$HOME", "${HOME}"})
+
+#: Command wrappers whose leading occurrence is transparent to the floor.
+_HARDLINE_WRAPPERS = frozenset(
+    {"sudo", "env", "command", "nice", "nohup", "time", "doas", "exec"}
+)
+
+#: Wrapper options that CONSUME the following token (Qodo review, PR #2301):
+#: without arity handling, `sudo -u root rm -rf /` surfaced `root` as the
+#: command word and slipped the floor. Long options in `--opt=value` form are
+#: a single token and need no entry; bare `--opt value` forms are listed.
+_WRAPPER_ARG_OPTIONS: dict[str, frozenset[str]] = {
+    "sudo": frozenset({
+        "-u", "-g", "-p", "-C", "-D", "-h", "-R", "-T", "-U",
+        "--user", "--group", "--prompt", "--chdir", "--chroot", "--host",
+        "--close-from", "--command-timeout", "--other-user",
+    }),
+    "doas": frozenset({"-u"}),
+    "env": frozenset({"-u", "-S", "-C", "-P", "--unset", "--chdir", "--split-string"}),
+    "nice": frozenset({"-n", "--adjustment"}),
+    "time": frozenset({"-f", "-o", "--format", "--output"}),
+}
+
+#: Runtime commands that shut the machine down when in command position.
+_SHUTDOWN_COMMANDS = frozenset({"shutdown", "poweroff", "halt", "reboot"})
+
+
+class RawCliHardlineViolation(ValueError):
+    """A catastrophic command shape hit the hardline floor.
+
+    Distinct from every permission refusal on purpose (AC#4): callers
+    surface it as "the safety floor refused this", never as a user denial,
+    and no approval option can clear it.
+    """
+
+    def __init__(self, rule: str) -> None:
+        self.rule = rule
+        super().__init__(
+            f"hardline safety floor: rule '{rule}' refuses this command"
+        )
+
+
+def _basename(token: str) -> str:
+    """Command basename without a path or variable-expansion prefix."""
+    return token.rsplit("/", 1)[-1]
+
+
+def _split_simple_commands(command: str) -> list[list[str]]:
+    """Tokenize with quote/escape awareness and split on UNQUOTED control
+    operators (``; | || & && newline``).
+
+    Uses shlex in POSIX mode with ``punctuation_chars`` so a control
+    operator INSIDE a quoted argument (``git commit -m "fix; reboot"``)
+    stays part of its token and never starts a new command -- the fix for
+    the quote-blind false positives. On a parse error (unbalanced quotes)
+    it falls back to a naive whitespace split, which for the floor's
+    purpose over-includes rather than under-includes.
+    """
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        tokens = command.split()
+    commands: list[list[str]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token and set(token) <= set(";|&\n"):
+            if current:
+                commands.append(current)
+                current = []
+        elif token in ("(", ")"):
+            # subshell grouping is transparent -- unwrap so `(rm -rf /)` is
+            # analyzed as `rm -rf /` rather than command word `(`.
+            continue
+        else:
+            current.append(token)
+    if current:
+        commands.append(current)
+    return commands
+
+
+def _strip_wrappers(tokens: list[str]) -> list[str]:
+    """Drop leading VAR=val assignments and sudo/env-style wrappers so the
+    real command word surfaces (`FOO=1 sudo rm ...` -> `rm ...`)."""
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", token):
+            index += 1
+        elif _basename(token) in _HARDLINE_WRAPPERS:
+            arg_options = _WRAPPER_ARG_OPTIONS.get(_basename(token), frozenset())
+            index += 1
+            # Skip the wrapper's own options. Options known to CONSUME the
+            # next token (`sudo -u root`, `nice -n 19`, `time -f fmt`) skip
+            # that argument too, so it can never surface as the apparent
+            # command word and hide the real one from the floor (Qodo
+            # review, PR #2301 -- closes the previously documented
+            # `sudo -u root rm -rf /` gap).
+            while index < len(tokens) and tokens[index].startswith("-"):
+                option = tokens[index]
+                index += 1
+                if option in arg_options and index < len(tokens):
+                    index += 1
+        else:
+            break
+    return tokens[index:]
+
+
+def _simple_command_violation(tokens: list[str]) -> str | None:
+    """The hardline rule one already-split simple command violates."""
+    tokens = _strip_wrappers(tokens)
+    if not tokens:
+        return None
+    command = tokens[0]
+    base = _basename(command)
+    args = tokens[1:]
+
+    # recursive-root-delete: `rm` (or a variable command word hiding it)
+    # with recursive AND force among the flags and a root target among the
+    # args. Anchored to rm-family so `cp -rf /` and `ls -laRF /` -- which
+    # do NOT delete -- are not floored (the false positives the old
+    # `\S+`-anchored regex produced).
+    is_rm = base == "rm"
+    is_variable_command = command.startswith("$") or command.startswith("${")
+    if is_rm or is_variable_command:
+        flag_letters = "".join(
+            token[1:]
+            for token in args
+            if token.startswith("-") and not token.startswith("--")
+        )
+        long_flags = {token for token in args if token.startswith("--")}
+        recursive = (
+            "r" in flag_letters
+            or "R" in flag_letters
+            or "--recursive" in long_flags
+        )
+        force = "f" in flag_letters or "--force" in long_flags
+        targets = {
+            token for token in args if not token.startswith("-") and token != "--"
+        }
+        if recursive and force and targets & _HARDLINE_ROOT_TARGETS:
+            return "recursive-root-delete"
+
+    if base == "mkfs" or base.startswith("mkfs."):
+        return "filesystem-format"
+
+    if base == "dd":
+        for token in args:
+            if token.startswith("of="):
+                if _DD_BLOCK_DEVICE_RE.match(token[3:]):
+                    return "dd-to-block-device"
+
+    if base in _SHUTDOWN_COMMANDS:
+        return "system-shutdown"
+    if base == "init" and any(arg in ("0", "6") for arg in args):
+        return "system-shutdown"
+    if base == "systemctl" and any(
+        arg in ("poweroff", "reboot", "halt") for arg in args
+    ):
+        return "system-shutdown"
+    return None
+
+
+def hardline_violation(command: str) -> str | None:
+    """Name the hardline rule ``command`` violates, or ``None``.
+
+    Tokenizes with quote/escape awareness (so `rm -\'r\'f /` and
+    `rm -"rf" /` collapse to `rm -rf /`, and a quoted `;` never splits a
+    command) and matches argument SHAPES per simple command. The fork bomb
+    is matched separately on the raw text since it is not shell-tokenizable.
+    """
+    if _FORK_BOMB_RE.search(command):
+        return "fork-bomb"
+    for tokens in _split_simple_commands(command):
+        rule = _simple_command_violation(tokens)
+        if rule is not None:
+            return rule
+    return None
+
+
+# ---------------------------------------------------------------------------
+# TASK-26006: actionable failure hints. Data, not branching (AC#6): each row
+# is (compiled pattern, hint line). First match wins; hints apply only to
+# non-zero exits; the original output is never altered -- callers APPEND the
+# hint after it, labeled so it can never be mistaken for command output.
+
+FAILURE_HINT_TABLE: tuple[tuple["re.Pattern[str]", str], ...] = (
+    (
+        re.compile(r"command not found|is not recognized as an internal"),
+        "the command is not installed or not on PATH; check the spelling "
+        "or install it first",
+    ),
+    (
+        re.compile(r"[Pp]ermission denied"),
+        "permission was denied; check file ownership/mode -- the raw shell "
+        "runs as the app user with no sudo",
+    ),
+    (
+        re.compile(r"No such file or directory"),
+        "a path does not exist relative to the initial directory; verify "
+        "with ls or use an absolute path",
+    ),
+    (
+        re.compile(r"ModuleNotFoundError|ImportError: No module named"),
+        "a Python dependency is missing in this environment; install it or "
+        "run inside the right virtualenv",
+    ),
+    (
+        re.compile(
+            r"Connection refused|Could not resolve host|Network is unreachable"
+        ),
+        "the network call failed; check the host, port, and connectivity "
+        "before retrying",
+    ),
+    (
+        re.compile(r"not a git repository"),
+        "this directory is not inside a git repository; cd into one or "
+        "pass an explicit path",
+    ),
+    (
+        re.compile(r"syntax error near unexpected token|unbound variable"),
+        "the shell rejected the command's own syntax; check quoting and "
+        "variable expansions",
+    ),
+    (
+        re.compile(r"Address already in use"),
+        "the port is taken by another process; pick another port or stop "
+        "the process holding it",
+    ),
+)
+
+#: Prefix marking every hint as tool-generated (AC#4).
+FAILURE_HINT_PREFIX = "[tool hint]"
+
+
+def failure_hint(exit_code: int | None, output: str) -> str | None:
+    """One bounded, labeled recovery line for a known failure shape.
+
+    Args:
+        exit_code: The command's exit code; hints apply only when it is a
+            non-zero integer (AC#2).
+        output: Combined stdout/stderr text to match against.
+
+    Returns:
+        ``"[tool hint] ..."`` for the FIRST matching table row (AC#3), or
+        ``None`` -- unrecognized failures return exactly today's output
+        with nothing added (AC#5).
+    """
+    if not isinstance(exit_code, int) or exit_code == 0:
+        return None
+    for pattern, hint in FAILURE_HINT_TABLE:
+        if pattern.search(output):
+            return f"{FAILURE_HINT_PREFIX} {hint}"
+    return None
+
+
 def validate_raw_cli_request(request: RawCliRequest) -> RawCliRequest:
     """Validate and normalize a request crossing the executor boundary."""
     if request.caller not in ("user", "model"):
@@ -155,6 +446,9 @@ def validate_raw_cli_request(request: RawCliRequest) -> RawCliRequest:
         request.command,
         max_bytes=MAX_RAW_COMMAND_BYTES,
     )
+    violation = hardline_violation(command)
+    if violation is not None:
+        raise RawCliHardlineViolation(violation)
 
     timeout = request.timeout_seconds
     if (

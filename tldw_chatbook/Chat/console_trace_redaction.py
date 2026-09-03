@@ -319,6 +319,7 @@ def redact_pii_value(
     value: object,
     *,
     detector: BuiltInPIIDetector | None = None,
+    additional_field_redactions: Sequence[PIIFieldRedaction] = (),
     max_nodes: int = DEFAULT_CREDENTIAL_MAX_NODES,
     max_depth: int = DEFAULT_CREDENTIAL_MAX_DEPTH,
     max_total_spans: int = DEFAULT_PII_MAX_MATCHES,
@@ -331,6 +332,8 @@ def redact_pii_value(
     Args:
         value: JSON-like provider-only value to mask without mutation.
         detector: Optional bounded detector; the built-in detector is the default.
+        additional_field_redactions: Precomputed content-free ranges to merge
+            with built-in detections at their structured field paths.
         max_nodes: Maximum aggregate structured nodes inspected.
         max_depth: Maximum recursive container depth inspected.
         max_total_spans: Maximum aggregate ranges retained in metadata.
@@ -351,9 +354,29 @@ def redact_pii_value(
     ):
         if type(limit) is not int or limit <= 0:
             raise ValueError(name)
+    additional = tuple(additional_field_redactions)
+    if any(not isinstance(item, PIIFieldRedaction) for item in additional):
+        raise TypeError("additional_field_redactions")
+    additional_by_path: dict[str, list[PIIRedactionSpan]] = {}
+    for item in additional:
+        additional_by_path.setdefault(item.field_path, []).append(item.span)
+    used_additional_paths: set[str] = set()
     field_redactions: list[PIIFieldRedaction] = []
     budget = [0]
     active: set[int] = set()
+
+    def mask_text(item: str, *, path: str) -> str:
+        detection = active_detector.detect(item)
+        if not detection.available:
+            raise ValueError("detector_unavailable")
+        custom_spans = additional_by_path.get(path, ())
+        if custom_spans:
+            used_additional_paths.add(path)
+        spans = merge_pii_spans((*detection.spans, *custom_spans))
+        if len(field_redactions) + len(spans) > max_total_spans:
+            raise ValueError("work_limit")
+        field_redactions.extend(PIIFieldRedaction(path, span) for span in spans)
+        return apply_pii_mask(item, spans)
 
     def visit(item: object, *, path: str, depth: int) -> object:
         if depth > max_depth:
@@ -368,15 +391,7 @@ def redact_pii_value(
                 raise ValueError("unsupported")
             return item
         if type(item) is str:
-            detection = active_detector.detect(item)
-            if not detection.available:
-                raise ValueError("detector_unavailable")
-            if len(field_redactions) + len(detection.spans) > max_total_spans:
-                raise ValueError("work_limit")
-            field_redactions.extend(
-                PIIFieldRedaction(path, span) for span in detection.spans
-            )
-            return apply_pii_mask(item, detection.spans)
+            return mask_text(item, path=path)
         if isinstance(item, Mapping):
             identity = id(item)
             if identity in active:
@@ -389,20 +404,7 @@ def redact_pii_value(
                 result: dict[str, object] = {}
                 for ordinal, (key, child) in enumerate(ordered):
                     key_path = f"{path}/@{ordinal}#key"
-                    key_detection = active_detector.detect(key)
-                    if not key_detection.available:
-                        raise ValueError("detector_unavailable")
-                    if (
-                        len(field_redactions)
-                        + len(key_detection.spans)
-                        > max_total_spans
-                    ):
-                        raise ValueError("work_limit")
-                    field_redactions.extend(
-                        PIIFieldRedaction(key_path, span)
-                        for span in key_detection.spans
-                    )
-                    masked_key = apply_pii_mask(key, key_detection.spans)
+                    masked_key = mask_text(key, path=key_path)
                     if masked_key in result:
                         raise ValueError("masked key collision")
                     result[masked_key] = visit(
@@ -431,6 +433,8 @@ def redact_pii_value(
 
     try:
         masked = visit(value, path="$", depth=0)
+        if used_additional_paths != set(additional_by_path):
+            raise ValueError("additional_mask_source_mismatch")
     except Exception:  # noqa: BLE001 - failures must not retain source content
         return PIIValueRedactionResult(
             available=False,

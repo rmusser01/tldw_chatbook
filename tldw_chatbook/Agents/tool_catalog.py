@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import threading
 from collections.abc import Sequence
 from contextlib import contextmanager, nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as _dataclass_replace
 from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
@@ -62,6 +63,7 @@ from .agent_models import (
     WAIT_AGENTS_TOOL_NAME,
 )
 from .run_context import current_run_id
+# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (tool_arg_coercion imports at the dispatch site.)
 from .run_log_search import (
     MAX_CROSS_RUN_RUNS,
     MAX_SLICE_RECORDS,
@@ -269,6 +271,67 @@ LOAD_TOOLS_SCHEMA = ToolSchema(
         "required": ["ids"],
     },
 )
+
+
+#: TASK-26007: cap on the tool-name listing embedded in find_tools'
+#: description; past it the listing degrades to prefix groups (AC#3).
+_FIND_TOOLS_LISTING_CHAR_LIMIT = 700
+
+
+_FUZZY_STOPWORDS = frozenset(
+    {
+        "a", "an", "and", "by", "for", "in", "of", "on", "or",
+        "the", "to", "with",
+    }
+)
+
+
+def _fuzzy_stem(token: str) -> str:
+    """Light deterministic stemming: files->file, reading->read."""
+    for suffix in ("ing", "es", "ed", "s"):
+        if token.endswith(suffix) and len(token) - len(suffix) >= 3:
+            return token[: -len(suffix)]
+    return token
+
+
+def _fuzzy_tokens(text: str) -> frozenset[str]:
+    return frozenset(
+        _fuzzy_stem(token)
+        for token in re.findall(r"[a-z0-9]+", text.casefold())
+        if token not in _FUZZY_STOPWORDS and len(token) > 1
+    )
+
+
+def build_find_tools_schema(names: "Sequence[str]") -> ToolSchema:
+    """find_tools' schema with the available tools named in its description.
+
+    TASK-26007 AC#2: a deferred catalog used to be invisible -- the model
+    saw only find_tools/load_tools and could conclude a present capability
+    was absent. Embedding the (bounded, deterministic) listing in the
+    search tool's own description closes that. Empty ``names`` returns the
+    plain schema object unchanged.
+    """
+    unique = sorted(dict.fromkeys(str(name) for name in names if str(name)))
+    if not unique:
+        return FIND_TOOLS_SCHEMA
+    listing = ", ".join(unique)
+    if len(listing) > _FIND_TOOLS_LISTING_CHAR_LIMIT:
+        groups: dict[str, int] = {}
+        for name in unique:
+            prefix = f"{name.split('_', 1)[0]}_*" if "_" in name else name
+            groups[prefix] = groups.get(prefix, 0) + 1
+        listing = ", ".join(
+            f"{group} ({count})" for group, count in sorted(groups.items())
+        )
+        label = "Available tool groups"
+    else:
+        label = "Available tools"
+    suffix = f" {label}: {listing}."
+    if len(suffix) > _FIND_TOOLS_LISTING_CHAR_LIMIT:
+        suffix = suffix[: _FIND_TOOLS_LISTING_CHAR_LIMIT] + "…"
+    return _dataclass_replace(
+        FIND_TOOLS_SCHEMA, description=FIND_TOOLS_SCHEMA.description + suffix
+    )
 
 SKILL_FILE_TOOL_SCHEMA = ToolSchema(
     id="runtime:skill_file",
@@ -1436,12 +1499,18 @@ class ToolCatalogRegistry:
         if not needle:
             return []
         allowed = None if allowed_names is None else frozenset(allowed_names)
-        ranked: list[tuple[int, str, str, ToolCatalogEntry]] = []
+        # TASK-26007: tier 4 -- stemmed-token overlap, so a paraphrase
+        # ("find files by name") reaches a tool sharing no literal
+        # substring. Deterministic: more matched tokens rank earlier, ties
+        # break on (name, id) exactly like the substring tiers.
+        query_tokens = _fuzzy_tokens(needle)
+        ranked: list[tuple[int, int, str, str, ToolCatalogEntry]] = []
         for entry in self.list_catalog():
             if allowed is not None and entry.name not in allowed:
                 continue
             name = entry.name.casefold()
             description = entry.one_line_description.casefold()
+            bias = 0
             if name == needle:
                 rank = 0
             elif name.startswith(needle):
@@ -1451,10 +1520,16 @@ class ToolCatalogRegistry:
             elif needle in description:
                 rank = 3
             else:
-                continue
-            ranked.append((rank, name, entry.id, entry))
-        ranked.sort(key=lambda item: item[:3])
-        return [item[3] for item in ranked[: max(int(limit), 0)]]
+                matched = len(
+                    query_tokens & _fuzzy_tokens(f"{name} {description}")
+                )
+                if not matched or not query_tokens:
+                    continue
+                rank = 4
+                bias = len(query_tokens) - matched
+            ranked.append((rank, bias, name, entry.id, entry))
+        ranked.sort(key=lambda item: item[:4])
+        return [item[4] for item in ranked[: max(int(limit), 0)]]
 
     def _build_owner_cache(
         self,
@@ -1540,11 +1615,41 @@ class ToolCatalogRegistry:
             return None
         return record.tool_id, record.provider
 
+    def _coerce_arguments(self, name, tool_id, provider, args: dict) -> dict:
+        """Repair JSON-string arguments against the tool's declared schema.
+
+        Never raises and never blocks a call: a provider that cannot produce a
+        schema simply gets the arguments unchanged, because failing to repair
+        is strictly better than failing to dispatch.
+        """
+        try:
+            schema = provider.load_schema(tool_id)
+            from .tool_arg_coercion import coerce_tool_args  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+
+            repaired, coerced = coerce_tool_args(args, getattr(schema, "parameters", None))
+        except Exception:  # noqa: BLE001 -- repair is best-effort by design
+            return args
+        if coerced:
+            # Reported, not masked: a model that systematically mis-encodes
+            # arguments is a prompt/model problem the operator should see.
+            logger.warning(
+                "Repaired JSON-string tool arguments for {} (fields: {}).",
+                name,
+                ", ".join(coerced),
+            )
+        return repaired
+
     def invoke_by_name(self, name: str, args: dict) -> ToolResult:
         record = self._owner_record_for_name(name)
         if record is None:
             return ToolResult(ok=False, error=f"Unknown tool: {name}")
         tool_id, provider = record.tool_id, record.provider
+        # TASK-26005: repair arguments the model JSON-encoded as strings before
+        # anything downstream sees them. Placed here rather than at either
+        # `provider.invoke` below because this method has two dispatch sites and
+        # is the one line every provider is reached through -- the same reason
+        # the ephemeral gate and the call caps live here.
+        args = self._coerce_arguments(name, tool_id, provider, args)
         # Workspace assistant defaults (Task 7): persona-policy call caps,
         # refused BEFORE dispatch in the exact error-`ToolResult` shape the
         # unknown-tool branch above uses. Narrowing-only -- a capped tool is

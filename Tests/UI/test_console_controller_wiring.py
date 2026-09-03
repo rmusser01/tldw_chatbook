@@ -40,11 +40,13 @@ from textual.css.query import QueryError
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import _build_test_app
+from tldw_chatbook.Chat.console_chat_models import FEEDBACK_ACTIVE_RUN_STATUSES
+from tldw_chatbook.UI.Console_Modules import hands_free as hands_free_module
+from tldw_chatbook.UI.Console_Modules import wiring as wiring_module
 from tldw_chatbook.UI.Console_Modules.agent import ConsoleAgentController
 from tldw_chatbook.UI.Console_Modules.character import ConsoleCharacterController
 from tldw_chatbook.UI.Console_Modules.dictation import ConsoleDictationController
 from tldw_chatbook.UI.Console_Modules.fleet import ConsoleFleetLifecycleController
-from tldw_chatbook.UI.Console_Modules import hands_free as hands_free_module
 from tldw_chatbook.UI.Console_Modules.hands_free import ConsoleHandsFreeController
 from tldw_chatbook.UI.Console_Modules.image import ConsoleImageController
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
@@ -53,12 +55,10 @@ from tldw_chatbook.UI.Console_Modules.prompt_queue import (
 )
 from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
 from tldw_chatbook.UI.Console_Modules.realtime import ConsoleRealtimeController
+from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
 from tldw_chatbook.UI.Console_Modules.review_selection import (
     ConsoleReviewSelectionController,
 )
-from tldw_chatbook.UI.Console_Modules import wiring as wiring_module
-from tldw_chatbook.Chat.console_chat_models import FEEDBACK_ACTIVE_RUN_STATUSES
-from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
 from tldw_chatbook.UI.Console_Modules.send_price import ConsoleSendPriceController
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Console_Modules.skill import ConsoleSkillController
@@ -95,7 +95,7 @@ _ALL_CONTROLLER_SLOTS: list[tuple[str, type]] = [
     ("_message", ConsoleMessageController),
     ("_prompts", ConsolePromptsController),
     ("_agent", ConsoleAgentController),
-    ("_terminal", ConsoleTerminalController),
+    ("_terminal", wiring_module._DeferredConsoleTerminalController),
     ("_prompt_queue", ConsolePromptQueueUIController),
     ("_review_selection", ConsoleReviewSelectionController),
     ("_send_price", ConsoleSendPriceController),
@@ -147,17 +147,17 @@ def test_terminal_controller_is_wired_to_late_bound_app_and_console_edges(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     screen = _unmounted_console()
-    controller = getattr(screen, "_terminal", None)
-    assert isinstance(controller, ConsoleTerminalController), (
-        "_terminal was never wired"
+    deferred = getattr(screen, "_terminal", None)
+    assert isinstance(deferred, wiring_module._DeferredConsoleTerminalController), (
+        "deferred _terminal was never wired"
     )
+    assert screen._console_terminal_workspace is None
+    assert deferred.is_open is False
 
     manager = object()
-    workspace = object()
     selected_root = Path("/late-bound-terminal-root")
     settings_calls: list[None] = []
     screen.app_instance.terminal_session_manager = manager
-    screen._console_terminal_workspace = workspace
     screen._open_terminal_privacy_settings = lambda: settings_calls.append(None)
     monkeypatch.setattr(
         wiring_module,
@@ -168,6 +168,12 @@ def test_terminal_controller_is_wired_to_late_bound_app_and_console_edges(
             session_id,
         ),
     )
+
+    controller = deferred._resolve()
+    assert isinstance(controller, ConsoleTerminalController)
+    assert screen._terminal is controller
+    workspace = object()
+    screen._console_terminal_workspace = workspace
 
     assert controller._terminal_runtime() is manager
     assert controller._workspace_accessor() is workspace

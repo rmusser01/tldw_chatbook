@@ -55,6 +55,9 @@ class ToolTestAdmissionPreview:
     rendered_gate: str
     authority_fingerprint: str | None
     safe_authority_label: str | None
+    profile_id: str = "default"
+    profile_policy_digest: str | None = None
+    profile_revision: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -308,6 +311,9 @@ class ToolTestPreviewRegistry:
         rendered_gate: str,
         authority: DirectoryChain | None,
         safe_authority_label: str | None,
+        profile_id: str = "default",
+        profile_policy_digest: str | None = None,
+        profile_revision: int | None = None,
     ) -> ToolTestAdmissionPreview:
         """Mint and retain one immutable preview, evicting oldest entries."""
         with self._lock:
@@ -328,6 +334,9 @@ class ToolTestPreviewRegistry:
                     authority_fingerprint(authority) if authority is not None else None
                 ),
                 safe_authority_label=safe_authority_label,
+                profile_id=profile_id,
+                profile_policy_digest=profile_policy_digest,
+                profile_revision=profile_revision,
             )
             self._entries[nonce] = RegisteredToolTestPreview(
                 public=public,

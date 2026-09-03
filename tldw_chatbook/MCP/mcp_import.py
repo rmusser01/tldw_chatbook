@@ -81,6 +81,16 @@ def parse_mcp_servers_json(
             command=str(entry.get("command") or "").strip(),
             args=[str(a) for a in entry.get("args") or []],
         )
+        # TASK-26013: imported configs pass through the identical spawn guard as
+        # hand-entered ones -- this is the untrusted-input path.
+        from tldw_chatbook.MCP.spawn_guard import screen_spawn_command  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+
+        _spawn_verdict = screen_spawn_command(candidate.command, candidate.args)
+        if _spawn_verdict is not None:
+            raise ValueError(
+                f'Entry "{name}" refused: {_spawn_verdict.reason} '
+                f"(rule: {_spawn_verdict.rule})"
+            )
         for key, raw_value in (entry.get("env") or {}).items():
             value = str(raw_value)
             if _PLACEHOLDER_RE.match(value.strip()):

@@ -223,6 +223,22 @@ def test_fleet_unseen_mark_type_is_allowed_and_independent_of_starring(tmp_path)
     assert not service.has_mark("conv-a", ConversationLocalMarksService.FLEET_UNSEEN)
 
 
+def test_fleet_receipt_fallback_mark_is_durable_and_independent(tmp_path):
+    db = _db(tmp_path)
+    first = ConversationLocalMarksService(db)
+    first.set_mark(
+        "conv-a", ConversationLocalMarksService.FLEET_RECEIPT_FALLBACK
+    )
+
+    second = ConversationLocalMarksService(db)
+
+    assert second.has_mark(
+        "conv-a", ConversationLocalMarksService.FLEET_RECEIPT_FALLBACK
+    )
+    assert not second.has_mark("conv-a", ConversationLocalMarksService.FLEET_UNSEEN)
+    assert not second.is_starred("conv-a")
+
+
 def test_fleet_unseen_mark_survives_into_a_fresh_service_handle(tmp_path):
     """Restart-proof by construction: the mark written through one service
     handle is read back through a FRESH service over a FRESH DB handle on

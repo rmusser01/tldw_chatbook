@@ -468,7 +468,7 @@ all-tools = [
 "Source Code" = "https://github.com/rmusser01/tldw_chatbook"
 "Changelog" = "https://github.com/rmusser01/tldw_chatbook/blob/main/CHANGELOG.md"
 
-# This creates a command-line script called 'tldw-chatbook'
+# Console scripts installed by the PyPI package.
 [project.scripts]
 # Loads the full app only when the command is invoked.
 tldw-cli = "tldw_chatbook.cli:main_cli_runner"

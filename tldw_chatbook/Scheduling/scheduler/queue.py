@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
+from tldw_chatbook.Scheduling.db.scheduled_tasks_db import DORMANT_TRANSFER_STATES
 from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
 
@@ -74,7 +75,7 @@ class PriorityQueue:
         unconditionally.
         """
         if now is None:
-            self._items = self.db.list_reminder_tasks(enabled=True)
+            self._items = self.db.list_reminder_tasks(enabled=True, armable_only=True)
             # Filter out tasks without a next run time and sort by it.
             self._items = [item for item in self._items if item.get("next_run_at")]
         else:
@@ -94,10 +95,17 @@ class PriorityQueue:
         # depth with `list_armable_automation_definitions`'s own
         # `owner_id` filter above): neither guard alone is trusted to keep
         # a server-scoped definition from arming locally.
+        #
+        # A second, independent guard drops any row still carrying a
+        # dormant `transfer_state` (spec §6.1 ruling 2): defense in depth
+        # with the DB-query layer's own exclusion above (`list_reminder_
+        # tasks(armable_only=True)` / `reminders_due_before` /
+        # `list_armable_automation_definitions`) for both primitives.
         self._items = [
             item
             for item in self._items
             if not is_server_scoped_owner(item.get("owner_id"))
+            and item.get("transfer_state") not in DORMANT_TRANSFER_STATES
         ]
 
         self._append_projected(self.watchlist_projection)

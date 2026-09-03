@@ -48,8 +48,17 @@ def build_raw_content_match_lines(content: str, query: str) -> tuple[int, ...]:
     return find_content_matches(content, query)
 
 
-class LibraryMediaContentBody(Container):
-    """Lazily mount and retain the Raw and Rendered media content views."""
+class LibraryMediaContentBody(ScrollableContainer):
+    """Lazily mount and retain the Raw and Rendered media content views.
+
+    task-28003 (Qodo #2307): a ``ScrollableContainer`` (was a plain
+    ``Container``) so rendered-Markdown mode is keyboard-scrollable -- the
+    Markdown is a direct child that scrolls in THIS container, and only a
+    scrolling, focusable container gives F6 a target and Page/arrow keys an
+    effect there. Raw mode is unaffected: it pins this container's
+    ``overflow_y: hidden`` and brings its own ``VirtualizedRawContent``
+    ``ScrollView``, so the outer container never double-scrolls.
+    """
 
     _VALID_MODES = frozenset({"raw", "rendered"})
 
@@ -339,20 +348,38 @@ class LibraryMediaContentSearchControls(Vertical):
         self.set_class(bool(self.query), self.ACTIVE_SEARCH_CLASS)
 
     def compose(self) -> ComposeResult:
+        """Compose the persistent, display-gated content-search controls.
+
+        task-28002: every child is PERSISTENT and display-gated on query
+        activity, never torn down. The old activity-flip recompose destroyed
+        this Input WHILE IT HELD FOCUS (a first submit is exactly such a
+        flip), leaving screen focus on nothing -- a live-verified total
+        keyboard deadlock, since every Escape gate reads ``self.focused``.
+        Same persistent-child idiom as the task-22207 loading banner.
+
+        Yields:
+            The search ``Input``, the match-count ``Static``, and the
+            Prev/Next navigation toolbar -- the latter two hidden while no
+            query is active.
+        """
+        is_active = bool(self.query)
         yield Input(
             value=self.query,
             placeholder=self._placeholder_text(),
             id="library-media-content-search",
         )
-        if not self.query:
-            return
-        yield Static(
+        status = Static(
             self._status_text(),
             id="library-media-content-search-status",
             markup=False,
         )
-        toolbar = Horizontal(classes="ds-toolbar")
+        status.display = is_active
+        yield status
+        toolbar = Horizontal(
+            classes="ds-toolbar", id="library-media-content-search-nav"
+        )
         toolbar.styles.height = "auto"
+        toolbar.display = is_active
         with toolbar:
             yield Button(
                 "◀ Prev",
@@ -375,7 +402,7 @@ class LibraryMediaContentSearchControls(Vertical):
         matches: tuple[int, ...],
         match_index: int,
     ) -> None:
-        """Synchronize query data, recomposing only when activity changes.
+        """Synchronize query data in place; children are never recomposed.
 
         Args:
             is_markdown: Whether the content supports a rendered Markdown view.
@@ -386,27 +413,24 @@ class LibraryMediaContentSearchControls(Vertical):
         Returns:
             None.
         """
-        was_active = bool(self.query)
         self.is_markdown = is_markdown
         self.query = query
         self.matches = matches
         self.match_index = match_index
         is_active = bool(query)
-        # Dock-on-active (task-15774): the class is on the persistent
-        # container itself, so it survives the child recompose below.
+        # Dock-on-active (task-15774): the class stays on the persistent
+        # container itself.
         self.set_class(is_active, self.ACTIVE_SEARCH_CLASS)
-
-        if was_active != is_active:
-            self.refresh(recompose=True)
-            return
 
         search_input = self.query_one("#library-media-content-search", Input)
         search_input.value = self.query
         search_input.placeholder = self._placeholder_text()
-        if is_active:
-            self.query_one("#library-media-content-search-status", Static).update(
-                self._status_text()
-            )
+        status = self.query_one("#library-media-content-search-status", Static)
+        status.update(self._status_text())
+        status.display = is_active
+        self.query_one("#library-media-content-search-nav", Horizontal).display = (
+            is_active
+        )
 
     def sync_match_index(
         self, *, matches: tuple[int, ...], match_index: int

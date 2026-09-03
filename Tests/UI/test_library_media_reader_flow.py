@@ -93,7 +93,15 @@ def _row_identity(row: Button) -> tuple[str, int, str]:
 
 
 @pytest.mark.asyncio
-async def test_media_global_f6_reaches_permanent_work_region() -> None:
+async def test_media_global_f6_reaches_content_scroller() -> None:
+    """task-28003: F6 into the Reader lands on the scrollable content.
+
+    Before this, the Reader pane's only F6 target was the Find button, so
+    the content ScrollView (VirtualizedRawContent, can_focus) was reachable
+    by mouse click alone -- keyboard scroll was dead on a fresh open
+    (live-verified 2026-09-02). The content scroller is now the first F6
+    candidate; Find stays reachable via "/".
+    """
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items(3))
     host = LibraryGlobalKeyProductionCSSHarness(app)
@@ -101,13 +109,17 @@ async def test_media_global_f6_reaches_permanent_work_region() -> None:
     async with host.run_test(size=WIDE_SIZE) as pilot:
         screen = await _open_media_list(host, pilot)
         screen.query_one("#library-media-row-0", Button).press()
-        find = await _wait_for_selector(screen, pilot, "#library-media-reader-find")
+        await _wait_for_selector(screen, pilot, "#library-media-reader-find")
+        content = await _wait_for_selector(
+            screen, pilot, "#library-media-viewer-content-text"
+        )
+        assert content.can_focus  # scroll keys have somewhere to land
         rail = screen.query_one("#library-search-input", Input)
         items = screen.query_one("#library-media-filter", Input)
         rail.focus()
         await pilot.pause()
 
-        for expected in (items, find, rail):
+        for expected in (items, content, rail):
             await pilot.press("f6")
             await pilot.pause()
             assert screen.focused is expected
@@ -182,6 +194,155 @@ async def test_enter_bypasses_selection_settle_window():
         )
         assert service.detail_calls[0]["media_id"] == expected_backing_id
         service.release(expected_backing_id)
+
+
+@pytest.mark.asyncio
+async def test_escape_from_reader_focuses_loaded_row_and_down_advances():
+    """task-28004: Escape from the Reader lands on the loaded ROW, not the filter.
+
+    Live repro (2026-09-02): Escape focused the "Filter media" Input, so
+    the natural next keystrokes were swallowed -- typed characters landed
+    in the filter and Down was inert until a Tab. Landing on the loaded
+    row keeps Escape-then-Down as the sequential-review gesture (Down
+    moves the selection and auto-loads the adjacent item).
+    """
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        # Load ROW 0 fully first (the reliable open-and-settle pattern the
+        # sibling traversal test uses): a fully-loaded item is what the
+        # Escape-then-Down selection path needs -- a still-pending selection
+        # is disarmed, not re-selected, when focus moves.
+        row_0 = screen.query_one("#library-media-row-0", Button)
+        row_0_id, backing_id_0, _ = _row_identity(row_0)
+        row_0.press()
+        await _wait_for_detail_call(service, backing_id_0)
+        service.release(backing_id_0)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_id == row_0_id,
+            message="Row 0 never settled in the Reader.",
+        )
+        assert screen._selected_media_id == row_0_id
+
+        # Put focus INSIDE the Reader pane, then Escape outward to Items.
+        screen.query_one("#library-media-reader-find", Button).focus()
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+        focused = screen.focused
+        assert focused is not None
+        assert focused.has_class("library-media-row")
+        assert str(getattr(focused, "media_id", "")) == row_0_id
+
+        # The core fix: because focus is on the ROW (not the filter Input),
+        # Down moves to the sibling row instead of being swallowed. Focus
+        # movement is synchronous and deterministic; the downstream
+        # auto-load-on-arrow is covered by
+        # test_arrow_traversal_updates_selection_immediately_but_loads_only_settled_row.
+        next_row_id = str(
+            screen.query_one("#library-media-row-1", Button).media_id
+        )
+        await pilot.press("down")
+        await pilot.pause()
+        assert str(screen.focused.media_id) == next_row_id
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)
+
+
+async def _load_row_0(screen, service, pilot):
+    """Open and fully settle row 0 in the Reader; return its canonical id."""
+    row_0 = screen.query_one("#library-media-row-0", Button)
+    row_0_id, backing_id_0, _ = _row_identity(row_0)
+    row_0.press()
+    await _wait_for_detail_call(service, backing_id_0)
+    service.release(backing_id_0)
+    await _wait_for_condition(
+        pilot,
+        lambda: screen._library_media_reader_session.loaded_id == row_0_id,
+        message="Row 0 never settled in the Reader.",
+    )
+    return row_0_id
+
+
+@pytest.mark.asyncio
+async def test_s_key_enters_select_mode_and_space_toggles_a_row():
+    """task-28012: keyboard-only bulk selection on the media list."""
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        assert screen._library_media_select_mode is False
+        assert ("s", "select") in screen._library_footer_shortcuts_for_current_state()
+
+        # "s" from a focused row enters select mode.
+        screen.query_one("#library-media-row-0", Button).focus()
+        await pilot.pause()
+        await pilot.press("s")
+        await pilot.pause()
+        assert screen._library_media_select_mode is True
+        footer = screen._library_footer_shortcuts_for_current_state()
+        assert ("space", "toggle selection") in footer
+        assert ("s", "done selecting") in footer
+
+        # Space toggles the focused row's selection.
+        row = screen.query_one("#library-media-row-0", Button)
+        row_id = str(row.media_id)
+        row.focus()
+        await pilot.pause()
+        await pilot.press("space")
+        await pilot.pause()
+        assert screen._library_media_row_selection.is_selected(row_id)
+
+
+@pytest.mark.asyncio
+async def test_bracket_keys_walk_to_next_and_previous_item_in_the_reader():
+    """task-28005: ] opens the next browse item, [ the previous, from the Reader."""
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        row_0_id = await _load_row_0(screen, service, pilot)
+        row_1_id = str(screen.query_one("#library-media-row-1", Button).media_id)
+        assert screen._selected_media_id == row_0_id
+
+        # ] walks DOWN the browse order (newest-first rows) to the next item.
+        await pilot.press("]")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._selected_media_id == row_1_id,
+            message="] did not select the next item.",
+        )
+        # [ walks back to the previous item.
+        await pilot.press("[")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._selected_media_id == row_0_id,
+            message="[ did not select the previous item.",
+        )
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)
+
+
+@pytest.mark.asyncio
+async def test_prev_item_binding_disabled_at_the_first_item():
+    """task-28005: [ is gated off (no-op) at the first item; ] stays active."""
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        row_0_id = await _load_row_0(screen, service, pilot)
+        # Row 0 is the first (top) item: no previous exists.
+        assert screen.check_action("library_media_prev_item", ()) is False
+        assert screen.check_action("library_media_next_item", ()) is True
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)
 
 
 @pytest.mark.asyncio
@@ -968,6 +1129,7 @@ def _escape_fake(*, region: str, more_open: bool = False):
         ),
         _sync_library_media_viewer_or_recompose=lambda: calls.append("sync"),
         _focus_library_control=lambda selector: calls.append(("focus", selector)),
+        _focus_library_media_items_pane=lambda: calls.append(("items-pane",)),
         _focus_library_rail_action=lambda selector: calls.append(("rail", selector)),
         _exit_library_media_viewer=lambda: calls.append("back"),
         _register_footer_shortcuts=lambda: calls.append("footer"),
@@ -1011,7 +1173,9 @@ def test_escape_moves_reader_to_items_then_library_then_screen_back():
     """One outward handler graduates through the effective pane hierarchy."""
     fake, calls, shell, _find = _escape_fake(region="reader")
     LibraryScreen.action_library_media_viewer_back(fake)
-    assert calls[:1] == [("focus", "#library-media-filter")]
+    # task-28004: the Items landing is the loaded row (falling back to the
+    # filter only on an empty list), so Escape-then-Down keeps working.
+    assert calls[:1] == [("items-pane",)]
 
     fake.focused = SimpleNamespace(ancestors=(shell.items,))
     calls.clear()
@@ -1204,6 +1368,109 @@ async def test_offset_burst_settles_only_the_newest_value_per_item():
     assert fake._library_media_progress_persisted_offsets["local:media:3"] == (0, 17)
 
 
+@pytest.mark.asyncio
+async def test_capture_outside_read_never_persists_the_analysis_body_offset():
+    """task-28026: the Analysis body reuses ``#library-media-viewer-content``,
+    so capturing progress while a non-Read tab is active must NOT record that
+    scroll offset as the transcript's reading progress."""
+    calls = []
+
+    async def update_reading_progress(**kwargs):
+        calls.append(kwargs)
+
+    async def run_service_call(call, *args, **kwargs):
+        kwargs.pop("isolate_in_worker", None)
+        return await call(*args, **kwargs)
+
+    workers: list = []
+    fake = _progress_capture_fake(
+        workers=workers,
+        update_reading_progress=update_reading_progress,
+        run_service_call=run_service_call,
+        scroll_y=42,
+    )
+    fake._library_media_reader_session = set_mode(
+        fake._library_media_reader_session, "analysis"
+    )
+
+    LibraryScreen._capture_library_media_loaded_progress(fake)
+
+    assert workers == []
+    assert calls == []
+    assert fake._library_media_read_scroll_by_id == {}
+
+
+def test_find_from_analysis_clears_the_search_before_reading_the_transcript():
+    """task-28026: the always-visible Find action switches Analysis->Read, so
+    it must drop the analysis query/index/memo the same way the mode buttons
+    do -- otherwise a stale, possibly out-of-range match index scans the
+    transcript."""
+    session = set_mode(
+        LibraryMediaReaderSessionState(
+            selected_id="local:media:1",
+            selected_backing_id=1,
+            selected_title="A",
+            loaded_id="local:media:1",
+            loaded_backing_id=1,
+            loaded_title="A",
+        ),
+        "analysis",
+    )
+    fake = SimpleNamespace(
+        _library_media_reader_session=session,
+        _library_media_content_query="needle",
+        _library_media_content_match_index=5,
+        _library_media_content_match_memo=(object(), "needle", (1, 2, 3), "analysis"),
+        _sync_library_media_viewer_or_recompose=lambda: None,
+        call_after_refresh=lambda *a, **k: None,
+        _focus_library_media_content_search_input=lambda: None,
+    )
+    fake._reset_library_media_search_on_mode_change = MethodType(
+        LibraryScreen._reset_library_media_search_on_mode_change, fake
+    )
+
+    LibraryScreen.handle_library_media_reader_find(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert fake._library_media_reader_session.mode == "read"
+    assert fake._library_media_content_query == ""
+    assert fake._library_media_content_match_index == 0
+    assert fake._library_media_content_match_memo is None
+
+
+def test_media_content_matches_scopes_corpus_to_the_active_reader_mode():
+    """task-28026: the match memo key includes reader mode, so the Analysis
+    tab searches the analysis text and Read searches the transcript -- a tab
+    switch never serves the other tab's matches from the one-slot memo."""
+    detail = {"id": 1}
+    state = SimpleNamespace(
+        content="alpha\nbeta\nalpha",
+        analysis="gamma\nalpha\ndelta",
+    )
+    fake = SimpleNamespace(
+        _library_media_detail=detail,
+        _library_media_content_query="alpha",
+        _library_media_content_match_memo=None,
+        _library_media_reader_session=LibraryMediaReaderSessionState(),
+        _library_media_viewer_state_cached=lambda _detail: state,
+    )
+
+    # Read tab -> transcript corpus ("alpha" on lines 0 and 2).
+    assert LibraryScreen._library_media_content_matches(fake) == (0, 2)
+    memo_after_read = fake._library_media_content_match_memo
+    assert memo_after_read is not None and memo_after_read[3] == "read"
+
+    # Same detail + query, Analysis tab: the memo must MISS on the mode and
+    # rescan the analysis text ("alpha" on line 1), not serve the cached
+    # transcript matches.
+    fake._library_media_reader_session = set_mode(
+        fake._library_media_reader_session, "analysis"
+    )
+    assert LibraryScreen._library_media_content_matches(fake) == (1,)
+    assert fake._library_media_content_match_memo[3] == "analysis"
+
+
 def test_capture_matching_fetched_progress_skips_the_write():
     """TASK-22210 probe: an offset already in the DB never re-writes."""
     workers: list = []
@@ -1344,3 +1611,173 @@ async def test_unmount_drains_pending_and_ambiguous_inflight_progress_writes():
         assert written.get(2) == {"scroll_x": 0, "scroll_y": 7}
         assert screen._library_media_progress_pending_writes == {}
         assert screen._library_media_progress_inflight_write is None
+
+
+# ---------------------------------------------------------------------------
+# task-28027: Reader action-row accelerator keys (l / c / t)
+# ---------------------------------------------------------------------------
+
+
+def _reader_key_fake(*, view="viewer", external=False, substate=False, pending=False):
+    """A minimal screen fake for the Reader action-key check_action gates."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
+
+    media_id = "local:media:1"
+    return SimpleNamespace(
+        _library_selected_row_id=LIBRARY_ROW_BROWSE_MEDIA,
+        _library_media_view=view,
+        _selected_media_id=media_id,
+        _library_media_reader_session=SimpleNamespace(
+            external_detail=external,
+            pending_request=object() if pending else None,
+            # A settled Reader has its loaded id == the selected id.
+            loaded_id=None if pending else media_id,
+        ),
+        _library_media_viewer_substate_active=lambda: substate,
+    )
+
+
+def test_reader_action_keys_gated_to_plain_local_viewer():
+    """task-28027: l/c/t active only in a plain local Reader; c also for external."""
+    plain = _reader_key_fake()
+    for action in (
+        "library_media_read_later",
+        "library_media_use_in_console",
+        "library_media_move_to_trash",
+    ):
+        assert LibraryScreen.check_action(plain, action, ()) is True, action
+
+    # A sub-state (edit/confirm/analysis-edit) gates all three off.
+    sub = _reader_key_fake(substate=True)
+    for action in (
+        "library_media_read_later",
+        "library_media_use_in_console",
+        "library_media_move_to_trash",
+    ):
+        assert LibraryScreen.check_action(sub, action, ()) is False, action
+
+    # External (server) items: read-later/trash are local-only, Console works.
+    ext = _reader_key_fake(external=True)
+    assert LibraryScreen.check_action(ext, "library_media_read_later", ()) is False
+    assert LibraryScreen.check_action(ext, "library_media_move_to_trash", ()) is False
+    assert LibraryScreen.check_action(ext, "library_media_use_in_console", ()) is True
+
+    # Not in the viewer at all -> all off.
+    listing = _reader_key_fake(view="list")
+    for action in (
+        "library_media_read_later",
+        "library_media_use_in_console",
+        "library_media_move_to_trash",
+    ):
+        assert LibraryScreen.check_action(listing, action, ()) is False, action
+
+    # Qodo #2317: while a detail request is pending (mid-load/traversal), the
+    # displayed detail is not yet the selected item -> all off.
+    loading = _reader_key_fake(pending=True)
+    for action in (
+        "library_media_read_later",
+        "library_media_use_in_console",
+        "library_media_move_to_trash",
+    ):
+        assert LibraryScreen.check_action(loading, action, ()) is False, action
+
+
+def test_t_key_arms_delete_confirmation():
+    """task-28027: 't' arms the same inline delete-confirm the button does."""
+    fake = SimpleNamespace(
+        _library_media_confirming_delete=False,
+        _library_media_delete_receipt_ids=("stale",),
+        _synced=0,
+    )
+    fake._sync_library_media_viewer_or_recompose = lambda: setattr(
+        fake, "_synced", fake._synced + 1
+    )
+    LibraryScreen.action_library_media_move_to_trash(fake)
+    assert fake._library_media_confirming_delete is True
+    assert fake._library_media_delete_receipt_ids == ()
+    assert fake._synced == 1
+
+
+def test_c_key_opens_console_handoff():
+    """task-28027: 'c' routes to the same Use-in-Console handoff as the button."""
+    calls = []
+    fake = SimpleNamespace(_open_selected_media_handoff=lambda: calls.append(1))
+    LibraryScreen.action_library_media_use_in_console(fake)
+    assert calls == [1]
+
+
+def test_l_key_starts_read_later_toggle():
+    """task-28027: 'l' starts the same read-it-later toggle as the button."""
+    started = []
+    fake = SimpleNamespace(
+        _start_library_media_read_later_toggle=lambda: started.append(1)
+    )
+    LibraryScreen.action_library_media_read_later(fake)
+    assert started == [1]
+
+
+@pytest.mark.asyncio
+async def test_t_key_in_reader_arms_delete_confirm_end_to_end():
+    """task-28027: pressing 't' in the mounted Reader arms the delete confirm."""
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _load_row_0(screen, service, pilot)
+        assert screen._library_media_confirming_delete is False
+
+        # Focus a non-input Reader control so the printable 't' reaches the
+        # screen binding (not a search/filter Input).
+        screen.query_one("#library-media-reader-find", Button).focus()
+        await pilot.pause()
+        await pilot.press("t")
+        await _wait_for_selector(screen, pilot, "#library-media-delete-confirm")
+        assert screen._library_media_confirming_delete is True
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)
+
+
+@pytest.mark.asyncio
+async def test_l_key_in_reader_toggles_read_later_end_to_end():
+    """task-28027 (Qodo #2317): 'l' in the mounted Reader saves read-it-later."""
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _load_row_0(screen, service, pilot)
+
+        screen.query_one("#library-media-reader-find", Button).focus()
+        await pilot.pause()
+        await pilot.press("l")
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(service.read_it_later_calls),
+            message="'l' did not toggle read-it-later.",
+        )
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)
+
+
+@pytest.mark.asyncio
+async def test_c_key_in_reader_opens_console_handoff_end_to_end(monkeypatch):
+    """task-28027 (Qodo #2317): 'c' in the mounted Reader routes to the handoff."""
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _load_row_0(screen, service, pilot)
+
+        calls = []
+        monkeypatch.setattr(
+            screen, "_open_selected_media_handoff", lambda: calls.append(1)
+        )
+        screen.query_one("#library-media-reader-find", Button).focus()
+        await pilot.pause()
+        await pilot.press("c")
+        await pilot.pause()
+        assert calls == [1]
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)

@@ -114,6 +114,9 @@ ABSENT_AT_READY_PREFIXES = (
     # interview coordinator, and agent tools must not delay the first frame.
     "tldw_chatbook.Personal_Context",
     "tldw_chatbook.RAG_Search.simplified",
+    # TASK-29227 / ADR-107: portable Tool Pack policy composition and receipt
+    # recovery are Tool Profiles interaction work, not first-paint work.
+    "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
     "tldw_chatbook.UI.Screens.trajectory_screen",
@@ -142,8 +145,17 @@ ABSENT_AT_READY_MODULES = (
     "tldw_chatbook.Sync_Interop.notes_organization",
     "tldw_chatbook.Sync_Interop.notes_organization_sync_service",
     "tldw_chatbook.Sync_Interop.notes_outbox_producer",
+    # Terminal sessions are first-use work.  App-lifetime ownership must not
+    # eagerly load their implementation before the Console is interactive.
+    "tldw_chatbook.Terminal",
+    "tldw_chatbook.Terminal.contracts",
+    "tldw_chatbook.Terminal.session_manager",
     # ADR-090: the external-summary LLM graph is approval-time work.
     "tldw_chatbook.Chat.permission_summary_service",
+    # TASK-21351: durable receipt coordination is first switcher/settlement
+    # work. The bridge keeps a lazy proxy so the implementation module does
+    # not spend the first-interactive-frame budget.
+    "tldw_chatbook.Chat.console_activity_receipts",
     "tldw_chatbook.Agents.profile_tool_provider",
     "tldw_chatbook.Sync_Interop.personal_context_adapter",
     # TASK-23113.7: normalization is idle maintenance. Its adapter and worker

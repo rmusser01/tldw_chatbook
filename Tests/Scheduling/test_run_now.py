@@ -160,6 +160,41 @@ def test_run_now_handler_failure_returns_false_and_records(db):
     assert row["last_status"] == "missed"
 
 
+@pytest.mark.parametrize("dormant_state", ["to_server_sent", "from_server_pending"])
+def test_run_now_refuses_dormant_transfer_state(db, dormant_state):
+    """Reminder-side parity guard (spec §6.1 ruling 2): the loop's manual
+    entry refuses a row mid-handoff or awaiting server release, same as
+    the definitions-side run_automation_now already did."""
+    task_id = _make_one_time(db, due_at=NOW)
+    db.update_reminder_task(task_id, transfer_state=dormant_state)
+    handler = AsyncMock()
+    loop = _make_loop(db, handler)
+    loop.queue.load()
+
+    succeeded = asyncio.run(loop.run_reminder_now(task_id))
+
+    assert succeeded is False
+    handler.assert_not_awaited()
+    row = db.get_reminder_task(task_id)
+    assert row["last_run_at"] is None  # untouched, not consumed
+
+
+@pytest.mark.parametrize("armed_state", ["to_server_pending", "to_server_failed"])
+def test_run_now_arms_non_dormant_transfer_state(db, armed_state):
+    """Corrects the any-non-NULL exclusion: a merely-queued or failed
+    transfer still dispatches manually."""
+    task_id = _make_one_time(db, due_at=NOW)
+    db.update_reminder_task(task_id, transfer_state=armed_state)
+    handler = AsyncMock()
+    loop = _make_loop(db, handler)
+    loop.queue.load()
+
+    succeeded = asyncio.run(loop.run_reminder_now(task_id))
+
+    assert succeeded is True
+    handler.assert_awaited_once()
+
+
 def test_manual_and_scheduled_dispatch_share_the_seam(db):
     """The same DB state dispatched manually vs via tick yields equal rows.
 
@@ -234,6 +269,23 @@ def test_service_run_now_missing_task_returns_none(db):
     service = SchedulingService(db=db, server_client=None, runtime_source="local")
     loop = _make_loop(db, AsyncMock())
     assert asyncio.run(service.run_reminder_now("no-such-id", loop=loop)) is None
+
+
+@pytest.mark.parametrize("dormant_state", ["to_server_sent", "from_server_pending"])
+def test_service_run_now_refuses_dormant_transfer_state(db, dormant_state):
+    """Service seam mirrors the loop's refusal -- returns None without
+    touching the row (spec §6.1 ruling 2)."""
+    task_id = _make_one_time(db, due_at=NOW)
+    db.update_reminder_task(task_id, transfer_state=dormant_state)
+    handler = AsyncMock()
+    loop = _make_loop(db, handler)
+    service = SchedulingService(db=db, server_client=None, runtime_source="local")
+    loop.queue.load()
+
+    result = asyncio.run(service.run_reminder_now(task_id, loop=loop))
+
+    assert result is None
+    handler.assert_not_awaited()
 
 
 class _FakeAutomationHandler:
@@ -326,8 +378,13 @@ def test_service_run_automation_now_lifecycle_not_configured_or_paused_refuses(
     assert handler.calls == []
 
 
-def test_service_run_automation_now_transfer_pending_refuses(db, monkeypatch):
-    definition_id = _make_automation_definition(db, transfer_state="pending")
+@pytest.mark.parametrize("dormant_state", ["to_server_sent", "from_server_pending"])
+def test_service_run_automation_now_dormant_transfer_refuses(db, monkeypatch, dormant_state):
+    """Only DORMANT_TRANSFER_STATES refuse (spec §6.1 ruling 2) -- corrected
+    from the pre-PR-5 "any non-NULL transfer_state refuses" behavior this
+    test used to pin (it used an arbitrary value, "pending", that spec
+    ruling 2 now classifies as armed, not dormant)."""
+    definition_id = _make_automation_definition(db, transfer_state=dormant_state)
     handler = _FakeAutomationHandler()
     service = _service_with_automation_handler(db, handler)
     _stub_health(monkeypatch)  # would otherwise also refuse; isolate this check
@@ -336,6 +393,23 @@ def test_service_run_automation_now_transfer_pending_refuses(db, monkeypatch):
 
     assert result is None
     assert handler.calls == []
+
+
+@pytest.mark.parametrize("armed_state", [None, "to_server_pending", "to_server_failed"])
+def test_service_run_automation_now_non_dormant_transfer_arms(db, monkeypatch, armed_state):
+    """NULL, to_server_pending (merely queued), and to_server_failed (send
+    failed, re-armed) all keep executing locally per spec §6.1 ruling 2 --
+    this is the corrected two-state exclusion, not the old any-non-NULL
+    one."""
+    definition_id = _make_automation_definition(db, transfer_state=armed_state)
+    handler = _FakeAutomationHandler()
+    service = _service_with_automation_handler(db, handler)
+    _stub_health(monkeypatch)
+
+    result = asyncio.run(service.run_automation_now(definition_id))
+
+    assert result == {"run_id": "run-1", "deduped": False}
+    assert len(handler.calls) == 1
 
 
 def test_service_run_automation_now_health_not_ready_refuses(db, monkeypatch):

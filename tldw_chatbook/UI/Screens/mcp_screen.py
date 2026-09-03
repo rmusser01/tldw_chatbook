@@ -1,5 +1,6 @@
 """MCP destination shell: mode strip + rail/canvas/inspector workbench."""
 
+from collections.abc import Mapping
 from typing import Any
 
 from textual.app import ComposeResult
@@ -156,6 +157,41 @@ class MCPScreen(BaseAppScreen):
             return state
         legacy = self.state_data.get("unified_mcp_view_state")
         return legacy if isinstance(legacy, dict) else None
+
+    def apply_navigation_context(self, context: Mapping[str, object]) -> None:
+        """Accept one bounded Settings deep-link into an exact profile."""
+        allowed = {
+            "mode",
+            "tool_policy_profile_id",
+            "profile_revision",
+            "profile_policy_digest",
+        }
+        if set(context) != allowed or context.get("mode") != "permissions":
+            return
+        profile_id = context.get("tool_policy_profile_id")
+        revision = context.get("profile_revision")
+        digest = context.get("profile_policy_digest")
+        if (
+            type(profile_id) is not str
+            or not profile_id
+            or len(profile_id) > 128
+            or (revision is not None and (type(revision) is not int or revision < 1))
+            or (
+                type(digest) is not str
+                or len(digest) != 64
+                or any(character not in "0123456789abcdef" for character in digest)
+            )
+        ):
+            return
+        view_state = {
+            "mode": "permissions",
+            "tool_policy_profile_id": profile_id,
+            "profile_revision": revision,
+            "profile_policy_digest": digest,
+        }
+        self.state_data["mcp_hub_view_state"] = view_state
+        if self.workbench is not None:
+            self.workbench.set_initial_view_state(view_state)
 
     def _sync_mode_chips(self, active_mode: str) -> None:
         for candidate, spec in MCP_HUB_MODES.items():

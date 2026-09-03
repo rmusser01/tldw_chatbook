@@ -1,20 +1,23 @@
 from __future__ import annotations
 
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.app import (
+    _install_deferred_notes_sync_facades,
+    _wire_notes_sync_services,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService, ScopeType
 from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
-from tldw_chatbook.Sync_Interop.notes_outbox_producer import NotesSyncV2OutboxProducer
 from tldw_chatbook.Sync_Interop.notes_organization_sync_service import (
     NotesOrganizationSyncService,
 )
+from tldw_chatbook.Sync_Interop.notes_outbox_producer import NotesSyncV2OutboxProducer
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
-from tldw_chatbook.app import _wire_notes_sync_services
 
 
 class _LocalNotes:
@@ -160,6 +163,108 @@ async def test_production_shaped_wiring_replaces_none_seam_before_note_mutation(
         dataset_id="dataset-a",
     )
     assert created == "note-a"
+    assert len(rows) == 1
+    assert rows[0]["domain"] == "notes"
+
+
+@pytest.fixture
+def deferred_notes_sync_databases(tmp_path):
+    """Yield the real SQLite owners with deterministic failure-path cleanup."""
+
+    with ExitStack() as cleanup:
+        notes = CharactersRAGDB(
+            tmp_path / "deferred-notes.sqlite",
+            client_id="deferred",
+        )
+        cleanup.callback(notes.close_connection)
+        state = SyncStateRepository(
+            tmp_path / "deferred-sync.sqlite",
+            client_id="deferred",
+        )
+        cleanup.callback(state.close)
+        yield notes, state
+
+
+@pytest.mark.asyncio
+async def test_deferred_notes_sync_facades_wire_on_first_sync_access(
+    deferred_notes_sync_databases,
+) -> None:
+    notes, state = deferred_notes_sync_databases
+    scope = NotesScopeService(
+        local_notes_service=_LocalNotes(notes),
+        server_service=object(),
+    )
+    app = SimpleNamespace(
+        active_server_id="server-a",
+        runtime_policy=SimpleNamespace(
+            state=SimpleNamespace(
+                active_source="server",
+                active_server_id="server-a",
+            )
+        ),
+        chachanotes_db=notes,
+        sync_state_repository=state,
+        sync_v2_dataset_keys={"dataset-a": generate_dataset_key()},
+        notes_scope_service=scope,
+        local_chat_conversation_service=SimpleNamespace(organization_sync_service=None),
+        notes_organization_repository=None,
+        notes_organization_sync_service=None,
+        local_first_sync_service=SimpleNamespace(
+            notes_organization_repository=None,
+            notes_organization_sync_service=None,
+        ),
+        sync_restore_service=SimpleNamespace(notes_organization_repository=None),
+        manual_sync_control_service=SimpleNamespace(
+            notes_organization_sync_service=None,
+            notes_repository=None,
+        ),
+    )
+    state.set_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id=None,
+        workspace_scope=None,
+        profile_mode="local_first",
+        device_id="device-a",
+        dataset_id="dataset-a",
+    )
+
+    assert _install_deferred_notes_sync_facades(app) is True
+    deferred_service = app.manual_sync_control_service.notes_organization_sync_service
+    assert deferred_service is not None
+
+    created = await scope.save_note(
+        scope=ScopeType.LOCAL_NOTE,
+        title="Deferred",
+        content="First use",
+        create_note_id="note-deferred",
+        user_id="local-user",
+        sync_v2_profile={"server_profile_id": "server-a"},
+    )
+
+    assert created == "note-deferred"
+    assert deferred_service.notes_repository.db is notes
+    assert isinstance(
+        app.notes_organization_sync_service,
+        NotesOrganizationSyncService,
+    )
+    assert (
+        app.notes_scope_service.organization_sync_service
+        is app.notes_organization_sync_service
+    )
+    assert (
+        app.local_first_sync_service.notes_organization_repository
+        is app.notes_organization_repository
+    )
+    assert (
+        app.sync_restore_service.notes_organization_repository
+        is app.notes_organization_repository
+    )
+    rows = state.list_pending_sync_v2_outbox_envelopes(
+        server_profile_id="server-a",
+        authenticated_principal_id=None,
+        workspace_scope=None,
+        dataset_id="dataset-a",
+    )
     assert len(rows) == 1
     assert rows[0]["domain"] == "notes"
 

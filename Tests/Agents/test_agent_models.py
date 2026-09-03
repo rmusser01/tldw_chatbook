@@ -11,6 +11,7 @@ from tldw_chatbook.Agents.agent_models import (
     MAX_RUN_CONTROL_STEPS,
     CHECK_AGENTS_TOOL_NAME,
     INSTALL_SKILL_TOOL_NAME,
+    PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
     LOOP_DETECTION_N,
     RUN_CANCELLED,
     RUN_DONE,
@@ -80,6 +81,10 @@ def test_runtime_tool_names():
         "load_tools",
         "skill_file",
         INSTALL_SKILL_TOOL_NAME,
+        # Red on origin/dev itself: the constant is in RUNTIME_TOOL_NAMES on
+        # both sides but neither side's test listed it (baseline breakage,
+        # fixed in the dev-merge of the hermes-parity branch).
+        PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
         RUN_SKILL_SCRIPT_TOOL_NAME,
         SEARCH_RUN_LOG_TOOL_NAME,
         RUN_LOG_STATS_TOOL_NAME,

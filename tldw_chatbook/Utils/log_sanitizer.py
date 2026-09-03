@@ -104,6 +104,10 @@ _BEARER = re.compile(
 _STANDALONE_CREDENTIALS = (
     re.compile(r"(?<![A-Za-z0-9_-])sk-proj-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])"),
     re.compile(r"(?<![A-Za-z0-9_-])sk-ant-api03-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])"),
+    # TASK-26022: Claude subscription OAuth access/refresh tokens (borrowed
+    # read-only from Claude Code's credential file) — same envelope as API
+    # keys, different prefix family.
+    re.compile(r"(?<![A-Za-z0-9_-])sk-ant-o[ar]t\d{2}-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])"),
     # TASK-19555 review: OpenRouter keys carry hyphens inside the body, so the
     # generic `sk-[A-Za-z0-9]{20,}` rule below never matched one.
     re.compile(r"(?<![A-Za-z0-9_-])sk-or-v1-[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])"),

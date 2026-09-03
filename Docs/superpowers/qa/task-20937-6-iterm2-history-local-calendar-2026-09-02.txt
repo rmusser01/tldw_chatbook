@@ -1,0 +1,78 @@
+# TASK-20937.6 iTerm2 Ctrl+K History local-calendar evidence
+
+Date: 2026-09-02 (America/Los_Angeles)
+
+## Scope and status
+
+This record covers the Ctrl+K History date-boundary defect discovered during
+the iTerm2 walkthrough. It closes TASK-20937.6 AC #11 only. The broader
+same-source Windows Terminal comparison in AC #4 remains open.
+
+## Environment
+
+- macOS 26.5.2 (25F84)
+- iTerm2 3.5.14
+- Python 3.12.11
+- Textual 8.2.8
+- tmux canvas: manual 235 columns x 52 rows
+- isolated profile: `/tmp/tldw-task20937.6-iterm.PHdk5V`
+- rebased `origin/dev`: `88e4b2580ead871637d6717781a51b290fa97a3b`
+- fixed runtime source: `3f82136954bdcfdfe301825abaf8e7c21ec0041c`
+- pre-fix source: `e64f952b80038fad1ac71fbde2017ec70f0b810f`
+
+The fixed screenshot was captured after the source commit was created. The
+running process had been restarted from the same worktree immediately before
+that commit, and no production or test source changed between restart, commit,
+and capture.
+
+## Reproduction and correction
+
+The pre-fix History view grouped conversations labeled `4h` beneath
+`YESTERDAY` even though iTerm2 and the host calendar were still on September 2.
+The loader defaulted a missing `app_instance.local_timezone_name` to UTC; that
+attribute is not populated by the application, so UTC was the effective
+production default.
+
+The fix keeps a valid explicit IANA timezone authoritative. With no valid
+explicit timezone, `datetime.astimezone(None)` delegates each date conversion
+to the host's local rules. This avoids freezing the current UTC offset and
+therefore preserves DST-aware calendar grouping without a new dependency.
+
+The same isolated database and iTerm2 window were restarted from fixed source.
+At 235x52, History then placed the five-hour-old conversations beneath `TODAY`;
+the recent Roleplay item also appeared beneath `TODAY` with its current
+minute-level age. A `tmux capture-pane` of the same frame independently
+reported `235x52`, `TODAY`, and the `5h` rows.
+
+## Captures
+
+- Pre-fix regression:
+  `task-20937-6-iterm2-history-utc-regression-2026-09-02.png`
+  SHA-256 `d6ffb14839e80c9364d638debc57e95c7cd03677c7367883b27f2fa28e1b1f1b`
+- Fixed local-calendar result:
+  `task-20937-6-iterm2-history-local-calendar-2026-09-02.png`
+  SHA-256 `7a3299da9adad107e359dc12b01cab01969da1ba8b1b4e35c570addcba5af884`
+
+Both images were captured from the native iTerm2 window through the signed CUA
+Driver daemon with Accessibility and Screen Recording granted. iTerm2 remained
+on its existing Space and was not raised to the foreground.
+
+## Automated evidence
+
+- Initial RED: the new pure resolver test failed to import before the resolver
+  existed.
+- Mutation RED: replacing the controller's resolved local timezone with UTC
+  made the production-shaped loader regression fail `Yesterday != Today`.
+- Restored GREEN: the pure resolver and loader boundary nodes passed `2 passed`.
+- Focused affected gate:
+  `Tests/Chat/test_console_switcher_state.py` and
+  `Tests/UI/test_console_activity_switcher.py` passed `58 passed, 1 warning in
+  11.34s`; the warning is the existing Requests dependency-version warning.
+- Scoped Ruff lint passed. Ruff format passed on the three formatter-clean
+  changed files; `workspace.py` retains unrelated pre-existing whole-file
+  formatter drift, while the changed hunk is formatter-clean. `py_compile` for
+  all four changed Python files and `git diff --check` passed.
+
+ADR-083 remains authoritative and requires no amendment for this correction:
+the change restores the already-intended local-calendar behavior and introduces
+no storage, ownership, security, dependency, or interaction-policy boundary.

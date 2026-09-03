@@ -85,7 +85,12 @@ from .sql_validation import (
 )
 from .sql_logging import preview_params
 from .private_sqlite import backup_connection_to_private, connect_private_sqlite
-from .base_db import _SemanticMutationAuthorization, register_semantic_mutation_guard
+from .base_db import (
+    _QuiescentSQLiteConnection,
+    _SemanticMutationAuthorization,
+    register_semantic_mutation_guard,
+    sqlite_connection_quiescence_registry,
+)
 from .transaction_observer import (
     begin_managed_transaction,
     complete_managed_transaction,
@@ -108,6 +113,11 @@ DEFAULT_DISCOVERY_OWNER = "general_chat"
 _CONVERSATION_IDENTITY_TEXT_MAX_BYTES = 256
 _SQLITE_POSITIVE_INTEGER_MAX = (1 << 63) - 1
 _UNSET = object()
+_NOTES_ORGANIZATION_SYNC_ID_TABLES = (
+    "keywords",
+    "keyword_collections",
+    "note_folders",
+)
 
 # Sentinel scope for conversation listing that spans every persisted scope
 # ('global' and all workspaces). This is a QUERY-only scope: conversations are
@@ -581,7 +591,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 63  # Epoch-safe semantic trace graph collection.
+    _CURRENT_SCHEMA_VERSION = 65  # Content-free physical trace-compaction status (after v64 auxiliary timeout).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -3215,6 +3225,9 @@ UPDATE db_schema_version
             f"[Client ID: {self.client_id}]"
         )
         self._local = threading.local()
+        self._connection_quiescence = sqlite_connection_quiescence_registry(
+            None if self.is_memory_db else self.db_path_str
+        )
         try:
             self._initialize_schema()
 
@@ -3283,80 +3296,98 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: If connecting to the database fails.
         """
-        conn = getattr(self._local, "conn", None)
-        if conn:
-            last_used = getattr(self._local, "conn_last_used", None)
-            if (
-                last_used is None
-                or (time.monotonic() - last_used) >= self._LIVENESS_PING_IDLE_SECONDS
-            ):
-                try:
-                    conn.execute("SELECT 1")  # Check if connection is still alive
-                except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                    logger.warning(
-                        f"Thread-local connection was closed or became unusable; "
-                        f"reopening db_sha256={self._db_diagnostic_ref}."
-                    )
-                    try:
-                        conn.close()
-                    except sqlite3.Error:
-                        # Ignore connection close errors - connection may already be closed
-                        pass
-                    conn = None
-
-        if not conn:
-            try:
-                conn = connect_private_sqlite(
-                    "db.chachanotes.primary",
-                    self.db_path_str,
-                    detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
-                    check_same_thread=False,  # Required for threading.local approach
-                    timeout=15,  # Maybe slightly increase timeout?
-                )
-                conn.row_factory = sqlite3.Row
-                if not self.is_memory_db:
-                    conn.execute("PRAGMA journal_mode=WAL;")
-                # NORMAL is safe under WAL (app-crash-safe; only an OS/power
-                # crash can lose the last commit or two, acceptable for this
-                # local cache) and avoids an fsync on every commit -- the
-                # default FULL was fsyncing the WAL on every commit despite
-                # WAL already being enabled. See Library_Ingest_Jobs_DB.py:
-                # 57-61 for the original template (task-15465).
-                conn.execute("PRAGMA synchronous=NORMAL;")
-
-                conn.execute("PRAGMA foreign_keys = ON;")
-                # task-22224: a HELD connection needs true autocommit (see
-                # Library_Ingest_Jobs_DB.py's module docstring -- the store
-                # template -- for the rule). Under the legacy default, one
-                # bare DML statement auto-BEGINs a DEFERRED transaction that
-                # ``TransactionContextManager`` then silently BORROWS at
-                # depth 0, degrading ``transaction(immediate=True)`` to a
-                # deferred snapshot nothing ever commits. With autocommit,
-                # the manager's explicit BEGIN [IMMEDIATE] is the only
-                # transaction owner; ``commit()``/``rollback()`` outside an
-                # explicit BEGIN are no-ops.
-                conn.isolation_level = None
-                self._local.semantic_mutation_authorization = (
-                    register_semantic_mutation_guard(conn)
-                )
-                self._local.conn = conn
-                logger.debug(
-                    f"Opened/Reopened SQLite connection "
-                    f"db_sha256={self._db_diagnostic_ref} "
-                    f"thread={threading.get_ident()}"
-                )
-            except (sqlite3.Error, PrivatePathError) as exc:
-                logger.error(
-                    f"Failed to connect to database "
-                    f"db_sha256={self._db_diagnostic_ref} "
-                    f"exception_type={type(exc).__name__}"
-                )
+        try:
+            self._connection_quiescence.begin_acquisition()
+        except RuntimeError as exc:
+            raise CharactersRAGDBError(str(exc)) from exc
+        try:
+            conn = getattr(self._local, "conn", None)
+            if conn is not None and not self._connection_quiescence.is_registered(conn):
+                conn = None
                 self._local.conn = None
-                raise CharactersRAGDBError(
-                    f"Failed to connect to database '{self.db_path_str}': {exc}"
-                ) from exc
-        self._local.conn_last_used = time.monotonic()
-        return self._local.conn
+                self._local.semantic_mutation_authorization = None
+            if conn:
+                last_used = getattr(self._local, "conn_last_used", None)
+                if (
+                    last_used is None
+                    or (time.monotonic() - last_used)
+                    >= self._LIVENESS_PING_IDLE_SECONDS
+                ):
+                    try:
+                        conn.execute("SELECT 1")  # Check if connection is still alive
+                    except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+                        logger.warning(
+                            f"Thread-local connection was closed or became unusable; "
+                            f"reopening db_sha256={self._db_diagnostic_ref}."
+                        )
+                        try:
+                            conn.close()
+                        except sqlite3.Error:
+                            # Ignore connection close errors - connection may already be closed
+                            pass
+                        self._connection_quiescence.unregister(conn)
+                        conn = None
+
+            if not conn:
+                try:
+                    conn = connect_private_sqlite(
+                        "db.chachanotes.primary",
+                        self.db_path_str,
+                        detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
+                        check_same_thread=False,  # Required for threading.local approach
+                        timeout=15,  # Maybe slightly increase timeout?
+                        factory=_QuiescentSQLiteConnection,
+                    )
+                    if not isinstance(conn, _QuiescentSQLiteConnection):
+                        raise RuntimeError("quiescent_connection_factory")
+                    conn.attach_quiescence_registry(self._connection_quiescence)
+                    conn.row_factory = sqlite3.Row
+                    if not self.is_memory_db:
+                        conn.execute("PRAGMA journal_mode=WAL;")
+                    # NORMAL is safe under WAL (app-crash-safe; only an OS/power
+                    # crash can lose the last commit or two, acceptable for this
+                    # local cache) and avoids an fsync on every commit -- the
+                    # default FULL was fsyncing the WAL on every commit despite
+                    # WAL already being enabled. See Library_Ingest_Jobs_DB.py:
+                    # 57-61 for the original template (task-15465).
+                    conn.execute("PRAGMA synchronous=NORMAL;")
+
+                    conn.execute("PRAGMA foreign_keys = ON;")
+                    # task-22224: a HELD connection needs true autocommit (see
+                    # Library_Ingest_Jobs_DB.py's module docstring -- the store
+                    # template -- for the rule). Under the legacy default, one
+                    # bare DML statement auto-BEGINs a DEFERRED transaction that
+                    # ``TransactionContextManager`` then silently BORROWS at
+                    # depth 0, degrading ``transaction(immediate=True)`` to a
+                    # deferred snapshot nothing ever commits. With autocommit,
+                    # the manager's explicit BEGIN [IMMEDIATE] is the only
+                    # transaction owner; ``commit()``/``rollback()`` outside an
+                    # explicit BEGIN are no-ops.
+                    conn.isolation_level = None
+                    self._local.semantic_mutation_authorization = (
+                        register_semantic_mutation_guard(conn)
+                    )
+                    self._connection_quiescence.register(conn)
+                    self._local.conn = conn
+                    logger.debug(
+                        f"Opened/Reopened SQLite connection "
+                        f"db_sha256={self._db_diagnostic_ref} "
+                        f"thread={threading.get_ident()}"
+                    )
+                except (sqlite3.Error, PrivatePathError) as exc:
+                    logger.error(
+                        f"Failed to connect to database "
+                        f"db_sha256={self._db_diagnostic_ref} "
+                        f"exception_type={type(exc).__name__}"
+                    )
+                    self._local.conn = None
+                    raise CharactersRAGDBError(
+                        f"Failed to connect to database '{self.db_path_str}': {exc}"
+                    ) from exc
+            self._local.conn_last_used = time.monotonic()
+            return self._local.conn
+        finally:
+            self._connection_quiescence.finish_acquisition()
 
     def get_connection(self) -> sqlite3.Connection:
         """
@@ -3368,6 +3399,74 @@ UPDATE db_schema_version
             The active sqlite3.Connection for the current thread.
         """
         return self._get_thread_connection()
+
+    def registered_connection_count(self) -> int:
+        """Return the number of live same-file thread-owned handles.
+
+        Returns:
+            The bounded count visible to the shared process-local barrier.
+        """
+
+        return self._connection_quiescence.connection_count()
+
+    def get_console_trace_compaction_status(self) -> dict[str, object]:
+        """Return content-free physical trace-maintenance status and metrics.
+
+        Returns:
+            Bounded status, progress, retry, and byte metrics, or an empty
+            mapping when the singleton is unavailable.
+        """
+
+        with self.transaction() as cursor:
+            row = cursor.execute(
+                "SELECT status, reason_code, retry_count, next_retry_at, "
+                "progress_basis_points, allocated_bytes_before, "
+                "allocated_bytes_after, freelist_bytes_before, "
+                "freelist_bytes_after, wal_bytes_before, wal_bytes_after, "
+                "logical_live_bytes FROM console_trace_compaction_state "
+                "WHERE singleton_id = 1"
+            ).fetchone()
+        if row is None:
+            return {}
+        return {
+            "status": str(row[0]),
+            "reason_code": str(row[1]),
+            "retry_count": int(row[2]),
+            "retry_pending": row[3] is not None,
+            "progress_basis_points": int(row[4]),
+            "allocated_bytes_before": int(row[5]),
+            "allocated_bytes_after": int(row[6]),
+            "freelist_bytes_before": int(row[7]),
+            "freelist_bytes_after": int(row[8]),
+            "wal_bytes_before": int(row[9]),
+            "wal_bytes_after": int(row[10]),
+            "logical_live_bytes": int(row[11]),
+        }
+
+    @contextlib.contextmanager
+    def quiesce_connections(self, *, timeout_seconds: float):
+        """Drain and close all same-file handles until the caller exits.
+
+        Args:
+            timeout_seconds: Maximum time to wait for acquisitions, managed
+                transactions, and direct cursor consumption to finish.
+
+        Yields:
+            Control while ordinary same-file acquisition remains blocked.
+
+        Raises:
+            TimeoutError: If active SQLite use does not drain in time.
+            RuntimeError: If another process-local barrier is already active.
+        """
+
+        token = self._connection_quiescence.begin_quiescence(
+            timeout_seconds=timeout_seconds
+        )
+        try:
+            self._connection_quiescence.close_registered(token)
+            yield
+        finally:
+            self._connection_quiescence.end_quiescence(token)
 
     def _semantic_mutation_authorization_for_coordinator(
         self, connection: sqlite3.Connection
@@ -3514,6 +3613,7 @@ UPDATE db_schema_version
                     f"exception_type={type(exc).__name__}"
                 )
             finally:
+                self._connection_quiescence.unregister(conn)
                 # This ensures that the reference is cleared from threading.local
                 # even if conn.close() itself raised an exception.
                 if hasattr(self._local, "conn"):
@@ -7505,6 +7605,78 @@ UPDATE db_schema_version
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v63_to_v64(self, conn: sqlite3.Connection) -> None:
+        """Widen the auxiliary-attempt status CHECK to accept 'timed_out'."""
+
+        self._require_migration_entry_version(conn, 63, "V63→V64")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v63_to_v64_auxiliary_timed_out_status.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V63→V64",
+                )
+                version_cursor = cursor.execute(
+                    "UPDATE db_schema_version SET version = 64 "
+                    "WHERE schema_name = ? AND version = 63",
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V63→V64] Migration version update was not applied"
+                    )
+            if self._get_db_version(conn) != 64:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V63→V64] Migration version check failed"
+                )
+        except SchemaError:
+            raise
+        except Exception as exc:
+            raise SchemaError(
+                f"Migration from V63 to V64 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
+    def _migrate_from_v64_to_v65(self, conn: sqlite3.Connection) -> None:
+        """Add the content-free physical trace-compaction status singleton."""
+
+        self._require_migration_entry_version(conn, 64, "V64→V65")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v64_to_v65_console_trace_compaction.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V64→V65",
+                )
+                version_cursor = cursor.execute(
+                    "UPDATE db_schema_version SET version = 65 "
+                    "WHERE schema_name = ? AND version = 64",
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V64→V65] Migration version update was not applied"
+                    )
+            if self._get_db_version(conn) != 65:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V64→V65] Migration version check failed"
+                )
+        except SchemaError:
+            raise
+        except Exception as exc:
+            raise SchemaError(
+                f"Migration from V64 to V65 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -7720,6 +7892,8 @@ UPDATE db_schema_version
                     60: self._migrate_from_v60_to_v61,
                     61: self._migrate_from_v61_to_v62,
                     62: self._migrate_from_v62_to_v63,
+                    63: self._migrate_from_v63_to_v64,
+                    64: self._migrate_from_v64_to_v65,
                 }
 
                 if current_db_version == 0:
@@ -7809,7 +7983,7 @@ UPDATE db_schema_version
         connection: sqlite3.Connection | sqlite3.Cursor,
     ) -> None:
         """Allocate stable portable UUIDs for organization rows missing them."""
-        for table in ("keywords", "keyword_collections", "note_folders"):
+        for table in _NOTES_ORGANIZATION_SYNC_ID_TABLES:
             rows = connection.execute(
                 f"SELECT id FROM {table} WHERE sync_id IS NULL ORDER BY id"
             ).fetchall()
@@ -8238,7 +8412,7 @@ UPDATE db_schema_version
         connection = self.get_connection()
         depth = getattr(self._local, "transaction_depth", 0)
         if (
-            type(cursor) is not sqlite3.Cursor
+            not isinstance(cursor, sqlite3.Cursor)
             or cursor.connection is not connection
             or not connection.in_transaction
             or depth < 1
@@ -8817,7 +8991,7 @@ UPDATE db_schema_version
         connection = self.get_connection()
         depth = getattr(self._local, "transaction_depth", 0)
         if (
-            type(cursor) is not sqlite3.Cursor
+            not isinstance(cursor, sqlite3.Cursor)
             or cursor.connection is not connection
             or not connection.in_transaction
             or depth < 1
@@ -10525,9 +10699,95 @@ UPDATE db_schema_version
         topic_label: Optional[str] = None,
         scope_type: Optional[str] = None,
         workspace_id: Optional[str] = None,
+        workspace_ids: Optional[Sequence[str]] = None,
+        include_global_scope: bool = False,
+        query_terms: Optional[Sequence[str]] = None,
+        query_workspace_ids_by_term: Optional[Sequence[Sequence[str]]] = None,
+        query_include_global_scope_by_term: Optional[Sequence[bool]] = None,
     ) -> Tuple[str, List[Any]]:
         clauses: List[str] = []
         params: List[Any] = []
+        if not isinstance(include_global_scope, bool):
+            raise InputError("include_global_scope must be a boolean.")
+
+        def normalize_workspace_ids(
+            values: Optional[Sequence[str]], field_name: str
+        ) -> Optional[Tuple[str, ...]]:
+            if values is None:
+                return None
+            if isinstance(values, (str, bytes)):
+                raise InputError(f"{field_name} must be a sequence of ids.")
+            return tuple(
+                dict.fromkeys(
+                    normalized
+                    for value in values
+                    if (normalized := self._normalize_nullable_text(value)) is not None
+                )
+            )
+
+        normalized_workspace_ids = normalize_workspace_ids(
+            workspace_ids, "workspace_ids"
+        )
+        normalized_query_terms: Optional[Tuple[str, ...]] = None
+        normalized_query_workspace_ids_by_term: Tuple[Tuple[str, ...], ...] = ()
+        normalized_query_global_scopes: Tuple[bool, ...] = ()
+        if query_terms is not None:
+            if isinstance(query_terms, (str, bytes)):
+                raise InputError("query_terms must be a sequence of text terms.")
+            normalized_query_terms = tuple(
+                term.strip()
+                for term in query_terms
+                if isinstance(term, str) and term.strip()
+            )
+            if len(normalized_query_terms) != len(query_terms):
+                raise InputError("query_terms must contain only non-empty text.")
+            if not normalized_query_terms or len(normalized_query_terms) > 256:
+                raise InputError("query_terms must contain between 1 and 256 terms.")
+            if query_workspace_ids_by_term is None:
+                normalized_query_workspace_ids_by_term = tuple(
+                    () for _ in normalized_query_terms
+                )
+            else:
+                if isinstance(query_workspace_ids_by_term, (str, bytes)):
+                    raise InputError("query_workspace_ids_by_term must be a sequence.")
+                normalized_query_workspace_ids_by_term = tuple(
+                    normalize_workspace_ids(values, "query workspace ids") or ()
+                    for values in query_workspace_ids_by_term
+                )
+                if len(normalized_query_workspace_ids_by_term) != len(
+                    normalized_query_terms
+                ):
+                    raise InputError(
+                        "query_workspace_ids_by_term must align with query_terms."
+                    )
+            if query_include_global_scope_by_term is None:
+                normalized_query_global_scopes = tuple(
+                    False for _ in normalized_query_terms
+                )
+            else:
+                if isinstance(query_include_global_scope_by_term, (str, bytes)):
+                    raise InputError(
+                        "query_include_global_scope_by_term must be a sequence."
+                    )
+                normalized_query_global_scopes = tuple(
+                    query_include_global_scope_by_term
+                )
+                if len(normalized_query_global_scopes) != len(normalized_query_terms):
+                    raise InputError(
+                        "query_include_global_scope_by_term must align with query_terms."
+                    )
+                if any(
+                    not isinstance(value, bool)
+                    for value in normalized_query_global_scopes
+                ):
+                    raise InputError(
+                        "query_include_global_scope_by_term must contain booleans."
+                    )
+        elif (
+            query_workspace_ids_by_term is not None
+            or query_include_global_scope_by_term is not None
+        ):
+            raise InputError("per-term workspace unions require query_terms.")
         if str(scope_type or "").strip().lower() == CONVERSATION_SCOPE_ALL:
             # "all" spans global- and workspace-scoped conversations in one
             # page/count (the Library Browse ▸ Conversations snapshot seam);
@@ -10538,6 +10798,13 @@ UPDATE db_schema_version
                 )
             normalized_workspace_id = None
         else:
+            if (
+                normalized_workspace_ids is not None
+                or include_global_scope
+                or any(normalized_query_workspace_ids_by_term)
+                or any(normalized_query_global_scopes)
+            ):
+                raise InputError("workspace union filters require scope_type='all'.")
             normalized_scope, normalized_workspace_id = self._normalize_scope(
                 scope_type, workspace_id
             )
@@ -10559,6 +10826,22 @@ UPDATE db_schema_version
         if normalized_workspace_id is not None:
             clauses.append("workspace_id = ?")
             params.append(normalized_workspace_id)
+        if normalized_workspace_ids is not None or include_global_scope:
+            workspace_scope_clauses: List[str] = []
+            if include_global_scope:
+                workspace_scope_clauses.append("scope_type = 'global'")
+            if normalized_workspace_ids:
+                workspace_scope_clauses.append(
+                    "workspace_id IN (SELECT value FROM json_each(?))"
+                )
+                params.append(
+                    json.dumps(normalized_workspace_ids, separators=(",", ":"))
+                )
+            clauses.append(
+                f"({' OR '.join(workspace_scope_clauses)})"
+                if workspace_scope_clauses
+                else "0 = 1"
+            )
 
         deleted_clause = self._conversation_deleted_scope_clause(
             include_deleted=include_deleted,
@@ -10587,7 +10870,32 @@ UPDATE db_schema_version
             params.append(normalized_topic_label)
 
         normalized_query = self._normalize_nullable_text(query)
-        if normalized_query is not None:
+        if normalized_query_terms is not None:
+            for index, term in enumerate(normalized_query_terms):
+                query_clauses = [
+                    "title LIKE ?",
+                    "EXISTS ("
+                    "SELECT 1 FROM messages_fts fts "
+                    "JOIN messages m ON fts.rowid = m.rowid "
+                    "WHERE m.conversation_id = conversations.id "
+                    "AND m.deleted = 0 "
+                    "AND fts.messages_fts MATCH ?"
+                    ")",
+                ]
+                params.extend([f"%{term}%", self._fts_prefix_match_expression(term)])
+                if len(normalized_query_terms) == 1:
+                    query_clauses.append("id = ?")
+                    params.append(term)
+                if normalized_query_global_scopes[index]:
+                    query_clauses.append("scope_type = 'global'")
+                workspace_term_ids = normalized_query_workspace_ids_by_term[index]
+                if workspace_term_ids:
+                    query_clauses.append(
+                        "workspace_id IN (SELECT value FROM json_each(?))"
+                    )
+                    params.append(json.dumps(workspace_term_ids, separators=(",", ":")))
+                clauses.append(f"({' OR '.join(query_clauses)})")
+        elif normalized_query is not None:
             # Message-content matching goes through messages_fts (kept in
             # sync by triggers -- see schema ~line 326) instead of a
             # correlated leading-wildcard substring scan against the raw
@@ -10595,8 +10903,7 @@ UPDATE db_schema_version
             # every candidate conversation's messages per call (task-249 /
             # performance audit finding A4). Title and id= matching are
             # unchanged.
-            clauses.append(
-                "("
+            query_clauses = [
                 "title LIKE ? OR id = ? OR EXISTS ("
                 "SELECT 1 FROM messages_fts fts "
                 "JOIN messages m ON fts.rowid = m.rowid "
@@ -10608,11 +10915,12 @@ UPDATE db_schema_version
                 # (verified against the test suite); both forms are
                 # documented FTS5.
                 "AND fts.messages_fts MATCH ?"
-                "))"
-            )
+                ")"
+            ]
             like_query = f"%{normalized_query}%"
             fts_query = self._fts_prefix_match_expression(normalized_query)
             params.extend([like_query, normalized_query, fts_query])
+            clauses.append(f"({' OR '.join(query_clauses)})")
 
         where_clause = " AND ".join(clauses) if clauses else "1 = 1"
         return where_clause, params
@@ -10648,6 +10956,11 @@ UPDATE db_schema_version
         topic_label: Optional[str] = None,
         scope_type: Optional[str] = None,
         workspace_id: Optional[str] = None,
+        workspace_ids: Optional[Sequence[str]] = None,
+        include_global_scope: bool = False,
+        query_terms: Optional[Sequence[str]] = None,
+        query_workspace_ids_by_term: Optional[Sequence[Sequence[str]]] = None,
+        query_include_global_scope_by_term: Optional[Sequence[bool]] = None,
         limit: int = 50,
         offset: int = 0,
         **_: Any,
@@ -10664,6 +10977,11 @@ UPDATE db_schema_version
             topic_label=topic_label,
             scope_type=scope_type,
             workspace_id=workspace_id,
+            workspace_ids=workspace_ids,
+            include_global_scope=include_global_scope,
+            query_terms=query_terms,
+            query_workspace_ids_by_term=query_workspace_ids_by_term,
+            query_include_global_scope_by_term=query_include_global_scope_by_term,
         )
         count_query = (
             f"SELECT COUNT(*) as total FROM conversations WHERE {where_clause}"
@@ -13700,7 +14018,10 @@ UPDATE db_schema_version
         Succeeds if `expected_version` matches the current database version.
         `version` is incremented, `last_modified` updated, and `client_id` set.
         Updatable fields from `update_data`: 'content', 'ranking', 'parent_message_id'.
-        Image data can also be updated: 'image_data' and 'image_mime_type'.
+        Image data can also be updated: 'image_data' and 'image_mime_type'. A
+        ``provider_continuation_json`` value of ``None`` explicitly clears an
+        assistant's private continuation; non-null continuation writes use the
+        dedicated continuation APIs.
         If 'image_data' is set to `None` in `update_data`, both 'image_data' and
         'image_mime_type' columns will be set to NULL in the database.
         Other fields in `update_data` are ignored. `update_data` must not be empty.
@@ -13735,10 +14056,17 @@ UPDATE db_schema_version
             raise InputError("Preserve descendants must be a boolean.")
         update_data = dict(update_data)
         thinking_update_requested = "thinking_blocks_json" in update_data
+        continuation_clear_requested = "provider_continuation_json" in update_data
         if update_data.get("thinking_blocks_json") is not None:
             update_data["thinking_blocks_json"] = _validated_thinking_blocks_json(
                 update_data["thinking_blocks_json"]
             )
+        if continuation_clear_requested:
+            if update_data["provider_continuation_json"] is not None:
+                raise InputError(
+                    "Provider continuation updates require the dedicated API."
+                )
+            update_data.pop("provider_continuation_json")
 
         now = self._get_current_utc_timestamp_iso()
         fields_to_update_sql = []
@@ -13755,6 +14083,9 @@ UPDATE db_schema_version
             "metadata_json",
             "thinking_blocks_json",
         ]
+
+        if continuation_clear_requested:
+            fields_to_update_sql.append("provider_continuation_json = NULL")
 
         # Special handling for clearing image
         if "image_data" in update_data and update_data["image_data"] is None:
@@ -13839,6 +14170,10 @@ UPDATE db_schema_version
                     )
                 if thinking_update_requested and current["role"] != "assistant":
                     raise InputError("Thinking data requires an assistant message.")
+                if continuation_clear_requested and current["role"] != "assistant":
+                    raise InputError(
+                        "Provider continuation data requires an assistant message."
+                    )
                 if thinking_update_requested:
                     _require_thinking_generation_actions(
                         current["thinking_blocks_json"]
@@ -22540,6 +22875,8 @@ class TransactionContextManager:
         self.is_outermost_transaction = False
         self.borrows_native_transaction = False
         self.transaction_observer_token: object | None = None
+        self.connection_use_token: object | None = None
+        self.cursor: sqlite3.Cursor | None = None
         # RESERVED up front (``BEGIN IMMEDIATE``) for read-then-write
         # transactions: a DEFERRED begin that reads (e.g. MAX(seq)) before
         # writing can hit SQLite's non-retryable snapshot/upgrade deadlock
@@ -22552,6 +22889,20 @@ class TransactionContextManager:
         self.immediate = bool(immediate)
 
     def __enter__(self):
+        """Reserve this managed use before entering its SQLite transaction."""
+
+        try:
+            self.connection_use_token = self.db._connection_quiescence.begin_use()
+        except RuntimeError as exc:
+            raise CharactersRAGDBError(str(exc)) from exc
+        try:
+            return self._enter_transaction()
+        except BaseException:
+            self.db._connection_quiescence.end_use(self.connection_use_token)
+            self.connection_use_token = None
+            raise
+
+    def _enter_transaction(self):
         # Ensure transaction_depth is initialized for this thread
         if not hasattr(self.db._local, "transaction_depth"):
             self.db._local.transaction_depth = 0
@@ -22563,7 +22914,8 @@ class TransactionContextManager:
             logger.debug(
                 f"Entered nested transaction level {self.db._local.transaction_depth} on thread {threading.get_ident()}."
             )
-            return self.conn.cursor()
+            self.cursor = self.conn.cursor()
+            return self.cursor
         else:
             # This is the outermost transaction
             self.conn = self.db.get_connection()
@@ -22578,7 +22930,8 @@ class TransactionContextManager:
                 logger.debug(
                     f"Borrowed caller-owned SQLite transaction on thread {threading.get_ident()}."
                 )
-                return self.conn.cursor()
+                self.cursor = self.conn.cursor()
+                return self.cursor
 
             # Set depth only after BEGIN succeeds so a failed BEGIN cannot corrupt it.
             self.conn.execute("BEGIN IMMEDIATE" if self.immediate else "BEGIN")
@@ -22592,9 +22945,25 @@ class TransactionContextManager:
             logger.debug(
                 f"Started outermost transaction on thread {threading.get_ident()}."
             )
-            return self.conn.cursor()
+            self.cursor = self.conn.cursor()
+            return self.cursor
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        """Finish SQLite work before releasing the maintenance reservation."""
+
+        try:
+            return self._exit_transaction(exc_type, exc_val, exc_tb)
+        finally:
+            try:
+                if self.cursor is not None:
+                    self.cursor.close()
+                    self.cursor = None
+            finally:
+                if self.connection_use_token is not None:
+                    self.db._connection_quiescence.end_use(self.connection_use_token)
+                    self.connection_use_token = None
+
+    def _exit_transaction(self, exc_type, exc_val, exc_tb):
         """
         Handles the exit of the transaction context.
 

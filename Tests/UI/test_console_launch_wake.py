@@ -798,7 +798,7 @@ async def test_a_mark_with_nothing_owed_is_left_alone_at_launch(tmp_path):
 @pytest.mark.asyncio
 async def test_a_launch_hydrates_only_the_conversations_that_are_owed(tmp_path):
     """Two marks, one owed. The owed one is hydrated and delivered; the
-    other is not opened at all.
+    other is not opened at all and its receipt-free stale mark is reconciled.
 
     This is the case that makes the per-conversation `has_pending` guard
     load-bearing rather than decorative: with a SINGLE unowed mark the
@@ -830,4 +830,7 @@ async def test_a_launch_hydrates_only_the_conversations_that_are_owed(tmp_path):
             "a marked-but-unowed conversation was hydrated alongside an owed "
             f"one: {opened}"
         )
-        assert marks.has_mark("conv-quiet", FLEET_UNSEEN)
+        assert not marks.has_mark("conv-quiet", FLEET_UNSEEN), (
+            "receipt hydration must remove a stale compatibility mark that "
+            "has neither an unseen receipt nor an owed wake"
+        )

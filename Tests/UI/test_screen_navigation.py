@@ -2491,6 +2491,49 @@ def test_library_screen_bindings_are_all_gated_or_universal():
             )
 
 
+def test_action_show_workbench_help_lists_reader_action_keys(monkeypatch):
+    """task-28027: F1 in the media Reader advertises the l/c/t accelerators."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+    from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
+
+    from tldw_chatbook.Library.library_media_reader_state import (
+        LibraryMediaReaderSessionState,
+    )
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    screen._library_media_view = "viewer"
+    # A settled Reader (loaded == selected, no pending request) so the l/c/t
+    # accelerators are genuinely active (task-28027 / Qodo #2317).
+    screen._selected_media_id = "local:media:1"
+    screen._library_media_reader_session = LibraryMediaReaderSessionState(
+        selected_id="local:media:1",
+        selected_backing_id=1,
+        loaded_id="local:media:1",
+        loaded_backing_id=1,
+    )
+
+    pushed = []
+
+    class FakeHelpApp:
+        def push_screen(self, panel):
+            pushed.append(panel)
+
+    monkeypatch.setattr(
+        LibraryScreen, "app", property(lambda self: FakeHelpApp()), raising=False
+    )
+
+    screen.action_show_workbench_help()
+
+    assert len(pushed) == 1
+    panel = pushed[0]
+    assert isinstance(panel, WorkbenchHelpPanel)
+    keys = {key for key, _description in panel.state.shortcuts}
+    assert {"l", "c", "t"} <= keys
+
+
 def test_action_show_workbench_help_filters_bindings_by_check_action(monkeypatch):
     """task-2858 AC#2 (LIB-09): F1 on a non-skills, non-Search canvas must
     NOT advertise the skill editor's or Search/RAG's dead keys -- the

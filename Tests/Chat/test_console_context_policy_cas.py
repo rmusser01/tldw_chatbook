@@ -91,7 +91,9 @@ def test_chat_persistence_service_exposes_revision_guard_without_breaking_legacy
         first = ConsoleContextPolicyOverrides(
             compaction_mode=ContextCompactionMode.AUTOMATIC
         )
-        second = ConsoleContextPolicyOverrides(compaction_mode=ContextCompactionMode.OFF)
+        second = ConsoleContextPolicyOverrides(
+            compaction_mode=ContextCompactionMode.OFF
+        )
 
         revision = service.update_conversation_context_policy(
             conversation_id=conversation_id,

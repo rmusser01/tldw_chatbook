@@ -46,8 +46,25 @@ def _fake_search_service() -> SimpleNamespace:
     return SimpleNamespace(search=lambda *args, **kwargs: None)
 
 
+def _readable_app(**overrides: object) -> SimpleNamespace:
+    """A fake app with a capable RAG service and all three scoped-source
+    seams present -- the baseline every source-readable test starts from
+    and overrides pieces of. `media_reading_scope_service`/
+    `notes_scope_service`/`chachanotes_db` are the real attributes
+    `Library/library_local_rag_search_service.py`'s `_search_media`/
+    `_search_notes`/`_search_conversations` gate on."""
+    attrs: dict[str, object] = {
+        "library_rag_search_service": _fake_search_service(),
+        "media_reading_scope_service": object(),
+        "notes_scope_service": object(),
+        "chachanotes_db": object(),
+    }
+    attrs.update(overrides)
+    return SimpleNamespace(**attrs)
+
+
 def test_permission_required_when_no_provider_resolves(monkeypatch):
-    app = SimpleNamespace(library_rag_search_service=_fake_search_service())
+    app = _readable_app()
     monkeypatch.setattr(
         automation_health,
         "resolve_execution_target",
@@ -61,7 +78,7 @@ def test_permission_required_when_no_provider_resolves(monkeypatch):
 
 
 def test_ready_when_rag_service_present_and_provider_resolves(monkeypatch):
-    app = SimpleNamespace(library_rag_search_service=_fake_search_service())
+    app = _readable_app()
     monkeypatch.setattr(
         automation_health,
         "resolve_execution_target",
@@ -106,3 +123,107 @@ def test_capability_unavailable_when_service_has_no_callable_search(monkeypatch)
 
     assert health == "capability_unavailable"
     assert reason
+
+
+# --- Sources-readable check (plan Task 6) -----------------------------------
+#
+# Default scope (no `config`, or `config.scope` omitted) normalizes to
+# "all_searchable_library" over all three server source names
+# (`media_db`/`notes`/`chats`), which `library_source_types` maps onto the
+# Library's plural vocabulary (`media`/`notes`/`conversations`) -- the same
+# mapping `automation_execution.py` uses for retrieval.
+
+SCOPED_TO_CHATS_ONLY: dict = {
+    "id": "def-scoped",
+    "input": {},
+    "config": {"scope": {"mode": "sources", "sources": ["chats"]}},
+}
+
+
+def test_ready_when_default_scope_sources_all_readable(monkeypatch):
+    """Every default-scope source (media/notes/conversations) resolves to a
+    live DB attribute -- the new check must not block a `ready` app."""
+    app = _readable_app()
+    monkeypatch.setattr(
+        automation_health,
+        "resolve_execution_target",
+        lambda row: {"provider": "openai", "model": "gpt-4", "max_tokens": 1000},
+    )
+
+    health, reason = automation_health.compute_local_health(app, DEFINITION_ROW)
+
+    assert health == "ready"
+    assert reason == ""
+
+
+def test_capability_unavailable_when_a_scoped_source_db_is_missing(monkeypatch):
+    """`notes_scope_service` missing blocks health even though the provider
+    would otherwise resolve -- and the reason names the unreadable source."""
+    app = _readable_app(notes_scope_service=None)
+
+    def _boom(row):
+        raise AssertionError("resolve_execution_target must not be called")
+
+    monkeypatch.setattr(automation_health, "resolve_execution_target", _boom)
+
+    health, reason = automation_health.compute_local_health(app, DEFINITION_ROW)
+
+    assert health == "capability_unavailable"
+    # First unreadable Library source type in iteration order (media, notes,
+    # conversations) -- media is present, notes is the first miss.
+    assert "notes" in reason
+
+
+def test_ready_ignores_a_missing_db_for_a_source_outside_the_scope(monkeypatch):
+    """A scope that only asks for `chats` must not be blocked by a missing
+    `media_reading_scope_service` -- readability is scoped, not blanket."""
+    app = _readable_app(media_reading_scope_service=None)
+    monkeypatch.setattr(
+        automation_health,
+        "resolve_execution_target",
+        lambda row: {"provider": "openai", "model": "gpt-4", "max_tokens": 1000},
+    )
+
+    health, reason = automation_health.compute_local_health(app, SCOPED_TO_CHATS_ONLY)
+
+    assert health == "ready"
+    assert reason == ""
+
+
+def test_capability_unavailable_when_the_in_scope_source_db_is_missing(monkeypatch):
+    """The inverse of the previous test: `chats` IS in scope and its DB is
+    missing -- must block, naming `conversations` (the Library vocabulary
+    `chats` maps onto)."""
+    app = _readable_app(chachanotes_db=None)
+
+    def _boom(row):
+        raise AssertionError("resolve_execution_target must not be called")
+
+    monkeypatch.setattr(automation_health, "resolve_execution_target", _boom)
+
+    health, reason = automation_health.compute_local_health(app, SCOPED_TO_CHATS_ONLY)
+
+    assert health == "capability_unavailable"
+    assert "conversations" in reason
+
+
+def test_deps_missing_takes_precedence_over_unreadable_source(monkeypatch):
+    """RAG-deps unavailability (no `library_rag_search_service`) must win
+    over a scoped source being unreadable -- the source-specific reason
+    must never leak when the seam itself is the actual blocker."""
+    app = SimpleNamespace(
+        library_rag_search_service=None,
+        media_reading_scope_service=None,
+        notes_scope_service=None,
+        chachanotes_db=None,
+    )
+
+    def _boom(row):
+        raise AssertionError("resolve_execution_target must not be called")
+
+    monkeypatch.setattr(automation_health, "resolve_execution_target", _boom)
+
+    health, reason = automation_health.compute_local_health(app, DEFINITION_ROW)
+
+    assert health == "capability_unavailable"
+    assert reason == automation_health._CAPABILITY_UNAVAILABLE_REASON

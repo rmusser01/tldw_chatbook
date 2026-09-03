@@ -162,3 +162,45 @@ async def test_the_setting_off_leaves_the_splash_running_its_full_duration() -> 
             await pilot.pause()
         assert app.closed, "the splash never auto-closed"
         assert app.closed[0] - app.mounted_at >= duration
+
+
+async def test_a_keypress_skips_the_startup_splash_in_the_full_app() -> None:
+    """End to end in the real app wiring, not a minimal host.
+
+    The mechanism tests above pin focus routing on a bare App; this one
+    boots the real TldwCli compose path, where the splash competes with
+    app startup for focus and message processing. Duration is pinned to
+    60s so the auto-close timer cannot account for the close: only the
+    keypress can.
+    """
+    from unittest.mock import patch
+
+    from tldw_chatbook import app as app_mod
+
+    from Tests.UI.app_factory import _build_test_app
+
+    real_get = app_mod.get_cli_setting
+
+    def pinned_duration(section, key=None, default=None):
+        if section == "splash_screen" and key == "duration":
+            return 60.0
+        return real_get(section, key, default)
+
+    with patch.object(app_mod, "get_cli_setting", side_effect=pinned_duration):
+        app = _build_test_app()
+        async with app.run_test() as pilot:
+            deadline = time.perf_counter() + 3.0
+            while not (
+                app.splash_screen_active and app._splash_screen_widget is not None
+            ):
+                assert time.perf_counter() < deadline, "splash never mounted"
+                await pilot.pause()
+            await pilot.press("x")
+
+            deadline = time.perf_counter() + 10.0
+            while app.splash_screen_active:
+                assert (
+                    time.perf_counter() < deadline
+                ), "keypress did not close the startup splash"
+                await pilot.pause()
+            assert app._splash_screen_widget is None

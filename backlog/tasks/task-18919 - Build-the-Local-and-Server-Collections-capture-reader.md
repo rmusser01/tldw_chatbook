@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-15 02:52'
-updated_date: '2026-09-02 00:12'
+updated_date: '2026-09-03 01:58'
 labels:
   - library
   - collections
@@ -34,7 +34,7 @@ references:
   - >-
     Docs/superpowers/specs/2026-08-31-library-collections-capture-reader-design.md
   - backlog/decisions/067-library-top-level-pagination-contracts.md
-  - backlog/decisions/107-collections-capture-authority-and-legacy-boundary.md
+  - backlog/decisions/113-collections-capture-authority-and-legacy-boundary.md
 priority: medium
 ---
 
@@ -68,12 +68,13 @@ Replace Chatbook's stale generic-container interpretation of Collections with th
 5. Normalize the Local repository and authenticated Reading API through one capture-specific authority/scope service with exact Server paging attestation, tri-state capabilities, authority-qualified identity, no Local/Server merge, and no workspace partitioning of Server captures.
 6. Build the generation-fenced Collections controller and mount contextual Library scopes, paged Items/Quick Capture, and permanent Read/Highlights/Notes/Info Work content in the existing adaptive reader shell.
 7. Wire destination preferences and lifecycle, retire old generic-container inventories without redirecting them, run focused security/service/Textual tests, production-shaped cross-reader suites, and isolated 160x50/120x35/100x30/80x24 Local plus enabled-Server walkthroughs.
+8. Rebase integration follow-up: align the legacy-membership public-ID regression with ADR-113 after Review Sets phase one carried forward the retired `collection` Library item expectation.
 
 Detailed executable plan: `Docs/superpowers/plans/2026-08-31-library-collections-capture-reader.md`
 
 ADR required: yes
 
-ADR path: `backlog/decisions/107-collections-capture-authority-and-legacy-boundary.md`
+ADR path: `backlog/decisions/113-collections-capture-authority-and-legacy-boundary.md`
 
 Reason: TASK-18919 changes durable Collections storage, source authority, migration, service, and legacy-data boundaries.
 <!-- SECTION:PLAN:END -->
@@ -97,7 +98,7 @@ evidence is in `Docs/superpowers/reviews/2026-08-31-library-collections-live-ver
 
 ADR required: yes
 
-ADR path: `backlog/decisions/107-collections-capture-authority-and-legacy-boundary.md`
+ADR path: `backlog/decisions/113-collections-capture-authority-and-legacy-boundary.md`
 
 Reason: TASK-18919 changes durable Collections storage, source authority, migration, service, and
 legacy-data boundaries.
@@ -123,6 +124,12 @@ Collections flows, two added service-wiring warnings contain no user content, an
 store's persistent sinks are limited to validated private bytes and its lifecycle lock; the reviewed
 production-diagnostic inventory was regenerated accordingly. All 12 new Collections indexes are
 now backed by no-statistics `EXPLAIN QUERY PLAN` assertions and recorded as plan-pinned. No new ADR
-was required because these changes enforce ADR-107's existing authority and fail-closed capability
+was required because these changes enforce ADR-113's existing authority and fail-closed capability
 boundaries. TASK-18919 is complete.
+
+PR #2324 rebase follow-up corrected the stale legacy-membership regression that
+still classified `collection` as a supported Library item after ADR-113 removed
+that identity. The production codec already enforced the accepted capture-domain
+boundary; the focused legacy Collections and newly merged Review Sets tests now
+exercise the same contract.
 <!-- SECTION:NOTES:END -->

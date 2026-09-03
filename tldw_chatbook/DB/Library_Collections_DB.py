@@ -38,7 +38,7 @@ class LibraryCollectionsDB(BaseDB):
     makes the held connection safe here -- each thread owns exactly one.
     """
 
-    _CURRENT_SCHEMA_VERSION = 3
+    _CURRENT_SCHEMA_VERSION = 4
     _WAL_SETUP_TIMEOUT_SECONDS = 5.0
 
     _CAPTURE_TABLE_NAMES = frozenset(
@@ -435,6 +435,52 @@ class LibraryCollectionsDB(BaseDB):
     #: known-good without a ping.
     _LIVENESS_PING_IDLE_SECONDS = 30.0
 
+    # task-28240 (schema v4): Library review sets -- an ordered, pinned snapshot
+    # of local media ids + an absolute cursor + per-item done marks + a
+    # completion stamp, so reviewing a set of items is a first-class resumable
+    # object. Applied idempotently like the capture DDL (new CREATE TABLEs, not
+    # ALTER migrations -- so inline here, not a migrations/*.sql artifact, which
+    # is reserved for column-add migrations). See
+    # backlog/docs/design-library-review-sets.md.
+    _REVIEW_SET_SCHEMA_DDL = (
+        """
+        CREATE TABLE IF NOT EXISTS review_sets (
+            set_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            origin TEXT NOT NULL,
+            cursor INTEGER NOT NULL DEFAULT 0,
+            active INTEGER NOT NULL DEFAULT 0,
+            completed_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            deleted_at TEXT
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS review_set_items (
+            set_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            backing_media_id INTEGER NOT NULL,
+            title_snapshot TEXT NOT NULL,
+            done INTEGER NOT NULL DEFAULT 0,
+            done_at TEXT,
+            PRIMARY KEY (set_id, position),
+            FOREIGN KEY(set_id)
+                REFERENCES review_sets(set_id)
+                ON DELETE CASCADE
+        )
+        """,
+        # Enforces the "at most one active set" invariant in the schema itself
+        # (task-28241 review) -- a partial UNIQUE index over the single active
+        # row, defence-in-depth beneath the service's transactional guard. It
+        # also exactly matches get_active_review_set's WHERE clause.
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS review_sets_one_active
+            ON review_sets(active)
+            WHERE active = 1 AND deleted_at IS NULL
+        """,
+    )
+
     def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
         # Must precede super().__init__: BaseDB.__init__ calls
         # _initialize_schema(), which already needs the held connection.
@@ -649,6 +695,11 @@ class LibraryCollectionsDB(BaseDB):
                 ):
                     if column_name not in columns:
                         conn.execute(statement)
+            # task-28240 (v4): the review-set tables use CREATE TABLE IF NOT
+            # EXISTS, so applying them on every init is idempotent -- the same
+            # shape as the capture DDL above.
+            for statement in self._REVIEW_SET_SCHEMA_DDL:
+                conn.execute(statement)
             conn.execute(
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (?)",
                 (self._CURRENT_SCHEMA_VERSION,),
