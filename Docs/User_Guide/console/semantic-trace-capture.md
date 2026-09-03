@@ -155,6 +155,16 @@ Copy and export obey the active Safe or Full projection and every frozen mask.
 Full copy/export asks for confirmation. Exported files are independent copies;
 later trace deletion cannot recall them.
 
+When a trace contains token-level text, reasoning, or tool-call stream events,
+Console may store a consecutive run as one compact physical row. This changes
+only database layout: the Inspector, replay, copy, and export paths receive the
+same individual events, with their original boundaries, identities, order, and
+timestamps. Short, mixed, unknown, and older unencoded records remain readable.
+If a row claims a packed format that Console does not support, or its contents
+do not reconstruct safely, Console reports a format or corruption diagnostic
+instead of showing a partial history. Persistence flush boundaries can reduce
+the compression ratio but cannot change the reconstructed conversation.
+
 Purge detaches one conversation's trace owner. Background garbage collection
 can then remove objects no remaining conversation or fork owns. Logical
 reclamation, SQLite free pages, WAL bytes, and the allocated database file are
