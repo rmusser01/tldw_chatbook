@@ -1,4 +1,4 @@
-"""TASK-21116: ratchet on whole-screen recompose statements in library_screen.py.
+"""TASK-21116: ratchet on whole-screen recompose statements across the Library surface.
 
 The Library screen is the largest screen in the app (34k+ lines). A
 statement-level ``self.refresh(recompose=True)`` there tears down and
@@ -9,6 +9,20 @@ Task-281, task-252, task-15457, and task-21116 each converted per-click
 sites to targeted seams, and each time the count regrew between fixes.
 
 This test pins the count so regrowth fails CI instead of accruing silently.
+
+TASK-3 (2026-09, ``Docs/superpowers/specs/2026-09-01-library-screen-
+decomposition-design.md``, "PR 0b") widened the scanned surface from
+``library_screen.py`` alone to that file PLUS every module under
+``tldw_chatbook/UI/Library_Modules/``, and counts them as ONE census. PR 0a
+moved ``_sync_library_canvas`` and its sanctioned whole-screen-recompose
+fallback arms out of ``library_screen.py`` into
+``Library_Modules/canvas_sync.py`` -- a single-file census would have
+silently drained by exactly the sites that moved, so the ratchet could
+regrow undetected on the next decomposition step without this widening. A
+class-scoped exemption list (``_CENSUS_EXEMPT_CLASS_SITES``) keeps the
+widened glob from also picking up recompose calls that belong to an
+unrelated class (e.g. a standalone modal) living in the same directory --
+see that constant's docstring.
 """
 
 from __future__ import annotations
@@ -16,19 +30,31 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-#: Maximum allowed statement-level whole-screen recompose sites in
-#: library_screen.py. Recorded at the TASK-21116 conversion (107 before,
-#: 97 after -- 15 per-click statements removed, 5 sanctioned fallback /
-#: structural-boundary arms added inside the new targeted seams). LOWER
-#: this pin when you remove sites; never raise it for a per-click path --
-#: see the failure message for the sanctioned seams.
+#: Maximum allowed statement-level whole-screen recompose sites across the
+#: Library surface (library_screen.py + every UI/Library_Modules/*.py file,
+#: exemption-filtered -- see the module docstring and
+#: ``_CENSUS_EXEMPT_CLASS_SITES``). Recorded at the TASK-21116 conversion
+#: (107 before, 97 after -- 15 per-click statements removed, 5 sanctioned
+#: fallback / structural-boundary arms added inside the new targeted
+#: seams). LOWER this pin when you remove sites; never raise it for a
+#: per-click path -- see the failure message for the sanctioned seams.
 #:
 #: TASK-22228 (item 6) re-based it: the 2026-08-24 reader burn-down had
 #: already taken the census to 80 without lowering the pin (23 sites of
 #: silent headroom -- a ratchet that cannot bite), and routing the six
 #: Reader sub-state presses through
 #: ``_sync_library_media_viewer_or_recompose`` took it to 74.
-LIBRARY_WHOLE_SCREEN_RECOMPOSE_MAX = 74
+#:
+#: TASK-3 (2026-09, surface widening) re-based it again, for the same
+#: reason TASK-22228 named: the single-file pin of 74 had already drifted
+#: 11 sites above the true single-file count of 63 (measured against the
+#: PR-0a merge base) -- more silent headroom. The widened,
+#: exemption-filtered census (screen 59 + canvas_sync.py 4 + 0 from the one
+#: exempted modal class = 63) confirms PR 0a moved sites without gaining or
+#: losing any, so the pin is re-based down to that measured 63 -- see
+#: ``Docs/superpowers/specs/2026-09-01-library-screen-decomposition-
+#: design.md`` ("PR 0b").
+LIBRARY_WHOLE_SCREEN_RECOMPOSE_MAX = 63
 
 _LIBRARY_SCREEN_PATH = (
     Path(__file__).resolve().parents[2]
@@ -38,13 +64,50 @@ _LIBRARY_SCREEN_PATH = (
     / "library_screen.py"
 )
 
-_RATCHET_GUIDANCE = """
-library_screen.py gained statement-level whole-screen recompose sites:
-{count} found, {maximum} allowed.
+_LIBRARY_MODULES_DIR = (
+    Path(__file__).resolve().parents[2]
+    / "tldw_chatbook"
+    / "UI"
+    / "Library_Modules"
+)
 
-Every site the census currently sees, in line order. The ones your change
-added are in this list -- diff it against the same listing on your merge
-base to find them:
+#: The whole Library surface the widened census scans: the screen itself
+#: plus every module PR 0a's decomposition can move code into or out of. A
+#: file added under Library_Modules/ later is picked up automatically by
+#: the glob -- no test edit required to stay covered.
+_LIBRARY_SURFACE_PATHS = sorted(
+    [_LIBRARY_SCREEN_PATH] + list(_LIBRARY_MODULES_DIR.glob("*.py"))
+)
+
+#: (filename, class name) pairs whose whole-screen-recompose-shaped sites
+#: are EXCLUDED from the census because the receiver does not denote
+#: LibraryScreen. Sites in unlisted classes, in module-level functions, and
+#: in LibraryScreen itself all still count -- a new file or class dropped
+#: into Library_Modules/ bites by default, and adding an exemption here is
+#: a deliberate, reviewable act, never a silent one.
+_CENSUS_EXEMPT_CLASS_SITES: frozenset[tuple[str, str]] = frozenset(
+    {
+        # PromptCollectionManagerModal is a standalone ModalScreen -- its
+        # own small compose tree for the collection-picker dialog -- not
+        # LibraryScreen. Its self.refresh(recompose=True)
+        # (prompt_collection_manager_modal.py:297, inside _refresh())
+        # rebuilds the modal, never the Library screen's nav bar/footer/
+        # rail/canvas this ratchet exists to police. It predates the
+        # Library_Modules surface widening (TASK-3, 2026-09): the file
+        # already lived here, unrelated to PR 0a's move, before this
+        # census ever looked at the directory.
+        ("prompt_collection_manager_modal.py", "PromptCollectionManagerModal"),
+    }
+)
+
+_RATCHET_GUIDANCE = """
+The Library surface (library_screen.py + UI/Library_Modules/*.py) gained
+statement-level whole-screen recompose sites: {count} found, {maximum}
+allowed.
+
+Every site the census currently sees, in file:line order. The ones your
+change added are in this list -- diff it against the same listing on your
+merge base to find them:
 
 {inventory}
 
@@ -168,23 +231,86 @@ def _enclosing_function(source: str, lineno: int) -> str:
     return best_name
 
 
+def _enclosing_class(source: str, lineno: int) -> str | None:
+    """Return the innermost class enclosing ``lineno``, or ``None`` at module scope.
+
+    Used to apply ``_CENSUS_EXEMPT_CLASS_SITES``: an exemption key is
+    ``(filename, class_name)``, so a site written directly in a
+    module-level function (``class_name`` is ``None``) can never match an
+    exemption -- only a site textually inside a named class can be
+    exempted.
+    """
+    tree = ast.parse(source)
+    best_name: str | None = None
+    best_start = -1
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        end = getattr(node, "end_lineno", node.lineno)
+        # Innermost == the containing class that starts latest.
+        if node.lineno <= lineno <= end and node.lineno > best_start:
+            best_name = node.name
+            best_start = node.lineno
+    return best_name
+
+
+def _non_exempt_sites(filename: str, source: str) -> list[tuple[int, str, str]]:
+    """Return ``(lineno, function, spelling)`` for ``source``'s sites, minus exemptions.
+
+    A site is dropped when ``(filename, enclosing class)`` is listed in
+    ``_CENSUS_EXEMPT_CLASS_SITES``. Everything else -- unlisted classes,
+    module-level functions, and library_screen.py's own LibraryScreen
+    methods -- still counts.
+    """
+    sites: list[tuple[int, str, str]] = []
+    for lineno, _receiver, spelling in find_library_whole_screen_recompose_statements(
+        source
+    ):
+        class_name = _enclosing_class(source, lineno)
+        if (filename, class_name) in _CENSUS_EXEMPT_CLASS_SITES:
+            continue
+        function = _enclosing_function(source, lineno)
+        sites.append((lineno, function, spelling))
+    return sites
+
+
+def _widened_library_surface_sites() -> list[tuple[str, int, str, str]]:
+    """Return ``(filename, lineno, function, spelling)`` across the whole surface.
+
+    Scans every path in ``_LIBRARY_SURFACE_PATHS`` (library_screen.py +
+    UI/Library_Modules/*.py), in path order, applying
+    ``_CENSUS_EXEMPT_CLASS_SITES`` per file.
+    """
+    sites: list[tuple[str, int, str, str]] = []
+    for path in _LIBRARY_SURFACE_PATHS:
+        source = path.read_text(encoding="utf-8")
+        for lineno, function, spelling in _non_exempt_sites(path.name, source):
+            sites.append((path.name, lineno, function, spelling))
+    return sites
+
+
 def test_library_screen_whole_screen_recompose_count_is_ratcheted() -> None:
-    """The whole-screen recompose statement count must not regrow."""
-    source = _LIBRARY_SCREEN_PATH.read_text(encoding="utf-8")
-    sites = find_library_whole_screen_recompose_statements(source)
+    """The whole-screen recompose statement count must not regrow.
+
+    Scans the WHOLE Library surface -- library_screen.py plus every module
+    under UI/Library_Modules/ (see the module docstring) -- as one census,
+    so moving code between these files can neither drain nor inflate the
+    count for free.
+    """
+    sites = _widened_library_surface_sites()
     count = len(sites)
     assert count > 0, (
         "The census found zero whole-screen recompose statements -- the "
-        "counter is no longer measuring its subject (renamed receiver or "
-        "moved module?). Fix the counter before trusting the ratchet."
+        "counter is no longer measuring its subject (renamed receiver, "
+        "moved module, or an over-broad exemption?). Fix the counter "
+        "before trusting the ratchet."
     )
     if count > LIBRARY_WHOLE_SCREEN_RECOMPOSE_MAX:
         # Name the sites. A bare count tells an author that they broke the
-        # ratchet but not where, on a 34k-line file (review round, m5).
+        # ratchet but not where, across a dozen-plus files (review round, m5).
         inventory = "\n".join(
-            f"  library_screen.py:{lineno}  {function}()  ->  {spelling}"
-            for lineno, _receiver, spelling in sites
-            for function in (_enclosing_function(source, lineno),)
+            f"  {filename}:{lineno}  {function}()  ->  {spelling}"
+            for filename, lineno, function, spelling in sites
         )
         raise AssertionError(
             _RATCHET_GUIDANCE.format(
@@ -258,6 +384,60 @@ class S:
         self.app.screen.refresh(recompose=True)
 """
     assert count_library_whole_screen_recompose_statements(blind) == 0
+
+
+def test_census_exemption_matches_only_the_documented_pair() -> None:
+    """The (filename, class) exemption is precise, not a class-name-only match.
+
+    Guards the exemption mechanism itself: the SAME class name in a
+    different file, and a DIFFERENT class in the exempted file, must both
+    still count. Only the exact pair in ``_CENSUS_EXEMPT_CLASS_SITES`` is
+    dropped. Both classes below share an identically-named ``_refresh``
+    method on purpose, so a function-name check couldn't tell them apart --
+    only the (filename, class) exemption can.
+    """
+    source = """
+class PromptCollectionManagerModal:
+    def _refresh(self):
+        self.refresh(recompose=True)
+
+class OtherModal:
+    def _refresh(self):
+        self.refresh(recompose=True)
+
+def module_level(self):
+    self.refresh(recompose=True)
+"""
+    raw_sites = find_library_whole_screen_recompose_statements(source)
+    assert len(raw_sites) == 3
+
+    modal_lineno = next(
+        lineno
+        for lineno, _receiver, _spelling in raw_sites
+        if _enclosing_class(source, lineno) == "PromptCollectionManagerModal"
+    )
+    other_linenos = {lineno for lineno, _receiver, _spelling in raw_sites} - {
+        modal_lineno
+    }
+    assert len(other_linenos) == 2
+
+    exempt_file = "prompt_collection_manager_modal.py"
+    other_file = "some_other_file.py"
+
+    # In the documented file: the modal's site is dropped; OtherModal's
+    # identically-named method and the module-level function still count.
+    exempt_linenos = {
+        lineno for lineno, _function, _spelling in _non_exempt_sites(exempt_file, source)
+    }
+    assert exempt_linenos == other_linenos
+    assert modal_lineno not in exempt_linenos
+
+    # Same class name, different filename -- the pair doesn't match, so
+    # nothing is dropped: all 3 sites count, including the modal's.
+    all_linenos = {
+        lineno for lineno, _function, _spelling in _non_exempt_sites(other_file, source)
+    }
+    assert all_linenos == other_linenos | {modal_lineno}
 
 
 def test_ratchet_failure_message_names_the_offending_sites() -> None:

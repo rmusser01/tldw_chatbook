@@ -7,6 +7,7 @@ import dataclasses
 import inspect
 import json
 import math
+import operator
 import re
 import threading
 import time
@@ -20,7 +21,7 @@ from contextlib import closing
 from functools import partial
 import hashlib
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal
 
 from loguru import logger
 from loguru import logger as loguru_logger
@@ -102,14 +103,9 @@ from ...Library.library_content_evidence import (
     LibraryContentEvidence,
     LibraryEvidenceStatus,
 )
-from ...Library.library_conversations_state import (
-    build_library_conversations_state,
-    validate_library_conversation_page,
-)
 from ...Utils.adaptive_reader_state import (
     AdaptiveReaderEffectiveLayout,
     AdaptiveReaderLayoutPreferences,
-    AdaptiveReaderLayoutProfile,
     PANE_GRIP_WIDTH,
     PaneName,
     normalize_adaptive_reader_preferences,
@@ -124,18 +120,7 @@ from ...Utils.library_rail_width import (
 )
 from ...Library.library_conversation_reader_state import (
     LIBRARY_CONVERSATION_PAGE_SIZE,
-    ConversationReaderRequest,
-    ConversationReaderState,
-    confirm_conversation_deleted,
     project_conversation_multiselect,
-    retry_conversation,
-    select_conversation,
-    set_conversation_find_query,
-    set_conversation_reader_mode,
-    settle_conversation_continuation,
-    settle_conversation_error,
-    settle_conversation_page,
-    settle_conversation_unavailable,
 )
 from ...Library.library_export_scope import (
     ExportScope,
@@ -232,7 +217,6 @@ from ...Library.library_notes_state import (
     LibraryNotesFocusIdentity,
     LibraryNotesListState,
     LibraryNotesOperationState,
-    NormalizedDatabaseNote,
     build_library_note_editor_state,
     build_library_notes_list_state,
     build_note_export_content,
@@ -276,8 +260,6 @@ from ...Notes.note_import_receipts import NoteImportReceiptRepository
 from ...Library.library_notes_session import (
     ConflictAction,
     ConflictOutcomeKind,
-    DatabaseNotePortLoadReply,
-    DatabaseNotePortSaveReply,
     DatabaseNoteSessionCoordinator,
     DestructiveAdmission,
     DestructiveAdmissionOutcomeKind,
@@ -351,12 +333,6 @@ from ...Prompt_Management.prompt_variables import (
 from ...Prompt_Management.prompt_source_capabilities import (
     PromptSourceCapabilities,
     local_prompt_capabilities,
-)
-from ...Prompt_Management.Prompts_Interop import (
-    parse_json_prompts_from_content,
-    parse_markdown_prompts_from_content,
-    parse_txt_prompts_from_content,
-    parse_yaml_prompts_from_content,
 )
 from ...Widgets.Prompts.prompt_block_editor import PromptBlockEditor
 from ...Widgets.Prompts.prompt_block_editor_state import (
@@ -455,11 +431,9 @@ from ...Notes.note_folder_models import (
     NoteFolderMembership,
     NotePlacementRecord,
 )
-from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...runtime_policy.types import PolicyDeniedError
 from ...STT.transcribe_cpp_config import (
     configure_model_path as configure_transcribe_cpp_model_path,
-    is_gguf_file,
 )
 from ...STT.parakeet_sources import (
     ParakeetSourceError,
@@ -467,7 +441,7 @@ from ...STT.parakeet_sources import (
     ParakeetSourceKey,
     PreparedExternalSelection,
 )
-from ...Third_Party.textual_fspicker import FileOpen, FileSave, Filters, SelectDirectory
+from ...Third_Party.textual_fspicker import FileOpen, FileSave, SelectDirectory
 from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
 from ...Utils.path_validation import validate_path_simple
 from ...Workspaces import (
@@ -570,7 +544,6 @@ from ...Widgets.Library.library_note_folder_dialog import (
     LibraryNoteFolderNameDialog,
     LibraryNoteFolderTargetDialog,
 )
-from ...Widgets.Library.library_canvas_sync import PostRecomposeCallback
 from ...Widgets.Library.library_emergency_return import LibraryEmergencyReturn
 from ...Widgets.Library.library_notes_canvas import (
     LibraryNotePresentationState,
@@ -608,6 +581,13 @@ from ..Library_Modules.library_collections_capture_controller import (
     CollectionsCaptureControllerState,
     LibraryCollectionsCaptureController,
 )
+from ..Library_Modules.library_conversation_reader_controller import (
+    LibraryConversationReaderController,
+)
+from ..Library_Modules.library_conversations_controller import (
+    LibraryConversationsController,
+)
+from ..Library_Modules.library_conversations_state import LibraryConversationsState
 from ..Library_Modules.library_note_import_controller import (
     LibraryNoteImportController,
 )
@@ -656,7 +636,6 @@ else:
 
 
 logger = logger.bind(module="LibraryScreen")
-LIBRARY_SKILLS_IMPORT_WORKER_GROUP = "library_skills_import"
 
 #: task-24456: attribute name under which the memoised ingest-option payload
 #: lives on the running ``App``. The cache is deliberately app-scoped, not
@@ -754,1576 +733,153 @@ def _library_ingest_options_for(owner: Any) -> dict[str, Any]:
     return payload
 
 
-LibraryReaderDestination = Literal[
-    "media",
-    "collections",
-    "conversations",
-    "notes",
-    "notes_files",
-    "prompts",
-    "skills",
-]
-LIBRARY_CONVERSATION_READER_PROFILE = AdaptiveReaderLayoutProfile()
-LIBRARY_COLLECTIONS_READER_PROFILE = AdaptiveReaderLayoutProfile(
-    work_min_width=48,
-    work_comfort_width=56,
-)
-LIBRARY_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=48)
-LIBRARY_FILE_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=30)
-LIBRARY_PROMPTS_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=48)
-LIBRARY_SKILLS_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=48)
-LIBRARY_CONVERSATION_READER_MAX_CHARS = 8000
-LIBRARY_SOURCE_PAGE_SIZES = {
-    "notes": 100,
-    "media": 50,
-    "conversations": LIBRARY_CONVERSATION_PAGE_SIZE,
-}
-LIBRARY_MEDIA_PREVIEW_CACHE_LIMIT = 20
-_LIBRARY_PROMPTS_SEARCH_DEBOUNCE_SECONDS = 0.25
-# Skills sort modes (Task 3 of the Skills sub-project): "name" (pure
-# alphabetical) <-> "status" (needs-review first, then alphabetical) --
-# cycled by handle_library_skills_sort. Same "screen-toolbar-cycling
-# concern, not pure list-state-building logic" posture as the prompts modes
-# above, kept local rather than in library_skills_state.py.
-_LIBRARY_SKILLS_SORT_MODES = ("name", "status")
+# PR 0a (Library decomposition foundation): the module-level support layer
+# formerly here now lives in tldw_chatbook/UI/Library_Modules/ -- re-exported
+# below so this module's import surface is unchanged.
 
 # task-28012 (Qodo #2309): the media bulk-selection keys, named once so the
 # key ``Binding``s and the advertised footer shortcuts cannot drift apart.
+# (dev commit 53d1789a6 -- new since PR 0a's base, kept inline here rather
+# than moved: it is new screen code, not part of the extracted support layer.)
 _MEDIA_SELECT_MODE_KEY = "s"
 _MEDIA_ROW_SELECT_KEY = "space"
-
-
-def _library_screen_is_current(screen: Any) -> bool:
-    """Reject delayed callbacks owned by a replaced Library screen."""
-    try:
-        runtime_app = screen.app
-        current_screen = getattr(runtime_app, "screen", screen)
-    except Exception:
-        return True
-    return current_screen is screen
-
-
-# Toolbar Import… (Task 5): which parser handles which file extension.
-# Mirrors ``Prompts_Interop._get_file_type``'s extension map, but writes
-# through ``prompt_scope_service``/``LocalPromptService`` per-prompt
-# (duplicate-name = skip, never overwrite) rather than
-# ``import_prompts_from_files`` -- that helper's own write path
-# (``add_or_update_prompt_interop``) hardcodes ``overwrite=True`` with no
-# way to opt out, and bypasses the scope service entirely. See
-# ``_run_library_prompts_import``.
-_LIBRARY_PROMPT_IMPORT_PARSERS = {
-    ".json": parse_json_prompts_from_content,
-    ".yaml": parse_yaml_prompts_from_content,
-    ".yml": parse_yaml_prompts_from_content,
-    ".md": parse_markdown_prompts_from_content,
-    ".txt": parse_txt_prompts_from_content,
-}
-_LIBRARY_PROMPTS_IMPORT_WORKER_GROUP = "library-prompts-import"
-_LIBRARY_PROMPT_WRITE_WORKER_GROUPS = frozenset(
-    {
-        "library_prompt_save",
-        "library_prompt_history_restore",
-        "library_prompt_memberships_apply",
-        _LIBRARY_PROMPTS_IMPORT_WORKER_GROUP,
-    }
-)
-_LIBRARY_PROMPT_WRITE_IN_PROGRESS_COPY = PROMPT_DISCARD_TOOLTIP_BUSY
-LIBRARY_SERVICE_ERROR_COPY = "Library source services unavailable; retry Library later."
-LIBRARY_SERVICE_UNAVAILABLE_COPY = (
-    "Library source services are unavailable in this runtime."
-)
-LIBRARY_EMPTY_COPY = "No local Library content yet."
-# F-021: the retired inspector pane's LIBRARY_INSPECTOR_EMPTY_COPY /
-# LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY were deleted -- nothing has
-# composed #library-source-inspector since the legacy workbench chrome
-# went away, so the (architecture-talk) copy never rendered. The
-# user-facing guidance it gestured at lives in the F-013 landing copy
-# and the F-010 landing hub.
-LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS = 5.0
-LIBRARY_ONBOARDING_EVIDENCE_TIMEOUT_SECONDS = LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS
-# Navigation composes a FRESH LibraryScreen instance per visit (PR #595
-# freeze fix), so a per-instance memo is useless -- the previous visit's
-# snapshot is cached on the APP instance instead (see `on_mount` and
-# `_refresh_local_source_snapshot`) so a repeat visit within this window
-# renders instantly instead of showing the loading placeholder again. The
-# cached snapshot is always applied THEN immediately reconciled with a
-# fresh background fetch, so staleness is bounded to a single refresh
-# cycle regardless of this TTL's length.
-LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS = 5.0
-# task-2856: how long an "enter/return to a list canvas" entry-focus
-# request (``_library_pending_list_entry_focus``) stays armed. A "back to
-# list" exit can kick off MULTIPLE sequential background workers, each
-# ending in its own recompose (e.g. the skills exit's snapshot refresh
-# chains into a trust-posture reload, which does its own LATER
-# ``self.refresh(recompose=True)``) -- a single-consume flag loses the
-# race against whichever finishes last. ``compose_content`` re-requests
-# the focus on every recompose while this window is open instead of
-# consuming the flag on first use.
 #
-# Review round 2: user interaction (ANY key -- ``on_key``; a focus change
-# to something other than the armed list's own rows, including mouse
-# clicks -- ``on_descendant_focus``) now disarms the request IMMEDIATELY,
-# so this window is no longer what protects a user's Tab-away/click from
-# being overridden -- it only bounds how long an IDLE, still-armed list
-# keeps re-requesting focus across its own chained background workers.
-# Measured live (timestamped, two independent runs of the exact skills
-# "New skill -> save -> Escape" chain that motivates this at all): the
-# gap between the exit's own synchronous recompose and the CHAINED
-# trust-posture worker's later one was 249ms and 142ms. This constant is
-# ~8-14x that measured worst case, comfortably absorbing a slower disk/
-# keyring backend or CI machine while still resolving quickly if a truly
-# idle list somehow never settles.
-LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS = 2.0
-LIBRARY_NOTES_AUTOSAVE_SECONDS = 2.0
-LIBRARY_NOTE_CONTENT_MAX_CHARS = 2_000_000
-# The literal title a just-created "Blank note" row is seeded with (LIB-14,
-# task-4021). The editor presents it placeholder-only (empty Input,
-# "Untitled" placeholder -- see ``_library_note_pending_blank_gc_id``), and
-# the untouched-blank GC gate (``_flush_library_note_save``) treats a
-# snapshot title equal to this literal as blank too -- both call sites and
-# the create seed in ``handle_library_notes_create_blank`` must agree on
-# the one constant rather than three independently-typed string literals.
-LIBRARY_NOTE_BLANK_SEED_TITLE = "Untitled"
-
-
-def library_note_persisted_title(raw_title: str) -> str:
-    """The exact title a note with ``raw_title`` is actually stored under.
-
-    (P0, xhigh review + live-verify round) The save port substitutes the
-    seed title for a blank one on the wire (task-2858's reviewed decision:
-    an emptied-out title persists as "Untitled", never as a blank row
-    name), but ``DatabaseNotePortSaveReply`` carries no title back -- so
-    the session snapshot's baseline kept the blank the draft had while the
-    DB row was named "Untitled", and every list row patched from that
-    snapshot inherited the disagreement. The substitution is a pure
-    function of the payload title, so both sides derive it from HERE
-    instead of one side guessing: the port before the write, the list
-    patch after it.
-
-    Args:
-        raw_title: The draft/payload title exactly as the user left it.
-
-    Returns:
-        ``raw_title`` when it carries any non-whitespace text, otherwise
-        :data:`LIBRARY_NOTE_BLANK_SEED_TITLE`.
-    """
-    return raw_title if raw_title.strip() else LIBRARY_NOTE_BLANK_SEED_TITLE
-
-
-# Prompt editor body fields (details/system/user) have no dedicated cap of
-# their own -- reuses the note body's generous ceiling rather than inventing
-# a second magic number for the same "large text field" concern.
-LIBRARY_PROMPT_TEXT_MAX_CHARS = LIBRARY_NOTE_CONTENT_MAX_CHARS
-# Exact outcome copy for the prompt editor's #library-prompt-save-status
-# line, keyed by `classify_prompt_save_error`'s return value. "conflict" is
-# deliberately absent -- both the pre-write staleness check AND a
-# ConflictError raised by the write itself (a race the pre-check cannot
-# see) route into the conflict banner instead (see `_save_library_prompt`),
-# never this status line.
-LIBRARY_PROMPT_SAVE_STATUS_COPY = {
-    "ok": "Saved.",
-    "name-in-use": "Name already in use — pick another or open the existing prompt.",
-    "soft-deleted-name": "A deleted prompt holds this name — restore it or choose another.",
-    "error": "Couldn't save this prompt. Try again.",
-}
-# Skill editor's text fields (description/allowed-tools/body) have no
-# dedicated cap of their own -- reuses the note body's generous ceiling,
-# same reasoning as ``LIBRARY_PROMPT_TEXT_MAX_CHARS`` above.
-LIBRARY_SKILL_TEXT_MAX_CHARS = LIBRARY_NOTE_CONTENT_MAX_CHARS
-LIBRARY_PROMPT_DIRTY_VETO_COPY = (
-    "Unsaved Prompt changes — Save or Discard changes first."
+# _INGEST_OPTIONS_CACHE_ATTR, _read_library_ingest_options_from_config, and
+# _library_ingest_options_for (just above) STAY here rather than moving to
+# Library_Modules/screen_helpers.py: several tests monkeypatch
+# get_cli_setting / _read_library_ingest_options_from_config on THIS module,
+# expecting the patch to reach _library_ingest_options_for's internal call.
+# That only works while both functions share this module's globals -- moving
+# them gives the internal call its own (unpatched) globals dict and breaks
+# 5 tests deterministically. See Library_Modules/screen_helpers.py's module
+# docstring and this task's report for the full trace.
+from ..Library_Modules.screen_constants import (
+    LIBRARY_SKILLS_IMPORT_WORKER_GROUP,
+    LIBRARY_CONVERSATION_READER_PROFILE,
+    LIBRARY_COLLECTIONS_READER_PROFILE,
+    LIBRARY_NOTES_READER_PROFILE,
+    LIBRARY_FILE_NOTES_READER_PROFILE,
+    LIBRARY_PROMPTS_READER_PROFILE,
+    LIBRARY_SKILLS_READER_PROFILE,
+    LIBRARY_CONVERSATION_READER_MAX_CHARS,
+    LIBRARY_SOURCE_PAGE_SIZES,
+    LIBRARY_MEDIA_PREVIEW_CACHE_LIMIT,
+    _LIBRARY_PROMPTS_SEARCH_DEBOUNCE_SECONDS,
+    _LIBRARY_SKILLS_SORT_MODES,
+    _LIBRARY_PROMPT_IMPORT_PARSERS,
+    _LIBRARY_PROMPTS_IMPORT_WORKER_GROUP,
+    _LIBRARY_PROMPT_WRITE_WORKER_GROUPS,
+    _LIBRARY_PROMPT_WRITE_IN_PROGRESS_COPY,
+    LIBRARY_SERVICE_ERROR_COPY,
+    LIBRARY_SERVICE_UNAVAILABLE_COPY,
+    LIBRARY_EMPTY_COPY,
+    LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
+    LIBRARY_ONBOARDING_EVIDENCE_TIMEOUT_SECONDS,
+    LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS,
+    LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS,
+    LIBRARY_NOTES_AUTOSAVE_SECONDS,
+    LIBRARY_NOTE_CONTENT_MAX_CHARS,
+    LIBRARY_NOTE_BLANK_SEED_TITLE,
+    LIBRARY_PROMPT_TEXT_MAX_CHARS,
+    LIBRARY_PROMPT_SAVE_STATUS_COPY,
+    LIBRARY_SKILL_TEXT_MAX_CHARS,
+    LIBRARY_PROMPT_DIRTY_VETO_COPY,
+    LIBRARY_SKILL_DIRTY_VETO_COPY,
+    LIBRARY_SKILL_TRUST_MISMATCH_COPY,
+    LIBRARY_SKILL_SAVE_STATUS_COPY,
+    LIBRARY_COLLECTION_SYNC_CONFLICT_LIMIT,
+    LIBRARY_HANDOFF_LABEL_PREFIX,
+    LIBRARY_WORKSPACE_SOURCE_COLUMN_WIDTH,
+    LIBRARY_WORKSPACE_SCOPE_COLUMN_WIDTH,
+    LIBRARY_WORKSPACE_VISIBLE_COLUMN_WIDTH,
+    LIBRARY_WORKSPACE_CONTEXT_COLUMN_WIDTH,
+    LIBRARY_HUB_RECENT_LABEL_WIDTH,
+    LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS,
+    LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS,
+    LIBRARY_NOTES_COMPACT_BREAKPOINT,
+    LIBRARY_INGEST_RAIL_COLLAPSE_BREAKPOINT,
+    _LIBRARY_READER_SHELL_SELECTOR,
+    LIBRARY_NOTES_SOURCE_DATABASE,
+    LIBRARY_NOTES_SOURCE_FILES,
+    LIBRARY_CANVAS_KIND_NOTES,
+    LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS,
+    LIBRARY_RAG_ANSWERABLE_RETRIEVAL_STATUSES,
+    LIBRARY_STUDY_HANDOFF_MODES,
+    LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY,
+    LIBRARY_STUDY_HANDOFF_TITLES_CAP,
+    LIBRARY_NAV_MODE_TO_ROW_ID,
+    LIBRARY_STUDY_HANDOFF_ROW_IDS,
+    _LIBRARY_LIST_ROW_CLASSES,
+    _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID,
+    _LIBRARY_HELP_SURFACE_LABELS,
 )
-# Exact outcome copy for the skill editor's #library-skill-save-status line,
-# keyed by ``classify_skill_save_error``'s return value. "version-conflict"
-# is deliberately absent -- it routes into the conflict banner instead (see
-# ``_save_library_skill``), never this status line.
-# task-449: toast shown whenever a dirty skill edit vetoes an exit (Back,
-# skill-row switch, rail-row switch) -- the veto itself is silent widget
-# state, so without this the blocked click looks like a dead button.
-LIBRARY_SKILL_DIRTY_VETO_COPY = "Unsaved skill changes — Save or Discard changes first."
-# task-414: specific approve-failure copy for the service's
-# ``ValueError("snapshot_mismatch")`` -- the files changed between capture
-# and approve, and the service has already discarded the review.
-LIBRARY_SKILL_TRUST_MISMATCH_COPY = (
-    "Skill files changed after the review was captured, so it was discarded. "
-    "Press Review changes again, then Approve."
+from ..Library_Modules.screen_support_types import (
+    LibraryReaderDestination,
+    _LibraryIngestStartConsent,
+    LibraryEntryReconcileResult,
+    LibraryEntryFocusIdentity,
+    _LibraryEntryFocusCapture,
+    _LibraryMediaFinalFocusPolicy,
+    _LibraryMediaSettlementOutcome,
+    _LibraryMediaReturnReceipt,
+    _LibraryMediaReturnSettlement,
+    _LibraryMediaSuccessfulFocusOwnership,
+    _LibraryEmergencyReturnEligibility,
+    _LibraryEmergencyRestoreReceipt,
+    _LibraryNotesRecomposeCapture,
+    _LibraryNotesRestoreGuard,
+    _LibraryNotesDeletedFolderReceipt,
+    _ParakeetV2NoPendingReportError,
 )
-LIBRARY_SKILL_SAVE_STATUS_COPY = {
-    "ok": "Saved.",
-    "exists": "A skill with this name already exists.",
-    "invalid-name": "Skill name must use lowercase letters, numbers, and hyphens.",
-    "trust-blocked": "This skill is blocked by trust review — approve it in the trust panel before saving.",
-    "error": "Couldn't save this skill. Try again.",
-}
-LIBRARY_COLLECTION_SYNC_CONFLICT_LIMIT = 200
-LIBRARY_HANDOFF_LABEL_PREFIX = "Console/RAG handoff: "
-LIBRARY_WORKSPACE_SOURCE_COLUMN_WIDTH = 30
-LIBRARY_WORKSPACE_SCOPE_COLUMN_WIDTH = 18
-LIBRARY_WORKSPACE_VISIBLE_COLUMN_WIDTH = 7
-LIBRARY_WORKSPACE_CONTEXT_COLUMN_WIDTH = 11
-LIBRARY_HUB_RECENT_LABEL_WIDTH = 32
-LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS = 500
-# `_refresh_library_rag_results_widgets` tears down every direct child of
-# `#library-rag-results` NOT in this set, then remounts fresh ones from
-# `library_rag_results_body_children` -- the same function `compose()`
-# uses, so the two paths cannot drift. Task 12/RAG-36 wrapped each row's
-# several flat sibling widgets into ONE `.library-rag-result-card`
-# container per row; that reduces the child COUNT under
-# `#library-rag-results` but does not change this set's membership, since
-# every row-level id (old flat widgets or the new card) was already being
-# removed and remounted here -- only the always-kept heading is listed.
-LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS = frozenset({"library-rag-results-heading"})
-LIBRARY_NOTES_COMPACT_BREAKPOINT = 120
-LIBRARY_INGEST_RAIL_COLLAPSE_BREAKPOINT = 100
-# TASK-23025: the adaptive reader shells, all constructed exclusively in
-# ``compose_content`` -- the basis for the one-probe-per-recompose negative
-# cache in ``_library_adaptive_reader_shell_active``.
-_LIBRARY_READER_SHELL_SELECTOR = (
-    "#library-media-reader-shell, "
-    "#library-collections-reader-shell, "
-    "#library-conversations-reader-shell, "
-    "#library-notes-reader-shell, "
-    "#library-prompts-reader-shell, "
-    "#library-skills-reader-shell"
+from ..Library_Modules.note_session_port import _LibraryDatabaseNoteSessionPort
+from ..Library_Modules.canvas_sync import (
+    _move_library_list_row_focus,
+    _patch_library_disabled_marker_label,
+    _apply_library_row_toggle,
+    _sync_library_canvas,
 )
-LIBRARY_NOTES_SOURCE_DATABASE = "database"
-LIBRARY_NOTES_SOURCE_FILES = "files"
-LIBRARY_CANVAS_KIND_NOTES = "notes"
-LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS = frozenset(
-    {LIBRARY_CANVAS_KIND_NOTES, LIBRARY_CANVAS_KIND_NOTES_CREATE}
+from ..Library_Modules.screen_helpers import (
+    _library_screen_is_current,
+    library_note_persisted_title,
+    _ingestible_file_filters,
+    _transcribe_cpp_gguf_filters,
+    _library_carries_forward_line,
+    _unbreakable_size_text,
+    _active_library_sync_scope,
+    _record_value,
+    _library_collection_record_data,
+    _library_collection_browse_summary,
+    _collection_scoped_mirror_report,
+    _collection_scoped_conflicts,
+    _canonical_shortcut_key,
 )
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
-class _LibraryIngestStartConsent:
-    """Immutable identity of the submission a second Start may authorize."""
-
-    fingerprint: str
-    admission_scope: ActiveIngestConsentScope
-    tooling_affected_count: int
-    is_folder: bool
-    request_fingerprint: str = ""
-    consent_context_fingerprint: str = ""
-    authoritative_refusal: bool = False
-    candidate_changed: bool = False
-
-    @property
-    def active_job_ids(self) -> tuple[str, ...]:
-        return self.admission_scope.active_job_ids
-
-    @property
-    def active_source_count(self) -> int:
-        return self.admission_scope.active_source_count
-
-    @property
-    def owed(self) -> bool:
-        return bool(
-            self.active_job_ids or self.tooling_affected_count or self.candidate_changed
-        )
-
-    @property
-    def allows_active_duplicate(self) -> bool:
-        return bool(
-            self.active_job_ids and self.admission_scope.active_job_ids_complete
-        )
-
-
-class LibraryEntryReconcileResult(Enum):
-    """Outcome of projecting a source snapshot into the mounted Library."""
-
-    APPLIED = "applied"
-    ALREADY_CURRENT = "already-current"
-    SUPERSEDED = "superseded"
-    FAILED = "failed"
-
-
-@dataclasses.dataclass(frozen=True)
-class LibraryEntryFocusIdentity:
-    """Portable semantic focus and scroll identity for an entry canvas."""
-
-    widget_id: str = ""
-    source_id: str = ""
-    scroll_offset: tuple[int, int] | None = None
-
-
-@dataclasses.dataclass(frozen=True)
-class _LibraryEntryFocusCapture:
-    """Focus intent carried across superseding strict entry syncs."""
-
-    identity: LibraryEntryFocusIdentity
-    outgoing_focus: Widget
-    route_key: tuple[object, ...]
-    notes_identity: LibraryNotesFocusIdentity | None = None
-
-
-_LibraryMediaFinalFocusPolicy: TypeAlias = Literal["row", "control"]
-_LibraryMediaSettlementOutcome: TypeAlias = Literal[
-    "exact-settled",
-    "exact-scroll-focus-fallback",
-    "clamped-after-revision",
-    "clamped-after-settlement-failure",
-    "layout-settlement-failed",
-]
-
-
-@dataclasses.dataclass(frozen=True)
-class _LibraryMediaReturnReceipt:
-    """Transient normal-Media coordinates captured before leaving its list."""
-
-    stable_id: str
-    scroll_offset: tuple[int, int] | None
-    content_signature: tuple[object, ...]
-    layout_signature: tuple[object, ...]
-    final_focus_policy: _LibraryMediaFinalFocusPolicy
-    final_focus_identity: str | None
-
-
-@dataclasses.dataclass(frozen=True)
-class _LibraryMediaReturnSettlement:
-    """Immutable authority for one current-owner Media return attempt."""
-
-    request_id: int
-    receipt: _LibraryMediaReturnReceipt
-    final_focus_policy: _LibraryMediaFinalFocusPolicy
-    final_focus_identity: str | None
-    focus_intent_generation: int
-    compose_generation: int
-    media_lifecycle_generation: int
-    presentation_epoch: int
-    content_signature: tuple[object, ...]
-    layout_signature: tuple[object, ...]
-    route_identity: tuple[object, ...]
-    media_view_identity: str
-    shell_identity: int
-    items_host_identity: int
-    owner_identity: int
-    exclusive_geometry_floor: int
-    focus_anchor: Widget | None
-
-
-@dataclasses.dataclass(frozen=True)
-class _LibraryMediaSuccessfulFocusOwnership:
-    """ABA-fenced focus ownership retained after one exact settlement."""
-
-    request: _LibraryMediaReturnSettlement
-    outer_generation: int
-    selected_media_id: str | None
-    target: Widget
-
-
-@dataclasses.dataclass(frozen=True)
-class _LibraryEmergencyReturnEligibility:
-    """One immutable truth source for narrow-canvas recovery chrome."""
-
-    visible: bool
-    enabled: bool
-    guarded: bool
-
-
-@dataclasses.dataclass(frozen=True)
-class _LibraryEmergencyRestoreReceipt:
-    """Portable focus/scroll state owned by one interaction generation."""
-
-    owner_id: str
-    scroll_owner_id: str
-    focus: LibraryEntryFocusIdentity
-    route_key: tuple[object, ...]
-    generation: int
-
-
-@dataclasses.dataclass(frozen=True)
-class _LibraryNotesRecomposeCapture:
-    """Portable identity needed to rehydrate a replaced Notes canvas."""
-
-    focus: LibraryNotesFocusIdentity
-    recompose_generation: int
-    scroll_generation: int
-    focus_generation: int
-    session_generation: int | None
-    draft_revision: int | None
-    preview: bool
-    context: bool
-    confirming_delete: bool
-
-
-@dataclasses.dataclass(frozen=True)
-class _LibraryNotesRestoreGuard:
-    """Generations that keep deferred focus/scroll restoration current."""
-
-    recompose_generation: int | None = None
-    scroll_generation: int | None = None
-    focus_generation: int | None = None
-
-
-@dataclasses.dataclass(frozen=True)
-class _LibraryNotesDeletedFolderReceipt:
-    """One-session recovery authority for the last removed folder subtree."""
-
-    folder_id: str
-    name: str
-    expected_version: int
-
-
-# PR-3 Task 4: the retrieval outcomes phase two runs on. `ready` is the
-# ordinary case; `empty` is answered too -- honestly, and without a provider
-# call (`generate_library_rag_answer` refuses to hand a model an evidence
-# block with nothing citable). `blocked`/`failed` are excluded on purpose:
-# retrieval did not run, so there is nothing to be grounded in and the
-# recovery copy those statuses already render is the honest answer.
-LIBRARY_RAG_ANSWERABLE_RETRIEVAL_STATUSES = frozenset({"ready", "empty"})
-
-
-class _LibraryDatabaseNoteSessionPort:
-    """Adapt the existing Library note services to the portable session port."""
-
-    def __init__(
-        self,
-        *,
-        run_service_call: Any,
-        notes_scope_service: Any,
-        notes_service: Any,
-        user_id: str,
-        clock: Any,
-    ) -> None:
-        self._run_service_call = run_service_call
-        self._notes_scope_service = notes_scope_service
-        self._notes_service = notes_service
-        self._user_id = user_id
-        self._clock = clock
-
-    @staticmethod
-    def _keyword_strings(records: Any) -> tuple[str, ...]:
-        """Return semantic keyword strings in their service-provided order."""
-        if records is None:
-            return ()
-        if isinstance(records, (str, bytes)) or not isinstance(records, Sequence):
-            raise TypeError("Keyword detail was not a sequence.")
-        keywords: list[str] = []
-        for record in records:
-            value = record.get("keyword") if isinstance(record, Mapping) else record
-            if value is None:
-                continue
-            keyword = value if isinstance(value, str) else str(value)
-            if keyword:
-                keywords.append(keyword)
-        return tuple(keywords)
-
-    async def load_note(self, note_id: str) -> DatabaseNotePortLoadReply:
-        """Fetch detail plus keywords and return one coherent typed reply."""
-        get_note_detail = getattr(self._notes_scope_service, "get_note_detail", None)
-        if not callable(get_note_detail):
-            return DatabaseNotePortLoadReply.failed("Note loading is unavailable.")
-        try:
-            detail = await self._run_service_call(
-                get_note_detail,
-                scope="local_note",
-                note_id=note_id,
-                user_id=self._user_id,
-                isolate_in_worker=True,
-            )
-            if detail is None:
-                return DatabaseNotePortLoadReply.missing()
-            if not isinstance(detail, Mapping):
-                return DatabaseNotePortLoadReply.failed(
-                    "Note detail was incomplete. Press Retry."
-                )
-
-            get_keywords = getattr(self._notes_service, "get_keywords_for_note", None)
-            if callable(get_keywords):
-                keyword_records = await self._run_service_call(
-                    get_keywords,
-                    self._user_id,
-                    note_id,
-                    isolate_in_worker=True,
-                )
-            elif "keywords" in detail:
-                keyword_records = detail["keywords"]
-            else:
-                return DatabaseNotePortLoadReply.failed(
-                    "Keyword loading is unavailable. Press Retry."
-                )
-            keywords = self._keyword_strings(keyword_records)
-            raw_note_id = detail.get("id", detail.get("note_id", note_id))
-            raw_title = detail.get("title", "")
-            raw_body = detail.get("content", detail.get("body", ""))
-            created_at = detail.get("created_at", "")
-            modified_at = detail.get(
-                "last_modified", detail.get("updated_at", created_at)
-            )
-            normalized = NormalizedDatabaseNote(
-                note_id=str(raw_note_id),
-                title=raw_title if isinstance(raw_title, str) else str(raw_title or ""),
-                body=raw_body if isinstance(raw_body, str) else str(raw_body or ""),
-                keywords=keywords,
-                version=int(detail.get("version", 0)),
-                created_at=(
-                    created_at if isinstance(created_at, str) else str(created_at or "")
-                ),
-                modified_at=(
-                    modified_at
-                    if isinstance(modified_at, str)
-                    else str(modified_at or "")
-                ),
-            )
-        except Exception as error:
-            logger.opt(exception=True).warning(
-                f"Failed to load Library note session for {note_id!r}."
-            )
-            failure_detail = str(error).strip()
-            return DatabaseNotePortLoadReply.failed(
-                (
-                    f"Unable to load note — {failure_detail.rstrip('.')}. Press Retry."
-                    if failure_detail
-                    else "Unable to load note. Press Retry."
-                )
-            )
-        return DatabaseNotePortLoadReply.loaded(normalized)
-
-    async def save_note(
-        self,
-        note_id: str,
-        expected_version: int,
-        payload: DatabaseNoteSavePayload,
-    ) -> DatabaseNotePortSaveReply:
-        """Persist one exact versioned payload and normalize the service reply."""
-        save_note = getattr(self._notes_scope_service, "save_note", None)
-        if not callable(save_note):
-            return DatabaseNotePortSaveReply.failed("Note saving is unavailable.")
-        try:
-            result = await self._run_service_call(
-                save_note,
-                scope="local_note",
-                # task-3315: restore the LIB-14 save-seam fallback the
-                # coordinator refactor (13cf08f90, notes-adaptive PR #1439)
-                # silently dropped -- an emptied-out title persists as the
-                # same "Untitled" default the create seam uses, never as a
-                # blank row title (task-2858's reviewed decision).
-                # (P0) The substitution rule lives in ONE helper now --
-                # ``_patch_library_note_list_from_session`` applies the
-                # same one to the snapshot, so the row name the session
-                # reports and the row name on disk can no longer disagree.
-                # (rebase note: task-4021's untouched-blank GC gate depends
-                # on this same fallback -- both features now share the one
-                # helper instead of two independently-typed literals.)
-                title=library_note_persisted_title(payload.title),
-                content=payload.body,
-                note_id=note_id,
-                version=expected_version,
-                user_id=self._user_id,
-                keywords=list(payload.keywords),
-                isolate_in_worker=True,
-            )
-        except ConflictError:
-            return DatabaseNotePortSaveReply.conflict()
-        except Exception as error:
-            logger.opt(exception=True).warning(
-                f"Library note save failed for {note_id!r}."
-            )
-            return DatabaseNotePortSaveReply.failed(str(error))
-
-        if result is False:
-            return DatabaseNotePortSaveReply.conflict()
-        modified_at = self._clock().isoformat()
-        if result is True:
-            return DatabaseNotePortSaveReply.saved(
-                version=expected_version + 1,
-                modified_at=modified_at,
-                keywords=payload.keywords,
-            )
-        if isinstance(result, Mapping):
-            try:
-                version = int(result.get("version", expected_version + 1))
-                keywords = (
-                    self._keyword_strings(result["keywords"])
-                    if "keywords" in result
-                    else payload.keywords
-                )
-            except (TypeError, ValueError) as error:
-                return DatabaseNotePortSaveReply.failed(
-                    f"Save returned invalid note metadata: {error}"
-                )
-            returned_modified = result.get(
-                "last_modified", result.get("updated_at", modified_at)
-            )
-            return DatabaseNotePortSaveReply.saved(
-                version=version,
-                modified_at=(
-                    returned_modified
-                    if isinstance(returned_modified, str)
-                    else str(returned_modified or modified_at)
-                ),
-                keywords=keywords,
-            )
-        return DatabaseNotePortSaveReply.failed(
-            "Save returned an unexpected result — edits kept. Press Save to retry."
-        )
-
-
-LIBRARY_STUDY_HANDOFF_MODES = {
-    "study": {
-        # "header" mirrors the rail row title that opens this canvas
-        # (LibraryRailRow "Study decks", library_shell_state.py) so the
-        # canvas doesn't restate the mode name a second, differently-worded
-        # way (L3b Task 8/9 follow-up: UX wave C/D, handoff copy
-        # consolidation).
-        "header": "Study decks",
-        "action_label": "Study Dashboard",
-        # UX wave L2: the button reads as a verb ("Continue in Study")
-        # instead of restating the destination's own name -- action_label
-        # still backs the header/purpose/recovery copy below.
-        "button_label": "Continue in Study",
-        "purpose": "Plan study decks from Library sources.",
-    },
-    "flashcards": {
-        "header": "Flashcards",
-        "action_label": "Flashcards",
-        "button_label": "Continue in Study",
-        "purpose": "Generate or review cards from Library sources.",
-    },
-    "quizzes": {
-        "header": "Quizzes",
-        "action_label": "Quizzes",
-        "button_label": "Continue in Study",
-        "purpose": "Generate or resume quizzes from Library sources.",
-    },
-}
-
-# Single shared ownership line for all three handoff canvases: Library only
-# prepares source context, Study owns everything downstream of "open".
-LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY = "Generation and review run in Study."
-
-# How many carried-forward source titles the handoff canvas names before
-# collapsing the rest into an "and N more" count.
-LIBRARY_STUDY_HANDOFF_TITLES_CAP = 3
-
-
-def _ingestible_file_filters() -> Filters:
-    """Filters that separate importable files from the rest.
-
-    The picker previously listed every file regardless of whether ingest
-    could do anything with it, so a user could pick something that was only
-    ever going to fail. The supported set is taken from the ingest capability
-    layer, so it cannot drift from what the pipeline actually accepts.
-    """
-    from ...Library.ingest_capabilities import UNSUPPORTED_GROUP, get_type_group
-
-    def _is_ingestible(path: Path) -> bool:
-        try:
-            return get_type_group(str(path)) != UNSUPPORTED_GROUP
-        except Exception:
-            return False
-
-    return Filters(
-        ("Importable files", _is_ingestible),
-        ("All files", lambda _path: True),
-    )
-
-
-def _transcribe_cpp_gguf_filters() -> Filters:
-    """Restrict the direct-local model picker to GGUF files."""
-    return Filters(("GGUF models", is_gguf_file))
-
-
-def _library_carries_forward_line(titles: Sequence[str]) -> str:
-    """Build the handoff canvas's capped, markup-escaped carries-forward line.
-
-    Args:
-        titles: Sampled source titles (notes/media/conversations) that will
-            carry forward into Study. Must be non-empty -- callers render no
-            line at all when there is no source context (see
-            ``_study_handoff_copy``).
-
-    Returns:
-        ``"Carries forward: a, b, c"`` when there are at most
-        ``LIBRARY_STUDY_HANDOFF_TITLES_CAP`` titles, else ``"Carries
-        forward: a, b, c and N more."`` with the remaining count appended.
-    """
-    escaped_titles = [escape_markup(title) for title in titles]
-    capped = escaped_titles[:LIBRARY_STUDY_HANDOFF_TITLES_CAP]
-    joined = ", ".join(capped)
-    remaining = len(escaped_titles) - len(capped)
-    if remaining > 0:
-        return f"Carries forward: {joined} and {remaining} more."
-    return f"Carries forward: {joined}"
-
-
-def _unbreakable_size_text(size_text: str) -> str:
-    """Drop the space between a formatted size's number and its unit, so
-    the rail's narrow Details column never wraps mid-unit (task-2859 item
-    5: "Prompts 144.0 / KB").
-
-    A non-breaking space (U+00A0) was the first thing tried here and does
-    NOT work: Rich's own word-wrap splitter (``rich._wrap.words``, used by
-    every plain ``Static``) tokenizes on ``re.compile(r"\\s*\\S+\\s*")``,
-    and Python's ``re`` module's Unicode-aware ``\\s`` matches U+00A0 the
-    same as an ordinary space -- confirmed by reproducing the exact wrap
-    live (rail width ~24-26 cells still split "144.0" from "KB" with the
-    NBSP already in place) and again directly against ``rich._wrap`` at
-    that width. Removing the space entirely denies the wrapper any
-    character to split on there at all -- verified stable across widths
-    20-29.
-
-    ``get_formatted_file_size``/``get_formatted_db_size_with_wal`` values
-    (e.g. ``"144.0 KB"``, ``"512 B"``) carry exactly one space; a fallback
-    value with no space at all (``"?"``, ``"N/A"``, ``"Error"``) passes
-    through unchanged.
-    """
-    return size_text.replace(" ", "")
-
-
-def _active_library_sync_scope(app_instance: Any) -> dict[str, str | None]:
-    runtime_policy = getattr(app_instance, "runtime_policy", None)
-    runtime_state = runtime_policy.state if runtime_policy is not None else None
-    active_source = str(
-        getattr(runtime_state, "active_source", "local") or "local"
-    ).lower()
-    server_profile_id = getattr(runtime_state, "active_server_id", None)
-    source_authority = (
-        "server" if active_source == "server" and server_profile_id else "local"
-    )
-    authenticated_principal_id = None
-    if source_authority == "server":
-        server_context_provider = getattr(app_instance, "server_context_provider", None)
-        get_active_context = getattr(
-            server_context_provider, "get_active_context", None
-        )
-        if callable(get_active_context):
-            try:
-                authenticated_principal_id = event_principal_id_from_active_context(
-                    get_active_context()
-                )
-            except Exception:
-                authenticated_principal_id = None
-    workspace_scope = None
-    workspace_service = getattr(app_instance, "workspace_registry_service", None)
-    get_active_workspace = getattr(workspace_service, "get_active_workspace", None)
-    if callable(get_active_workspace):
-        try:
-            active_workspace = get_active_workspace()
-            workspace_scope = getattr(active_workspace, "workspace_id", None)
-        except Exception:
-            workspace_scope = None
-    return {
-        "source_authority": source_authority,
-        "server_profile_id": str(server_profile_id) if server_profile_id else None,
-        "authenticated_principal_id": authenticated_principal_id,
-        "workspace_scope": workspace_scope,
-    }
-
-
-# Maps a Library navigation-context ``mode`` value to the shell rail row
-# that selects that canvas -- covers exactly the mode values nav-context
-# callers emit/support today (L3b Task 8 audit): ``conversations`` (Personas'
-# conversations controller), ``search`` and ``collections`` (both directly
-# tested contracts of ``apply_navigation_context``, though no live emitter
-# currently sends them), and ``prompts`` (the retired Personas "prompts" mode
-# chip's legacy route alias -- see ``screen_registry``'s ``_SCREEN_ALIASES``
-# and ``shell_destinations``, Task 7). ``skills`` (Skills sub-project Task 1)
-# has no live emitter yet either -- same forward-compat posture as
-# ``search``/``collections`` -- added so a future Skills deep link has
-# somewhere to land without another table edit. ``notes`` is handled as its
-# own dedicated branch in ``_apply_navigation_context_state`` below
-# (``open_notes_workspace``'s route), not through this table. ``media``
-# (task-2851: the retired standalone Media Library screen's legacy route
-# alias -- mirrors "search"/"prompts"/"skills" above) lands on this same
-# canvas's browse row -- unlike those, its own selected item still round-
-# trips through ``open_source_type``/``open_source_id`` above rather than a
-# mode-table entry, so this only owns landing on the list. ``study`` (task-
-# 2854: the Study screen's Escape binding lands back here) is a "handoff"
-# row like ``flashcards``/``quizzes`` -- unlike the plain "canvas" rows
-# above, selecting it shows the staging canvas ("Continue in Study"), not a
-# browse list -- but ``_select_library_rail_row_after_source_admission``
-# treats every row_id identically regardless of target_kind, so nothing
-# about being a handoff row stops it from being a valid nav-context landing
-# spot. ``flashcards``/``quizzes`` stay out: nothing emits those modes yet
-# (a Library-origin Escape always returns to the shared "Study decks" row --
-# see ``StudyScreen.action_study_back``), so adding them now would be
-# speculative, same posture as the other forward-compat-only entries below.
-# Any other mode value, including the retired ``sources``/``workspaces``/
-# ``import-export`` values, degrades quietly, unchanged from before this
-# table existed.
-LIBRARY_NAV_MODE_TO_ROW_ID = {
-    "conversations": LIBRARY_ROW_BROWSE_CONVERSATIONS,
-    "collections": LIBRARY_ROW_BROWSE_COLLECTIONS,
-    "search": LIBRARY_ROW_BROWSE_SEARCH,
-    "prompts": LIBRARY_ROW_BROWSE_PROMPTS,
-    "skills": LIBRARY_ROW_BROWSE_SKILLS,
-    "media": LIBRARY_ROW_BROWSE_MEDIA,
-    "study": LIBRARY_ROW_CREATE_STUDY,
-}
-
-#: task-4023 AC#7: the three Study staging (handoff) rows -- the surfaces
-#: whose Escape returns to the hub landing (they had no back path at all).
-#: Row ids match ``library_shell_state.py``'s study_rows.
-LIBRARY_STUDY_HANDOFF_ROW_IDS = (
-    LIBRARY_ROW_CREATE_STUDY,
-    LIBRARY_ROW_CREATE_FLASHCARDS,
-    LIBRARY_ROW_CREATE_QUIZZES,
-)
-
-
-def _record_value(record: Any, key: str, fallback: Any = "") -> Any:
-    if isinstance(record, Mapping):
-        return record.get(key, fallback)
-    return getattr(record, key, fallback)
-
-
-def _library_collection_record_data(record: Any) -> dict[str, Any]:
-    return {
-        "collection_id": _record_value(record, "collection_id"),
-        "name": _record_value(record, "name"),
-        "description": _record_value(record, "description"),
-        "item_count": _record_value(record, "item_count", 0),
-        "source_authority": _record_value(record, "source_authority", "local"),
-        "sync_status": _record_value(record, "sync_status", "local-only"),
-        "created_at": _record_value(record, "created_at"),
-        "updated_at": _record_value(record, "updated_at"),
-    }
-
-
-def _library_collection_browse_summary(record: Any) -> dict[str, Any]:
-    """Project one committed record into the strict bounded-page row shape."""
-
-    return {
-        "collection_id": _record_value(record, "collection_id"),
-        "name": _record_value(record, "name"),
-        "description": _record_value(record, "description"),
-        "item_count": _record_value(record, "item_count", 0),
-        "created_at": _record_value(record, "created_at"),
-        "updated_at": _record_value(record, "updated_at"),
-    }
-
-
-def _collection_scoped_mirror_report(
-    report: Mapping[str, Any] | None,
-    collection_id: str,
-) -> dict[str, Any] | None:
-    if not report:
-        return None
-    actions = tuple(
-        action
-        for action in report.get("actions", ())
-        if isinstance(action, Mapping)
-        and isinstance(action.get("identity"), Mapping)
-        and str(action["identity"].get("local_entity_id", "")) == collection_id
-    )
-    if not actions:
-        return None
-    scoped_report = dict(report)
-    scoped_report["actions"] = actions
-    scoped_report["mapped_count"] = len(actions)
-    scoped_report["dry_run"] = bool(report.get("dry_run", True))
-    scoped_report["write_enabled"] = bool(report.get("write_enabled", False))
-    return scoped_report
-
-
-def _collection_scoped_conflicts(
-    conflict_reports: Sequence[Mapping[str, Any]],
-    collection_id: str,
-) -> tuple[Mapping[str, Any], ...]:
-    scoped: list[Mapping[str, Any]] = []
-    local_side_suffix = f":local:{collection_id}"
-    remote_side_suffix = f":remote:{collection_id}"
-    for conflict in conflict_reports:
-        local_side_key = str(conflict.get("local_side_key") or "")
-        remote_side_key = str(conflict.get("remote_side_key") or "")
-        if local_side_key or remote_side_key:
-            if local_side_key.endswith(local_side_suffix) or remote_side_key.endswith(
-                remote_side_suffix
-            ):
-                scoped.append(conflict)
-            continue
-        details = conflict.get("details", {})
-        if isinstance(details, Mapping):
-            local_entity_id = details.get("local_entity_id")
-            if local_entity_id is not None and str(local_entity_id) != collection_id:
-                continue
-        scoped.append(conflict)
-    return tuple(scoped)
-
-
-# --- task-2856: Library keyboard story -------------------------------------
-#
-# Every list canvas (Media/Notes/Prompts/Skills) renders its rows as plain
-# Button widgets in a Vertical container, not a Textual ListView -- so Up/
-# Down movement between them has to be wired by hand. The four row CSS
-# classes are the seam: entering a list canvas focuses the first one
-# (``_focus_library_list_entry``/``_LIBRARY_LIST_ROW_CLASS_BY_ROW_ID``) and
-# Up/Down move DOM focus between siblings sharing one of these classes
-# (``_move_library_list_row_focus``). A MODULE-LEVEL function (not a method)
-# for the same reason ``_apply_library_row_toggle`` below is one: it is unit
-# tested against a minimal Pilot host without constructing a full
-# ``LibraryScreen``.
-_LIBRARY_LIST_ROW_CLASSES = (
-    "library-media-row",
-    "library-notes-row",
-    "library-prompt-row",
-    "library-skill-row",
-)
-
-_LIBRARY_LIST_ROW_CLASS_BY_ROW_ID = {
-    LIBRARY_ROW_BROWSE_MEDIA: "library-media-row",
-    LIBRARY_ROW_BROWSE_NOTES: "library-notes-row",
-    LIBRARY_ROW_BROWSE_PROMPTS: "library-prompt-row",
-    LIBRARY_ROW_BROWSE_SKILLS: "library-skill-row",
-    # ``_enter_library_prompt_create_editor``/``_enter_library_skill_create_
-    # editor`` (Create rail row -> editor) never reassign
-    # ``_library_selected_row_id`` away from these CREATE_* ids (mirroring
-    # ``_library_skill_editor_active``'s own dual-row-id gate) -- so
-    # exiting that editor back to the list still reads CREATE_PROMPT/
-    # CREATE_SKILL here, not BROWSE_PROMPTS/BROWSE_SKILLS. Omitting these
-    # left "New skill -> save -> Escape" focusing nothing (reproduced
-    # live: ``row_class`` resolved to ``None`` for ``LIBRARY_ROW_CREATE_
-    # SKILL``).
-    LIBRARY_ROW_CREATE_PROMPT: "library-prompt-row",
-    LIBRARY_ROW_CREATE_SKILL: "library-skill-row",
-}
-
-
-def _move_library_list_row_focus(focused: Widget | None, key: str) -> bool:
-    """Move DOM focus to the previous/next Library list row, in place.
-
-    Up/Down are otherwise unbound in this app (see the module docstring
-    above); this fires ONLY when ``focused`` is one of the four Library
-    list-row Button classes, so it never intercepts Up/Down anywhere else
-    on the screen (rail rows, form Inputs, TextAreas, the RAG evidence
-    cards, etc. all keep their native/absent behavior). Siblings sharing a
-    row class are read off ``focused.parent.children`` and filtered to
-    that class -- the Skills list interleaves a non-row ``Static`` secondary
-    line between rows (``library_skills_canvas.py``), so a plain "next
-    child" walk would skip a row every other step.
-
-    Args:
-        focused: The screen's currently focused widget (``screen.focused``),
-            or ``None``.
-        key: ``"up"`` or ``"down"``.
-
-    Returns:
-        ``True`` when ``focused`` is a Library list row -- the caller
-        should treat the key as claimed (``event.stop()`` /
-        ``event.prevent_default()``) even at a list boundary, where focus
-        deliberately does not wrap. ``False`` when ``focused`` is not a
-        Library list row, so the caller must leave the key untouched for
-        its normal handling elsewhere.
-    """
-    if focused is None:
-        return False
-    if not any(focused.has_class(name) for name in _LIBRARY_LIST_ROW_CLASSES):
-        return False
-    parent = focused.parent
-    if parent is None:
-        return False
-    siblings = [
-        child
-        for child in parent.children
-        if any(child.has_class(name) for name in _LIBRARY_LIST_ROW_CLASSES)
-    ]
-    try:
-        index = siblings.index(focused)
-    except ValueError:
-        return True
-    step = -1 if key == "up" else 1
-    new_index = index + step
-    if 0 <= new_index < len(siblings):
-        siblings[new_index].focus()
-    return True
-
-
-# --- task-252: targeted (non-recompose) selection-interaction updates ------
-#
-# Docs/Design/2026-07-16-performance-audit.md §P1 B2: library_screen.py
-# called self.refresh(recompose=True) -- a whole-screen remove/remount of
-# the nav bar, footer, ~20-row rail, and 50-100-row canvas -- from every
-# per-row selection/checkbox handler. These two helpers are the SELECTION
-# interaction class's staged fix: Tier 1 patches a toggled row in place;
-# Tier 2 routes structural selection changes (browse-mode row pick,
-# select-mode enter/exit/select-all/clear) through the canvas widget's own
-# sync_state(), a canvas-scoped recompose that never touches the nav bar,
-# footer, or rail.
-#
-# Both are MODULE-LEVEL functions (screen passed explicitly), not
-# LibraryScreen methods, so that existing bare-SimpleNamespace-fake unit
-# tests (Tests/UI/test_library_multiselect_{conversations,media,notes}.py)
-# that stub only `.refresh` -- not a new method name -- keep passing: a
-# `self._new_method(...)` call would fail attribute lookup on a fake
-# lacking that attribute BEFORE this function's own try/except could ever
-# run; calling a module-level function with `screen` as an explicit
-# argument has no such attribute-lookup step, so a fake missing
-# `query_one`/`app`/etc. correctly falls through to the `except` below and
-# reaches the already-stubbed `screen.refresh(...)` fallback instead.
-def _patch_library_disabled_marker_label(button: Button) -> None:
-    """Rebuild a marker-carrying action label after ``disabled`` flipped.
-
-    task-4023 AC#1 (RC-07): the non-colour "○" disabled marker is part of
-    the Button's label, so every in-place patcher that flips ``disabled``
-    must rebuild the label too (the recompose-discipline rule). The base
-    label is stashed on the button at compose time
-    (``_library_disabled_marker_base``) because rendered labels are not a
-    safe source to reconstruct from (the PR #665 escape lesson) and the
-    notes canvas spells its compact label differently. A missing stash
-    (unexpected widget shape) is a silent no-op -- the label simply keeps
-    its compose-time marker state until the next canvas sync.
-
-    Args:
-        button: The action Button whose ``disabled`` was just updated.
-
-    Returns:
-        None.
-    """
-    base = getattr(button, "_library_disabled_marker_base", None)
-    if base is None:
-        return
-    button.label = library_disabled_action_label(base, button.disabled)
-
-
-def _apply_library_row_toggle(
-    screen: "LibraryScreen", kind: str, button: Button, row_id: str
+def _assign_library_reader_preferences_attribute(
+    owner: Any, attribute: str, value: Any
 ) -> None:
-    """In-place select-mode checkbox toggle for a Library row button.
+    """Write through a possibly-dotted attribute path off ``owner``.
 
-    Tier 1: after the caller's ``row_selection.toggle(row_id)``, flips the
-    pressed row's marker, the "N selected" Static, and the
-    export-selected button's disabled state directly -- never a
-    screen-level recompose. Any failure (e.g. the select-mode action
-    strip isn't mounted because the mode raced) falls back to the old
-    ``screen.refresh(recompose=True)`` rather than raising.
-
-    Args:
-        screen: The Library screen instance driving the update.
-        kind: One of "conversations", "media", "notes" -- selects
-            ``screen._library_<kind>_row_selection`` and the
-            ``#library-<kind>-selected-count`` /
-            ``#library-<kind>-export-selected`` action-strip ids.
-        button: The pressed row's Button, rendered with the marker at
-            position 0 (``f"{marker} {title}..."`` / notes'
-            ``f"{marker} {title}..."`` glyph shape) -- only that leading
-            character is replaced; the rest of the label (title,
-            secondary line) is untouched since a selection toggle never
-            changes it.
-        row_id: The row's id, already toggled into/out of
-            ``screen._library_<kind>_row_selection`` by the caller --
-            read back here (single source of truth) rather than inferred
-            by flipping the old marker text.
-
-    Returns:
-        None.
+    Task 9 (Conversations cleanup) support: ``_replace_library_reader_preference``
+    and ``_persist_library_reader_preference`` dispatch across every reader
+    destination (media, collections, conversations, notes, notes_files,
+    prompts, skills) through a ``{destination: attribute_name}`` dict, read
+    with plain ``getattr``/``operator.attrgetter`` and written with plain
+    ``setattr``. Every destination except conversations still keeps its
+    reader-preferences object as a flat screen attribute, so a bare
+    attribute-name string has always been enough. Conversations' own
+    ``reader_preferences`` field moved to ``self._conversations_state.reader_preferences``
+    (Task 6/9) -- one extra hop the generic dispatch's plain ``setattr``
+    cannot express. This resolves the last (dotted) segment's owner via
+    ``operator.attrgetter`` and assigns onto it, and is a no-op passthrough
+    (``setattr(owner, attribute, value)``) for every other, undotted,
+    destination -- so the six not-yet-extracted subsystems are unaffected.
+    Future subsystem extractions hit this exact same shape; this helper is
+    meant to keep serving them, not to be re-derived per subsystem.
     """
-    try:
-        selection = getattr(screen, f"_library_{kind}_row_selection")
-        count_static = screen.query_one(f"#library-{kind}-selected-count", Static)
-        export_button = screen.query_one(f"#library-{kind}-export-selected", Button)
-        checked = selection.is_selected(row_id)
-        marker = "☑" if checked else "☐"
-        # Rebuild the label from the RAW remainder the canvas stashed on the
-        # button at compose time — NEVER from the mounted label: both
-        # ``.plain`` and Textual 8's ``str(Content)`` return RENDERED text,
-        # stripping the escape_markup() the canvas applied to user titles,
-        # so a title like "[draft] notes" would restyle or drop on toggle
-        # (PR #665 review; same escape lesson as the Library redesign). A
-        # missing stash (unexpected widget shape) raises into the fallback
-        # full recompose below.
-        glyph = f"{marker} " if kind == "notes" else marker
-        if kind == "notes":
-            matching_buttons = tuple(
-                candidate
-                for candidate in screen.query(".library-notes-row")
-                if str(getattr(candidate, "note_id", "") or "") == row_id
-            )
-        else:
-            matching_buttons = (button,)
-        for matching_button in matching_buttons:
-            label_rest = matching_button._library_row_label_rest
-            matching_button.label = f"{glyph}{label_rest}"
-            if kind == "media":
-                matching_button._library_media_checked = checked
-        count_static.update(f"{selection.count} selected")
-        export_button.disabled = selection.count == 0
-        # F-018: the reason/action tooltip flips in place with `disabled`
-        # (this patcher deliberately avoids a recompose, so the compose-
-        # time tooltip would otherwise go stale).
-        export_button.tooltip = (
-            LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP
-            if export_button.disabled
-            else LIBRARY_EXPORT_SELECTED_TOOLTIP
-        )
-        # task-4023 AC#1 (RC-07): the "○" disabled marker lives in the
-        # label, so it must flip here alongside `disabled` (recompose
-        # discipline). Rebuilt from the base label the canvas stashed at
-        # compose time -- notes spells the compact label differently, so
-        # the patcher must not hard-code it.
-        _patch_library_disabled_marker_label(export_button)
-        # task-2853: Media is the only canvas with a "Delete selected" bulk
-        # action today (conversations/notes are out of this task's scope) --
-        # flip it in place too, same reason/action tooltip pair as export.
-        # Row presses are blocked outright while the bulk-delete confirm row
-        # has replaced this button (see ``handle_library_media_row``), so
-        # this lookup should always find it when ``kind == "media"``; any
-        # surprise (e.g. a future caller that skips that guard) falls
-        # through to the same full-recompose fallback as every other
-        # failure here.
-        if kind == "media":
-            delete_button = screen.query_one("#library-media-delete-selected", Button)
-            delete_button.disabled = selection.count == 0
-            delete_button.tooltip = (
-                LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP
-                if delete_button.disabled
-                else LIBRARY_DELETE_SELECTED_TOOLTIP
-            )
-            _patch_library_disabled_marker_label(delete_button)
-            # task-28242 (Qodo #2335): the "Review selected" bulk action flips
-            # in place too, or it stays disabled after the first row toggle
-            # until an unrelated full recompose.
-            review_button = screen.query_one(
-                "#library-media-review-selected", Button
-            )
-            review_button.disabled = selection.count == 0
-            review_button.tooltip = (
-                LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP
-                if review_button.disabled
-                else LIBRARY_REVIEW_SELECTED_TOOLTIP
-            )
-            _patch_library_disabled_marker_label(review_button)
-        elif kind == "notes":
-            work_panes = screen.query("#library-note-work-pane")
-            if work_panes and screen._library_note_session.snapshot is not None:
-                work_panes.first(LibraryNoteWorkPane).apply_session_state(
-                    screen._library_note_presentation_state()
-                )
-    except Exception:
-        logger.debug(
-            f"Library {kind} row toggle in-place update failed; falling back "
-            "to full recompose.",
-            exc_info=True,
-        )
-        screen.refresh(recompose=True)
-
-
-def _sync_library_canvas(
-    screen: "LibraryScreen",
-    kind: str,
-    *,
-    then: Callable[[], bool | None] | None = None,
-    allow_screen_fallback: bool = True,
-    notes_focus_identity: LibraryNotesFocusIdentity | None = None,
-    deferred_guard: Callable[[], bool] | None = None,
-    sync_prompt_work: bool = True,
-    projection_owned: bool = False,
-) -> bool:
-    """Canvas-scoped targeted update for a Library browse canvas (Tier 2).
-
-    Rebuilds the given canvas's fresh display state and hands it to the
-    mounted canvas widget's own ``sync_state`` -- a canvas-scoped
-    ``recompose`` (the widget rebuilds only its OWN children) that skips
-    the nav bar, footer, and rail entirely, unlike a screen-level
-    ``screen.refresh(recompose=True)``.
-
-    Releases the app's mouse capture first, mirroring
-    ``BaseAppScreen.refresh`` (see that method's docstring for the full
-    mouse-capture war story it defends against): this path recomposes the
-    canvas directly via ``sync_state``, bypassing ``BaseAppScreen.refresh``
-    -- and hence its guard -- entirely, so a canvas row mid mouse-capture
-    (e.g. an ``Input`` click/selection whose ``MouseUp`` hasn't arrived
-    yet) would otherwise be recomposed away and leave
-    ``App.mouse_captured`` referencing a removed widget forever,
-    permanently breaking click dispatch app-wide.
-
-    TASK-15457 extends the contract to every high-frequency Library canvas.
-    An unsupported ``kind``, like any other failure here (e.g. the canvas
-    isn't mounted because a mode switch raced), falls back to the old
-    whole-screen recompose rather than raising.
-
-    Args:
-        screen: The Library screen instance driving the update.
-        kind: Supported Library canvas kind.
-        then: Optional zero-argument follow-up (in practice: "focus the
-            control the user should now be on"), run once the canvas's new
-            children are mounted. It exists because
-            ``screen.call_after_refresh`` -- correct for a WHOLE-SCREEN
-            recompose, where ``Screen._on_timer_update`` runs the recompose
-            before the callbacks -- has no ordering against a recompose
-            driven by the CANVAS's own message pump. Reproduced while
-            converting the notes strips: the follow-ups ran against removed
-            children and stranded DOM focus outside the canvas. Supported
-            only for canvases carrying ``PostRecomposeCallback``; passing it
-            for another kind raises into the whole-screen fallback rather
-            than silently dropping the follow-up. Returning ``False`` vetoes
-            an explicitly supplied pre-detach Notes restore.
-
-        allow_screen_fallback: Whether a failed targeted update may request
-            the legacy whole-screen recompose.
-        notes_focus_identity: Rich Notes identity captured before portable
-            entry focus is detached, when automatic reconciliation owns sync.
-        deferred_guard: Ownership predicate checked by deferred retained-owner
-            DOM work before and after each await.
-        sync_prompt_work: Whether a Prompt Items projection should also sync
-            the independent retained Work pane. Browse-only settlements pass
-            ``False`` so live editor widgets, cursor, and undo state survive.
-        projection_owned: Whether this is the projection's own final sync.
-            External syncs that land during a swap request one replay after
-            the swap; the final sync itself must not request another replay.
-
-    Returns:
-        True when the mounted canvas accepted the state; otherwise False.
-    """
-    if (
-        not projection_owned
-        and getattr(screen, "_library_canvas_projection_depth", 0) > 0
-    ):
-        # Even when the outgoing canvas still exists and accepts this sync,
-        # the projection may already hold a replacement built from older
-        # state. Reapply current state after the outermost swap completes.
-        screen._library_canvas_resync_pending = True
-    canvas: Widget | None = None
-    note_work: LibraryNoteWorkPane | None = None
-    note_work_kwargs: dict[str, Any] = {}
-    note_work_surface_changed = False
-    prompt_work: LibraryPromptWorkPane | None = None
-    prompt_work_kwargs: dict[str, Any] = {}
-    skill_work: LibrarySkillWorkPane | None = None
-    skill_work_kwargs: dict[str, Any] = {}
-    follow_up_canvas: Widget | None = None
-    prompt_work_recovered = False
-    try:
-        sync_args: tuple[Any, ...] = ()
-        sync_kwargs: dict[str, Any] = {}
-        if kind == "conversations":
-            canvas = screen.query_one(
-                "#library-conversations-canvas", LibraryConversationsCanvas
-            )
-            sync_args = (screen._build_library_conversations_state(),)
-        elif kind == "media":
-            canvas = screen.query_one("#library-media-canvas", LibraryMediaCanvas)
-            media_state = screen._build_library_media_state()
-            # The state builder RESOLVES the selection -- a requested id the
-            # active type filter no longer renders falls back to the first
-            # row -- so the screen's pointer has to be re-read from it, the
-            # same mirror ``compose_content`` and
-            # ``_replace_library_browse_canvas`` perform. Without it,
-            # filtering the selected item out left the canvas highlighting
-            # row 0 while "Open in viewer" still opened the filtered-out
-            # item (task-15457 review round 1, Critical 1).
-            screen._selected_media_id = media_state.selected_id
-            sync_args = (media_state,)
-            sync_kwargs = screen._library_media_canvas_presentation()
-        elif kind == "media-trash":
-            # task-4025: the media canvas's Trash view -- same targeted
-            # contract, its own mounted widget/state builder.
-            canvas = screen.query_one(
-                "#library-media-trash-canvas", LibraryMediaTrashCanvas
-            )
-            new_state = screen._build_library_media_trash_state()
-            sync_args = (new_state,)
-            sync_kwargs = screen._library_media_trash_canvas_presentation()
-        elif kind == "notes":
-            canvas = screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
-            sync_kwargs = screen._library_notes_list_canvas_kwargs()
-            sync_kwargs["deferred_guard"] = deferred_guard
-            sync_kwargs["focus_intent_generation"] = partial(
-                getattr,
-                screen,
-                "_library_notes_focus_intent_generation",
-            )
-            shell = build_library_shell_state(
-                screen._build_library_shell_input(),
-                selected_row_id=screen._library_selected_row_id,
-            )
-            rail = screen._active_library_rail()
-            if rail is not None:
-                rail.apply_selection(
-                    shell,
-                    lifecycle=screen._library_lifecycle,
-                    onboarding_all_empty=screen._library_onboarding_all_empty,
-                )
-            work_panes = screen.query("#library-note-work-pane")
-            if work_panes:
-                note_work = work_panes.first(LibraryNoteWorkPane)
-                note_work_kwargs = screen._library_note_work_pane_kwargs()
-                note_work_surface_changed = (
-                    note_work_kwargs.get("mode") != note_work.mode
-                )
-                note_work.sync_state(**note_work_kwargs)
-            screen._sync_library_notes_reader_layout_from_shell()
-        elif kind == "prompts":
-            canvas = screen.query_one(
-                "#library-prompts-canvas", LibraryPromptsListCanvas
-            )
-            sync_kwargs = screen._library_prompts_list_canvas_kwargs()
-            if sync_prompt_work:
-                work_panes = screen.query("#library-prompt-work-pane")
-                if work_panes:
-                    prompt_work = work_panes.first(LibraryPromptWorkPane)
-                    prompt_work_kwargs = screen._library_prompt_work_pane_kwargs()
-        elif kind == "skills":
-            canvas = screen.query_one("#library-skills-canvas", LibrarySkillsListCanvas)
-            sync_kwargs = screen._library_skills_list_canvas_kwargs()
-            work_panes = screen.query("#library-skill-work-pane")
-            if work_panes:
-                skill_work = work_panes.first(LibrarySkillWorkPane)
-                skill_work_kwargs = screen._library_skill_work_pane_kwargs()
-        elif kind == "ingest":
-            canvas = screen.query_one("#library-ingest-canvas", LibraryIngestCanvas)
-            sync_args = (screen._build_library_ingest_state(),)
-        elif kind == "search":
-            canvas = screen.query_one(
-                "#library-search-rag-panel", LibrarySearchRagPanel
-            )
-            screen._library_rag_answer_render_key = None
-            sync_args = (screen._library_rag_panel_state(),)
-        elif kind == "export":
-            canvas = screen.query_one("#library-export-canvas", LibraryExportCanvas)
-            sync_args = (screen._build_library_export_state(),)
-        elif kind == "landing":
-            canvas = screen.query_one("#library-landing-canvas", LibraryLandingCanvas)
-            sync_args = (screen._library_landing_canvas_state(),)
-        elif kind == "handoff":
-            canvas = screen.query_one(
-                "#library-study-handoff-canvas", LibraryStudyHandoffCanvas
-            )
-            shell = build_library_shell_state(
-                screen._build_library_shell_input(),
-                selected_row_id=screen._library_selected_row_id,
-            )
-            sync_args = (
-                screen._library_study_handoff_canvas_state(shell.canvas_target),
-            )
-        else:
-            raise ValueError(
-                f"Unsupported Library canvas kind for targeted sync: {kind!r}"
-            )
-        if screen.is_running:
-            try:
-                screen.app.capture_mouse(None)
-            except Exception:
-                logger.debug(
-                    "Mouse-capture release before Library canvas sync skipped.",
-                    exc_info=True,
-                )
-        # task-15457 review round 1, Critical 2 + Important 3: the DEFAULT
-        # follow-up. A whole-screen recompose restores portable Notes focus
-        # and the named region's scroll offset through ``LibraryScreen.
-        # refresh`` -> ``_rehydrate_library_notes_after_recompose`` ->
-        # ``_restore_library_notes_focus_identity``. A canvas-scoped sync
-        # bypasses that override entirely, so every converted notes site
-        # WITHOUT its own ``then=`` let DOM focus escape to the console rail
-        # when its focused child was recomposed away, and (only visible
-        # below ``LIBRARY_NOTES_COMPACT_BREAKPOINT``, where the list can
-        # actually scroll) dropped the notes list back to the top.
-        # Captured here, at the same choke point the footer fix uses, and
-        # gated on the notes workflow owning the route -- the identity is
-        # Notes-specific, so a media/ingest/search sync must not build one.
-        # An explicit ``then`` COMPOSES with this rather than replacing it.
-        # Ordinary actions restore Notes first and let their follow-up choose
-        # final focus; automatic reconciliation runs its generic focus guard
-        # first so a newer user move can veto the stale Notes identity.
-        follow_up: Callable[[], bool | None] | None = then
-        # Gated on the KIND, not on the screen-level workflow predicate
-        # (review m5): the identity is the notes canvas's, and
-        # ``_library_notes_workflow_active()`` is also true while a
-        # media/ingest/search sync runs from a Notes rail row, which would
-        # build and restore an identity for a canvas that is not on screen.
-        if (
-            kind == "notes"
-            and not note_work_surface_changed
-            and sync_kwargs.get("mode") == getattr(canvas, "mode", None)
-        ):
-            # ...and only for an IN-SURFACE sync. On a surface TRANSITION
-            # (list -> loading -> editor) the capture is worthless: the
-            # handlers flip the notes view before calling this, so
-            # ``_capture_library_notes_focus_identity`` already reports the
-            # DESTINATION region with an empty semantic role -- restoring it
-            # resolves to a fallback target (measured: the rail row), which is
-            # worse than leaving focus to the transition's own arming path
-            # (``_arm_library_note_editor`` + its explicit editor identity).
-            identity = (
-                notes_focus_identity
-                if notes_focus_identity is not None
-                else screen._capture_library_notes_focus_identity()
-            )
-
-            def _restore_then_explicit(
-                _identity: LibraryNotesFocusIdentity = identity,
-                _explicit: Callable[[], bool | None] | None = then,
-            ) -> None:
-                # Automatic reconciliation passes the pre-detach Notes
-                # identity explicitly. Let its generic restore enforce the
-                # current-user-focus veto before the richer Notes restore can
-                # apply stale focus. Ordinary Notes actions retain their
-                # established Notes-first, explicit-action-last ordering.
-                if (
-                    notes_focus_identity is not None
-                    and _explicit is not None
-                    and _explicit() is False
-                ):
-                    return
-                screen._restore_library_notes_after_targeted_sync(_identity)
-                if _explicit is not None and notes_focus_identity is None:
-                    _explicit()
-
-            follow_up = _restore_then_explicit
-        if kind == "landing":
-            canvas.set_deferred_sync_guard(deferred_guard)
-        follow_up_canvas = canvas
-        if note_work is not None and note_work_kwargs.get("mode") != "list":
-            # Notes keeps its navigator mounted in Items while editor/load
-            # children recompose in the retained Work pane. Follow-ups that
-            # arm or focus those children must ride the widget doing that
-            # recompose, not the unrelated list canvas.
-            follow_up_canvas = note_work
-        if prompt_work is not None and (
-            prompt_work_kwargs.get("mode") != "list"
-            or prompt_work_kwargs.get("import_open")
-        ):
-            follow_up_canvas = prompt_work
-        if skill_work is not None and (
-            skill_work_kwargs.get("mode") != "list"
-            or skill_work_kwargs.get("import_open")
-        ):
-            follow_up_canvas = skill_work
-        if follow_up is not None:
-            follow_up_canvas.queue_after_recompose(follow_up)
-        canvas.sync_state(*sync_args, **sync_kwargs)
-        if prompt_work is not None:
-            try:
-                prompt_work.sync_state(**prompt_work_kwargs)
-                screen._sync_library_prompts_reader_layout_from_shell()
-            except Exception:
-                logger.opt(exception=True).debug(
-                    "Library prompts work-pane sync failed."
-                )
-                if (
-                    follow_up_canvas is prompt_work or allow_screen_fallback
-                ) and isinstance(follow_up_canvas, PostRecomposeCallback):
-                    follow_up_canvas.queue_after_recompose(None)
-                if allow_screen_fallback:
-                    screen.refresh(recompose=True)
-                    if then is not None:
-                        screen.call_after_refresh(then)
-                return False
-        if skill_work is not None:
-            try:
-                skill_work.sync_state(**skill_work_kwargs)
-                screen._sync_library_skills_reader_layout_from_shell()
-            except Exception:
-                logger.opt(exception=True).debug(
-                    "Library Skills work-pane sync failed."
-                )
-                if isinstance(follow_up_canvas, PostRecomposeCallback):
-                    follow_up_canvas.queue_after_recompose(None)
-                if allow_screen_fallback:
-                    screen.refresh(recompose=True)
-                    if then is not None:
-                        screen.call_after_refresh(then)
-                return False
-        return True
-        # NOTE (task-15457 review): a footer re-derivation was added here and
-        # then REMOVED after probing. Both footer tiers that a targeted sync
-        # can flip -- the Notes tier (select mode / sort-strip visibility) and
-        # the shared choice-strip tier -- are already kept honest by dev's own
-        # mechanism: ``LibraryScreen.refresh`` calls
-        # ``_apply_library_notes_footer_context()`` on EVERY refresh, not only
-        # on ``recompose=True``, and every footer-flipping sync has a focus
-        # follow-up whose ``set_focus``/``scroll_visible`` triggers one.
-        # Verified by disabling both branches: the Notes select-mode and the
-        # media type-strip footers both stayed current. Keeping an
-        # unfalsifiable branch is worse than the coupling it guards, so it is
-        # gone; the coupling itself is recorded in the task file's residuals.
-
-    except Exception:
-        logger.debug(f"Library {kind} canvas sync failed.")
-        if kind == "prompts" and prompt_work is not None:
-            try:
-                prompt_work.sync_state(**prompt_work_kwargs)
-                screen._sync_library_prompts_reader_layout_from_shell()
-                prompt_work_recovered = True
-            except Exception:
-                logger.opt(exception=True).debug(
-                    "Library prompts recovery work-pane sync failed."
-                )
-        # task-21116 review, M3: a targeted canvas projection detaches the
-        # canvas host's child for the duration of its remove/mount await.
-        # Any sync landing inside that window cannot find its canvas and
-        # would take this fallback -- firing the very whole-screen
-        # recompose the conversion removed, and racing a fresh
-        # same-id canvas into the in-flight ``mount`` (observed:
-        # ``DuplicateIds`` on '#library-media-canvas', then a 30 s pilot
-        # stall). Reproduced BOTH ways: detaching the host and calling this
-        # helper fires exactly one whole-screen recompose, and a real
-        # viewer-back whose list reload outlives the swap does the same --
-        # the shipped tests missed it only because their in-memory service
-        # always won the race.
-        #
-        # Suppressing is safe rather than lossy: the projection rebuilds
-        # the destination child from CURRENT screen state, so the state
-        # this sync wanted to paint is picked up by the projection itself.
-        # ``then`` is deliberately not run -- it is a focus/scroll
-        # follow-up, and the projection owns focus through its own
-        # ``then=`` (whose callback is ordered after the new children
-        # mount); running it here would target children about to be
-        # replaced, the stranded-focus shape task-15457 recorded.
-        if (
-            not projection_owned
-            and getattr(screen, "_library_canvas_projection_depth", 0) > 0
-        ):
-            logger.debug(
-                f"Library {kind} canvas sync suppressed: a targeted "
-                "projection owns the canvas host."
-            )
-            screen._library_canvas_resync_pending = True
-            if isinstance(follow_up_canvas, PostRecomposeCallback):
-                follow_up_canvas.queue_after_recompose(None)
-            return False
-        if allow_screen_fallback:
-            if isinstance(follow_up_canvas, PostRecomposeCallback):
-                follow_up_canvas.queue_after_recompose(None)
-            screen.refresh(recompose=True)
-            if then is not None:
-                screen.call_after_refresh(then)
-        elif isinstance(follow_up_canvas, PostRecomposeCallback) and (
-            follow_up_canvas is canvas or not prompt_work_recovered
-        ):
-            follow_up_canvas.queue_after_recompose(None)
-        return False
-
-
-def _canonical_shortcut_key(key: str) -> str:
-    """Fold a shortcut key label to its canonical dedupe form.
-
-    (task-3312 #1) The footer's shared shortcut sets use display spellings
-    ("esc", "F6") while ``BINDINGS`` uses Textual key names ("escape",
-    "f6"); the F1 panel merges the two sources and must treat those as the
-    SAME key or it advertises one action twice.
-
-    Args:
-        key: A shortcut key label from either source.
-
-    Returns:
-        A casefolded key with the "escape"/"esc" spelling unified.
-    """
-    lowered = key.strip().casefold()
-    return "esc" if lowered == "escape" else lowered
-
-
-#: task-4023 AC#4 (RC-10): human names for the F1 panel's surface-qualified
-#: title, keyed by rail-row id. Surface identity only -- the shortcut SET
-#: still comes solely from ``_library_footer_shortcuts_for_current_state``.
-_LIBRARY_HELP_SURFACE_LABELS: dict[str, str] = {
-    LIBRARY_ROW_BROWSE_MEDIA: "Media",
-    LIBRARY_ROW_BROWSE_CONVERSATIONS: "Conversations",
-    LIBRARY_ROW_BROWSE_NOTES: "Notes",
-    LIBRARY_ROW_BROWSE_PROMPTS: "Prompts",
-    LIBRARY_ROW_BROWSE_SKILLS: "Skills",
-    LIBRARY_ROW_BROWSE_COLLECTIONS: "Collections",
-    LIBRARY_ROW_BROWSE_SEARCH: "Search / RAG",
-    LIBRARY_ROW_INGEST_MEDIA: "Import",
-    LIBRARY_ROW_INGEST_EXPORT: "Export",
-    LIBRARY_ROW_CREATE_NOTE: "New note",
-    LIBRARY_ROW_CREATE_PROMPT: "New prompt",
-    LIBRARY_ROW_CREATE_SKILL: "New skill",
-}
-
-
-class _ParakeetV2NoPendingReportError(RuntimeError):
-    """Raised when confirmation has no retained preflight report."""
+    head, _, tail = attribute.rpartition(".")
+    target = operator.attrgetter(head)(owner) if head else owner
+    setattr(target, tail, value)
 
 
 class LibraryScreen(BaseAppScreen):
@@ -3697,33 +2253,106 @@ class LibraryScreen(BaseAppScreen):
             LibraryLandingAttentionAction | None
         ) = None
         self._library_navigation_context_generation: int = 0
-        self._library_conversation_query: str = ""
-        self._library_conversation_requested_page = 1
-        self._library_conversation_requested_query = ""
-        self._library_conversation_freshness = "uninitialized"
-        self._library_conversation_stale_copy = ""
-        self._library_conversation_selection_notice = ""
-        self._library_conversation_focus_after_apply = ""
-        self._library_conversation_page_records: tuple[Mapping[str, Any], ...] = ()
-        self._library_conversation_page = 1
-        self._library_conversation_page_size = LIBRARY_CONVERSATION_PAGE_SIZE
-        self._library_conversation_total = 0
-        self._library_conversation_total_known = False
-        self._library_conversation_has_more = False
-        self._library_conversation_page_loaded = False
-        self._library_conversation_loading = False
-        self._library_conversation_error = ""
-        self._library_conversation_request_generation = 0
-        self._library_conversations_select_mode: bool = False
-        self._library_conversations_row_selection = RowSelection("conversations")
-        self._library_conversation_reader_state = ConversationReaderState()
-        self._library_conversation_reader_loaded_metadata: Mapping[str, Any] = {}
-        self._library_conversation_reader_selected_metadata: Mapping[str, Any] = {}
+        self._conversations_state = LibraryConversationsState()
+        self._conversation_reader_controller = LibraryConversationReaderController(
+            self,
+            conversations_state_accessor=lambda: self._conversations_state,
+            build_conversations_state=lambda: self._build_library_conversations_state(),
+            adaptive_reader_allocation_is_current=(
+                lambda reader: self._library_adaptive_reader_allocation_is_current(
+                    reader
+                )
+            ),
+            run_library_service_call=(
+                lambda *args, **kwargs: self._run_library_service_call(
+                    *args, **kwargs
+                )
+            ),
+            conversation_records=lambda: self._conversation_records(),
+            conversation_record_id=(
+                lambda record, index: self._conversation_record_id(record, index)
+            ),
+            library_loaded_accessor=lambda: self._library_loaded,
+            library_lookup_error_accessor=lambda: self._library_lookup_error,
+            notes_focus_intent_generation_accessor=(
+                lambda: self._library_notes_focus_intent_generation
+            ),
+            selected_row_id_accessor=lambda: self._library_selected_row_id,
+            selected_conversation_id_accessor=lambda: self._selected_conversation_id,
+        )
+        self._conversations_controller = LibraryConversationsController(
+            self,
+            conversations_state_accessor=lambda: self._conversations_state,
+            ensure_reader_selection=(
+                lambda: self._conversation_reader_controller._ensure_library_conversation_reader_selection()
+            ),
+            start_reader_selection=(
+                lambda *a, **k: self._conversation_reader_controller._start_library_conversation_reader_selection(
+                    *a, **k
+                )
+            ),
+            sync_reader=(
+                lambda: self._conversation_reader_controller._sync_library_conversation_reader()
+            ),
+            selected_conversation_id_accessor=lambda: self._selected_conversation_id,
+            set_selected_conversation_id=(
+                lambda value: setattr(self, "_selected_conversation_id", value)
+            ),
+            pending_library_source_open_accessor=(
+                lambda: self._pending_library_source_open
+            ),
+            set_pending_library_source_open=(
+                lambda value: setattr(self, "_pending_library_source_open", value)
+            ),
+            selected_row_id_accessor=lambda: self._library_selected_row_id,
+            set_selected_row_id=(
+                lambda value: setattr(self, "_library_selected_row_id", value)
+            ),
+            local_source_records_accessor=(
+                lambda: getattr(self, "_local_source_records", {})
+            ),
+            library_canvas_projection_depth_accessor=(
+                lambda: self._library_canvas_projection_depth
+            ),
+            library_canvas_resync_pending_accessor=(
+                lambda: self._library_canvas_resync_pending
+            ),
+            set_library_canvas_resync_pending=(
+                lambda value: setattr(self, "_library_canvas_resync_pending", value)
+            ),
+            acknowledge_destination_change=(
+                lambda: self._acknowledge_library_destination_change()
+            ),
+            library_workspace_depth_state=(
+                lambda *a, **k: self._library_workspace_depth_state(*a, **k)
+            ),
+            open_library_export_canvas=(
+                lambda *a, **k: self._open_library_export_canvas(*a, **k)
+            ),
+            open_library_item_by_id=(
+                lambda *a, **k: self._open_library_item_by_id(*a, **k)
+            ),
+            run_library_service_call=(
+                lambda *args, **kwargs: self._run_library_service_call(
+                    *args, **kwargs
+                )
+            ),
+            source_record_id=lambda record: self._source_record_id(record),
+            source_title=(
+                lambda source_type, record: self._source_title(source_type, record)
+            ),
+            library_conversation_loaded_preview_selected=(
+                lambda: self._library_conversation_loaded_preview_selected()
+            ),
+            selected_conversation_handoff_payload=(
+                lambda: self._selected_conversation_handoff_payload()
+            ),
+        )
         (
             self._library_reader_shared_preferences,
             self._library_media_reader_preferences,
             self._library_collections_reader_preferences,
-            self._library_conversation_reader_preferences,
+            self._conversations_state.reader_preferences,
             self._library_notes_reader_preferences,
             self._library_file_notes_reader_preferences,
             self._library_prompts_reader_preferences,
@@ -3818,15 +2447,15 @@ class LibraryScreen(BaseAppScreen):
             "skills_items": 0,
         }
         self._library_reader_durable_preferences = {
-            "library": self._library_conversation_reader_preferences.library_open,
+            "library": self._conversations_state.reader_preferences.library_open,
             "collections_items": self._library_collections_reader_preferences.items_open,
-            "conversations_items": self._library_conversation_reader_preferences.items_open,
+            "conversations_items": self._conversations_state.reader_preferences.items_open,
             "notes_items": self._library_notes_reader_preferences.items_open,
             "notes_file_items": self._library_file_notes_reader_preferences.items_open,
             "prompts_items": self._library_prompts_reader_preferences.items_open,
             "skills_items": self._library_skills_reader_preferences.items_open,
         }
-        self._library_conversation_reader_persistence_locks = {
+        self._conversations_state.reader_persistence_locks = {
             "library": library_pane_persistence_lock,
             "items": asyncio.Lock(),
         }
@@ -3850,13 +2479,10 @@ class LibraryScreen(BaseAppScreen):
             "library": library_pane_persistence_lock,
             "items": asyncio.Lock(),
         }
-        self._library_conversation_find_focus_intent: tuple[int, int, str] | None = None
-        self._library_conversation_reader_mounted_authority = False
-        self._library_conversation_deleted_selection_id = ""
-        self._library_conversation_reader_layout: AdaptiveReaderEffectiveLayout = (
+        self._conversations_state.reader_layout: AdaptiveReaderEffectiveLayout = (
             resolve_adaptive_reader_layout(
                 0,
-                self._library_conversation_reader_preferences,
+                self._conversations_state.reader_preferences,
                 LIBRARY_CONVERSATION_READER_PROFILE,
             )
         )
@@ -4953,7 +3579,7 @@ class LibraryScreen(BaseAppScreen):
             return self.LIBRARY_LIST_SHORTCUTS
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
             shortcuts: list[tuple[str, str]] = []
-            if self._library_conversation_reader_layout.items_open:
+            if self._conversations_state.reader_layout.items_open:
                 shortcuts.append(("/", "focus filter"))
             shortcuts.append(("F6", "next pane"))
             escape_label = self._library_conversation_escape_label()
@@ -8391,33 +7017,9 @@ class LibraryScreen(BaseAppScreen):
         self,
         priority: Literal["library", "items"] | None = None,
     ) -> None:
-        """Resolve the settled Conversations shell and patch it in place."""
-        try:
-            shell = self.query_one(
-                "#library-conversations-reader-shell", LibraryAdaptiveReaderShell
-            )
-        except (NoMatches, QueryError):
-            return
-        width = shell.region.width
-        if not self._library_adaptive_reader_allocation_is_current(shell):
-            return
-        previous = self._library_conversation_reader_layout
-        if (
-            previous.reader_width == 0
-            and previous.library_width == 0
-            and previous.items_width == 0
-        ):
-            previous = None
-        layout = resolve_adaptive_reader_layout(
-            width,
-            self._library_conversation_reader_preferences,
-            LIBRARY_CONVERSATION_READER_PROFILE,
-            previous=previous,
-            priority=priority,
+        return self._conversation_reader_controller._sync_library_conversation_reader_layout_from_shell(
+            priority
         )
-        shell.sync_layout(layout)
-        self._library_conversation_reader_layout = layout
-        self._sync_library_conversation_reader()
 
     def _sync_library_collections_reader_layout_from_shell(
         self,
@@ -8455,20 +7057,9 @@ class LibraryScreen(BaseAppScreen):
         key: Literal["library_open", "items_open"],
         value: bool,
     ) -> None:
-        """Mirror one optimistic Conversations pane choice into app config."""
-        app_config = getattr(self.app_instance, "app_config", None)
-        if not isinstance(app_config, dict):
-            return
-        library_config = app_config.setdefault("library", {})
-        if not isinstance(library_config, dict):
-            library_config = {}
-            app_config["library"] = library_config
-        section_name = "reader" if key == "library_open" else "conversations_reader"
-        section = library_config.setdefault(section_name, {})
-        if not isinstance(section, dict):
-            section = {}
-            library_config[section_name] = section
-        section[key] = value
+        return self._conversation_reader_controller._mirror_library_conversation_reader_preference(
+            key, value
+        )
 
     def _mirror_library_collections_reader_preference(
         self,
@@ -8581,22 +7172,24 @@ class LibraryScreen(BaseAppScreen):
         attributes = {
             "media": "_library_media_reader_preferences",
             "collections": "_library_collections_reader_preferences",
-            "conversations": "_library_conversation_reader_preferences",
+            "conversations": "_conversations_state.reader_preferences",
             "notes": "_library_notes_reader_preferences",
             "notes_files": "_library_file_notes_reader_preferences",
             "prompts": "_library_prompts_reader_preferences",
             "skills": "_library_skills_reader_preferences",
         }
         attribute = attributes[destination]
-        preferences = getattr(self, attribute)
-        setattr(self, attribute, dataclasses.replace(preferences, **{key: value}))
+        preferences = operator.attrgetter(attribute)(self)
+        _assign_library_reader_preferences_attribute(
+            self, attribute, dataclasses.replace(preferences, **{key: value})
+        )
         if key != "library_open":
             return
         for other_attribute in attributes.values():
             if other_attribute == attribute:
                 continue
-            other = getattr(self, other_attribute)
-            setattr(
+            other = operator.attrgetter(other_attribute)(self)
+            _assign_library_reader_preferences_attribute(
                 self,
                 other_attribute,
                 dataclasses.replace(other, library_open=value),
@@ -8723,7 +7316,7 @@ class LibraryScreen(BaseAppScreen):
         preferences_attribute = {
             "media": "_library_media_reader_preferences",
             "collections": "_library_collections_reader_preferences",
-            "conversations": "_library_conversation_reader_preferences",
+            "conversations": "_conversations_state.reader_preferences",
             "notes": "_library_notes_reader_preferences",
             "notes_files": "_library_file_notes_reader_preferences",
             "prompts": "_library_prompts_reader_preferences",
@@ -8732,7 +7325,7 @@ class LibraryScreen(BaseAppScreen):
         locks = {
             "media": self._library_media_reader_persistence_locks,
             "collections": self._library_collections_reader_persistence_locks,
-            "conversations": self._library_conversation_reader_persistence_locks,
+            "conversations": self._conversations_state.reader_persistence_locks,
             "notes": self._library_notes_reader_persistence_locks,
             "notes_files": self._library_file_notes_reader_persistence_locks,
             "prompts": self._library_prompts_reader_persistence_locks,
@@ -8771,7 +7364,7 @@ class LibraryScreen(BaseAppScreen):
                 not self._library_reader_persistence_is_current(
                     destination, pane, attempted_generation
                 )
-                or getattr(getattr(self, preferences_attribute), key) != attempted_value
+                or getattr(operator.attrgetter(preferences_attribute)(self), key) != attempted_value
             ):
                 return
             while True:
@@ -8802,7 +7395,7 @@ class LibraryScreen(BaseAppScreen):
                 current_generation = self._library_reader_persistence_generations[
                     authority
                 ]
-                current_value = getattr(getattr(self, preferences_attribute), key)
+                current_value = getattr(operator.attrgetter(preferences_attribute)(self), key)
                 if persisted is True:
                     if (
                         attempted_generation == current_generation
@@ -8846,7 +7439,7 @@ class LibraryScreen(BaseAppScreen):
                     current_generation = self._library_reader_persistence_generations[
                         authority
                     ]
-                    current_value = getattr(getattr(self, preferences_attribute), key)
+                    current_value = getattr(operator.attrgetter(preferences_attribute)(self), key)
                     if (
                         attempted_generation != current_generation
                         or attempted_value != current_value
@@ -9052,7 +7645,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_reader_shared_preferences,
             self._library_media_reader_preferences,
             self._library_collections_reader_preferences,
-            self._library_conversation_reader_preferences,
+            self._conversations_state.reader_preferences,
             self._library_notes_reader_preferences,
             self._library_file_notes_reader_preferences,
             self._library_prompts_reader_preferences,
@@ -9061,7 +7654,7 @@ class LibraryScreen(BaseAppScreen):
         current_values = {
             "library": self._library_reader_shared_preferences.library_open,
             "collections_items": self._library_collections_reader_preferences.items_open,
-            "conversations_items": self._library_conversation_reader_preferences.items_open,
+            "conversations_items": self._conversations_state.reader_preferences.items_open,
             "media_items": self._library_media_reader_preferences.items_open,
             "notes_items": self._library_notes_reader_preferences.items_open,
             "notes_file_items": self._library_file_notes_reader_preferences.items_open,
@@ -9176,7 +7769,7 @@ class LibraryScreen(BaseAppScreen):
             )
             return
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
-            layout = self._library_conversation_reader_layout
+            layout = self._conversations_state.reader_layout
             opening = not (
                 layout.library_open if event.pane == "library" else layout.items_open
             )
@@ -10609,7 +9202,7 @@ class LibraryScreen(BaseAppScreen):
         )
         if is_slash:
             if self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
-                if self._library_conversation_reader_layout.items_open:
+                if self._conversations_state.reader_layout.items_open:
                     try:
                         self.query_one("#library-conversations-filter", Input).focus()
                     except (NoMatches, QueryError):
@@ -10755,7 +9348,7 @@ class LibraryScreen(BaseAppScreen):
         and runs deferred deep-link loads (collections / note editor / media
         viewer) that ``apply_navigation_context`` could not run before mount.
         """
-        self._library_conversation_reader_mounted_authority = True
+        self._conversations_state.reader_mounted_authority = True
         self._library_media_trash_mounted_authority = True
         self._register_footer_shortcuts()
         self.call_after_refresh(self._sync_library_media_reader_layout_from_shell)
@@ -10780,8 +9373,8 @@ class LibraryScreen(BaseAppScreen):
             and self._pending_library_source_open is None
         ):
             self._start_library_conversation_page_request(
-                self._library_conversation_requested_page,
-                self._library_conversation_requested_query,
+                self._conversations_state.requested_page,
+                self._conversations_state.requested_query,
             )
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
@@ -10964,13 +9557,13 @@ class LibraryScreen(BaseAppScreen):
         """
         self._disarm_library_list_entry_focus()
         self._invalidate_library_notes_tree_for_unmount()
-        self._library_conversation_reader_mounted_authority = False
+        self._conversations_state.reader_mounted_authority = False
         self._invalidate_library_conversation_reader_authority()
         self._library_notes_sync_controller.invalidate_for_remount()
         # A local thread read may outlive this screen. Revoke apply authority
         # before any awaited shutdown work can yield back to its completion.
         self._library_onboarding_generation += 1
-        self._library_conversation_request_generation += 1
+        self._conversations_state.request_generation += 1
         self._invalidate_library_prompts_browse()
         self._library_skills_browse_controller.invalidate()
         self._invalidate_library_prompt_detail_generation()
@@ -11191,12 +9784,12 @@ class LibraryScreen(BaseAppScreen):
             applied_collections.page if applied_collections is not None else 1
         )
         state["selected_prompt_id"] = self._selected_prompt_id
-        conversation_applied = self._library_conversation_freshness != "uninitialized"
+        conversation_applied = self._conversations_state.freshness != "uninitialized"
         state["library_conversation_page"] = (
-            self._library_conversation_page if conversation_applied else 1
+            self._conversations_state.page if conversation_applied else 1
         )
         state["library_conversation_query"] = (
-            self._library_conversation_query if conversation_applied else ""
+            self._conversations_state.query if conversation_applied else ""
         )
         # task-2858 AC#3 (LIB-12): extend the receipt's durability past a
         # full navigate-away-and-back, not just within-instance canvas
@@ -11260,13 +9853,13 @@ class LibraryScreen(BaseAppScreen):
             source_list_adjusted = self._library_prompts_view != "list"
         elif row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
             if (
-                not self._library_conversation_page_loaded
-                or self._library_conversation_freshness not in {"fresh", "stale"}
+                not self._conversations_state.page_loaded
+                or self._conversations_state.freshness not in {"fresh", "stale"}
             ):
                 return None
             scope = {
-                "page": self._library_conversation_page,
-                "query": self._library_conversation_query,
+                "page": self._conversations_state.page,
+                "query": self._conversations_state.query,
             }
         elif row_id == LIBRARY_ROW_BROWSE_NOTES:
             if (
@@ -11599,28 +10192,28 @@ class LibraryScreen(BaseAppScreen):
         self._selected_prompt_id = (
             selected_prompt_id if isinstance(selected_prompt_id, int) else None
         )
-        self._library_conversation_page_records = ()
-        self._library_conversation_page = 1
-        self._library_conversation_query = ""
-        self._library_conversation_total = 0
-        self._library_conversation_total_known = False
-        self._library_conversation_has_more = False
-        self._library_conversation_page_loaded = False
-        self._library_conversation_loading = False
-        self._library_conversation_error = ""
-        self._library_conversation_freshness = "uninitialized"
-        self._library_conversation_stale_copy = ""
-        self._library_conversation_selection_notice = ""
-        self._library_conversation_focus_after_apply = ""
-        self._library_conversations_select_mode = False
-        self._library_conversations_row_selection.clear()
+        self._conversations_state.page_records = ()
+        self._conversations_state.page = 1
+        self._conversations_state.query = ""
+        self._conversations_state.total = 0
+        self._conversations_state.total_known = False
+        self._conversations_state.has_more = False
+        self._conversations_state.page_loaded = False
+        self._conversations_state.loading = False
+        self._conversations_state.error = ""
+        self._conversations_state.freshness = "uninitialized"
+        self._conversations_state.stale_copy = ""
+        self._conversations_state.selection_notice = ""
+        self._conversations_state.focus_after_apply = ""
+        self._conversations_state.select_mode = False
+        self._conversations_state.row_selection.clear()
         conversation_query = state.get("library_conversation_query")
-        self._library_conversation_requested_query = self._safe_text(
+        self._conversations_state.requested_query = self._safe_text(
             conversation_query if isinstance(conversation_query, str) else "",
             "",
             max_length=200,
         )
-        self._library_conversation_requested_page = (
+        self._conversations_state.requested_page = (
             self._normalize_library_conversation_page(
                 state.get("library_conversation_page")
             )
@@ -11640,8 +10233,8 @@ class LibraryScreen(BaseAppScreen):
                 self._library_prompts_view = "list"
                 self._selected_prompt_id = None
             elif row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
-                self._library_conversation_requested_page = scope["page"]
-                self._library_conversation_requested_query = scope["query"]
+                self._conversations_state.requested_page = scope["page"]
+                self._conversations_state.requested_query = scope["query"]
                 self._selected_conversation_id = ""
             elif row_id == LIBRARY_ROW_BROWSE_NOTES:
                 self._set_library_notes_source(LIBRARY_NOTES_SOURCE_DATABASE)
@@ -11833,34 +10426,12 @@ class LibraryScreen(BaseAppScreen):
         return False
 
     def _library_conversation_focus_region(self) -> str:
-        """Return the retained Conversations role containing current focus."""
-        focused = self.focused
-        if focused is None:
-            return ""
-        try:
-            shell = self.query_one(
-                "#library-conversations-reader-shell", LibraryAdaptiveReaderShell
-            )
-        except (NoMatches, QueryError):
-            return ""
-        for name, pane in (
-            ("library", shell.library),
-            ("items", shell.items),
-            ("work", shell.work),
-        ):
-            if focused is pane or pane in focused.ancestors:
-                return name
-        return ""
+        return self._conversations_controller._library_conversation_focus_region()
+
 
     def _library_conversation_escape_label(self) -> str:
-        """Name the nearest visible prior role reached by Escape."""
-        region = self._library_conversation_focus_region()
-        layout = self._library_conversation_reader_layout
-        if region == "work" and layout.items_open:
-            return "focus Items"
-        if region in {"work", "items"} and layout.library_open:
-            return "focus Library"
-        return ""
+        return self._conversations_controller._library_conversation_escape_label()
+
 
     def _arm_library_list_entry_focus(
         self,
@@ -12718,24 +11289,8 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def _adopt_library_conversation_state_selection(self, selected_id: str) -> None:
-        """Adopt list normalization unless it would consume a pending deep link."""
+        return self._conversations_controller._adopt_library_conversation_state_selection(selected_id)
 
-        pending = self._pending_library_source_open
-        if (
-            pending is not None
-            and pending[0] == "conversations"
-            and self._selected_conversation_id == pending[1]
-            and selected_id != pending[1]
-        ):
-            return
-        retained_reader_id = self._library_conversation_reader_state.selected_id
-        if (
-            retained_reader_id
-            and not self._library_conversation_reader_state.unavailable
-            and selected_id != retained_reader_id
-        ):
-            return
-        self._selected_conversation_id = selected_id
 
     # Own group, deliberately separate from the "default" group the plain
     # `self.run_worker(self._sync_collections_panel(...))` calls above use
@@ -12806,66 +11361,9 @@ class LibraryScreen(BaseAppScreen):
             # pay for an off-thread keyring read it has no use for).
             self._refresh_library_skills_trust_posture()
 
-    def _carry_selected_conversation_into_snapshot(
-        self,
-        records: dict[str, tuple[Mapping[str, Any], ...]],
-    ) -> dict[str, tuple[Mapping[str, Any], ...]]:
-        """Preserve an out-of-page selected conversation across a snapshot replace.
+    def _carry_selected_conversation_into_snapshot(self, records: dict[str, tuple[Mapping[str, Any], ...]]) -> dict[str, tuple[Mapping[str, Any], ...]]:
+        return self._conversations_controller._carry_selected_conversation_into_snapshot(records)
 
-        (C3) A wholesale ``_local_source_records`` replace -- the periodic
-        background refresh, not a user action -- can silently drop the
-        currently-open conversation if it fell off the loaded page (the
-        conversations snapshot is capped, see
-        ``LIBRARY_SOURCE_PAGE_SIZES["conversations"]``) or was fetched
-        out-of-band via ``_open_library_item_by_id`` and prepended into the
-        OLD records. Without this, the next recompose would silently reset
-        the selection to the first row (``_ensure_selected_conversation_id``)
-        even though the user never navigated away -- the same class of race
-        ``_open_library_item_by_id`` already guards against for its own
-        out-of-snapshot fetch, just triggered by a background refresh
-        instead of a user click.
-
-        Pure in-memory merge: reads the OLD ``self._local_source_records``
-        (not yet replaced) and the INCOMING ``records``, and -- only when the
-        selected id is present in the old snapshot but missing from the new
-        one -- prepends the old record into the new conversations tuple so
-        the selection survives the replace.
-
-        Args:
-            records: The incoming snapshot about to replace
-                ``self._local_source_records``.
-
-        Returns:
-            ``records``, unchanged, or with the selected conversation's
-            record prepended into its ``"conversations"`` tuple.
-        """
-        selected_id = getattr(self, "_selected_conversation_id", "")
-        if not selected_id:
-            return records
-        old_conversations = getattr(self, "_local_source_records", {}).get(
-            "conversations", ()
-        )
-        old_index_by_id = {
-            self._conversation_record_id(record, index): record
-            for index, record in enumerate(old_conversations)
-        }
-        carried_record = old_index_by_id.get(selected_id)
-        if carried_record is None:
-            # Not present in the old snapshot either -- nothing to carry.
-            return records
-        new_conversations = records.get("conversations", ())
-        new_ids = {
-            self._conversation_record_id(record, index)
-            for index, record in enumerate(new_conversations)
-        }
-        if selected_id in new_ids:
-            # Still present in the incoming snapshot -- no carry-over needed.
-            return records
-        merged = dict(records)
-        merged["conversations"] = (carried_record, *new_conversations)[
-            :LIBRARY_CONVERSATION_PAGE_SIZE
-        ]
-        return merged
 
     @staticmethod
     def _structural_records_for_comparison(
@@ -14824,75 +13322,31 @@ class LibraryScreen(BaseAppScreen):
         ]
 
     def _conversation_records(self) -> tuple[Mapping[str, Any], ...]:
-        return tuple(self._library_conversation_page_records)
+        return self._conversations_controller._conversation_records()
+
 
     def _conversation_record_id(self, record: Mapping[str, Any], index: int) -> str:
-        return self._source_record_id(record) or f"conversation-{index + 1}"
+        return self._conversations_controller._conversation_record_id(record, index)
 
-    def _ensure_selected_conversation_id(self) -> str:
-        records = self._conversation_records()
-        record_ids = {
-            self._conversation_record_id(record, index)
-            for index, record in enumerate(records)
-        }
-        if self._selected_conversation_id in record_ids:
-            return self._selected_conversation_id
-        self._selected_conversation_id = (
-            self._conversation_record_id(records[0], 0) if records else ""
-        )
-        return self._selected_conversation_id
 
     def _selected_conversation_record(self) -> tuple[int, Mapping[str, Any]] | None:
-        selected_id = self._ensure_selected_conversation_id()
-        if not selected_id:
-            return None
-        for index, record in enumerate(self._conversation_records()):
-            if self._conversation_record_id(record, index) == selected_id:
-                return index, record
-        return None
+        return self._conversations_controller._selected_conversation_record()
+
 
     @classmethod
     def _conversation_message_count_label(cls, record: Mapping[str, Any]) -> str:
-        for key in (
-            "message_count",
-            "messages_count",
-            "messageCount",
-            "message_total",
-            "messages_total",
-        ):
-            value = record.get(key)
-            if isinstance(value, int):
-                return f"Messages: {value}"
-            if isinstance(value, str) and value.strip().isdigit():
-                return f"Messages: {value.strip()}"
-        messages = record.get("messages")
-        if isinstance(messages, Sequence) and not isinstance(
-            messages, (str, bytes, bytearray)
-        ):
-            return f"Messages: {len(messages)}"
-        return "Messages: unknown"
+        return LibraryConversationsController._conversation_message_count_label(record)
+
 
     @classmethod
     def _conversation_workspace_label(cls, record: Mapping[str, Any]) -> str:
-        for key in ("workspace_name", "workspace_id", "workspace", "scope_id"):
-            value = cls._safe_text(record.get(key), max_length=64)
-            if value:
-                return f"Workspace: {value}"
-        return "Workspace: unassigned"
+        return LibraryConversationsController._conversation_workspace_label(record)
+
 
     @classmethod
     def _conversation_updated_label(cls, record: Mapping[str, Any]) -> str:
-        for key in (
-            "updated_at",
-            "last_modified",
-            "last_updated",
-            "modified_at",
-            "created_at",
-        ):
-            value = cls._safe_text(record.get(key), max_length=64)
-            if value:
-                return f"Updated: {value}"
-        return "Updated: unknown"
+        return LibraryConversationsController._conversation_updated_label(record)
+
 
     def _selected_conversation_handoff_payload(self) -> ChatHandoffPayload | None:
         selected = self._selected_conversation_record()
@@ -14936,6 +13390,8 @@ class LibraryScreen(BaseAppScreen):
                 "source_authority": "local",
             },
         )
+
+
 
     def _selected_media_handoff_payload(self) -> ChatHandoffPayload | None:
         """Build the Console handoff payload for the open Library media item.
@@ -15180,8 +13636,8 @@ class LibraryScreen(BaseAppScreen):
                 action_kind="prompts-retry",
             )
         if (
-            self._library_conversation_freshness == "stale"
-            and self._library_conversation_stale_copy
+            self._conversations_state.freshness == "stale"
+            and self._conversations_state.stale_copy
         ):
             return LibraryLandingAttentionAction(
                 message="Conversations may be out of date.",
@@ -16297,19 +14753,19 @@ class LibraryScreen(BaseAppScreen):
                 id="library-canvas",
                 classes="destination-workbench-pane",
             )
-            reader_metadata = dict(self._library_conversation_reader_loaded_metadata)
+            reader_metadata = dict(self._conversations_state.reader_loaded_metadata)
             if not self._library_loaded and not self._library_lookup_error:
                 reader_metadata["_list_status"] = "Loading local Library sources…"
             elif self._library_lookup_error:
                 reader_metadata["_list_status"] = self._library_lookup_error
-            if not self._library_conversation_reader_layout.items_open:
+            if not self._conversations_state.reader_layout.items_open:
                 reader_metadata["_list_summary"] = (
                     self._conversation_reader_list_summary()
                 )
             reader = LibraryConversationReader(
-                self._library_conversation_reader_state,
+                self._conversations_state.reader_state,
                 loaded_metadata=reader_metadata,
-                selected_metadata=self._library_conversation_reader_selected_metadata,
+                selected_metadata=self._conversations_state.reader_selected_metadata,
                 id="library-conversation-reader",
             )
             with shell_grid:
@@ -16317,7 +14773,7 @@ class LibraryScreen(BaseAppScreen):
                     library=rail,
                     items=items_host,
                     work=reader,
-                    layout=self._library_conversation_reader_layout,
+                    layout=self._conversations_state.reader_layout,
                     id_prefix="library-conversations",
                     library_label="Library",
                     items_label="Items",
@@ -16882,109 +15338,14 @@ class LibraryScreen(BaseAppScreen):
                 "next rail recompose renders it from the updated cache."
             )
 
-    def _conversation_reader_record(
-        self, conversation_id: str
-    ) -> Mapping[str, Any] | None:
-        """Return the exact retained list record for one conversation id."""
-        for index, record in enumerate(self._conversation_records()):
-            if self._conversation_record_id(record, index) == conversation_id:
-                return record
-        return None
-
     def _conversation_reader_list_summary(self) -> str:
-        """Summarize a collapsed Items pane inside protected work status."""
-        state = self._build_library_conversations_state()
-        pager = state.pager
-        count = pager.title_count if pager is not None else None
-        heading = "Conversations" if count is None else f"Conversations ({count})"
-        titles = [
-            str(record.get("title") or "").strip()
-            for record in self._conversation_records()[:2]
-        ]
-        visible_titles = [title for title in titles if title]
-        return " · ".join((heading, *visible_titles))
-
-    @staticmethod
-    def _conversation_reader_record_version(
-        record: Mapping[str, Any] | None,
-    ) -> int | None:
-        """Read an authoritative optimistic-lock version without inventing one."""
-        value = record.get("version") if record is not None else None
-        return value if type(value) is int and value >= 0 else None
+        return self._conversation_reader_controller._conversation_reader_list_summary()
 
     def _sync_library_conversation_reader(self) -> bool:
-        """Patch the mounted work pane from controller-owned pure state."""
-        try:
-            reader = self.query_one(
-                "#library-conversation-reader", LibraryConversationReader
-            )
-        except (NoMatches, QueryError):
-            return False
-        metadata = dict(self._library_conversation_reader_loaded_metadata)
-        if not self._library_loaded and not self._library_lookup_error:
-            metadata["_list_status"] = "Loading local Library sources…"
-        elif self._library_lookup_error:
-            metadata["_list_status"] = self._library_lookup_error
-        if not self._library_conversation_reader_layout.items_open:
-            metadata["_list_summary"] = self._conversation_reader_list_summary()
-        reader.sync_state(
-            self._library_conversation_reader_state,
-            loaded_metadata=metadata,
-            selected_metadata=self._library_conversation_reader_selected_metadata,
-        )
-        self._finish_library_conversation_find_focus()
-        return True
-
-    def _finish_library_conversation_find_focus(self) -> None:
-        """Reveal a deferred Find match only while its user intent is current."""
-        intent = self._library_conversation_find_focus_intent
-        state = self._library_conversation_reader_state
-        if intent is None or not state.find_complete or not state.find_matches:
-            return
-        generation, focus_generation, query = intent
-        if (
-            self._library_selected_row_id != LIBRARY_ROW_BROWSE_CONVERSATIONS
-            or generation != state.generation
-            or query != state.find_query
-            or focus_generation != self._library_notes_focus_intent_generation
-        ):
-            self._library_conversation_find_focus_intent = None
-            return
-        try:
-            reader = self.query_one(
-                "#library-conversation-reader", LibraryConversationReader
-            )
-        except (NoMatches, QueryError):
-            return
-        if reader.state.generation != generation or reader.state.find_query != query:
-            self._library_conversation_find_focus_intent = None
-            return
-        if reader.focus_find_match(state.find_matches[0].message_id):
-            self._library_conversation_find_focus_intent = None
-
-    def _conversation_reader_request_is_current(
-        self, request: ConversationReaderRequest
-    ) -> bool:
-        """Check the complete destination/id/version/generation request fence."""
-        state = self._library_conversation_reader_state
-        return (
-            self._library_conversation_reader_mounted_authority
-            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
-            and request.destination == "conversations"
-            and request.conversation_id == state.selected_id
-            and request.version == state.selected_version
-            and request.generation == state.generation
-        )
+        return self._conversation_reader_controller._sync_library_conversation_reader()
 
     def _invalidate_library_conversation_reader_authority(self) -> None:
-        """Revoke every page/continuation and loaded-action generation."""
-        state = self._library_conversation_reader_state
-        self._library_conversation_reader_state = dataclasses.replace(
-            state,
-            generation=state.generation + 1,
-            loading=False,
-        )
-        self._library_conversation_find_focus_intent = None
+        return self._conversation_reader_controller._invalidate_library_conversation_reader_authority()
 
     def _set_library_destination_with_conversation_fence(self, row_id: str) -> None:
         """Set one admitted Library destination and revoke a Conversations read."""
@@ -17001,797 +15362,48 @@ class LibraryScreen(BaseAppScreen):
             self._invalidate_library_conversation_reader_authority()
         self._library_selected_row_id = row_id
 
-    def _conversation_reader_service(self) -> Any | None:
-        """Return the existing local conversation detail authority."""
-        direct = getattr(self.app_instance, "local_chat_conversation_service", None)
-        if callable(getattr(direct, "get_library_conversation_messages", None)):
-            return direct
-        scope = getattr(self.app_instance, "chat_conversation_scope_service", None)
-        local = getattr(scope, "local_service", None)
-        if callable(getattr(local, "get_library_conversation_messages", None)):
-            return local
-        return None
-
     def _ensure_library_conversation_reader_selection(self) -> None:
-        """Start the initial selected-row read once the permanent pane mounts."""
-        conversation_id = self._selected_conversation_id
-        if not conversation_id or self._library_conversations_select_mode:
-            return
-        state = self._library_conversation_reader_state
-        record_version = self._conversation_reader_record_version(
-            self._conversation_reader_record(conversation_id)
-        )
-        if state.selected_id == conversation_id and (
-            (
-                state.loading
-                and (record_version is None or state.selected_version == record_version)
-            )
-            or (
-                state.loaded_actions_eligible
-                and (record_version is None or state.loaded_version == record_version)
-            )
-        ):
-            return
-        self._start_library_conversation_reader_selection(conversation_id)
+        return self._conversation_reader_controller._ensure_library_conversation_reader_selection()
 
     def _start_library_conversation_reader_selection(
         self, conversation_id: str
     ) -> None:
-        """Select one list record and launch its fenced progressive reader."""
-        self._library_conversation_deleted_selection_id = ""
-        record = self._conversation_reader_record(conversation_id)
-        if record is not None:
-            self._library_conversation_reader_selected_metadata = dict(record)
-        version = self._conversation_reader_record_version(record)
-        if version is None:
-            state = self._library_conversation_reader_state
-            generation = state.generation + 1
-            self._library_conversation_reader_state = dataclasses.replace(
-                state,
-                selected_id=conversation_id,
-                selected_version=None,
-                generation=generation,
-                mode=state.mode if conversation_id == state.loaded_id else "read",
-                error=None,
-                loading=True,
-                unavailable=False,
-                bulk_active=False,
-                bulk_selected_count=0,
-                bulk_loaded_preview_selected=None,
-            )
-            self._sync_library_conversation_reader()
-            self.run_worker(
-                self._bootstrap_library_conversation_reader(
-                    conversation_id, generation
-                ),
-                exclusive=True,
-                group="library_conversation_reader",
-            )
-            return
-        state, request = select_conversation(
-            self._library_conversation_reader_state,
-            conversation_id,
-            version=version,
+        return self._conversation_reader_controller._start_library_conversation_reader_selection(
+            conversation_id
         )
-        self._library_conversation_reader_state = state
-        self._sync_library_conversation_reader()
-        self.run_worker(
-            self._load_library_conversation_reader(request),
-            exclusive=True,
-            group="library_conversation_reader",
-        )
-
-    async def _bootstrap_library_conversation_reader(
-        self, conversation_id: str, bootstrap_generation: int
-    ) -> None:
-        """Obtain a missing real version from the authoritative detail envelope."""
-        service = self._conversation_reader_service()
-        read = getattr(service, "get_library_conversation_messages", None)
-        if not callable(read):
-            state = self._library_conversation_reader_state
-            if self._conversation_reader_bootstrap_is_current(
-                conversation_id, bootstrap_generation
-            ):
-                self._library_conversation_reader_state = dataclasses.replace(
-                    state,
-                    error="Conversation detail is unavailable.",
-                    loading=False,
-                    unavailable=False,
-                )
-                self._sync_library_conversation_reader()
-            return
-        try:
-            response = await self._run_library_service_call(
-                read,
-                conversation_id,
-                message_offset=0,
-                message_limit=LIBRARY_CONVERSATION_PAGE_SIZE,
-                max_chars=LIBRARY_CONVERSATION_READER_MAX_CHARS,
-            )
-        except Exception:
-            if self._conversation_reader_bootstrap_is_current(
-                conversation_id, bootstrap_generation
-            ):
-                state = self._library_conversation_reader_state
-                self._library_conversation_reader_state = dataclasses.replace(
-                    state,
-                    error="Couldn't load this conversation. Try again.",
-                    loading=False,
-                    unavailable=False,
-                )
-                self._sync_library_conversation_reader()
-            return
-        if not self._conversation_reader_bootstrap_is_current(
-            conversation_id, bootstrap_generation
-        ):
-            return
-        state = self._library_conversation_reader_state
-        if response is None:
-            self._library_conversation_reader_state = dataclasses.replace(
-                state,
-                error="Conversation unavailable.",
-                loading=False,
-                unavailable=True,
-            )
-            self._sync_library_conversation_reader()
-            return
-        version = response.get("version") if isinstance(response, Mapping) else None
-        if type(version) is not int or version < 0:
-            self._library_conversation_reader_state = dataclasses.replace(
-                state,
-                error="Conversation detail returned no authoritative version.",
-                loading=False,
-            )
-            self._sync_library_conversation_reader()
-            return
-        selected, request = select_conversation(state, conversation_id, version=version)
-        self._library_conversation_reader_state = selected
-        await self._load_library_conversation_reader(
-            request,
-            initial_response=response,
-        )
-
-    def _conversation_reader_bootstrap_is_current(
-        self,
-        conversation_id: str,
-        bootstrap_generation: int,
-    ) -> bool:
-        """Fence a version bootstrap to its mounted Conversations selection."""
-        state = self._library_conversation_reader_state
-        return (
-            self._library_conversation_reader_mounted_authority
-            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
-            and state.selected_id == conversation_id
-            and state.selected_version is None
-            and state.generation == bootstrap_generation
-        )
-
-    async def _load_library_conversation_reader(
-        self,
-        request: ConversationReaderRequest,
-        *,
-        initial_response: Mapping[str, Any] | None = None,
-    ) -> None:
-        """Settle bounded pages and body continuations incrementally off-loop."""
-        service = self._conversation_reader_service()
-        read = getattr(service, "get_library_conversation_messages", None)
-        if not callable(read):
-            self._library_conversation_reader_state = settle_conversation_error(
-                self._library_conversation_reader_state,
-                request,
-                "Conversation detail is unavailable.",
-            )
-            self._sync_library_conversation_reader()
-            return
-
-        response = initial_response
-        while self._conversation_reader_request_is_current(request):
-            try:
-                if response is None:
-                    response = await self._run_library_service_call(
-                        read,
-                        request.conversation_id,
-                        message_offset=request.message_offset,
-                        message_limit=request.message_limit,
-                        max_chars=LIBRARY_CONVERSATION_READER_MAX_CHARS,
-                    )
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                response = None
-                if self._conversation_reader_request_is_current(request):
-                    self._library_conversation_reader_state = settle_conversation_error(
-                        self._library_conversation_reader_state,
-                        request,
-                        "Couldn't load this conversation. Try again.",
-                    )
-                    self._sync_library_conversation_reader()
-                return
-            if not self._conversation_reader_request_is_current(request):
-                return
-            if response is None:
-                self._library_conversation_reader_state = (
-                    settle_conversation_unavailable(
-                        self._library_conversation_reader_state, request
-                    )
-                )
-                self._sync_library_conversation_reader()
-                return
-            try:
-                before_settle = self._library_conversation_reader_state
-                previous_loaded_generation = before_settle.loaded_generation
-                settled = settle_conversation_page(
-                    before_settle,
-                    request,
-                    response,
-                )
-            except (TypeError, ValueError):
-                before_settle = self._library_conversation_reader_state
-                settled = settle_conversation_error(
-                    before_settle,
-                    request,
-                    "Conversation detail was invalid. Try again.",
-                )
-            self._library_conversation_reader_state = settled
-            request_content_loaded = (
-                settled.loaded_id == request.conversation_id
-                and settled.loaded_generation == request.generation
-            )
-            if (
-                settled is not before_settle
-                and settled.error is None
-                and request_content_loaded
-            ):
-                metadata = dict(
-                    self._library_conversation_reader_selected_metadata
-                    if previous_loaded_generation != request.generation
-                    else self._library_conversation_reader_loaded_metadata
-                )
-                title = response.get("title")
-                if isinstance(title, str) and title.strip():
-                    metadata["title"] = title.strip()
-                metadata["version"] = request.version
-                self._library_conversation_reader_loaded_metadata = metadata
-            self._sync_library_conversation_reader()
-            await asyncio.sleep(0)
-            if settled.error:
-                return
-
-            for message in tuple(settled.messages):
-                while (
-                    not message.complete
-                    and self._conversation_reader_request_is_current(request)
-                ):
-                    try:
-                        continuation = await self._run_library_service_call(
-                            read,
-                            request.conversation_id,
-                            message_offset=request.message_offset,
-                            message_limit=request.message_limit,
-                            max_chars=LIBRARY_CONVERSATION_READER_MAX_CHARS,
-                            message_id=message.message_id,
-                            char_start=len(message.text),
-                        )
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception:
-                        self._library_conversation_reader_state = (
-                            settle_conversation_error(
-                                self._library_conversation_reader_state,
-                                request,
-                                "Couldn't finish loading a saved message. Try again.",
-                            )
-                        )
-                        self._sync_library_conversation_reader()
-                        return
-                    before = self._library_conversation_reader_state
-                    if continuation is None:
-                        self._library_conversation_reader_state = (
-                            settle_conversation_unavailable(before, request)
-                        )
-                        self._sync_library_conversation_reader()
-                        return
-                    self._library_conversation_reader_state = (
-                        settle_conversation_continuation(
-                            before,
-                            request,
-                            continuation,
-                        )
-                    )
-                    if self._library_conversation_reader_state is before:
-                        self._library_conversation_reader_state = (
-                            settle_conversation_error(
-                                before,
-                                request,
-                                "Saved message continuation was invalid. Try again.",
-                            )
-                        )
-                        self._sync_library_conversation_reader()
-                        return
-                    self._sync_library_conversation_reader()
-                    await asyncio.sleep(0)
-                    message = next(
-                        candidate
-                        for candidate in self._library_conversation_reader_state.messages
-                        if candidate.message_id == message.message_id
-                    )
-
-            state = self._library_conversation_reader_state
-            if state.complete:
-                return
-            next_offset = len(state.messages)
-            if next_offset <= request.message_offset:
-                self._library_conversation_reader_state = settle_conversation_error(
-                    state,
-                    request,
-                    "Conversation loading made no progress. Try again.",
-                )
-                self._sync_library_conversation_reader()
-                return
-            request = dataclasses.replace(request, message_offset=next_offset)
-            response = None
 
     def _build_library_conversations_state(self):
-        """Build the conversations canvas display state from local records."""
-        state = build_library_conversations_state(
-            self._conversation_records(),
-            query=self._library_conversation_query,
-            selected_id=self._selected_conversation_id,
-            select_mode=self._library_conversations_select_mode,
-            selected_ids=self._library_conversations_row_selection.ids,
-            page=self._library_conversation_page,
-            requested_page=self._library_conversation_requested_page,
-            page_size=self._library_conversation_page_size,
-            total_count=self._library_conversation_total,
-            total_known=self._library_conversation_total_known,
-            has_more=self._library_conversation_has_more,
-            freshness=self._library_conversation_freshness,
-            stale_copy=self._library_conversation_stale_copy,
-            loading=self._library_conversation_loading,
-            error_copy=self._library_conversation_error,
-            selection_notice=self._library_conversation_selection_notice,
-        )
-        state = dataclasses.replace(
-            state,
-            query=self._library_conversation_requested_query,
-            status_copy=(
-                state.status_copy or self._library_conversation_selection_notice
-            ),
-        )
-        retained_reader_id = self._library_conversation_reader_state.selected_id
-        if (
-            retained_reader_id
-            and not self._library_conversation_reader_state.unavailable
-            and all(row.conversation_id != retained_reader_id for row in state.rows)
-        ):
-            state = dataclasses.replace(
-                state,
-                selected_id="",
-                preview_lines=(),
-                rows=tuple(
-                    dataclasses.replace(row, selected=False) for row in state.rows
-                ),
-            )
-        if self._library_conversation_deleted_selection_id:
-            state = dataclasses.replace(
-                state,
-                selected_id="",
-                preview_lines=(),
-                rows=tuple(
-                    dataclasses.replace(row, selected=False) for row in state.rows
-                ),
-            )
-        if self._library_conversations_select_mode:
-            self._library_conversations_row_selection.reconcile(
-                r.conversation_id for r in state.rows
-            )
-        return state
+        return self._conversations_controller._build_library_conversations_state()
 
-    def _sync_library_conversation_canvas(
-        self, *, then: Callable[[], None] | None = None
-    ) -> bool:
-        """Sync Conversation state through its canvas-owned action gates."""
 
-        return _sync_library_canvas(
-            self,
-            "conversations",
-            then=then,
-            allow_screen_fallback=False,
-        )
+    def _sync_library_conversation_canvas(self, *, then: Callable[[], None] | None=None) -> bool:
+        return self._conversations_controller._sync_library_conversation_canvas(then=then)
+
 
     @staticmethod
     def _normalize_library_conversation_page(page: object) -> int:
-        """Return a dispatch-safe one-based page, defaulting invalid input."""
+        return LibraryConversationsController._normalize_library_conversation_page(page)
 
-        if isinstance(page, bool) or not isinstance(page, int) or page < 1:
-            return 1
-        max_page = (2**63 - 1) // LIBRARY_CONVERSATION_PAGE_SIZE + 1
-        return page if page <= max_page else 1
 
-    def _start_library_conversation_page_request(
-        self,
-        page: int,
-        query: str,
-        *,
-        refocus_filter: bool = False,
-        focus_after_apply: str = "",
-    ) -> None:
-        """Start one generation-guarded conversation page request."""
-        self._pending_library_source_open = None
-        requested_page = self._normalize_library_conversation_page(page)
-        normalized_query, generation = self._prepare_library_conversation_page_request(
-            query,
-            page=requested_page,
-            refocus_filter=refocus_filter,
-            focus_after_apply=focus_after_apply,
-        )
-        self.run_worker(
-            self._load_library_conversation_page(
-                requested_page,
-                normalized_query,
-                generation,
-            ),
-            exclusive=True,
-            group="library_conversation_page",
-        )
+    def _start_library_conversation_page_request(self, page: int, query: str, *, refocus_filter: bool=False, focus_after_apply: str='') -> None:
+        return self._conversations_controller._start_library_conversation_page_request(page, query, refocus_filter=refocus_filter, focus_after_apply=focus_after_apply)
 
-    def _prepare_library_conversation_page_request(
-        self,
-        query: str,
-        *,
-        page: int = 1,
-        refocus_filter: bool = False,
-        focus_after_apply: str = "",
-    ) -> tuple[str, int]:
-        """Invalidate older requests and publish a coherent loading state."""
-        self._library_conversation_request_generation += 1
-        generation = self._library_conversation_request_generation
-        normalized_query = self._safe_text(query, max_length=200)
-        self._library_conversation_requested_page = (
-            self._normalize_library_conversation_page(page)
-        )
-        self._library_conversation_requested_query = normalized_query
-        if refocus_filter:
-            focus_after_apply = "#library-conversations-filter"
-        self._library_conversation_focus_after_apply = focus_after_apply
-        self._library_conversation_loading = True
-        self._library_conversation_error = ""
-        had_selection = (
-            self._library_conversations_select_mode
-            or self._library_conversations_row_selection.count > 0
-        )
-        self._library_conversation_selection_notice = (
-            "Selection cleared." if had_selection else ""
-        )
-        self._library_conversations_select_mode = False
-        self._library_conversations_row_selection.clear()
-        self._library_conversation_reader_state = project_conversation_multiselect(
-            self._library_conversation_reader_state,
-            active=False,
-            selected_count=0,
-            loaded_preview_selected=None,
-        )
-        self._sync_library_conversation_reader()
-        self._sync_library_conversation_canvas()
-        if refocus_filter:
-            self._refocus_library_conversations_filter_after_sync()
-        return normalized_query, generation
+
+    def _prepare_library_conversation_page_request(self, query: str, *, page: int=1, refocus_filter: bool=False, focus_after_apply: str='') -> tuple[str, int]:
+        return self._conversations_controller._prepare_library_conversation_page_request(query, page=page, refocus_filter=refocus_filter, focus_after_apply=focus_after_apply)
+
 
     def _library_conversation_page_needs_recovery(self) -> bool:
-        """Return whether Conversation entry needs its requested scope refetched."""
+        return self._conversations_controller._library_conversation_page_needs_recovery()
 
-        return not self._library_conversation_loading and bool(
-            not self._library_conversation_page_loaded
-            or self._library_conversation_freshness != "fresh"
-            or self._library_conversation_error
-        )
 
-    def _finish_library_conversation_request_focus(self) -> None:
-        """Restore captured pager/filter focus after Conversation recomposition."""
+    def _fail_library_conversation_request(self, requested_page: int, requested_query: str, generation: int, *, copy: str='') -> None:
+        return self._conversations_controller._fail_library_conversation_request(requested_page, requested_query, generation, copy=copy)
 
-        requested = self._library_conversation_focus_after_apply
-        self._library_conversation_focus_after_apply = ""
-        if not requested:
-            return
-        selectors = [requested]
-        if requested == "#library-conversations-next":
-            selectors.extend(
-                ("#library-conversations-previous", "#library-conversations-filter")
-            )
-        elif requested == "#library-conversations-previous":
-            selectors.extend(
-                ("#library-conversations-next", "#library-conversations-filter")
-            )
-        elif requested == "#library-conversations-retry":
-            selectors.append("#library-conversations-filter")
-        for selector in selectors:
-            matches = self.query(selector)
-            if not matches:
-                continue
-            target = matches.first()
-            if getattr(target, "disabled", False):
-                continue
-            target.focus()
-            return
 
-    def _finish_library_conversation_page_apply(self) -> None:
-        """Finish list focus and align the permanent work selection."""
-        self._finish_library_conversation_request_focus()
-        self._ensure_library_conversation_reader_selection()
+    async def _load_library_conversation_page(self, page: int, query: str, generation: int, *, _clamp_attempted: bool=False) -> None:
+        return await self._conversations_controller._load_library_conversation_page(page, query, generation, _clamp_attempted=_clamp_attempted)
 
-    def _fail_library_conversation_request(
-        self,
-        requested_page: int,
-        requested_query: str,
-        generation: int,
-        *,
-        copy: str = "",
-    ) -> None:
-        """Retain last-good applied state and publish retryable failure copy."""
-
-        if generation != self._library_conversation_request_generation:
-            return
-        self._library_conversation_loading = False
-        if self._library_conversation_freshness == "stale":
-            self._library_conversation_error = ""
-            if copy:
-                self._library_conversation_stale_copy = copy
-        elif copy:
-            self._library_conversation_error = copy
-        elif self._library_conversation_freshness == "uninitialized":
-            self._library_conversation_error = "Couldn't load conversations. Try again."
-        elif requested_query != self._library_conversation_query:
-            self._library_conversation_error = (
-                "Filter wasn’t applied; showing previous results."
-            )
-        else:
-            self._library_conversation_error = f"Couldn't load page {requested_page}."
-        self._sync_library_conversation_canvas(
-            then=self._finish_library_conversation_request_focus
-        )
-
-    @staticmethod
-    def _conversation_out_of_range_total(
-        result: object, *, requested_offset: int
-    ) -> int | None:
-        """Return the coherent total proving an ordinary page is out of range."""
-
-        if not isinstance(result, Mapping):
-            return None
-        items = result.get("items")
-        pagination = result.get("pagination")
-        if not isinstance(items, list) or items:
-            return None
-        if not isinstance(pagination, Mapping):
-            return None
-        limit = pagination.get("limit")
-        offset = pagination.get("offset")
-        total = pagination.get("total")
-        has_more = pagination.get("has_more")
-        coordinates = (limit, offset, total)
-        if any(
-            isinstance(value, bool) or not isinstance(value, int)
-            for value in coordinates
-        ):
-            return None
-        if (
-            limit != LIBRARY_CONVERSATION_PAGE_SIZE
-            or offset != requested_offset
-            or total < 0
-            or requested_offset == 0
-            or requested_offset < total
-            or has_more is not False
-        ):
-            return None
-        return total
-
-    def _library_conversation_absence_fence_is_current(
-        self,
-        *,
-        conversation_id: str,
-        version: int | None,
-        reader_generation: int,
-        page_generation: int,
-    ) -> bool:
-        """Fence an exact-ID absence probe to its mounted reader epoch."""
-        state = self._library_conversation_reader_state
-        return (
-            self._library_conversation_reader_mounted_authority
-            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
-            and page_generation == self._library_conversation_request_generation
-            and state.selected_id == conversation_id
-            and state.selected_version == version
-            and state.generation == reader_generation
-        )
-
-    async def _confirm_library_conversation_page_absence(
-        self,
-        *,
-        conversation_id: str,
-        version: int | None,
-        reader_generation: int,
-        page_generation: int,
-    ) -> Literal["exists", "deleted", "unknown", "stale"]:
-        """Confirm a missing page row through the existing exact-ID locator."""
-        service = getattr(self.app_instance, "chat_conversation_scope_service", None)
-        locate_page = getattr(service, "locate_conversation_page", None)
-        if not callable(locate_page):
-            return "unknown"
-        try:
-            located = await self._run_library_service_call(
-                locate_page,
-                conversation_id,
-                mode="local",
-                scope_type="all",
-                limit=LIBRARY_CONVERSATION_PAGE_SIZE,
-            )
-        except Exception:
-            logger.warning("Failed to confirm missing Library conversation.")
-            located = Ellipsis
-        if not self._library_conversation_absence_fence_is_current(
-            conversation_id=conversation_id,
-            version=version,
-            reader_generation=reader_generation,
-            page_generation=page_generation,
-        ):
-            return "stale"
-        if located is None:
-            return "deleted"
-        if located is Ellipsis:
-            return "unknown"
-        try:
-            self._validate_library_conversation_locator(located, conversation_id)
-        except (TypeError, ValueError):
-            return "unknown"
-        return "exists"
-
-    async def _load_library_conversation_page(
-        self,
-        page: int,
-        query: str,
-        generation: int,
-        *,
-        _clamp_attempted: bool = False,
-    ) -> None:
-        """Load a complete service-backed page, discarding stale results."""
-        service = getattr(self.app_instance, "chat_conversation_scope_service", None)
-        list_conversations = getattr(service, "list_conversations", None)
-        if not callable(list_conversations):
-            self._fail_library_conversation_request(page, query, generation)
-            return
-
-        requested_page = self._normalize_library_conversation_page(page)
-        normalized_query = self._safe_text(query, max_length=200)
-        requested_offset = (requested_page - 1) * LIBRARY_CONVERSATION_PAGE_SIZE
-        try:
-            result = await self._run_library_service_call(
-                list_conversations,
-                mode="local",
-                scope_type="all",
-                query=normalized_query or None,
-                limit=LIBRARY_CONVERSATION_PAGE_SIZE,
-                offset=requested_offset,
-            )
-        except Exception:
-            if generation != self._library_conversation_request_generation:
-                return
-            logger.warning("Failed to load Library conversations page.")
-            self._fail_library_conversation_request(
-                requested_page, normalized_query, generation
-            )
-            return
-
-        if generation != self._library_conversation_request_generation:
-            return
-
-        out_of_range_total = self._conversation_out_of_range_total(
-            result,
-            requested_offset=requested_offset,
-        )
-        if out_of_range_total is not None:
-            page_count = max(
-                1,
-                (out_of_range_total + LIBRARY_CONVERSATION_PAGE_SIZE - 1)
-                // LIBRARY_CONVERSATION_PAGE_SIZE,
-            )
-            if _clamp_attempted:
-                self._library_conversation_loading = False
-                self._library_conversation_freshness = "stale"
-                self._library_conversation_total_known = False
-                self._library_conversation_error = ""
-                self._library_conversation_stale_copy = (
-                    "Source changed again; try again."
-                )
-                self._sync_library_conversation_canvas(
-                    then=self._finish_library_conversation_request_focus
-                )
-                return
-            self._library_conversation_requested_page = page_count
-            await self._load_library_conversation_page(
-                page_count,
-                normalized_query,
-                generation,
-                _clamp_attempted=True,
-            )
-            return
-
-        try:
-            validated = validate_library_conversation_page(
-                result,
-                requested_limit=LIBRARY_CONVERSATION_PAGE_SIZE,
-                requested_offset=requested_offset,
-            )
-        except (TypeError, ValueError):
-            self._fail_library_conversation_request(
-                requested_page, normalized_query, generation
-            )
-            return
-
-        if generation != self._library_conversation_request_generation:
-            return
-
-        reader_state = self._library_conversation_reader_state
-        previous_ids = {
-            str(record.get("id") or "")
-            for record in self._library_conversation_page_records
-        }
-        refreshed_ids = {str(record.get("id") or "") for record in validated.items}
-        selected_id = reader_state.selected_id or ""
-        needs_exact_confirmation = (
-            self._library_conversation_page_loaded
-            and requested_page == self._library_conversation_page
-            and normalized_query == self._library_conversation_query
-            and selected_id in previous_ids
-            and selected_id not in refreshed_ids
-        )
-        absence_result: Literal["exists", "deleted", "unknown", "stale"] | None = None
-        if needs_exact_confirmation:
-            absence_result = await self._confirm_library_conversation_page_absence(
-                conversation_id=selected_id,
-                version=reader_state.selected_version,
-                reader_generation=reader_state.generation,
-                page_generation=generation,
-            )
-            if absence_result == "stale":
-                return
-        if absence_result == "deleted":
-            deleted_state = confirm_conversation_deleted(
-                self._library_conversation_reader_state,
-                selected_id,
-                version=reader_state.selected_version,
-                generation=reader_state.generation,
-            )
-            if deleted_state is not reader_state:
-                self._library_conversation_reader_state = deleted_state
-                self._library_conversation_deleted_selection_id = selected_id
-                self._selected_conversation_id = ""
-                self._sync_library_conversation_reader()
-
-        self._library_conversation_page_records = validated.items
-        self._library_conversation_page = requested_page
-        self._library_conversation_total = validated.total
-        self._library_conversation_total_known = True
-        self._library_conversation_has_more = validated.has_more
-        self._library_conversation_page_loaded = True
-        self._library_conversation_query = normalized_query
-        self._library_conversation_requested_page = requested_page
-        self._library_conversation_requested_query = normalized_query
-        self._library_conversation_freshness = (
-            "stale" if absence_result == "unknown" else "fresh"
-        )
-        self._library_conversation_stale_copy = (
-            "Conversation location could not be confirmed; try again."
-            if absence_result == "unknown"
-            else ""
-        )
-        self._library_conversation_loading = False
-        self._library_conversation_error = ""
-        self._adopt_library_conversation_state_selection(
-            self._build_library_conversations_state().selected_id
-        )
-        self._sync_library_conversation_canvas(
-            then=self._finish_library_conversation_page_apply
-        )
 
     def _build_library_media_state(self) -> LibraryMediaCanvasState:
         """Build Media rows only from the controller's retained exact page."""
@@ -25672,11 +23284,11 @@ class LibraryScreen(BaseAppScreen):
         if (
             action_kind == "conversations-retry"
             and self._library_selected_row_id == row_id
-            and not self._library_conversation_loading
+            and not self._conversations_state.loading
         ):
             self._start_library_conversation_page_request(
-                self._library_conversation_requested_page,
-                self._library_conversation_requested_query,
+                self._conversations_state.requested_page,
+                self._conversations_state.requested_query,
                 focus_after_apply="#library-conversations-retry",
             )
 
@@ -26024,8 +23636,8 @@ class LibraryScreen(BaseAppScreen):
                 and self._library_conversation_page_needs_recovery()
             ):
                 self._start_library_conversation_page_request(
-                    self._library_conversation_requested_page,
-                    self._library_conversation_requested_query,
+                    self._conversations_state.requested_page,
+                    self._conversations_state.requested_query,
                 )
             return
         if target_kind == "handoff":
@@ -26267,14 +23879,14 @@ class LibraryScreen(BaseAppScreen):
         if (
             self._pending_library_source_open is not None
             and self._pending_library_source_open[0] == "conversations"
-            and self._library_conversation_loading
+            and self._conversations_state.loading
         ):
-            self._library_conversation_request_generation += 1
-            self._library_conversation_requested_page = self._library_conversation_page
-            self._library_conversation_requested_query = (
-                self._library_conversation_query
+            self._conversations_state.request_generation += 1
+            self._conversations_state.requested_page = self._conversations_state.page
+            self._conversations_state.requested_query = (
+                self._conversations_state.query
             )
-            self._library_conversation_loading = False
+            self._conversations_state.loading = False
         self._pending_library_source_open = None
         if row_id != LIBRARY_ROW_BROWSE_PROMPTS:
             self._clear_library_prompt_selection(announce=True)
@@ -26623,7 +24235,13 @@ class LibraryScreen(BaseAppScreen):
         """Select mode: toggle the row's checkbox. Normal mode: select the row.
 
         In select mode, a row press toggles that row's id in
-        ``_library_conversations_row_selection`` and patches the row's
+        ``self._conversations_state.row_selection`` (conversations resolves
+        its selection state through the dotted ``_conversations_state``
+        path, not a flat ``_library_conversations_row_selection`` attribute
+        -- see ``_apply_library_row_toggle``'s docstring in
+        ``UI/Library_Modules/canvas_sync.py`` for the attrgetter dispatch
+        that routes each not-yet-extracted subsystem's flat name versus
+        conversations' dotted one) and patches the row's
         marker, the "N selected" Static, and export-selected's disabled
         state in place (task-252 Tier 1) -- it never sets the normal-mode
         selection/detail while in select mode. Outside select mode,
@@ -26637,18 +24255,18 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by a conversation row button.
         """
         event.stop()
-        if self._library_conversation_freshness != "fresh":
+        if self._conversations_state.freshness != "fresh":
             return
         conversation_id = str(getattr(event.button, "conversation_id", "") or "")
-        if self._library_conversations_select_mode:
-            self._library_conversations_row_selection.toggle(conversation_id)
+        if self._conversations_state.select_mode:
+            self._conversations_state.row_selection.toggle(conversation_id)
             _apply_library_row_toggle(
                 self, "conversations", event.button, conversation_id
             )
-            self._library_conversation_reader_state = project_conversation_multiselect(
-                self._library_conversation_reader_state,
+            self._conversations_state.reader_state = project_conversation_multiselect(
+                self._conversations_state.reader_state,
                 active=True,
-                selected_count=self._library_conversations_row_selection.count,
+                selected_count=self._conversations_state.row_selection.count,
                 loaded_preview_selected=self._library_conversation_loaded_preview_selected(),
             )
             self._sync_library_conversation_reader()
@@ -26661,159 +24279,64 @@ class LibraryScreen(BaseAppScreen):
         if conversation_id:
             self._start_library_conversation_reader_selection(conversation_id)
 
+
+
     @on(Button.Pressed, "#library-conversation-reader-read")
     def show_library_conversation_reader_read(self, event: Button.Pressed) -> None:
-        """Show the retained saved transcript."""
-        event.stop()
-        self._library_conversation_reader_state = set_conversation_reader_mode(
-            self._library_conversation_reader_state, "read"
+        return self._conversation_reader_controller.show_library_conversation_reader_read(
+            event
         )
-        self._sync_library_conversation_reader()
 
     @on(Button.Pressed, "#library-conversation-reader-info")
     def show_library_conversation_reader_info(self, event: Button.Pressed) -> None:
-        """Show truthful local conversation metadata."""
-        event.stop()
-        self._library_conversation_reader_state = set_conversation_reader_mode(
-            self._library_conversation_reader_state, "info"
+        return self._conversation_reader_controller.show_library_conversation_reader_info(
+            event
         )
-        self._sync_library_conversation_reader()
 
     @on(Input.Submitted, "#library-conversation-reader-find")
     def find_in_library_conversation(self, event: Input.Submitted) -> None:
-        """Find only after every saved message body is fully hydrated."""
-        event.stop()
-        self._library_conversation_reader_state = set_conversation_find_query(
-            self._library_conversation_reader_state,
-            event.value,
+        return self._conversation_reader_controller.find_in_library_conversation(
+            event
         )
-        self._sync_library_conversation_reader()
-        state = self._library_conversation_reader_state
-        if not state.loading and not state.complete and state.selected_id:
-            self._retry_library_conversation_reader()
-            state = self._library_conversation_reader_state
-        self._library_conversation_find_focus_intent = (
-            (
-                state.generation,
-                self._library_notes_focus_intent_generation,
-                state.find_query,
-            )
-            if state.find_query
-            else None
-        )
-        if state.find_complete and state.find_matches:
-            self._finish_library_conversation_find_focus()
 
     @on(LibraryConversationReader.MessagesSynced)
     def library_conversation_reader_messages_synced(
         self,
         event: LibraryConversationReader.MessagesSynced,
     ) -> None:
-        """Revalidate deferred Find focus after current transcript rows mount."""
-        event.stop()
-        state = self._library_conversation_reader_state
-        if (
-            event.reader_generation != state.generation
-            or event.find_query != state.find_query
-        ):
-            self._library_conversation_find_focus_intent = None
-            return
-        self._finish_library_conversation_find_focus()
+        return self._conversation_reader_controller.library_conversation_reader_messages_synced(
+            event
+        )
 
     @on(Button.Pressed, "#library-conversation-reader-retry")
     def retry_library_conversation_reader(self, event: Button.Pressed) -> None:
-        """Retry the selected detail with a fresh pure-state generation."""
-        event.stop()
-        self._retry_library_conversation_reader()
-
-    def _retry_library_conversation_reader(self) -> None:
-        """Start one generation-fenced reader retry when selection is known."""
-        if (
-            self._library_conversations_select_mode
-            or self._library_conversation_reader_state.bulk_active
-        ):
-            return
-        try:
-            state, request = retry_conversation(self._library_conversation_reader_state)
-        except ValueError:
-            selected = self._library_conversation_reader_state.selected_id
-            if selected:
-                self._start_library_conversation_reader_selection(selected)
-            return
-        self._library_conversation_reader_state = state
-        self._sync_library_conversation_reader()
-        self.run_worker(
-            self._load_library_conversation_reader(request),
-            exclusive=True,
-            group="library_conversation_reader",
+        return self._conversation_reader_controller.retry_library_conversation_reader(
+            event
         )
 
     def _library_conversation_loaded_preview_selected(self) -> bool | None:
         """Return whether the retained transcript is in the checked-row set."""
-        loaded_id = self._library_conversation_reader_state.loaded_id
+        loaded_id = self._conversations_state.reader_state.loaded_id
         if loaded_id is None:
             return None
-        return self._library_conversations_row_selection.is_selected(loaded_id)
+        return self._conversations_state.row_selection.is_selected(loaded_id)
+
+
 
     @on(Button.Pressed, "#library-conversations-select-toggle")
     def handle_library_conversations_select_toggle(self, event: Button.Pressed) -> None:
-        """Enter/exit conversations select mode; clears the selection set (both on enter and exit)."""
-        event.stop()
-        if self._library_conversation_freshness != "fresh":
-            return
-        self._library_conversations_select_mode = (
-            not self._library_conversations_select_mode
-        )
-        self._library_conversations_row_selection.clear()
-        self._library_conversation_reader_state = project_conversation_multiselect(
-            self._library_conversation_reader_state,
-            active=self._library_conversations_select_mode,
-            selected_count=0,
-            loaded_preview_selected=(
-                self._library_conversation_loaded_preview_selected()
-                if self._library_conversations_select_mode
-                else None
-            ),
-        )
-        self._sync_library_conversation_reader()
-        _sync_library_canvas(self, "conversations")
-        if not self._library_conversations_select_mode:
-            self._ensure_library_conversation_reader_selection()
+        return self._conversations_controller.handle_library_conversations_select_toggle(event)
+
 
     @on(Button.Pressed, "#library-conversations-select-all")
     def handle_library_conversations_select_all(self, event: Button.Pressed) -> None:
-        """Select every conversation row currently rendered by the canvas."""
-        event.stop()
-        if self._library_conversation_freshness != "fresh":
-            return
-        rows = self._build_library_conversations_state().rows
-        self._library_conversations_row_selection.select_all(
-            r.conversation_id for r in rows
-        )
-        self._library_conversation_reader_state = project_conversation_multiselect(
-            self._library_conversation_reader_state,
-            active=True,
-            selected_count=self._library_conversations_row_selection.count,
-            loaded_preview_selected=self._library_conversation_loaded_preview_selected(),
-        )
-        self._sync_library_conversation_reader()
-        _sync_library_canvas(self, "conversations")
+        return self._conversations_controller.handle_library_conversations_select_all(event)
+
 
     @on(Button.Pressed, "#library-conversations-select-clear")
     def handle_library_conversations_select_clear(self, event: Button.Pressed) -> None:
-        """Clear the current conversations selection without leaving select mode."""
-        event.stop()
-        if self._library_conversation_freshness != "fresh":
-            return
-        self._library_conversations_row_selection.clear()
-        self._library_conversation_reader_state = project_conversation_multiselect(
-            self._library_conversation_reader_state,
-            active=True,
-            selected_count=0,
-            loaded_preview_selected=self._library_conversation_loaded_preview_selected(),
-        )
-        self._sync_library_conversation_reader()
-        _sync_library_canvas(self, "conversations")
+        return self._conversations_controller.handle_library_conversations_select_clear(event)
+
 
     @on(Button.Pressed, "#library-conversations-export-selected")
     async def handle_library_conversations_export_selected(
@@ -26821,17 +24344,19 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Open the export canvas scoped to the currently selected conversation ids."""
         event.stop()
-        if self._library_conversation_freshness != "fresh":
+        if self._conversations_state.freshness != "fresh":
             return
         # Defensive: an empty selection would resolve to a whole-source export
         # (empty ids == whole source). The button is disabled at 0 selected, so
         # this is normally unreachable -- guard anyway so a future activation
         # path can't silently export everything.
-        if not self._library_conversations_row_selection.count:
+        if not self._conversations_state.row_selection.count:
             return
         await self._open_library_export_canvas(
-            self._library_conversations_row_selection.export_scope()
+            self._conversations_state.row_selection.export_scope()
         )
+
+
 
     @on(Button.Pressed, "#library-media-type-filter")
     def handle_library_media_type_filter_pressed(self, event: Button.Pressed) -> None:
@@ -34767,7 +32292,7 @@ class LibraryScreen(BaseAppScreen):
             return
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
             region = self._library_conversation_focus_region()
-            layout = self._library_conversation_reader_layout
+            layout = self._conversations_state.reader_layout
             if region == "work" and layout.items_open:
                 self._focus_library_control("#library-conversations-filter")
                 return
@@ -39924,16 +37449,8 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-conversations-export")
     async def handle_library_conversations_export(self, event: Button.Pressed) -> None:
-        """Open the export canvas scoped to Conversations.
+        return await self._conversations_controller.handle_library_conversations_export(event)
 
-        Args:
-            event: Button press event emitted by the conversations
-                canvas's "Export…" action.
-        """
-        event.stop()
-        if self._library_conversation_freshness != "fresh":
-            return
-        await self._open_library_export_canvas(ExportScope(kind="conversations"))
 
     @on(Button.Pressed, "#library-notes-export")
     async def handle_library_notes_export(self, event: Button.Pressed) -> None:
@@ -44741,18 +42258,9 @@ class LibraryScreen(BaseAppScreen):
         return "Search Library…"
 
     @on(Input.Submitted, "#library-conversations-filter")
-    def handle_library_conversations_filter_submitted(
-        self, event: Input.Submitted
-    ) -> None:
-        """Search all conversations from the in-canvas filter box.
+    def handle_library_conversations_filter_submitted(self, event: Input.Submitted) -> None:
+        return self._conversations_controller.handle_library_conversations_filter_submitted(event)
 
-        Args:
-            event: Input submit event emitted by the conversations canvas's
-                filter box.
-        """
-        event.stop()
-        query = self._safe_text(event.value, max_length=200)
-        self._start_library_conversation_page_request(1, query, refocus_filter=True)
 
     @on(Button.Pressed, "#library-conversations-empty-console")
     def handle_library_conversations_empty_console(self, event: Button.Pressed) -> None:
@@ -44766,13 +42274,15 @@ class LibraryScreen(BaseAppScreen):
                 action_label="Start in Console",
             )
 
+
+
     @on(Button.Pressed, "#library-conversations-empty-clear-filter")
     def handle_library_conversations_empty_clear_filter(
         self, event: Button.Pressed
     ) -> None:
         """Clear the submitted Conversation query and request page one."""
         event.stop()
-        if self._library_conversation_loading:
+        if self._conversations_state.loading:
             return
         self._start_library_conversation_page_request(
             1,
@@ -44780,99 +42290,22 @@ class LibraryScreen(BaseAppScreen):
             refocus_filter=True,
         )
 
+
+
     @on(Button.Pressed, "#library-conversations-retry")
     def handle_library_conversations_retry(self, event: Button.Pressed) -> None:
-        """Retry the most recently requested Conversation scope."""
+        return self._conversations_controller.handle_library_conversations_retry(event)
 
-        event.stop()
-        if self._library_conversation_loading:
-            return
-        pending = self._pending_library_source_open
-        if pending is not None and pending[0] == "conversations":
-            self.run_worker(
-                self._retry_pending_library_conversation_open(pending),
-                exclusive=True,
-                group="library_nav_open_source",
-            )
-            return
-        self._start_library_conversation_page_request(
-            self._library_conversation_requested_page,
-            self._library_conversation_requested_query,
-            focus_after_apply="#library-conversations-retry",
-        )
-
-    async def _retry_pending_library_conversation_open(
-        self, pending: tuple[str, str]
-    ) -> None:
-        """Retry one retained Conversation locator intent."""
-
-        if self._pending_library_source_open != pending:
-            return
-        await self._open_library_item_by_id(*pending)
 
     @on(Button.Pressed, "#library-conversations-previous")
     def handle_library_conversations_previous(self, event: Button.Pressed) -> None:
-        """Load the preceding complete conversation page.
+        return self._conversations_controller.handle_library_conversations_previous(event)
 
-        Args:
-            event: Button press emitted by the conversations pager.
-        """
-        event.stop()
-        if (
-            self._library_conversation_loading
-            or self._library_conversation_freshness != "fresh"
-            or self._library_conversation_page <= 1
-        ):
-            return
-        self._start_library_conversation_page_request(
-            self._library_conversation_page - 1,
-            self._library_conversation_query,
-            focus_after_apply="#library-conversations-previous",
-        )
 
     @on(Button.Pressed, "#library-conversations-next")
     def handle_library_conversations_next(self, event: Button.Pressed) -> None:
-        """Load the following complete conversation page.
+        return self._conversations_controller.handle_library_conversations_next(event)
 
-        Args:
-            event: Button press emitted by the conversations pager.
-        """
-        event.stop()
-        if (
-            self._library_conversation_loading
-            or self._library_conversation_freshness != "fresh"
-            or not self._library_conversation_has_more
-        ):
-            return
-        self._start_library_conversation_page_request(
-            self._library_conversation_page + 1,
-            self._library_conversation_query,
-            focus_after_apply="#library-conversations-next",
-        )
-
-    def _focus_library_conversations_filter(self) -> None:
-        """Re-focus the conversations filter box after a submit-triggered recompose.
-
-        Mirrors ``_focus_library_search_input``: the Submitted-driven
-        recompose remounts a brand-new ``#library-conversations-filter``;
-        without this, focus silently falls back to the screen after every
-        filter submit.
-        """
-        try:
-            self.query_one("#library-conversations-filter", Input).focus()
-        except (NoMatches, QueryError):
-            pass
-
-    def _refocus_library_conversations_filter_after_sync(self) -> None:
-        """Focus the remounted filter after its canvas-scoped recompose."""
-        try:
-            canvas = self.query_one(
-                "#library-conversations-canvas", LibraryConversationsCanvas
-            )
-        except (NoMatches, QueryError):
-            self.call_after_refresh(self._focus_library_conversations_filter)
-            return
-        canvas.call_after_refresh(self._focus_library_conversations_filter)
 
     def _library_collections_capture_request(
         self,
@@ -46699,7 +44132,7 @@ class LibraryScreen(BaseAppScreen):
                 limit=LIBRARY_CONVERSATION_PAGE_SIZE,
             )
         except Exception:
-            if generation != self._library_conversation_request_generation:
+            if generation != self._conversations_state.request_generation:
                 return LibraryEntryReconcileResult.SUPERSEDED
             self._fail_library_conversation_request(
                 1,
@@ -46708,7 +44141,7 @@ class LibraryScreen(BaseAppScreen):
                 copy="Couldn't open conversation; try again.",
             )
             return None
-        if generation != self._library_conversation_request_generation:
+        if generation != self._conversations_state.request_generation:
             return LibraryEntryReconcileResult.SUPERSEDED
         if not entry_is_current():
             return LibraryEntryReconcileResult.SUPERSEDED
@@ -46734,19 +44167,19 @@ class LibraryScreen(BaseAppScreen):
             )
             return None
 
-        self._library_conversation_page_records = records
-        self._library_conversation_page = resolved_page
-        self._library_conversation_total = total
-        self._library_conversation_total_known = True
-        self._library_conversation_has_more = has_more
-        self._library_conversation_page_loaded = True
-        self._library_conversation_query = ""
-        self._library_conversation_requested_page = resolved_page
-        self._library_conversation_requested_query = ""
-        self._library_conversation_freshness = "fresh"
-        self._library_conversation_stale_copy = ""
-        self._library_conversation_loading = False
-        self._library_conversation_error = ""
+        self._conversations_state.page_records = records
+        self._conversations_state.page = resolved_page
+        self._conversations_state.total = total
+        self._conversations_state.total_known = True
+        self._conversations_state.has_more = has_more
+        self._conversations_state.page_loaded = True
+        self._conversations_state.query = ""
+        self._conversations_state.requested_page = resolved_page
+        self._conversations_state.requested_query = ""
+        self._conversations_state.freshness = "fresh"
+        self._conversations_state.stale_copy = ""
+        self._conversations_state.loading = False
+        self._conversations_state.error = ""
         self._selected_conversation_id = record_id
         if entry_origin:
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
@@ -46773,63 +44206,13 @@ class LibraryScreen(BaseAppScreen):
         return None
 
     def _notify_library_conversation_unavailable(self) -> None:
-        """Preserve the existing deep-link warning for an unavailable target."""
+        return self._conversations_controller._notify_library_conversation_unavailable()
 
-        notify = getattr(self.app_instance, "notify", None)
-        if callable(notify):
-            notify("Conversation is unavailable.", severity="warning")
 
     @staticmethod
-    def _validate_library_conversation_locator(
-        response: object,
-        conversation_id: str,
-    ) -> tuple[tuple[Mapping[str, Any], ...], int, int, bool]:
-        """Validate the bounded rank-derived Conversation locator envelope."""
+    def _validate_library_conversation_locator(response: object, conversation_id: str) -> tuple[tuple[Mapping[str, Any], ...], int, int, bool]:
+        return LibraryConversationsController._validate_library_conversation_locator(response, conversation_id)
 
-        if not isinstance(response, Mapping):
-            raise ValueError("Conversation locator response must be a mapping.")
-        pagination = response.get("pagination")
-        if not isinstance(pagination, Mapping):
-            raise ValueError("Conversation locator pagination is required.")
-        limit = pagination.get("limit")
-        offset = pagination.get("offset")
-        page = pagination.get("page")
-        total = pagination.get("total")
-        target_index = pagination.get("target_index")
-        coordinates = (limit, offset, page, total, target_index)
-        if any(
-            isinstance(value, bool) or not isinstance(value, int)
-            for value in coordinates
-        ):
-            raise ValueError("Conversation locator coordinates must be integers.")
-        if limit != LIBRARY_CONVERSATION_PAGE_SIZE or target_index < 0:
-            raise ValueError("Conversation locator coordinates are invalid.")
-        expected_offset = (target_index // limit) * limit
-        if (
-            offset != expected_offset
-            or page != expected_offset // limit + 1
-            or target_index >= total
-        ):
-            raise ValueError("Conversation locator owner page is invalid.")
-        validated = validate_library_conversation_page(
-            response,
-            requested_limit=limit,
-            requested_offset=offset,
-        )
-        local_index = target_index - offset
-        if (
-            local_index < 0
-            or local_index >= len(validated.items)
-            or str(
-                validated.items[local_index].get("id")
-                or validated.items[local_index].get("conversation_id")
-                or validated.items[local_index].get("uuid")
-                or ""
-            ).strip()
-            != conversation_id
-        ):
-            raise ValueError("Conversation locator target position is invalid.")
-        return validated.items, page, validated.total, validated.has_more
 
     @on(Button.Pressed, "#library-rag-use-selected-in-console")
     def use_selected_library_rag_result_in_console(
@@ -47819,60 +45202,18 @@ class LibraryScreen(BaseAppScreen):
         return library_rag_scope_summary(panel_state.scope)
 
     def _open_selected_conversation_handoff(self) -> None:
-        if self._library_conversation_freshness != "fresh":
-            return
-        if not self._library_conversation_reader_state.loaded_actions_eligible:
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify(
-                    "Wait for the selected conversation to finish loading.",
-                    severity="warning",
-                )
-            return
-        workspace_state = self._library_workspace_depth_state()
-        payload = self._selected_conversation_handoff_payload()
-        notify = getattr(self.app_instance, "notify", None)
-        if payload is None:
-            if callable(notify):
-                notify(
-                    "Select a conversation before using it in Console.",
-                    severity="warning",
-                )
-            return
-        # Single-item action: gate on THIS conversation's own workspace
-        # eligibility, not the aggregate blocked-count — one foreign item
-        # elsewhere in the Library must not veto an eligible conversation
-        # (TASK-15423). Bulk staging keeps the aggregate gate.
-        item_eligible, item_reason = library_item_context_handoff(
-            workspace_state,
-            item_type=payload.item_type,
-            item_id=str(payload.source_id or ""),
-        )
-        if not item_eligible:
-            if callable(notify):
-                notify(item_reason, severity="warning")
-            return
-        open_chat_with_handoff = getattr(
-            self.app_instance, "open_chat_with_handoff", None
-        )
-        if not callable(open_chat_with_handoff):
-            if callable(notify):
-                notify(
-                    "Console handoff is unavailable for Library Conversations.",
-                    severity="warning",
-                )
-            return
-        open_chat_with_handoff(payload, action_label="Use in Console")
+        return self._conversations_controller._open_selected_conversation_handoff()
+
 
     @on(Button.Pressed, "#library-conversation-open-console")
     def open_selected_conversation_in_console(self, event: Button.Pressed) -> None:
-        event.stop()
-        self._open_selected_conversation_handoff()
+        return self._conversations_controller.open_selected_conversation_in_console(event)
+
 
     @on(Button.Pressed, "#library-conversation-use-source")
     def use_selected_conversation_as_source(self, event: Button.Pressed) -> None:
-        event.stop()
-        self._open_selected_conversation_handoff()
+        return self._conversations_controller.use_selected_conversation_as_source(event)
+
 
     def _open_selected_media_handoff(self) -> None:
         """Stage the media item open in the viewer into Console via the shared handoff.
@@ -48139,3 +45480,43 @@ class LibraryScreen(BaseAppScreen):
             ),
             action_label="Use in Console",
         )
+
+# task 8: classmethod dependency binding -- `_conversation_workspace_label`/
+# `_conversation_updated_label`'s moved bodies (byte-for-byte, on
+# `LibraryConversationsController`) call `cls._safe_text(...)`. `_safe_text`
+# is a general Library-wide staticmethod with ~36 non-Conversations call
+# sites, so it stays on `LibraryScreen` and is NOT itself moved. A
+# classmethod dispatches via the class object, not an instance, so the
+# usual per-instance constructor-dependency lambda (the canon's binding
+# kind 2) has no instance to attach to here; this rebinds the SAME name
+# onto the controller class object instead, once, at import time -- done
+# from this module (not the controller module) to avoid the circular
+# import a controller-side `from ..Screens.library_screen import
+# LibraryScreen` would create (the controller module is imported by this
+# one, before `LibraryScreen` itself is defined).
+#
+# This is the CONTROLLER'S ONLY BINDING for `_safe_text` -- there is no
+# `@property`/constructor parameter for it, deliberately. This line is a
+# plain class-attribute assignment (`ClassName.attr = value`), which
+# REPLACES whatever was previously on the class under that name; a
+# `@property` of the same name defined in the class body would be
+# silently overwritten (not merged with, not consulted by) this
+# assignment the instant this module is imported -- which is why an
+# earlier version of this controller carrying BOTH a `_safe_text`
+# `@property` (reading an injected `safe_text` constructor callable) AND
+# this line was reviewed and found to have dead code: the property/
+# parameter/backing attribute could never run, because by the time any
+# `LibraryConversationsController` instance exists, `LibraryScreen` (and
+# hence this line) has necessarily already been imported and has already
+# overwritten the property. Since `_safe_text` is a plain `@staticmethod`
+# (no `self`/`cls` of its own), the SAME class-level callable correctly
+# serves both call shapes in the cluster's moved bodies:
+# `self._safe_text(...)` (3 regular-method sites) and `cls._safe_text(...)`
+# (2 classmethod sites) -- one binding, not two. A test constructing
+# `LibraryConversationsController` directly without ever importing
+# `library_screen` will not have this class attribute at all (an
+# `AttributeError`, not a working injected stub) -- an accepted
+# consequence of the class-level-only design, not a bug to route around;
+# production code always imports `library_screen` before any instance of
+# this controller can exist.
+LibraryConversationsController._safe_text = staticmethod(LibraryScreen._safe_text)

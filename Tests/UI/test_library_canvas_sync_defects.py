@@ -673,7 +673,7 @@ async def test_entry_canvas_sync_does_not_focus_an_unrelated_replacement_row():
             },
             conversations[1],
         )
-        screen._library_conversation_page_records = records["conversations"]
+        screen._conversations_state.page_records = records["conversations"]
         screen._apply_local_source_snapshot(
             records,
             dict(screen._local_source_counts),

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import operator
 import threading
 from pathlib import Path
 
@@ -71,8 +72,15 @@ DESTINATION_CONTRACT = {
         "#library-row-browse-conversations",
         "#library-conversations-reader-shell",
         "#library-conversation-row-1",
-        "_library_conversation_reader_preferences",
-        "_library_conversation_reader_layout",
+        # Task 9: conversations' own reader_preferences/reader_layout
+        # fields moved to ``screen._conversations_state.<field>`` -- one
+        # extra hop a bare ``getattr(screen, name)`` can't express. Every
+        # call site below reads these two contract entries through
+        # ``operator.attrgetter`` instead of plain ``getattr`` so it stays
+        # a passthrough for the other five, not-yet-extracted,
+        # destinations' flat attribute names.
+        "_conversations_state.reader_preferences",
+        "_conversations_state.reader_layout",
     ),
     "notes": (
         "#library-row-browse-notes",
@@ -358,7 +366,7 @@ async def _open_destination(screen, pilot, destination: str):
     restore_closed_library = bool(
         mounted_shells
         and {
-            getattr(screen, contract[3]).library_open
+            operator.attrgetter(contract[3])(screen).library_open
             for contract in DESTINATION_CONTRACT.values()
         }
         == {False}
@@ -369,7 +377,7 @@ async def _open_destination(screen, pilot, destination: str):
             pilot,
             lambda: (
                 {
-                    getattr(screen, contract[3]).library_open
+                    operator.attrgetter(contract[3])(screen).library_open
                     for contract in DESTINATION_CONTRACT.values()
                 }
                 == {True}
@@ -417,7 +425,7 @@ async def _open_destination(screen, pilot, destination: str):
             == second.capture_identity
         ),
         "conversations": lambda: (
-            str(screen._library_conversation_reader_state.selected_id or "")
+            str(screen._conversations_state.reader_state.selected_id or "")
             == str(second.conversation_id)
         ),
         "notes": lambda: str(screen._selected_note_id or "") == str(second.note_id),
@@ -463,9 +471,9 @@ async def _open_destination(screen, pilot, destination: str):
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_conversation_reader_state.selected_id == expected
-                and screen._library_conversation_reader_state.loaded_id == expected
-                and not screen._library_conversation_reader_state.loading
+                screen._conversations_state.reader_state.selected_id == expected
+                and screen._conversations_state.reader_state.loaded_id == expected
+                and not screen._conversations_state.reader_state.loading
             ),
             message="Conversation second selection did not settle",
         )
@@ -525,7 +533,7 @@ async def _open_destination(screen, pilot, destination: str):
             pilot,
             lambda: (
                 {
-                    getattr(screen, contract[3]).library_open
+                    operator.attrgetter(contract[3])(screen).library_open
                     for contract in DESTINATION_CONTRACT.values()
                 }
                 == {False}
@@ -559,9 +567,9 @@ def _destination_state(screen, destination: str) -> tuple[object, ...]:
         )
     elif destination == "conversations":
         semantic = (
-            screen._library_conversation_reader_state.selected_id,
-            screen._library_conversation_reader_state.loaded_id,
-            screen._library_conversation_reader_state.mode,
+            screen._conversations_state.reader_state.selected_id,
+            screen._conversations_state.reader_state.loaded_id,
+            screen._conversations_state.reader_state.mode,
         )
     elif destination == "notes":
         mode = (
@@ -583,8 +591,8 @@ def _destination_state(screen, destination: str) -> tuple[object, ...]:
         id(shell),
         id(shell.items),
         id(shell.work),
-        getattr(screen, preferences_name),
-        getattr(screen, layout_name),
+        operator.attrgetter(preferences_name)(screen),
+        operator.attrgetter(layout_name)(screen),
         semantic,
     )
 
@@ -598,8 +606,8 @@ def _durable_live_oracle(
     observations: dict[str, object],
 ) -> dict[str, object]:
     """Capture the bounded structured truth shared by durable live journeys."""
-    preferences = getattr(screen, DESTINATION_CONTRACT[destination][3])
-    layout = getattr(screen, DESTINATION_CONTRACT[destination][4])
+    preferences = operator.attrgetter(DESTINATION_CONTRACT[destination][3])(screen)
+    layout = operator.attrgetter(DESTINATION_CONTRACT[destination][4])(screen)
     if destination == "media":
         state = screen._library_media_reader_session
         record = {
@@ -629,7 +637,7 @@ def _durable_live_oracle(
             "mode": screen._library_collections_reader_mode,
         }
     elif destination == "conversations":
-        state = screen._library_conversation_reader_state
+        state = screen._conversations_state.reader_state
         record = {
             "selected": state.selected_id,
             "pending": state.selected_id if state.loading else None,
@@ -928,7 +936,7 @@ async def _exercise_closeout_preferences_restore_in_fresh_screen(
             shell = None
             for destination, items_open in expected.items():
                 shell = await _open_destination(screen, pilot, destination)
-                preferences = getattr(screen, DESTINATION_CONTRACT[destination][3])
+                preferences = operator.attrgetter(DESTINATION_CONTRACT[destination][3])(screen)
                 if preferences.items_open is items_open:
                     continue
                 authority = f"{destination}_items"
@@ -937,7 +945,7 @@ async def _exercise_closeout_preferences_restore_in_fresh_screen(
                 await _wait_for_condition(
                     pilot,
                     lambda authority=authority, generation=generation, destination=destination, items_open=items_open: (
-                        getattr(screen, DESTINATION_CONTRACT[destination][3]).items_open
+                        operator.attrgetter(DESTINATION_CONTRACT[destination][3])(screen).items_open
                         is items_open
                         and screen._library_reader_persistence_generations[authority]
                         > generation
@@ -955,7 +963,7 @@ async def _exercise_closeout_preferences_restore_in_fresh_screen(
                 pilot,
                 lambda: (
                     all(
-                        not getattr(screen, contract[3]).library_open
+                        not operator.attrgetter(contract[3])(screen).library_open
                         for contract in DESTINATION_CONTRACT.values()
                     )
                     and screen._library_reader_persistence_generations["library"]
@@ -991,7 +999,7 @@ async def _exercise_closeout_preferences_restore_in_fresh_screen(
             await _wait_for_library_shell(screen, pilot)
             for destination, items_open in expected.items():
                 shell = await _open_destination(screen, pilot, destination)
-                preferences = getattr(screen, DESTINATION_CONTRACT[destination][3])
+                preferences = operator.attrgetter(DESTINATION_CONTRACT[destination][3])(screen)
                 assert preferences.library_open is False
                 assert preferences.items_open is items_open
             facts = _durable_live_oracle(
@@ -1075,7 +1083,7 @@ async def _exercise_closeout_single_app_route_cycle(
                         pilot,
                         lambda: (
                             all(
-                                not getattr(screen, contract[3]).library_open
+                                not operator.attrgetter(contract[3])(screen).library_open
                                 for contract in DESTINATION_CONTRACT.values()
                             )
                             and screen._library_reader_durable_generations["library"]
@@ -1161,15 +1169,15 @@ async def _exercise_closeout_single_app_route_cycle(
                     await _wait_for_condition(
                         pilot,
                         lambda: (
-                            screen._library_conversation_reader_state.selected_id
+                            screen._conversations_state.reader_state.selected_id
                             == second_id
-                            and screen._library_conversation_reader_state.loaded_id
+                            and screen._conversations_state.reader_state.loaded_id
                             == second_id
-                            and not screen._library_conversation_reader_state.loading
+                            and not screen._conversations_state.reader_state.loading
                         ),
                         message=lambda: (
                             "Conversation B did not win rapid A-to-B selection: "
-                            f"state={screen._library_conversation_reader_state!r}; "
+                            f"state={screen._conversations_state.reader_state!r}; "
                             f"calls={stale_service.calls!r}"
                         ),
                     )
@@ -1193,11 +1201,11 @@ async def _exercise_closeout_single_app_route_cycle(
                         lambda: (
                             stale_target_id is not None
                             and screen._library_selected_row_id == "browse-notes"
-                            and screen._library_conversation_reader_state.selected_id
+                            and screen._conversations_state.reader_state.selected_id
                             == stale_target_id
-                            and screen._library_conversation_reader_state.loaded_id
+                            and screen._conversations_state.reader_state.loaded_id
                             == stale_target_id
-                            and not screen._library_conversation_reader_state.loading
+                            and not screen._conversations_state.reader_state.loading
                         ),
                         message="Late Conversation worker escaped its route fence",
                     )
@@ -1214,12 +1222,12 @@ async def _exercise_closeout_single_app_route_cycle(
                 )
                 assert shell.work.is_mounted and shell.work.display
                 assert {
-                    getattr(screen, contract[3]).library_open
+                    operator.attrgetter(contract[3])(screen).library_open
                     for contract in DESTINATION_CONTRACT.values()
                 } == {False}
                 assert not screen._library_reader_durable_preferences["library"]
                 assert (
-                    getattr(screen, DESTINATION_CONTRACT[destination][3]).items_open
+                    operator.attrgetter(DESTINATION_CONTRACT[destination][3])(screen).items_open
                     is expected_items[destination]
                 )
                 restored_focus = await _focus_closeout_work_via_f6(
