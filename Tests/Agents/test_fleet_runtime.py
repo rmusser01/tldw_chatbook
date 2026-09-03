@@ -3796,3 +3796,61 @@ def test_isolated_spawn_refuses_on_non_git_workspace(db, tmp_path):
     # No handle survives the refusal -- the reserved slot was unwound.
     assert coordinator.live_count() == 0
     assert service._agent_worktrees == {}
+
+
+# -- TASK-28238 phase 2 T4 review fix: inline spawns must refuse isolation --
+
+
+def test_isolated_spawn_refuses_without_fleet(db, monkeypatch):
+    """Review fix: `[agents] max_live_subagents == 1` (the documented
+    opt-out) means `fleet is None` -- `spawn`'s INLINE branch never
+    reaches `_launch_fleet_child`, so it can never create or admit a
+    worktree. An isolation="worktree" spawn there must refuse honestly,
+    never silently run the child inline sharing the tree.
+    """
+    service, _chat = make_inline_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "iso task", "isolation": "worktree"}),
+            "done",
+        ],
+        monkeypatch,
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    assert service._fleet is None
+    results = _tool_results(db.get_run(run_id), SPAWN_TOOL_NAME)
+    assert results and all("no_fleet" in r for r in results), results
+    # No child was created -- the refusal costs no spawn slot.
+    assert db.count_subagent_runs("c") == 0
+
+
+def test_plain_inline_spawn_without_isolation_still_works(db, monkeypatch):
+    """Sibling pin: the same fleet-off shape with NO isolation is
+    untouched by the review fix (mirrors
+    ``test_max_live_of_one_keeps_spawn_inline``)."""
+    service, _chat = make_inline_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "plain task"}),
+            "sub answer",
+            "done",
+        ],
+        monkeypatch,
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    assert service._fleet is None
+    spawn_results = _tool_results(db.get_run(run_id), SPAWN_TOOL_NAME)
+    assert spawn_results == ["sub answer"]
+    assert db.count_subagent_runs("c") == 1

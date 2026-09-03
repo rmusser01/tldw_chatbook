@@ -5171,6 +5171,21 @@ class AgentService:
                 # record numbers unique across it.
                 run_log_writer=writer,
             )
+            if isolation == "worktree" and (fleet is None or inline):
+                # TASK-28238 P2 T4 (review fix): the INLINE path never
+                # reaches `_launch_fleet_child`, so it can never create or
+                # admit a worktree -- silently falling into it here would
+                # share the tree despite the model asking for isolation.
+                # No child was created, so this costs no spawn slot --
+                # same rule as the cap/unknown-agent refusals above.
+                sub_agent_spawns -= 1
+                return ToolResult(
+                    ok=False,
+                    error=(
+                        "worktree isolation refused [no_fleet]: isolation "
+                        "requires fleet mode (max_live_subagents > 1)"
+                    ),
+                )
             if fleet is None or inline:
                 # -- INLINE path: byte-identical to every release before
                 # PR2a. Kept, not merely tolerated: with no fleet there is
