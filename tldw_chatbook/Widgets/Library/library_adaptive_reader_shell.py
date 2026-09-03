@@ -7,6 +7,7 @@ from typing import Any, Literal
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.content import Content
 from textual.containers import Horizontal
 from textual.events import DescendantFocus
 from textual.message import Message
@@ -18,6 +19,9 @@ from tldw_chatbook.Utils.adaptive_reader_state import (
     AdaptiveReaderEffectiveLayout,
     PaneName,
 )
+
+
+LIBRARY_ARROW_UPPER_POSITION_RATIO = 0.35
 
 
 class PaneToggleRequested(Message):
@@ -73,6 +77,24 @@ class LibraryAdaptiveReaderPaneGrip(Button):
             self._name = copy
         if self.tooltip != copy:
             self.tooltip = copy
+
+    def render(self) -> Content:
+        """Paint the Library pair around the single centered Items arrow.
+
+        Returns:
+            Content: Full-height grip content with arrows at the approved rows.
+        """
+        height = max(self.content_region.height, 1)
+        last_row = height - 1
+        if self.pane == "library" and height > 1:
+            upper_row = round(last_row * LIBRARY_ARROW_UPPER_POSITION_RATIO)
+            arrow_rows = {upper_row, last_row - upper_row}
+        else:
+            arrow_rows = {last_row // 2}
+        arrow = self.label.plain
+        return Content.from_text(
+            "\n".join(arrow if row in arrow_rows else " " for row in range(height))
+        )
 
     @on(Button.Pressed)
     def request_toggle(self, event: Button.Pressed) -> None:
