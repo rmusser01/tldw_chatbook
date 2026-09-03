@@ -30776,6 +30776,14 @@ class LibraryScreen(BaseAppScreen):
             # the boundary. A focused Input still consumes "[" / "]" first.
             if not self._library_media_item_traversal_active():
                 return False
+            # task-30041 (critique P1): with an active review set the keys
+            # walk the PINNED SET, so browse-row adjacency is the wrong
+            # gate -- it disabled the documented final-] completion gesture
+            # at the last browse row and misfired whenever set order
+            # diverged from browse order. The walk clamps safely at the
+            # set's ends.
+            if self._review_set_active():
+                return True
             direction = 1 if action == "library_media_next_item" else -1
             return self._library_media_adjacent_row(direction) is not None
         if action in (
@@ -41853,6 +41861,22 @@ class LibraryScreen(BaseAppScreen):
         service = self._review_set_service()
         if service is None:
             return False
+        # task-30042 (user ruling: silent failure is never acceptable): a
+        # storage error mid-walk surfaces and consumes the key -- falling
+        # through to browse traversal would stack a second action on top of
+        # an error the user hasn't seen yet.
+        try:
+            return self._walk_active_review_set_unguarded(service, direction)
+        except Exception:
+            logger.opt(exception=True).warning("review-set walk failed")
+            self._notify_review_set(
+                "Couldn't walk the review set — storage error.",
+                severity="error",
+            )
+            return True
+
+    def _walk_active_review_set_unguarded(self, service, direction: int) -> bool:
+        """The walk body; storage exceptions are the caller's to surface."""
         review_set = service.get_active_review_set()
         if review_set is None:
             return False
@@ -41899,19 +41923,31 @@ class LibraryScreen(BaseAppScreen):
         outcome = plan_walk(
             review_set.items, displayed_position, direction, is_live
         )
+        was_complete = review_set.completed_at is not None
         if outcome.mark_done_backing_id is not None:
             service.mark_item_done(
                 review_set.set_id, outcome.mark_done_backing_id, True
             )
         if outcome.new_cursor != review_set.cursor:
             service.set_cursor(review_set.set_id, outcome.new_cursor)
-        service.refresh_completion(review_set.set_id, is_live)
+        complete = service.refresh_completion(review_set.set_id, is_live)
         if outcome.target is not None:
             self._select_library_media_reader_row(
                 f"local:media:{outcome.target.backing_media_id}",
                 outcome.target.title_snapshot,
                 immediate=True,
             )
+        else:
+            # task-30041 (critique P1): the clamp step -- including the
+            # final-] completion gesture -- changes marks/completion without
+            # loading a new item, so the Reader chrome must refresh here or
+            # the footer stays stale at exactly the finish.
+            self._sync_library_media_viewer_or_recompose()
+        if complete and not was_complete and outcome.mark_done_backing_id is not None:
+            live_count = sum(
+                1 for item in review_set.items if is_live(item.backing_media_id)
+            )
+            self._notify_review_set(f"All {live_count} reviewed.")
         return True
 
     def _active_review_set_progress(self) -> str | None:
@@ -41944,9 +41980,23 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def _review_set_active(self) -> bool:
-        """True when a review set is active (drives the Reader footer + gating)."""
+        """True when a review set is active (drives the Reader footer + gating).
+
+        Fails CLOSED on a storage error (Qodo #2346): this runs on every key
+        resolution and footer render, so raising here would crash-loop the
+        screen and a notice here would toast-storm. The keys degrade to
+        browse traversal; the explicit gesture paths carry the notices.
+        """
         service = self._review_set_service()
-        return service is not None and service.get_active_review_set() is not None
+        if service is None:
+            return False
+        try:
+            return service.get_active_review_set() is not None
+        except Exception:
+            logger.opt(exception=True).warning(
+                "review-set active-check failed; gating fails closed"
+            )
+            return False
 
     def action_library_media_exit_review(self) -> None:
         """Exit review mode: deactivate the active set, keeping it resumable.
@@ -41958,9 +42008,19 @@ class LibraryScreen(BaseAppScreen):
         if not self._library_media_item_traversal_active():
             return
         service = self._review_set_service()
-        if service is None or service.get_active_review_set() is None:
+        if service is None:
             return
-        service.deactivate_active()
+        # task-30042: surface a storage error instead of crashing the action.
+        try:
+            if service.get_active_review_set() is None:
+                return
+            service.deactivate_active()
+        except Exception:
+            logger.opt(exception=True).warning("review-set exit failed")
+            self._notify_review_set(
+                "Couldn't exit review — storage error.", severity="error"
+            )
+            return
         self._sync_library_media_viewer_or_recompose()
 
     def action_library_media_toggle_reviewed(self) -> None:
@@ -41976,6 +42036,19 @@ class LibraryScreen(BaseAppScreen):
         service = self._review_set_service()
         if service is None:
             return
+        # task-30042: a storage error on an explicit mark gesture surfaces
+        # instead of crashing the action or silently dropping the mark.
+        try:
+            self._toggle_reviewed_unguarded(service)
+        except Exception:
+            logger.opt(exception=True).warning("review-set toggle failed")
+            self._notify_review_set(
+                "Couldn't update the reviewed mark — storage error.",
+                severity="error",
+            )
+
+    def _toggle_reviewed_unguarded(self, service) -> None:
+        """The toggle body; storage exceptions are the caller's to surface."""
         review_set = service.get_active_review_set()
         if review_set is None:
             return
@@ -42203,6 +42276,11 @@ class LibraryScreen(BaseAppScreen):
             return
         service = self._review_set_service()
         if service is None:
+            # task-30042: the items resolved but there is nowhere to pin
+            # them -- say so instead of silently discarding the gesture.
+            self._notify_review_set(
+                self._REVIEW_SET_STORAGE_UNAVAILABLE, severity="error"
+            )
             return
         service.create_review_set(name, origin, items)
         if truncated:
@@ -42213,6 +42291,8 @@ class LibraryScreen(BaseAppScreen):
         else:
             self._notify_review_set(f"Reviewing {len(items)} items.")
         self._open_library_media_viewer(f"local:media:{items[0][0]}")
+
+    _REVIEW_SET_STORAGE_UNAVAILABLE = "Review-set storage is unavailable."
 
     def _notify_review_set(
         self, message: str, *, severity: str = "information"
@@ -42249,6 +42329,11 @@ class LibraryScreen(BaseAppScreen):
         try:
             service = self._review_set_service()
             if service is None:
+                # task-30042: a dead button is indistinguishable from the
+                # feature not existing -- the press always responds.
+                self._notify_review_set(
+                    self._REVIEW_SET_STORAGE_UNAVAILABLE, severity="error"
+                )
                 return
             rows = await self._run_library_service_call(
                 self._collect_review_set_picker_rows, isolate_in_worker=True
@@ -42442,10 +42527,19 @@ class LibraryScreen(BaseAppScreen):
         back to the list plus re-entry shows the list, never a yank loop.
         AC#3: the final still-on-the-media-list + current-screen gates make
         a cold-start yank abort without opening (and without burning the
-        once-per-set chance). Auto-resume is a convenience: any failure is
-        silent, never a notice or a crash.
+        once-per-set chance). task-30042 (user ruling): failures are NEVER
+        silent -- missing storage warns once per session, and any storage
+        error surfaces; only the ordinary no-active-set case stays quiet.
         """
         try:
+            if self._review_set_service() is None:
+                if not getattr(self, "_review_set_storage_warned", False):
+                    self._review_set_storage_warned = True
+                    self._notify_review_set(
+                        self._REVIEW_SET_STORAGE_UNAVAILABLE,
+                        severity="warning",
+                    )
+                return
             landing = await self._run_library_service_call(
                 self._resolve_active_review_set_landing, isolate_in_worker=True
             )
@@ -42465,7 +42559,13 @@ class LibraryScreen(BaseAppScreen):
             self._review_set_auto_resumed = resumed
             self._open_library_media_viewer(f"local:media:{backing_id}")
         except Exception:
-            return
+            # task-30042: resuming failed on a real error -- surface it; the
+            # user has an active set they can no longer see.
+            logger.opt(exception=True).warning("review-set auto-resume failed")
+            self._notify_review_set(
+                "Couldn't resume the review set — storage error.",
+                severity="error",
+            )
 
     def _resolve_active_review_set_landing(self) -> tuple[str, int] | None:
         """Resolve the active set's live cursor item (runs off the loop).
