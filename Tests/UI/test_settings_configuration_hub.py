@@ -8,6 +8,7 @@ import time
 import builtins
 import tomllib
 from collections import UserDict
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -36,9 +37,18 @@ from Tests.UI.test_destination_shells import (
     _visible_text,
     _wait_for_selector,
 )
+from Tests.UI.test_console_session_settings import (
+    _assert_public_value_equal,
+    _assert_schema_key_absent,
+    _bare_console_state_screen,
+)
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
 import tldw_chatbook.config as config_module
 from tldw_chatbook.Chat import provider_setup_persistence as provider_persistence_module
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Constants import TAB_CHAT
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.Utils import input_validation as input_validation_module
 from tldw_chatbook.UI.Screens.provider_model_resolution import (
@@ -65,6 +75,9 @@ from tldw_chatbook.UI.Screens.settings_config_models import (
     SettingsCategoryId,
     SettingsDraft,
     SettingsValidationResult,
+)
+from tldw_chatbook.Widgets.Console.console_settings_modal import (
+    ConsoleSettingsDraftSnapshot,
 )
 from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
     SettingsEndpointProbeOutcome,
@@ -351,6 +364,17 @@ def _assert_log_capture_is_live_and_private_free(
         pytest.fail(f"safe marker missing from {surface_label}", pytrace=False)
     if saw_private_value:
         pytest.fail(f"private value leaked through {surface_label}", pytrace=False)
+
+
+def _assert_public_text_present(
+    surface: str,
+    expected_text: str,
+    *,
+    surface_label: str,
+) -> None:
+    """Check a public marker without rendering the inspected surface on failure."""
+    if expected_text not in surface:
+        pytest.fail(f"public marker missing from {surface_label}", pytrace=False)
 
 
 def _capture_provider_settings_mutations(monkeypatch):
@@ -7580,6 +7604,45 @@ async def test_conversation_settings_return_keeps_mounted_credential_out_of_tran
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
     app.app_config["api_settings"] = {"openai": {}}
+    snapshot_marker = "TASK30010-linked-private-console-snapshot-31d5"
+    suspended_snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(
+            provider="openai",
+            model="gpt-5",
+            system_prompt=snapshot_marker,
+        ),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-model-picker": "gpt-5"},
+        provider_model_drafts={"openai": "gpt-5"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=2,
+        focus_control_id="console-settings-model-picker",
+        disclosure_state={
+            "advanced_generation": False,
+            "connection_details": False,
+        },
+    )
+    console_store = ConsoleChatStore()
+    console_store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="openai",
+            model="gpt-5",
+            system_prompt="Committed mounted-journey prompt",
+        )
+    )
+    console_screen = _bare_console_state_screen(console_store)
+    console_screen._suspended_conversation_settings = suspended_snapshot
+    console_screen._suspended_conversation_settings_token = 1
+    seeded_console_snapshot = console_screen._serialize_native_console_state()
+    if seeded_console_snapshot is None:
+        pytest.fail("Console serializer produced no snapshot", pytrace=False)
+    runtime_identity = app._current_runtime_identity()
+    app.screen_state_store.save(
+        TAB_CHAT,
+        seeded_console_snapshot,
+        runtime_identity,
+    )
     intent, target = _stage_conversation_settings_return_intent(app)
     mutations = _capture_provider_settings_mutations(monkeypatch)
     host = ConversationReturnSettingsHarness(app)
@@ -7614,7 +7677,11 @@ async def test_conversation_settings_return_keeps_mounted_credential_out_of_tran
                 surface_label="masked API-key field render",
             )
             frame = host.export_screenshot()
-            assert "Providers" in frame
+            _assert_public_text_present(
+                frame,
+                "Providers",
+                surface_label="mounted Settings compositor frame",
+            )
             _assert_private_values_absent(
                 frame,
                 private_values,
@@ -7700,6 +7767,54 @@ async def test_conversation_settings_return_keeps_mounted_credential_out_of_tran
         saw_safe_marker=loguru_capture[0],
         saw_private_value=loguru_capture[1],
         surface_label="loguru capture",
+    )
+    linked_console_snapshot = app.screen_state_store.restore(
+        TAB_CHAT,
+        runtime_identity,
+    )
+    if linked_console_snapshot is None:
+        pytest.fail("linked Console snapshot was not restored", pytrace=False)
+    _assert_private_values_absent(
+        linked_console_snapshot,
+        private_values,
+        surface_label="linked Console screen-state snapshot",
+    )
+    _assert_schema_key_absent(
+        linked_console_snapshot,
+        "api_key",
+        surface_label="linked Console screen-state snapshot",
+    )
+    restored_suspended_snapshot = ConsoleSettingsDraftSnapshot.from_mapping(
+        linked_console_snapshot.get("suspended_conversation_settings")
+    )
+    if restored_suspended_snapshot is None:
+        pytest.fail("linked Console suspended draft was not restored", pytrace=False)
+    _assert_private_value_matches_opaquely(
+        restored_suspended_snapshot.settings.system_prompt,
+        snapshot_marker,
+        surface_label="linked Console suspended-draft identity",
+    )
+
+    injected_snapshot = deepcopy(linked_console_snapshot)
+    injected_snapshot["suspended_conversation_settings"]["raw_values"][
+        "console-settings-temperature"
+    ] = credential
+    with pytest.raises(pytest.fail.Exception) as injected_failure:
+        _assert_private_values_absent(
+            injected_snapshot,
+            private_values,
+            surface_label="linked Console screen-state snapshot",
+        )
+    injected_failure_text = str(injected_failure.value)
+    _assert_private_values_absent(
+        injected_failure_text,
+        private_values,
+        surface_label="linked snapshot failure artifact",
+    )
+    _assert_public_value_equal(
+        injected_failure_text,
+        "private value leaked through linked Console screen-state snapshot",
+        surface_label="linked snapshot failure copy",
     )
 
 

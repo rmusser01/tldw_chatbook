@@ -152,6 +152,78 @@ def _assert_log_capture_is_live_and_private_free(
         pytest.fail(f"private value leaked through {surface_label}", pytrace=False)
 
 
+def _assert_public_value_equal(
+    actual: object,
+    expected: object,
+    *,
+    surface_label: str,
+) -> None:
+    """Compare public structure without rendering an inspected value on failure."""
+    if actual != expected:
+        pytest.fail(f"unexpected public value in {surface_label}", pytrace=False)
+
+
+def _assert_private_value_is_none(actual: object, *, surface_label: str) -> None:
+    """Assert private optional state is empty without rendering it on failure."""
+    if actual is not None:
+        pytest.fail(f"unexpected private value in {surface_label}", pytrace=False)
+
+
+def _assert_schema_key_absent(
+    surface: object,
+    forbidden_key: str,
+    *,
+    surface_label: str,
+) -> None:
+    """Inspect nested container keys without rendering any container values."""
+    if isinstance(surface, dict):
+        if forbidden_key in surface:
+            pytest.fail(
+                f"forbidden schema field present in {surface_label}",
+                pytrace=False,
+            )
+        for value in surface.values():
+            _assert_schema_key_absent(
+                value,
+                forbidden_key,
+                surface_label=surface_label,
+            )
+    elif isinstance(surface, (list, tuple)):
+        for value in surface:
+            _assert_schema_key_absent(
+                value,
+                forbidden_key,
+                surface_label=surface_label,
+            )
+
+
+def _bare_console_state_screen(store: ConsoleChatStore) -> ChatScreen:
+    """Build the minimal real Console serializer fixture used by privacy tests."""
+    screen = ChatScreen.__new__(ChatScreen)
+    screen._console_runtime_ref = SimpleNamespace(
+        chat_store=store,
+        set_chat_store=lambda value: setattr(
+            screen._console_runtime_ref, "chat_store", value
+        ),
+    )
+    screen._ensure_console_chat_store = lambda: store
+    screen._session = SimpleNamespace(_console_visible_draft_session_id=None)
+    image_state = SimpleNamespace(
+        prune=lambda _ids: None,
+        serialize=lambda: {},
+    )
+    screen._stash_console_pending_attachments = lambda _store: None
+    screen._console_visible_draft_session_id = None
+    screen._console_composer_or_none = lambda: None
+    screen._ensure_console_image_view = lambda: (image_state, SimpleNamespace())
+    screen._task_resume_state = TaskResumeState()
+    screen._console_library_rag_source_types = ("media", "notes", "conversations")
+    screen._pending_console_launch_context = None
+    screen._console_evidence_sent_notice = None
+    screen._message = SimpleNamespace()
+    return screen
+
+
 def test_private_surface_assertions_keep_failure_messages_value_free() -> None:
     """A failing privacy oracle reports only its fixed surface label."""
     private_value = "TASK30010-helper-private-value"
@@ -174,15 +246,44 @@ def test_private_surface_assertions_keep_failure_messages_value_free() -> None:
             saw_private_value=True,
             surface_label="helper logger probe",
         )
+    with pytest.raises(pytest.fail.Exception) as schema_failure:
+        _assert_schema_key_absent(
+            {"nested": {"api_key": private_value}},
+            "api_key",
+            surface_label="helper schema probe",
+        )
 
-    assert str(leak_failure.value) == (
-        "private value leaked through helper absence probe"
+    failure_artifacts = (
+        str(leak_failure.value),
+        str(mismatch_failure.value),
+        str(log_failure.value),
+        str(schema_failure.value),
     )
-    assert str(mismatch_failure.value) == (
-        "private value mismatch in helper digest probe"
+    for failure_artifact in failure_artifacts:
+        _assert_private_values_absent(
+            failure_artifact,
+            (private_value,),
+            surface_label="privacy-helper failure artifact",
+        )
+    _assert_public_value_equal(
+        failure_artifacts[0],
+        "private value leaked through helper absence probe",
+        surface_label="absence-helper failure copy",
     )
-    assert str(log_failure.value) == (
-        "private value leaked through helper logger probe"
+    _assert_public_value_equal(
+        failure_artifacts[1],
+        "private value mismatch in helper digest probe",
+        surface_label="digest-helper failure copy",
+    )
+    _assert_public_value_equal(
+        failure_artifacts[2],
+        "private value leaked through helper logger probe",
+        surface_label="logger-helper failure copy",
+    )
+    _assert_public_value_equal(
+        failure_artifacts[3],
+        "forbidden schema field present in helper schema probe",
+        surface_label="schema-helper failure copy",
     )
 
 
@@ -663,33 +764,11 @@ def test_credential_request_stages_only_a_secret_free_return_and_navigation_cont
     store = ConsoleChatStore()
     session = store.create_session(settings=committed_settings)
     messages = []
-    screen = ChatScreen.__new__(ChatScreen)
+    screen = _bare_console_state_screen(store)
     screen.app_instance = SimpleNamespace(
         pending_handoffs=chat_screen_module.PendingHandoffStore(),
     )
-    screen._console_runtime_ref = SimpleNamespace(
-        chat_store=store,
-        set_chat_store=lambda value: setattr(
-            screen._console_runtime_ref, "chat_store", value
-        ),
-    )
-    screen._ensure_console_chat_store = lambda: store
     screen.post_message = messages.append
-
-    screen._session = SimpleNamespace(_console_visible_draft_session_id=None)
-    image_state = SimpleNamespace(
-        prune=lambda _ids: None,
-        serialize=lambda: {},
-    )
-    screen._stash_console_pending_attachments = lambda _store: None
-    screen._console_visible_draft_session_id = None
-    screen._console_composer_or_none = lambda: None
-    screen._ensure_console_image_view = lambda: (image_state, SimpleNamespace())
-    screen._task_resume_state = TaskResumeState()
-    screen._console_library_rag_source_types = ("media", "notes", "conversations")
-    screen._pending_console_launch_context = None
-    screen._console_evidence_sent_notice = None
-    screen._message = SimpleNamespace()
 
     from loguru import logger as loguru_logger
 
@@ -727,7 +806,8 @@ def test_credential_request_stages_only_a_secret_free_return_and_navigation_cont
         loguru_messages.clear()
 
     retained_snapshot = screen._suspended_conversation_settings
-    assert isinstance(retained_snapshot, ConsoleSettingsDraftSnapshot)
+    if not isinstance(retained_snapshot, ConsoleSettingsDraftSnapshot):
+        pytest.fail("Console suspended snapshot was not retained", pytrace=False)
     _assert_private_value_matches_opaquely(
         retained_snapshot.settings.system_prompt,
         system_prompt,
@@ -749,7 +829,10 @@ def test_credential_request_stages_only_a_secret_free_return_and_navigation_cont
         "Committed session prompt",
         surface_label="committed Console session prompt",
     )
-    assert committed.pinned_prefill is None
+    _assert_private_value_is_none(
+        committed.pinned_prefill,
+        surface_label="committed Console session prefill",
+    )
     assert store.session_settings_revision(session.id) == 0
     assert len(messages) == 1
     navigation = messages[0]
@@ -773,19 +856,22 @@ def test_credential_request_stages_only_a_secret_free_return_and_navigation_cont
         private_values,
         surface_label="return handoff context",
     )
-    assert "127.0.0.1" not in repr(settings_navigation_context)
     _assert_private_values_absent(
         settings_navigation_context,
-        private_values,
+        (*private_values, "http://127.0.0.1:9099"),
         surface_label="Settings navigation context",
     )
-    assert settings_navigation_context == {
-        "category": "providers-models",
-        "provider": "llama_cpp",
-        "model": "model-a",
-        "field": "api_key",
-        "return_revision": claim.revision,
-    }
+    _assert_public_value_equal(
+        settings_navigation_context,
+        {
+            "category": "providers-models",
+            "provider": "llama_cpp",
+            "model": "model-a",
+            "field": "api_key",
+            "return_revision": claim.revision,
+        },
+        surface_label="Settings navigation context shape",
+    )
     assert serialized_console is not None
     suspended = serialized_console["suspended_conversation_settings"]
     restored_snapshot = ConsoleSettingsDraftSnapshot.from_mapping(suspended)
@@ -800,7 +886,11 @@ def test_credential_request_stages_only_a_secret_free_return_and_navigation_cont
         pinned_prefill,
         surface_label="serialized suspended snapshot prefill",
     )
-    assert "api_key" not in repr(serialized_console)
+    _assert_schema_key_absent(
+        serialized_console,
+        "api_key",
+        surface_label="serialized Console snapshot",
+    )
     transfer_coordinates = {
         key: value
         for key, value in serialized_console.items()
