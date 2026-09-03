@@ -53,6 +53,7 @@ from pydantic import (
 
 #
 # Local Imports
+from tldw_chatbook.Constants import DEFAULT_SPLASH_DURATION_SECONDS
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
@@ -3484,7 +3485,7 @@ openai_cache_key = false
 # Splash screen configuration for startup animations
 # See Docs/Examples/SPLASH_SCREENS_CATALOG.md for all available splash screens
 enabled = true  # Enable/disable splash screen
-duration = 1.5  # Duration in seconds to display splash screen
+duration = __DEFAULT_SPLASH_DURATION__  # Duration in seconds to display splash screen
 skip_on_keypress = true  # Allow users to skip with any keypress
 
 # Card selection mode:
@@ -5179,6 +5180,13 @@ debug = false  # Enable debug mode for development
 # absent key.
 CONFIG_TOML_CONTENT = CONFIG_TOML_CONTENT.replace(
     "__DEFAULT_TRANSCRIPTION_PROVIDER__", _default_stt_provider_for_platform()
+)
+# Same single-substitution discipline for the splash duration (PR #2329):
+# the placeholder keeps the literal out of the template and every reader --
+# the widget, the app fallback, the Settings viewer -- shares the one
+# constant from Constants.py.
+CONFIG_TOML_CONTENT = CONFIG_TOML_CONTENT.replace(
+    "__DEFAULT_SPLASH_DURATION__", str(DEFAULT_SPLASH_DURATION_SECONDS)
 )
 
 try:

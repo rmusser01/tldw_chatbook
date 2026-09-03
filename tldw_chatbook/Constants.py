@@ -1925,6 +1925,14 @@ options:
 """
 
 #: Worker group for the provider model-catalog refresh. One constant so the
+#: Default startup-splash duration in seconds. One source of truth for the
+#: SplashScreen constructor, the loaded-config fallback, the app compose
+#: fallback, the Settings viewer defaults, and the config.toml template
+#: (injected via its placeholder) -- so none of them can drift apart
+#: (Qodo review of PR #2329).
+DEFAULT_SPLASH_DURATION_SECONDS: float = 7.0
+
+
 #: dispatch sites and the worker-handler's acknowledgement set cannot drift
 #: apart through a spelling change — exclusivity and event routing both key
 #: off this exact string (Qodo review of PR #2131).

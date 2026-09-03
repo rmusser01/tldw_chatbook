@@ -153,6 +153,7 @@ from tldw_chatbook.Utils.instance_lock import (
     acquire_profile_instance_lock,
 )
 from tldw_chatbook.Constants import (
+    DEFAULT_SPLASH_DURATION_SECONDS,
     MODEL_CATALOG_REFRESH_WORKER_GROUP,
     ALL_TABS,
     TAB_CCP,
@@ -11665,7 +11666,9 @@ class TldwCli(
         logging.info(f"Splash screen enabled: {splash_enabled}")
         if splash_enabled:
             # Get splash screen configuration
-            splash_duration = get_cli_setting("splash_screen", "duration", 1.5)
+            splash_duration = get_cli_setting(
+                "splash_screen", "duration", DEFAULT_SPLASH_DURATION_SECONDS
+            )
             splash_skip = get_cli_setting("splash_screen", "skip_on_keypress", True)
             splash_progress = get_cli_setting("splash_screen", "show_progress", True)
             splash_card = get_cli_setting("splash_screen", "card_selection", "random")
