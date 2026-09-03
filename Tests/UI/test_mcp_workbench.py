@@ -3537,6 +3537,7 @@ class ToolTestHubService(FakeHubService):
         self.active_calls: list[tuple[str, str]] = []
         self._preview_count = 0
         self.next_prepared_outcome: Any | None = None
+        self.preview_profile_calls: list[tuple[str, str | None, int | None]] = []
         self.lease_observer = None
         self.lease_observations: list[int] = []
         self.session_approvals: set[tuple[str, str, str]] = set()
@@ -3561,7 +3562,9 @@ class ToolTestHubService(FakeHubService):
     ) -> bool:
         return (profile_id, server_key, tool_name) in self.session_approvals
 
-    def gate_tool_test(self, tool: Any) -> EffectiveToolState:
+    def gate_tool_test(
+        self, tool: Any, *, profile_id: str = "default"
+    ) -> EffectiveToolState:
         self.gate_calls.append((tool.server_key, tool.name))
         return EffectiveToolState(
             state=self.gate_state,
@@ -3571,7 +3574,11 @@ class ToolTestHubService(FakeHubService):
         )
 
     def gate_tool_test_by_key(
-        self, server_key: str, tool_name: str
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        profile_id: str = "default",
     ) -> EffectiveToolState:
         self.gate_by_key_calls.append((server_key, tool_name))
         return EffectiveToolState(
@@ -3657,7 +3664,17 @@ class ToolTestHubService(FakeHubService):
             raise self.raise_error
         return self.test_result
 
-    def prepare_hub_test(self, tool: HubTool) -> ToolTestAdmissionPreview:
+    def prepare_hub_test(
+        self,
+        tool: HubTool,
+        *,
+        profile_id: str = "default",
+        expected_profile_digest: str | None = None,
+        expected_revision: int | None = None,
+    ) -> ToolTestAdmissionPreview:
+        self.preview_profile_calls.append(
+            (profile_id, expected_profile_digest, expected_revision)
+        )
         self._preview_count += 1
         rendered_gate = {
             "allow": "allow",
@@ -3672,6 +3689,9 @@ class ToolTestHubService(FakeHubService):
             rendered_gate=rendered_gate,
             authority_fingerprint=None,
             safe_authority_label=None,
+            profile_id=profile_id,
+            profile_policy_digest=expected_profile_digest,
+            profile_revision=expected_revision,
         )
         self._previews[preview.nonce] = preview
         return preview
@@ -3841,6 +3861,35 @@ async def test_denied_prepared_tool_test_releases_captured_profile_lease() -> No
     assert app.unified_mcp_service.lease_observations == [1]
     assert app.unified_mcp_service.test_calls == []
     assert lifecycle.active_lease_count("default") == 0
+
+
+@pytest.mark.asyncio
+async def test_prepared_preview_receives_exact_selected_profile_context(tmp_path):
+    app = ToolTestApp()
+    store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+    store.ensure_profile("research")
+    app.unified_mcp_service.permission_store = store
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        assert await workbench.select_tool_policy_profile("research") is True
+        context = workbench._tool_policy_profile_context
+        assert context is not None
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)
+        await pilot.click("#mcp-inspector-test-tool")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+    assert app.unified_mcp_service.preview_profile_calls == [
+        (
+            "research",
+            context.policy_digest,
+            context.revision,
+        )
+    ]
 
 
 @pytest.mark.asyncio
@@ -4042,9 +4091,7 @@ async def test_queued_audit_action_rejects_profile_switch_before_handler(destina
         workbench._tool_policy_profile_context = None
 
         if destination == "tool":
-            event = MCPInspector.AuditOpenToolRequested(
-                "local:docs", "fetch", context
-            )
+            event = MCPInspector.AuditOpenToolRequested("local:docs", "fetch", context)
             await workbench.on_mcp_inspector_audit_open_tool_requested(event)
         else:
             event = MCPInspector.AuditAdjustPermissionRequested(
@@ -4615,6 +4662,46 @@ async def test_test_tool_preview_stale_refresh_preserves_current_arguments():
         assert result.splitlines()[0] == "Changed · not run"
         assert not result.startswith("Failed")
         assert "tool definition changed" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_test_tool_profile_changed_never_arms_refreshed_stale_authority():
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)
+        await pilot.click("#mcp-inspector-test-tool")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        context = workbench._tool_policy_profile_context
+        assert context is not None
+        tool = next(t for t in workbench._last_hub_tools if t.name == "fetch")
+        refreshed = replace(
+            app.unified_mcp_service.prepare_hub_test(tool),
+            profile_id=context.profile_id,
+            profile_policy_digest="f" * 64,
+            profile_revision=context.revision,
+        )
+        app.unified_mcp_service._previews[refreshed.nonce] = refreshed
+        app.unified_mcp_service.next_prepared_outcome = ToolTestAdmissionStale(
+            reason="profile_changed",
+            refreshed_preview=refreshed,
+        )
+
+        await pilot.click("#mcp-inspector-test-run")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        button = app.query_one("#mcp-inspector-test-run", Button)
+        assert str(button.label) == "Unavailable"
+        assert button.disabled is True
+        assert refreshed.nonce in app.unified_mcp_service.revoked_nonces
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert "tool policy profile changed" in result.lower()
 
 
 @pytest.mark.asyncio
@@ -6291,6 +6378,7 @@ def test_mcp_screen_accepts_bounded_tool_profile_navigation_context():
     )
     assert screen._initial_view_state()["tool_policy_profile_id"] == "research"
 
+
 def test_profile_scoped_mutation_does_not_retry_an_internal_type_error():
     context = PermissionProfileContext("default", 0, "a" * 64, None)
     calls = 0
@@ -6319,9 +6407,7 @@ async def test_named_profile_global_edit_uses_exact_captured_context(tmp_path):
         context = workbench._tool_policy_profile_context
         assert isinstance(context, PermissionProfileContext)
         await workbench.on_mcp_permissions_mode_state_cycle_requested(
-            MCPPermissionsMode.StateCycleRequested(
-                "global", "", None, "deny", context
-            )
+            MCPPermissionsMode.StateCycleRequested("global", "", None, "deny", context)
         )
 
     payload = store.load()
@@ -6389,9 +6475,7 @@ async def test_selector_hides_tombstone_and_marks_invalid_profile_unavailable(tm
             "revision": 1,
         },
     }
-    imported["tool_pack_lifecycle"]["policy_digest"] = profile_policy_digest(
-        imported
-    )
+    imported["tool_pack_lifecycle"]["policy_digest"] = profile_policy_digest(imported)
     payload["profiles"]["research"] = imported
     payload["profiles"]["custom"] = {"servers": {}}
     payload["profiles"]["ws-team"] = {"servers": {}}
@@ -6416,9 +6500,7 @@ async def test_selector_hides_tombstone_and_marks_invalid_profile_unavailable(tm
             "revision": 2,
         },
     }
-    tombstone["tool_pack_lifecycle"]["policy_digest"] = profile_policy_digest(
-        tombstone
-    )
+    tombstone["tool_pack_lifecycle"]["policy_digest"] = profile_policy_digest(tombstone)
     payload["profiles"]["removed"] = tombstone
     store.save(payload)
 
@@ -6442,7 +6524,9 @@ async def test_selector_hides_tombstone_and_marks_invalid_profile_unavailable(tm
 
 
 @pytest.mark.asyncio
-async def test_selected_profile_disappearance_falls_back_and_invalidates_context(tmp_path):
+async def test_selected_profile_disappearance_falls_back_and_invalidates_context(
+    tmp_path,
+):
     store_path = tmp_path / "mcp_permissions.json"
     store = MCPPermissionStore(store_path)
     store.ensure_profile("research")
@@ -7692,7 +7776,7 @@ async def test_reallow_round_trip_clears_config_changed_marker_and_matrix_warnin
         "local:docs",
         "search",
         "allow",
-        definition_hash="stale-hash-from-a-different-tool-shape",
+        definition_hash="a" * 64,
     )
 
     app = PermissionsApp(store_path)
@@ -7807,7 +7891,7 @@ async def test_reallow_refreshes_cascade_with_tool_rung_as_winner(tmp_path):
         "local:docs",
         "search",
         "allow",
-        definition_hash="stale-hash-from-a-different-tool-shape",
+        definition_hash="a" * 64,
     )
     app = PermissionsApp(store_path)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -8089,7 +8173,7 @@ async def test_reallow_prefixes_preview_with_echo(tmp_path):
         "local:docs",
         "search",
         "allow",
-        definition_hash="stale-hash-from-a-different-tool-shape",
+        definition_hash="a" * 64,
     )
     app = PermissionsApp(store_path)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -8309,7 +8393,7 @@ async def test_reallow_propagates_fresh_states_to_tools_mode_without_full_resync
         "local:docs",
         "search",
         "allow",
-        definition_hash="stale-hash-from-a-different-tool-shape",
+        definition_hash="a" * 64,
     )
 
     app = PermissionsApp(store_path)

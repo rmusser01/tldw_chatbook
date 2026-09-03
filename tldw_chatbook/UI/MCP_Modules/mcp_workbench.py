@@ -1955,8 +1955,10 @@ class MCPWorkbench(Container):
                     policy_digest=digest,
                     revision=revision,
                 )
-        return profiles, options, contexts.get(
-            selected_profile_id or self._tool_policy_profile_id
+        return (
+            profiles,
+            options,
+            contexts.get(selected_profile_id or self._tool_policy_profile_id),
         )
 
     @staticmethod
@@ -2112,8 +2114,7 @@ class MCPWorkbench(Container):
                 await self._sync_permissions_mode()
             return False
         if (
-            expected_revision is not None
-            and desired.revision != expected_revision
+            expected_revision is not None and desired.revision != expected_revision
         ) or (
             expected_policy_digest is not None
             and desired.policy_digest != expected_policy_digest
@@ -4606,9 +4607,7 @@ class MCPWorkbench(Container):
             return
         tool = self._tool_for(event.server_key, event.tool_name)
         if tool is None:
-            inspector.show_test_unavailable(
-                "The selected tool is no longer available."
-            )
+            inspector.show_test_unavailable("The selected tool is no longer available.")
             return
         generation = self._tool_test_generation
         lifecycle = self._tool_profile_lifecycle_authority()
@@ -4741,9 +4740,7 @@ class MCPWorkbench(Container):
                 )
                 inspector = self.query_one(MCPInspector)
                 inspector.show_test_preparing()
-                await self._prepare_tool_test_preview(
-                    tool, generation, profile_context
-                )
+                await self._prepare_tool_test_preview(tool, generation, profile_context)
             await self._refresh_test_audit()
             return
         if not self._test_panel_is_current(tool, generation):
@@ -4765,14 +4762,20 @@ class MCPWorkbench(Container):
                 admission_changed=True,
                 profile_context=profile_context,
             )
+            if outcome.reason == "profile_changed":
+                if outcome.refreshed_preview is not None:
+                    await self._revoke_test_nonce(outcome.refreshed_preview.nonce)
+                inspector.show_test_unavailable(
+                    "Tool policy profile changed. Refresh and try again."
+                )
+                await self._refresh_test_audit()
+                return
             if outcome.refreshed_preview is not None:
                 self._tool_test_preview_nonce = outcome.refreshed_preview.nonce
                 inspector.show_test_preview(outcome.refreshed_preview)
             else:
                 inspector.show_test_preparing()
-                await self._prepare_tool_test_preview(
-                    tool, generation, profile_context
-                )
+                await self._prepare_tool_test_preview(tool, generation, profile_context)
             await self._refresh_test_audit()
             return
 
@@ -4792,9 +4795,7 @@ class MCPWorkbench(Container):
                 inspector.show_test_preview(outcome.refreshed_preview)
             else:
                 inspector.show_test_preparing()
-                await self._prepare_tool_test_preview(
-                    tool, generation, profile_context
-                )
+                await self._prepare_tool_test_preview(tool, generation, profile_context)
             await self._refresh_test_audit()
             return
 
@@ -4876,6 +4877,7 @@ class MCPWorkbench(Container):
             "preview_unavailable": "The preview expired or was already used. A fresh preview is required.",
             "identity_changed": "The tool or workspace changed. Reopen the panel and retry.",
             "definition_changed": "The tool definition changed. Review the refreshed preview.",
+            "profile_changed": "The Tool policy profile changed. Refresh and try again.",
             "already_active": "A test for this tool is already active. Wait for it to finish.",
         }.get(
             str(reason),

@@ -62,4 +62,18 @@ Verification: 280 Workbench tests, 106 permission-store/control-plane permission
 ADR required: no new ADR. Existing ADR: backlog/decisions/107-portable-tool-use-packs.md.
 
 Primary files: MCP permission store and control-plane service; ToolPack service; MCP Permissions, Inspector, and Workbench UI modules; focused unit and integration tests.
+
+Latest-dev rebase follow-up: ported the profile context and lifecycle lease onto
+dev's service-owned prepared Test Tool flow. Prepared nonces now bind the exact
+profile id, policy digest, and imported revision; preview minting rejects stale or
+invalid lifecycle authority, click-time policy drift returns a bounded stale result,
+and local provider re-resolution uses the captured profile through dispatch. The UI
+revokes rather than arms refreshed authority after a profile change. Rebase fixtures
+were also aligned with the hardened SHA-256 definition-hash contract.
+
+Latest-dev verification: 568 MCP permission/store/control-plane/Inspector/ToolPack
+tests and all 332 Workbench tests passed. The rebased Settings/profile checks added
+33 passing UI tests, and the V1 closure checks added 76 passing Tool Pack/Console
+continuation tests. Scoped Ruff lint/format and git diff checks passed; the full
+repository suite was not run under the targeted-test policy.
 <!-- SECTION:NOTES:END -->

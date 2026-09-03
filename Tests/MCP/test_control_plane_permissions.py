@@ -168,15 +168,9 @@ def test_session_approvals_are_isolated_by_exact_profile_id(tmp_path):
 
     service.approve_for_session("local:docs", "search", profile_id="research")
 
-    assert service.is_session_approved(
-        "local:docs", "search", profile_id="research"
-    )
-    assert not service.is_session_approved(
-        "local:docs", "search", profile_id="default"
-    )
-    assert not service.is_session_approved(
-        "local:docs", "search", profile_id="other"
-    )
+    assert service.is_session_approved("local:docs", "search", profile_id="research")
+    assert not service.is_session_approved("local:docs", "search", profile_id="default")
+    assert not service.is_session_approved("local:docs", "search", profile_id="other")
 
 
 def test_profile_scoped_session_clear_preserves_other_profiles(tmp_path):
@@ -189,9 +183,7 @@ def test_profile_scoped_session_clear_preserves_other_profiles(tmp_path):
     assert not service.is_session_approved(
         "local:docs", "search", profile_id="research"
     )
-    assert service.is_session_approved(
-        "local:docs", "search", profile_id="other"
-    )
+    assert service.is_session_approved("local:docs", "search", profile_id="other")
 
 
 def test_no_argument_session_clear_remains_clear_all(tmp_path):
@@ -686,9 +678,7 @@ def test_gate_tool_test_by_key_resolves_only_the_selected_profile(tmp_path):
     store.set_tool_state("local:demo", "search", "deny", profile_id="research")
     store.set_tool_state("local:demo", "search", "ask")
 
-    named = service.gate_tool_test_by_key(
-        "local:demo", "search", profile_id="research"
-    )
+    named = service.gate_tool_test_by_key("local:demo", "search", profile_id="research")
     default = service.gate_tool_test_by_key("local:demo", "search")
 
     assert named.state == "deny"
@@ -1435,7 +1425,7 @@ async def test_preview_nonce_revoke_and_reuse_return_typed_stale_outcomes(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_rendered_allow_requires_run_and_fresh_allow(tmp_path):
+async def test_rendered_allow_requires_run_and_unchanged_profile(tmp_path):
     service, _store = _service(tmp_path)
     tool = _tool()
     service.local_service.get_external_servers = lambda: [
@@ -1468,14 +1458,14 @@ async def test_rendered_allow_requires_run_and_fresh_allow(tmp_path):
     service.set_tool_state(tool.server_key, tool.name, "ask")
     changed = await service.execute_prepared_hub_test(changed_preview.nonce, "run", {})
     assert isinstance(changed, ToolTestAdmissionStale)
-    assert changed.reason == "gate_changed"
+    assert changed.reason == "profile_changed"
     assert changed.refreshed_preview is not None
     assert changed.refreshed_preview.rendered_gate == "ask"
     service.test_hub_tool.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_rendered_ask_approve_once_accepts_fresh_ask_or_allow_without_persisting(
+async def test_rendered_ask_approve_once_rejects_profile_edit_before_dispatch(
     tmp_path,
 ):
     service, _store = _service(tmp_path)
@@ -1489,7 +1479,7 @@ async def test_rendered_ask_approve_once_accepts_fresh_ask_or_allow_without_pers
             },
         }
     ]
-    service.test_hub_tool = AsyncMock(side_effect=[{"ask": True}, {"allow": True}])
+    service.test_hub_tool = AsyncMock(return_value={"ask": True})
 
     ask_preview = service.prepare_hub_test(tool)
     ask_result = await service.execute_prepared_hub_test(
@@ -1503,9 +1493,40 @@ async def test_rendered_ask_approve_once_accepts_fresh_ask_or_allow_without_pers
     allow_result = await service.execute_prepared_hub_test(
         allow_preview.nonce, "approve_once", {"x": True}
     )
-    assert allow_result == {"allow": True}
-    assert service.test_hub_tool.await_args_list[0].kwargs["decision"] == "approved"
-    assert service.test_hub_tool.await_args_list[1].kwargs["decision"] == "allowed"
+    assert isinstance(allow_result, ToolTestAdmissionStale)
+    assert allow_result.reason == "profile_changed"
+    assert service.test_hub_tool.await_count == 1
+    assert service.test_hub_tool.await_args.kwargs["decision"] == "approved"
+
+
+def test_prepared_preview_rejects_imported_profile_with_mismatched_lifecycle_digest(
+    tmp_path,
+):
+    service, _store = _service(tmp_path)
+    tool = _tool()
+    service.local_service.get_external_servers = lambda: [
+        {
+            "profile_id": "demo",
+            "is_connected": True,
+            "discovery_snapshot": {
+                "tools": [{"name": tool.name, "description": tool.description}]
+            },
+        }
+    ]
+    permission_store = service.permission_store
+    payload = permission_store.load()
+    profile = _imported_profile()
+    profile["tool_pack_lifecycle"]["policy_digest"] = "f" * 64
+    payload["profiles"]["research"] = profile
+    permission_store.save(payload)
+
+    with pytest.raises(ProfileMutationError, match="lifecycle_invalid"):
+        service.prepare_hub_test(
+            tool,
+            profile_id="research",
+            expected_profile_digest=profile_policy_digest(profile),
+            expected_revision=1,
+        )
 
 
 @pytest.mark.asyncio

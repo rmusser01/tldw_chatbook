@@ -2661,17 +2661,48 @@ class UnifiedMCPControlPlaneService:
             registered_argument_names=registered_argument_names,
         )
 
-    def prepare_hub_test(self, tool: HubTool) -> ToolTestAdmissionPreview:
+    def prepare_hub_test(
+        self,
+        tool: HubTool,
+        *,
+        profile_id: str = "default",
+        expected_profile_digest: str | None = None,
+        expected_revision: int | None = None,
+    ) -> ToolTestAdmissionPreview:
         """Resolve and register an immutable preview for one Hub test panel.
 
         The caller's ``HubTool`` supplies only the exact catalog identity. The
         definition, gate, eligibility, and workspace authority all come from a
         fresh service-owned resolution so a stale UI row cannot mint authority.
+
+        Args:
+            tool: Catalog identity selected by the operator.
+            profile_id: Exact local Tool policy profile to resolve.
+            expected_profile_digest: Captured profile digest to compare before
+                minting a nonce.
+            expected_revision: Captured imported-profile revision, when present.
+
+        Returns:
+            A single-use preview bound to the current profile and tool authority.
+
+        Raises:
+            KeyError: If the tool is no longer in the service-owned catalog.
+            ProfileMutationError: If captured profile authority is stale or
+                invalid.
         """
-        resolved = self._resolve_hub_test(tool.server_key, tool.name)
+        resolved = self._resolve_hub_test_for_profile(
+            tool.server_key,
+            tool.name,
+            profile_id,
+        )
         if resolved is None:
             raise KeyError(f"Unknown Hub tool: {tool.tool_id}")
-        return self._issue_hub_test_preview(resolved)
+        return self._issue_hub_test_preview(
+            resolved,
+            profile_id=profile_id,
+            expected_profile_digest=expected_profile_digest,
+            expected_revision=expected_revision,
+        )
 
     def revoke_hub_test_preview(self, nonce: str) -> None:
         """Revoke one prepared Hub test nonce if it is still live."""
@@ -2757,11 +2788,18 @@ class UnifiedMCPControlPlaneService:
                 arguments=dispatch_arguments,
             )
 
-        resolved = self._resolve_hub_test(public.server_key, public.tool_name)
+        resolved = self._resolve_hub_test_for_profile(
+            public.server_key,
+            public.tool_name,
+            public.profile_id,
+        )
         if resolved is None:
             return self._hub_test_stale(public, reason="identity_changed")
 
-        fresh_preview = self._preview_fields(resolved)
+        try:
+            fresh_preview = self._preview_fields(resolved, profile_id=public.profile_id)
+        except Exception:  # noqa: BLE001 -- stale authority stays bounded
+            return self._hub_test_stale(public, reason="profile_changed")
         if (
             fresh_preview.server_key != public.server_key
             or fresh_preview.tool_name != public.tool_name
@@ -2769,7 +2807,20 @@ class UnifiedMCPControlPlaneService:
             return self._hub_test_stale(
                 public,
                 reason="identity_changed",
-                refreshed=self._issue_hub_test_preview(resolved),
+                refreshed=self._issue_hub_test_preview(
+                    resolved, profile_id=public.profile_id
+                ),
+            )
+        if (
+            fresh_preview.profile_policy_digest != public.profile_policy_digest
+            or fresh_preview.profile_revision != public.profile_revision
+        ):
+            return self._hub_test_stale(
+                public,
+                reason="profile_changed",
+                refreshed=self._issue_hub_test_preview(
+                    resolved, profile_id=public.profile_id
+                ),
             )
         rendered_gate = public.rendered_gate
         fresh_gate = fresh_preview.rendered_gate
@@ -2781,20 +2832,26 @@ class UnifiedMCPControlPlaneService:
                     if rendered_gate in {"unavailable", "unresolved"}
                     else "permission_denied"
                 ),
-                refreshed=self._issue_hub_test_preview(resolved),
+                refreshed=self._issue_hub_test_preview(
+                    resolved, profile_id=public.profile_id
+                ),
             )
         if resolved.unavailable_reason is not None:
             return self._hub_test_stale(
                 public,
                 reason=resolved.unavailable_reason,
-                refreshed=self._issue_hub_test_preview(resolved),
+                refreshed=self._issue_hub_test_preview(
+                    resolved, profile_id=public.profile_id
+                ),
             )
 
         if fresh_preview.definition_hash != public.definition_hash:
             return self._hub_test_stale(
                 public,
                 reason="definition_changed",
-                refreshed=self._issue_hub_test_preview(resolved),
+                refreshed=self._issue_hub_test_preview(
+                    resolved, profile_id=public.profile_id
+                ),
             )
         if (
             fresh_preview.authority_fingerprint != public.authority_fingerprint
@@ -2804,7 +2861,9 @@ class UnifiedMCPControlPlaneService:
             return self._hub_test_stale(
                 public,
                 reason="authority_changed",
-                refreshed=self._issue_hub_test_preview(resolved),
+                refreshed=self._issue_hub_test_preview(
+                    resolved, profile_id=public.profile_id
+                ),
             )
 
         if rendered_gate == "allow":
@@ -2812,26 +2871,34 @@ class UnifiedMCPControlPlaneService:
                 return self._hub_test_blocked(
                     public,
                     reason="intent_mismatch",
-                    refreshed=self._issue_hub_test_preview(resolved),
+                    refreshed=self._issue_hub_test_preview(
+                        resolved, profile_id=public.profile_id
+                    ),
                 )
             if fresh_gate != "allow":
                 return self._hub_test_stale(
                     public,
                     reason="gate_changed",
-                    refreshed=self._issue_hub_test_preview(resolved),
+                    refreshed=self._issue_hub_test_preview(
+                        resolved, profile_id=public.profile_id
+                    ),
                 )
         elif rendered_gate == "ask":
             if intent != "approve_once":
                 return self._hub_test_blocked(
                     public,
                     reason="intent_mismatch",
-                    refreshed=self._issue_hub_test_preview(resolved),
+                    refreshed=self._issue_hub_test_preview(
+                        resolved, profile_id=public.profile_id
+                    ),
                 )
             if fresh_gate not in {"ask", "allow"}:
                 return self._hub_test_stale(
                     public,
                     reason="gate_changed",
-                    refreshed=self._issue_hub_test_preview(resolved),
+                    refreshed=self._issue_hub_test_preview(
+                        resolved, profile_id=public.profile_id
+                    ),
                 )
 
         # Re-encode the independent object immediately before dispatch. This
@@ -2842,7 +2909,9 @@ class UnifiedMCPControlPlaneService:
             return self._hub_test_blocked(
                 public,
                 reason="arguments_changed",
-                refreshed=self._issue_hub_test_preview(resolved),
+                refreshed=self._issue_hub_test_preview(
+                    resolved, profile_id=public.profile_id
+                ),
             )
 
         decision = "approved" if fresh_gate == "ask" else "allowed"
@@ -2904,18 +2973,40 @@ class UnifiedMCPControlPlaneService:
         )
 
         public = registered.public
-        resolved = self._resolve_hub_test(public.server_key, public.tool_name)
+        resolved = self._resolve_hub_test_for_profile(
+            public.server_key,
+            public.tool_name,
+            public.profile_id,
+        )
         if resolved is None:
             return ToolTestAdmissionStale(reason="identity_changed")
 
-        fresh_preview = self._preview_fields(resolved)
+        try:
+            fresh_preview = self._preview_fields(resolved, profile_id=public.profile_id)
+        except Exception:  # noqa: BLE001 -- stale authority stays bounded
+            return ToolTestAdmissionStale(
+                reason="profile_changed",
+                refreshed_preview=self._refresh_hub_test_preview(public),
+            )
         if (
             fresh_preview.server_key != public.server_key
             or fresh_preview.tool_name != public.tool_name
         ):
             return ToolTestAdmissionStale(
                 reason="identity_changed",
-                refreshed_preview=self._issue_hub_test_preview(resolved),
+                refreshed_preview=self._issue_hub_test_preview(
+                    resolved, profile_id=public.profile_id
+                ),
+            )
+        if (
+            fresh_preview.profile_policy_digest != public.profile_policy_digest
+            or fresh_preview.profile_revision != public.profile_revision
+        ):
+            return ToolTestAdmissionStale(
+                reason="profile_changed",
+                refreshed_preview=self._issue_hub_test_preview(
+                    resolved, profile_id=public.profile_id
+                ),
             )
         rendered_gate = public.rendered_gate
         fresh_gate = fresh_preview.rendered_gate
@@ -2926,17 +3017,23 @@ class UnifiedMCPControlPlaneService:
                     if rendered_gate in {"unavailable", "unresolved"}
                     else "permission_denied"
                 ),
-                refreshed_preview=self._issue_hub_test_preview(resolved),
+                refreshed_preview=self._issue_hub_test_preview(
+                    resolved, profile_id=public.profile_id
+                ),
             )
         if resolved.unavailable_reason is not None:
             return ToolTestAdmissionStale(
                 reason=resolved.unavailable_reason,
-                refreshed_preview=self._issue_hub_test_preview(resolved),
+                refreshed_preview=self._issue_hub_test_preview(
+                    resolved, profile_id=public.profile_id
+                ),
             )
         if fresh_preview.definition_hash != public.definition_hash:
             return ToolTestAdmissionStale(
                 reason="definition_changed",
-                refreshed_preview=self._issue_hub_test_preview(resolved),
+                refreshed_preview=self._issue_hub_test_preview(
+                    resolved, profile_id=public.profile_id
+                ),
             )
         if (
             fresh_preview.authority_fingerprint != public.authority_fingerprint
@@ -2945,36 +3042,48 @@ class UnifiedMCPControlPlaneService:
         ):
             return ToolTestAdmissionStale(
                 reason="authority_changed",
-                refreshed_preview=self._issue_hub_test_preview(resolved),
+                refreshed_preview=self._issue_hub_test_preview(
+                    resolved, profile_id=public.profile_id
+                ),
             )
         if rendered_gate == "allow":
             if intent != "run":
                 return ToolTestAdmissionBlocked(
                     reason="intent_mismatch",
-                    refreshed_preview=self._issue_hub_test_preview(resolved),
+                    refreshed_preview=self._issue_hub_test_preview(
+                        resolved, profile_id=public.profile_id
+                    ),
                 )
             if fresh_gate != "allow":
                 return ToolTestAdmissionStale(
                     reason="gate_changed",
-                    refreshed_preview=self._issue_hub_test_preview(resolved),
+                    refreshed_preview=self._issue_hub_test_preview(
+                        resolved, profile_id=public.profile_id
+                    ),
                 )
         else:
             if intent != "approve_once":
                 return ToolTestAdmissionBlocked(
                     reason="intent_mismatch",
-                    refreshed_preview=self._issue_hub_test_preview(resolved),
+                    refreshed_preview=self._issue_hub_test_preview(
+                        resolved, profile_id=public.profile_id
+                    ),
                 )
             if fresh_gate not in {"ask", "allow"}:
                 return ToolTestAdmissionStale(
                     reason="gate_changed",
-                    refreshed_preview=self._issue_hub_test_preview(resolved),
+                    refreshed_preview=self._issue_hub_test_preview(
+                        resolved, profile_id=public.profile_id
+                    ),
                 )
 
         dispatch_bytes, dispatch_copy = canonicalize_arguments(arguments)
         if dispatch_bytes != canonical_arguments:
             return ToolTestAdmissionBlocked(
                 reason="arguments_changed",
-                refreshed_preview=self._issue_hub_test_preview(resolved),
+                refreshed_preview=self._issue_hub_test_preview(
+                    resolved, profile_id=public.profile_id
+                ),
             )
         return resolved, fresh_gate, dispatch_copy
 
@@ -2982,6 +3091,7 @@ class UnifiedMCPControlPlaneService:
         self,
         *,
         tool: HubTool,
+        profile_id: str,
         authority: DirectoryChain | None,
         intent: Literal["run", "approve_once"],
         fresh_gate: str,
@@ -3105,7 +3215,9 @@ class UnifiedMCPControlPlaneService:
                 approval_state["callback"] = approval_callback
                 handle = local_server_tools.build_hub_local_provider(
                     root,
-                    resolve_state=self.gate_tool_test,
+                    resolve_state=lambda candidate: self._gate_hub_tool_for_profile(
+                        candidate, profile_id
+                    ),
                     approval_callback=approval_callback,
                     dispatch_guard=_dispatch_guard,
                 )
@@ -3346,6 +3458,7 @@ class UnifiedMCPControlPlaneService:
                     )
                 return self._execute_prepared_local_hub_test(
                     tool=resolved.tool,
+                    profile_id=public.profile_id,
                     authority=resolved.authority,
                     intent=intent,
                     fresh_gate=fresh_gate,
@@ -3738,13 +3851,17 @@ class UnifiedMCPControlPlaneService:
         )
 
     def _resolve_hub_test(
-        self, server_key: str, tool_name: str
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        profile_id: str = "default",
     ) -> _ResolvedHubTest | None:
         """Recapture one exact live Hub identity and any local authority."""
         normalized_key = str(server_key or "").strip()
         normalized_name = str(tool_name or "").strip()
         if normalized_key == "local:__local__":
-            return self._resolve_local_hub_test(normalized_name)
+            return self._resolve_local_hub_test(normalized_name, profile_id=profile_id)
 
         if normalized_key.startswith("local:"):
             try:
@@ -3787,7 +3904,17 @@ class UnifiedMCPControlPlaneService:
                     return _ResolvedHubTest(tool=candidate)
         return None
 
-    def _resolve_local_hub_test(self, tool_name: str) -> _ResolvedHubTest | None:
+    def _resolve_hub_test_for_profile(
+        self, server_key: str, tool_name: str, profile_id: str
+    ) -> _ResolvedHubTest | None:
+        """Resolve explicitly named profiles without widening the default seam."""
+        if profile_id == "default":
+            return self._resolve_hub_test(server_key, tool_name)
+        return self._resolve_hub_test(server_key, tool_name, profile_id=profile_id)
+
+    def _resolve_local_hub_test(
+        self, tool_name: str, *, profile_id: str = "default"
+    ) -> _ResolvedHubTest | None:
         """Rebuild local inspection and eligible provider state fail-closed."""
         from . import local_server_tools
 
@@ -3798,7 +3925,9 @@ class UnifiedMCPControlPlaneService:
                 inspection_handle = (
                     local_server_tools.build_hub_local_inspection_provider(
                         Path.cwd(),
-                        resolve_state=self.gate_tool_test,
+                        resolve_state=lambda tool: self._gate_hub_tool_for_profile(
+                            tool, profile_id
+                        ),
                     )
                 )
                 inspection = next(
@@ -3843,7 +3972,9 @@ class UnifiedMCPControlPlaneService:
                 root = local_server_tools.resolve_server_workspace_root()
                 executable_handle = local_server_tools.build_hub_local_provider(
                     root,
-                    resolve_state=self.gate_tool_test,
+                    resolve_state=lambda tool: self._gate_hub_tool_for_profile(
+                        tool, profile_id
+                    ),
                     approval_callback=None,
                 )
                 executable_tools = executable_handle.provider.hub_tools()
@@ -3893,29 +4024,117 @@ class UnifiedMCPControlPlaneService:
                         type(exc).__name__,
                     )
 
-    def _preview_fields(self, resolved: _ResolvedHubTest) -> ToolTestAdmissionPreview:
+    def _gate_hub_tool_for_profile(
+        self, tool: HubTool, profile_id: str
+    ) -> EffectiveToolState:
+        """Resolve a preview gate while preserving default-only test seams."""
+        if profile_id == "default":
+            return self.gate_tool_test(tool)
+        return self.gate_tool_test(tool, profile_id=profile_id)
+
+    def _captured_hub_test_profile_gate(
+        self,
+        tool: HubTool,
+        *,
+        profile_id: str,
+        expected_profile_digest: str | None = None,
+        expected_revision: int | None = None,
+        resolve_gate: bool = True,
+    ) -> tuple[EffectiveToolState | None, str | None, int | None]:
+        """Capture one strict profile identity and its gate under one fence."""
+        store = self.permission_store
+        if store is None:
+            if (
+                profile_id != "default"
+                or expected_profile_digest is not None
+                or expected_revision is not None
+            ):
+                raise ProfileMutationError("stale_profile")
+            try:
+                gate = (
+                    self._gate_hub_tool_for_profile(tool, profile_id)
+                    if resolve_gate
+                    else None
+                )
+            except Exception as exc:  # noqa: BLE001 -- rendered unavailable
+                logger.warning(
+                    "MCP Hub test permission unavailable (exception_type={})",
+                    type(exc).__name__,
+                )
+                gate = None
+            return gate, None, None
+
+        with store.mutation_fence():
+            snapshot = store.read_snapshot_strict()
+            profile = snapshot.payload["profiles"].get(profile_id)
+            if not isinstance(profile, Mapping):
+                raise ProfileMutationError("stale_profile")
+            disposition = profile_lifecycle_disposition(profile)
+            if disposition in {"invalid", "tombstone"}:
+                raise ProfileMutationError("lifecycle_invalid")
+            digest = profile_policy_digest(profile)
+            if (
+                disposition == "imported"
+                and profile["tool_pack_lifecycle"].get("policy_digest") != digest
+            ):
+                raise ProfileMutationError("lifecycle_invalid")
+            if (
+                expected_profile_digest is not None
+                and digest != expected_profile_digest
+            ):
+                raise ProfileMutationError("stale_profile")
+            revision = (
+                profile["tool_pack_lifecycle"]["revision"]
+                if disposition == "imported"
+                else None
+            )
+            if expected_revision is not None and revision != expected_revision:
+                raise ProfileMutationError("stale_revision")
+            try:
+                gate = (
+                    self._gate_hub_tool_for_profile(tool, profile_id)
+                    if resolve_gate
+                    else None
+                )
+            except Exception as exc:  # noqa: BLE001 -- rendered unavailable
+                logger.warning(
+                    "MCP Hub test permission unavailable (exception_type={})",
+                    type(exc).__name__,
+                )
+                gate = None
+            return gate, digest, revision
+
+    def _preview_fields(
+        self,
+        resolved: _ResolvedHubTest,
+        *,
+        profile_id: str = "default",
+        expected_profile_digest: str | None = None,
+        expected_revision: int | None = None,
+    ) -> ToolTestAdmissionPreview:
         """Build comparison-only preview fields without registering a nonce."""
         from .hub_test_execution import (
             ToolTestAdmissionPreview,
             authority_fingerprint,
         )
 
+        actionable = resolved.tool.executable and resolved.unavailable_reason is None
+        gate, profile_digest, profile_revision = self._captured_hub_test_profile_gate(
+            resolved.tool,
+            profile_id=profile_id,
+            expected_profile_digest=expected_profile_digest,
+            expected_revision=expected_revision,
+            resolve_gate=actionable,
+        )
         rendered_gate = "unavailable"
-        if resolved.tool.executable and resolved.unavailable_reason is None:
-            try:
-                gate = self.gate_tool_test(resolved.tool)
-                rendered_gate = (
-                    gate.state
-                    if gate.origin != "gate_error"
-                    and gate.state in {"allow", "ask", "deny"}
-                    else "unresolved"
-                )
-            except Exception as exc:  # noqa: BLE001 -- gate errors are unavailable
-                logger.warning(
-                    "MCP Hub test permission unavailable (exception_type={})",
-                    type(exc).__name__,
-                )
-                rendered_gate = "unresolved"
+        if actionable:
+            rendered_gate = (
+                gate.state
+                if gate is not None
+                and gate.origin != "gate_error"
+                and gate.state in {"allow", "ask", "deny"}
+                else "unresolved"
+            )
         return ToolTestAdmissionPreview(
             nonce="",
             server_key=resolved.tool.server_key,
@@ -3930,12 +4149,25 @@ class UnifiedMCPControlPlaneService:
                 else None
             ),
             safe_authority_label=resolved.safe_authority_label,
+            profile_id=profile_id,
+            profile_policy_digest=profile_digest,
+            profile_revision=profile_revision,
         )
 
     def _issue_hub_test_preview(
-        self, resolved: _ResolvedHubTest
+        self,
+        resolved: _ResolvedHubTest,
+        *,
+        profile_id: str = "default",
+        expected_profile_digest: str | None = None,
+        expected_revision: int | None = None,
     ) -> ToolTestAdmissionPreview:
-        fields = self._preview_fields(resolved)
+        fields = self._preview_fields(
+            resolved,
+            profile_id=profile_id,
+            expected_profile_digest=expected_profile_digest,
+            expected_revision=expected_revision,
+        )
         previews, _execution = self._ensure_hub_test_state()
         return previews.issue(
             server_key=fields.server_key,
@@ -3944,13 +4176,29 @@ class UnifiedMCPControlPlaneService:
             rendered_gate=fields.rendered_gate,
             authority=resolved.authority,
             safe_authority_label=fields.safe_authority_label,
+            profile_id=fields.profile_id,
+            profile_policy_digest=fields.profile_policy_digest,
+            profile_revision=fields.profile_revision,
         )
 
     def _refresh_hub_test_preview(
         self, public: ToolTestAdmissionPreview
     ) -> ToolTestAdmissionPreview | None:
-        resolved = self._resolve_hub_test(public.server_key, public.tool_name)
-        return self._issue_hub_test_preview(resolved) if resolved is not None else None
+        resolved = self._resolve_hub_test_for_profile(
+            public.server_key,
+            public.tool_name,
+            public.profile_id,
+        )
+        if resolved is None:
+            return None
+        try:
+            return self._issue_hub_test_preview(resolved, profile_id=public.profile_id)
+        except Exception as exc:  # noqa: BLE001 -- refresh remains bounded
+            logger.warning(
+                "MCP Hub test profile refresh unavailable (exception_type={})",
+                type(exc).__name__,
+            )
+            return None
 
     def _record_prepared_hub_block(
         self, public: ToolTestAdmissionPreview, reason: str
@@ -4957,9 +5205,7 @@ class UnifiedMCPControlPlaneService:
         store = self.permission_store
         if store is None:
             return False
-        return arg_rule_allows(
-            store.load(), tool, args, profile_id=profile_id
-        )
+        return arg_rule_allows(store.load(), tool, args, profile_id=profile_id)
 
     def gate_tool_test(
         self, tool: HubTool, *, profile_id: str = "default"
