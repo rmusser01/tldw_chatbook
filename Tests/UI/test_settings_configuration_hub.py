@@ -43,6 +43,17 @@ from tldw_chatbook.UI.Screens.provider_model_resolution import (
     resolve_effective_provider_model,
 )
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
+    ConsoleSettingsReturnTarget,
+    ConversationSettingsReturnIntent,
+    ConversationSettingsReturnOutcome,
+    ProviderSettingsNavigationTarget,
+)
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+    HandoffChannel,
+    PendingHandoffStore,
+)
 from tldw_chatbook.UI.Screens.settings_config_adapter import (
     SettingsConfigAdapter,
     failure_status_text,
@@ -312,6 +323,16 @@ class StyledSettingsDestinationHarness(DestinationHarness):
     )
 
 
+class ConversationReturnSettingsHarness(DestinationHarness):
+    def __init__(self, app_instance):
+        super().__init__(app_instance, "settings")
+        self.navigation_messages: list[NavigateToScreen] = []
+
+    def on_navigate_to_screen(self, message: NavigateToScreen) -> None:
+        self.navigation_messages.append(message)
+        message.stop()
+
+
 async def _settle_settings_mount_storm(pilot) -> None:
     """Deterministically wait out the Settings mount-time refresh.
 
@@ -472,7 +493,7 @@ async def test_theme_category_opens_without_crashing():
     test_settings_theme_editor.py.
     """
     app = _build_test_app()
-    host = DestinationHarness(app, "settings")
+    host = ConversationReturnSettingsHarness(app)
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-theme")
         screen = _active_destination_screen(host)
@@ -7196,6 +7217,374 @@ async def test_settings_provider_navigation_context_focuses_api_key_field():
 
         api_key = screen.query_one("#settings-provider-api-key", Input)
         assert api_key.has_focus
+
+
+def _stage_conversation_settings_return_intent(app, *, provider: str = "openai"):
+    app.pending_handoffs = PendingHandoffStore()
+    intent = ConversationSettingsReturnIntent(
+        session_id="console-session-return",
+        settings_revision=3,
+        active_view="model",
+        focus_control_id="console-settings-model-picker",
+    )
+    revision = app.pending_handoffs.stage(
+        HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+        intent,
+    )
+    target = ProviderSettingsNavigationTarget(
+        category="providers-models",
+        provider=provider,
+        model="gpt-5" if provider == "openai" else "claude-3-5-sonnet",
+        field="api_key",
+        return_revision=revision,
+    )
+    return intent, target
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_clean_deep_link_focuses_exact_provider_credential():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {
+        "openai": {},
+        "anthropic": {},
+    }
+    _intent, target = _stage_conversation_settings_return_intent(
+        app, provider="anthropic"
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        screen.apply_navigation_context(target.to_context())
+        await _wait_for_selector(screen, pilot, "#settings-provider-api-key")
+        for _ in range(20):
+            if screen.query_one("#settings-provider-api-key", Input).has_focus:
+                break
+            await pilot.pause(0.05)
+
+        assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
+        assert screen.query_one("#settings-provider-value", Select).value == "anthropic"
+        assert (
+            screen.query_one("#settings-model-value", Input).value
+            == "claude-3-5-sonnet"
+        )
+        assert screen.query_one("#settings-provider-api-key", Input).has_focus
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_preserves_same_provider_draft_and_discloses_fields():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
+    _intent, target = _stage_conversation_settings_return_intent(app)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        draft = SettingsDraft(category=SettingsCategoryId.PROVIDERS_MODELS)
+        draft.set_value("endpoint", "", "https://draft.example/v1")
+        draft.set_value("api_key", "", "DUMMY-DRAFT-SECRET")
+        screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = draft
+
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] is draft
+        assert screen.query_one("#settings-provider-api-key", Input).has_focus
+        summary = screen.query_one(
+            "#settings-provider-existing-changes-summary", Static
+        )
+        summary_text = str(summary.renderable)
+        assert summary.display is True
+        assert "API key" in summary_text
+        assert "Endpoint" in summary_text
+        assert "DUMMY-DRAFT-SECRET" not in summary_text
+        assert "draft.example" not in summary_text
+
+
+@pytest.mark.asyncio
+async def test_provider_navigation_conflict_requires_review_discard_or_return():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {
+        "openai": {"api_key_env_var": "OPENAI_API_KEY"},
+        "anthropic": {"api_key_env_var": "ANTHROPIC_API_KEY"},
+    }
+    intent, target = _stage_conversation_settings_return_intent(
+        app, provider="anthropic"
+    )
+    host = ConversationReturnSettingsHarness(app)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        draft = SettingsDraft(category=SettingsCategoryId.PROVIDERS_MODELS)
+        draft.set_value("endpoint", "", "https://draft.example/v1")
+        screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = draft
+
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+
+        assert screen.query_one("#settings-provider-value", Select).value == "openai"
+        assert screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] is draft
+        conflict = screen.query_one("#settings-provider-navigation-conflict")
+        assert conflict.display is True
+        assert "Endpoint" in _visible_text(conflict)
+        assert screen.query_one("#settings-provider-conflict-review", Button).label == (
+            "Review existing changes"
+        )
+        assert str(
+            screen.query_one("#settings-provider-conflict-discard", Button).label
+        ) == "Discard changes and configure Anthropic"
+        assert screen.query_one("#settings-provider-conflict-return", Button).label == (
+            "Return to Conversation settings"
+        )
+
+        screen.query_one("#settings-provider-conflict-review", Button).press()
+        await pilot.pause()
+        assert screen.query_one("#settings-provider-endpoint-value", Input).has_focus
+        assert screen.query_one("#settings-provider-value", Select).value == "openai"
+
+        screen.query_one("#settings-provider-conflict-return", Button).press()
+        await pilot.pause()
+        assert len(host.navigation_messages) == 1
+        return_context = host.navigation_messages[0].screen_context
+        assert set(return_context) == {
+            "session_id",
+            "settings_revision",
+            "active_view",
+            "focus_control_id",
+            "return_revision",
+            "outcome",
+        }
+        assert "draft.example" not in repr(return_context)
+        returned = ConsoleSettingsReturnTarget.from_context(return_context)
+        assert returned is not None
+        assert returned.outcome is ConversationSettingsReturnOutcome.WITHOUT_SAVING
+        assert returned.return_revision == target.return_revision
+        assert returned.session_id == intent.session_id
+        assert screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] is draft
+
+
+@pytest.mark.asyncio
+async def test_provider_navigation_conflict_discard_explicitly_applies_staged_target():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {
+        "openai": {},
+        "anthropic": {"api_key_env_var": "ANTHROPIC_API_KEY"},
+    }
+    _intent, target = _stage_conversation_settings_return_intent(
+        app, provider="anthropic"
+    )
+    host = ConversationReturnSettingsHarness(app)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        draft = SettingsDraft(category=SettingsCategoryId.PROVIDERS_MODELS)
+        draft.set_value("endpoint", "", "https://draft.example/v1")
+        screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = draft
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+
+        screen.query_one("#settings-provider-conflict-discard", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert SettingsCategoryId.PROVIDERS_MODELS not in screen._settings_drafts
+        assert screen.query_one("#settings-provider-value", Select).value == "anthropic"
+        assert screen.query_one("#settings-provider-api-key", Input).has_focus
+        assert screen.query_one("#settings-provider-navigation-conflict").display is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("changed_selector", "changed_value", "expected_outcome"),
+    (
+        (
+            "#settings-provider-api-key",
+            "DUMMY-OPENAI-RETURN-KEY",
+            ConversationSettingsReturnOutcome.CREDENTIAL_SAVED,
+        ),
+        (
+            "#settings-provider-endpoint-value",
+            "https://api.openai.example/v1",
+            ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED,
+        ),
+    ),
+)
+async def test_conversation_settings_return_save_shows_typed_continuation(
+    monkeypatch,
+    changed_selector,
+    changed_value,
+    expected_outcome,
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    intent, target = _stage_conversation_settings_return_intent(app)
+    mutations = _capture_provider_settings_mutations(monkeypatch)
+    host = ConversationReturnSettingsHarness(app)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        await pilot.pause()
+        screen.query_one(changed_selector, Input).value = changed_value
+        await pilot.pause()
+
+        screen.action_settings_save_category(allow_text_entry_focus=True)
+        await pilot.pause()
+
+        assert mutations
+        continuation = screen.query_one("#settings-provider-return-continuation")
+        assert continuation.display is True
+        assert screen.query_one("#settings-provider-return", Button).label == (
+            "Return to Conversation settings"
+        )
+        assert screen.query_one("#settings-provider-stay", Button).label == "Stay"
+
+        screen.query_one("#settings-provider-return", Button).press()
+        await pilot.pause()
+
+        return_context = host.navigation_messages[0].screen_context
+        assert set(return_context) == {
+            "session_id",
+            "settings_revision",
+            "active_view",
+            "focus_control_id",
+            "return_revision",
+            "outcome",
+        }
+        assert changed_value not in repr(return_context)
+        returned = ConsoleSettingsReturnTarget.from_context(return_context)
+        assert returned is not None
+        assert returned.outcome is expected_outcome
+        assert returned.session_id == intent.session_id
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_save_failure_retains_draft_and_handoff(
+    monkeypatch,
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    _intent, target = _stage_conversation_settings_return_intent(app)
+    monkeypatch.setattr(
+        settings_screen_module,
+        "persist_provider_settings_atomic",
+        lambda *_args, **_kwargs: ConfigMutationResult(False, False, "before_replace"),
+    )
+    host = ConversationReturnSettingsHarness(app)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        screen.query_one("#settings-provider-api-key", Input).value = (
+            "DUMMY-OPENAI-FAILED-RETURN-KEY"
+        )
+        await pilot.pause()
+
+        screen.action_settings_save_category(allow_text_entry_focus=True)
+        await pilot.pause()
+
+        assert screen.query_one("#settings-provider-return-continuation").display is False
+        assert SettingsCategoryId.PROVIDERS_MODELS in screen._settings_drafts
+        claim = app.pending_handoffs.claim(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN
+        )
+        assert claim is not None
+        assert claim.revision == target.return_revision
+        app.pending_handoffs.release(claim)
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_without_saving_uses_discard_guard():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    _intent, target = _stage_conversation_settings_return_intent(app)
+    host = ConversationReturnSettingsHarness(app)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        screen.query_one("#settings-provider-api-key", Input).value = (
+            "DUMMY-UNSAVED-RETURN-KEY"
+        )
+        await pilot.pause()
+        screen.query_one("#settings-provider-return-without-save", Button).press()
+        await pilot.pause()
+        assert isinstance(host.screen_stack[-1], ConfirmationDialog)
+        assert host.navigation_messages == []
+        host.screen_stack[-1].query_one("#confirm-button", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert len(host.navigation_messages) == 1
+        returned = ConsoleSettingsReturnTarget.from_context(
+            host.navigation_messages[0].screen_context
+        )
+        assert returned is not None
+        assert returned.outcome is ConversationSettingsReturnOutcome.WITHOUT_SAVING
+        assert SettingsCategoryId.PROVIDERS_MODELS not in screen._settings_drafts
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_stay_settles_exact_handoff(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    _intent, target = _stage_conversation_settings_return_intent(app)
+    _capture_provider_settings_mutations(monkeypatch)
+    host = ConversationReturnSettingsHarness(app)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        screen.query_one("#settings-provider-api-key", Input).value = (
+            "DUMMY-OPENAI-STAY-KEY"
+        )
+        await pilot.pause()
+        screen.action_settings_save_category(allow_text_entry_focus=True)
+        await pilot.pause()
+
+        screen.query_one("#settings-provider-stay", Button).press()
+        await pilot.pause()
+
+        assert host.navigation_messages == []
+        assert screen.query_one("#settings-provider-return-continuation").display is False
+        replacement = ConversationSettingsReturnIntent(
+            "replacement-session",
+            0,
+            "model",
+            None,
+        )
+        app.pending_handoffs.stage(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+            replacement,
+        )
+        claim = app.pending_handoffs.claim(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN
+        )
+        assert claim is not None
+        assert claim.value == replacement
+        app.pending_handoffs.release(claim)
 
 
 @pytest.mark.asyncio

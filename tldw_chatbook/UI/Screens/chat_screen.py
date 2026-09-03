@@ -47,9 +47,13 @@ from ..Navigation.main_navigation import NavigateToScreen
 from ..Navigation.pending_handoff_store import (
     ConsoleProviderIntent,
     HandoffChannel,
+    HandoffClaim,
+    PendingHandoffStore,
 )
 from ..Navigation.conversation_settings_navigation import (
+    ConsoleSettingsReturnTarget,
     ConversationSettingsReturnIntent,
+    ConversationSettingsReturnOutcome,
     ProviderSettingsNavigationTarget,
 )
 from ..Navigation.screen_state_store import ConsolePromptTargetProjection
@@ -3168,6 +3172,225 @@ class ChatScreen(BaseAppScreen):
             self._suspended_conversation_settings = None
             self._suspended_conversation_settings_token = None
 
+    def apply_navigation_context(self, context: Mapping[str, object]) -> None:
+        """Capture a saved-chat resume or claim a typed Settings return."""
+
+        resume_value = context.get(CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID)
+        if isinstance(resume_value, str):
+            conversation_id = resume_value.strip()
+            if (
+                conversation_id
+                and len(conversation_id) <= _RESUME_LOCAL_CONVERSATION_ID_MAX_LENGTH
+            ):
+                self._pending_resume_local_conversation_id = conversation_id
+            return
+
+        target = ConsoleSettingsReturnTarget.from_context(context)
+        if target is None:
+            logger.debug("Ignoring invalid Conversation settings return context")
+            return
+        handoffs = getattr(self.app_instance, "pending_handoffs", None)
+        if not isinstance(handoffs, PendingHandoffStore):
+            return
+        claim = handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+        if claim is None:
+            return
+        if (
+            claim.revision != target.return_revision
+            or type(claim.value) is not ConversationSettingsReturnIntent
+        ):
+            handoffs.release(claim)
+            return
+        intent = claim.value
+        if (
+            target.session_id != intent.session_id
+            or target.settings_revision != intent.settings_revision
+            or target.active_view != intent.active_view
+            or target.focus_control_id != intent.focus_control_id
+        ):
+            self._reject_conversation_settings_return(handoffs, claim)
+            return
+        if not self._conversation_settings_return_is_restorable(target):
+            self._reject_conversation_settings_return(handoffs, claim)
+            return
+        self._pending_conversation_settings_return_claim = claim
+        self._pending_conversation_settings_return_target = target
+        if self.is_mounted:
+            self.call_after_refresh(self._consume_pending_conversation_settings_return)
+
+    def _conversation_settings_return_is_restorable(
+        self,
+        target: ConsoleSettingsReturnTarget,
+    ) -> bool:
+        """Validate origin identity, revision, and private snapshot ownership."""
+
+        store = self._ensure_console_chat_store()
+        try:
+            if store.session_is_ephemeral(target.session_id):
+                return False
+            if (
+                store.session_settings_revision(target.session_id)
+                != target.settings_revision
+            ):
+                return False
+        except KeyError:
+            return False
+        snapshot = getattr(self, "_suspended_conversation_settings", None)
+        token = getattr(self, "_suspended_conversation_settings_token", None)
+        return bool(
+            isinstance(snapshot, ConsoleSettingsDraftSnapshot)
+            and type(token) is int
+            and token > 0
+            and snapshot.active_view == target.active_view
+            and snapshot.focus_control_id == target.focus_control_id
+        )
+
+    def _reject_conversation_settings_return(
+        self,
+        handoffs: PendingHandoffStore,
+        claim: HandoffClaim[ConversationSettingsReturnIntent],
+    ) -> None:
+        """Settle one terminal rejection and discard its obsolete private draft."""
+
+        handoffs.acknowledge(claim)
+        self._pending_conversation_settings_return_claim = None
+        self._pending_conversation_settings_return_target = None
+        self._suspended_conversation_settings = None
+        self._suspended_conversation_settings_token = None
+
+    def _consume_pending_conversation_settings_return(self) -> None:
+        """Schedule the mounted restore once, retaining transient failures."""
+
+        if (
+            self._conversation_settings_return_restore_in_progress
+            or self._pending_conversation_settings_return_claim is None
+            or self._pending_conversation_settings_return_target is None
+        ):
+            return
+        self._conversation_settings_return_restore_in_progress = True
+        self.run_worker(
+            self._restore_claimed_conversation_settings_return(),
+            exclusive=False,
+            group="conversation-settings-return",
+        )
+
+    async def _restore_claimed_conversation_settings_return(self) -> None:
+        """Restore the exact suspended draft, then acknowledge its handoff."""
+
+        claim = self._pending_conversation_settings_return_claim
+        target = self._pending_conversation_settings_return_target
+        handoffs = getattr(self.app_instance, "pending_handoffs", None)
+        try:
+            if (
+                claim is None
+                or target is None
+                or not isinstance(handoffs, PendingHandoffStore)
+            ):
+                return
+            if not handoffs.is_current_claim(claim):
+                handoffs.release(claim)
+                return
+            if not self._conversation_settings_return_is_restorable(target):
+                self._reject_conversation_settings_return(handoffs, claim)
+                return
+            snapshot = self._suspended_conversation_settings
+            token = self._suspended_conversation_settings_token
+            if (
+                not isinstance(snapshot, ConsoleSettingsDraftSnapshot)
+                or type(token) is not int
+            ):
+                self._reject_conversation_settings_return(handoffs, claim)
+                return
+            store = self._ensure_console_chat_store()
+            if store.active_session_id != target.session_id:
+                try:
+                    store.switch_session(target.session_id)
+                except KeyError:
+                    self._reject_conversation_settings_return(handoffs, claim)
+                    return
+                await self._sync_native_console_chat_ui()
+            await self._reopen_suspended_console_settings(
+                token,
+                session_id=target.session_id,
+                settings_revision=target.settings_revision,
+            )
+            restored = self._suspended_conversation_settings is None
+            if not restored:
+                handoffs.release(claim)
+                return
+            try:
+                await self._mount_conversation_settings_return_status(
+                    target,
+                    snapshot,
+                )
+            except Exception:
+                logger.debug(
+                    "Unable to mount Conversation settings return status",
+                    exc_info=True,
+                )
+            handoffs.acknowledge(claim)
+        except asyncio.CancelledError:
+            if isinstance(handoffs, PendingHandoffStore) and claim is not None:
+                handoffs.release(claim)
+            raise
+        except Exception:
+            logger.debug(
+                "Conversation settings return restore failed transiently",
+                exc_info=True,
+            )
+            if isinstance(handoffs, PendingHandoffStore) and claim is not None:
+                handoffs.release(claim)
+        finally:
+            self._pending_conversation_settings_return_claim = None
+            self._pending_conversation_settings_return_target = None
+            self._conversation_settings_return_restore_in_progress = False
+
+    async def _mount_conversation_settings_return_status(
+        self,
+        target: ConsoleSettingsReturnTarget,
+        snapshot: ConsoleSettingsDraftSnapshot,
+    ) -> None:
+        """Mount fixed return copy beside, not inside, canonical readiness."""
+
+        modal = self.app.screen_stack[-1]
+        if not isinstance(modal, ConsoleSettingsModal):
+            return
+        outcome_copy = {
+            ConversationSettingsReturnOutcome.CREDENTIAL_SAVED: (
+                "Credential saved. Conversation settings restored."
+            ),
+            ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED: (
+                "Provider settings saved. Conversation settings restored."
+            ),
+            ConversationSettingsReturnOutcome.WITHOUT_SAVING: (
+                "No provider settings were saved. Conversation settings restored."
+            ),
+        }[target.outcome]
+        readiness = get_provider_readiness(
+            snapshot.settings.provider,
+            self._provider_readiness_app_config(),
+        )
+        recovery_copy = ""
+        if (
+            not readiness.ready
+            and readiness.env_var
+            and not os.environ.get(readiness.env_var)
+        ):
+            recovery_copy = (
+                f"Export {readiness.env_var}, then relaunch Chatbook before sending."
+            )
+        status = Static(
+            "\n".join(line for line in (outcome_copy, recovery_copy) if line),
+            id="console-settings-return-status",
+            classes="console-settings-modal-row",
+            markup=False,
+        )
+        readiness_widget = modal.query_one("#console-settings-readiness", Static)
+        await modal.query_one("#console-settings-modal").mount(
+            status,
+            before=readiness_widget,
+        )
+
     def _global_chat_display_name(self) -> str:
         """Return the live in-memory global chat label without touching disk."""
         app_config = getattr(self.app_instance, "app_config", {}) or {}
@@ -5941,23 +6164,13 @@ class ChatScreen(BaseAppScreen):
     _console_mount_visit_refreshed: bool = False
     _pending_resume_local_conversation_id: str | None = None
     _resume_navigation_startup_in_progress: bool = False
-
-    def apply_navigation_context(self, context: Mapping[str, object]) -> None:
-        """Capture one valid saved-conversation ID for post-mount resume.
-
-        Args:
-            context: Memory-only navigation values supplied for this screen visit.
-        """
-        value = context.get(CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID)
-        if not isinstance(value, str):
-            return
-        conversation_id = value.strip()
-        if (
-            not conversation_id
-            or len(conversation_id) > _RESUME_LOCAL_CONVERSATION_ID_MAX_LENGTH
-        ):
-            return
-        self._pending_resume_local_conversation_id = conversation_id
+    _pending_conversation_settings_return_claim: (
+        HandoffClaim[ConversationSettingsReturnIntent] | None
+    ) = None
+    _pending_conversation_settings_return_target: ConsoleSettingsReturnTarget | None = (
+        None
+    )
+    _conversation_settings_return_restore_in_progress: bool = False
 
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(app_instance, "chat", **kwargs)
@@ -5977,6 +6190,9 @@ class ChatScreen(BaseAppScreen):
         self._suspended_conversation_settings: ConsoleSettingsDraftSnapshot | None = None
         self._suspended_conversation_settings_token: int | None = None
         self._next_suspended_conversation_settings_token = 0
+        self._pending_conversation_settings_return_claim = None
+        self._pending_conversation_settings_return_target = None
+        self._conversation_settings_return_restore_in_progress = False
         self._pending_console_launch_auto_open_inspector = False
         # PR-4/task-1: source count of the evidence the LAST send consumed,
         # kept only until the next thing happens (a new send, new staging, or
@@ -13872,6 +14088,7 @@ class ChatScreen(BaseAppScreen):
             # existing resume/user-triggered retry paths.
             self.set_timer(0.15, self._consume_pending_console_prompt_insert)
             self.set_timer(0.15, self.consume_pending_console_provider_intent)
+            self.set_timer(0.15, self._consume_pending_conversation_settings_return)
             # PR3a-2 Task 4: claim a background sub-agent completion's deep
             # link (staged while Console was not mounted) and switch to the
             # settled conversation's session. Same 0.15s settle hedge as the
@@ -19843,6 +20060,7 @@ class ChatScreen(BaseAppScreen):
         if not ordered_resume_active:
             self.set_timer(0.15, self._consume_pending_console_prompt_insert)
             self.set_timer(0.15, self.consume_pending_console_provider_intent)
+            self.set_timer(0.15, self._consume_pending_conversation_settings_return)
             # PR3a-2 Task 4: mirrors the on_mount claim -- a completion staged
             # while the user was on another screen is claimed on resume too.
             self.set_timer(
