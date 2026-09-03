@@ -1,11 +1,11 @@
 ---
 id: TASK-28243
 title: 'Review sets - Phase 4: set picker (resume / switch / dismiss)'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-02 22:29'
-updated_date: '2026-09-03 04:57'
+updated_date: '2026-09-03 05:53'
 labels:
   - library
   - media-ux
