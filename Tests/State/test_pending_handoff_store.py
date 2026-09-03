@@ -104,7 +104,7 @@ def test_stage_replaces_unclaimed_value_with_channel_local_revision() -> None:
 
 def test_conversation_settings_return_handoff_replaces_and_detaches() -> None:
     store = PendingHandoffStore()
-    first = ConversationSettingsReturnIntent("session-1", 4, "model", "console-settings-model")
+    first = ConversationSettingsReturnIntent("session-1", 4, "model", "console-settings-model-picker")
     second = ConversationSettingsReturnIntent("session-2", 5, "context", None)
     assert store.stage(HandoffChannel.CONVERSATION_SETTINGS_RETURN, first) == 1
     assert store.stage(HandoffChannel.CONVERSATION_SETTINGS_RETURN, second) == 2

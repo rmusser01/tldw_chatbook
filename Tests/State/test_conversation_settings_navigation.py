@@ -24,6 +24,17 @@ def test_provider_settings_target_valid_round_trip() -> None:
     assert target.to_context() == {**context, "provider": "openai"}
 
 
+def test_provider_settings_target_allows_missing_model_explicitly() -> None:
+    context = {
+        "category": "providers-models", "provider": "openai", "model": None,
+        "field": "api_key", "return_revision": 4,
+    }
+    target = ProviderSettingsNavigationTarget.from_context(context)
+    assert target is not None
+    assert target.model is None
+    assert target.to_context() == context
+
+
 def test_provider_settings_target_rejects_unknown_context_key() -> None:
     assert ProviderSettingsNavigationTarget.from_context({
         "category": "providers-models", "provider": "openai", "model": "gpt-4o",
@@ -50,7 +61,7 @@ def test_provider_settings_target_rejects_invalid_revision(revision: object) -> 
 def test_console_return_target_round_trip_and_outcome_allowlist() -> None:
     context = {
         "session_id": "session-1", "settings_revision": 2, "active_view": "model",
-        "focus_control_id": "console-settings-model", "return_revision": 7,
+        "focus_control_id": "console-settings-model-picker", "return_revision": 7,
         "outcome": "credential_saved",
     }
     target = ConsoleSettingsReturnTarget.from_context(context)
@@ -71,10 +82,28 @@ def test_return_contracts_are_frozen_and_validate_shape() -> None:
     assert ConversationSettingsReturnIntent("session-1", 0, "model", None).settings_revision == 0
 
 
-@pytest.mark.parametrize("focus", ["console-settings-secret", "bad", "x" * 129])
+@pytest.mark.parametrize("focus", [
+    "console-settings-secret", "console-settings-api-key", "console-settings-context-view",
+    "console-settings-model", "bad", "x" * 129,
+])
 def test_return_target_rejects_focus_outside_bounded_allowlist(focus: str) -> None:
     context = {
         "session_id": "session-1", "settings_revision": 2, "active_view": "model",
         "focus_control_id": focus, "return_revision": 7, "outcome": "without_saving",
     }
     assert ConsoleSettingsReturnTarget.from_context(context) is None
+
+
+@pytest.mark.parametrize("focus", [
+    "console-settings-provider", "console-settings-model-picker", "console-settings-base-url",
+    "console-settings-temperature", "console-settings-max-tokens", "console-settings-streaming",
+    "console-settings-view-model", "console-settings-view-context", "console-context-budget-mode",
+])
+def test_return_target_accepts_real_focusable_modal_targets(focus: str) -> None:
+    context = {
+        "session_id": "session-1", "settings_revision": 2, "active_view": "model",
+        "focus_control_id": focus, "return_revision": 7, "outcome": "without_saving",
+    }
+    target = ConsoleSettingsReturnTarget.from_context(context)
+    assert target is not None
+    assert target.to_context() == context

@@ -16,13 +16,31 @@ _SAFE_TEXT_RE = re.compile(r"[^\x00-\x1f\x7f\x80-\x9f]+\Z")
 _FOCUS_CONTROL_IDS = frozenset(
     {
         "console-settings-provider",
-        "console-settings-model",
-        "console-settings-api-key",
+        "console-settings-model-picker",
+        "console-settings-model-select",
+        "console-settings-model-input",
+        "console-settings-model-custom",
         "console-settings-base-url",
         "console-settings-temperature",
         "console-settings-max-tokens",
         "console-settings-streaming",
-        "console-settings-context-view",
+        "console-settings-view-model",
+        "console-settings-view-context",
+        "console-context-budget-mode",
+        "console-context-custom-budget",
+        "console-context-compaction-mode",
+        "console-context-compaction-representation",
+        "console-context-trigger-percent",
+        "console-context-target-percent",
+        "console-context-summary-max",
+        "console-context-failure-behavior",
+        "console-context-carry-forward",
+        "console-context-compact-now",
+        "console-context-reset-current",
+        "console-context-undo-reset",
+        "console-context-reset-overrides",
+        "console-context-reset-all",
+        "console-context-confirm-reset-all",
     }
 )
 
@@ -91,7 +109,7 @@ class ProviderSettingsNavigationTarget:
 
     category: Literal["providers-models"]
     provider: str
-    model: str
+    model: str | None
     field: Literal["api_key"]
     return_revision: int
 
@@ -102,7 +120,8 @@ class ProviderSettingsNavigationTarget:
         if not provider or _PROVIDER_RE.fullmatch(provider) is None:
             raise ValueError("provider is invalid")
         object.__setattr__(self, "provider", provider)
-        _text(self.model, name="model", limit=512)
+        if self.model is not None:
+            _text(self.model, name="model", limit=512)
         if self.field != "api_key":
             raise ValueError("field is invalid")
         _revision(self.return_revision, name="return_revision")
