@@ -2,8 +2,8 @@
 
 Status: design approved 2026-09-02 (brainstorming), then hardened by an
 adversarial design review against the code (same day; corrections folded in
-below). Phase 1 implemented on branch `feat/task-28238-stale-write-guard`
-(2026-09-02); phase 2 (worktree isolation) not started.
+below). Phases 1 and 2 implemented (phase 1 merged in PR #2341; phase 2 on
+branch feat/task-28238-phase2-worktree-isolation).
 
 ## Problem
 
