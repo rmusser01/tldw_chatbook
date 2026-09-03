@@ -10699,9 +10699,22 @@ UPDATE db_schema_version
         topic_label: Optional[str] = None,
         scope_type: Optional[str] = None,
         workspace_id: Optional[str] = None,
+        workspace_ids: Optional[Sequence[str]] = None,
+        include_global_scope: bool = False,
     ) -> Tuple[str, List[Any]]:
         clauses: List[str] = []
         params: List[Any] = []
+        normalized_workspace_ids: Optional[Tuple[str, ...]] = None
+        if workspace_ids is not None:
+            if isinstance(workspace_ids, (str, bytes)):
+                raise InputError("workspace_ids must be a sequence of ids.")
+            normalized_workspace_ids = tuple(
+                dict.fromkeys(
+                    normalized
+                    for value in workspace_ids
+                    if (normalized := self._normalize_nullable_text(value)) is not None
+                )
+            )
         if str(scope_type or "").strip().lower() == CONVERSATION_SCOPE_ALL:
             # "all" spans global- and workspace-scoped conversations in one
             # page/count (the Library Browse ▸ Conversations snapshot seam);
@@ -10712,6 +10725,10 @@ UPDATE db_schema_version
                 )
             normalized_workspace_id = None
         else:
+            if normalized_workspace_ids is not None or include_global_scope:
+                raise InputError(
+                    "workspace_ids and include_global_scope require scope_type='all'."
+                )
             normalized_scope, normalized_workspace_id = self._normalize_scope(
                 scope_type, workspace_id
             )
@@ -10733,6 +10750,19 @@ UPDATE db_schema_version
         if normalized_workspace_id is not None:
             clauses.append("workspace_id = ?")
             params.append(normalized_workspace_id)
+        if normalized_workspace_ids is not None or include_global_scope:
+            workspace_scope_clauses: List[str] = []
+            if include_global_scope:
+                workspace_scope_clauses.append("scope_type = 'global'")
+            if normalized_workspace_ids:
+                placeholders = ", ".join("?" for _ in normalized_workspace_ids)
+                workspace_scope_clauses.append(f"workspace_id IN ({placeholders})")
+                params.extend(normalized_workspace_ids)
+            clauses.append(
+                f"({' OR '.join(workspace_scope_clauses)})"
+                if workspace_scope_clauses
+                else "0 = 1"
+            )
 
         deleted_clause = self._conversation_deleted_scope_clause(
             include_deleted=include_deleted,
@@ -10822,6 +10852,8 @@ UPDATE db_schema_version
         topic_label: Optional[str] = None,
         scope_type: Optional[str] = None,
         workspace_id: Optional[str] = None,
+        workspace_ids: Optional[Sequence[str]] = None,
+        include_global_scope: bool = False,
         limit: int = 50,
         offset: int = 0,
         **_: Any,
@@ -10838,6 +10870,8 @@ UPDATE db_schema_version
             topic_label=topic_label,
             scope_type=scope_type,
             workspace_id=workspace_id,
+            workspace_ids=workspace_ids,
+            include_global_scope=include_global_scope,
         )
         count_query = (
             f"SELECT COUNT(*) as total FROM conversations WHERE {where_clause}"

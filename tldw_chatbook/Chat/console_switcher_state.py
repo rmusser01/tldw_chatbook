@@ -110,6 +110,15 @@ class ConsoleSwitcherHistoryPage:
 
 
 @dataclass(frozen=True)
+class ConsoleSwitcherHistoryQuery:
+    """Storage-facing plan for one semantic History query."""
+
+    text_query: str
+    workspace_terms: tuple[str, ...] = ()
+    can_match: bool = True
+
+
+@dataclass(frozen=True)
 class ConsoleSwitcherEntry:
     """One selectable result in the Console session switcher."""
 
@@ -901,6 +910,64 @@ def _normalized_active_query(query: str) -> list[str]:
     ):
         normalized = normalized.replace(phrase, replacement)
     return [token for token in normalized.split() if token]
+
+
+def plan_console_history_query(query: str) -> ConsoleSwitcherHistoryQuery:
+    """Translate switcher semantics into bounded persisted-history filters.
+
+    History contains saved destinations only. Semantic tokens that describe
+    that invariant are consumed before title/message search; tokens describing
+    live or unavailable activity cannot match. Workspace terms remain separate
+    because their labels live in the Console workspace registry, not the
+    conversation FTS index.
+
+    Args:
+        query: User-entered switcher query.
+
+    Returns:
+        A storage text query, workspace-label terms, and matchability flag.
+    """
+    text_terms: list[str] = []
+    workspace_terms: list[str] = []
+    history_false_terms = {
+        "waiting",
+        "working",
+        "new",
+        "current",
+        "open",
+        "unavailable",
+        "running",
+        "queued",
+        "failed",
+        "finished",
+        "cancelled",
+        "approval",
+        "paused",
+        "stuck",
+        "stopped",
+        "validating",
+        "retrying",
+    }
+    for token in _normalized_active_query(query):
+        if token.startswith("workspace:"):
+            value = token.partition(":")[2]
+            if not value:
+                return ConsoleSwitcherHistoryQuery("", can_match=False)
+            workspace_terms.append(value)
+            continue
+        if token.startswith("is:"):
+            if token == "is:saved":
+                continue
+            return ConsoleSwitcherHistoryQuery("", can_match=False)
+        if token == "saved":
+            continue
+        if token in history_false_terms:
+            return ConsoleSwitcherHistoryQuery("", can_match=False)
+        text_terms.append(token)
+    return ConsoleSwitcherHistoryQuery(
+        " ".join(text_terms),
+        workspace_terms=tuple(workspace_terms),
+    )
 
 
 def _active_result_predicates(

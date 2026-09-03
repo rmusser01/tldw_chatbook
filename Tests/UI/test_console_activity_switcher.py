@@ -216,6 +216,144 @@ async def test_history_uses_one_all_local_bounded_page_with_explicit_targets():
 
 
 @pytest.mark.asyncio
+async def test_history_workspace_filter_resolves_labels_before_storage_search():
+    calls: list[dict[str, object]] = []
+
+    def list_conversations(**kwargs):
+        calls.append(kwargs)
+        return {
+            "items": [
+                {
+                    "id": "roleplay-portrait",
+                    "title": "Portrait scene",
+                    "scope_type": "workspace",
+                    "workspace_id": "workspace-roleplay",
+                    "state": "in-progress",
+                    "last_modified": "2026-08-23T12:00:00+00:00",
+                }
+            ],
+            "pagination": {"total": 1},
+        }
+
+    app = SimpleNamespace(
+        console_runtime=SimpleNamespace(
+            profile_authority="profile-a",
+            authority_token="runtime-a",
+            activity_receipts=_ReceiptSnapshot(),
+        ),
+        local_chat_conversation_service=SimpleNamespace(
+            list_conversations=list_conversations
+        ),
+    )
+    controller = _projection_controller(app)
+    controller._console_browser_workspace_labels = lambda: {
+        "workspace-roleplay": "Roleplay Tavern",
+        "workspace-research": "Research Lab",
+    }
+
+    page = await controller.load_console_session_switcher_history(
+        query="workspace:roleplay portrait", offset=0, limit=50
+    )
+
+    assert [entry.title for entry in page.entries] == ["Portrait scene"]
+    assert calls == [
+        {
+            "query": "portrait",
+            "scope_type": "all",
+            "workspace_ids": ("workspace-roleplay",),
+            "limit": 50,
+            "offset": 0,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_history_chats_workspace_filter_includes_global_and_default_scopes():
+    calls: list[dict[str, object]] = []
+
+    def list_conversations(**kwargs):
+        calls.append(kwargs)
+        return {"items": [], "pagination": {"total": 0}}
+
+    app = SimpleNamespace(
+        console_runtime=SimpleNamespace(
+            profile_authority="profile-a",
+            authority_token="runtime-a",
+            activity_receipts=_ReceiptSnapshot(),
+        ),
+        local_chat_conversation_service=SimpleNamespace(
+            list_conversations=list_conversations
+        ),
+    )
+    controller = _projection_controller(app)
+    controller._console_browser_workspace_labels = lambda: {
+        workspace_module.DEFAULT_WORKSPACE_ID: "Chats",
+        "workspace-roleplay": "Roleplay Tavern",
+    }
+
+    await controller.load_console_session_switcher_history(
+        query="workspace:chats", offset=0, limit=50
+    )
+
+    assert calls == [
+        {
+            "query": "",
+            "scope_type": "all",
+            "workspace_ids": (workspace_module.DEFAULT_WORKSPACE_ID,),
+            "include_global_scope": True,
+            "limit": 50,
+            "offset": 0,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_history_saved_alias_is_not_forwarded_as_title_search():
+    calls: list[dict[str, object]] = []
+
+    def list_conversations(**kwargs):
+        calls.append(kwargs)
+        return {
+            "items": [
+                {
+                    "id": "saved-1",
+                    "title": "Release plan",
+                    "scope_type": "global",
+                    "state": "in-progress",
+                    "last_modified": "2026-08-23T12:00:00+00:00",
+                }
+            ],
+            "pagination": {"total": 1},
+        }
+
+    app = SimpleNamespace(
+        console_runtime=SimpleNamespace(
+            profile_authority="profile-a",
+            authority_token="runtime-a",
+            activity_receipts=_ReceiptSnapshot(),
+        ),
+        local_chat_conversation_service=SimpleNamespace(
+            list_conversations=list_conversations
+        ),
+    )
+    controller = _projection_controller(app)
+
+    page = await controller.load_console_session_switcher_history(
+        query="is:saved", offset=0, limit=50
+    )
+
+    assert [entry.title for entry in page.entries] == ["Release plan"]
+    assert calls == [
+        {
+            "query": "",
+            "scope_type": "all",
+            "limit": 50,
+            "offset": 0,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_history_loader_groups_missing_timezone_by_host_local_date(monkeypatch):
     class BoundaryDatetime(datetime):
         @classmethod

@@ -51,6 +51,7 @@ from ...Chat.console_switcher_state import (
     build_console_active_results,
     group_console_history_entries,
     parse_console_switcher_instant,
+    plan_console_history_query,
     resolve_console_history_timezone,
 )
 from ...Chat.console_conversation_hydration import (
@@ -2784,6 +2785,9 @@ class ConsoleWorkspaceController:
         """Load one bounded all-local History page off the event loop."""
         bounded_limit = min(CONSOLE_SWITCHER_PAGE_LIMIT, max(1, int(limit)))
         bounded_offset = max(0, int(offset))
+        query_plan = plan_console_history_query(query)
+        if not query_plan.can_match:
+            return ConsoleSwitcherHistoryPage((), bounded_offset, bounded_limit, 0)
         service = getattr(
             self.app_instance, "local_chat_conversation_service", None
         )
@@ -2799,11 +2803,30 @@ class ConsoleWorkspaceController:
                 (), bounded_offset, bounded_limit, 0, "History is unavailable."
             )
         kwargs: dict[str, Any] = {
-            "query": str(query or ""),
+            "query": query_plan.text_query,
             "scope_type": "all",
             "limit": bounded_limit,
             "offset": bounded_offset,
         }
+        if query_plan.workspace_terms:
+            labels = self._console_browser_workspace_labels()
+            workspace_ids = tuple(
+                workspace_id
+                for workspace_id, label in labels.items()
+                if all(
+                    term in str(label or "").casefold()
+                    for term in query_plan.workspace_terms
+                )
+            )
+            include_global_scope = all(
+                term in "chats" for term in query_plan.workspace_terms
+            )
+            if not workspace_ids and not include_global_scope:
+                return ConsoleSwitcherHistoryPage((), bounded_offset, bounded_limit, 0)
+            if workspace_ids:
+                kwargs["workspace_ids"] = workspace_ids
+            if include_global_scope:
+                kwargs["include_global_scope"] = True
         if include_mode:
             kwargs["mode"] = "local"
         try:

@@ -254,6 +254,74 @@ class TestCoherentConversationPages:
         assert fts_total == 1
         assert fts_rows[0]["title"] == "Conversation 17"
 
+    def test_all_scope_can_filter_multiple_workspace_ids(self, db):
+        wanted = {
+            db.add_conversation(
+                {
+                    "title": "Roleplay notes",
+                    "scope_type": "workspace",
+                    "workspace_id": "ws-roleplay",
+                }
+            ),
+            db.add_conversation(
+                {
+                    "title": "Research notes",
+                    "scope_type": "workspace",
+                    "workspace_id": "ws-research",
+                }
+            ),
+        }
+        db.add_conversation(
+            {
+                "title": "Writing notes",
+                "scope_type": "workspace",
+                "workspace_id": "ws-writing",
+            }
+        )
+        db.add_conversation({"title": "Global notes", "scope_type": "global"})
+
+        rows, total, _ = db.search_conversations_page(
+            None,
+            scope_type="all",
+            workspace_ids=("ws-roleplay", "ws-research"),
+            limit=20,
+            offset=0,
+        )
+
+        assert {row["id"] for row in rows} == wanted
+        assert total == 2
+
+    def test_all_scope_can_union_global_and_workspace_ids(self, db):
+        default_id = db.add_conversation(
+            {
+                "title": "Default workspace notes",
+                "scope_type": "workspace",
+                "workspace_id": "ws-default",
+            }
+        )
+        global_id = db.add_conversation(
+            {"title": "Global notes", "scope_type": "global"}
+        )
+        db.add_conversation(
+            {
+                "title": "Roleplay notes",
+                "scope_type": "workspace",
+                "workspace_id": "ws-roleplay",
+            }
+        )
+
+        rows, total, _ = db.search_conversations_page(
+            None,
+            scope_type="all",
+            workspace_ids=("ws-default",),
+            include_global_scope=True,
+            limit=20,
+            offset=0,
+        )
+
+        assert {row["id"] for row in rows} == {default_id, global_id}
+        assert total == 2
+
     @pytest.mark.parametrize("mutation", ["insert", "delete"])
     def test_count_and_rows_share_one_wal_snapshot(self, tmp_path, mutation):
         counted = threading.Event()
