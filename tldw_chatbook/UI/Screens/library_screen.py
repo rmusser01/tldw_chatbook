@@ -42250,9 +42250,16 @@ class LibraryScreen(BaseAppScreen):
             from tldw_chatbook.Widgets.Library.library_review_set_picker import (
                 PICKER_DISMISS,
                 PICKER_OPEN,
+                PICKER_READ_LATER,
             )
 
             action, set_id = decision
+            if action == PICKER_READ_LATER:
+                pairs = await self._review_read_later_pairs()
+                self._create_and_open_review_set(
+                    "Read later", "read_later", pairs
+                )
+                return
             if action == PICKER_DISMISS:
                 await self._run_library_service_call(
                     service.dismiss, set_id, isolate_in_worker=True
@@ -42278,6 +42285,44 @@ class LibraryScreen(BaseAppScreen):
             self._notify_review_set(
                 "Couldn't open review sets.", severity="error"
             )
+
+    async def _review_read_later_pairs(self) -> list[tuple[int, str]]:
+        """Build ordered (backing_id, title) pairs from the read-later queue.
+
+        task-28244: ids come from ``list_read_it_later_media_ids`` (already
+        ordered ``saved_at DESC``); titles come from the same bounded
+        allowlist query Review-selected uses, whose browse-sort order is then
+        discarded in favor of the saved order.
+
+        Returns:
+            Pairs in saved-at order; empty when the queue is empty or the
+            Media DB is unavailable.
+        """
+        from tldw_chatbook.Library.review_set_state import REVIEW_SET_CAP
+
+        lister = getattr(
+            getattr(self.app_instance, "media_db", None),
+            "list_read_it_later_media_ids",
+            None,
+        )
+        if not callable(lister):
+            return []
+        # Bound the DB query itself (Qodo #2340) -- +1 so build_pinned_items
+        # can still flag truncation; the client-side slice stays as a guard
+        # for listers without limit support.
+        ids = await self._run_library_service_call(
+            lister, isolate_in_worker=True, limit=REVIEW_SET_CAP + 1
+        )
+        ids = [int(backing_id) for backing_id in ids][: REVIEW_SET_CAP + 1]
+        if not ids:
+            return []
+        pairs = await self._order_selected_review_pairs(tuple(ids))
+        title_by_id = {backing_id: title for backing_id, title in pairs}
+        return [
+            (backing_id, title_by_id[backing_id])
+            for backing_id in ids
+            if backing_id in title_by_id
+        ]
 
     def _collect_review_set_picker_rows(
         self,

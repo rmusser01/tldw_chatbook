@@ -3628,9 +3628,20 @@ class MediaDatabase:
             ) from e
 
     def list_read_it_later_media_ids(
-        self, *, include_deleted: bool = False, include_trash: bool = False
+        self,
+        *,
+        include_deleted: bool = False,
+        include_trash: bool = False,
+        limit: Optional[int] = None,
     ) -> List[int]:
-        """List media IDs saved in the local read-it-later table."""
+        """List media IDs saved in the local read-it-later table.
+
+        Args:
+            include_deleted: Include soft-deleted media.
+            include_trash: Include trashed media.
+            limit: Bound the result to the newest ``limit`` saves; ``None``
+                returns the whole queue (the pre-existing behavior).
+        """
         sql = """
             SELECT s.media_id
             FROM MediaReadItLaterState s
@@ -3642,8 +3653,12 @@ class MediaDatabase:
         if not include_trash:
             sql += " AND m.is_trash = 0"
         sql += " ORDER BY s.saved_at DESC, s.media_id DESC"
+        params: tuple = ()
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (int(limit),)
         try:
-            cursor = self.execute_query(sql, ())
+            cursor = self.execute_query(sql, params)
             return [int(row["media_id"]) for row in cursor.fetchall()]
         except (DatabaseError, sqlite3.Error) as e:
             logger.error(

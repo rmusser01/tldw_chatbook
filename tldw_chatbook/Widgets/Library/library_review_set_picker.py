@@ -29,8 +29,12 @@ PICKER_OPEN = "open"
 PICKER_DISMISS = "dismiss"
 """Decision action: soft-delete the chosen set."""
 
+PICKER_READ_LATER = "read_later"
+"""Decision action: build a new set from the read-later queue (task-28244)."""
+
 PickerDecision = tuple[str, str] | None
-"""``(PICKER_OPEN, set_id)`` | ``(PICKER_DISMISS, set_id)`` | ``None``."""
+"""``(PICKER_OPEN, set_id)`` | ``(PICKER_DISMISS, set_id)`` |
+``(PICKER_READ_LATER, "")`` | ``None``."""
 
 
 class LibraryReviewSetPickerDialog(
@@ -113,6 +117,12 @@ class LibraryReviewSetPickerDialog(
                         dismiss_button.review_set_id = set_id
                         yield dismiss_button
             with Horizontal(id="library-review-set-picker-actions"):
+                yield Button(
+                    "Review read-later",
+                    id="library-review-set-picker-read-later",
+                    compact=True,
+                    tooltip="Build a review set from your read-later queue.",
+                )
                 yield Button("Close", id="library-review-set-picker-close")
 
     @on(Button.Pressed, ".library-review-set-open")
@@ -134,6 +144,16 @@ class LibraryReviewSetPickerDialog(
         """
         event.stop()
         self.dismiss((PICKER_DISMISS, str(event.button.review_set_id)))
+
+    @on(Button.Pressed, "#library-review-set-picker-read-later")
+    def _read_later(self, event: Button.Pressed) -> None:
+        """Dismiss with the build-from-read-later decision (task-28244).
+
+        Args:
+            event: The "Review read-later" Button press.
+        """
+        event.stop()
+        self.dismiss((PICKER_READ_LATER, ""))
 
     @on(Button.Pressed, "#library-review-set-picker-close")
     async def _close(self, event: Button.Pressed) -> None:
