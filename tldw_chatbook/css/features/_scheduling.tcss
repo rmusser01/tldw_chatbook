@@ -76,10 +76,20 @@ SchedulesWorkbench TabbedContent TabPane {
 
 /* schedules-redesign PR-1, Task 4: the Automations tab's third pane --
  * the definitions detail widget (DefinitionDetail), the same list|detail|
- * inspector idiom as the Queue tab's three panes above. */
+ * inspector idiom as the Queue tab's three panes above.
+ *
+ * min-width 22, not 30 (final review F5): the three panes' min-widths must
+ * SUM to no more than the narrowest width at which all three are still
+ * shown -- 84, the same `hide_detail` threshold the Queue tab's own detail
+ * pane uses. At 30+30+30 = 90 the 84-89 band could not satisfy that, and
+ * Textual's fr layout then gave EVERY pane the full container width,
+ * laying the detail and history panes out entirely off-screen; the split
+ * has overflow: hidden, so not even a scrollbar hinted at it. 30+30+22 =
+ * 82 fits 84 with slack. This floor only ever binds inside that band -- at
+ * any wider width the 1fr share is larger anyway. */
 #scheduling-automations-detail-pane {
     width: 1fr;
-    min-width: 30;
+    min-width: 22;
     height: 1fr;
     min-height: 0;
     padding: 1;
@@ -92,7 +102,10 @@ SchedulesWorkbench TabbedContent TabPane {
     padding: 3 1;
 }
 
-#scheduling-automation-detail-question {
+/* The two detail panes' body cards: the definitions pane's question and
+ * (final review F10) the reminder pane's body text, same card. */
+#scheduling-automation-detail-question,
+#scheduling-task-detail-body-card {
     height: auto;
     padding: 1;
     margin-bottom: 1;

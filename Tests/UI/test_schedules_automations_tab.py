@@ -874,6 +874,10 @@ def _frequency_definition(**overrides) -> dict:
             "generation_mode": "required",
         },
         "finding_policy": {"preset": "high_confidence_only"},
+        # This client's writer emits booleans from the form's one "Notify
+        # me about results" checkbox; the server sends per-outcome channel
+        # strings instead (see the fixture-shaped test below).
+        "notification_policy": {"on_success": True, "on_failure": True},
     }
     row.update(overrides)
     return row
@@ -919,6 +923,10 @@ async def test_definition_detail_renders_every_details_and_frequency_value():
             _detail_text(detail, "scheduling-automation-detail-timezone")
             == "America/New_York"
         )
+        # Final review F8: spec §5 gives BOTH columns this Frequency row.
+        assert (
+            _detail_text(detail, "scheduling-automation-detail-notifications") == "On"
+        )
 
 
 @pytest.mark.asyncio
@@ -942,10 +950,11 @@ async def test_definition_detail_runs_on_shows_transfer_badge_when_in_flight():
 
 
 @pytest.mark.asyncio
-async def test_definition_detail_renders_one_time_schedule_and_defaults():
+async def test_definition_detail_renders_one_time_schedule_and_absent_keys():
     """A one-time schedule renders through the same rows; a definition
-    with no `config`/`finding_policy` at all degrades to the create/edit
-    form's own defaults rather than a blank or a crash."""
+    with no `config`/`finding_policy`/`notification_policy` at all says
+    so rather than blanking, crashing, or (final review F2) presenting
+    the create/edit form's DEFAULTS as if they were readings."""
     async with _BareDefinitionDetailApp().run_test() as pilot:
         detail = pilot.app.query_one(DefinitionDetail)
         detail.set_definition(
@@ -967,16 +976,16 @@ async def test_definition_detail_renders_one_time_schedule_and_defaults():
         assert _detail_text(detail, "scheduling-automation-detail-timezone") == "UTC"
         assert _detail_text(detail, "scheduling-automation-detail-model") == "auto"
         assert (
-            _detail_text(detail, "scheduling-automation-detail-generation")
-            == "Only when something new is found"
+            _detail_text(detail, "scheduling-automation-detail-generation") == "Not set"
         )
         assert (
             _detail_text(detail, "scheduling-automation-detail-finding-policy")
-            == "Balanced findings"
+            == "Not set"
         )
+        assert _detail_text(detail, "scheduling-automation-detail-sources") == "Not set"
         assert (
-            _detail_text(detail, "scheduling-automation-detail-sources")
-            == "All searchable library"
+            _detail_text(detail, "scheduling-automation-detail-notifications")
+            == "Not set"
         )
 
 
@@ -1152,7 +1161,16 @@ async def test_selecting_a_server_definition_shows_its_server_owner_label():
                         "provider": "anthropic",
                         "model": "claude",
                     },
-                    "schedule": {"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+                    # WIRE shape: the real server sends `expression`, not
+                    # `cron` (final review F1, recorded fixture
+                    # `automation_definition_list.json`). Do not "fix"
+                    # this to the client's own key -- that drift is what
+                    # let `At: -` ship for every server definition.
+                    "schedule": {
+                        "kind": "cron",
+                        "expression": "0 9 * * 1",
+                        "timezone": "UTC",
+                    },
                     "config": {"scope": {"mode": "all_searchable_library"}},
                 },
             ],
@@ -1179,12 +1197,28 @@ async def test_selecting_a_server_definition_shows_its_server_owner_label():
             _detail_text(detail, "scheduling-automation-detail-model")
             == "anthropic/claude"
         )
+        # Final review F1: the wire's `expression` key reaches the At row.
+        assert (
+            _detail_text(detail, "scheduling-automation-detail-at")
+            == "Weekly on Monday at 09:00 UTC"
+        )
 
         # History starts collapsed -- expand before reading its rows.
         history_group = detail.query_one("#scheduling-automation-detail-group-history")
         history_group.collapsed = False
         await pilot.pause()
-        assert _detail_text(detail, "scheduling-automation-detail-run-count") == "0"
+        # Final review F3: `automation_runs` is local-only, so a server
+        # row has no local counts to report -- and "Never run"/"0" here
+        # contradicted the run-history pane beside it, which was listing
+        # that same definition's server audit trail.
+        assert (
+            _detail_text(detail, "scheduling-automation-detail-run-count")
+            == "Kept on the server"
+        )
+        assert (
+            _detail_text(detail, "scheduling-automation-detail-last-run")
+            == "Kept on the server — see Run history"
+        )
 
 
 @pytest.mark.asyncio
@@ -1215,3 +1249,278 @@ async def test_definition_detail_counts_are_read_off_the_event_loop():
             await pilot.pause()
 
         spy.assert_awaited()
+
+
+def _recorded_server_definition() -> dict:
+    """Item 0 of this repo's own RECORDED real-server definition list,
+    scoped the way `_load_server_automations` scopes it (`owner_id`
+    stamped from the connection, everything else passed through raw).
+
+    Hand-written dicts are what hid final review F1/F2 for a whole task:
+    every branch test wrote the CLIENT's payload shape (`schedule.cron`,
+    a full `config`), so the pane looked correct against a payload the
+    server never sends.
+    """
+    import json
+    from pathlib import Path
+
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "Scheduling/fixtures/server_responses/automation_definition_list.json"
+    )
+    definition = json.loads(path.read_text())["items"][0]
+    definition["owner_id"] = "server:server-1"
+    return definition
+
+
+@pytest.mark.asyncio
+async def test_definition_detail_reads_the_recorded_server_payload_honestly():
+    """Final review F1 + F2, against the recorded fixture rather than a
+    hand-written dict.
+
+    F1: the server sends `schedule.expression`; reading only `cron`
+    rendered `At: -` for EVERY server-owned definition.
+    F2: the server's `config` carries none of the create-form's keys, and
+    substituting that form's defaults presented a guess as a reading --
+    a definition actually configured `high_confidence_only` would have
+    rendered "Finding policy: Balanced findings".
+    """
+    definition = _recorded_server_definition()
+    # Guard the premise: if the recorded payload ever grows these keys,
+    # this test is no longer testing what it claims to.
+    assert definition["schedule"]["expression"] == "0 9 * * 1-5"
+    assert "cron" not in definition["schedule"]
+    assert "generation_mode" not in definition["config"]
+    assert "scope" not in definition["config"]
+    assert "finding_policy" not in definition
+
+    async with _BareDefinitionDetailApp().run_test() as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(definition)
+        await pilot.pause()
+
+        assert _detail_text(detail, "scheduling-automation-detail-repeat") == "Recurring"
+        assert (
+            _detail_text(detail, "scheduling-automation-detail-at")
+            == "Weekdays at 09:00 UTC"
+        )
+        assert _detail_text(detail, "scheduling-automation-detail-timezone") == "UTC"
+        # The server's per-outcome channel strings, not this client's bools.
+        assert (
+            _detail_text(detail, "scheduling-automation-detail-notifications")
+            == "silent on success · toast on failure"
+        )
+        for row_id in ("generation", "finding-policy", "sources"):
+            assert (
+                _detail_text(detail, f"scheduling-automation-detail-{row_id}")
+                == "Not set"
+            ), row_id
+
+
+@pytest.mark.asyncio
+async def test_definition_detail_history_is_owner_honest():
+    """Final review F3: local counts are the truth only for a LOCAL row.
+
+    `automation_runs` has one writer (local dispatch) and no server
+    mirror, so a server-owned definition's local counts are structurally
+    zero -- "Never run"/"0" was a claim, not a reading, and it sat beside
+    a run-history pane showing the server's real audit trail.
+    """
+    async with _BareDefinitionDetailApp().run_test() as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        # History starts collapsed (spec §5) and its rows paint at a zero
+        # region until expanded -- the same discipline every other History
+        # assertion in this file follows.
+        detail.query_one(
+            "#scheduling-automation-detail-group-history"
+        ).collapsed = False
+
+        detail.set_definition(_frequency_definition(), run_count=0, last_run=None)
+        await pilot.pause()
+        assert (
+            _detail_text(detail, "scheduling-automation-detail-last-run") == "Never run"
+        )
+        assert _detail_text(detail, "scheduling-automation-detail-run-count") == "0"
+
+        detail.set_definition(
+            _frequency_definition(owner_id="server:server-1"),
+            run_count=0,
+            last_run=None,
+        )
+        await pilot.pause()
+        assert (
+            _detail_text(detail, "scheduling-automation-detail-last-run")
+            == "Kept on the server — see Run history"
+        )
+        assert (
+            _detail_text(detail, "scheduling-automation-detail-run-count")
+            == "Kept on the server"
+        )
+
+        # Authored offline against the server scope: the server has never
+        # heard of it, so it has no history there either.
+        detail.set_definition(
+            _frequency_definition(owner_id="server:server-1", pending_sync=True),
+            run_count=0,
+            last_run=None,
+        )
+        await pilot.pause()
+        assert (
+            _detail_text(detail, "scheduling-automation-detail-last-run")
+            == "Not synced to the server yet"
+        )
+
+
+@pytest.mark.asyncio
+async def test_definition_detail_says_so_when_the_history_read_failed():
+    """Final review F14: a failed count read must not be indistinguishable
+    from a genuinely empty history."""
+    async with _BareDefinitionDetailApp().run_test() as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.query_one(
+            "#scheduling-automation-detail-group-history"
+        ).collapsed = False
+        detail.set_definition(_frequency_definition(), history_error=True)
+        await pilot.pause()
+
+        for row_id in ("last-run", "run-count", "unread-results"):
+            assert (
+                _detail_text(detail, f"scheduling-automation-detail-{row_id}")
+                == "Couldn't load — see the log"
+            ), row_id
+
+
+@pytest.mark.asyncio
+async def test_a_failed_count_read_paints_the_error_not_zeros():
+    """Same as above, driven through `SchedulesWorkbench`'s own read path
+    (the `except` branch of `_load_automation_detail`)."""
+    server_client = AutomationsServerClient()
+    definition = _frequency_definition(id="local-def-freq")
+    service = AutomationsMockService(server_client, local_definitions=[definition])
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("sqlite is unhappy")
+
+    service.db.count_automation_runs = _boom
+    app = AutomationsTestApp(service)
+    async with app.run_test(size=(200, 50)) as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+        workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+            "scheduling-automations-tab"
+        )
+        detail = workbench.query_one("#scheduling-automation-detail", DefinitionDetail)
+        table = workbench.query_one("#scheduling-automations-table", DataTable)
+        row_index = next(
+            i
+            for i, row in enumerate(workbench._automations)
+            if row["id"] == "local-def-freq"
+        )
+        table.cursor_coordinate = (row_index, 0)
+        await pilot.pause()
+        await pilot.pause()
+
+        history_group = detail.query_one("#scheduling-automation-detail-group-history")
+        history_group.collapsed = False
+        await pilot.pause()
+        assert (
+            _detail_text(detail, "scheduling-automation-detail-run-count")
+            == "Couldn't load — see the log"
+        )
+
+
+@pytest.mark.asyncio
+async def test_editing_the_selected_definition_refreshes_the_detail_pane():
+    """Final review F4: a table refresh that lands on the SAME row id must
+    still re-feed the detail pane -- the row's DATA may have changed.
+
+    The `RowHighlighted` handler early-returns on an unchanged id, so
+    after an edit-save the table cell updated while the pane beside it
+    kept painting the pre-edit model.
+    """
+    server_client = AutomationsServerClient()
+    definition = _frequency_definition(id="local-def-freq")
+    service = AutomationsMockService(server_client, local_definitions=[definition])
+    app = AutomationsTestApp(service)
+    async with app.run_test(size=(200, 50)) as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+        workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+            "scheduling-automations-tab"
+        )
+        detail = workbench.query_one("#scheduling-automation-detail", DefinitionDetail)
+        table = workbench.query_one("#scheduling-automations-table", DataTable)
+        row_index = next(
+            i
+            for i, row in enumerate(workbench._automations)
+            if row["id"] == "local-def-freq"
+        )
+        table.cursor_coordinate = (row_index, 0)
+        await pilot.pause()
+        await pilot.pause()
+        assert _detail_text(detail, "scheduling-automation-detail-model") == "openai/gpt-5"
+
+        # Edit-and-save shape: the stored row changes, the id does not.
+        service.db._automation_definitions[0]["input"] = {
+            "question": "What changed this week?",
+            "provider": "anthropic",
+            "model": "claude-x",
+        }
+        await workbench.load_automations()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert (
+            _detail_text(detail, "scheduling-automation-detail-model")
+            == "anthropic/claude-x"
+        )
+
+
+@pytest.mark.asyncio
+async def test_automations_panes_stay_on_screen_across_the_detail_hide_boundary():
+    """Final review F5: three panes x min-width 30 could not fit the 84-89
+    band, and Textual's fr layout then laid the detail and history panes
+    out entirely off-screen (the split has `overflow: hidden`, so nothing
+    hinted at it).
+
+    84 is the width at which the detail pane is still shown -- the same
+    `hide_detail` threshold the Queue tab uses.
+    """
+
+    class _CssApp(AutomationsTestApp):
+        # The default harness does not load `_scheduling.tcss`, so
+        # geometry assertions there measure NOTHING (this exact trap made
+        # the reviewer's first probe read clean when it was not).
+        CSS_PATH = str(BUNDLED_STYLESHEET)
+
+    app = _CssApp(AutomationsMockService(AutomationsServerClient()))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+        workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+            "scheduling-automations-tab"
+        )
+        await pilot.pause()
+
+        for width in (84, 90):
+            await pilot.resize_terminal(width, 40)
+            await pilot.pause()
+            await pilot.pause()
+            panes = [
+                workbench.query_one(f"#{pane_id}")
+                for pane_id in (
+                    "scheduling-automations-pane",
+                    "scheduling-automations-detail-pane",
+                    "scheduling-automation-history-pane",
+                )
+            ]
+            for pane in panes:
+                assert not pane.has_class("pane-hidden"), (width, pane.id)
+                assert pane.region.width > 0, (width, pane.id)
+                assert pane.region.right <= width, (
+                    f"W={width}: {pane.id} runs off-screen "
+                    f"(x={pane.region.x}, width={pane.region.width})"
+                )

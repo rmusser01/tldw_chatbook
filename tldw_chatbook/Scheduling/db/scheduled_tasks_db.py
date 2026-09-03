@@ -2294,7 +2294,9 @@ class ScheduledTasksDB(BaseDB):
                 cursor.fetchall(), json_fields=self._AUTOMATION_RUN_JSON_FIELDS
             )
 
-    def count_automation_runs(self, definition_id: str) -> int:
+    def count_automation_runs(
+        self, definition_id: str, owner_id: Optional[str] = None
+    ) -> int:
         """Count automation runs for one definition.
 
         ``automation_runs`` is a local-only table (never synced from the
@@ -2302,16 +2304,33 @@ class ScheduledTasksDB(BaseDB):
         cross-id-space ambiguity here -- ``definition_id`` is always the
         LOCAL definition id.
 
+        ``owner_id`` scopes the count the way ``list_automation_runs``
+        already scopes its read (schedules-redesign PR-1 final review
+        F11): the detail pane shows both in one group, and
+        ``convert_row_to_server_mirror``'s "converted" path rewrites a
+        row's ``owner_id`` while keeping its local id -- so an unscoped
+        count beside a scoped last-run could contradict itself on screen
+        ("Run count: 3" next to "Last run: Never run"). The parameter is
+        optional because the existing callers count across owners.
+
         Args:
             definition_id: The definition's local id.
+            owner_id: Optional owner scope; ``None`` counts every owner's
+                runs for that definition.
 
         Returns:
             The number of ``automation_runs`` rows for that definition.
         """
+        conditions = ["definition_id = ?"]
+        params: list[Any] = [definition_id]
+        if owner_id is not None:
+            conditions.append("owner_id = ?")
+            params.append(owner_id)
         with closing(self._get_connection()) as conn:
             cursor = conn.execute(
-                "SELECT COUNT(*) FROM automation_runs WHERE definition_id = ?",
-                (definition_id,),
+                "SELECT COUNT(*) FROM automation_runs "
+                f"WHERE {' AND '.join(conditions)}",
+                params,
             )
             row = cursor.fetchone()
             return int(row[0]) if row else 0

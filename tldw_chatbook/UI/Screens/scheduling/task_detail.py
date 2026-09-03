@@ -391,8 +391,44 @@ def _task_sync_label(task: ReminderTask | ScheduledTask) -> str:
     return "local (read-only projection)"
 
 
+def owner_display_label(owner_id: Any) -> str:
+    """Prose owner label shared by BOTH detail panes (final review F6/F7).
+
+    ``"This device"`` for a locally-owned row, the server's own id for a
+    server-scoped one (``"server:srv-1"`` -> ``"srv-1"``) -- the
+    vocabulary the spec, the User Guide and the Automations table's own
+    Name-cell prefix already use. The reminder pane's `Runs on` row used
+    to render the raw metadata string instead (``local``, ``server:1 /
+    server <id>``), so the two panes spoke two dialects for the flagship
+    row of the redesign. One helper, one vocabulary -- settled before
+    PR-3 turns this row into the transfer dropdown.
+
+    `TaskInspector`'s Owner row deliberately keeps `_task_owner_label`'s
+    raw value: that pane is the metadata inspector, where the unprettied
+    owner/server ids are the point.
+
+    Args:
+        owner_id: A row's ``owner_id`` (any type tolerated -- anything
+            that is not a server-scoped string reads as local).
+
+    Returns:
+        ``"This device"``, or the server's own id.
+    """
+    # ADR-097: scheduler.queue stays off the boot census -- function-local
+    # import, same as `_queue_owner_suffix` below.
+    from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
+
+    if not is_server_scoped_owner(owner_id):
+        return "This device"
+    owner_id = str(owner_id)
+    return owner_id.split(":", 1)[1] if ":" in owner_id else owner_id
+
+
 def _task_owner_label(task: ReminderTask | ScheduledTask) -> str:
-    """Return an owner label for the task."""
+    """Return the RAW owner label for the task (TaskInspector's Owner row).
+
+    Prose-rendered surfaces use `owner_display_label` instead.
+    """
     owner = task.owner_id or "local"
     if isinstance(task, ReminderTask) and task.server_id:
         owner += f" / server {task.server_id}"
@@ -476,10 +512,16 @@ _REMINDER_NOTIFICATIONS_LABEL = "Inbox + toast"
 
 
 def _reminder_runs_on_label(task: ReminderTask) -> str:
-    """'Runs on' row value (spec §5 Details group): owner label plus the
-    existing in-flight transfer badge text, when a transfer is running.
+    """'Runs on' row value (spec §5 Details group): the shared prose owner
+    label plus the existing in-flight transfer badge text, when a transfer
+    is running.
+
+    Final review F6/F7: this used to render `_task_owner_label`'s raw
+    metadata string (``local``), which neither matched the definitions
+    pane's ``This device`` nor the User Guide's own description of this
+    very row. Both panes now go through `owner_display_label`.
     """
-    return _task_owner_label(task) + _transfer_row_suffix(task)
+    return owner_display_label(task.owner_id) + _transfer_row_suffix(task)
 
 
 def _reminder_repeat_label(task: ReminderTask) -> str:
@@ -583,6 +625,7 @@ class TaskDetail(Vertical):
         self._at_row: DetailValueRow | None = None
         self._timezone_row: DetailValueRow | None = None
         self._last_fire_row: DetailValueRow | None = None
+        self._body_card: Static | None = None
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -652,6 +695,17 @@ class TaskDetail(Vertical):
             # `ReminderTask`; a `ScheduledTask` projection keeps the
             # legacy Type/Schedule rows above instead.
             with Vertical(id="scheduling-task-detail-groups"):
+                # Spec §5 wants the body text in a rounded card above the
+                # groups, exactly like the definitions pane's question
+                # card -- final review F10: it was never built, and
+                # `ReminderTask.body` was rendered nowhere. Same
+                # `markup=False` escape discipline (reminder bodies are
+                # user text); hidden entirely for a body-less reminder
+                # rather than showing an empty bordered box.
+                self._body_card = Static(
+                    "", id="scheduling-task-detail-body-card", markup=False
+                )
+                yield self._body_card
                 self._runs_on_row = DetailValueRow(
                     "Runs on", "-", value_id="scheduling-detail-runs-on"
                 )
@@ -685,9 +739,12 @@ class TaskDetail(Vertical):
                 self._last_fire_row = DetailValueRow(
                     "Last fire", "-", value_id="scheduling-detail-last-fire"
                 )
+                # Final review N2: labelled "Recent runs" pointing at a
+                # section whose own label is also "Recent runs" -- one of
+                # the two had to be renamed.
                 history_link_row = DetailValueRow(
-                    "Recent runs",
-                    "See below",
+                    "Run history",
+                    "See list below",
                     value_id="scheduling-detail-history-link",
                 )
                 yield DetailGroup(
@@ -993,6 +1050,9 @@ class TaskDetail(Vertical):
         )
         if is_reminder:
             assert self._runs_on_row is not None, "set_task called before mount"
+            body = (task.body or "").strip()
+            self._body_card.update(body)
+            self._body_card.display = bool(body)
             self._runs_on_row.update_value(_reminder_runs_on_label(task))
             self._repeat_row.update_value(_reminder_repeat_label(task))
             self._at_row.update_value(_reminder_at_label(task))

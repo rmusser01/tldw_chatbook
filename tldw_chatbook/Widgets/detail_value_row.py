@@ -10,6 +10,15 @@ focusable. A hidden error-line slot below the row is implemented and tested
 (``show_error``/``clear_error``) but unused by any PR-1 caller; PR-3 wires a
 caller to it.
 
+Three PR-3 seams are dormant in PR-1 (final review F13, fixed while the row
+had only two consumers): ``affordance`` is a settable property, not a
+construction-only flag (the glyph is always mounted and toggled with
+``display``, so flipping a row read-only<->editable never means a remount);
+``row_key`` gives the row an identity of its own to carry on whatever
+message PR-3 posts; and ``can_focus`` is a constructor flag (default
+``False``, as every PR-1 caller leaves it) so spec §12's Up/Down row
+traversal needs no subclass.
+
 ``DetailGroup`` is a thin ``Collapsible`` subclass (the house idiom already
 used directly across this codebase -- see
 ``redesign-pr1-survey.md`` section 3 -- rather than a bespoke toggle-button
@@ -63,6 +72,8 @@ class DetailValueRow(Vertical):
         *,
         affordance: bool = False,
         value_id: str | None = None,
+        row_key: str | None = None,
+        can_focus: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -73,6 +84,15 @@ class DetailValueRow(Vertical):
         self._error_id = f"{value_id}-error" if value_id else None
         self._value_static: Static | None = None
         self._error_static: Static | None = None
+        self._affordance_static: Static | None = None
+        #: Stable field identity for the row itself (final-review F13.2).
+        #: PR-3 addresses the ROW (open its editor, route its error) and
+        #: must not reach through `static.parent.parent` to find it.
+        self.row_key = row_key
+        #: Focusable-ready (final-review F13.3): spec §12 wants Up/Down
+        #: traversal of detail rows. `Vertical.can_focus` is False and
+        #: every PR-1 caller leaves it there; PR-3 flips it per row.
+        self.can_focus = can_focus
 
     def compose(self) -> ComposeResult:
         with Horizontal(classes="detail-value-row-line"):
@@ -84,15 +104,36 @@ class DetailValueRow(Vertical):
                 id=self._value_id,
             )
             yield self._value_static
-            if self._affordance:
-                yield Static(
-                    "▾", classes="detail-value-row-affordance", markup=False
-                )
+            # Always mounted, shown/hidden by the `affordance` property
+            # (final-review F13.1): PR-3 flips a row between read-only and
+            # editable in place, and rebuilding the row would mean a
+            # remount -- both consumers hold hard refs assigned in their
+            # own `compose()`.
+            self._affordance_static = Static(
+                "▾", classes="detail-value-row-affordance", markup=False
+            )
+            self._affordance_static.styles.display = (
+                "block" if self._affordance else "none"
+            )
+            yield self._affordance_static
         self._error_static = Static(
             "", classes="detail-value-row-error", markup=False, id=self._error_id
         )
         self._error_static.styles.display = "none"
         yield self._error_static
+
+    @property
+    def affordance(self) -> bool:
+        """Whether the ``▾`` affordance glyph is showing."""
+        return self._affordance
+
+    @affordance.setter
+    def affordance(self, value: bool) -> None:
+        self._affordance = bool(value)
+        if self._affordance_static is not None:
+            self._affordance_static.styles.display = (
+                "block" if self._affordance else "none"
+            )
 
     def update_value(self, value: str | Text) -> None:
         """Refresh the painted value in place -- no recompose."""

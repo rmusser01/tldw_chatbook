@@ -31,13 +31,18 @@ Values are drawn from BOTH the local `automation_definitions` table
 (client-authored, `schedule.cron`/`config.scope`/etc. per
 `automation_definition_form.py`'s own payload shape) and the server's raw
 list-response dicts (`_load_server_automations` never runs these through
-a JSON round-trip, so any camelCase/renamed field a live server used
-would need translating separately -- out of this task's scope, matching
-`AutomationDefinitionForm._prefill_from_row`'s own documented precedent
-of leaving an un-recognized schedule shape at its default rather than
-guessing). Every formatter here reads with `.get()`/`isinstance` guards
-and degrades to an honest placeholder instead of raising, the same
-defensive-read idiom `automation_execution_target_label` already used.
+a JSON round-trip, stamping only `owner_id`). The two shapes genuinely
+differ, and the final review proved the cost of assuming otherwise: the
+server sends `schedule.expression` where this client writes
+`schedule.cron`, so every server definition rendered `At: -`, and the
+config keys the server simply does not carry (`generation_mode`,
+`scope`, `finding_policy`) were being filled in from the CREATE FORM's
+defaults and presented as readings. Both are fixed: the cron read accepts
+either key, and an absent key renders "Not set". Every formatter here
+reads with `.get()`/`isinstance` guards and degrades to an honest
+placeholder instead of raising, the same defensive-read idiom
+`automation_execution_target_label` already used -- honest meaning "we
+have no value", never a plausible guess.
 
 Escape discipline: every `DetailValueRow` value is safe by construction
 (Task 1: the row's `Static` is built with `markup=False` and the value is
@@ -62,7 +67,35 @@ from .forms.automation_definition_form import (
     _GENERATION_MODE_OPTIONS,
     _SCOPE_SOURCE_CHECKBOXES,
 )
-from .task_detail import _TRANSFER_STATE_ROW_LABELS, _format_timezone, _humanize_cron
+from .task_detail import (
+    _TRANSFER_STATE_ROW_LABELS,
+    _format_timezone,
+    _humanize_cron,
+    owner_display_label,
+)
+
+#: Absent key -> honest placeholder (final review F2). A definition this
+#: client did not author carries none of the create-form's config keys,
+#: and substituting that form's DEFAULTS here presented a guess as a
+#: reading: a server definition configured `high_confidence_only`
+#: rendered "Finding policy: Balanced findings" in a read-only pane the
+#: user has no reason to distrust. Defaults belong to the create path.
+_NOT_SET = "Not set"
+
+#: History rows for a server-owned definition (final review F3).
+#: `automation_runs` is a local-only table with exactly one writer (local
+#: dispatch, `scheduler/handlers/automation_handler.py`), so its counts
+#: are structurally zero for a server row -- and "Never run"/"0" sat
+#: beside a run-history pane listing the server's real audit trail.
+#: Mirrors `_load_automation_history`'s own honest local-gap copy.
+_SERVER_LAST_RUN = "Kept on the server — see Run history"
+_SERVER_RUN_COUNT = "Kept on the server"
+_PENDING_SYNC_HISTORY = "Not synced to the server yet"
+
+#: History rows after a failed count read (final review F14): a DB error
+#: must not be indistinguishable from a genuinely empty history. Same
+#: wording shape as `_load_automation_history`'s read-failure notice.
+_HISTORY_READ_FAILED = "Couldn't load — see the log"
 
 #: value -> label reverse lookups, reusing the SAME vocabulary the
 #: create/edit form already presents (`automation_definition_form.py`)
@@ -125,14 +158,13 @@ def _definition_owner_label(definition: dict[str, Any]) -> str:
     `automation_name_cell` wraps into its Name-cell prefix, factored out
     here so the detail pane's "Runs on" row and the table cell can never
     drift apart.
-    """
-    from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
 
-    owner_id = str(definition.get("owner_id") or "local")
-    if not is_server_scoped_owner(owner_id):
-        return "This device"
-    label = owner_id.split(":", 1)[1] if ":" in owner_id else owner_id
-    if definition.get("pending_sync"):
+    The owner half is `task_detail.owner_display_label`, shared with the
+    reminder pane's own "Runs on" row (final review F6/F7); only the
+    definition-dict read and the pending-sync suffix live here.
+    """
+    label = owner_display_label(definition.get("owner_id") or "local")
+    if definition.get("pending_sync") and label != "This device":
         label = f"{label} · pending sync"
     return label
 
@@ -191,10 +223,13 @@ def _definition_question_text(definition: dict[str, Any]) -> str:
 
 def _definition_generation_label(config: dict[str, Any]) -> str:
     """'Generation' row value (Details group): `config.generation_mode`,
-    labeled with the same wording the create/edit form's Select uses.
-    Defaults to "optional" (the form's own default) when absent."""
+    labeled with the same wording the create/edit form's Select uses;
+    `"Not set"` when the payload carries no `generation_mode` at all
+    (final review F2 -- this used to substitute the form's own default)."""
     mode = config.get("generation_mode") if isinstance(config, dict) else None
-    mode = str(mode) if mode else "optional"
+    if not mode:
+        return _NOT_SET
+    mode = str(mode)
     return _GENERATION_MODE_LABELS.get(mode, mode)
 
 
@@ -202,27 +237,55 @@ def _definition_finding_policy_label(definition: dict[str, Any]) -> str:
     """'Finding policy' row value (Details group): the top-level
     `finding_policy.preset` column (survey §4's authoritative source --
     distinct from the create/edit payload's `config.finding_policy`,
-    which the service copies into this column at save time). Defaults to
-    "balanced_findings" (the `AutomationDefinition` model's own default)
-    when absent."""
+    which the service copies into this column at save time); `"Not set"`
+    when absent (final review F2)."""
     finding_policy = definition.get("finding_policy")
-    preset = (
-        finding_policy.get("preset") if isinstance(finding_policy, dict) else None
-    ) or "balanced_findings"
+    preset = finding_policy.get("preset") if isinstance(finding_policy, dict) else None
+    if not preset:
+        return _NOT_SET
     return _FINDING_POLICY_LABELS.get(preset, str(preset))
 
 
 def _definition_sources_label(config: dict[str, Any]) -> str:
     """'Sources' row value (Details group): `config.scope`, joined plurals
     for an explicit source list, or the all-library sentence for the
-    default scope mode."""
+    default scope mode; `"Not set"` when the payload carries no `scope`
+    at all (final review F2 -- a server definition's config has no
+    `scope`, and claiming "All searchable library" for it was a guess)."""
     scope = config.get("scope") if isinstance(config, dict) else None
-    scope = scope if isinstance(scope, dict) else {}
+    if not isinstance(scope, dict) or not scope:
+        return _NOT_SET
     if scope.get("mode") != "sources":
         return "All searchable library"
     sources = scope.get("sources") or []
     labels = [_SCOPE_SOURCE_LABELS.get(str(item), str(item)) for item in sources]
     return ", ".join(labels) if labels else "None selected"
+
+
+def _definition_notifications_label(definition: dict[str, Any]) -> str:
+    """'Notifications' row value (Frequency group), spec §5's fourth
+    Frequency row -- missing until final review F8.
+
+    Reads `notification_policy`, which arrives in two shapes: this
+    client's writer emits booleans from the form's one "Notify me about
+    results" checkbox (`automation_definition_form.py`), while the real
+    server fixture returns per-outcome channel strings
+    (`{"on_success": "silent", "on_failure": "toast"}`). Both render;
+    an absent policy says so instead of guessing.
+    """
+    policy = definition.get("notification_policy")
+    if not isinstance(policy, dict) or not policy:
+        return _NOT_SET
+    on_success = policy.get("on_success")
+    on_failure = policy.get("on_failure")
+    if isinstance(on_success, bool) or isinstance(on_failure, bool):
+        return "On" if (on_success or on_failure) else "Off"
+    parts = [
+        f"{value} on {outcome}"
+        for outcome, value in (("success", on_success), ("failure", on_failure))
+        if value
+    ]
+    return " · ".join(parts) if parts else _NOT_SET
 
 
 def _parse_iso(value: Any) -> datetime | None:
@@ -248,6 +311,20 @@ def _definition_repeat_label(schedule: dict[str, Any]) -> str:
     return "-"
 
 
+def _definition_cron_expression(schedule: dict[str, Any]) -> Any:
+    """The cron string, under either key the two writers use.
+
+    Final review F1: this read `schedule["cron"]` only -- the key THIS
+    client's writer emits (`automation_definition_form.py`) -- so every
+    server-owned definition rendered `At: -`. The real server sends
+    `schedule.expression` (recorded fixture
+    `Tests/Scheduling/fixtures/server_responses/
+    automation_definition_list.json`), and `_load_server_automations`
+    passes the payload through raw, stamping only `owner_id`.
+    """
+    return schedule.get("cron") or schedule.get("expression")
+
+
 def _definition_at_label(schedule: dict[str, Any]) -> str:
     """'At' row value (Frequency group): the full schedule summary, reusing
     `_humanize_cron` for a cron-kind schedule -- the same formatter
@@ -257,7 +334,9 @@ def _definition_at_label(schedule: dict[str, Any]) -> str:
         return "-"
     kind = schedule.get("kind")
     if kind == "cron":
-        return _humanize_cron(schedule.get("cron"), schedule.get("timezone"))
+        return _humanize_cron(
+            _definition_cron_expression(schedule), schedule.get("timezone")
+        )
     if kind == "one_time":
         run_at = schedule.get("run_at")
         dt = _parse_iso(run_at) if run_at else None
@@ -280,6 +359,34 @@ def _definition_timezone_label(schedule: dict[str, Any]) -> str:
         dt = _parse_iso(run_at) if run_at else None
         return _format_timezone(dt) if dt is not None else "UTC"
     return "UTC"
+
+
+def _definition_history_labels(
+    definition: dict[str, Any],
+    *,
+    run_count: int,
+    last_run: dict[str, Any] | None,
+    history_error: bool,
+) -> tuple[str, str]:
+    """(Last run, Run count) values -- honest for every owner (F3/F14).
+
+    `automation_runs` is local-only: it has exactly one writer (local
+    dispatch) and no server mirror, so a server-owned definition's local
+    counts are structurally zero. Rendering them as `Never run` / `0`
+    contradicted the run-history pane beside it, which was listing that
+    same definition's server audit trail at the time -- and contradicted
+    the User Guide, which already claimed the honest behaviour.
+    """
+    from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
+
+    if is_server_scoped_owner(definition.get("owner_id")):
+        if definition.get("pending_sync"):
+            # Never reached the server, and never ran locally either.
+            return _PENDING_SYNC_HISTORY, _PENDING_SYNC_HISTORY
+        return _SERVER_LAST_RUN, _SERVER_RUN_COUNT
+    if history_error:
+        return _HISTORY_READ_FAILED, _HISTORY_READ_FAILED
+    return _definition_last_run_label(last_run), str(run_count)
 
 
 def _definition_last_run_label(last_run: dict[str, Any] | None) -> str:
@@ -321,6 +428,7 @@ class DefinitionDetail(Vertical):
         self._repeat_row: DetailValueRow | None = None
         self._at_row: DetailValueRow | None = None
         self._timezone_row: DetailValueRow | None = None
+        self._notifications_row: DetailValueRow | None = None
         self._last_run_row: DetailValueRow | None = None
         self._run_count_row: DetailValueRow | None = None
         self._unread_row: DetailValueRow | None = None
@@ -377,10 +485,18 @@ class DefinitionDetail(Vertical):
             self._timezone_row = DetailValueRow(
                 "Timezone", "-", value_id="scheduling-automation-detail-timezone"
             )
+            # Spec §5 gives BOTH columns a Frequency `Notifications` row;
+            # the plan's Task 4 text quietly dropped it (final review F8).
+            self._notifications_row = DetailValueRow(
+                "Notifications",
+                "-",
+                value_id="scheduling-automation-detail-notifications",
+            )
             yield DetailGroup(
                 self._repeat_row,
                 self._at_row,
                 self._timezone_row,
+                self._notifications_row,
                 title="Frequency",
                 id="scheduling-automation-detail-group-frequency",
             )
@@ -418,12 +534,15 @@ class DefinitionDetail(Vertical):
         run_count: int = 0,
         last_run: dict[str, Any] | None = None,
         unread_count: int = 0,
+        history_error: bool = False,
     ) -> None:
         """Paint the pane for `definition` (or the empty state for `None`).
 
         Pure render -- `run_count`/`last_run`/`unread_count` are already
         fetched (off the event loop) by the caller; this method performs
-        no I/O of its own.
+        no I/O of its own. `history_error` says that fetch FAILED, so the
+        History rows say so rather than painting a zero the read never
+        proved (final review F14).
         """
         empty_state = self.query_one(
             "#scheduling-automation-detail-empty-state", Static
@@ -462,7 +581,18 @@ class DefinitionDetail(Vertical):
         self._repeat_row.update_value(_definition_repeat_label(schedule))
         self._at_row.update_value(_definition_at_label(schedule))
         self._timezone_row.update_value(_definition_timezone_label(schedule))
+        self._notifications_row.update_value(
+            _definition_notifications_label(definition)
+        )
 
-        self._last_run_row.update_value(_definition_last_run_label(last_run))
-        self._run_count_row.update_value(str(run_count))
-        self._unread_row.update_value(str(unread_count))
+        last_run_label, run_count_label = _definition_history_labels(
+            definition,
+            run_count=run_count,
+            last_run=last_run,
+            history_error=history_error,
+        )
+        self._last_run_row.update_value(last_run_label)
+        self._run_count_row.update_value(run_count_label)
+        self._unread_row.update_value(
+            _HISTORY_READ_FAILED if history_error else str(unread_count)
+        )

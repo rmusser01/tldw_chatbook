@@ -1882,6 +1882,16 @@ class SchedulesWorkbench(BaseAppScreen):
             # Restoring the cursor fires RowHighlighted, which re-records
             # the same id -- belt and braces, set both explicitly.
             table.cursor_coordinate = (row_keys.index(previous_selection), 0)
+            # ...and that RowHighlighted hits the unchanged-id early
+            # return, so the pane would keep painting the PRE-refresh row
+            # (final review F4: edit a definition's model/cron/sources and
+            # save -- the table cell updated, the detail pane beside it
+            # did not, until the user selected another row and came back).
+            # The row DATA changed even though its id did not, so re-feed
+            # the pane explicitly. The detail worker is exclusive within
+            # its own group, so repeated refreshes are latest-wins, never
+            # a pile-up.
+            self._request_automation_detail(previous_selection)
         else:
             self._selected_automation_id = None
             self._clear_automation_history("Select an automation to see its history.")
@@ -2165,14 +2175,20 @@ class SchedulesWorkbench(BaseAppScreen):
             return
 
         def _read_counts() -> tuple[int, dict[str, Any] | None, int]:
+            # Both run reads are owner-scoped (final review F11): they sit
+            # in one group on screen, and `convert_row_to_server_mirror`'s
+            # "converted" path rewrites `owner_id` while keeping the local
+            # id -- an unscoped count beside a scoped last-run rendered
+            # "Run count: 3" next to "Last run: Never run".
             owner_id = str(definition.get("owner_id") or "local")
-            run_count = service.db.count_automation_runs(definition_id)
+            run_count = service.db.count_automation_runs(definition_id, owner_id)
             runs = service.db.list_automation_runs(owner_id, definition_id, limit=1)
             unread_count = service.db.count_unread_results(
                 owner_id=None, definition_id=definition_id
             )
             return run_count, (runs[0] if runs else None), unread_count
 
+        history_error = False
         try:
             run_count, last_run, unread_count = await asyncio.to_thread(_read_counts)
         except Exception:  # noqa: BLE001
@@ -2180,7 +2196,10 @@ class SchedulesWorkbench(BaseAppScreen):
                 "Failed to load automation detail counts (definition_id={})",
                 definition_id,
             )
-            run_count, last_run, unread_count = 0, None, 0
+            # Never paint 0/Never run off a read that blew up (F14): the
+            # pane says the read failed, matching how `_load_automation_
+            # history` reports its own read failure.
+            run_count, last_run, unread_count, history_error = 0, None, 0, True
         if definition_id != self._selected_automation_id:
             return
         detail.set_definition(
@@ -2188,6 +2207,7 @@ class SchedulesWorkbench(BaseAppScreen):
             run_count=run_count,
             last_run=last_run,
             unread_count=unread_count,
+            history_error=history_error,
         )
 
     @on(DataTable.RowHighlighted, "#scheduling-automations-table")

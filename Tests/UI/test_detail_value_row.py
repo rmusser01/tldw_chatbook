@@ -121,7 +121,13 @@ async def test_affordance_glyph_is_painted_and_dimmer_than_the_value():
             f"the value it sits beside: affordance={affordance_luminance:.3f} "
             f"value={value_luminance:.3f}"
         )
-        assert len(without_affordance.query(".detail-value-row-affordance")) == 0
+        # The glyph is always MOUNTED (final review F13.1 made
+        # `affordance` a settable property, so PR-3 can flip a row
+        # without a remount) -- what a row without one must not do is
+        # PAINT it.
+        hidden = without_affordance.query_one(".detail-value-row-affordance")
+        assert hidden.region.width == 0
+        assert hidden.display is False
 
 
 @pytest.mark.asyncio
@@ -223,3 +229,50 @@ async def test_group_starts_collapsed_when_requested():
     async with app.run_test(size=(40, 10)):
         assert group.collapsed is True
         assert child.region.height == 0
+
+
+@pytest.mark.asyncio
+async def test_affordance_can_be_flipped_after_mount_without_a_remount():
+    """Final review F13.1: PR-3 flips a row between read-only and editable
+    per state, and both consumers hold hard refs to rows assigned inside
+    their own `compose()` -- rebuilding the row would mean a remount."""
+    row = DetailValueRow("Repeat", "Weekly", id="row")
+    app = _RowHarness(row)
+    async with app.run_test(size=(40, 6)) as pilot:
+        value = row.query_one(".detail-value-row-value")
+        glyph = row.query_one(".detail-value-row-affordance")
+        assert row.affordance is False
+        assert glyph.region.width == 0
+
+        row.affordance = True
+        await pilot.pause()
+        assert glyph.region.width > 0
+        assert glyph.render_line(0).text.strip() == "▾"
+        # Same mounted widgets throughout -- no recompose, so the painted
+        # value survives the flip.
+        assert row.query_one(".detail-value-row-value") is value
+        assert value.render_line(0).text.strip() == "Weekly"
+
+        row.affordance = False
+        await pilot.pause()
+        assert row.affordance is False
+        assert glyph.region.width == 0
+
+
+@pytest.mark.asyncio
+async def test_row_carries_its_own_identity_and_focusability():
+    """Final review F13.2/F13.3: PR-3 addresses the ROW (open its editor,
+    route its error) and spec §12 wants Up/Down row traversal -- neither
+    should need `static.parent.parent` or a subclass."""
+    plain = DetailValueRow("Repeat", "Weekly", id="plain")
+    keyed = DetailValueRow(
+        "Repeat", "Weekly", row_key="schedule.cron", can_focus=True, id="keyed"
+    )
+    app = _RowHarness(plain, keyed)
+    async with app.run_test(size=(40, 8)):
+        assert plain.row_key is None
+        assert plain.can_focus is False, "PR-1 rows stay read-only by default"
+        assert keyed.row_key == "schedule.cron"
+        assert keyed.can_focus is True
+        keyed.focus()
+        assert app.focused is keyed

@@ -168,14 +168,18 @@ class MockSchedulingDB:
         rows.sort(key=lambda row: row.get("created_at") or "", reverse=True)
         return rows[offset : offset + limit]
 
-    def count_automation_runs(self, definition_id: str) -> int:
+    def count_automation_runs(
+        self, definition_id: str, owner_id: str | None = None
+    ) -> int:
         """Stub: mirrors the real `count_automation_runs` (schedules-
-        redesign PR-1, Task 4's "Run count" row)."""
+        redesign PR-1, Task 4's "Run count" row), including the optional
+        owner scope the final review's F11 added."""
         return len(
             [
                 row
                 for row in self._automation_runs
                 if row.get("definition_id") == definition_id
+                and (owner_id is None or row.get("owner_id") == owner_id)
             ]
         )
 

@@ -181,18 +181,22 @@ read-only with a reason.
 
 ## 10. ADRs
 
-- **New ADR (number ≥112, swept against origin/dev at merge time —
-  110/111 claimed 2026-09-02):** "Schedules unified workbench" — the
+- **New ADR (number ≥113, swept against origin/dev at merge time —
+  110/111/112 claimed as of 2026-09-02):** "Schedules unified workbench" — the
   one-list IA, chip vocabulary, inspector-pane grammar, and the
   retirement of the tab bar.
 - **ADR-099 amendment** (same PR): hybrid editing — in-pane single-value
   rows + modal for create/full-edit/narrow fallback; names the accepted
   two-path cost and the shared-seam rationale.
-- **Errata:** dev carries an ADR-099 filename collision
+- **Errata:** dev carries ADR filename collisions on `099`
   (`099-schedule-editor-shape.md` vs
-  `099-persistent-terminal-session-runtime-boundary.md`); this program
-  cites by FILENAME, and renumbering is deliberately left to the
-  in-flight `docs/lesson-adr-number-collisions` branch.
+  `099-persistent-terminal-session-runtime-boundary.md`), and the same on
+  `098`, `102` and `104`; this program cites by FILENAME, and renumbering
+  is deliberately left to the in-flight `docs/lesson-adr-number-collisions`
+  branch. The "≥113" above was written as "≥112" until the final review
+  caught that `112-per-task-schedule-ownership-transfer.md` already
+  existed at this branch's own base — re-sweep the range at merge time
+  rather than trusting the number in this file.
 
 ## 11. Sequencing
 

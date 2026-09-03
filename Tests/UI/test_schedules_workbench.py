@@ -26,6 +26,9 @@ from tldw_chatbook.Scheduling.models import (
     TaskStatus,
 )
 from tldw_chatbook.UI.Screens.scheduling.conflicts_tab import ConflictsTab
+from tldw_chatbook.UI.Screens.scheduling.definition_detail import (
+    _definition_owner_label,
+)
 from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import ReminderForm
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
 from tldw_chatbook.UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
@@ -314,7 +317,10 @@ async def test_task_detail_groups_render_every_frequency_and_details_value():
         def _text(widget_id: str) -> str:
             return detail.query_one(f"#{widget_id}", Static).render_line(0).text.strip()
 
-        assert _text("scheduling-detail-runs-on") == "local"
+        # Final review F6/F7: the prose owner vocabulary, shared with the
+        # definitions pane (`owner_display_label`) -- not the raw metadata
+        # string this row used to render.
+        assert _text("scheduling-detail-runs-on") == "This device"
         assert _text("scheduling-detail-repeat") == "Recurring"
         assert _text("scheduling-detail-at") == "Weekly on Monday at 09:00 America/New_York"
         assert _text("scheduling-detail-timezone") == "America/New_York"
@@ -327,7 +333,7 @@ async def test_task_detail_groups_render_every_frequency_and_details_value():
         history_group.collapsed = False
         await pilot.pause()
         assert _text("scheduling-detail-last-fire") == "2026-08-24 09:00 UTC — Completed"
-        assert _text("scheduling-detail-history-link") == "See below"
+        assert _text("scheduling-detail-history-link") == "See list below"
 
 
 @pytest.mark.asyncio
@@ -367,7 +373,61 @@ async def test_task_detail_runs_on_shows_transfer_badge_when_in_flight():
         await pilot.pause()
 
         runs_on = detail.query_one("#scheduling-detail-runs-on", Static)
-        assert runs_on.render_line(0).text.strip() == "local (Moving to server…)"
+        assert (
+            runs_on.render_line(0).text.strip()
+            == "This device (Moving to server\u2026)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_task_detail_runs_on_speaks_the_definitions_pane_vocabulary():
+    """Final review F6/F7: one owner vocabulary across BOTH detail panes.
+
+    The reminder pane rendered the raw metadata string (`local`,
+    `server:1 / server <id>`) while the definitions pane rendered
+    `This device` / the bare server id -- two dialects for the flagship
+    row of the redesign, and the User Guide described only the second.
+    Both now go through `task_detail.owner_display_label`; this pins the
+    reminder side against the definitions side's own helper.
+    """
+    async with _BareTaskDetailApp().run_test() as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+
+        detail.set_task(
+            _frequency_reminder(owner_id="server:srv-9", server_id="remote-42")
+        )
+        await pilot.pause()
+        runs_on = detail.query_one("#scheduling-detail-runs-on", Static)
+        assert runs_on.render_line(0).text.strip() == "srv-9"
+        assert runs_on.render_line(0).text.strip() == _definition_owner_label(
+            {"owner_id": "server:srv-9"}
+        )
+
+        detail.set_task(_frequency_reminder(owner_id="local"))
+        await pilot.pause()
+        assert runs_on.render_line(0).text.strip() == _definition_owner_label(
+            {"owner_id": "local"}
+        )
+
+
+@pytest.mark.asyncio
+async def test_task_detail_shows_the_reminder_body_card():
+    """Final review F10: spec §5 wants the body text in a card above the
+    groups (the definitions pane has had one all along); `ReminderTask.
+    body` was rendered nowhere. Brackets stay literal, and a body-less
+    reminder shows no empty card."""
+    async with _BareTaskDetailApp().run_test() as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder(body="Ship the [bold] digest"))
+        await pilot.pause()
+
+        card = detail.query_one("#scheduling-task-detail-body-card", Static)
+        assert card.display is True
+        assert card.render_line(0).text.strip() == "Ship the [bold] digest"
+
+        detail.set_task(_frequency_reminder(body=None))
+        await pilot.pause()
+        assert card.display is False
 
 
 @pytest.mark.asyncio
