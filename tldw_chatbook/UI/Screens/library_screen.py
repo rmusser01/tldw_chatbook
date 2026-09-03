@@ -21735,6 +21735,7 @@ class LibraryScreen(BaseAppScreen):
             from ...Widgets.Library.library_media_image_preview import (
                 decode_media_image,
                 image_preview_eligibility,
+                image_preview_expected,
             )
 
             # Remote details are rejected before even consulting local file
@@ -21760,8 +21761,13 @@ class LibraryScreen(BaseAppScreen):
                 backend="local",
             )
             if not eligibility.eligible:
+                # task-30044 (critique P2): the failure chrome is honest only
+                # when an image was actually EXPECTED -- a plain document
+                # with no image type hint reads as a document, never as a
+                # failed image with a Retry button above its text.
                 if (
                     eligibility.reason == "unavailable"
+                    and image_preview_expected(detail)
                     and self._library_media_preview_request_is_current(
                         request_generation, canonical_id
                     )

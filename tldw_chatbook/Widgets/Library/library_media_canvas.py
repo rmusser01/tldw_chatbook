@@ -124,19 +124,19 @@ def _media_row_label_rest(
     loading: bool = False,
     loaded: bool = False,
 ) -> str:
-    """Return the marker-free Media row label for one responsive density."""
+    """Return the marker-free Media row label for one responsive density.
+
+    task-30044 (critique 2026-09-03 P2): both densities use the SHORT state
+    prefix ("Loaded · " / "Loading · ") -- the old wide-mode prose ("Loaded
+    in Reader            ") consumed ~28 of ~35 label cells and displaced
+    titles to "Quart"/"SQLit", so the row that mattered most was the one
+    you couldn't identify.
+    """
     visible_title = _visible_row_title(title)
     state = "Loading" if loading else "Loaded" if loaded else ""
+    prefix = f"{state} · " if state else ""
     if compact:
-        prefix = f"{state} · " if state else ""
         return f" {prefix}{visible_title} · {secondary}"
-    prefix = (
-        "Selected · loading preview  "
-        if loading
-        else "Loaded in Reader            "
-        if loaded
-        else ""
-    )
     return f" {prefix}{visible_title}\n    {secondary}"
 
 

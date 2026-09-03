@@ -50,8 +50,8 @@ screen temporarily collapses Library first and then Items; widening the
 terminal restores the remembered layout instead of saving the temporary
 responsive state.
 
-While another row is loading, Items distinguishes **Selected · loading
-preview** from **Loaded in Reader**. Reader may keep the prior item visible,
+While another row is loading, Items distinguishes a **Loading ·** row
+prefix from the settled **Loaded ·** one. Reader may keep the prior item visible,
 but names both items until the new detail settles. Late or failed loads cannot
 replace a newer selection. Conversations retains its existing paged
 list-and-preview layout.
