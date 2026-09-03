@@ -28,8 +28,8 @@ Use `tldw-cli --help` and `tldw-serve --help` for installation smoke tests.
 
 Normal publishing is done by `.github/workflows/publish-pypi.yml`:
 
-- Manual workflow dispatch publishes to TestPyPI through the `testpypi`
-  environment.
+- Manual workflow dispatch from protected `dev` publishes to TestPyPI through
+  the `testpypi` environment.
 - Protected `v*` tags publish to PyPI through the `pypi` environment after the
   tag version matches `pyproject.toml`.
 

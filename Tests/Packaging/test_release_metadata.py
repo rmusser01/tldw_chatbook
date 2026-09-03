@@ -4,6 +4,9 @@ import ast
 import tomllib
 from pathlib import Path
 
+import pytest
+
+from Packaging.common.dist_path import resolve_dist_dir
 from Packaging.common import version as packaging_version
 
 
@@ -49,3 +52,43 @@ def test_pypi_release_scripts_match_packaged_entry_points() -> None:
         "tldw-cli": "tldw_chatbook.cli:main_cli_runner",
         "tldw-serve": "tldw_chatbook.Web_Server.serve:main",
     }
+
+
+def test_distribution_output_path_must_be_strictly_inside_repo(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    external = tmp_path / "external"
+    external.mkdir()
+
+    assert resolve_dist_dir("dist", repo_root) == repo_root / "dist"
+    assert resolve_dist_dir("./dist", repo_root) == repo_root / "dist"
+
+    unsafe_paths = ("", ".", "./", "..", "../dist", "dist/..", "./dist/..", str(external))
+    for unsafe in unsafe_paths:
+        with pytest.raises(ValueError):
+            resolve_dist_dir(unsafe, repo_root)
+
+
+def test_distribution_output_path_rejects_symlink_escape(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    external = tmp_path / "external"
+    external.mkdir()
+    link = repo_root / "linked-external"
+
+    try:
+        link.symlink_to(external, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+
+    with pytest.raises(ValueError):
+        resolve_dist_dir("linked-external/dist", repo_root)
+
+
+def test_testpypi_publish_requires_protected_dev_ref() -> None:
+    workflow = (REPO_ROOT / ".github" / "workflows" / "publish-pypi.yml").read_text()
+
+    assert (
+        "if: github.event_name == 'workflow_dispatch' && "
+        "github.ref == 'refs/heads/dev' && github.ref_protected"
+    ) in workflow

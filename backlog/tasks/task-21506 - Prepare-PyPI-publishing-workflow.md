@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-24 05:42'
-updated_date: '2026-08-24 06:05'
+updated_date: '2026-09-03 06:45'
 labels:
   - packaging
   - release
@@ -54,10 +54,11 @@ installed-distribution contract from ADR-032.
   `tldw_chatbook/__init__.py`, packaging helper metadata, and the real
   `tldw-cli`/`tldw-serve` scripts.
 - Added `.github/workflows/publish-pypi.yml` with a build/check artifact job,
-  manual TestPyPI publishing through the `testpypi` environment, and PyPI
-  publishing from protected `v*` tags through the `pypi` environment. The build
-  job fails if artifact versions drift from `pyproject.toml` or a tag does not
-  match `v<project-version>`. Only publish jobs receive `id-token: write`.
+  manual TestPyPI publishing through the `testpypi` environment only from the
+  protected `dev` branch, and PyPI publishing from protected `v*` tags through
+  the `pypi` environment. The build job fails if artifact versions drift from
+  `pyproject.toml` or a tag does not match `v<project-version>`. Only publish
+  jobs receive `id-token: write`.
 - Reworked `Packaging/PYPI_RELEASE.md`, `Packaging/PYPI_README.md`,
   `Packaging/build_dist.sh`, `Packaging/build_release.sh`, and
   `Packaging/PACKAGING_CHECKLIST.md` around fresh artifacts, trusted
@@ -70,16 +71,21 @@ installed-distribution contract from ADR-032.
   migrations ship via `migrations/*.sql`, while `Packaging/check_manifest.py`
   and the installed-distribution regression derive the required migration set
   from source/runtime reads instead of hand-maintained lists.
+- Addressed Qodo review follow-up by routing `Packaging/build_dist.sh`
+  `DIST_DIR` cleanup validation through `Packaging.common.dist_path` and the
+  central `tldw_chatbook.Utils.path_validation.validate_path` helper, rejecting
+  root/dot spellings, traversal, absolute external paths, and symlink escapes
+  before removing any artifact directory.
 - Reused the existing `backlog/docs/lessons-testing-evidence.md` packaging
   lesson that now covers the TASK-21506 migration-package-data incident.
 
 Verification:
 
 - Red metadata test first failed on stale `Packaging.common.version.VERSION`
-  (`0.1.6.2` vs `0.1.8.0`); after the fix,
+  (`0.1.6.2` vs `0.1.8.0`); after the fix and Qodo hardening,
   `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Packaging/test_release_metadata.py -q`
-  passed on the clean `dev`-based branch: 2 passed, 1 environment warning in
-  1.08s.
+  passed on the clean `dev`-based branch: 5 passed, 1 environment warning in
+  0.49s.
 - `PYTHON=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python Packaging/build_dist.sh`
   passed on the clean `dev`-based branch, building
   `tldw_chatbook-0.1.8.0.tar.gz` and
@@ -89,11 +95,13 @@ Verification:
   first failed on the missing v40-to-v41 migration; after rebasing onto current
   `dev`'s generalized migration packaging and artifact-derived checks,
   `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Packaging/test_installed_distribution.py -m integration -q -p no:cacheprovider`
-  passed on the clean `dev`-based branch: 163 passed, 1 environment warning in
-  558.64s after rebasing onto current `dev`.
-- `DIST_DIR=/private/tmp/tldw-should-refuse Packaging/build_dist.sh` failed
-  closed with `Refusing DIST_DIR outside repository root`, confirming the
-  cleanup script no longer deletes arbitrary external artifact directories.
+  passed on the clean `dev`-based branch before review and again after Qodo
+  hardening: 163 passed, 1 environment warning in 544.57s.
+- `DIST_DIR=./ PYTHON=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python Packaging/build_dist.sh`
+  failed closed with `Refusing unsafe DIST_DIR: DIST_DIR must be a repository
+  subdirectory`; `DIST_DIR=/private/tmp/tldw-should-refuse` failed closed with
+  `Refusing unsafe DIST_DIR: Path is outside the allowed directory`, confirming
+  cleanup cannot target the checkout root or external directories.
 - `bash -n Packaging/build_dist.sh`, `bash -n Packaging/build_release.sh`,
   `bash -n Packaging/macos/scripts/package_dmg.sh`, workflow YAML parse,
   host-Python macOS version extraction, and targeted `git diff --check` passed.

@@ -35,9 +35,11 @@ For PyPI:
 If the project does not exist yet, create a pending trusted publisher for the
 same owner, repository, workflow, and environment.
 
-Protect the `pypi` GitHub environment and the production `v*` tag pattern before
-allowing production publishing. The publish job only downloads built artifacts
-and requests the PyPI OIDC token.
+Protect the `dev` branch, the `testpypi` and `pypi` GitHub environments, and
+the production `v*` tag pattern before allowing publishing. The TestPyPI job
+only runs for manual dispatch from protected `dev`; the PyPI job only runs for
+protected matching version tags. Publish jobs only download built artifacts and
+request the PyPI OIDC token.
 
 ## Local Release Gates
 
@@ -77,7 +79,7 @@ Run the full suite only when the release manager explicitly wants a full sweep.
 ## Publish to TestPyPI
 
 1. Open the `Publish Python package` workflow in GitHub Actions.
-2. Run it manually from the intended release branch.
+2. Run it manually from the protected `dev` branch.
 3. The workflow builds, checks, uploads artifacts, and publishes to TestPyPI
    through the `testpypi` environment.
 4. Test installation from TestPyPI:

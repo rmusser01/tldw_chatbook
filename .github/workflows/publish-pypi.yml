@@ -95,7 +95,7 @@ jobs:
 
   publish-testpypi:
     name: Publish to TestPyPI
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev' && github.ref_protected
     needs: build
     runs-on: ubuntu-latest
     environment:

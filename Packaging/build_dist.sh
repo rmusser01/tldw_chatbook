@@ -10,18 +10,21 @@ cd "$(dirname "$0")/.."
 
 REPO_ROOT="$(pwd -P)"
 
-if [[ -z "$DIST_DIR" || "$DIST_DIR" == "." || "$DIST_DIR" == "/" ]]; then
-    echo "Refusing unsafe DIST_DIR: ${DIST_DIR:-<empty>}" >&2
-    exit 1
-fi
+DIST_DIR_REAL=$("$PYTHON" - "$DIST_DIR" "$REPO_ROOT" <<'PY'
+from pathlib import Path
+import sys
 
-if [[ "$DIST_DIR" = /* || "$DIST_DIR" == ".." || "$DIST_DIR" == ../* || "$DIST_DIR" == */.. || "$DIST_DIR" == */../* ]]; then
-    echo "Refusing DIST_DIR outside repository root: $DIST_DIR" >&2
+from Packaging.common.dist_path import resolve_dist_dir
+
+try:
+    print(resolve_dist_dir(sys.argv[1], Path(sys.argv[2])))
+except ValueError as exc:
+    raise SystemExit(f"Refusing unsafe DIST_DIR: {exc}")
+PY
+) || {
     echo "Use python -m build directly for external artifact directories." >&2
     exit 1
-fi
-
-DIST_DIR_REAL="${REPO_ROOT}/${DIST_DIR#./}"
+}
 
 echo "Building tldw_chatbook distribution into ${DIST_DIR_REAL}..."
 
