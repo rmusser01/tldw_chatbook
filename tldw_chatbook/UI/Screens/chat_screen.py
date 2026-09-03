@@ -2868,6 +2868,7 @@ class ChatScreen(BaseAppScreen):
         transfer: ConsoleSettingsTransfer | None = None,
         suspended_draft: ConsoleSettingsDraftSnapshot | None = None,
         _pre_push_guard: Callable[[], bool] | None = None,
+        _suspended_owner_token: int | None = None,
     ) -> bool:
         """Open Console session settings for the active native session."""
         controller = self._ensure_console_chat_controller()
@@ -2973,7 +2974,19 @@ class ChatScreen(BaseAppScreen):
         try:
             await self.app.push_screen(modal, callback=apply_origin_result)
         except asyncio.CancelledError:
-            await self._unwind_failed_console_settings_modal(modal)
+            removed = await self._unwind_failed_console_settings_modal(modal)
+            if (
+                not removed
+                and self._console_settings_modal_is_on_stack(modal)
+                and suspended_draft is not None
+                and _suspended_owner_token is not None
+                and getattr(self, "_suspended_conversation_settings", None)
+                is suspended_draft
+                and getattr(self, "_suspended_conversation_settings_token", None)
+                == _suspended_owner_token
+            ):
+                self._suspended_conversation_settings = None
+                self._suspended_conversation_settings_token = None
             raise
         except Exception:
             removed = await self._unwind_failed_console_settings_modal(modal)
@@ -3142,6 +3155,7 @@ class ChatScreen(BaseAppScreen):
             reopened = await self._open_console_settings(
                 suspended_draft=snapshot,
                 _pre_push_guard=may_push,
+                _suspended_owner_token=request_token,
             )
         except Exception:
             return

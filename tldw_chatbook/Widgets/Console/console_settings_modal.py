@@ -54,6 +54,7 @@ from tldw_chatbook.Chat.local_server_discovery import (
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.Chat.console_session_settings import (
+    CONSOLE_SESSION_SETTINGS_SOURCES,
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
     DEFAULT_LLAMACPP_BASE_URL,
@@ -245,6 +246,27 @@ _SNAPSHOT_REQUIRED_FLOAT_FIELDS = frozenset({"temperature", "top_p"})
 _SNAPSHOT_REQUIRED_STRING_FIELDS = frozenset(
     {"provider", "character_label", "source"}
 )
+_SNAPSHOT_SETTING_CHOICE_DOMAINS = {
+    "reasoning_effort": frozenset(
+        {"none", "minimal", "low", "medium", "high", "xhigh"}
+    ),
+    "reasoning_summary": frozenset({"auto", "concise", "detailed", "none"}),
+    "verbosity": frozenset({"low", "medium", "high"}),
+    "thinking_effort": frozenset({"off", "low", "medium", "high", "xhigh", "max"}),
+}
+_SNAPSHOT_FLOAT_BOUNDS = {
+    "temperature": (0.0, 2.0),
+    "top_p": (0.0, 1.0),
+    "min_p": (0.0, 1.0),
+    "presence_penalty": (-2.0, 2.0),
+    "frequency_penalty": (-2.0, 2.0),
+}
+_SNAPSHOT_INT_MINIMUMS = {
+    "top_k": 0,
+    "max_tokens": 1,
+    "seed": 0,
+    "thinking_budget_tokens": 1024,
+}
 _SNAPSHOT_CONTEXT_ENUM_KEYS = frozenset(
     {
         "budget_mode",
@@ -356,7 +378,7 @@ def _copy_snapshot_string_mapping(
 
 
 def _valid_snapshot_settings_mapping(source: Mapping[str, object]) -> bool:
-    """Validate the primitive session-settings shape before reconstructing it."""
+    """Validate config-independent snapshot shape and semantic invariants."""
     for name, value in source.items():
         if name in _SNAPSHOT_OPTIONAL_STRING_FIELDS:
             limit = (
@@ -396,10 +418,24 @@ def _valid_snapshot_settings_mapping(source: Mapping[str, object]) -> bool:
         settings = ConsoleSessionSettings(**dict(source))
     except TypeError:
         return False
-    return not validate_console_session_settings(
-        settings,
-        app_config={"api_settings": {}},
-    )
+    if settings.source not in CONSOLE_SESSION_SETTINGS_SOURCES:
+        return False
+    if settings.base_url is not None and settings.base_url.strip():
+        if not validate_url(settings.base_url):
+            return False
+    for name, (minimum, maximum) in _SNAPSHOT_FLOAT_BOUNDS.items():
+        value = getattr(settings, name)
+        if value is not None and not minimum <= value <= maximum:
+            return False
+    for name, minimum in _SNAPSHOT_INT_MINIMUMS.items():
+        value = getattr(settings, name)
+        if value is not None and value < minimum:
+            return False
+    for name, domain in _SNAPSHOT_SETTING_CHOICE_DOMAINS.items():
+        value = getattr(settings, name)
+        if value is not None and value.strip() and value not in domain:
+            return False
+    return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -2150,6 +2186,7 @@ class ConsoleSettingsModal(
         body.scroll_to(y=snapshot.scroll_anchor, animate=False)
         control_id = snapshot.focus_control_id
         if control_id is None:
+            self._focus_connection_fallback()
             return
         if control_id == "console-settings-model-picker":
             try:
@@ -2172,6 +2209,7 @@ class ConsoleSettingsModal(
 
     def _focus_connection_fallback(self) -> None:
         """Focus a live Connection control when an old logical target is unavailable."""
+        self._show_settings_view("model")
         for selector, widget_type in (
             ("#console-settings-provider", Select),
             ("#console-settings-model-picker", ModelSearchPicker),

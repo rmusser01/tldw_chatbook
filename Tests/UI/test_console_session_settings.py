@@ -285,6 +285,35 @@ def test_suspended_draft_allows_incomplete_connection_and_multiline_private_text
     assert restored.settings.pinned_prefill == "prefill line one\n\tprefill line two"
 
 
+def test_suspended_draft_allows_first_run_cloud_model_to_remain_unselected() -> None:
+    """A private draft does not need to satisfy live send readiness."""
+    mapping = _minimal_suspended_draft_mapping()
+    mapping["settings"]["model"] = None  # type: ignore[index]
+    mapping["settings"]["base_url"] = ""  # type: ignore[index]
+    mapping["provider_model_drafts"] = {"openai": None}
+
+    restored = ConsoleSettingsDraftSnapshot.from_mapping(mapping)
+
+    assert restored is not None
+    assert restored.settings.provider == "openai"
+    assert restored.settings.model is None
+    assert restored.settings.base_url == ""
+
+
+@pytest.mark.parametrize(
+    "invalid_url",
+    ["not-a-url", "ftp://example.test", "https://bad host.test"],
+)
+def test_suspended_draft_rejects_malformed_nonblank_semantic_endpoint(
+    invalid_url: str,
+) -> None:
+    """Semantic endpoint validation cannot depend on configured provider state."""
+    mapping = _minimal_suspended_draft_mapping()
+    mapping["settings"]["base_url"] = invalid_url  # type: ignore[index]
+
+    assert ConsoleSettingsDraftSnapshot.from_mapping(mapping) is None
+
+
 def _minimal_suspended_draft_mapping() -> dict[str, object]:
     """Return one detached valid snapshot mapping for fail-closed mutations."""
     return ConsoleSettingsDraftSnapshot(
@@ -801,6 +830,90 @@ async def test_cancelled_source_reopen_retains_suspended_snapshot_and_token(
 
     assert screen._suspended_conversation_settings is snapshot
     assert screen._suspended_conversation_settings_token == 11
+
+
+@pytest.mark.asyncio
+async def test_covered_cancelled_source_reopen_transfers_exact_draft_to_modal(
+    monkeypatch,
+) -> None:
+    """A covered modal, not its source slot, owns the draft after cancellation."""
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-model-picker": "gpt-5"},
+        provider_model_drafts={"openai": "gpt-5"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id="console-settings-model-picker",
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+    store = ConsoleChatStore()
+    session = store.create_session(settings=snapshot.settings)
+    screen = ChatScreen.__new__(ChatScreen)
+    stack: list[object] = [screen]
+    pushed: list[ConsoleSettingsModal] = []
+    newer_overlay = object()
+    mount_wait_started = asyncio.Event()
+
+    class PendingMount:
+        def __await__(self):
+            async def wait_for_cancellation():
+                mount_wait_started.set()
+                await asyncio.Future()
+
+            return wait_for_cancellation().__await__()
+
+    def push_screen(modal, callback):
+        stack.append(modal)
+        pushed.append(modal)
+        return PendingMount()
+
+    fake_app = SimpleNamespace(screen_stack=stack, push_screen=push_screen)
+    monkeypatch.setattr(ChatScreen, "app", property(lambda _self: fake_app))
+    screen._session = SimpleNamespace(
+        _ensure_active_console_session_settings=lambda: snapshot.settings
+    )
+    screen._ensure_console_chat_store = lambda: store
+    screen._ensure_console_chat_controller = lambda: SimpleNamespace(
+        run_state=SimpleNamespace(is_send_allowed=True),
+        reset_active_context_memory=lambda _session_id: None,
+        undo_context_memory_reset=lambda: None,
+        reset_all_context_memories=lambda _session_id: None,
+        compact_context_now=lambda _session_id: None,
+    )
+    screen._active_console_settings_context_estimate = lambda: (
+        ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
+    )
+    screen._active_console_context_control_state = lambda **_kwargs: None
+    screen._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
+    screen._global_chat_display_name = lambda: "Ada"
+
+    async def provider_models(*_args, **_kwargs):
+        return {"openai": ["gpt-5"]}
+
+    screen._providers_models_for_console_settings = provider_models
+    screen._suspended_conversation_settings = snapshot
+    screen._suspended_conversation_settings_token = 13
+
+    reopen_task = asyncio.create_task(
+        ChatScreen._reopen_suspended_console_settings(
+            screen,
+            13,
+            session_id=session.id,
+            settings_revision=0,
+        )
+    )
+    await mount_wait_started.wait()
+    stack.append(newer_overlay)
+    reopen_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await reopen_task
+
+    assert len(pushed) == 1
+    assert stack == [screen, pushed[0], newer_overlay]
+    assert screen._suspended_conversation_settings is None
+    assert screen._suspended_conversation_settings_token is None
 
 
 @pytest.mark.asyncio
@@ -1702,6 +1815,46 @@ async def test_suspended_model_picker_focus_falls_back_when_ancestor_is_hidden()
         assert modal.query_one("#console-settings-provider", Select).focusable
         modal._restore_suspended_scroll_and_focus(snapshot)
         await _wait_for_focused_id(app, pilot, "console-settings-provider")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "focus_control_id",
+    [None, "console-context-undo-reset", "console-context-confirm-reset-all"],
+)
+async def test_suspended_context_missing_or_transient_focus_reveals_connection_fallback(
+    focus_control_id: str | None,
+) -> None:
+    """Unavailable Context focus restores a usable visible Connection target."""
+    app = ModalHarness()
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={
+            "console-settings-provider": "openai",
+            "console-settings-model-picker": "gpt-5",
+        },
+        provider_model_drafts={"openai": "gpt-5"},
+        provider_base_url_drafts={},
+        active_view="context",
+        scroll_anchor=0,
+        focus_control_id=focus_control_id,
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = _basic_modal(
+            snapshot.settings,
+            app,
+            providers_models={"openai": ["gpt-5"]},
+            suspended_draft=snapshot,
+        )
+        await app.push_screen(modal)
+        await _wait_for_focused_id(app, pilot, "console-settings-provider")
+
+        assert modal._active_view == "model"
+        assert all(section.display for section in modal.query(".console-settings-model-view"))
+        assert modal.query_one("#console-settings-context-view").display is False
 
 
 @pytest.mark.asyncio
