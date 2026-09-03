@@ -127,7 +127,7 @@ class AutomationsMockService(MockSchedulingServiceMixin):
             return_value={"run_id": "run-local-1", "deduped": False}
         )
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return []
 
 
@@ -192,7 +192,12 @@ async def test_automations_tab_loads_server_definitions():
         table = workbench.query_one("#scheduling-automations-table", DataTable)
         notice = workbench.query_one("#scheduling-automations-notice")
 
-        server_client.list_automation_definitions.assert_awaited_once()
+        # redesign PR-2, Task 2: `load_tasks` (the Queue tab's own unified
+        # loader) now ALSO fetches both definition halves on every mount
+        # (its own separate cadence, per the brief -- not a shared cache
+        # with this tab's `load_automations`), so the server fetch is
+        # awaited twice, not once, at mount.
+        assert server_client.list_automation_definitions.await_count == 2
         assert table.row_count == 2
         assert "2 automations on the server" in str(notice.content)
         # Highlighting a row records the selection Run-now will act on.

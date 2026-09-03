@@ -9,7 +9,6 @@ to edit them instead of exposing the internal "reminder" noun.
 from datetime import datetime, timezone
 
 import pytest
-from textual.widgets import DataTable, Input, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Scheduling.models import (
@@ -56,7 +55,7 @@ class _MixedService(MockSchedulingServiceMixin):
     def __init__(self) -> None:
         self.created: list[dict] = []
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return [
             ReminderTask(
                 id="task-1",
@@ -87,59 +86,22 @@ async def _mounted_workbench(pilot):
     return workbench
 
 
-@pytest.mark.asyncio
-async def test_edit_guard_on_projection_names_the_owner_not_reminders():
-    app = _App()
-    async with app.run_test(size=(160, 48)) as pilot:
-        workbench = await _mounted_workbench(pilot)
-        table = workbench.query_one("#scheduling-task-table", DataTable)
-        table.move_cursor(row=1)  # the watchlist projection
-        await pilot.pause()
-
-        workbench.action_edit_task()
-        await pilot.pause()
-
-        messages = [n.message for n in pilot.app._notifications]
-        assert any("Managed by Watchlists" in m for m in messages), messages
-        assert not any("reminder" in m.lower() for m in messages), messages
-
-
-@pytest.mark.asyncio
-async def test_toggle_guard_on_projection_names_the_owner_not_reminders():
-    app = _App()
-    async with app.run_test(size=(160, 48)) as pilot:
-        workbench = await _mounted_workbench(pilot)
-        table = workbench.query_one("#scheduling-task-table", DataTable)
-        table.move_cursor(row=1)
-        await pilot.pause()
-
-        workbench.action_toggle_enabled()
-        await pilot.pause()
-
-        messages = [n.message for n in pilot.app._notifications]
-        assert any("Managed by Watchlists" in m for m in messages), messages
-        assert not any("reminder" in m.lower() for m in messages), messages
-
-
-@pytest.mark.asyncio
-async def test_detail_pane_states_projection_ownership():
-    app = _App()
-    async with app.run_test(size=(160, 48)) as pilot:
-        workbench = await _mounted_workbench(pilot)
-        table = workbench.query_one("#scheduling-task-table", DataTable)
-        table.move_cursor(row=1)
-        await pilot.pause()
-
-        managed = workbench.query_one(
-            "#scheduling-task-detail-managed", Static
-        )
-        assert managed.display
-        assert "Managed by Watchlists" in str(managed.render())
-
-        # Selecting the reminder row hides the ownership line again.
-        table.move_cursor(row=0)
-        await pilot.pause()
-        assert not managed.display
+# redesign PR-2, Task 2: the three tests that used to live here (edit
+# guard / toggle guard / detail-pane ownership line, all triggered by
+# selecting a watchlist projection AT ROW 1 of the queue table) pinned a
+# scenario the redesign retires -- watchlist/briefing projections no
+# longer enter the unified Queue list at all (spec S2 locked decision 2,
+# Task 1's report), so there is no longer a route to reach the
+# `_managed_elsewhere_notice` guard FROM this table with a projection.
+# The guard's own copy generation stays covered by
+# `test_managed_elsewhere_notice_names_the_owning_screen` above (a
+# direct, workbench-free unit test of `_managed_elsewhere_notice` itself);
+# `TaskDetail.set_task`'s "#scheduling-task-detail-managed" ownership-line
+# RENDERING for a `ScheduledTask` has no dedicated test anywhere else in
+# the suite and genuinely loses coverage here -- the code path is now
+# unreachable from this screen (a `ScheduledTask` is never fed to
+# `TaskDetail` from the Queue table any more) but is left in place,
+# unmodified, in case another future caller needs it.
 
 
 @pytest.mark.asyncio

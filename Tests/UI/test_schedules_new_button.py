@@ -1,10 +1,12 @@
-"""Visible New button in the Schedule Queue pane (UX F-07).
+"""Visible Create button in the Schedule Queue rail (UX F-07).
 
 The only create affordance used to be the `c` key in the footer. This adds
-a primary button beside the "Schedule Queue" pane title. Task 5 upgrades
+a primary button beside the "Schedule Queue" pane title. Task 5 upgraded
 its behavior from a direct reminder-form push to a two-item chooser
 (Reminder / Recurring question) -- the `c` key binding is unchanged and
-still opens the reminder form directly.
+still opens the reminder form directly. Redesign PR-2, Task 3 relabels it
+`Create ▾` and repositions it in the rail header alongside the new
+`Mark all read` button -- same id/handler/chooser, unchanged.
 """
 
 from __future__ import annotations
@@ -13,6 +15,13 @@ import pytest
 from textual.widgets import Button
 
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from Tests.UI.schedules_test_helpers import (
+    MockSchedulingDB,
+    MockSchedulingServiceMixin,
+)
+from tldw_chatbook.UI.Screens.scheduling.forms.automation_definition_form import (
+    AutomationDefinitionForm,
+)
 from tldw_chatbook.UI.Screens.scheduling.forms.new_task_choice_modal import (
     NewTaskChoiceModal,
 )
@@ -24,6 +33,24 @@ from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
 
 class LocalOnlyTestApp(ConsolidatedCSSApp):
     scheduling_service = None
+
+
+class _EmptyService(MockSchedulingServiceMixin):
+    """A service is required for the recurring-question path -- unlike the
+    reminder path, `action_create_automation` refuses without one."""
+
+    def __init__(self) -> None:
+        self.owner_id = "local"
+        self.db = MockSchedulingDB()
+
+    async def list_tasks(self, owner_id=None, include_projections=True):
+        return []
+
+
+class ServiceBackedTestApp(ConsolidatedCSSApp):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.scheduling_service = _EmptyService()
 
 
 class LocalOnlyBundledCSSTestApp(LocalOnlyTestApp):
@@ -40,7 +67,8 @@ class LocalOnlyBundledCSSTestApp(LocalOnlyTestApp):
 
 @pytest.mark.asyncio
 async def test_new_button_exists_and_opens_choice_chooser():
-    """task-5: the button now offers Reminder / Recurring question."""
+    """Redesign PR-2, Task 3: `Create ▾` (relabeled from `+ New`) still
+    opens the same chooser via the same id/handler."""
     app = LocalOnlyTestApp()
     async with app.run_test() as pilot:
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
@@ -48,7 +76,7 @@ async def test_new_button_exists_and_opens_choice_chooser():
         workbench = pilot.app.screen
 
         button = workbench.query_one("#scheduling-new-task", Button)
-        assert "New" in str(button.label)
+        assert "Create" in str(button.label)
 
         pushed: list = []
         workbench.app.push_screen = lambda screen, callback=None: pushed.append(screen)
@@ -75,6 +103,27 @@ async def test_new_button_chooser_reminder_choice_opens_reminder_form():
         await pilot.pause()
 
         assert isinstance(pilot.app.screen, ReminderForm)
+
+
+@pytest.mark.asyncio
+async def test_new_button_chooser_recurring_choice_opens_automation_form():
+    """Picking "Recurring question…" opens the automation-definition form
+    -- the rail's `Create ▾` button's OTHER path (redesign PR-2, Task 3:
+    "both create paths still open their modals")."""
+    app = ServiceBackedTestApp()
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+
+        workbench.query_one("#scheduling-new-task", Button).press()
+        await pilot.pause()
+        assert isinstance(pilot.app.screen, NewTaskChoiceModal)
+
+        await pilot.click("#new-task-choice-automation")
+        await pilot.pause()
+
+        assert isinstance(pilot.app.screen, AutomationDefinitionForm)
 
 
 @pytest.mark.asyncio

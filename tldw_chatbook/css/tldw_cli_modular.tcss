@@ -13609,9 +13609,10 @@ Button.error:hover {
  * Scheduling workbench specific styles
  * ======================================== */
 
-/* The destination header + sync bar above the tabs are auto-height siblings;
- * without an explicit 1fr the auto-height TabbedContent measures its fr
- * children against the whole content area and overflows past the footer. */
+/* The liveness Static + bottom status strip are auto-height siblings of
+ * the TabbedContent; without an explicit 1fr the auto-height TabbedContent
+ * measures its fr children against the whole content area and overflows
+ * past the footer. */
 #schedules-shell {
     height: 1fr;
     min-height: 0;
@@ -13619,6 +13620,23 @@ Button.error:hover {
 
 #scheduling-tabs {
     height: 1fr;
+}
+
+/* redesign PR-2, Task 3: the bottom status strip (plan ruling 4) -- shared
+ * across every tab (not Queue-specific), hosting the existing
+ * SyncStatusWidget (owner indicator + sync health) and a conflicts badge
+ * that switches to the Conflicts tab. SyncStatusWidget takes the
+ * remaining width so the badge sits flush right; `align` centers the
+ * badge (height:1, from .scheduling-queue-chip) against the taller
+ * padded SyncStatusWidget row. */
+#scheduling-status-strip {
+    height: auto;
+    border-top: solid $ds-grid-line;
+    align: left middle;
+}
+
+#scheduling-status-strip > SyncStatusWidget {
+    width: 1fr;
 }
 
 SchedulesWorkbench TabbedContent,
@@ -13740,10 +13758,33 @@ SchedulesWorkbench TabbedContent TabPane {
     background: $surface-darken-1;
 }
 
+/* redesign PR-2, Task 2: the chip row (spec S3) -- compact single-row
+ * buttons, same height:1/border:none idiom the filter Input above uses,
+ * so the row costs one line rather than a full 3-row Button box. */
+#scheduling-queue-chips {
+    height: 1;
+    margin: 0 0 1 0;
+}
+
+#scheduling-queue-chips .scheduling-queue-chip {
+    height: 1;
+    border: none;
+    min-width: 8;
+    margin-right: 1;
+    background: $surface-darken-1;
+}
+
 /* Compact mode: the filter's margin row goes to the table (80x24 has
- * exactly one spare row; without this the queue shows only the filter). */
+ * exactly one spare row; without this the queue shows only the filter).
+ * The chip row is hidden outright at this width rather than squeezed
+ * further -- it is a filter convenience, not a required affordance, and
+ * the narrow-width floor already prioritizes the table + detail pane. */
 #scheduling-workbench.compact #scheduling-queue-filter {
     margin: 0;
+}
+
+#scheduling-workbench.compact #scheduling-queue-chips {
+    display: none;
 }
 
 SchedulesWorkbench.schedules-workbench-compact #scheduling-workbench {
@@ -13788,6 +13829,15 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
 #scheduling-new-task {
     width: auto;
     min-width: 9;
+}
+
+/* redesign PR-2, Task 3: the rail's Mark-all-read button -- hidden by
+ * default (see SchedulesWorkbench.on_mount / _update_mark_all_read_
+ * visibility), same height:auto row as Create above it. */
+#scheduling-mark-all-read {
+    width: auto;
+    min-width: 9;
+    margin-left: 1;
 }
 
 /* Automations tab header (task-5): same title+button row shape as the

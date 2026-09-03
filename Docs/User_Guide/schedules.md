@@ -25,10 +25,83 @@ If creation is accepted but no completed briefing appears, inspect the exact bri
 ## What this screen is for
 
 Schedules controls when jobs, watchlists, and workflows run. The screen
-has no single on-screen title; it opens on a sync status bar (Local /
-Server, last pull/push) above **Queue**, **Automations**, **Conflicts**,
-and **Results** tabs, with panels for the Schedule Queue, Task Detail, and
-Inspector.
+has no single on-screen title; a one-line scheduler-liveness indicator
+sits above **Queue**, **Automations**, **Conflicts**, and **Results**
+tabs, with panels for the Schedule Queue, Task Detail, and Inspector. A
+status strip (sync bar + Conflicts count) runs along the bottom of the
+whole screen, shared across every tab — see "Status strip", below.
+
+## The unified Queue list
+
+The Queue tab's Schedule Queue lists **both** reminders and recurring-
+question automation definitions in one table, spanning both owners
+(this device and any connected server) — no need to check the
+Automations tab separately just to see whether something is scheduled.
+A chip row above the table (**All · Active · Paused · Completed**)
+narrows it: **Active** is everything still armed to run (an enabled
+reminder or a `configured` automation, including one mid-transfer to the
+server — it keeps running locally until the server actually accepts
+it); **Paused** is anything disabled or explicitly paused; **Completed**
+is a fired one-time reminder or an archived automation, kept out of the
+default **All** view so it stays uncluttered (a one-time reminder that
+has already fired stays under **Completed** even if you re-enable it —
+re-enabling gives it no new run time; edit its schedule to arm it
+again). Each row shows a status
+glyph (`○` recurring, `▶` one-shot, `⏸` paused, `✓` completed), the
+title with the same owner/transfer-badge suffixes described below, and
+a subtitle line (the schedule summary plus a relative next-run time, or
+"— (paused)"/"— (disabled)" when nothing will fire). An automation row
+with unread results carries a bold unread dot after its title.
+
+Automation-definition rows are **view-only from the Queue tab** —
+highlighting one opens the same read-only detail pane the Automations
+tab uses, but editing, running, transferring, or deleting a recurring
+question still happens from the **Automations** tab. Pressing a
+reminder key (**e**, **r**, **x**, **space**, **d**) on a definition row
+says so ("This automation is managed on the Automations tab for now")
+rather than doing nothing. Every reminder
+action described in the rest of this page (edit, run now, delete, mark,
+enable/disable, move between owners) is unchanged and still reachable
+from the Queue tab exactly as before.
+
+Watchlist checks and briefings are not in this list — they have their
+own home in Watchlists' **Sources** pane, whose **Next check** column
+shows the same "when will this run again" signal the Queue used to
+project for them (see the [Watchlists guide](watchlists.md)).
+
+Every row's relative next-run text ("in 25m", "overdue 2h") stays
+current on its own: the visible Queue rows repaint once a minute
+without reloading the list, so a bucket a row was in a minute ago
+("in 1h") reads correctly once it crosses into the next one ("in 59m")
+even if you never touch the screen. Switching away to another tab in
+the app pauses that repaint; coming back refreshes it immediately so
+nothing is left stale from the time it was hidden.
+
+## Queue rail
+
+The Queue tab's pane header is a rail: **Create ▾** opens the chooser
+described below; **Mark all read** appears only once an automation
+result somewhere in the queue is unread, and clears every one of them
+in one press (the same action as pressing **a**, without needing to be
+on the Results tab first). It — and the per-row unread dots — track
+results as they change: a result arriving from the server makes them
+appear without switching tabs, and marking everything read from the
+Results tab clears them here too. Below the chip row, the filter box
+narrows the list by title or question/body text as you type — not by
+status words like `missed`, which the unified list dropped along with
+the Status/Type columns.
+
+## Status strip
+
+A status strip runs along the bottom of the screen, below the tabs and
+shared by all of them: the sync bar (Local/Server, last pull/push —
+see "Sync bar honesty", below) on the left, and a **Conflicts** button
+on the right showing the current owner's scheduled-task conflict count
+("Conflicts (2)", or plain "Conflicts" with none). Clicking it switches
+to the Conflicts tab. At narrow terminal widths the sync bar's
+timestamps drop to save space, the same compacting the side panes
+already do; the owner buttons and any sync error stay visible either
+way.
 
 ## Getting there
 
@@ -120,13 +193,13 @@ Type/Schedule rows unchanged — the grouped layout is reminder-specific.
 
 ## Creating a scheduled task
 
-Press **c**, or click **+ New** in the Queue tab's pane header, to open
-the create form. Clicking **+ New** first asks which kind of task you
-want — **Reminder…** or **Recurring question…** — since a recurring
-question is a different kind of definition, not just another schedule
-shape; **c** always opens the reminder form directly. The form scrolls
-when the terminal is short; the live "Runs: …" preview, validation, and
-Save/Cancel stay pinned at the bottom while you edit.
+Press **c**, or click **Create ▾** in the Queue tab's rail header, to
+open the create form. Clicking **Create ▾** first asks which kind of
+task you want — **Reminder…** or **Recurring question…** — since a
+recurring question is a different kind of definition, not just another
+schedule shape; **c** always opens the reminder form directly. The form
+scrolls when the terminal is short; the live "Runs: …" preview,
+validation, and Save/Cancel stay pinned at the bottom while you edit.
 
 Every create/edit form also has a **Runs on** selector — **This device**
 or **Server (\<id\>)** when a scheduling server is connected — defaulting
@@ -176,13 +249,17 @@ carries it.
 
 Press **space** on a highlighted task (or the **Disable** button in the
 detail pane) to disable it. A disabled task shows the text status
-**Disabled** in both the queue row and the detail badge, and its Next Run
-reads **— (disabled)** instead of a concrete time it will not honor.
+**Disabled** in the detail badge, the `⏸` glyph in the queue row (the
+unified list conveys status via glyph, not a separate Status column),
+and its Next Run reads **— (disabled)** instead of a concrete time it
+will not honor, in both the detail pane and the queue row's subtitle.
 Enabling it restores the recorded last outcome and the real next run.
 
 This covers a one-time reminder that has already fired: running it
-disables it and clears its next run, so it reads **Disabled** with a Next
-Run of **— (disabled)** — the same as a task you disabled by hand.
+disables it and clears its next run, so it reads **Disabled** in the
+detail badge with a Next Run of **— (disabled)** — the same as a task
+you disabled by hand. A fired one-time reminder shows the `✓` glyph in
+the queue and moves under the **Completed** chip.
 
 ## Ran late — what happens to overdue reminders
 
@@ -212,9 +289,11 @@ not running at the scheduled time.
   time, not from where it left off. Skipped occurrences are counted and
   surfaced, never re-run.
 - **The queue marks late tasks with a ◇ glyph** before the title, so a
-  glance at the Queue tab shows what fell behind. Typing `missed` into the
-  queue filter finds them (it also matches tasks whose last dispatch
-  *failed*, which is a different thing — see below).
+  glance at the Queue tab shows what fell behind. The queue filter
+  searches title and body text only (it no longer matches status words
+  like `missed` — the unified list dropped the old status/type keyword
+  search along with the Status/Type columns); search for the task's own
+  title to find it, or scan for the ◇ glyph.
 
 This state describes the **last** dispatch and heals itself: the next
 on-time firing clears the marker and the notice.
@@ -367,8 +446,8 @@ toast.
 
 A recurring question runs a scoped search on a schedule and reports what
 it finds — a different kind of task than a reminder. Open its create
-form from the Queue tab's **+ New** chooser ("Recurring question…") or
-the Automations tab's own **+ New** button. Its v1 fields: a name, the
+form from the Queue tab's **Create ▾** chooser ("Recurring question…")
+or the Automations tab's own **+ New** button. Its v1 fields: a name, the
 question itself, which sources to search (all readable library sources,
 or a specific choice of Media / Notes / Chats — collections, tags, and
 saved searches are not offered yet), the schedule (the same one-time/
@@ -541,6 +620,48 @@ The default bound is `handler_timeout_seconds` under `[scheduling]` in
 `config.toml` (**300** seconds). Set it to `0` (or negative) to disable the
 bound entirely — every handler may then run as long as it likes, and a
 wedged handler will wedge the scheduler, which is why the default is on.
+
+*Verified against the schedules redesign PR-2 final fix wave —
+2026-09-03 (docs pass against shipped code/tests, live check pending the
+redesign program's later PRs per spec §14: an automation created from
+the Queue rail's **Create ▾** now appears in the list immediately; a
+definition moved to the server keeps its earlier unread results in the
+Queue's count, so the unread dots and **Mark all read** agree with the
+Results tab's badge; results pulled from the server (or marked read
+anywhere) refresh both surfaces; reminder enable/disable and delete act
+under the row's OWN owner, so a server-owned row's change is pushed
+instead of silently reverted by the next sync; and the reminder keys
+answer honestly on a definition row. Pinned by
+`Tests/UI/test_schedules_unified_list.py`,
+`Tests/Scheduling/test_unified_rows.py`, and
+`Tests/Scheduling/test_scheduling_service.py`.)*
+
+*Verified against the schedules redesign PR-2 Task 4 fix wave —
+2026-09-03 (docs pass against shipped code/tests, live check pending the
+redesign program's later PRs per spec §14: the Queue rail's **Create ▾**
+relabel (was "+ New") and **Mark all read** button, the bottom status
+strip's relocation of the sync bar plus its new **Conflicts** count
+button, the Watchlists Sources pane's restored **Next check** column
+and its cross-reference here, and the 60-second relative-next-run
+ticker — repaints the visible Queue rows in place, pauses while another
+screen covers Schedules, and refreshes immediately on return, never
+reloading data. Pinned by `Tests/UI/test_schedules_next_run_relative.py`
+(tick/suspend/resume), `Tests/UI/test_schedules_workbench.py` (rail +
+status strip), `Tests/UI/test_schedules_new_button.py` (Create ▾), and
+`Tests/Watchlists/test_watchlists_sources_pane.py` (Next check).)*
+
+*Verified against the schedules redesign PR-2 Task 2 fix wave —
+2026-09-03 (docs pass against shipped code/tests, live check pending the
+redesign program's later PRs per spec §14: the Queue tab's unified list
+— reminders + automation definitions spanning both owners in one table,
+the All/Active/Paused/Completed chip row, per-row status glyphs, the
+combined schedule-summary-plus-next-run subtitle line replacing the old
+Type/Status/Next-Run columns, the unread dot on a definition row, and
+detail-pane routing between the reminder and definition detail panes on
+highlight. Automation-definition rows stay view-only from the Queue tab
+in this PR; every reminder action is unchanged. Pinned by
+`Tests/UI/test_schedules_unified_list.py` and the updated assertions in
+`Tests/UI/test_schedules_workbench.py`.)*
 
 *Verified against the schedules redesign PR-1 fix wave — 2026-09-02
 (docs pass against shipped code/tests, live check pending the redesign

@@ -42,7 +42,7 @@ class _SyncService(MockSchedulingServiceMixin):
         self._outcome = outcome
         self.db = MockSchedulingDB()
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return [
             ReminderTask(
                 id="task-1",
@@ -274,3 +274,40 @@ async def test_clear_is_hidden_until_an_error_exists():
         bar.update_status(None, None, [])
         await pilot.pause()
         assert not clear.display
+
+
+# --- redesign PR-2, Task 3: width-triggered compact path -------------------
+
+
+@pytest.mark.asyncio
+async def test_set_compact_hides_timestamps_but_keeps_owner_and_error_visible():
+    """`set_compact` is additive and independent of `_apply_collapse`'s
+    own owner/server-based collapse: with a live server (so the owner
+    buttons render normally), compact hides only the last-pull/last-push
+    timestamps -- the owner indicator (plan ruling 4's "(b)") and the
+    error/Clear pair stay visible, same honesty-over-compactness carve-out
+    `_apply_collapse` already documents."""
+    app = _BarHarness(
+        current_owner="local",
+        active_server_id="http://127.0.0.1:8000",
+        server_available=True,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        bar = app.query_one(SyncStatusWidget)
+        bar.update_status(None, None, [{"message": "boom"}])
+        await pilot.pause()
+
+        bar.set_compact(True)
+        await pilot.pause()
+        assert not app.query_one("#scheduling-last-pull", Static).display
+        assert not app.query_one("#scheduling-last-push", Static).display
+        assert app.query_one("#scheduling-owner-local", Button).display
+        assert app.query_one("#scheduling-owner-server", Button).display
+        assert app.query_one("#scheduling-sync-error", Static).display
+        assert app.query_one("#scheduling-clear-error", Button).display
+
+        bar.set_compact(False)
+        await pilot.pause()
+        assert app.query_one("#scheduling-last-pull", Static).display
+        assert app.query_one("#scheduling-last-push", Static).display

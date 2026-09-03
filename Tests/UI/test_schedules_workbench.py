@@ -10,8 +10,7 @@ import pytest
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
-from textual.containers import Horizontal
-from textual.widgets import Button, DataTable, Input, Select, Static
+from textual.widgets import Button, DataTable, Input, Select, Static, TabbedContent
 from textual.widgets._collapsible import CollapsibleTitle
 
 from tldw_chatbook.Scheduling.events import (
@@ -79,6 +78,7 @@ class MockSchedulingService(_MockSchedulingServiceMixin):
         # flip), so a cross-owner save is observable here.
         self.created_owners: list[str | None] = []
         self.updated_owners: list[str | None] = []
+        self.deleted_owners: list[str | None] = []
 
     async def list_reminders(self):
         return [
@@ -91,7 +91,7 @@ class MockSchedulingService(_MockSchedulingServiceMixin):
             )
         ]
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return await self.list_reminders()
 
     async def create_reminder(self, payload: dict, *, owner_id: str | None = None):
@@ -110,8 +110,9 @@ class MockSchedulingService(_MockSchedulingServiceMixin):
             setattr(task, key, value)
         return task
 
-    async def delete_reminder(self, task_id: str):
+    async def delete_reminder(self, task_id: str, *, owner_id: str | None = None):
         self.deleted_ids.append(task_id)
+        self.deleted_owners.append(owner_id)
         return True
 
 
@@ -137,7 +138,7 @@ class MockSchedulingServiceWithWatchlist(_MockSchedulingServiceMixin):
             )
         ]
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         reminder_tasks = await self.list_reminders()
         return reminder_tasks + [
             ScheduledTask(
@@ -463,7 +464,7 @@ class EmptyMockSchedulingService(_MockSchedulingServiceMixin):
     async def list_reminders(self):
         return []
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return await self.list_reminders()
 
 
@@ -486,7 +487,7 @@ class DistinctMetadataMockSchedulingService(_MockSchedulingServiceMixin):
             )
         ]
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return await self.list_reminders()
 
 
@@ -496,7 +497,7 @@ class FailingMockSchedulingService(_MockSchedulingServiceMixin):
     async def list_reminders(self):
         raise RuntimeError("service unavailable")
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         raise RuntimeError("service unavailable")
 
 
@@ -635,7 +636,7 @@ async def test_conflict_card_shows_for_conflict_status():
                 )
             ]
 
-        async def list_tasks(self):
+        async def list_tasks(self, owner_id=None, include_projections=True):
             return await self.list_reminders()
 
     class WorkbenchTestAppWithConflict(ConsolidatedCSSApp):
@@ -693,84 +694,37 @@ async def test_load_tasks_service_error_notifies_and_uses_empty_state():
         assert "No scheduled tasks yet" in empty_state.visual.plain
 
 
+# redesign PR-2, Task 2: the four watchlist-row tests that used to live
+# here (renders/selects/inspects/hides-lifecycle for a watchlist
+# projection AT ROW 1 of the queue table) pinned the OLD single-primitive
+# table's shape -- a flat reminder+projection list with Title/Type/
+# Status/Next-Run columns. Spec S2 locked decision 2 ("Briefing and
+# watchlist projections stay out") and Task 1's own report ("Task 2 is
+# expected to filter list_tasks' spans-owners result down to real
+# ReminderTask instances") retire that: the unified Queue list is
+# reminders + automation definitions only. Replaced by the single
+# exclusion test below; the detail-pane/inspector rendering for a
+# `ScheduledTask` projection stays covered directly by `task_detail.py`'s
+# own unit tests (`TaskDetail.set_task`/`TaskInspector.set_task` are
+# still general-purpose, just no longer reachable with a projection FROM
+# this table).
 @pytest.mark.asyncio
-async def test_workbench_renders_watchlist_job_row():
-    """The workbench renders both reminders and watchlist projection rows."""
+async def test_watchlist_projection_excluded_from_unified_queue():
+    """A watchlist projection never appears in the unified Queue list."""
     async with WorkbenchTestAppWithMixedService().run_test() as pilot:
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
 
-        table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
-        assert table.row_count == 2
-
-        watchlist_row = table.get_row_at(1)
-        assert "Watchlist Title" in str(watchlist_row[0])
-        assert "Watchlist Job" in str(watchlist_row[1])
-        assert "Waiting" in str(watchlist_row[2])
-        # task-23111: the queue column drops the TZ token and appends a
-        # relative form ("2026-07-20 11:00 (overdue 39d)").
-        assert "2026-07-20 11:00" in str(watchlist_row[3])
-
-
-@pytest.mark.asyncio
-async def test_select_watchlist_task_updates_detail():
-    """Selecting a watchlist row updates the detail pane with projection metadata."""
-    async with WorkbenchTestAppWithMixedService().run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-
-        table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
-        table.cursor_coordinate = (1, 0)
-        pilot.app.screen._update_detail_for_index(1)
-        await pilot.pause()
-
-        detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
-        type_label = detail.query_one("#scheduling-task-detail-type", Static)
-        schedule = detail.query_one("#scheduling-task-detail-schedule", Static)
-
-        assert "Watchlist Job" in type_label.visual.plain
-        assert "Every 1h" in schedule.visual.plain
-
-
-@pytest.mark.asyncio
-async def test_inspector_shows_read_only_projection_for_watchlist():
-    """The inspector surfaces the read-only projection state for watchlist jobs."""
-    async with WorkbenchTestAppWithMixedService().run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-
-        table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
-        table.cursor_coordinate = (1, 0)
-        pilot.app.screen._update_detail_for_index(1)
-        await pilot.pause()
-
-        inspector = pilot.app.screen.query_one(
-            "#scheduling-task-inspector", TaskInspector
-        )
-        sync = inspector.query_one("#scheduling-inspector-sync", Static)
-        last_run = inspector.query_one("#scheduling-inspector-last-run", Static)
-        owner = inspector.query_one("#scheduling-inspector-owner", Static)
-
-        assert "local (read-only projection)" in sync.visual.plain
-        assert "-" == last_run.visual.plain.strip()
-        assert "local" in owner.visual.plain
-
-
-@pytest.mark.asyncio
-async def test_watchlist_task_hides_lifecycle_actions():
-    """Watchlist projections do not expose reminder lifecycle buttons."""
-    async with WorkbenchTestAppWithMixedService().run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-
-        table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
-        table.cursor_coordinate = (1, 0)
-        pilot.app.screen._update_detail_for_index(1)
-        await pilot.pause()
-
-        detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
-        lifecycle = detail.query_one("#scheduling-task-detail-lifecycle", Horizontal)
-        assert lifecycle.display is False
+        workbench = pilot.app.screen
+        table = workbench.query_one("#scheduling-task-table", DataTable)
+        assert table.row_count == 1
+        assert "Reminder" in str(table.get_row_at(0)[1])
+        assert not any(
+            row.kind != "reminder" for row in workbench._visible_rows
+        ), "only reminder rows are unified-list eligible until definitions exist"
+        assert all(
+            task.id != "watchlist:1" for task in workbench._tasks
+        ), "the projection must never enter the reminder-only _tasks list"
 
 
 def test_humanize_cron_daily_pattern():
@@ -812,7 +766,7 @@ class ToggleFailingMockSchedulingService(_MockSchedulingServiceMixin):
             )
         ]
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return await self.list_reminders()
 
 
@@ -864,10 +818,10 @@ class RecordingMockSchedulingService(_MockSchedulingServiceMixin):
             )
         ]
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return await self.list_reminders()
 
-    async def delete_reminder(self, task_id: str) -> None:
+    async def delete_reminder(self, task_id: str, *, owner_id: str | None = None) -> None:
         if self.fail_delete:
             raise RuntimeError("delete failed")
         self.deleted_ids.append(task_id)
@@ -916,7 +870,7 @@ class ControlledRefreshSchedulingService(_MockSchedulingServiceMixin):
             next_run_at=timestamp,
         )
 
-    async def list_tasks(self) -> list[ReminderTask]:
+    async def list_tasks(self, owner_id=None, include_projections=True) -> list[ReminderTask]:
         """Return the next controlled task snapshot.
 
         Returns:
@@ -938,11 +892,15 @@ class ControlledRefreshSchedulingService(_MockSchedulingServiceMixin):
             return [self.newest_task]
         raise AssertionError(f"Unexpected list_tasks call {self._list_calls}")
 
-    async def delete_reminder(self, task_id: str) -> None:
+    async def delete_reminder(
+        self, task_id: str, *, owner_id: str | None = None
+    ) -> None:
         """Record completion of the controlled delete.
 
         Args:
             task_id: Identifier of the deleted reminder.
+            owner_id: The row's own owner, threaded by the workbench
+                (final review F4); recorded only, not acted on.
         """
         self.deleted_ids.append(task_id)
         self.delete_completed.set()
@@ -1039,7 +997,9 @@ async def test_delete_mutation_refresh_cannot_repaint_after_newer_user_refresh()
         assert [task.id for task in workbench._tasks] == ["newest-task"]
         table = workbench.query_one("#scheduling-task-table", DataTable)
         assert table.row_count == 1
-        assert "Newest user snapshot" in str(table.get_row_at(0)[0])
+        # redesign PR-2, Task 2: column 0 is now the glyph, column 1 the
+        # title (old single-primitive shape was Title/Type/Status/Next Run).
+        assert "Newest user snapshot" in str(table.get_row_at(0)[1])
 
 
 @pytest.mark.asyncio
@@ -1222,10 +1182,14 @@ async def test_create_reminder_for_a_different_runs_on_owner_queues_a_mutation(
 
             toasts = [n.message for n in pilot.app._notifications]
             assert any(
-                "Server (example.com)" in message
-                and "switch to that owner" in message
-                for message in toasts
+                "Server (example.com)" in message for message in toasts
             ), f"the toast must name the owner it was created for; got {toasts}"
+            # Final review F7: the queue spans owners since redesign PR-2
+            # Task 1, so the old "switch to that owner to see it"
+            # instruction told the user to do something unnecessary.
+            assert not any("switch to that owner" in m for m in toasts), (
+                f"the cross-owner instruction must be gone; got {toasts}"
+            )
 
         assert service.owner_id == "local"  # never repointed by the save
         assert service.sync_engine.owner_id == "local"
@@ -1573,3 +1537,157 @@ async def test_sync_strip_fields_do_not_abut():
         assert push.region.right < error.region.x, (
             f"push {push.region} abuts error {error.region}"
         )
+
+
+# --- redesign PR-2, Task 3: rail chrome + bottom status strip --------------
+
+
+def _definition_row(
+    def_id: str, *, name: str = "Digest", lifecycle: str = "configured"
+) -> dict:
+    return {
+        "id": def_id,
+        "server_id": None,
+        "owner_id": "local",
+        "name": name,
+        # Qodo MEDIUM (schedules-redesign PR-2): `build_unified_rows`
+        # filters definitions to `family == "recurring_question"` --
+        # every real definition row carries a family, so this fixture
+        # must too.
+        "family": "recurring_question",
+        "lifecycle": lifecycle,
+        "schedule": {"kind": "one_time", "run_at": "2099-01-01T00:00:00+00:00"},
+        "input": {"question": "What changed?"},
+        "updated_at": "2026-08-01T00:00:00+00:00",
+    }
+
+
+class _RailService(_MockSchedulingServiceMixin):
+    """One definition, optionally carrying an unread result -- drives the
+    rail's `Mark all read` visibility (redesign PR-2, Task 3)."""
+
+    def __init__(self, *, unread: bool = False, conflicts: list | None = None) -> None:
+        self.owner_id = "local"
+        self.db = _MockSchedulingDB(
+            conflicts=conflicts,
+            automation_definitions=[_definition_row("def-1")],
+            automation_results=(
+                [
+                    {
+                        "id": "result-1",
+                        "definition_id": "def-1",
+                        "owner_id": "local",
+                        "review_state": "unread",
+                        "kind": "finding",
+                        "created_at": "2026-08-20T00:00:00+00:00",
+                    }
+                ]
+                if unread
+                else []
+            ),
+        )
+
+    async def list_tasks(self, owner_id=None, include_projections=True):
+        return []
+
+
+class _RailTestApp(ConsolidatedCSSApp):
+    def __init__(self, service: _RailService, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.scheduling_service = service
+
+
+@pytest.mark.asyncio
+async def test_mark_all_read_hidden_when_nothing_unread():
+    app = _RailTestApp(_RailService(unread=False))
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        button = pilot.app.screen.query_one("#scheduling-mark-all-read", Button)
+        assert button.display is False
+
+
+@pytest.mark.asyncio
+async def test_mark_all_read_visible_when_a_definition_has_unread_results():
+    """redesign PR-2, Task 3: the rail action is shown only once the
+    unified rows' total unread count is > 0 -- summed across
+    `UnifiedRow.unread_count`, not a new query."""
+    app = _RailTestApp(_RailService(unread=True))
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        button = pilot.app.screen.query_one("#scheduling-mark-all-read", Button)
+        assert button.display is True
+
+
+@pytest.mark.asyncio
+async def test_conflicts_badge_shows_count_and_switches_to_conflicts_tab():
+    """redesign PR-2, Task 3, plan ruling 4: the status strip's conflicts
+    badge mirrors `_refresh_conflicts_tab`'s own existing count (no new
+    query) and switches to the Conflicts tab on click -- no overlay."""
+    app = _RailTestApp(
+        _RailService(conflicts=[{"id": "c1"}, {"id": "c2"}])
+    )
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+
+        badge = workbench.query_one("#scheduling-conflicts-badge", Button)
+        assert str(badge.label) == "Conflicts (2)"
+        assert "scheduled task" in str(badge.tooltip).lower()
+
+        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
+        assert tabs.active != "scheduling-conflicts-tab"
+
+        badge.press()
+        await pilot.pause()
+
+        assert tabs.active == "scheduling-conflicts-tab"
+
+
+@pytest.mark.asyncio
+async def test_conflicts_badge_defaults_to_no_count():
+    app = _RailTestApp(_RailService())
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        badge = pilot.app.screen.query_one("#scheduling-conflicts-badge", Button)
+        assert str(badge.label) == "Conflicts"
+
+
+@pytest.mark.asyncio
+async def test_status_strip_sync_widget_is_compact_at_narrow_width():
+    """redesign PR-2, Task 3: the strip's width-triggered compact path --
+    the default (80, 24) test size is well under `SCHEDULES_COMPACT_
+    WORKBENCH_MAX_WIDTH` (120), so `_sync_responsive_workbench` (run at
+    `on_mount`) should already have applied it."""
+    app = _RailTestApp(_RailService())
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        sync_status = pilot.app.screen.query_one(
+            "#scheduling-sync-status", SyncStatusWidget
+        )
+        assert "compact" in sync_status.classes
+
+
+@pytest.mark.asyncio
+async def test_status_strip_sync_widget_is_not_compact_at_wide_width():
+    app = _RailTestApp(_RailService())
+    async with app.run_test(size=(200, 40)) as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        sync_status = pilot.app.screen.query_one(
+            "#scheduling-sync-status", SyncStatusWidget
+        )
+        assert "compact" not in sync_status.classes

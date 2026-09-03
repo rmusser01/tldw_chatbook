@@ -105,15 +105,26 @@ class SyncStatusWidget(Horizontal):
         persisted sync error from a since-removed server must stay
         visible and clearable on a now-local-only profile, so collapsed
         mode shows local note + error + Clear whenever an error exists.
+
+        redesign PR-2, Task 3: the width-triggered compact path
+        (`set_compact`/`self.has_class("compact")`) ALSO hides the
+        timestamps, folded into this same write rather than a second
+        independent one -- Textual widgets resolve `.display` from
+        whichever code last set it imperatively (inline styles beat
+        stylesheet rules), so a plain CSS `.compact { display: none }`
+        rule here would silently lose to this method's own explicit
+        `display = not collapsed` on every owner/server-state refresh.
+        Folding both triggers into one write keeps there being exactly
+        one place these two Statics' visibility is decided. The
+        owner-button collapse stays gated on `collapsed` alone -- compact
+        must not hide the owner indicator (plan ruling 4's "(b)").
         """
         collapsed = self.current_owner == "local" and not self.server_available
-        for selector in (
-            "#scheduling-owner-local",
-            "#scheduling-owner-server",
-            "#scheduling-last-pull",
-            "#scheduling-last-push",
-        ):
+        for selector in ("#scheduling-owner-local", "#scheduling-owner-server"):
             self.query_one(selector).display = not collapsed
+        hide_timestamps = collapsed or self.has_class("compact")
+        for selector in ("#scheduling-last-pull", "#scheduling-last-push"):
+            self.query_one(selector).display = not hide_timestamps
         note = self.query_one("#scheduling-sync-local-note", Static)
         note.display = collapsed
         note.update(
@@ -121,6 +132,22 @@ class SyncStatusWidget(Horizontal):
             if collapsed
             else ""
         )
+
+    def set_compact(self, compact: bool) -> None:
+        """Width-triggered compact styling path (redesign PR-2, Task 3).
+
+        Additive: stores the trigger as a CSS class (`.compact`) and
+        re-runs `_apply_collapse` so the two triggers combine through
+        that one method rather than fighting over the same two Statics'
+        `.display` -- `_apply_collapse`'s own owner/server-based collapse
+        decision (and the owner-button/note halves of it) are unchanged.
+
+        Args:
+            compact: Whether the host rail is narrow enough to hide the
+                last-pull/last-push timestamps.
+        """
+        self.set_class(compact, "compact")
+        self._apply_collapse()
 
     def set_owner_state(
         self,

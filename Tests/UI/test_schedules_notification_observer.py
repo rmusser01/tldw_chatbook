@@ -78,7 +78,7 @@ class _OwnerSuffixService(MockSchedulingServiceMixin):
             )
         ]
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return await self.list_reminders()
 
 
@@ -94,7 +94,9 @@ async def test_queue_owner_suffix_shown_at_wide_width():
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
         table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
-        assert "(server: 1)" in str(table.get_cell_at((0, 0)))
+        # redesign PR-2, Task 2: column 0 is now the glyph, column 1 the
+        # title (old single-primitive shape was Title/Type/Status/Next Run).
+        assert "(server: 1)" in str(table.get_cell_at((0, 1)))
 
 
 @pytest.mark.asyncio
@@ -103,8 +105,8 @@ async def test_queue_owner_suffix_hidden_at_compact_width():
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
         table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
-        assert "(server: 1)" not in str(table.get_cell_at((0, 0)))
-        assert "Nightly digest" in str(table.get_cell_at((0, 0)))
+        assert "(server: 1)" not in str(table.get_cell_at((0, 1)))
+        assert "Nightly digest" in str(table.get_cell_at((0, 1)))
 
 
 class _BracketTitleService(MockSchedulingServiceMixin):
@@ -122,7 +124,7 @@ class _BracketTitleService(MockSchedulingServiceMixin):
             )
         ]
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None, include_projections=True):
         return await self.list_reminders()
 
 
@@ -145,7 +147,9 @@ async def test_queue_title_renders_brackets_literally():
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
         table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
-        assert rendered_row_cells(table, 0)[0] == "Nightly [bold] digest (server: 1)"
+        # redesign PR-2, Task 2: column 0 is now the glyph, column 1 the
+        # title.
+        assert rendered_row_cells(table, 0)[1] == "Nightly [bold] digest (server: 1)"
 
 
 # ---------------------------------------------------------------------------

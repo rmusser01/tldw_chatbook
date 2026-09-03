@@ -1585,7 +1585,14 @@ async def test_watchlists_right_rail_does_not_clip_action_labels(size):
         (
             "schedules",
             "#scheduling-workbench",
-            ("Schedule Queue", "Task Detail", "Inspector"),
+            # redesign PR-2, Task 2 added `DefinitionDetail` as a sibling of
+            # `TaskDetail` (toggled via the `pane-hidden` class, not removed
+            # from the DOM) -- `_visible_workbench_pane_titles` checks each
+            # `.column-title` Static's OWN `.display`, which Textual never
+            # derives from an ancestor's `display: none` (`Widget.display`
+            # only reads `self.styles.display`), so the hidden pane's title
+            # still shows up here even while its content is invisible.
+            ("Schedule Queue", "Task Detail", "Definition Detail", "Inspector"),
         ),
         (
             "workflows",
@@ -2091,7 +2098,7 @@ async def test_operational_loading_states_preserve_workbench_geometry(
         load_started = asyncio.Event()
         load_cancelled = asyncio.Event()
 
-        async def hold_initial_load(self):
+        async def hold_initial_load(self, *, refresh_definitions: bool = True):
             load_started.set()
             try:
                 await asyncio.Event().wait()

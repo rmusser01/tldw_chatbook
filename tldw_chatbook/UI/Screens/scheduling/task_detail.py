@@ -26,6 +26,16 @@ from ....Scheduling.models import ReminderTask, ScheduledTask, ScheduleKind, Tas
 from ....Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
 from ....Widgets.detail_value_row import DetailGroup, DetailValueRow
 from ..destination_recovery import DestinationRecoveryState
+# Hoisted to `unified_rows.py` (redesign PR-2 Task 1) so that pure module can
+# reuse them without pulling Textual in as an import side effect; re-exported
+# here unchanged so every existing call site/test import keeps working.
+from .unified_rows import (
+    _format_timezone,
+    _humanize_cron,  # noqa: F401  (re-export: definition_detail.py + tests import this from here)
+    _humanize_schedule,
+    definition_cron_expression,  # noqa: F401  (re-export: definition_detail.py imports this from here)
+    owner_display_label,
+)
 
 
 SCHEDULES_EMPTY_CONSOLE_RECOVERY = DestinationRecoveryState(
@@ -39,16 +49,6 @@ SCHEDULES_EMPTY_CONSOLE_RECOVERY = DestinationRecoveryState(
     disabled_tooltip="Start or select a schedule run to enable Console follow.",
 )
 
-
-_WEEKDAYS = [
-    "Sunday",
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-]
 
 _STATUS_LABELS: dict[TaskStatus, str] = {
     TaskStatus.WAITING: "Waiting",
@@ -106,13 +106,6 @@ def _humanize_status(status: TaskStatus) -> str:
 def _humanize_schedule_kind(kind: ScheduleKind) -> str:
     """Return 'Recurring' or 'One-time' for a schedule kind."""
     return "Recurring" if kind == ScheduleKind.RECURRING else "One-time"
-
-
-def _format_timezone(dt) -> str:
-    """Return a timezone label for a datetime, defaulting to UTC."""
-    if dt.tzinfo is None:
-        return "UTC"
-    return dt.tzname() or "UTC"
 
 
 def _format_relative(next_run_at: datetime, now: datetime) -> str:
@@ -233,75 +226,6 @@ def format_incidents(incidents) -> str:
     return "\n".join(lines)
 
 
-def _humanize_cron(cron: str | None, timezone: str | None = None) -> str:
-    """Summarize a cron expression in plain English."""
-    if not cron:
-        return "-"
-    parts = cron.split()
-    if len(parts) != 5:
-        return cron
-    minute, hour, dom, month, dow = parts
-    tz = f" {timezone}" if timezone else " UTC"
-
-    def _is_wildcard(value: str) -> bool:
-        return value == "*"
-
-    def _is_digit(value: str) -> bool:
-        # ASCII only: '²'.isdigit() is True but int('²') raises, and this
-        # runs on every detail render of a synced cron (review F14).
-        return bool(value) and value.isascii() and value.isdigit()
-
-    if (
-        _is_digit(minute)
-        and _is_digit(hour)
-        and _is_wildcard(dom)
-        and _is_wildcard(month)
-        and _is_wildcard(dow)
-    ):
-        return f"Daily at {int(hour):02d}:{int(minute):02d}{tz}"
-
-    if (
-        _is_digit(minute)
-        and _is_digit(hour)
-        and _is_wildcard(dom)
-        and _is_wildcard(month)
-        and dow == "1-5"
-    ):
-        # The "Every weekday at..." preset (task-23102).
-        return f"Weekdays at {int(hour):02d}:{int(minute):02d}{tz}"
-
-    if (
-        _is_digit(minute)
-        and _is_digit(hour)
-        and _is_wildcard(dom)
-        and _is_wildcard(month)
-        and _is_digit(dow)
-    ):
-        day_index = int(dow)
-        if 0 <= day_index <= 6:
-            return f"Weekly on {_WEEKDAYS[day_index]} at {int(hour):02d}:{int(minute):02d}{tz}"
-
-    if (
-        _is_digit(minute)
-        and _is_digit(hour)
-        and _is_digit(dom)
-        and _is_wildcard(month)
-        and _is_wildcard(dow)
-    ):
-        return f"Monthly on the {int(dom)} at {int(hour):02d}:{int(minute):02d}{tz}"
-
-    return f"cron: {cron}{tz}"
-
-
-def _humanize_schedule(task: ReminderTask) -> str:
-    """Return a human-readable schedule summary for the task."""
-    if task.schedule_kind == ScheduleKind.ONE_TIME:
-        if task.run_at is None:
-            return "One-time"
-        return f"One-time at {task.run_at.strftime('%Y-%m-%d %H:%M')} {_format_timezone(task.run_at)}"
-    return _humanize_cron(task.cron, task.timezone)
-
-
 def _underlying_status(task: ReminderTask | ScheduledTask) -> TaskStatus:
     """The recorded dispatch status, without the enabled-state overlay.
 
@@ -389,67 +313,6 @@ def _task_sync_label(task: ReminderTask | ScheduledTask) -> str:
             sync_status += " (local)"
         return sync_status
     return "local (read-only projection)"
-
-
-def definition_cron_expression(schedule: dict[str, Any]) -> Any:
-    """An automation definition's cron string, under EITHER key.
-
-    The two writers disagree: this client writes `schedule["cron"]`
-    (`AutomationDefinitionForm`'s save payload), the real server sends
-    `schedule["expression"]` (recorded fixture
-    `Tests/Scheduling/fixtures/server_responses/
-    automation_definition_list.json`), and `_load_server_automations`
-    passes the payload through raw, stamping only `owner_id`.
-
-    Both readers of that field go through here (final review F1 + its
-    carry-forward), and it lives in this leaf module because the two are
-    in packages that cannot import each other: `definition_detail`'s "At"
-    row -- where a cron-only read rendered `At: -` for EVERY server-owned
-    definition -- and `AutomationDefinitionForm._prefill_from_row`, where
-    the same read was worse than cosmetic: editing a mirrored server-only
-    definition fell through to the form's default preset, so a save wrote
-    that default OVER the server's real schedule.
-
-    Args:
-        schedule: A definition's `schedule` dict, from either source.
-
-    Returns:
-        The cron string, or ``None``/empty when neither key carries one.
-    """
-    return schedule.get("cron") or schedule.get("expression")
-
-
-def owner_display_label(owner_id: Any) -> str:
-    """Prose owner label shared by BOTH detail panes (final review F6/F7).
-
-    ``"This device"`` for a locally-owned row, the server's own id for a
-    server-scoped one (``"server:srv-1"`` -> ``"srv-1"``) -- the
-    vocabulary the spec, the User Guide and the Automations table's own
-    Name-cell prefix already use. The reminder pane's `Runs on` row used
-    to render the raw metadata string instead (``local``, ``server:1 /
-    server <id>``), so the two panes spoke two dialects for the flagship
-    row of the redesign. One helper, one vocabulary -- settled before
-    PR-3 turns this row into the transfer dropdown.
-
-    `TaskInspector`'s Owner row deliberately keeps `_task_owner_label`'s
-    raw value: that pane is the metadata inspector, where the unprettied
-    owner/server ids are the point.
-
-    Args:
-        owner_id: A row's ``owner_id`` (any type tolerated -- anything
-            that is not a server-scoped string reads as local).
-
-    Returns:
-        ``"This device"``, or the server's own id.
-    """
-    # ADR-097: scheduler.queue stays off the boot census -- function-local
-    # import, same as `_queue_owner_suffix` below.
-    from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
-
-    if not is_server_scoped_owner(owner_id):
-        return "This device"
-    owner_id = str(owner_id)
-    return owner_id.split(":", 1)[1] if ":" in owner_id else owner_id
 
 
 def _task_owner_label(task: ReminderTask | ScheduledTask) -> str:
