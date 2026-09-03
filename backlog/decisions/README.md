@@ -99,6 +99,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-106](106-human-reviewed-agent-lesson-promotion.md) | Accepted | Force foreground approval for Agent Lesson mutations and permit only exact, human-reviewed promotion through existing instruction and trust authorities. |
 | [ADR-107](107-portable-tool-use-packs.md) | Proposed | Export one flattened Tool policy profile as deterministic policy-only content; import it unbound with exact mapping, first-bind confirmation, and deny tombstones. |
 | [ADR-113](113-collections-capture-authority-and-legacy-boundary.md) | Accepted | Separate Local and Server Collections capture authority from Media and preserve obsolete generic containers as explicit read-only legacy data. |
+| [ADR-114](114-llamacpp-lab-console-connection-authority.md) | Proposed | Keep llama.cpp process ownership, HTTP/model readiness, Console session adoption, and durable provider defaults separate behind one sanitized connection target. |
 
 ## Historical Decision Material
 
