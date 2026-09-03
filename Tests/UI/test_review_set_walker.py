@@ -9,7 +9,9 @@ and the per-item actuator is recorded rather than mounting a Reader.
 from __future__ import annotations
 
 import itertools
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
+
+import pytest
 
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 from tldw_chatbook.Library.review_set_service import ReviewSetService
@@ -228,6 +230,180 @@ def test_review_set_live_ids_treats_ids_live_when_media_db_absent():
         _REVIEW_SET_LIVENESS_BATCH=LibraryScreen._REVIEW_SET_LIVENESS_BATCH,
     )
     assert LibraryScreen._review_set_live_ids(fake, [1, 2, 3]) == {1, 2, 3}
+
+
+def _entry_fake(service):
+    opened: list[str] = []
+    notices: list[tuple[str, str]] = []
+    fake = SimpleNamespace(
+        _review_set_service=lambda: service,
+        _open_library_media_viewer=lambda media_id: opened.append(media_id),
+        app_instance=SimpleNamespace(
+            notify=lambda message, severity="information": notices.append(
+                (message, severity)
+            )
+        ),
+    )
+    fake._notify_review_set = MethodType(
+        LibraryScreen._notify_review_set, fake
+    )
+    fake._opened = opened
+    fake._notices = notices
+    return fake
+
+
+def test_create_and_open_review_set_creates_activates_and_lands(tmp_path):
+    service = _service(tmp_path)
+    fake = _entry_fake(service)
+
+    LibraryScreen._create_and_open_review_set(
+        fake, "Talks", "browse", [(10, "A"), (11, "B")]
+    )
+
+    review_set = service.get_active_review_set()
+    assert review_set is not None
+    assert [item.backing_media_id for item in review_set.items] == [10, 11]
+    assert fake._opened == ["local:media:10"]  # landed on the first item
+
+
+def test_create_and_open_review_set_empty_notifies_and_makes_no_set(tmp_path):
+    service = _service(tmp_path)
+    fake = _entry_fake(service)
+
+    LibraryScreen._create_and_open_review_set(fake, "X", "browse", [])
+
+    assert service.get_active_review_set() is None
+    assert fake._opened == []
+    assert fake._notices and fake._notices[0][1] == "warning"
+
+
+def test_create_and_open_review_set_warns_on_truncation(tmp_path):
+    service = _service(tmp_path)
+    fake = _entry_fake(service)
+
+    LibraryScreen._create_and_open_review_set(
+        fake, "X", "browse", [(index, f"t{index}") for index in range(600)]
+    )
+
+    review_set = service.get_active_review_set()
+    assert len(review_set.items) == 500
+    assert any(severity == "warning" for _msg, severity in fake._notices)
+
+
+def _worker_fake(service, *, search_media, scope=None):
+    """Fake screen for the entry-point workers, wiring the real methods."""
+    fake = _entry_fake(service)
+    fake._library_media_browse_controller = SimpleNamespace(applied_scope=scope)
+    fake.app_instance.media_reading_scope_service = SimpleNamespace(
+        search_media=search_media
+    )
+
+    async def run_call(call, *args, isolate_in_worker=False, **kwargs):
+        return await call(*args, **kwargs)
+
+    fake._run_library_service_call = run_call
+    for name in (
+        "_collect_review_pairs_from_scope",
+        "_order_selected_review_pairs",
+        "_create_and_open_review_set",
+        "_review_these_worker",
+        "_review_selected_worker",
+    ):
+        setattr(fake, name, MethodType(getattr(LibraryScreen, name), fake))
+    fake._review_these_name = LibraryScreen._review_these_name
+    return fake
+
+
+@pytest.mark.asyncio
+async def test_review_these_worker_pages_the_whole_result_and_lands(tmp_path):
+    service = _service(tmp_path)
+    pages = {
+        0: [
+            {"backing_media_id": 10, "title": "A"},
+            {"backing_media_id": 11, "title": "B"},
+        ],
+        2: [{"backing_media_id": 12, "title": "C"}],
+    }
+
+    async def search_media(*, offset=0, **_kwargs):
+        return {"items": pages.get(offset, []), "total": 3}
+
+    scope = SimpleNamespace(
+        query="", media_type=None, sort_by="last_modified_desc", page_size=2
+    )
+    fake = _worker_fake(service, search_media=search_media, scope=scope)
+
+    await fake._review_these_worker()
+
+    review_set = service.get_active_review_set()
+    assert [item.backing_media_id for item in review_set.items] == [10, 11, 12]
+    assert review_set.origin == "browse"
+    assert fake._opened == ["local:media:10"]
+
+
+@pytest.mark.asyncio
+async def test_review_selected_worker_orders_via_the_id_allowlist(tmp_path):
+    service = _service(tmp_path)
+    seen_kwargs = {}
+
+    async def search_media(**kwargs):
+        seen_kwargs.update(kwargs)
+        # the service returns the allowlist in browse order (newest first).
+        return {
+            "items": [
+                {"backing_media_id": 30, "title": "Z"},
+                {"backing_media_id": 20, "title": "Y"},
+            ],
+            "total": 2,
+        }
+
+    fake = _worker_fake(service, search_media=search_media, scope=None)
+
+    await fake._review_selected_worker((20, 30))
+
+    review_set = service.get_active_review_set()
+    assert [item.backing_media_id for item in review_set.items] == [30, 20]
+    assert review_set.origin == "selection"
+    assert seen_kwargs["id_allowlist"] == [20, 30]  # bounded allowlist passed
+
+
+@pytest.mark.asyncio
+async def test_review_these_worker_notifies_on_failure(tmp_path):
+    service = _service(tmp_path)
+
+    async def search_media(**_kwargs):
+        raise RuntimeError("db exploded")
+
+    scope = SimpleNamespace(
+        query="", media_type=None, sort_by="last_modified_desc", page_size=2
+    )
+    fake = _worker_fake(service, search_media=search_media, scope=scope)
+
+    await fake._review_these_worker()  # must not raise
+
+    assert service.get_active_review_set() is None
+    assert any(severity == "error" for _msg, severity in fake._notices)
+
+
+def test_review_these_name_from_scope():
+    assert (
+        LibraryScreen._review_these_name(
+            SimpleNamespace(query="cats", media_type=None)
+        )
+        == 'Search: "cats"'
+    )
+    assert (
+        LibraryScreen._review_these_name(
+            SimpleNamespace(query="", media_type="video")
+        )
+        == "video items"
+    )
+    assert (
+        LibraryScreen._review_these_name(
+            SimpleNamespace(query="", media_type=None)
+        )
+        == "All media"
+    )
 
 
 def test_review_set_active_reflects_the_service(tmp_path):
