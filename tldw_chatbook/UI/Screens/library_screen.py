@@ -42307,8 +42307,11 @@ class LibraryScreen(BaseAppScreen):
         )
         if not callable(lister):
             return []
+        # Bound the DB query itself (Qodo #2340) -- +1 so build_pinned_items
+        # can still flag truncation; the client-side slice stays as a guard
+        # for listers without limit support.
         ids = await self._run_library_service_call(
-            lister, isolate_in_worker=True
+            lister, isolate_in_worker=True, limit=REVIEW_SET_CAP + 1
         )
         ids = [int(backing_id) for backing_id in ids][: REVIEW_SET_CAP + 1]
         if not ids:

@@ -528,9 +528,12 @@ async def test_picker_worker_open_all_tombstoned_notifies_without_activating(
 
 @pytest.mark.asyncio
 async def test_picker_worker_read_later_builds_a_set_in_saved_order(tmp_path):
-    # task-28244: ids come from list_read_it_later_media_ids (saved_at DESC);
-    # titles come from the bounded allowlist query, whose browse-sort order is
-    # then discarded in favor of the saved order.
+    """The read-later decision pins the queue in saved order (task-28244).
+
+    Ids come from ``list_read_it_later_media_ids`` (saved_at DESC); titles
+    come from the bounded allowlist query, whose browse-sort order is then
+    discarded in favor of the saved order.
+    """
     service = _service(tmp_path)
     fake = _picker_fake(service, decision=("read_later", ""))
     fake.app_instance.media_db = SimpleNamespace(
@@ -570,6 +573,7 @@ async def test_picker_worker_read_later_builds_a_set_in_saved_order(tmp_path):
 
 @pytest.mark.asyncio
 async def test_picker_worker_read_later_empty_notifies_without_a_set(tmp_path):
+    """An empty read-later queue notices instead of creating an empty set."""
     service = _service(tmp_path)
     fake = _picker_fake(service, decision=("read_later", ""))
     fake.app_instance.media_db = SimpleNamespace(
@@ -587,6 +591,81 @@ async def test_picker_worker_read_later_empty_notifies_without_a_set(tmp_path):
     assert service.get_active_review_set() is None
     assert fake._opened == []
     assert any(severity == "warning" for _msg, severity in fake._notices)
+
+
+def test_list_read_it_later_media_ids_honors_the_limit(tmp_path):
+    """The real DB lister bounds its query when a limit is passed (Qodo #2340)."""
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+    media_db = MediaDatabase(db_path=str(tmp_path / "media.db"), client_id="t")
+    ids = []
+    for index in range(3):
+        media_id, _uuid, _msg = media_db.add_media_with_keywords(
+            title=f"Item {index}", media_type="document", content=f"c{index}"
+        )
+        ids.append(media_id)
+        media_db.save_media_to_read_it_later(media_id)
+
+    bounded = media_db.list_read_it_later_media_ids(limit=2)
+    # Same-second saves tie-break by media_id DESC: the two newest rows.
+    assert bounded == [ids[2], ids[1]]
+    assert media_db.list_read_it_later_media_ids() == [ids[2], ids[1], ids[0]]
+
+
+@pytest.mark.asyncio
+async def test_read_later_pairs_run_against_the_real_media_db(tmp_path):
+    """The worker seam reads a REAL Media DB's read-later order end to end.
+
+    Qodo #2340: only the (remote-shaped) search service is stubbed -- the
+    lister runs the real query with the worker's real kwargs, so a bad limit
+    kwarg or a broken ordering would fail here, not just against a fake.
+    """
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+    media_db = MediaDatabase(db_path=str(tmp_path / "media.db"), client_id="t")
+    ids = []
+    for index in range(3):
+        media_id, _uuid, _msg = media_db.add_media_with_keywords(
+            title=f"Doc {index}", media_type="document", content=f"c{index}"
+        )
+        ids.append(media_id)
+    media_db.save_media_to_read_it_later(ids[0])
+    media_db.save_media_to_read_it_later(ids[2])
+
+    service = _service(tmp_path)
+    fake = _picker_fake(service, decision=("read_later", ""))
+    fake.app_instance.media_db = media_db
+
+    async def search_media(**kwargs):
+        titles = {ids[0]: "Doc 0", ids[2]: "Doc 2"}
+        return {
+            "items": [
+                {"backing_media_id": bid, "title": titles[bid]}
+                for bid in sorted(kwargs["id_allowlist"])  # browse order differs
+            ],
+            "total": len(kwargs["id_allowlist"]),
+        }
+
+    fake.app_instance.media_reading_scope_service = SimpleNamespace(
+        search_media=search_media
+    )
+    fake._library_media_browse_controller = SimpleNamespace(applied_scope=None)
+    for name in (
+        "_order_selected_review_pairs",
+        "_review_read_later_pairs",
+        "_create_and_open_review_set",
+    ):
+        setattr(fake, name, MethodType(getattr(LibraryScreen, name), fake))
+
+    await fake._review_set_picker_worker()
+
+    review_set = service.get_active_review_set()
+    # saved_at DESC with same-second tie-break by media_id DESC -> [ids2, ids0]
+    assert [item.backing_media_id for item in review_set.items] == [
+        ids[2],
+        ids[0],
+    ]
+    assert fake._opened == [f"local:media:{ids[2]}"]
 
 
 @pytest.mark.asyncio

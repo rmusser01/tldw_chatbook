@@ -102,9 +102,12 @@ async def test_empty_rows_show_empty_copy_and_close_returns_none() -> None:
 
 @pytest.mark.asyncio
 async def test_read_later_action_dismisses_with_read_later_decision() -> None:
-    # task-28244: the picker is the set hub, so "Review read-later" lives in
-    # its actions row -- present even with no saved sets, since the read-later
-    # queue is independent of them.
+    """The picker's "Review read-later" action resolves its own decision.
+
+    task-28244: the picker is the set hub, so the action lives in its
+    actions row -- present even with no saved sets, since the read-later
+    queue is independent of them.
+    """
     app = ModalHarness([])
     async with app.run_test(size=(100, 30)) as pilot:
         app.show()
