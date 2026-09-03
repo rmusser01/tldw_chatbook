@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import datetime, timedelta, timezone
 import errno
 import hashlib
@@ -501,6 +501,20 @@ def test_read_rejects_digest_mismatch_noncanonical_bytes_and_symlink(
     symlink.symlink_to(handle.path)
     with pytest.raises(ToolPackError, match=r"payload_invalid$"):
         store.read(symlink.name, expected_digest=handle.digest)
+
+
+def test_delete_owned_is_digest_authenticated_and_idempotent(tmp_path: Path) -> None:
+    store = _store(tmp_path / "receipts")
+    handle = _commit(store)
+
+    with pytest.raises(ToolPackError, match=r"payload_invalid$"):
+        store.delete_owned(replace(handle, digest=_ZERO_HASH))
+    with pytest.raises(ToolPackError, match=r"payload_invalid$"):
+        store.delete_owned(replace(handle, size=handle.size + 1))
+    assert handle.path.exists()
+
+    assert store.delete_owned(handle) is True
+    assert store.delete_owned(handle) is False
 
 
 def test_reconcile_removes_only_old_authenticated_unowned_regular_receipts(

@@ -16,6 +16,7 @@ import unicodedata
 import zipfile
 
 from tldw_chatbook.MCP.permission_store import PermissionStoreSnapshot
+from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Tool_Packs.catalog_snapshot import (
     PermissionInventoryRegistry,
     PermissionInventorySnapshot,
@@ -152,7 +153,13 @@ class ToolPackImportService:
             ToolPackError: If archive, store, inventory, reference, or mapping
                 admission fails. Errors contain no filesystem paths.
         """
-        path = Path(archive_path)
+        try:
+            selected = Path(archive_path)
+            path = validate_path(selected, selected.parent, redact_paths=True)
+            if not isinstance(path, Path) or selected.is_symlink():
+                raise ValueError
+        except (OSError, TypeError, ValueError):
+            raise ToolPackError("import", "archive_invalid") from None
         if path.suffix != ".tldw-tool-pack":
             raise ToolPackError("import", "archive_invalid")
         archive_bytes = _read_regular_archive(path)

@@ -291,6 +291,11 @@ class _RecordingReceiptStore:
     def read(self, receipt_id: str, *, expected_digest: str):
         return self.store.read(receipt_id, expected_digest=expected_digest)
 
+    def delete_owned(self, handle: ReceiptHandle) -> bool:
+        removed = self.store.delete_owned(handle)
+        self.events.append("receipt_removed")
+        return removed
+
 
 def _service(
     tmp_path: Path,
@@ -719,7 +724,16 @@ def test_activation_rechecks_expiry_under_final_authority_fence(
     with pytest.raises(ToolPackError, match=r"review_stale$"):
         service.install(review)
 
-    assert events[-3:] == ["receipt_durable", "coordinator", "store_fence"]
+    assert events == [
+        "reinspect",
+        "inventory",
+        "receipt_durable",
+        "coordinator",
+        "store_fence",
+        "coordinator",
+        "store_fence",
+        "receipt_removed",
+    ]
     assert "reference_check" not in events
     assert store.install_calls == 0
 
@@ -760,11 +774,16 @@ def test_activation_rechecks_destination_references_after_durable_receipt(
     with pytest.raises(ToolPackError, match=r"destination_referenced$"):
         service.install(review)
 
-    assert events[-4:] == [
+    assert events == [
+        "reinspect",
+        "inventory",
         "receipt_durable",
         "coordinator",
         "store_fence",
         "reference_check",
+        "coordinator",
+        "store_fence",
+        "receipt_removed",
     ]
     assert store.install_calls == 0
     assert "research" not in store.profiles
@@ -804,7 +823,16 @@ def test_activation_rejects_store_change_under_final_authority_fence(
     with pytest.raises(ToolPackError, match=r"store_changed$"):
         service.install(review)
 
-    assert events[-3:] == ["receipt_durable", "coordinator", "store_fence"]
+    assert events == [
+        "reinspect",
+        "inventory",
+        "receipt_durable",
+        "coordinator",
+        "store_fence",
+        "coordinator",
+        "store_fence",
+        "receipt_removed",
+    ]
     assert "reference_check" not in events
     assert store.install_calls == 0
 
@@ -823,7 +851,16 @@ def test_activation_rejects_occupied_destination_under_final_authority_fence(
     with pytest.raises(ToolPackError, match=r"destination_referenced$"):
         service.install(review)
 
-    assert events[-3:] == ["receipt_durable", "coordinator", "store_fence"]
+    assert events == [
+        "reinspect",
+        "inventory",
+        "receipt_durable",
+        "coordinator",
+        "store_fence",
+        "coordinator",
+        "store_fence",
+        "receipt_removed",
+    ]
     assert "reference_check" not in events
     assert store.install_calls == 0
 
@@ -855,7 +892,7 @@ def test_activation_maps_profile_and_store_caps_to_capacity(
     events: list[str] = []
     review = _review()
     store = _Store(events, review, install_outcome=outcome)
-    service, store, _references, _receipts, _events = _service(
+    service, store, _references, receipts, events = _service(
         tmp_path,
         monkeypatch,
         review=review,
@@ -867,6 +904,31 @@ def test_activation_maps_profile_and_store_caps_to_capacity(
 
     assert store.install_calls == 1
     assert "research" not in store.profiles
+    assert "receipt_removed" in events
+    assert list(receipts.store.root.iterdir()) == []
+
+
+def test_unexpected_definitive_activation_failure_reclaims_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    review = _review()
+    service, store, _references, receipts, events = _service(
+        tmp_path,
+        monkeypatch,
+        review=review,
+    )
+
+    def fail_authority(*_args: object) -> None:
+        raise RuntimeError("private failure")
+
+    monkeypatch.setattr(service, "_install_authority", fail_authority)
+
+    with pytest.raises(ToolPackError, match=r"^tool_pack\.import\.activation_failed$"):
+        service.install(review)
+
+    assert store.install_calls == 0
+    assert "receipt_removed" in events
+    assert list(receipts.store.root.iterdir()) == []
 
 
 @pytest.mark.parametrize(
@@ -894,7 +956,7 @@ def test_activation_strictly_reconciles_ambiguous_install_outcomes(
         install_outcome=outcome,
         fail_reconciliation_read=fail_reconciliation,
     )
-    service, store, _references, _receipts, _events = _service(
+    service, store, _references, receipts, _events = _service(
         tmp_path,
         monkeypatch,
         review=review,
@@ -911,6 +973,11 @@ def test_activation_strictly_reconciles_ambiguous_install_outcomes(
         assert error.value.category == category
 
     assert store.install_calls == 1
+    remaining = tuple(receipts.store.root.iterdir())
+    if outcome == "before" and not fail_reconciliation:
+        assert remaining == ()
+    else:
+        assert len(remaining) == 1
 
 
 def test_import_install_is_unbound_and_preserves_existing_workspace_policy(

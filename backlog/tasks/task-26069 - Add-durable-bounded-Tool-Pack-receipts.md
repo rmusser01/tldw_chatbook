@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-31 19:46'
-updated_date: '2026-08-31 21:51'
+updated_date: '2026-09-03 01:54'
 labels:
   - tool-packs
   - receipts
@@ -29,6 +29,7 @@ Persist privacy-safe, non-authoritative import and tombstone receipts with capac
 - [x] #3 Strict import and compact-tombstone receipt variants contain only approved safe metadata and reject unknown, sensitive, malformed, or mismatched fields.
 - [x] #4 Reconciliation removes only authenticated old unreferenced regular receipts after the 24-hour grace period while preserving linked, live, recent, corrupt-referenced, unknown, and symlink entries.
 - [x] #5 Tombstone compaction preserves required lineage while reducing receipt size, and focused receipt/static tests pass.
+- [x] #6 A definitively failed activation immediately reclaims only its exact digest-authenticated, unreferenced receipt; uncertain outcomes preserve evidence.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -39,6 +40,7 @@ Persist privacy-safe, non-authoritative import and tombstone receipts with capac
 3. Add red tests for 24-hour reconciliation, protected entry classes, corrupt referenced receipts, and tombstone compaction.
 4. Implement bounded reconciliation and compact tombstone receipts without granting authority.
 5. Run focused receipt tests, scoped static checks, self-review, and independent review.
+6. PR review follow-up: add failing receipt-leak and identity-mismatch tests, implement idempotent owned-receipt deletion, and prove activation cleanup remains fail-closed.
 
 ADR required: no new ADR
 ADR path: backlog/decisions/107-portable-tool-use-packs.md
@@ -57,4 +59,11 @@ plus parent-directory fsync is mandatory, with post-replace failures reported
 as uncertain. Focused verification: 41 receipt tests passed; scoped Ruff and
 `git diff --check` passed. ADR-107 remains the governing decision; no new ADR,
 dependency, schema migration, or Windows-specific implementation was added.
+
+PR #2324 Qodo follow-up added idempotent, digest/size/identity-authenticated
+owned-receipt deletion under the receipt-store lock. Activation now reclaims a
+committed receipt only after strict authority reconciliation proves that no
+profile references it; ambiguous mutation outcomes retain the receipt as
+recovery evidence. Definitive capacity, collision, and unexpected failure
+regressions pass in the 399-test Tool Pack suite.
 <!-- SECTION:NOTES:END -->

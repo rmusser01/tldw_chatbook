@@ -5,14 +5,17 @@ from __future__ import annotations
 import hashlib
 import inspect
 import os
-import secrets
 import stat
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from tldw_chatbook.Tool_Packs.contracts import ToolPackError
-from tldw_chatbook.Tool_Packs.export import ToolPackExportSnapshot, write_tool_pack_archive
+from tldw_chatbook.Tool_Packs.export import (
+    ToolPackExportSnapshot,
+    write_tool_pack_archive,
+)
+from tldw_chatbook.Utils.path_validation import validate_path
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,7 +26,7 @@ class ToolPackPublicationPrimitives:
     nofollow: bool
     directory: bool
     directory_descriptors: bool
-    replacement_directory_descriptors: bool
+    link_directory_descriptors: bool
     nofollow_stat: bool
 
     @classmethod
@@ -36,7 +39,7 @@ class ToolPackPublicationPrimitives:
                 operation in os.supports_dir_fd
                 for operation in (os.open, os.stat, os.unlink)
             ),
-            replacement_directory_descriptors=_replace_supports_directory_descriptors(),
+            link_directory_descriptors=_link_supports_directory_descriptors(),
             nofollow_stat=os.stat in os.supports_follow_symlinks,
         )
 
@@ -47,18 +50,22 @@ class ToolPackPublicationPrimitives:
                 self.nofollow,
                 self.directory,
                 self.directory_descriptors,
-                self.replacement_directory_descriptors,
+                self.link_directory_descriptors,
                 self.nofollow_stat,
             )
         )
 
 
-def _replace_supports_directory_descriptors() -> bool:
+def _link_supports_directory_descriptors() -> bool:
     try:
-        parameters = inspect.signature(os.replace).parameters
+        parameters = inspect.signature(os.link).parameters
     except (TypeError, ValueError):
         return False
-    return {"src_dir_fd", "dst_dir_fd"}.issubset(parameters)
+    return (
+        {"src_dir_fd", "dst_dir_fd", "follow_symlinks"}.issubset(parameters)
+        and os.link in os.supports_dir_fd
+        and os.link in os.supports_follow_symlinks
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,7 +75,6 @@ class CapturedToolPackDestination:
     path: Path = field(repr=False)
     parent_identity: tuple[int, int]
     target_identity: tuple[int, int] | None
-    _overwrite_token: str | None = field(repr=False, compare=False)
     _target_digest: str | None = field(repr=False, compare=False)
 
     @classmethod
@@ -79,7 +85,16 @@ class CapturedToolPackDestination:
                 not isinstance(path, Path)
                 or not path.is_absolute()
                 or path.name in {"", ".", ".."}
+            ):
+                raise ValueError
+            selected = path
+            path = validate_path(selected, selected.parent, redact_paths=True)
+            if (
+                not isinstance(path, Path)
+                or not path.is_absolute()
+                or path.name in {"", ".", ".."}
                 or path.suffix.lower() != ".tldw-tool-pack"
+                or selected.is_symlink()
             ):
                 raise ValueError
             parent = path.parent
@@ -93,18 +108,15 @@ class CapturedToolPackDestination:
             except FileNotFoundError:
                 target_identity = None
                 target_digest = None
-                token = None
             else:
                 if not stat.S_ISREG(target.st_mode):
                     raise ValueError
                 target_identity = _identity(target)
                 target_digest = _digest_path(path, target_identity)
-                token = secrets.token_urlsafe(32)
             return cls(
                 path=path,
                 parent_identity=(parent_stat.st_dev, parent_stat.st_ino),
                 target_identity=target_identity,
-                _overwrite_token=token,
                 _target_digest=target_digest,
             )
         except (OSError, RuntimeError, TypeError, ValueError):
@@ -112,8 +124,8 @@ class CapturedToolPackDestination:
 
     @property
     def overwrite_token(self) -> str | None:
-        """Return the opaque confirmation value for this exact existing target."""
-        return self._overwrite_token
+        """Return no token because safe existing-file overwrite is unsupported."""
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,25 +154,28 @@ def publish_tool_pack(
         or type(overwrite) is not bool
         or not callable(cancelled)
         or (phase_hook is not None and not callable(phase_hook))
-        or (primitives is not None and type(primitives) is not ToolPackPublicationPrimitives)
+        or (
+            primitives is not None
+            and type(primitives) is not ToolPackPublicationPrimitives
+        )
     ):
         raise ToolPackError("export", "publication_failed")
     active_primitives = primitives or ToolPackPublicationPrimitives.current()
     if not active_primitives.supported():
         raise ToolPackError("export", "publication_unsupported")
-    if destination.target_identity is not None and (
-        not overwrite or overwrite_token != destination.overwrite_token
-    ):
+    if destination.target_identity is not None:
+        raise ToolPackError("export", "publication_unsupported")
+    if overwrite or overwrite_token is not None:
         raise ToolPackError("export", "destination_changed")
 
     parent_fd = -1
     temporary_name: str | None = None
     temporary_identity: tuple[int, int] | None = None
     archive_sha256 = ""
-    replacement_may_have_occurred = False
+    publication_may_have_occurred = False
     try:
         parent_fd = _open_parent(destination)
-        temporary_name = f".{destination.path.name}.{secrets.token_hex(16)}.tmp"
+        temporary_name = f".{destination.path.name}.{os.urandom(16).hex()}.tmp"
         temporary_fd = os.open(
             temporary_name,
             os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
@@ -189,28 +204,35 @@ def publish_tool_pack(
             phase_hook("before_replace")
         _validate_parent_and_target(parent_fd, destination)
         _validate_owned_temporary(parent_fd, temporary_name, temporary_identity)
-        replacement_may_have_occurred = True
-        os.replace(
-            temporary_name,
-            destination.path.name,
-            src_dir_fd=parent_fd,
-            dst_dir_fd=parent_fd,
-        )
+        publication_may_have_occurred = True
+        try:
+            os.link(
+                temporary_name,
+                destination.path.name,
+                src_dir_fd=parent_fd,
+                dst_dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except FileExistsError:
+            publication_may_have_occurred = False
+            raise ToolPackError("export", "destination_changed") from None
+        os.unlink(temporary_name, dir_fd=parent_fd)
         temporary_name = None
         os.fsync(parent_fd)
-        _reconcile_after_replace(
+        _reconcile_after_publish(
             parent_fd, destination, archive_sha256, temporary_identity
         )
         return ToolPackPublicationResult(archive_sha256, True, False)
     except ToolPackError:
         raise
     except Exception:
-        if replacement_may_have_occurred:
-            return _reconcile_after_replace(
+        if publication_may_have_occurred:
+            return _reconcile_after_publish(
                 parent_fd, destination, archive_sha256, temporary_identity
             )
         raise ToolPackError("export", "publication_failed") from None
     finally:
+        cleanup_error: ToolPackError | None = None
         try:
             if (
                 temporary_name is not None
@@ -218,12 +240,18 @@ def publish_tool_pack(
                 and parent_fd >= 0
             ):
                 _remove_owned_temporary(parent_fd, temporary_name, temporary_identity)
+        except ToolPackError as error:
+            cleanup_error = error
         finally:
             if parent_fd >= 0:
                 try:
                     os.close(parent_fd)
                 except OSError:
                     pass
+        if cleanup_error is not None:
+            if publication_may_have_occurred:
+                raise ToolPackError("export", "durability_uncertain") from None
+            raise cleanup_error
 
 
 def _open_parent(destination: CapturedToolPackDestination) -> int:
@@ -263,7 +291,9 @@ def _validate_parent_and_target(
         ):
             raise ValueError
         try:
-            target = os.stat(destination.path.name, dir_fd=parent_fd, follow_symlinks=False)
+            target = os.stat(
+                destination.path.name, dir_fd=parent_fd, follow_symlinks=False
+            )
         except FileNotFoundError:
             current_identity = None
         else:
@@ -295,7 +325,9 @@ def _validate_owned_temporary(
         raise ToolPackError("export", "publication_failed") from None
 
 
-def _remove_owned_temporary(parent_fd: int, name: str, identity: tuple[int, int]) -> None:
+def _remove_owned_temporary(
+    parent_fd: int, name: str, identity: tuple[int, int]
+) -> None:
     try:
         try:
             current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
@@ -310,11 +342,11 @@ def _remove_owned_temporary(parent_fd: int, name: str, identity: tuple[int, int]
         raise ToolPackError("export", "publication_failed") from None
 
 
-def _reconcile_after_replace(
+def _reconcile_after_publish(
     parent_fd: int,
     destination: CapturedToolPackDestination,
     archive_sha256: str,
-    replacement_identity: tuple[int, int] | None,
+    publication_identity: tuple[int, int] | None,
 ) -> ToolPackPublicationResult:
     try:
         named_parent = os.lstat(destination.path.parent)
@@ -346,8 +378,8 @@ def _reconcile_after_replace(
         except (OSError, TypeError, ValueError):
             raise ToolPackError("export", "durability_uncertain") from None
     if (
-        replacement_identity is not None
-        and current_identity == replacement_identity
+        publication_identity is not None
+        and current_identity == publication_identity
         and current_digest == archive_sha256
     ):
         return ToolPackPublicationResult(archive_sha256, True, True)
@@ -363,7 +395,10 @@ def _digest_path(path: Path, expected_identity: tuple[int, int]) -> str:
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     try:
         metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode) or _identity(metadata) != expected_identity:
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or _identity(metadata) != expected_identity
+        ):
             raise ValueError
         digest = hashlib.sha256()
         while block := os.read(descriptor, 64 * 1024):
@@ -383,7 +418,10 @@ def _digest_descriptor_relative(
     )
     try:
         metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode) or _identity(metadata) != expected_identity:
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or _identity(metadata) != expected_identity
+        ):
             raise ValueError
         digest = hashlib.sha256()
         while block := os.read(descriptor, 64 * 1024):

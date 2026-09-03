@@ -331,6 +331,13 @@ def test_tool_pack_wiring_schedules_one_post_ready_thread_worker() -> None:
 
 
 def test_tool_pack_worker_start_failure_keeps_the_bootstrap_fail_closed() -> None:
+    attempts = 0
+
+    def fail_start(*_args, **_kwargs):
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("cancelled before start")
+
     registry, bootstrap = _guarded_tool_pack_registry()
     fake = SimpleNamespace(
         _ui_ready=True,
@@ -340,16 +347,18 @@ def test_tool_pack_worker_start_failure_keeps_the_bootstrap_fail_closed() -> Non
         tool_pack_service=None,
         tool_pack_service_unavailable_reason="not_ready",
         _compose_tool_pack_service_off_thread=lambda: None,
-        run_worker=lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            RuntimeError("cancelled before start")
-        ),
+        run_worker=fail_start,
     )
 
     TldwCli._deferred_wire_tool_pack_service(fake)
 
     assert fake.tool_pack_service is None
     assert fake.tool_pack_service_unavailable_reason == "composition_unavailable"
+    assert fake._tool_pack_wiring_started is False
     assert bootstrap.active_guard is None
+
+    TldwCli._deferred_wire_tool_pack_service(fake)
+    assert attempts == 2
 
 
 def test_tool_pack_composition_failure_attaches_no_partial_guard(
@@ -380,6 +389,7 @@ def test_tool_pack_composition_failure_attaches_no_partial_guard(
 
     assert fake.tool_pack_service is None
     assert fake.tool_pack_service_unavailable_reason == "composition_unavailable"
+    assert fake._tool_pack_wiring_started is False
     assert registry.attachments == [bootstrap]
     assert bootstrap.active_guard is None
 

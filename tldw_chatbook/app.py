@@ -9292,6 +9292,7 @@ class TldwCli(
                 exit_on_error=False,
             )
         except Exception:
+            self._tool_pack_wiring_started = False
             self.tool_pack_service_unavailable_reason = "composition_unavailable"
 
     def _compose_tool_pack_service_off_thread(self) -> None:
@@ -9398,6 +9399,7 @@ class TldwCli(
     def _mark_tool_pack_service_unavailable(self, category: str) -> None:
         """Expose one stable unavailable category without diagnostic detail."""
         if getattr(self, "tool_pack_service", None) is None:
+            self._tool_pack_wiring_started = False
             self.tool_pack_service_unavailable_reason = category
 
     def _deferred_wire_notes_sync_services(self) -> None:

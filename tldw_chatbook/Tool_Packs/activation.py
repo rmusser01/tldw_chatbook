@@ -319,7 +319,15 @@ class ToolPackActivationService:
         with self._live_lock:
             self._live_receipts.add(receipt.receipt_id)
         try:
-            return self._install_authority(review, inventory, receipt, now)
+            try:
+                return self._install_authority(review, inventory, receipt, now)
+            except ToolPackError as error:
+                if error.category != "activation_uncertain":
+                    self._reclaim_failed_receipt(receipt)
+                raise
+            except Exception:
+                self._reclaim_failed_receipt(receipt)
+                raise _fail("activation_failed") from None
         finally:
             with self._live_lock:
                 self._live_receipts.discard(receipt.receipt_id)
@@ -393,6 +401,29 @@ class ToolPackActivationService:
         if type(result) is not bool:
             raise _fail("destination_referenced")
         return result
+
+    def _reclaim_failed_receipt(self, receipt: ReceiptHandle) -> None:
+        """Reclaim a failed activation receipt only after proving no profile owns it."""
+        with self._lifecycle.mutation():
+            with self._permission_store.mutation_fence():
+                snapshot = self._strict_snapshot(category="activation_uncertain")
+                profiles = snapshot.payload.get("profiles")
+                if not isinstance(profiles, Mapping):
+                    raise _fail("activation_uncertain")
+                for candidate_id, profile in profiles.items():
+                    if type(candidate_id) is not str or not isinstance(
+                        profile, Mapping
+                    ):
+                        raise _fail("activation_uncertain")
+                    lifecycle = profile.get("tool_pack_lifecycle")
+                    if isinstance(lifecycle, Mapping) and (
+                        lifecycle.get("receipt_id") == receipt.receipt_id
+                    ):
+                        raise _fail("activation_uncertain")
+                try:
+                    self._receipt_store.delete_owned(receipt)
+                except Exception:
+                    raise _fail("activation_uncertain") from None
 
     def _strict_snapshot(self, *, category: str) -> PermissionStoreSnapshot:
         try:

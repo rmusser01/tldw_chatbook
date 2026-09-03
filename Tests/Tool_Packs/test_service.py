@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 from datetime import datetime, timedelta, timezone
+import inspect
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -217,6 +218,24 @@ def facade(tmp_path: Path, *, store=None, registry=None, activation=None, **deps
     )
 
 
+def test_public_facade_methods_document_arguments_results_and_errors() -> None:
+    methods = (
+        ToolPackService.capture_export,
+        ToolPackService.publish_export,
+        ToolPackService.inspect_import,
+        ToolPackService.import_unbound,
+        ToolPackService.review_first_bind,
+        ToolPackService.confirm_first_bind,
+        ToolPackService.remove_profile,
+    )
+
+    for method in methods:
+        doc = inspect.getdoc(method) or ""
+        assert "Args:" in doc
+        assert "Returns:" in doc
+        assert "Raises:" in doc
+
+
 def test_facade_exposes_separate_review_and_commit_operations(tmp_path: Path) -> None:
     exporter, importer, activation = (
         Delegate("capture"),
@@ -368,15 +387,17 @@ def test_publish_export_forwards_the_worker_cancellation_probe(tmp_path: Path) -
 
     service = facade(tmp_path, publisher=publisher)
     review = ToolPackExportReview(
-        SimpleNamespace(), "i" * 64, (), (), ()  # type: ignore[arg-type]
+        SimpleNamespace(),
+        "i" * 64,
+        (),
+        (),
+        (),  # type: ignore[arg-type]
     )
 
     def probe() -> bool:
         return False
 
-    assert (
-        service.publish_export(review, object(), cancelled=probe) == "published"
-    )
+    assert service.publish_export(review, object(), cancelled=probe) == "published"
     assert published == [probe]
 
 

@@ -10889,12 +10889,21 @@ a pathname that no longer named the result. The same review also found that the
 capability gate checked directory-descriptor support on `os.rename` while the code
 actually called `os.replace`.
 
-**What to do.** At every overwrite revalidation, compare both the captured inode
-and a descriptor-read digest. Probe the exact callable and exact parameters that
-the mutation path will invoke. After any point where replacement may have occurred,
+**PR #2324 follow-up, 2026-09-02.** A later review exposed the remaining gap:
+even inode-plus-digest revalidation occurs before `os.replace`, so a concurrent
+writer can still substitute the name between the check and mutation. No amount of
+pre-replace observation turns an unconditional rename into compare-and-swap.
+Tool Pack V1 therefore disabled existing-file overwrite and changed absent-target
+publication to descriptor-relative `link`, whose create-only result is atomic.
+
+**What to do.** A captured identity authorizes replacement only when the mutation
+primitive atomically compares that identity. Without such a primitive, fail closed
+for existing targets; for absent targets, use an atomic create-only operation rather
+than check-then-replace. Probe the exact callable and exact parameters that the
+mutation path will invoke. After any point where publication may have occurred,
 keep the authenticated parent descriptor open and reconcile the currently named
 parent, target identity, and content digest before claiming ordinary success; a
 named-parent mismatch is an uncertain committed state, not proof the old file
-survived. Tests must inject the in-place rewrite and the parent rename at the
-replacement call itself—checking only the phase before it leaves the decisive race
+survived. Tests must inject a competing create and parent rename inside the atomic
+publication call itself—checking only the phase before it leaves the decisive race
 untested.

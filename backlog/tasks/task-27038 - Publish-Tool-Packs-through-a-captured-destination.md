@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-01 00:00'
-updated_date: '2026-09-01 00:00'
+updated_date: '2026-09-03 01:54'
 labels:
   - tool-packs
   - export
@@ -21,15 +21,16 @@ priority: high
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Publish a completed Tool Pack archive only to the exact destination accepted by
 the user, preserving atomicity and reporting uncertain durability truthfully when
-the host cannot confirm a post-replace directory sync.
+the host cannot confirm a post-publication directory sync.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Destination capture validates the `.tldw-tool-pack` path and pins parent and existing-target identity without following symlinks or accepting nonregular targets.
-- [x] #2 Publication writes and fsyncs one authenticated private same-parent temporary, revalidates the exact captured destination/overwrite state, and uses only a supported atomic no-follow replacement.
-- [x] #3 Cancellation, destination races, unsupported primitives, and pre-replace failures preserve the destination, remove only the authenticated temporary, and return stable path-free export error categories.
-- [x] #4 Post-replace failures reconcile exact destination identity and archive digest, returning committed-with-uncertain-durability only for the exact new archive, retaining `publication_failed` only for provable exact-old/no-commit state, and otherwise reporting `durability_uncertain`; targeted tests and scoped static checks pass.
+- [x] #2 Publication writes and fsyncs one authenticated private same-parent temporary, revalidates the exact captured destination state, and uses only a supported descriptor-relative atomic no-replace primitive.
+- [x] #3 Cancellation, destination races, unsupported primitives, and pre-publication failures preserve the destination, remove only the authenticated temporary, and return stable path-free export error categories.
+- [x] #4 Post-publication failures reconcile exact destination identity and archive digest, returning committed-with-uncertain-durability only for the exact new archive, retaining `publication_failed` only for provable no-commit state, and otherwise reporting `durability_uncertain`; targeted tests and scoped static checks pass.
+- [x] #5 Destination capture uses the normalized path returned by central path validation, absent-target publication is atomic no-replace, and existing-target overwrite fails closed until a true compare-and-swap primitive is available.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -40,6 +41,7 @@ the host cannot confirm a post-replace directory sync.
 3. Implement same-parent mode-0600 staging, archive flush/fsync, final revalidation, supported no-follow atomic publication, and parent fsync.
 4. Add failing post-replace reconciliation tests for exact-new, exact-old, and third-state outcomes, then implement truthful committed/uncertain results.
 5. Run the targeted publication tests, related export tests, scoped Ruff, diff hygiene, self-review, and independent review.
+6. PR review follow-up: add central-validation and replacement-boundary race regressions, switch absent publication to descriptor-relative atomic linking, disable unsafe overwrite, and update Settings copy/flow.
 
 ADR required: no new ADR
 ADR path: backlog/decisions/107-portable-tool-use-packs.md
@@ -71,4 +73,11 @@ Reason: ADR-107 already fixes the captured-destination identity, no-follow atomi
 - ADR required: no new ADR. ADR-107 remains the governing decision. The generalized
   replacement-boundary race incident is recorded in
   `backlog/docs/lessons-testing-evidence.md`.
+- PR #2324 Qodo follow-up superseded the overwrite-token path: central validation's
+  normalized path now owns every later check, existing targets fail closed, and
+  absent targets publish with descriptor-relative `link` create-only semantics.
+  A target appearing at the final boundary is never replaced. Post-link fsync and
+  staging-cleanup failures reconcile or report `durability_uncertain` truthfully.
+  Settings no longer offers an unsupported overwrite confirmation. All 399 Tool
+  Pack tests pass, including the publication race and cleanup-failure matrix.
 <!-- SECTION:NOTES:END -->

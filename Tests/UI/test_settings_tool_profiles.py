@@ -512,6 +512,28 @@ async def test_canonical_settings_category_loads_app_owned_listing_off_thread() 
 
 
 @pytest.mark.asyncio
+async def test_tool_profiles_category_retries_failed_service_composition_once() -> None:
+    app = _build_test_app()
+    app.tool_pack_service = None
+    app.tool_pack_service_unavailable_reason = "composition_unavailable"
+    attempts: list[bool] = []
+
+    def retry() -> None:
+        attempts.append(True)
+        app.tool_pack_service_unavailable_reason = "starting"
+
+    app._deferred_wire_tool_pack_service = retry
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-tool-profiles")
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    assert attempts == [True]
+
+
+@pytest.mark.asyncio
 async def test_tool_profiles_refresh_when_settings_resumes_after_policy_edit() -> None:
     service = _WorkflowService(
         ToolProfileListing(
@@ -938,7 +960,7 @@ async def test_export_worker_uses_exact_profile_context_and_captured_destination
         )
         assert service.calls[1][0] == "publish"
         assert service.calls[1][2] is False
-        assert service.calls[1][1]["overwrite_token"] is None
+        assert "overwrite_token" not in service.calls[1][1]
         assert "Exported Tool Pack" in screen._tool_profiles_result
 
 

@@ -108,6 +108,16 @@ def _profile_id(value: object) -> str:
     return identifier
 
 
+def _file_identity(value: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+
+
 def _timestamp(value: object) -> str:
     text = _text(value, max_bytes=64)
     if not text.endswith("Z"):
@@ -556,6 +566,60 @@ class ToolPackReceiptStore:
             raise _fail("payload_invalid")
         handle = ReceiptHandle(receipt_id, digest, path, len(data))
         return VerifiedToolPackReceipt(receipt, digest, handle)
+
+    def delete_owned(self, handle: ReceiptHandle) -> bool:
+        """Delete exactly one digest-authenticated receipt owned by the caller.
+
+        Args:
+            handle: Exact handle returned by this receipt store's commit path.
+
+        Returns:
+            True when the verified receipt was removed; False when it was already absent.
+
+        Raises:
+            ToolPackError: If the handle, current file identity, content digest, or
+                deletion durability cannot be verified.
+        """
+        if (
+            type(handle) is not ReceiptHandle
+            or handle.path != self._path(handle.receipt_id)
+            or type(handle.size) is not int
+            or handle.size <= 0
+        ):
+            raise _fail("payload_invalid")
+        expected_digest = _digest(handle.digest)
+        path = handle.path
+        with self._state.lock:
+            try:
+                before = path.lstat()
+            except FileNotFoundError:
+                return False
+            except OSError:
+                raise _fail("payload_invalid") from None
+            if (
+                stat.S_ISLNK(before.st_mode)
+                or not stat.S_ISREG(before.st_mode)
+                or stat.S_IMODE(before.st_mode) != 0o600
+                or before.st_size != handle.size
+            ):
+                raise _fail("payload_invalid")
+            verified = self.read(handle.receipt_id, expected_digest=expected_digest)
+            try:
+                after = path.lstat()
+            except OSError:
+                raise _fail("activation_uncertain") from None
+            if verified.handle.size != handle.size or _file_identity(
+                before
+            ) != _file_identity(after):
+                raise _fail("payload_invalid")
+            try:
+                path.unlink()
+                self._fsync_directory(self.root)
+            except FileNotFoundError:
+                return False
+            except OSError:
+                raise _fail("activation_uncertain") from None
+        return True
 
     def reconcile_orphans(
         self,

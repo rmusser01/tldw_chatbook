@@ -222,6 +222,21 @@ class ToolPackService:
         expected_revision: int | None = None,
         expected_policy_digest: str | None = None,
     ) -> object:
+        """Capture an immutable export review for one exact profile revision.
+
+        Args:
+            profile_id: Permission profile to export.
+            display_name: User-facing pack name.
+            suggested_id: Portable destination id suggestion.
+            expected_revision: Optional imported-profile revision fence.
+            expected_policy_digest: Optional exact policy digest fence.
+
+        Returns:
+            The captured Tool Pack export review.
+
+        Raises:
+            ToolPackError: If the profile or export authority is invalid.
+        """
         return self._delegate(
             "export",
             "profile_invalid",
@@ -241,6 +256,22 @@ class ToolPackService:
         overwrite_token: str | None = None,
         cancelled: Callable[[], bool] = lambda: False,
     ) -> object:
+        """Publish one captured export review to one captured destination.
+
+        Args:
+            review: Exact export review returned by :meth:`capture_export`.
+            destination: Captured publication destination.
+            overwrite_token: Reserved compatibility token; existing-file overwrite
+                is unsupported.
+            cancelled: Probe checked immediately before publication.
+
+        Returns:
+            The immutable publication result.
+
+        Raises:
+            ToolPackError: If review or destination authority is invalid, safe
+                publication is unavailable, or publication fails.
+        """
         if type(review) is not ToolPackExportReview:
             raise ToolPackError("export", "publication_failed")
         return self._delegate(
@@ -261,6 +292,20 @@ class ToolPackService:
         destination_id: str,
         mappings: Sequence[ServerMapping] = (),
     ) -> object:
+        """Inspect an archive without mutating permission or workspace state.
+
+        Args:
+            archive_path: User-selected Tool Pack archive.
+            destination_id: Proposed unbound permission-profile id.
+            mappings: Explicit source-to-destination MCP server mappings.
+
+        Returns:
+            An immutable, expiring import review.
+
+        Raises:
+            ToolPackError: If archive, destination, store, inventory, or mapping
+                admission fails.
+        """
         return self._delegate(
             "import",
             "archive_invalid",
@@ -271,6 +316,17 @@ class ToolPackService:
         )
 
     def import_unbound(self, review: object) -> object:
+        """Install exactly one approved import review as an unbound profile.
+
+        Args:
+            review: Exact import review returned by :meth:`inspect_import`.
+
+        Returns:
+            The known activation result.
+
+        Raises:
+            ToolPackError: If review revalidation or activation fails or is uncertain.
+        """
         return self._delegate(
             "import", "activation_failed", self._activation.install, review
         )
@@ -278,6 +334,19 @@ class ToolPackService:
     def review_first_bind(
         self, workspace_id: str, intended_defaults: object, *, action: str
     ) -> object:
+        """Capture a first-bind confirmation for current workspace authority.
+
+        Args:
+            workspace_id: Workspace whose defaults would change.
+            intended_defaults: Exact proposed workspace defaults.
+            action: Requested binding action.
+
+        Returns:
+            An immutable first-bind review.
+
+        Raises:
+            ToolPackError: If current binding authority cannot be confirmed.
+        """
         return self._delegate(
             "bind",
             "confirmation_invalid",
@@ -288,11 +357,35 @@ class ToolPackService:
         )
 
     def confirm_first_bind(self, review: object) -> object:
+        """Consume one current first-bind review.
+
+        Args:
+            review: Exact review returned by :meth:`review_first_bind`.
+
+        Returns:
+            The confirmed workspace defaults mutation result.
+
+        Raises:
+            ToolPackError: If confirmation is invalid, expired, stale, or uncertain.
+        """
         return self._delegate(
             "bind", "confirmation_invalid", self._binding_guard.confirm, review
         )
 
     def remove_profile(self, profile_id: str, *, expected_revision: int) -> object:
+        """Remove one eligible imported profile at its exact revision.
+
+        Args:
+            profile_id: Imported profile to remove.
+            expected_revision: Exact lifecycle revision selected by the user.
+
+        Returns:
+            The known removal result.
+
+        Raises:
+            ToolPackError: If the profile is referenced, active, stale, invalid,
+                non-removable, or has an uncertain mutation outcome.
+        """
         return self._delegate(
             "remove",
             "non_removable",
@@ -382,9 +475,7 @@ class ToolPackService:
                         if type(lifecycle.get("revision")) is int
                         else None
                     ),
-                    policy_digest=(
-                        current_policy_digest if lifecycle_valid else None
-                    ),
+                    policy_digest=(current_policy_digest if lifecycle_valid else None),
                 )
             )
         return ToolProfileListing(tuple(rows))

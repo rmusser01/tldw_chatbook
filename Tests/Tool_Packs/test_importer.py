@@ -127,7 +127,9 @@ def _archive(
     payload = ToolProfilePayload(
         TOOL_PROFILE_SCHEMA,
         tuple(
-            PortableFallback(authority, server_key, states.get((authority, server_key), "ask"))
+            PortableFallback(
+                authority, server_key, states.get((authority, server_key), "ask")
+            )
             for authority, server_key in sorted(fallbacks)
         ),
         tuple(
@@ -202,6 +204,42 @@ def test_inspects_canonical_export_with_one_strict_snapshot_and_inventory(
     assert review.matched[0].destination_identity == ("mcp", "local:docs", "search")
     assert store.calls == captures == 1
     assert references == ["research"]
+
+
+def test_inspection_uses_the_path_returned_by_central_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fixed_now: datetime,
+) -> None:
+    tool = _tool()
+    inventory = _inventory(tool)
+    monkeypatch.setattr(
+        importer_module, "capture_v1_inventory", lambda _registry: inventory
+    )
+    selected = tmp_path / "selected.tldw-tool-pack"
+    normalized = _archive(
+        tmp_path / "normalized.tldw-tool-pack",
+        rules=(
+            PortableToolRule(
+                "mcp", "local:docs", "search", "allow", portable_contract_sha256(tool)
+            ),
+        ),
+    )
+    calls: list[tuple[Path, Path, bool]] = []
+
+    def validate_path(path: Path, base: Path, *, redact_paths: bool) -> Path:
+        calls.append((path, base, redact_paths))
+        return normalized
+
+    monkeypatch.setattr(importer_module, "validate_path", validate_path, raising=False)
+    service = ToolPackImportService(
+        _Store(), inventory, lambda _profile_id: False, now=lambda: fixed_now
+    )
+
+    review = service.inspect_archive(selected, destination_id="research")
+
+    assert calls == [(selected, selected.parent, True)]
+    assert review.archive_path == normalized
 
 
 def test_explicit_external_mapping_matches_exact_contract_and_maps_pending_deny(

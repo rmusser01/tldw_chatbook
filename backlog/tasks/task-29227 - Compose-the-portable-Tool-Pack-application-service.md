@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-02 14:00'
-updated_date: '2026-09-02 15:12'
+updated_date: '2026-09-03 01:54'
 labels:
   - tool-packs
   - app-wiring
@@ -30,6 +30,7 @@ Expose the completed portable Tool Pack lifecycle behind one deferred app-owned 
 - [x] #4 `app.py` composes exactly one complete service only after MCP and workspace prerequisites exist, attaches its binding guard exactly once, exposes a stable unavailable state on failure, and never attaches a partial guard or eagerly imports Tool Pack implementation modules on the startup-critical path.
 - [x] #5 Receipt reconciliation runs only after UI readiness/first use, protects every authoritative referenced and live-owned receipt, honors orphan grace and authenticated regular-file checks, and remains bounded/fail-safe for fresh, symlinked, unknown, and corrupt entries.
 - [x] #6 Focused service, startup-hygiene, and startup-performance tests plus scoped Ruff/format and diff checks pass; independent review has no unresolved Critical or Important findings.
+- [x] #7 Public facade methods document their arguments, results, and stable errors; failed deferred composition can be retried on demand from Settings while preserving single-flight attachment.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -41,6 +42,7 @@ Expose the completed portable Tool Pack lifecycle behind one deferred app-owned 
 4. Add bounded post-ready receipt reconciliation using current profile receipt links plus in-flight activation ownership; prove only eligible expired orphans are reclaimed.
 5. Run the prescribed targeted suites, scoped static/diff checks, self-review, and independent review before closeout.
 6. Remediate independent-review blockers at their owning seams: add the workspace registry's fail-closed deferred guard, share export's runtime-floor projection with listings, and give receipt reconciliation an entry budget. This expands the initial six-file boundary only because app-only wrappers cannot close direct registry writes or bound the store-owned traversal.
+7. PR review follow-up: add startup retry and facade-documentation regressions, reset the single-flight gate only after failure, trigger retry from Settings demand, and rerun focused startup/service tests.
 
 ADR required: no new ADR
 ADR path: backlog/decisions/107-portable-tool-use-packs.md
@@ -55,4 +57,11 @@ Implemented the app-facing `ToolPackService` and immutable profile presentation 
 Independent review exposed five blockers. The final implementation installs a cheap fail-closed workspace guard during registry wiring, atomically activates the complete captured-registry guard before receipt recovery, unwraps the export review's immutable snapshot for publication, shares export's raw-shell Ask-floor projection with profile listings, and caps receipt reconciliation at 4,096 entries before any deletion. The original six-file boundary was expanded only to the registry, export projection, and receipt-store owners required for those fixes.
 
 Focused controller verification passed 139 tests; the independent re-review passed 118 tests and reported no remaining findings. Scoped Ruff and diff checks passed. The only warning was the known environment `RequestsDependencyWarning`; `export.py` retains its exact pre-existing formatter baseline with no new formatting delta. ADR-107 remains controlling, no new ADR was required, and the work produced no new reusable lesson.
+
+PR #2324 Qodo follow-up documents every split public facade operation with
+Google-style arguments, results, and stable error behavior. Failed worker starts,
+missing prerequisites, and composition failures now release the single-flight
+gate; entering Tool Profiles retries composition on demand without replacing an
+attached service. Final verification passed 399 Tool Pack tests and 49 focused
+startup/Settings tests, with scoped Ruff/format and diff checks green.
 <!-- SECTION:NOTES:END -->

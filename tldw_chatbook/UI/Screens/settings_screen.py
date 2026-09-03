@@ -3830,6 +3830,14 @@ class SettingsScreen(BaseAppScreen):
 
     def _request_tool_profiles_listing(self) -> None:
         """Refresh Tool Profiles from the app-owned service off the UI thread."""
+        if (
+            getattr(self.app_instance, "tool_pack_service", None) is None
+            and getattr(self.app_instance, "tool_pack_service_unavailable_reason", None)
+            != "starting"
+        ):
+            retry = getattr(self.app_instance, "_deferred_wire_tool_pack_service", None)
+            if callable(retry):
+                retry()
         self._tool_profiles_listing_generation += 1
         self._load_tool_profiles_worker(self._tool_profiles_listing_generation)
 
@@ -4091,26 +4099,10 @@ class SettingsScreen(BaseAppScreen):
                 CapturedToolPackDestination.capture,
                 Path(selected),
             )
-            overwrite_token = destination.overwrite_token
-            if overwrite_token is not None:
-                overwrite = await self.app.push_screen_wait(
-                    ConfirmationDialog(
-                        title="Replace existing Tool Pack?",
-                        message=(
-                            "The selected destination already contains a regular "
-                            "file. Replace that exact captured file?"
-                        ),
-                        confirm_label="Replace",
-                    )
-                )
-                if overwrite is not True or worker.is_cancelled:
-                    self._set_tool_profiles_result("Export cancelled")
-                    return
             result = await asyncio.to_thread(
                 service.publish_export,
                 candidate,
                 destination,
-                overwrite_token=overwrite_token,
                 cancelled=lambda: worker.is_cancelled,
             )
             if type(result) is not ToolPackPublicationResult:

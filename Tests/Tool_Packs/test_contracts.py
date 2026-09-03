@@ -5,9 +5,11 @@ import hashlib
 import json
 
 import pytest
+from pydantic import BaseModel
 
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import definition_hash
+from tldw_chatbook.Tool_Packs import contracts as contracts_module
 from tldw_chatbook.Tool_Packs.contracts import (
     MAX_JSON_DEPTH,
     MAX_JSON_NODES,
@@ -90,10 +92,7 @@ def _manifest(profile_bytes: bytes) -> dict[str, object]:
         ],
     }
     preimage = (
-        b"tldw.tool-pack/v1\0"
-        + canonical_json_bytes(body)
-        + b"\0"
-        + profile_bytes
+        b"tldw.tool-pack/v1\0" + canonical_json_bytes(body) + b"\0" + profile_bytes
     )
     body["content_digest"] = hashlib.sha256(preimage).hexdigest()
     return body
@@ -121,6 +120,18 @@ def test_tool_pack_error_has_only_the_stable_public_code() -> None:
     assert error.operation == "import"
     assert error.category == "payload_invalid"
     assert str(error) == "tool_pack.import.payload_invalid"
+
+
+def test_external_archive_contracts_use_strict_pydantic_admission_models() -> None:
+    manifest_model = getattr(contracts_module, "_ToolPackManifestModel", None)
+    profile_model = getattr(contracts_module, "_ToolProfilePayloadModel", None)
+
+    assert isinstance(manifest_model, type) and issubclass(manifest_model, BaseModel)
+    assert isinstance(profile_model, type) and issubclass(profile_model, BaseModel)
+    assert manifest_model.model_config["strict"] is True
+    assert manifest_model.model_config["extra"] == "forbid"
+    assert profile_model.model_config["strict"] is True
+    assert profile_model.model_config["extra"] == "forbid"
 
 
 @pytest.mark.parametrize(
@@ -153,7 +164,9 @@ def test_tool_pack_error_never_constructs_a_pair_outside_the_stable_table(
         b"[]",
     ],
 )
-def test_strict_json_rejects_noncanonical_inputs_with_supplied_category(raw: bytes) -> None:
+def test_strict_json_rejects_noncanonical_inputs_with_supplied_category(
+    raw: bytes,
+) -> None:
     with pytest.raises(ToolPackError) as caught:
         strict_json_object(raw, category="payload_invalid", max_bytes=1024)
 
@@ -177,17 +190,23 @@ def test_strict_json_accepts_the_exact_byte_node_and_depth_boundaries() -> None:
     for _ in range(MAX_JSON_DEPTH - 2):
         exact_depth = [exact_depth]
     depth_raw = json.dumps({"root": exact_depth}).encode()
-    assert strict_json_object(
-        depth_raw, category="payload_invalid", max_bytes=len(depth_raw)
-    )["root"] is not None
+    assert (
+        strict_json_object(
+            depth_raw, category="payload_invalid", max_bytes=len(depth_raw)
+        )["root"]
+        is not None
+    )
 
     exact_nodes = {str(index): None for index in range(MAX_JSON_NODES - 1)}
     node_raw = json.dumps(exact_nodes).encode()
-    assert len(
-        strict_json_object(
-            node_raw, category="payload_invalid", max_bytes=len(node_raw)
+    assert (
+        len(
+            strict_json_object(
+                node_raw, category="payload_invalid", max_bytes=len(node_raw)
+            )
         )
-    ) == MAX_JSON_NODES - 1
+        == MAX_JSON_NODES - 1
+    )
 
 
 def test_strict_json_rejects_one_byte_over_the_string_limit() -> None:
@@ -235,7 +254,9 @@ def test_canonical_json_normalizes_strings_keys_and_line_termination() -> None:
         {"é": 1, "e\u0301": 2},
     ],
 )
-def test_canonical_json_rejects_unsupported_or_normalized_collision_values(value) -> None:
+def test_canonical_json_rejects_unsupported_or_normalized_collision_values(
+    value,
+) -> None:
     with pytest.raises(ToolPackError, match=r"^tool_pack\.import\.payload_invalid$"):
         canonical_json_bytes(value)
 
@@ -284,7 +305,9 @@ def test_dataclass_instances_are_immutable() -> None:
 
 @pytest.mark.parametrize("kind", ["fallback", "rule", "profile", "manifest"])
 @pytest.mark.parametrize("mutation", ["missing", "unknown"])
-def test_contract_objects_reject_missing_and_unknown_fields(kind: str, mutation: str) -> None:
+def test_contract_objects_reject_missing_and_unknown_fields(
+    kind: str, mutation: str
+) -> None:
     profile_bytes = canonical_json_bytes(_profile())
     values = {
         "fallback": _fallback(),
@@ -502,9 +525,7 @@ def test_direct_document_construction_rejects_mismatched_manifest_and_profile() 
     first_raw = _profile()
     first_bytes = canonical_json_bytes(first_raw)
     manifest = ToolPackManifest.from_dict(_manifest(first_bytes))
-    changed_profile = ToolProfilePayload.from_dict(
-        _profile(tools=[_rule(state="ask")])
-    )
+    changed_profile = ToolProfilePayload.from_dict(_profile(tools=[_rule(state="ask")]))
 
     with pytest.raises(ToolPackError, match=r"^tool_pack\.import\.manifest_invalid$"):
         ToolPackDocument(manifest, changed_profile)
@@ -513,7 +534,11 @@ def test_direct_document_construction_rejects_mismatched_manifest_and_profile() 
 @pytest.mark.parametrize(
     ("operation", "mutator", "expected_category"),
     [
-        ("import", lambda raw: raw.__setitem__("schema", "future"), "schema_unsupported"),
+        (
+            "import",
+            lambda raw: raw.__setitem__("schema", "future"),
+            "schema_unsupported",
+        ),
         ("export", lambda raw: raw.__setitem__("schema", "future"), "profile_invalid"),
         (
             "import",
@@ -540,7 +565,9 @@ def test_manifest_validation_maps_semantics_to_the_operation_error_table(
     assert caught.value.category == expected_category
 
 
-def test_export_canonical_and_profile_validation_never_leak_import_or_contract_codes() -> None:
+def test_export_canonical_and_profile_validation_never_leak_import_or_contract_codes() -> (
+    None
+):
     with pytest.raises(ToolPackError) as canonical_error:
         canonical_json_bytes(object(), operation="export")
     assert str(canonical_error.value) == "tool_pack.export.profile_invalid"
@@ -579,11 +606,15 @@ def test_every_public_export_validator_uses_only_export_error_categories() -> No
         assert str(caught.value) == "tool_pack.export.profile_invalid"
 
 
-def test_document_validates_exact_payload_size_hash_digest_and_canonical_bytes() -> None:
+def test_document_validates_exact_payload_size_hash_digest_and_canonical_bytes() -> (
+    None
+):
     profile = _profile()
     profile_bytes = canonical_json_bytes(profile)
     manifest = _manifest(profile_bytes)
-    document = ToolPackDocument.from_dicts(manifest, profile, profile_bytes=profile_bytes)
+    document = ToolPackDocument.from_dicts(
+        manifest, profile, profile_bytes=profile_bytes
+    )
 
     assert document.profile.schema == "tldw.tool-profile/v1"
     assert document.manifest.suggested_id == "research-tools"
@@ -598,7 +629,9 @@ def test_document_rejects_profile_payload_over_limit_before_schema_work() -> Non
     profile_bytes = b"{" + b" " * MAX_PROFILE_BYTES + b"}"
 
     with pytest.raises(ToolPackError, match=r"^tool_pack\.import\.too_large$"):
-        ToolPackDocument.from_dicts(_manifest(b"{}\n"), profile, profile_bytes=profile_bytes)
+        ToolPackDocument.from_dicts(
+            _manifest(b"{}\n"), profile, profile_bytes=profile_bytes
+        )
 
 
 def test_document_independently_rejects_payload_size_mismatch() -> None:
@@ -609,10 +642,7 @@ def test_document_independently_rejects_payload_size_mismatch() -> None:
     body = dict(manifest)
     body.pop("content_digest")
     manifest["content_digest"] = hashlib.sha256(
-        b"tldw.tool-pack/v1\0"
-        + canonical_json_bytes(body)
-        + b"\0"
-        + profile_bytes
+        b"tldw.tool-pack/v1\0" + canonical_json_bytes(body) + b"\0" + profile_bytes
     ).hexdigest()
 
     with pytest.raises(ToolPackError, match=r"^tool_pack\.import\.manifest_invalid$"):
@@ -627,10 +657,7 @@ def test_document_independently_rejects_payload_sha256_mismatch() -> None:
     body = dict(manifest)
     body.pop("content_digest")
     manifest["content_digest"] = hashlib.sha256(
-        b"tldw.tool-pack/v1\0"
-        + canonical_json_bytes(body)
-        + b"\0"
-        + profile_bytes
+        b"tldw.tool-pack/v1\0" + canonical_json_bytes(body) + b"\0" + profile_bytes
     ).hexdigest()
 
     with pytest.raises(ToolPackError, match=r"^tool_pack\.import\.manifest_invalid$"):
@@ -649,7 +676,9 @@ def test_document_independently_rejects_content_digest_mismatch() -> None:
 
 def test_portable_fingerprint_normalizes_description_and_policy_tags() -> None:
     base = _hub(tags=("network", "mutates"))
-    reordered = _hub(description="Search\ndocuments.", tags=("mutates", "network", "network"))
+    reordered = _hub(
+        description="Search\ndocuments.", tags=("mutates", "network", "network")
+    )
 
     assert portable_contract_sha256(base) == portable_contract_sha256(reordered)
     assert portable_contract_sha256(base) != portable_contract_sha256(
@@ -660,7 +689,9 @@ def test_portable_fingerprint_normalizes_description_and_policy_tags() -> None:
     )
 
 
-def test_portable_fingerprint_rejects_non_nfc_identity_and_invalid_schema_tree() -> None:
+def test_portable_fingerprint_rejects_non_nfc_identity_and_invalid_schema_tree() -> (
+    None
+):
     for tool in (_hub(name="e\u0301"), _hub(input_schema={"bad": object()})):
         with pytest.raises(ToolPackError):
             portable_contract_sha256(tool)
@@ -674,7 +705,9 @@ def test_portable_fingerprint_equals_the_explicit_canonical_preimage() -> None:
         '["mutates","network"],"tool_name":"search"}\n'
     ).encode()
 
-    assert portable_contract_sha256(tool) == hashlib.sha256(expected_preimage).hexdigest()
+    assert (
+        portable_contract_sha256(tool) == hashlib.sha256(expected_preimage).hexdigest()
+    )
 
 
 def test_portable_fingerprint_includes_each_contract_field_independently() -> None:
@@ -682,7 +715,10 @@ def test_portable_fingerprint_includes_each_contract_field_independently() -> No
     base_hash = portable_contract_sha256(base)
 
     assert portable_contract_sha256(_hub(name="lookup")) != base_hash
-    assert portable_contract_sha256(_hub(description="Search\nother documents.")) != base_hash
+    assert (
+        portable_contract_sha256(_hub(description="Search\nother documents."))
+        != base_hash
+    )
     assert portable_contract_sha256(_hub(input_schema={"type": "object"})) != base_hash
     assert portable_contract_sha256(_hub(tags=("network",))) != base_hash
 

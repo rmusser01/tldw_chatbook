@@ -332,21 +332,22 @@ Allow into `default`, changing unrelated workspaces.
 
 ### 2.3 Safe export publication
 
-Export captures the chosen parent and destination identity at picker acceptance,
-validates the `.tldw-tool-pack` name and regular-file/no-symlink boundary, and builds
-the complete archive in a private temporary file. Immediately before publication it
-revalidates the captured parent and destination. An overwrite requires explicit
-confirmation for that exact destination identity; a missing destination appearing,
-an existing destination changing, a parent substitution, or a nonregular target
-fails with `destination_changed`. Publication flushes and fsyncs the complete private
-file, then uses a same-parent atomic no-follow replacement and fsyncs the parent
-directory where the supported platform contract requires it. A host lacking the
-required secure primitive fails with `publication_unsupported`; non-atomic overwrite
-is forbidden. Failure before replacement removes only the validated private
-temporary file and never the destination. Failure after replacement reconciles the
-destination identity/digest and reports either success or the distinct committed-but-
-`durability_uncertain` outcome; it never tells the user the old file survived when a
-replacement may already be visible.
+Export first consumes the normalized path returned by central path validation, then
+captures the chosen parent and destination identity at picker acceptance, validates
+the `.tldw-tool-pack` name and regular-file/no-symlink boundary, and builds the
+complete archive in a private temporary file. Immediately before publication it
+revalidates the captured parent and destination. V1 fails closed with
+`publication_unsupported` when the destination already exists because the supported
+POSIX primitives do not provide compare-and-swap replacement against the captured
+inode and digest. For an absent destination, publication flushes and fsyncs the
+complete private file, atomically hard-links it into the captured parent with
+no-replace semantics, removes the private name, and fsyncs the parent directory. A
+destination appearing, parent substitution, or nonregular target fails without being
+overwritten. A host lacking the required secure primitive fails with
+`publication_unsupported`; non-atomic overwrite is forbidden. Failure after the link
+may have committed reconciles the destination identity/digest and reports either
+success or the distinct committed-but-`durability_uncertain` outcome; it never tells
+the user no archive was published when the new file may already be visible.
 
 This is a Tool-Pack-specific use of the captured-destination pattern. V1 does not
 refactor or share Actor Pack internals, and Windows-native publication remains the
@@ -356,9 +357,11 @@ separate verification claim in §11.
 
 ### 3.1 Inspection is side-effect free
 
-Inspection performs bounded ZIP admission, exact schema validation, digest
-verification, profile-id normalization, destination inventory capture, and mapping
-analysis without writing the permission store or workspace database. Permission
+Inspection consumes the normalized path returned by central path validation before
+its suffix, descriptor, and identity checks. It performs bounded ZIP admission,
+exact schema validation, digest verification, profile-id normalization, destination
+inventory capture, and mapping analysis without writing the permission store or
+workspace database. Permission
 authority is read only through the strict snapshot API in §4; inspection must never
 call legacy `MCPPermissionStore.load()`, whose corrupt/unknown-version recovery can
 rename the live file. Invalid authority storage fails with

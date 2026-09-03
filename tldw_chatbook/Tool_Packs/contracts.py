@@ -16,6 +16,15 @@ import re
 import unicodedata
 from typing import Any, Literal
 
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
+
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 
 
@@ -38,27 +47,202 @@ MAX_DISPLAY_CODEPOINTS = 200
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _PORTABLE_ID_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}\Z")
 _ERROR_TOKEN_RE = re.compile(r"[a-z][a-z0-9_]*\Z")
-_FALLBACK_KEYS = frozenset({"authority", "server_key", "state"})
-_TOOL_KEYS = frozenset({"authority", "server_key", "tool_name", "state"})
-_TOOL_KEYS_WITH_FINGERPRINT = _TOOL_KEYS | {"contract_sha256"}
-_PROFILE_KEYS = frozenset({"schema", "fallbacks", "tools"})
-_MANIFEST_KEYS = frozenset(
-    {
-        "schema",
-        "producer",
-        "required_features",
-        "profile",
-        "files",
-        "content_digest",
-    }
-)
-_PRODUCER_KEYS = frozenset({"name", "version"})
-_MANIFEST_PROFILE_KEYS = frozenset({"suggested_id", "display_name", "payload"})
-_FILE_KEYS = frozenset({"path", "size", "sha256"})
-
 Authority = Literal["mcp", "builtin"]
 ToolState = Literal["allow", "ask", "deny"]
 FallbackState = Literal["ask", "deny"]
+
+
+def _admit_nfc_text(value: str, *, max_bytes: int, allow_empty: bool = False) -> str:
+    if (not allow_empty and not value) or unicodedata.normalize("NFC", value) != value:
+        raise ValueError("invalid text")
+    if any(0xD800 <= ord(character) <= 0xDFFF for character in value):
+        raise ValueError("invalid text")
+    try:
+        if len(value.encode("utf-8")) > max_bytes:
+            raise ValueError("text too large")
+    except UnicodeError:
+        raise ValueError("invalid text") from None
+    return value
+
+
+class _StrictArchiveModel(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+
+class _PortableFallbackModel(_StrictArchiveModel):
+    authority: Authority
+    server_key: str
+    state: FallbackState
+
+    @field_validator("server_key")
+    @classmethod
+    def _validate_server_key(cls, value: str) -> str:
+        return _admit_nfc_text(value, max_bytes=MAX_IDENTITY_BYTES)
+
+    @model_validator(mode="after")
+    def _validate_authority_pair(self) -> "_PortableFallbackModel":
+        if (self.authority == "builtin") != (self.server_key == "agent:builtin"):
+            raise ValueError("invalid authority pair")
+        return self
+
+
+class _PortableToolRuleModel(_StrictArchiveModel):
+    authority: Authority
+    server_key: str
+    tool_name: str
+    state: ToolState
+    contract_sha256: str | None = None
+
+    @field_validator("server_key", "tool_name")
+    @classmethod
+    def _validate_identity(cls, value: str) -> str:
+        return _admit_nfc_text(value, max_bytes=MAX_IDENTITY_BYTES)
+
+    @field_validator("contract_sha256")
+    @classmethod
+    def _validate_contract_digest(cls, value: str | None) -> str | None:
+        if value is not None and _SHA256_RE.fullmatch(value) is None:
+            raise ValueError("invalid digest")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_rule_relationships(self) -> "_PortableToolRuleModel":
+        supplied = "contract_sha256" in self.model_fields_set
+        if self.server_key == "*" or (
+            (self.authority == "builtin") != (self.server_key == "agent:builtin")
+        ):
+            raise ValueError("invalid authority pair")
+        if self.state == "deny":
+            if supplied and self.contract_sha256 is None:
+                raise ValueError("explicit null digest")
+        elif not supplied or self.contract_sha256 is None:
+            raise ValueError("missing digest")
+        return self
+
+
+class _ToolProfilePayloadModel(_StrictArchiveModel):
+    schema_value: Literal[TOOL_PROFILE_SCHEMA] = Field(alias="schema")
+    fallbacks: list[_PortableFallbackModel] = Field(max_length=MAX_FALLBACKS)
+    tools: list[_PortableToolRuleModel] = Field(max_length=MAX_TOOLS)
+
+
+class _ToolPackProducerModel(_StrictArchiveModel):
+    name: str
+    version: str
+
+    @field_validator("name", "version")
+    @classmethod
+    def _validate_producer_text(cls, value: str) -> str:
+        return _admit_nfc_text(value, max_bytes=MAX_PRODUCER_BYTES)
+
+
+class _ToolPackProfileModel(_StrictArchiveModel):
+    suggested_id: str
+    display_name: str
+    payload: Literal[PROFILE_PATH]
+
+    @field_validator("suggested_id")
+    @classmethod
+    def _validate_suggested_id(cls, value: str) -> str:
+        value = _admit_nfc_text(value, max_bytes=128)
+        if (
+            _PORTABLE_ID_RE.fullmatch(value) is None
+            or value == "default"
+            or value.startswith("ws-")
+        ):
+            raise ValueError("invalid portable id")
+        return value
+
+    @field_validator("display_name")
+    @classmethod
+    def _validate_display_name(cls, value: str) -> str:
+        value = _admit_nfc_text(value, max_bytes=MAX_PROFILE_BYTES)
+        if not value.strip() or len(value) > MAX_DISPLAY_CODEPOINTS:
+            raise ValueError("invalid display name")
+        return value
+
+
+class _ToolPackFileModel(_StrictArchiveModel):
+    path: Literal[PROFILE_PATH]
+    size: int = Field(gt=0, le=MAX_PROFILE_BYTES)
+    sha256: str
+
+    @field_validator("sha256")
+    @classmethod
+    def _validate_digest(cls, value: str) -> str:
+        if _SHA256_RE.fullmatch(value) is None:
+            raise ValueError("invalid digest")
+        return value
+
+
+class _ToolPackManifestModel(_StrictArchiveModel):
+    schema_value: Literal[TOOL_PACK_SCHEMA] = Field(alias="schema")
+    producer: _ToolPackProducerModel
+    required_features: list[str]
+    profile: _ToolPackProfileModel
+    files: list[_ToolPackFileModel] = Field(min_length=1, max_length=1)
+    content_digest: str
+
+    @field_validator("content_digest")
+    @classmethod
+    def _validate_content_digest(cls, value: str) -> str:
+        if _SHA256_RE.fullmatch(value) is None:
+            raise ValueError("invalid digest")
+        return value
+
+
+def _admit_fallback_model(
+    raw: object, *, operation: str, category: str
+) -> _PortableFallbackModel:
+    if type(raw) is not dict:
+        raise _error(operation, category)
+    try:
+        return _PortableFallbackModel.model_validate(raw)
+    except ValidationError:
+        raise _error(operation, category) from None
+
+
+def _admit_rule_model(
+    raw: object, *, operation: str, category: str
+) -> _PortableToolRuleModel:
+    if type(raw) is not dict:
+        raise _error(operation, category)
+    try:
+        return _PortableToolRuleModel.model_validate(raw)
+    except ValidationError:
+        raise _error(operation, category) from None
+
+
+def _admit_profile_model(
+    raw: object, *, operation: str, category: str
+) -> _ToolProfilePayloadModel:
+    if type(raw) is not dict:
+        raise _error(operation, category)
+    if raw.get("schema") != TOOL_PROFILE_SCHEMA:
+        raise _error(operation, "schema_unsupported")
+    try:
+        return _ToolProfilePayloadModel.model_validate(raw)
+    except ValidationError as error:
+        if any(item["type"] == "too_long" for item in error.errors()):
+            raise _error(operation, "too_large") from None
+        raise _error(operation, category) from None
+
+
+def _admit_manifest_model(
+    raw: object, *, operation: str, category: str
+) -> _ToolPackManifestModel:
+    if type(raw) is not dict:
+        raise _error(operation, category)
+    if raw.get("schema") != TOOL_PACK_SCHEMA:
+        raise _error(operation, "schema_unsupported")
+    required = raw.get("required_features")
+    if type(required) is list and required:
+        raise _error(operation, "feature_unsupported")
+    try:
+        return _ToolPackManifestModel.model_validate(raw)
+    except ValidationError:
+        raise _error(operation, category) from None
+
 
 _ERROR_CATEGORIES = {
     "export": frozenset(
@@ -143,14 +327,6 @@ class ToolPackError(ValueError):
 
 def _error(operation: str, category: str) -> ToolPackError:
     return ToolPackError(operation, category)
-
-
-def _exact_dict(
-    value: object, keys: frozenset[str], *, operation: str, category: str
-) -> dict[str, Any]:
-    if type(value) is not dict or set(value) != keys:
-        raise _error(operation, category)
-    return value
 
 
 def _nfc_text(
@@ -246,11 +422,11 @@ class PortableFallback:
         operation: str = "import",
         category: str = "payload_invalid",
     ) -> PortableFallback:
-        value = _exact_dict(raw, _FALLBACK_KEYS, operation=operation, category=category)
+        model = _admit_fallback_model(raw, operation=operation, category=category)
         authority, server_key, state = _validate_fallback_fields(
-            value["authority"],
-            value["server_key"],
-            value["state"],
+            model.authority,
+            model.server_key,
+            model.state,
             operation=operation,
             category=category,
         )
@@ -316,24 +492,14 @@ class PortableToolRule:
         operation: str = "import",
         category: str = "payload_invalid",
     ) -> PortableToolRule:
-        if type(raw) is not dict:
-            raise _error(operation, category)
-        fingerprint_present = "contract_sha256" in raw
-        raw_state = raw.get("state")
-        expected_keys = (
-            _TOOL_KEYS
-            if raw_state == "deny" and not fingerprint_present
-            else _TOOL_KEYS_WITH_FINGERPRINT
-        )
-        value = _exact_dict(raw, expected_keys, operation=operation, category=category)
-        if raw_state == "deny" and fingerprint_present and value["contract_sha256"] is None:
-            raise _error(operation, category)
+        model = _admit_rule_model(raw, operation=operation, category=category)
+        fingerprint_present = "contract_sha256" in model.model_fields_set
         fields = _validate_rule_fields(
-            value["authority"],
-            value["server_key"],
-            value["tool_name"],
-            value["state"],
-            value.get("contract_sha256"),
+            model.authority,
+            model.server_key,
+            model.tool_name,
+            model.state,
+            model.contract_sha256,
             fingerprint_present=fingerprint_present,
             operation=operation,
             category=category,
@@ -414,20 +580,20 @@ class ToolProfilePayload:
         operation: str = "import",
         category: str = "payload_invalid",
     ) -> ToolProfilePayload:
-        value = _exact_dict(raw, _PROFILE_KEYS, operation=operation, category=category)
-        if value["schema"] != TOOL_PROFILE_SCHEMA:
-            raise _error(operation, "schema_unsupported")
-        if type(value["fallbacks"]) is not list or type(value["tools"]) is not list:
-            raise _error(operation, category)
-        if len(value["fallbacks"]) > MAX_FALLBACKS or len(value["tools"]) > MAX_TOOLS:
-            raise _error(operation, "too_large")
+        model = _admit_profile_model(raw, operation=operation, category=category)
         fallbacks = tuple(
-            PortableFallback.from_dict(item, operation=operation, category=category)
-            for item in value["fallbacks"]
+            PortableFallback(item.authority, item.server_key, item.state)
+            for item in model.fallbacks
         )
         tools = tuple(
-            PortableToolRule.from_dict(item, operation=operation, category=category)
-            for item in value["tools"]
+            PortableToolRule(
+                item.authority,
+                item.server_key,
+                item.tool_name,
+                item.state,
+                item.contract_sha256,
+            )
+            for item in model.tools
         )
         _validate_profile_values(
             TOOL_PROFILE_SCHEMA,
@@ -467,9 +633,9 @@ def _validate_profile_values(
 
     fallback_ids = [(item.authority, item.server_key) for item in fallbacks]
     tool_ids = [(item.authority, item.server_key, item.tool_name) for item in tools]
-    if _has_exact_or_casefold_collision(fallback_ids) or _has_exact_or_casefold_collision(
-        tool_ids
-    ):
+    if _has_exact_or_casefold_collision(
+        fallback_ids
+    ) or _has_exact_or_casefold_collision(tool_ids):
         raise _error(operation, "identity_duplicate")
 
     server_spellings: dict[tuple[str, str], tuple[str, str]] = {}
@@ -487,7 +653,10 @@ def _validate_profile_values(
         "agent:builtin",
     ) not in fallback_set:
         raise _error(operation, category)
-    if any((authority, server_key) not in fallback_set for authority, server_key, _ in tool_ids):
+    if any(
+        (authority, server_key) not in fallback_set
+        for authority, server_key, _ in tool_ids
+    ):
         raise _error(operation, category)
     distinct_servers = fallback_set - {("mcp", "*")}
     if len(distinct_servers) > MAX_SERVERS:
@@ -545,75 +714,59 @@ class ToolPackManifest:
         operation: str = "import",
         category: str = "manifest_invalid",
     ) -> ToolPackManifest:
-        value = _exact_dict(raw, _MANIFEST_KEYS, operation=operation, category=category)
-        if value["schema"] != TOOL_PACK_SCHEMA:
-            raise _error(operation, "schema_unsupported")
+        model = _admit_manifest_model(raw, operation=operation, category=category)
         try:
-            encoded_size = len(canonical_json_bytes(value))
+            encoded_size = len(
+                canonical_json_bytes(model.model_dump(mode="python", by_alias=True))
+            )
         except ToolPackError:
             raise _error(operation, category) from None
         if encoded_size > MAX_MANIFEST_BYTES:
             raise _error(operation, "too_large")
 
-        producer = _exact_dict(
-            value["producer"], _PRODUCER_KEYS, operation=operation, category=category
-        )
         producer_name = _nfc_text(
-            producer["name"],
+            model.producer.name,
             operation=operation,
             category=category,
             max_bytes=MAX_PRODUCER_BYTES,
         )
         producer_version = _nfc_text(
-            producer["version"],
+            model.producer.version,
             operation=operation,
             category=category,
             max_bytes=MAX_PRODUCER_BYTES,
         )
-        required = value["required_features"]
-        if type(required) is not list or any(type(item) is not str for item in required):
-            raise _error(operation, category)
+        required = model.required_features
         if required:
             raise _error(operation, "feature_unsupported")
 
-        profile = _exact_dict(
-            value["profile"],
-            _MANIFEST_PROFILE_KEYS,
-            operation=operation,
-            category=category,
-        )
         suggested_id = _portable_id(
-            profile["suggested_id"], operation=operation, category=category
+            model.profile.suggested_id, operation=operation, category=category
         )
         display_name = _nfc_text(
-            profile["display_name"],
+            model.profile.display_name,
             operation=operation,
             category=category,
             max_bytes=MAX_PROFILE_BYTES,
         )
         if not display_name.strip() or len(display_name) > MAX_DISPLAY_CODEPOINTS:
             raise _error(operation, category)
-        if profile["payload"] != PROFILE_PATH:
+        if model.profile.payload != PROFILE_PATH:
             raise _error(operation, category)
 
-        files = value["files"]
-        if type(files) is not list or len(files) != 1:
-            raise _error(operation, category)
-        file_entry = _exact_dict(
-            files[0], _FILE_KEYS, operation=operation, category=category
-        )
-        payload_size = file_entry["size"]
+        file_entry = model.files[0]
+        payload_size = file_entry.size
         if (
-            file_entry["path"] != PROFILE_PATH
+            file_entry.path != PROFILE_PATH
             or type(payload_size) is not int
             or not 0 < payload_size <= MAX_PROFILE_BYTES
         ):
             raise _error(operation, category)
         payload_sha256 = _sha256(
-            file_entry["sha256"], operation=operation, category=category
+            file_entry.sha256, operation=operation, category=category
         )
         content_digest = _sha256(
-            value["content_digest"], operation=operation, category=category
+            model.content_digest, operation=operation, category=category
         )
         assert payload_sha256 is not None and content_digest is not None
         return cls(
@@ -728,9 +881,10 @@ class ToolPackDocument:
     profile: ToolProfilePayload
 
     def __post_init__(self) -> None:
-        if type(self.manifest) is not ToolPackManifest or type(
-            self.profile
-        ) is not ToolProfilePayload:
+        if (
+            type(self.manifest) is not ToolPackManifest
+            or type(self.profile) is not ToolProfilePayload
+        ):
             raise _error("import", "payload_invalid")
         _validate_document_relationships(
             self.manifest, self.profile, operation="import"
@@ -801,7 +955,14 @@ def canonical_json_bytes(value: object, *, operation: str = "import") -> bytes:
         return (encoded + "\n").encode("utf-8")
     except ToolPackError:
         raise _error(operation, "payload_invalid") from None
-    except (MemoryError, OverflowError, RecursionError, TypeError, UnicodeError, ValueError):
+    except (
+        MemoryError,
+        OverflowError,
+        RecursionError,
+        TypeError,
+        UnicodeError,
+        ValueError,
+    ):
         raise _error(operation, "payload_invalid") from None
 
 
@@ -1000,7 +1161,14 @@ def portable_contract_sha256(
         return hashlib.sha256(canonical_json_bytes(preimage)).hexdigest()
     except ToolPackError:
         raise _error(operation, "payload_invalid") from None
-    except (MemoryError, OverflowError, RecursionError, TypeError, UnicodeError, ValueError):
+    except (
+        MemoryError,
+        OverflowError,
+        RecursionError,
+        TypeError,
+        UnicodeError,
+        ValueError,
+    ):
         raise _error(operation, "payload_invalid") from None
 
 
