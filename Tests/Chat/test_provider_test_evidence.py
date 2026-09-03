@@ -48,6 +48,29 @@ def test_ready_configuration_can_retain_unverified_credential_evidence():
     assert snapshot.generation == "not_tested"
 
 
+def test_successful_snapshot_rejects_missing_credential_evidence():
+    with pytest.raises(ValueError):
+        ProviderReadinessSnapshot(
+            configuration="configured",
+            endpoint="not_tested",
+            model="unconfirmed",
+            credential="missing",
+            generation="succeeded",
+        )
+
+
+def test_successful_snapshot_authenticates_present_credential_evidence():
+    snapshot = ProviderReadinessSnapshot(
+        configuration="configured",
+        endpoint="not_tested",
+        model="unconfirmed",
+        credential="present_unverified",
+        generation="succeeded",
+    )
+
+    assert snapshot.credential == "authenticated"
+
+
 def test_existing_positional_constructors_retain_their_field_meanings():
     identity = _identity(credential_source="none", credential_revision=0)
 
@@ -189,6 +212,28 @@ def test_generation_failure_records_only_a_bounded_category():
 
     assert store.evidence_for(identity).generation == "failed"
     assert store.evidence_for(identity).generation_category == "rate_limit"
+
+
+def test_authentication_failure_downgrades_prior_success_for_same_identity():
+    store = ProviderTestEvidenceStore()
+    identity = _identity()
+
+    success_token = store.begin_generation(identity)
+    assert store.settle_generation(
+        success_token, ProviderGenerationProbeResult("succeeded")
+    )
+    assert store.evidence_for(identity).credential == "authenticated"
+
+    failure_token = store.begin_generation(identity)
+    assert store.settle_generation(
+        failure_token,
+        ProviderGenerationProbeResult("failed", "authentication"),
+    )
+
+    evidence = store.evidence_for(identity)
+    assert evidence.credential == "present_unverified"
+    assert evidence.generation == "failed"
+    assert evidence.generation_category == "authentication"
 
 
 def test_generation_evidence_can_be_marked_changed_since_test():

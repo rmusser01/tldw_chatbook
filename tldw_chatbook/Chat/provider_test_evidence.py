@@ -190,6 +190,13 @@ class ProviderReadinessSnapshot:
             or self.generation not in _GENERATION_FACETS
         ):
             raise ValueError("Generation facet is invalid.")
+        normalized_credential = _normalize_generation_credential(
+            self.credential,
+            self.generation,
+            None,
+            credential_required=self.credential != "not_required",
+        )
+        object.__setattr__(self, "credential", normalized_credential)
         if self.category is not None and (
             type(self.category) is not str
             or self.category not in _FAILURE_CATEGORIES
@@ -424,18 +431,13 @@ class ProviderTestEvidence:
                 raise ValueError("Failed generation evidence requires a category.")
         elif self.generation_category is not None:
             raise ValueError("Generation category conflicts with its facet.")
-
-        if (
-            self.credential == "not_required"
-            and self.identity.credential_source != "none"
-        ):
-            object.__setattr__(self, "credential", "present_unverified")
-
-        if self.generation == "succeeded":
-            if self.credential == "missing":
-                raise ValueError("Successful generation cannot have a missing credential.")
-            if self.credential == "present_unverified":
-                object.__setattr__(self, "credential", "authenticated")
+        normalized_credential = _normalize_generation_credential(
+            self.credential,
+            self.generation,
+            self.generation_category,
+            credential_required=self.identity.credential_source != "none",
+        )
+        object.__setattr__(self, "credential", normalized_credential)
 
 
 class _MutationResult(Protocol):
@@ -953,6 +955,28 @@ def _validate_generation_result(generation: object, category: object) -> None:
         raise ValueError("Failed provider generation requires a category.")
     if generation == "succeeded" and category is not None:
         raise ValueError("Successful provider generation cannot include a category.")
+
+
+def _normalize_generation_credential(
+    credential: CredentialFacet,
+    generation: GenerationFacet,
+    category: GenerationFailureCategory | None,
+    *,
+    credential_required: bool,
+) -> CredentialFacet:
+    """Return credential evidence consistent with the observed generation."""
+
+    if generation == "succeeded" and credential == "missing":
+        raise ValueError("Successful generation cannot have a missing credential.")
+    if not credential_required:
+        return "not_required"
+    if generation == "succeeded":
+        return "authenticated"
+    if generation == "failed" and category == "authentication":
+        return "present_unverified"
+    if credential == "not_required":
+        return "present_unverified"
+    return credential
 
 
 def _evidence_from_exact_outcome(
