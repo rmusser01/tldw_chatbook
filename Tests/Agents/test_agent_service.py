@@ -489,7 +489,7 @@ def test_first_request_plan_direct_discloses_many_compact_schemas(monkeypatch):
     assert plan.system_prompt == "direct"
 
 
-def test_first_request_plan_contains_exact_named_agent_and_fleet_schemas(monkeypatch):
+def _fleet_schema_plan(monkeypatch, *, worktree_merge_enabled: bool):
     registry, allowed = _planning_registry(1)
     config = AgentConfig(
         model="m",
@@ -502,7 +502,7 @@ def test_first_request_plan_contains_exact_named_agent_and_fleet_schemas(monkeyp
     monkeypatch.setattr(agent_service, "catalog_schema_tokens", lambda *_a, **_k: 50)
     monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 500)
 
-    plan = build_first_request_schema_plan(
+    return build_first_request_schema_plan(
         registry,
         allowed,
         config,
@@ -520,23 +520,45 @@ def test_first_request_plan_contains_exact_named_agent_and_fleet_schemas(monkeyp
             ),
         ),
         fleet_active=True,
+        worktree_merge_enabled=worktree_merge_enabled,
     )
+
+
+def test_first_request_plan_contains_exact_named_agent_and_fleet_schemas(monkeypatch):
+    """fleet_active alone still yields exactly the three fleet-coordination
+    names -- merge/discard require the Task 7 ruling's separate
+    worktree_merge_enabled gate (see the sibling test below)."""
+    plan = _fleet_schema_plan(monkeypatch, worktree_merge_enabled=False)
 
     assert [schema.name for schema in plan.runtime_schemas] == [
         "spawn_subagent",
         "wait_agents",
         "check_agents",
         "send_to_agent",
-        # TASK-28238 phase 2 Task 5: merge/discard for a worktree-isolated
-        # child, pinned under the same fleet predicate as the three names
-        # directly above.
-        "merge_agent_worktree",
-        "discard_agent_worktree",
     ]
     assert (
         "researcher"
         in plan.runtime_schemas[0].parameters["properties"]["agent"]["description"]
     )
+
+
+def test_first_request_plan_adds_worktree_merge_schemas_only_when_enabled(
+    monkeypatch,
+):
+    """TASK-28238 phase 2 Task 7 ruling: merge/discard for a
+    worktree-isolated child is additionally gated on a run-entry confirm
+    surface existing (worktree_merge_enabled), like run_skill_script_enabled
+    -- no longer the bare fleet_active predicate Task 5 used."""
+    plan = _fleet_schema_plan(monkeypatch, worktree_merge_enabled=True)
+
+    assert [schema.name for schema in plan.runtime_schemas] == [
+        "spawn_subagent",
+        "wait_agents",
+        "check_agents",
+        "send_to_agent",
+        "merge_agent_worktree",
+        "discard_agent_worktree",
+    ]
 
 
 def test_first_request_plan_defers_large_or_history_cramped_catalog(monkeypatch):

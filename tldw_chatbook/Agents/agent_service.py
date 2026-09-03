@@ -649,6 +649,7 @@ def build_first_request_schema_plan(
     run_log_active: bool,
     agent_definitions: tuple[AgentDefinition, ...] | None = None,
     fleet_active: bool = False,
+    worktree_merge_enabled: bool = False,
     fleet_max_live: int | None = None,
     agent_kind: str = AGENT_KIND_PRIMARY,
     direct_system_prompt: str | None = None,
@@ -670,6 +671,10 @@ def build_first_request_schema_plan(
         run_log_active: Whether run-log tools may be enabled for this run.
         agent_definitions: Named sub-agent definitions available to spawning.
         fleet_active: Whether the primary may coordinate a live agent fleet.
+        worktree_merge_enabled: Whether a run-entry confirm surface exists to
+            approve merge_agent_worktree/discard_agent_worktree -- like
+            run_skill_script_enabled, this disclosure is additionally gated
+            beyond fleet_active alone.
         fleet_max_live: Maximum live agents recorded in the frozen plan.
         agent_kind: Primary or sub-agent disclosure policy selector.
         direct_system_prompt: Prompt used when all allowed schemas fit directly.
@@ -702,17 +707,20 @@ def build_first_request_schema_plan(
             runtime.append(build_spawn_schema(agent_definitions or ()))
         if fleet_active and agent_kind == AGENT_KIND_PRIMARY:
             runtime.extend(
-                (
-                    WAIT_AGENTS_SCHEMA,
-                    CHECK_AGENTS_SCHEMA,
-                    SEND_TO_AGENT_SCHEMA,
-                    # TASK-28238 phase 2 Task 5: merge/discard for a
-                    # worktree-isolated child, pinned under the identical
-                    # predicate as the three fleet schemas above.
-                    MERGE_AGENT_WORKTREE_SCHEMA,
-                    DISCARD_AGENT_WORKTREE_SCHEMA,
-                )
+                (WAIT_AGENTS_SCHEMA, CHECK_AGENTS_SCHEMA, SEND_TO_AGENT_SCHEMA)
             )
+            if worktree_merge_enabled:
+                # TASK-28238 phase 2 Task 7 ruling: merge/discard for a
+                # worktree-isolated child is no longer disclosed under the
+                # identical predicate as the three fleet schemas above --
+                # it is additionally gated on the run-entry confirm surface
+                # being wired (see worktree_merge_enabled). Without it,
+                # both tools always fail closed at their call sites, so a
+                # session with no confirm surface was advertising two
+                # tools that could only ever refuse, at real token cost.
+                runtime.extend(
+                    (MERGE_AGENT_WORKTREE_SCHEMA, DISCARD_AGENT_WORKTREE_SCHEMA)
+                )
         if offer_find_load:
             # TASK-26007: the deferred surface NAMES what exists -- the
             # model must never conclude a present capability is absent.
@@ -4267,6 +4275,7 @@ class AgentService:
                     and self._fleet is not None
                     and config.budget.max_subagents > 0
                 ),
+                worktree_merge_enabled=request_worktree_merge_confirm is not None,
                 fleet_max_live=(
                     self._fleet.max_live
                     if agent_kind == AGENT_KIND_PRIMARY and self._fleet is not None
