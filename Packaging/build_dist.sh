@@ -1,7 +1,9 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Build script for tldw_chatbook PyPI distribution
 
-set -e  # Exit on error
+set -euo pipefail
+
+PYTHON="${PYTHON:-python}"
 
 echo "🚀 Building tldw_chatbook distribution..."
 
@@ -20,15 +22,15 @@ rm -rf dist/ build/ *.egg-info
 
 # Build source distribution and wheel
 echo "🔨 Building source and wheel distributions..."
-python -m build
+"$PYTHON" -m build
 
 # Check the distributions
 echo "✅ Checking distributions with twine..."
-python -m twine check dist/*
+"$PYTHON" -m twine check dist/*
 
 # Verify manifest
 echo "📋 Verifying distribution contents..."
-python Packaging/check_manifest.py
+"$PYTHON" Packaging/check_manifest.py
 
 echo ""
 echo "✨ Build complete!"
@@ -37,10 +39,10 @@ echo "📦 Distribution files created in ./dist/"
 ls -la dist/
 echo ""
 echo "📤 To upload to TestPyPI (for testing):"
-echo "  python -m twine upload --repository testpypi dist/*"
+echo "  $PYTHON -m twine upload --repository testpypi dist/*"
 echo ""
 echo "📤 To upload to PyPI (production):"
-echo "  python -m twine upload dist/*"
+echo "  $PYTHON -m twine upload dist/*"
 echo ""
 echo "🧪 To test installation from wheel:"
 echo "  pip install dist/tldw_chatbook-*.whl"
