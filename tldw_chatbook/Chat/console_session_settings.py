@@ -1415,7 +1415,11 @@ def build_console_settings_readiness(
     if evidence_is_current and evidence is not None:
         generation: GenerationFacet = evidence.generation
         generation_category = evidence.generation_category
-    elif evidence is not None:
+    elif evidence is not None and evidence.generation in {
+        "succeeded",
+        "failed",
+        "changed_since_test",
+    }:
         generation = "changed_since_test"
         generation_category = None
     else:

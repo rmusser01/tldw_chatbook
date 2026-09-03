@@ -1342,6 +1342,32 @@ def test_stale_verification_is_typed_without_echoing_old_endpoint():
     assert "api/chat" not in readiness.provider_display_name
 
 
+def test_stale_endpoint_only_evidence_does_not_claim_a_generation_test_changed():
+    tested = _readiness_identity()
+    current = _readiness_identity(
+        endpoint="http://127.0.0.1:11434/v1/chat/completions",
+        draft_generation=2,
+    )
+    evidence = ProviderTestEvidence(tested, "reachable", ("model",))
+
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(
+            provider="ollama",
+            model="model",
+            base_url="http://127.0.0.1:11434",
+        ),
+        app_config={
+            "api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}
+        },
+        environ={},
+        evidence=evidence,
+        current_identity=current,
+    )
+
+    assert readiness.endpoint == "changed_since_test"
+    assert readiness.generation == "not_tested"
+
+
 @pytest.mark.parametrize(
     ("category", "expected_blocker", "expected_recovery"),
     [

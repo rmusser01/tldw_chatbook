@@ -65,9 +65,15 @@ from tldw_chatbook.Chat.console_library_destination import (
     resolve_console_destination,
 )
 from tldw_chatbook.Chat.console_provider_gateway import (
+    AuxiliaryCompletionRequest,
     AuxiliaryCompletionResult,
     ConsoleProviderGateway,
     ConsoleProviderResolution,
+)
+from tldw_chatbook.Chat.provider_endpoint_contract import canonical_connection_identity
+from tldw_chatbook.Chat.provider_test_evidence import (
+    ConsoleGenerationTestRequest,
+    ProviderDraftIdentity,
 )
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
@@ -5502,6 +5508,241 @@ def test_console_session_settings_base_url_wins_over_llamacpp_fallback(monkeypat
 
     assert selection.base_url == "http://127.0.0.1:9999"
     assert selection.explicit_model == "settings-model"
+
+
+def test_console_generation_test_selection_uses_validated_draft_without_session_mutation():
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    original = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
+    store.replace_session_settings(session.id, original)
+    draft = ConsoleSessionSettings(
+        provider="ollama",
+        model="qwen-test",
+        base_url="http://127.0.0.1:11434",
+        temperature=0.25,
+        streaming=True,
+    )
+
+    selection = screen._build_console_provider_selection_for_settings(
+        session.id, draft
+    )
+
+    assert selection.provider == "ollama"
+    assert selection.explicit_model == "qwen-test"
+    assert selection.base_url == "http://127.0.0.1:11434"
+    assert selection.temperature == 0.25
+    assert selection.streaming is True
+    assert store.session_settings(session.id) == original
+
+
+@pytest.mark.asyncio
+async def test_console_one_token_generation_test_has_fixed_isolated_policy(monkeypatch):
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="",
+        model="gpt-4.1",
+        ready=True,
+        readiness_key="openai",
+        execution_key="openai",
+        api_key="secret",
+        request_timeout=99.0,
+        request_retries=9,
+        request_retry_delay=8.0,
+        streaming=True,
+    )
+
+    class FakeGateway:
+        def __init__(self):
+            self.selections = []
+            self.requests = []
+
+        async def resolve_for_send(self, selection):
+            self.selections.append(selection)
+            return replace(
+                resolution,
+                reasoning_effort=selection.settings.reasoning_effort,
+                reasoning_summary=selection.settings.reasoning_summary,
+                verbosity=selection.settings.verbosity,
+                thinking_effort=selection.settings.thinking_effort,
+                thinking_budget_tokens=selection.settings.thinking_budget_tokens,
+            )
+
+        async def complete_auxiliary(self, request):
+            self.requests.append(request)
+            return AuxiliaryCompletionResult("openai", "gpt-4.1", "yes", None)
+
+    deadlines = []
+
+    class Deadline:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(
+        chat_screen_module.asyncio,
+        "timeout",
+        lambda seconds: deadlines.append(seconds) or Deadline(),
+    )
+    gateway = FakeGateway()
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    original_messages = store.messages_for_session(session.id)
+    screen._ensure_console_provider_gateway = lambda: gateway
+    draft = ConsoleSessionSettings(
+        provider="anthropic",
+        model="claude-test",
+        reasoning_effort="high",
+        reasoning_summary="detailed",
+        verbosity="high",
+        thinking_effort="high",
+        thinking_budget_tokens=4096,
+    )
+    identity = ProviderDraftIdentity(
+        provider_key="openai",
+        connection_identity=canonical_connection_identity(
+            "openai", "https://api.openai.com/v1"
+        ),
+        credential_source="stored",
+        credential_revision=1,
+        draft_generation=2,
+    )
+    screen._build_console_provider_selection_for_settings = (
+        lambda session_id, settings: SimpleNamespace(session_id=session_id, settings=settings)
+    )
+
+    result = await screen._test_console_generation(
+        session.id, ConsoleGenerationTestRequest(draft, identity)
+    )
+
+    assert result.generation == "succeeded"
+    assert deadlines == [20.0]
+    assert len(gateway.requests) == 1
+    request = gateway.requests[0]
+    assert isinstance(request, AuxiliaryCompletionRequest)
+    assert tuple(dict(message) for message in request.messages) == (
+        {"role": "user", "content": "Reply with one short token."},
+    )
+    assert request.response_format is None
+    assert request.max_output_tokens == 1
+    assert request.resolution.request_timeout == 15.0
+    assert request.resolution.request_retries == 0
+    assert request.resolution.request_retry_delay == 0.0
+    assert request.resolution.streaming is False
+    assert request.resolution.reasoning_effort is None
+    assert request.resolution.reasoning_summary is None
+    assert request.resolution.verbosity is None
+    assert request.resolution.thinking_effort is None
+    assert request.resolution.thinking_budget_tokens is None
+    assert "yes" not in repr(result)
+    assert store.messages_for_session(session.id) == original_messages
+
+
+@pytest.mark.asyncio
+async def test_console_generation_test_failure_is_bounded_and_sanitized() -> None:
+    secret = "sk-private-value https://secret.internal/path"
+
+    class FailingGateway:
+        async def resolve_for_send(self, _selection):
+            return ConsoleProviderResolution(
+                provider="openai",
+                base_url="",
+                model="gpt-4.1",
+                ready=True,
+                readiness_key="openai",
+                execution_key="openai",
+            )
+
+        async def complete_auxiliary(self, _request):
+            raise RuntimeError(secret)
+
+    screen = ChatScreen.__new__(ChatScreen)
+    screen._ensure_console_provider_gateway = lambda: FailingGateway()
+    screen._build_console_provider_selection_for_settings = lambda *_args: object()
+    draft = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
+    identity = ProviderDraftIdentity(
+        provider_key="openai",
+        connection_identity=canonical_connection_identity(
+            "openai", "https://api.openai.com/v1"
+        ),
+        credential_source="stored",
+        credential_revision=1,
+        draft_generation=2,
+    )
+
+    result = await screen._test_console_generation(
+        "session-1", ConsoleGenerationTestRequest(draft, identity)
+    )
+
+    assert result.generation == "failed"
+    assert result.category == "provider_error"
+    assert secret not in repr(result)
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected_category"),
+    [
+        (400, "bad_request"),
+        (401, "authentication"),
+        (403, "authentication"),
+        (408, "timeout"),
+        (429, "rate_limit"),
+        (502, "provider_error"),
+        (503, "connection_error"),
+        (504, "timeout"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_console_generation_test_preserves_bounded_transport_category(
+    status_code: int,
+    expected_category: str,
+) -> None:
+    secret = "sk-private transport cause"
+
+    class FailingGateway:
+        async def resolve_for_send(self, _selection):
+            return ConsoleProviderResolution(
+                provider="llama_cpp",
+                base_url="http://127.0.0.1:9099/v1",
+                model="model-a",
+                ready=True,
+                readiness_key="llama_cpp",
+                execution_key="llama_cpp",
+            )
+
+        async def complete_auxiliary(self, _request):
+            raise chat_screen_module.ChatProviderError(
+                secret,
+                status_code=status_code,
+                details=RuntimeError(secret),
+            )
+
+    screen = ChatScreen.__new__(ChatScreen)
+    screen._ensure_console_provider_gateway = lambda: FailingGateway()
+    screen._build_console_provider_selection_for_settings = lambda *_args: object()
+    draft = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    identity = ProviderDraftIdentity(
+        provider_key="llama_cpp",
+        connection_identity=canonical_connection_identity(
+            "llama_cpp", "http://127.0.0.1:9099/v1"
+        ),
+        credential_source="none",
+        credential_revision=1,
+        draft_generation=2,
+    )
+
+    result = await screen._test_console_generation(
+        "session-1", ConsoleGenerationTestRequest(draft, identity)
+    )
+
+    assert result.generation == "failed"
+    assert result.category == expected_category
+    assert secret not in repr(result)
 
 
 @pytest.mark.asyncio

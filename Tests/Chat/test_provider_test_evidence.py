@@ -7,12 +7,16 @@ import pytest
 
 from tldw_chatbook.Chat import provider_test_evidence as evidence_module
 from tldw_chatbook.Chat.provider_test_evidence import (
+    ConsoleGenerationTestAvailability,
+    ConsoleGenerationTestRequest,
     ProviderDraftIdentity,
     ProviderProbeResult,
     ProviderReadinessSnapshot,
     ProviderTestEvidence,
     ProviderTestEvidenceStore,
+    console_generation_test_availability,
 )
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 
 ProviderGenerationProbeResult = getattr(
     evidence_module, "ProviderGenerationProbeResult", None
@@ -46,6 +50,36 @@ def test_ready_configuration_can_retain_unverified_credential_evidence():
 
     assert snapshot.credential == "present_unverified"
     assert snapshot.generation == "not_tested"
+
+
+def test_latest_evidence_exposes_only_the_bounded_snapshot_for_stale_projection():
+    store = ProviderTestEvidenceStore()
+    identity = _identity()
+    token = store.begin_generation(identity)
+    assert store.settle_generation(
+        token, ProviderGenerationProbeResult("succeeded")
+    )
+
+    assert store.latest_evidence() == store.evidence_for(identity)
+
+
+def test_mark_generation_changed_preserves_active_endpoint_probe_ownership():
+    store = ProviderTestEvidenceStore()
+    identity = _identity()
+    generation = store.begin_generation(identity)
+    assert store.settle_generation(
+        generation, ProviderGenerationProbeResult("succeeded")
+    )
+    endpoint = store.begin(identity)
+
+    assert store.mark_generation_changed(identity)
+    testing = store.evidence_for(identity)
+    assert testing.endpoint == "testing"
+    assert testing.generation == "changed_since_test"
+    assert store.settle(endpoint, ProviderProbeResult("reachable", ("model-a",)))
+    settled = store.evidence_for(identity)
+    assert settled.endpoint == "reachable"
+    assert settled.generation == "changed_since_test"
 
 
 def test_successful_snapshot_rejects_missing_credential_evidence():
@@ -382,3 +416,61 @@ def test_extended_records_remain_frozen_and_slotted():
     assert not hasattr(evidence, "__dict__")
     with pytest.raises(AttributeError):
         evidence.generation = "failed"
+
+
+def test_generation_test_request_keeps_settings_out_of_repr() -> None:
+    settings = ConsoleSessionSettings(
+        provider="custom",
+        model="private-model",
+        base_url="https://private.example.test/v1",
+    )
+
+    identity = _identity(
+        endpoint="https://identity-private.example.test/v1/chat/completions"
+    )
+    request = ConsoleGenerationTestRequest(settings=settings, identity=identity)
+
+    assert request.settings is settings
+    assert request.identity == identity
+    assert "private-model" not in repr(request)
+    assert "private.example.test" not in repr(request)
+    assert "identity-private.example.test" not in repr(request)
+    assert "identity-private.example.test" not in repr(identity)
+
+
+@pytest.mark.parametrize(
+    ("provider", "handlers", "expected"),
+    [
+        ("OpenAI", {"openai"}, ConsoleGenerationTestAvailability.UNSUPPORTED),
+        ("Custom OpenAI API", {"custom-openai-api"}, ConsoleGenerationTestAvailability.UNSUPPORTED),
+        ("Moonshot", {"moonshot"}, ConsoleGenerationTestAvailability.SUPPORTED),
+        ("llama_cpp", {"llama_cpp"}, ConsoleGenerationTestAvailability.SUPPORTED),
+        ("unknown", {"openai"}, ConsoleGenerationTestAvailability.UNSUPPORTED),
+    ],
+)
+def test_generation_test_availability_uses_console_gateway_handler_catalog(
+    provider, handlers, expected
+) -> None:
+    assert console_generation_test_availability(provider, handler_keys=handlers) is expected
+
+
+def test_cancel_generation_probe_revokes_token_and_removes_testing_state() -> None:
+    store = ProviderTestEvidenceStore()
+    identity = _identity()
+    token = store.begin_generation(identity)
+
+    assert store.cancel_generation_probe(token)
+    assert store.evidence_for(identity) is None
+    assert not store.settle_generation(token, ProviderGenerationProbeResult("succeeded"))
+
+
+def test_cancelled_generation_retest_restores_prior_exact_result() -> None:
+    store = ProviderTestEvidenceStore()
+    identity = _identity()
+    first = store.begin_generation(identity)
+    assert store.settle_generation(first, ProviderGenerationProbeResult("succeeded"))
+
+    retry = store.begin_generation(identity)
+    assert store.cancel_generation_probe(retry)
+
+    assert store.evidence_for(identity).generation == "succeeded"

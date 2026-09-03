@@ -10987,6 +10987,11 @@ class _ImmediateConnectionTester:
         return self.result
 
 
+class _MalformedConnectionTester:
+    async def __call__(self, _identity: ProviderDraftIdentity):
+        return {"detail": "PRIVATE-CONNECTION-PAYLOAD"}
+
+
 class _CancellationResistantConnectionTester(_BlockingConnectionTester):
     async def __call__(self, identity: ProviderDraftIdentity) -> ProviderProbeResult:
         self.calls.append(identity)
@@ -10997,6 +11002,126 @@ class _CancellationResistantConnectionTester(_BlockingConnectionTester):
             self.cancelled = True
             return self.result
         return self.result
+
+
+@pytest.mark.parametrize(
+    ("edit_kind", "control_id", "new_value"),
+    [
+        ("streaming", None, None),
+        ("choice", "console-settings-reasoning-effort", "high"),
+        ("choice", "console-settings-reasoning-summary", "concise"),
+        ("choice", "console-settings-verbosity", "high"),
+        ("choice", "console-settings-thinking-effort", "high"),
+        ("numeric", "console-settings-temperature", "0.3"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_generation_edit_preserves_active_connection_probe_and_settlement(
+    edit_kind: str,
+    control_id: str | None,
+    new_value: str | None,
+) -> None:
+    async def generation_tester(_request):
+        return settings_modal_module.ProviderGenerationProbeResult("succeeded")
+
+    tester = _CancellationResistantConnectionTester(
+        ProviderProbeResult("reachable", ("model-a",))
+    )
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        connection_tester=tester,
+        generation_tester=generation_tester,
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one("#console-settings-test-generation", Button).press()
+        modal.query_one("#console-settings-confirm-generation", Button).press()
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if "Generation · Succeeded" in str(
+                modal.query_one("#console-settings-readiness", Static).renderable
+            ):
+                break
+
+        action = modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        action.press()
+        await asyncio.wait_for(tester.started.wait(), 1)
+        token = modal._active_connection_probe_token
+        assert token is not None
+
+        if edit_kind == "streaming":
+            modal.query_one("#console-settings-streaming", Button).press()
+        elif edit_kind == "choice":
+            assert control_id is not None and new_value is not None
+            modal.query_one(f"#{control_id}", Select).value = new_value
+        else:
+            assert control_id is not None and new_value is not None
+            modal.query_one(f"#{control_id}", Input).value = new_value
+        await pilot.pause()
+
+        readiness = str(
+            modal.query_one("#console-settings-readiness", Static).renderable
+        )
+        assert tester.cancelled is False
+        assert modal._active_connection_probe_token is token
+        assert action.disabled
+        assert "Endpoint · Testing" in readiness
+        assert "Generation · Changed since test" in readiness
+
+        tester.release.set()
+        await _wait_for_discover_status(app, pilot, "1 model listed")
+        readiness = str(
+            modal.query_one("#console-settings-readiness", Static).renderable
+        )
+        assert modal._active_connection_probe_token is None
+        assert action.disabled is False
+        assert "Endpoint · Testing" not in readiness
+        assert "Endpoint · Reachable" in readiness
+        assert "Generation · Changed since test" in readiness
+
+
+@pytest.mark.asyncio
+async def test_malformed_connection_tester_result_restores_bounded_action() -> None:
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        connection_tester=_MalformedConnectionTester(),
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        action = modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        action.press()
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if modal._active_connection_probe_token is None:
+                break
+
+        rendered = str(
+            modal.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static).renderable
+        )
+        readiness = str(
+            modal.query_one("#console-settings-readiness", Static).renderable
+        )
+        assert modal._active_connection_probe_token is None
+        assert action.disabled is False
+        assert "Testing" not in readiness
+        assert "Connection failed: connection error." in rendered
+        assert "PRIVATE-CONNECTION-PAYLOAD" not in rendered
 
 
 @pytest.mark.asyncio
@@ -11125,8 +11250,8 @@ async def test_endpoint_edit_immediately_removes_reachable_confirmation_from_rea
         await pilot.pause()
 
         rendered = str(readiness.renderable)
-        assert "Endpoint · Not tested" in rendered
-        assert "Model · Selected — not verified at this endpoint" in rendered
+        assert "Endpoint · Changed since test" in rendered
+        assert "Model · Changed since test" in rendered
         assert "Endpoint · Reachable" not in rendered
         assert "Model · Confirmed" not in rendered
         assert modal._connection_evidence_store.evidence_for(
@@ -11135,7 +11260,7 @@ async def test_endpoint_edit_immediately_removes_reachable_confirmation_from_rea
         cancelled_readiness = str(
             modal.query_one("#console-settings-readiness", Static).renderable
         )
-        assert "Endpoint · Not tested" in cancelled_readiness
+        assert "Endpoint · Changed since test" in cancelled_readiness
         assert "Endpoint · Testing…" not in cancelled_readiness
         assert "Endpoint · Reachable" not in cancelled_readiness
 
@@ -13940,3 +14065,718 @@ async def test_console_settings_task4_geometry_keeps_connection_and_footer_usabl
         assert str(use.label) == "Use for this conversation"
         assert defaults.region.width >= len(str(defaults.label))
         assert use.region.width >= len(str(use.label))
+
+
+@pytest.mark.asyncio
+async def test_generation_test_requires_fresh_confirmation_for_every_paid_request() -> None:
+    calls = []
+
+    async def tester(request):
+        calls.append(request)
+        return settings_modal_module.ProviderGenerationProbeResult("succeeded")
+
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        generation_tester=tester,
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        test_button = modal.query_one("#console-settings-test-generation", Button)
+        confirmation = modal.query_one("#console-settings-generation-confirmation")
+
+        test_button.press()
+        await pilot.pause()
+        assert calls == []
+        assert confirmation.display
+        assert "may incur provider charges" in str(
+            modal.query_one("#console-settings-generation-consent-copy", Static).renderable
+        )
+
+        modal.query_one("#console-settings-confirm-generation", Button).press()
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if calls:
+                break
+        assert len(calls) == 1
+        assert confirmation.display is False
+        assert calls[0].settings.model == "model-a"
+        assert "Generation · Succeeded" in str(
+            modal.query_one("#console-settings-readiness", Static).renderable
+        )
+
+        test_button.press()
+        await pilot.pause()
+        assert len(calls) == 1
+        assert confirmation.display
+
+
+@pytest.mark.parametrize(
+    "change_path", ("select", "input", "picker_selected", "picker_value")
+)
+@pytest.mark.asyncio
+async def test_generation_test_model_edit_cancels_and_rejects_late_result(
+    change_path: str,
+) -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def cancellation_resistant_tester(_request):
+        entered.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            await release.wait()
+        return settings_modal_module.ProviderGenerationProbeResult("succeeded")
+
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        providers_models={"llama_cpp": ["model-a", "model-b"]},
+        generation_tester=cancellation_resistant_tester,
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one("#console-settings-test-generation", Button).press()
+        modal.query_one("#console-settings-confirm-generation", Button).press()
+        await asyncio.wait_for(entered.wait(), 1)
+
+        if change_path == "select":
+            model_select = modal.query_one("#console-settings-model-select", Select)
+            modal._model_select_changed(Select.Changed(model_select, "model-b"))
+        elif change_path == "input":
+            modal.query_one("#console-settings-model-input", Input).value = "model-b"
+        elif change_path == "picker_selected":
+            modal._model_picker_selected(ModelSearchPicker.ModelSelected("model-b"))
+        else:
+            modal._model_picker_value_changed(
+                ModelSearchPicker.ModelValueChanged("model-b", custom=True)
+            )
+        await pilot.pause()
+        button = modal.query_one("#console-settings-test-generation", Button)
+        assert str(button.label) == "Test generation"
+        assert button.disabled is False
+        assert "Testing generation" not in str(
+            modal.query_one(
+                "#console-settings-generation-test-status", Static
+            ).renderable
+        )
+        cancellation_copy = str(
+            modal.query_one(
+                "#console-settings-generation-test-status", Static
+            ).renderable
+        )
+        assert "Stopped waiting" in cancellation_copy
+        assert "may continue" in cancellation_copy
+        assert "may still be billed" in cancellation_copy
+        assert "Generation · Succeeded" not in str(
+            modal.query_one("#console-settings-readiness", Static).renderable
+        )
+
+        release.set()
+        await pilot.pause(0.1)
+        assert "Generation · Succeeded" not in str(
+            modal.query_one("#console-settings-readiness", Static).renderable
+        )
+
+
+@pytest.mark.parametrize(
+    "change_path", ("provider", "endpoint", "generation", "connection_test")
+)
+@pytest.mark.asyncio
+async def test_implicit_generation_cancellation_keeps_billing_warning_and_fences_late_result(
+    change_path: str,
+) -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def cancellation_resistant_tester(_request):
+        entered.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            await release.wait()
+        return settings_modal_module.ProviderGenerationProbeResult("succeeded")
+
+    async def connection_tester(_identity):
+        return settings_modal_module.ProviderProbeResult("reachable", ("model-a",))
+
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        providers_models={
+            "llama_cpp": ["model-a"],
+            "openai": ["gpt-4.1"],
+        },
+        generation_tester=cancellation_resistant_tester,
+        connection_tester=connection_tester,
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one("#console-settings-test-generation", Button).press()
+        modal.query_one("#console-settings-confirm-generation", Button).press()
+        await asyncio.wait_for(entered.wait(), 1)
+
+        if change_path == "provider":
+            modal._switch_provider("openai")
+        elif change_path == "endpoint":
+            modal.query_one("#console-settings-base-url", Input).value = (
+                "http://127.0.0.1:9199"
+            )
+        elif change_path == "generation":
+            modal.query_one("#console-settings-streaming", Button).press()
+        else:
+            modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button).press()
+        await pilot.pause()
+
+        status = str(
+            modal.query_one(
+                "#console-settings-generation-test-status", Static
+            ).renderable
+        )
+        assert modal._active_generation_probe_token is None
+        assert "Stopped waiting" in status
+        assert "may continue" in status
+        assert "may still be billed" in status
+        assert "Generation · Succeeded" not in str(
+            modal.query_one("#console-settings-readiness", Static).renderable
+        )
+
+        release.set()
+        await pilot.pause(0.1)
+        status = str(
+            modal.query_one(
+                "#console-settings-generation-test-status", Static
+            ).renderable
+        )
+        assert "succeeded" not in status.lower()
+        assert "may still be billed" in status
+
+
+@pytest.mark.asyncio
+async def test_generation_test_cancel_action_and_close_cancel_active_request() -> None:
+    entered = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def waiting_tester(_request):
+        entered.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        base_url="http://127.0.0.1:9099",
+    )
+    modal = _basic_modal(settings, app, generation_tester=waiting_tester)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        button = modal.query_one("#console-settings-test-generation", Button)
+        button.press()
+        modal.query_one("#console-settings-confirm-generation", Button).press()
+        await asyncio.wait_for(entered.wait(), 1)
+        assert str(button.label) == "Cancel test"
+        running_copy = str(
+            modal.query_one(
+                "#console-settings-generation-test-status", Static
+            ).renderable
+        )
+        assert "Cancel stops waiting" in running_copy
+        assert "may continue" in running_copy
+        assert "may still be billed" in running_copy
+
+        button.press()
+        await asyncio.wait_for(cancelled.wait(), 1)
+        await pilot.pause()
+        assert str(button.label) == "Test generation"
+        cancel_copy = str(
+            modal.query_one(
+                "#console-settings-generation-test-status", Static
+            ).renderable
+        )
+        assert "Stopped waiting" in cancel_copy
+        assert "may continue" in cancel_copy
+        assert "may still be billed" in cancel_copy
+
+    entered = asyncio.Event()
+    cancelled = asyncio.Event()
+    second_app = ModalHarness()
+    second = _basic_modal(settings, second_app, generation_tester=waiting_tester)
+    async with second_app.run_test(size=(120, 40)) as pilot:
+        await second_app.push_screen(second)
+        await pilot.pause()
+        second.query_one("#console-settings-test-generation", Button).press()
+        second.query_one("#console-settings-confirm-generation", Button).press()
+        await asyncio.wait_for(entered.wait(), 1)
+        second.action_dismiss()
+        await asyncio.wait_for(cancelled.wait(), 1)
+
+
+@pytest.mark.asyncio
+async def test_generation_test_unsupported_provider_has_fixed_copy_and_no_action() -> None:
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="local_onnx", model="model-a"),
+        app,
+        providers_models={"local_onnx": ["model-a"]},
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        assert modal.query_one("#console-settings-test-generation", Button).display is False
+        unavailable = modal.query_one(
+            "#console-settings-generation-unavailable", Static
+        )
+        assert unavailable.display
+        assert str(unavailable.renderable) == (
+            "Generation test unavailable for this provider."
+        )
+
+
+@pytest.mark.parametrize("change_path", ["legacy_select", "provider_picker"])
+@pytest.mark.asyncio
+async def test_provider_switch_syncs_generation_test_action_bidirectionally(
+    change_path: str,
+) -> None:
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        providers_models={
+            "llama_cpp": ["model-a"],
+            "openai": ["gpt-4.1"],
+        },
+    )
+
+    async def switch(provider: str) -> None:
+        sync_trace.clear()
+        if change_path == "legacy_select":
+            provider_select = modal.query_one("#console-settings-provider", Select)
+            with provider_select.prevent(Select.Changed):
+                provider_select.value = provider
+            modal._provider_changed(Select.Changed(provider_select, provider))
+        else:
+            modal._provider_picker_selected(
+                ConsoleProviderPicker.ProviderSelected(provider)
+            )
+        await pilot.pause()
+        assert sync_trace[-2:] == [
+            ("generation_controls", provider),
+            ("generation_test", provider),
+        ]
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        # The paid-test action must not rely on incidental generation-choice
+        # events to refresh after a provider transition.
+        sync_trace: list[tuple[str, str]] = []
+        sync_generation_test_controls = modal._sync_generation_test_controls
+
+        def sync_test_controls() -> None:
+            sync_trace.append(("generation_test", modal._active_provider))
+            sync_generation_test_controls()
+
+        modal._sync_generation_test_controls = sync_test_controls
+        modal._sync_generation_control_support = lambda: sync_trace.append(
+            ("generation_controls", modal._active_provider)
+        )
+        action = modal.query_one("#console-settings-test-generation", Button)
+        unavailable = modal.query_one(
+            "#console-settings-generation-unavailable", Static
+        )
+
+        assert action.display
+        assert action.disabled is False
+        assert unavailable.display is False
+
+        await switch("openai")
+        assert action.display is False
+        assert action.disabled is True
+        assert unavailable.display
+        assert str(unavailable.renderable) == (
+            "Generation test unavailable for this provider."
+        )
+
+        await switch("llama_cpp")
+        assert action.display
+        assert action.disabled is False
+        assert unavailable.display is False
+
+
+@pytest.mark.asyncio
+async def test_switch_provider_explicitly_syncs_generation_test_controls() -> None:
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        app,
+        providers_models={
+            "llama_cpp": ["model-a"],
+            "openai": ["gpt-4.1"],
+        },
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        calls: list[str] = []
+        modal.query_one(
+            "#console-settings-provider-picker", ConsoleProviderPicker
+        ).set_provider = lambda _provider: None
+        modal._cancel_connection_probe = lambda: None
+        modal._invalidate_model_discovery_for_provider = lambda _provider: None
+        modal._store_current_model_for_provider = lambda _provider: None
+        modal._store_current_base_url_for_provider = lambda _provider: None
+        modal._sync_model_controls = lambda _provider, _model: None
+        modal._sync_base_url_control = lambda _provider, _base_url: None
+        modal._advance_model_discovery_generation = lambda: False
+        modal._sync_model_discover_controls = lambda _provider: None
+        modal._sync_provider_choice_placeholders = lambda: None
+        modal._sync_generation_control_support = lambda: None
+        modal._sync_readiness_display = lambda: None
+        modal._sync_visual_representation_availability = lambda: None
+        modal._sync_generation_test_controls = lambda: calls.append(
+            modal._active_provider
+        )
+
+        modal._switch_provider("openai")
+
+        assert calls == ["openai"]
+
+
+@pytest.mark.asyncio
+async def test_connection_retest_preserves_succeeded_generation_evidence() -> None:
+    connection_entered = asyncio.Event()
+    connection_release = asyncio.Event()
+
+    async def generation_tester(_request):
+        return settings_modal_module.ProviderGenerationProbeResult("succeeded")
+
+    async def connection_tester(_identity):
+        connection_entered.set()
+        await connection_release.wait()
+        return settings_modal_module.ProviderProbeResult("reachable", ("model-a",))
+
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        generation_tester=generation_tester,
+        connection_tester=connection_tester,
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one("#console-settings-test-generation", Button).press()
+        modal.query_one("#console-settings-confirm-generation", Button).press()
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if "Generation · Succeeded" in str(
+                modal.query_one("#console-settings-readiness", Static).renderable
+            ):
+                break
+
+        modal.query_one("#console-settings-model-discover", Button).press()
+        await asyncio.wait_for(connection_entered.wait(), 1)
+        readiness = str(
+            modal.query_one("#console-settings-readiness", Static).renderable
+        )
+        assert "Endpoint · Testing" in readiness
+        assert "Generation · Succeeded" in readiness
+        connection_release.set()
+
+
+@pytest.mark.parametrize(
+    "edit_kind", ["provider", "endpoint", "model", "generation"]
+)
+@pytest.mark.asyncio
+async def test_succeeded_generation_evidence_is_invalidated_by_relevant_edit(
+    edit_kind: str,
+) -> None:
+    async def generation_tester(_request):
+        return settings_modal_module.ProviderGenerationProbeResult("succeeded")
+
+    app = ModalHarness()
+    app.app_config["api_settings"]["ollama"] = {
+        "api_url": "http://127.0.0.1:11434"
+    }
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        providers_models={
+            "llama_cpp": ["model-a", "model-b"],
+            "ollama": ["model-a"],
+        },
+        generation_tester=generation_tester,
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one("#console-settings-test-generation", Button).press()
+        modal.query_one("#console-settings-confirm-generation", Button).press()
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if "Generation · Succeeded" in str(
+                modal.query_one("#console-settings-readiness", Static).renderable
+            ):
+                break
+
+        if edit_kind == "provider":
+            modal._switch_provider("ollama")
+        elif edit_kind == "endpoint":
+            modal.query_one("#console-settings-base-url", Input).value = (
+                "http://127.0.0.1:9199"
+            )
+        elif edit_kind == "model":
+            modal._model_picker_selected(ModelSearchPicker.ModelSelected("model-b"))
+        else:
+            modal.query_one("#console-settings-temperature", Input).value = "0.3"
+        await pilot.pause()
+
+        readiness = str(
+            modal.query_one("#console-settings-readiness", Static).renderable
+        )
+        assert "Generation · Succeeded" not in readiness
+        assert "Generation · Changed since test" in readiness
+        status = str(
+            modal.query_one(
+                "#console-settings-generation-test-status", Static
+            ).renderable
+        )
+        assert "succeeded" not in status.lower()
+        assert "Changed since test" in status
+
+
+@pytest.mark.parametrize(
+    ("control_id", "new_value"),
+    [
+        ("console-settings-reasoning-effort", "high"),
+        ("console-settings-reasoning-summary", "concise"),
+        ("console-settings-verbosity", "high"),
+        ("console-settings-thinking-effort", "high"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_generation_choice_edit_immediately_marks_succeeded_test_changed(
+    control_id: str,
+    new_value: str,
+) -> None:
+    async def generation_tester(_request):
+        return settings_modal_module.ProviderGenerationProbeResult("succeeded")
+
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        generation_tester=generation_tester,
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one("#console-settings-test-generation", Button).press()
+        modal.query_one("#console-settings-confirm-generation", Button).press()
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if "Generation · Succeeded" in str(
+                modal.query_one("#console-settings-readiness", Static).renderable
+            ):
+                break
+
+        modal.query_one(f"#{control_id}", Select).value = new_value
+        await pilot.pause()
+
+        readiness = str(
+            modal.query_one("#console-settings-readiness", Static).renderable
+        )
+        assert "Generation · Succeeded" not in readiness
+        assert "Generation · Changed since test" in readiness
+        assert "Changed since test" in str(
+            modal.query_one(
+                "#console-settings-generation-test-status", Static
+            ).renderable
+        )
+
+
+@pytest.mark.parametrize("edit_kind", ["streaming", "temperature", "enum"])
+@pytest.mark.asyncio
+async def test_generation_edit_marks_changed_without_invalidating_endpoint(
+    edit_kind: str,
+) -> None:
+    async def generation_tester(_request):
+        return settings_modal_module.ProviderGenerationProbeResult("succeeded")
+
+    async def connection_tester(_identity):
+        return settings_modal_module.ProviderProbeResult("reachable", ("model-a",))
+
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        generation_tester=generation_tester,
+        connection_tester=connection_tester,
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one("#console-settings-model-discover", Button).press()
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if "Endpoint · Reachable" in str(
+                modal.query_one("#console-settings-readiness", Static).renderable
+            ):
+                break
+        modal.query_one("#console-settings-test-generation", Button).press()
+        modal.query_one("#console-settings-confirm-generation", Button).press()
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if "Generation · Succeeded" in str(
+                modal.query_one("#console-settings-readiness", Static).renderable
+            ):
+                break
+
+        if edit_kind == "streaming":
+            modal.query_one("#console-settings-streaming", Button).press()
+        elif edit_kind == "temperature":
+            modal.query_one("#console-settings-temperature", Input).value = "0.3"
+        else:
+            modal.query_one(
+                "#console-settings-reasoning-effort", Select
+            ).value = "high"
+        await pilot.pause()
+
+        readiness = str(
+            modal.query_one("#console-settings-readiness", Static).renderable
+        )
+        assert "Endpoint · Reachable" in readiness
+        assert "Generation · Changed since test" in readiness
+
+
+@pytest.mark.asyncio
+async def test_malformed_generation_tester_result_fails_bounded_and_restores_action() -> None:
+    async def malformed_tester(_request):
+        return {"text": "secret provider response"}
+
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        generation_tester=malformed_tester,
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one("#console-settings-test-generation", Button).press()
+        modal.query_one("#console-settings-confirm-generation", Button).press()
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if modal._active_generation_probe_token is None:
+                break
+
+        assert modal._active_generation_probe_token is None
+        assert str(
+            modal.query_one("#console-settings-test-generation", Button).label
+        ) == "Test generation"
+        status = str(
+            modal.query_one(
+                "#console-settings-generation-test-status", Static
+            ).renderable
+        )
+        assert status == "Provider generation test failed."
+        assert "secret provider response" not in status
+
+
+@pytest.mark.asyncio
+async def test_generation_timeout_discloses_provider_work_may_continue_and_bill() -> None:
+    async def timeout_tester(_request):
+        return settings_modal_module.ProviderGenerationProbeResult(
+            "failed", "timeout"
+        )
+
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        generation_tester=timeout_tester,
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one("#console-settings-test-generation", Button).press()
+        modal.query_one("#console-settings-confirm-generation", Button).press()
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if modal._active_generation_probe_token is None:
+                break
+
+        status = str(
+            modal.query_one(
+                "#console-settings-generation-test-status", Static
+            ).renderable
+        )
+        assert status == (
+            "Generation test timed out. Already-started provider work may continue "
+            "and may still be billed."
+        )

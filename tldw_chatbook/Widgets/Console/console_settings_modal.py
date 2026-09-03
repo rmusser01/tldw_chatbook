@@ -69,9 +69,14 @@ from tldw_chatbook.Chat.provider_endpoint_contract import (
     connection_probe_availability,
 )
 from tldw_chatbook.Chat.provider_test_evidence import (
+    ConsoleGenerationTestAvailability,
+    ConsoleGenerationTestRequest,
     ProviderDraftIdentity,
+    ProviderGenerationProbeResult,
     ProviderProbeResult,
+    ProviderTestEvidence,
     ProviderTestEvidenceStore,
+    console_generation_test_availability,
 )
 from tldw_chatbook.Chat.provider_setup_persistence import canonical_provider_key
 from tldw_chatbook.config import save_settings_to_cli_config
@@ -157,6 +162,23 @@ MODEL_DISCOVER_SCOPE_COPY = (
 CONNECTION_PROBE_UNAVAILABLE_COPY = (
     "No non-billable live connection check is available for this provider."
 )
+GENERATION_TEST_UNAVAILABLE_COPY = "Generation test unavailable for this provider."
+GENERATION_TEST_CONSENT_COPY = (
+    "This sends one paid generation request and may incur provider charges."
+)
+GENERATION_TEST_CANCELLED_COPY = (
+    "Stopped waiting. Already-started provider work may continue and may still be billed."
+)
+GENERATION_TEST_RUNNING_COPY = (
+    "Testing generation… Cancel stops waiting; already-started provider work may "
+    "continue and may still be billed."
+)
+GENERATION_TEST_CHANGED_COPY = (
+    "Changed since test. Prior generation evidence no longer applies."
+)
+GENERATION_TEST_BUTTON_ID = "console-settings-test-generation"
+GENERATION_TEST_STATUS_ID = "console-settings-generation-test-status"
+_PROVIDER_DEFAULT_IDENTITY_ENDPOINT = "https://provider-default.invalid"
 _NO_CONFIGURED_MODELS_VALUE = "__no_configured_models__"
 MODEL_DISCOVER_MISSING_URL_COPY = "Enter a base URL to discover models."
 MODEL_DISCOVER_INVALID_URL_COPY = (
@@ -164,6 +186,9 @@ MODEL_DISCOVER_INVALID_URL_COPY = (
 )
 ModelProber = Callable[[str, str], Awaitable[LocalModelProbeResult]]
 ConnectionTester = Callable[[ProviderDraftIdentity], Awaitable[ProviderProbeResult]]
+GenerationTester = Callable[
+    [ConsoleGenerationTestRequest], Awaitable[ProviderGenerationProbeResult]
+]
 CurrentMemoryResetter = Callable[[], tuple[str, int] | None]
 CurrentMemoryUndo = Callable[[str, int], bool]
 AllMemoryResetter = Callable[[], int]
@@ -185,6 +210,13 @@ _MODEL_PROVENANCE_COPY = {
         "Custom model ID; generation not verified."
     ),
 }
+
+
+async def _default_generation_tester(
+    _request: ConsoleGenerationTestRequest,
+) -> ProviderGenerationProbeResult:
+    """Fail closed when the owning Console screen did not inject a tester."""
+    return ProviderGenerationProbeResult("failed", "provider_error")
 
 
 _CONSOLE_SETTINGS_DRAFT_VERSION = 1
@@ -1155,6 +1187,7 @@ class ConsoleSettingsModal(
         compact_now: ContextCompactor | None = None,
         model_prober: ModelProber | None = None,
         connection_tester: ConnectionTester | None = None,
+        generation_tester: GenerationTester | None = None,
         draft_rebaser: DraftRebaser | None = None,
         live_committer: LiveCommitter | None = None,
         default_readiness_resolver: DefaultReadinessResolver | None = None,
@@ -1231,6 +1264,8 @@ class ConsoleSettingsModal(
             raise TypeError("persist_and_apply must be callable")
         if connection_tester is not None and not callable(connection_tester):
             raise TypeError("connection_tester must be callable")
+        if generation_tester is not None and not callable(generation_tester):
+            raise TypeError("generation_tester must be callable")
         self._expected_settings_revision = expected_settings_revision
         self._persist_and_apply = persist_and_apply
         self._focus_model = focus_model
@@ -1277,8 +1312,15 @@ class ConsoleSettingsModal(
         self._connection_tester: ConnectionTester = (
             connection_tester or self._connection_test_from_model_prober
         )
+        self._generation_tester: GenerationTester = (
+            generation_tester or _default_generation_tester
+        )
         self._connection_evidence_store = ProviderTestEvidenceStore()
         self._active_connection_probe_token: object | None = None
+        self._active_generation_probe_token: object | None = None
+        self._generation_confirmation_visible = False
+        self._generation_changed_since_test = False
+        self._generation_cancel_warning_visible = False
         self._draft_rebaser = draft_rebaser
         self._live_committer = live_committer
         self._default_readiness_resolver = default_readiness_resolver
@@ -1824,6 +1866,52 @@ class ConsoleSettingsModal(
                                 classes="console-settings-modal-row",
                                 markup=False,
                             )
+                        generation_supported = (
+                            console_generation_test_availability(
+                                self._active_provider
+                            )
+                            is ConsoleGenerationTestAvailability.SUPPORTED
+                        )
+                        generation_test = Button(
+                            "Test generation",
+                            id=GENERATION_TEST_BUTTON_ID,
+                        )
+                        generation_test.display = generation_supported
+                        yield generation_test
+                        generation_unavailable = Static(
+                            GENERATION_TEST_UNAVAILABLE_COPY,
+                            id="console-settings-generation-unavailable",
+                            classes="console-settings-field-help",
+                            markup=False,
+                        )
+                        generation_unavailable.display = not generation_supported
+                        yield generation_unavailable
+                        with Vertical(
+                            id="console-settings-generation-confirmation"
+                        ) as generation_confirmation:
+                            generation_confirmation.display = False
+                            yield Static(
+                                GENERATION_TEST_CONSENT_COPY,
+                                id="console-settings-generation-consent-copy",
+                                markup=False,
+                            )
+                            with Horizontal():
+                                yield Button(
+                                    "Run 1-token test",
+                                    id="console-settings-confirm-generation",
+                                )
+                                yield Button(
+                                    "Cancel",
+                                    id="console-settings-cancel-generation",
+                                )
+                        generation_status = Static(
+                            "",
+                            id=GENERATION_TEST_STATUS_ID,
+                            classes="console-settings-field-help",
+                            markup=False,
+                        )
+                        generation_status.display = False
+                        yield generation_status
 
                 with Collapsible(
                     title="Advanced generation",
@@ -2499,6 +2587,7 @@ class ConsoleSettingsModal(
                 self._sync_visual_representation_availability()
                 self.call_after_refresh(self._focus_context_control)
         self._sync_generation_control_support()
+        self._sync_generation_test_controls()
         self._sync_completion_actions()
         if self._suspended_draft is None and not self._focus_model and self._active_view == "model":
             self.call_after_refresh(self._focus_highest_priority_connection)
@@ -2730,6 +2819,7 @@ class ConsoleSettingsModal(
         self._sync_model_controls(provider, self._model_for_provider(provider))
         self._sync_base_url_control(provider, self._base_url_for_provider(provider))
         self._sync_model_discover_controls(provider)
+        self._sync_generation_test_controls()
         self._sync_provider_choice_placeholders()
         self._sync_generation_control_support()
         self._sync_readiness_display()
@@ -3500,6 +3590,7 @@ class ConsoleSettingsModal(
         if self._compaction_is_active():
             self._show_settings_close_guard("compaction")
             return
+        self._cancel_generation_test()
         self.dismiss_safe_once(None)
 
     def _show_settings_close_guard(self, mode: str) -> None:
@@ -4151,12 +4242,15 @@ class ConsoleSettingsModal(
     def _toggle_streaming(self, event: Button.Pressed) -> None:
         """Cycle the profile draft through Inherit, On, and Off."""
         event.stop()
+        self._cancel_generation_test()
+        self._remember_generation_test_became_stale()
         self._streaming_draft = {
             None: True,
             True: False,
             False: None,
         }[self._streaming_draft]
         event.button.label = self._streaming_toggle_label()
+        self._sync_readiness_display()
         self._sync_completion_actions()
 
     def _streaming_toggle_label(self) -> str:
@@ -4324,8 +4418,27 @@ class ConsoleSettingsModal(
         control_id = event.select.id
         if control_id is None:
             return
+        self._cancel_generation_test()
+        self._remember_generation_test_became_stale()
         self._invalid_generation_choice_drafts.pop(control_id, None)
         self._sync_generation_choice_validation(control_id)
+        self._sync_readiness_display()
+
+    @on(
+        Input.Changed,
+        "#console-settings-temperature, #console-settings-top-p, "
+        "#console-settings-min-p, #console-settings-top-k, "
+        "#console-settings-max-tokens, #console-settings-seed, "
+        "#console-settings-presence-penalty, #console-settings-frequency-penalty, "
+        "#console-settings-thinking-budget-tokens",
+    )
+    def _generation_number_changed(self, _event: Input.Changed) -> None:
+        """Fence paid-test evidence when a consumed generation value changes."""
+        if self._restoring_suspended_draft:
+            return
+        self._cancel_generation_test()
+        self._remember_generation_test_became_stale()
+        self._sync_readiness_display()
 
     def _sync_generation_control_support(self) -> None:
         """Apply authoritative support without rewriting retained draft values."""
@@ -4601,6 +4714,7 @@ class ConsoleSettingsModal(
         self._sync_model_discover_controls(provider)
         self._sync_provider_choice_placeholders()
         self._sync_generation_control_support()
+        self._sync_generation_test_controls()
         self._sync_readiness_display()
         self._sync_visual_representation_availability()
         self._sync_endpoint_controls()
@@ -4786,6 +4900,7 @@ class ConsoleSettingsModal(
         self._cancel_connection_probe()
         self._advance_model_discovery_generation()
         self._sync_model_discover_controls(self._active_provider)
+        self._sync_readiness_display()
 
     @on(Select.Changed, "#console-context-compaction-representation")
     def _compaction_representation_changed(self, _event: Select.Changed) -> None:
@@ -4825,9 +4940,18 @@ class ConsoleSettingsModal(
     def _current_connection_probe_identity(self) -> ProviderDraftIdentity | None:
         """Return the secret-free exact identity for the current modal draft."""
         discovery_identity = self._current_draft_discovery_identity()
-        if discovery_identity is None:
+        provider_key = provider_config_key(self._active_provider)
+        if not provider_key:
             return None
-        provider_key = discovery_identity.provider_key
+        connection_identity = (
+            discovery_identity.connection_identity
+            if discovery_identity is not None
+            else canonical_connection_identity(
+                provider_key, _PROVIDER_DEFAULT_IDENTITY_ENDPOINT
+            )
+        )
+        if connection_identity is None:
+            return None
         provider_settings = self._provider_settings(provider_key)
         credential_source = configured_provider_credential_source(provider_settings)
         if credential_source is None:
@@ -4840,10 +4964,10 @@ class ConsoleSettingsModal(
                 credential_source = "stored"
         return ProviderDraftIdentity(
             provider_key=provider_key,
-            connection_identity=discovery_identity.connection_identity,
+            connection_identity=connection_identity,
             credential_source=credential_source,
             credential_revision=self._expected_settings_revision,
-            draft_generation=discovery_identity.draft_generation,
+            draft_generation=self._model_discovery_generation,
         )
 
     async def _connection_test_from_model_prober(
@@ -4859,8 +4983,11 @@ class ConsoleSettingsModal(
             return ProviderProbeResult("reachable", tuple(result.model_ids))
         return ProviderProbeResult("unreachable", (), "connection_error")
 
-    def _cancel_connection_probe(self) -> None:
+    def _cancel_connection_probe(self, *, mark_generation_stale: bool = True) -> None:
         """Cancel the active worker and revoke any result settlement capability."""
+        self._cancel_generation_test()
+        if mark_generation_stale:
+            self._remember_generation_test_became_stale()
         try:
             self.workers.cancel_group(self, "console-settings-model-discovery")
         except Exception:
@@ -4869,9 +4996,27 @@ class ConsoleSettingsModal(
         self._active_connection_probe_token = None
         if token is not None:
             self._connection_evidence_store.cancel_probe(token)
-        if self.is_mounted:
+        if self.is_mounted and token is not None:
             self._sync_model_discover_controls(self._active_provider)
             self._sync_readiness_display()
+
+    def _remember_generation_test_became_stale(self) -> None:
+        """Remember a completed generation result invalidated by a draft edit."""
+
+        identity = self._current_connection_probe_identity()
+        evidence = (
+            self._connection_evidence_store.evidence_for(identity)
+            if identity is not None
+            else None
+        )
+        if evidence is None:
+            evidence = self._connection_evidence_store.latest_evidence()
+        if evidence is not None and evidence.generation in {"succeeded", "failed"}:
+            self._generation_changed_since_test = True
+            if identity is not None:
+                self._connection_evidence_store.mark_generation_changed(identity)
+            if self.is_mounted:
+                self._set_generation_test_status(self._generation_stale_status_copy())
 
     def _current_draft_discovery_identity(
         self,
@@ -4935,7 +5080,9 @@ class ConsoleSettingsModal(
         self._sync_completion_actions()
         return True
 
-    def _advance_model_generation_preserving_current_listing(self) -> None:
+    def _advance_model_generation_preserving_current_listing(
+        self, *, force: bool = False
+    ) -> None:
         """Rebind endpoint-list evidence across a model-only draft transition."""
         preserve_listing = self._current_model_discovery_matches_current_draft()
         listed_model_ids = self._current_discovered_model_ids
@@ -4946,7 +5093,8 @@ class ConsoleSettingsModal(
             else None
         )
         changed = self._advance_model_discovery_generation(
-            clear_status=not preserve_listing
+            clear_status=not preserve_listing,
+            force=force,
         )
         if not changed or not preserve_listing:
             return
@@ -5090,6 +5238,176 @@ class ConsoleSettingsModal(
         if self._is_effectively_focusable(cancel):
             cancel.focus()
 
+    def _sync_generation_test_controls(self) -> None:
+        """Project provider support and current worker state into fixed controls."""
+        try:
+            button = self.query_one(f"#{GENERATION_TEST_BUTTON_ID}", Button)
+            unavailable = self.query_one(
+                "#console-settings-generation-unavailable", Static
+            )
+            confirmation = self.query_one(
+                "#console-settings-generation-confirmation", Vertical
+            )
+        except (NoMatches, QueryError):
+            return
+        supported = (
+            console_generation_test_availability(self._active_provider)
+            is ConsoleGenerationTestAvailability.SUPPORTED
+        )
+        running = self._active_generation_probe_token is not None
+        button.display = supported
+        button.disabled = not supported
+        button.label = "Cancel test" if running else "Test generation"
+        unavailable.display = not supported
+        unavailable.update(GENERATION_TEST_UNAVAILABLE_COPY)
+        confirmation.display = bool(
+            supported and self._generation_confirmation_visible and not running
+        )
+
+    def _set_generation_test_status(self, text: str) -> None:
+        try:
+            status = self.query_one(f"#{GENERATION_TEST_STATUS_ID}", Static)
+        except (NoMatches, QueryError):
+            return
+        status.update(text)
+        status.display = bool(text)
+
+    @on(Button.Pressed, f"#{GENERATION_TEST_BUTTON_ID}")
+    def _generation_test_pressed(self, event: Button.Pressed) -> None:
+        """Require fresh consent, or cancel the currently running paid test."""
+        event.stop()
+        if self._active_generation_probe_token is not None:
+            self._cancel_generation_test(visible_status=True)
+            return
+        if (
+            console_generation_test_availability(self._active_provider)
+            is not ConsoleGenerationTestAvailability.SUPPORTED
+        ):
+            return
+        self._generation_confirmation_visible = True
+        self._sync_generation_test_controls()
+
+    @on(Button.Pressed, "#console-settings-cancel-generation")
+    def _cancel_generation_confirmation(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._generation_confirmation_visible = False
+        self._sync_generation_test_controls()
+
+    @on(Button.Pressed, "#console-settings-confirm-generation")
+    def _confirm_generation_test(self, event: Button.Pressed) -> None:
+        """Start exactly one test after consuming the current confirmation."""
+        event.stop()
+        if not self._generation_confirmation_visible:
+            return
+        self._generation_confirmation_visible = False
+        draft = self._build_draft()
+        errors = validate_console_session_settings(draft, app_config=self._app_config)
+        identity = self._current_connection_probe_identity()
+        if errors or identity is None:
+            self._set_generation_test_status(
+                "Generation test unavailable until provider settings are valid."
+            )
+            self._sync_generation_test_controls()
+            return
+        token = self._connection_evidence_store.begin_generation(identity)
+        self._generation_changed_since_test = False
+        self._generation_cancel_warning_visible = False
+        self._active_generation_probe_token = token
+        self._sync_readiness_display()
+        self._set_generation_test_status(GENERATION_TEST_RUNNING_COPY)
+        self._sync_generation_test_controls()
+        request = ConsoleGenerationTestRequest(draft, identity)
+        self.run_worker(
+            self._run_generation_test(request, token),
+            exclusive=True,
+            group="console-settings-generation-test",
+        )
+
+    async def _run_generation_test(
+        self,
+        request: ConsoleGenerationTestRequest,
+        token: object,
+    ) -> None:
+        """Settle only a bounded result for the exact draft that started it."""
+        try:
+            result = await self._generation_tester(request)
+        except asyncio.CancelledError:
+            self._connection_evidence_store.cancel_generation_probe(token)
+            if self._active_generation_probe_token is token:
+                self._active_generation_probe_token = None
+            raise
+        except Exception:
+            result = ProviderGenerationProbeResult("failed", "provider_error")
+        if type(result) is not ProviderGenerationProbeResult:
+            result = ProviderGenerationProbeResult("failed", "provider_error")
+        if request.identity != self._current_connection_probe_identity():
+            self._connection_evidence_store.cancel_generation_probe(token)
+            if self._active_generation_probe_token is token:
+                self._active_generation_probe_token = None
+            if self.is_mounted:
+                self._sync_readiness_display()
+                self._sync_generation_test_controls()
+            return
+        if not self._connection_evidence_store.settle_generation(token, result):
+            if self._active_generation_probe_token is token:
+                self._active_generation_probe_token = None
+            if self.is_mounted:
+                self._sync_readiness_display()
+                self._sync_generation_test_controls()
+            return
+        if self._active_generation_probe_token is token:
+            self._active_generation_probe_token = None
+        if result.generation == "succeeded":
+            copy = "Generation test succeeded; response content was not retained."
+        else:
+            failure_copy = {
+                "authentication": "Authentication failed.",
+                "rate_limit": "Provider rate limit reached.",
+                "bad_request": "Provider rejected the test request.",
+                "timeout": (
+                    "Generation test timed out. Already-started provider work may "
+                    "continue and may still be billed."
+                ),
+                "connection_error": "Could not connect to the provider.",
+                "provider_error": "Provider generation test failed.",
+            }
+            copy = failure_copy.get(
+                result.category, "Provider generation test failed."
+            )
+        self._set_generation_test_status(copy)
+        self._sync_readiness_display()
+        self._sync_generation_test_controls()
+
+    def _cancel_generation_test(self, *, visible_status: bool = False) -> None:
+        """Cancel the worker and revoke its exact settlement capability."""
+        try:
+            self.workers.cancel_group(self, "console-settings-generation-test")
+        except Exception:
+            pass
+        token = self._active_generation_probe_token
+        self._active_generation_probe_token = None
+        self._generation_confirmation_visible = False
+        if token is not None:
+            self._connection_evidence_store.cancel_generation_probe(token)
+            self._generation_cancel_warning_visible = True
+        if self.is_mounted:
+            status_copy = self._generation_stale_status_copy()
+            if visible_status and not status_copy:
+                status_copy = GENERATION_TEST_CANCELLED_COPY
+            self._set_generation_test_status(status_copy)
+            self._sync_readiness_display()
+            self._sync_generation_test_controls()
+
+    def _generation_stale_status_copy(self) -> str:
+        """Compose non-contradictory stale and cancellation disclosures."""
+
+        parts = []
+        if self._generation_cancel_warning_visible:
+            parts.append(GENERATION_TEST_CANCELLED_COPY)
+        if self._generation_changed_since_test:
+            parts.append(GENERATION_TEST_CHANGED_COPY)
+        return " ".join(parts)
+
     @on(Button.Pressed, f"#{MODEL_DISCOVER_BUTTON_ID}")
     def _model_discover_pressed(self, event: Button.Pressed) -> None:
         """Test the current connection through its non-generating models route."""
@@ -5109,12 +5427,32 @@ class ConsoleSettingsModal(
         if normalized_probe_url is None or not validate_url(normalized_probe_url):
             self._set_model_discover_status(MODEL_DISCOVER_INVALID_URL_COPY)
             return
-        self._cancel_connection_probe()
+        self._cancel_connection_probe(mark_generation_stale=False)
+        prior_identity = self._current_connection_probe_identity()
+        prior_evidence = (
+            self._connection_evidence_store.evidence_for(prior_identity)
+            if prior_identity is not None
+            else None
+        )
         discovery_identity = self._begin_model_discovery_identity(provider, base_url)
         identity = self._current_connection_probe_identity()
         if identity is None:
             self._set_model_discover_status(MODEL_DISCOVER_INVALID_URL_COPY)
             return
+        if prior_evidence is not None and prior_evidence.generation in {
+            "succeeded",
+            "failed",
+        }:
+            generation_token = self._connection_evidence_store.begin_generation(
+                identity
+            )
+            self._connection_evidence_store.settle_generation(
+                generation_token,
+                ProviderGenerationProbeResult(
+                    prior_evidence.generation,
+                    prior_evidence.generation_category,
+                ),
+            )
         token = self._connection_evidence_store.begin(identity)
         self._active_connection_probe_token = token
         event.button.disabled = True
@@ -5155,14 +5493,23 @@ class ConsoleSettingsModal(
                 (),
                 "connection_error",
             )
+        if not self.is_mounted:
+            self._discard_connection_probe_result(token)
+            return
+        if type(result) is not ProviderProbeResult:
+            result = ProviderProbeResult(
+                "unreachable",
+                (),
+                "connection_error",
+            )
         if (
-            type(result) is not ProviderProbeResult
-            or discovery_identity != self._current_draft_discovery_identity()
+            discovery_identity != self._current_draft_discovery_identity()
             or identity != self._current_connection_probe_identity()
         ):
-            self._connection_evidence_store.cancel_probe(token)
+            self._discard_connection_probe_result(token)
             return
         if not self._connection_evidence_store.settle(token, result):
+            self._discard_connection_probe_result(token)
             return
         if self._active_connection_probe_token is token:
             self._active_connection_probe_token = None
@@ -5176,6 +5523,16 @@ class ConsoleSettingsModal(
             rebound_token = self._connection_evidence_store.begin(rebound)
             self._connection_evidence_store.settle(rebound_token, result)
         self._sync_readiness_display()
+
+    def _discard_connection_probe_result(self, token: object) -> None:
+        """Revoke a stale probe and restore its action without publishing data."""
+
+        self._connection_evidence_store.cancel_probe(token)
+        if self._active_connection_probe_token is token:
+            self._active_connection_probe_token = None
+        if self.is_mounted:
+            self._sync_model_discover_controls(self._active_provider)
+            self._sync_readiness_display()
 
     def _apply_connection_probe_result(
         self,
@@ -5371,6 +5728,14 @@ class ConsoleSettingsModal(
             ).display = self._missing_credential_recovery_available(readiness)
         except (NoMatches, QueryError):
             pass
+        if (
+            (
+                self._generation_changed_since_test
+                or self._generation_cancel_warning_visible
+            )
+            and self._active_generation_probe_token is None
+        ):
+            self._set_generation_test_status(self._generation_stale_status_copy())
         self._sync_provider_model_section_emphasis()
         self._sync_completion_actions()
 
@@ -5380,11 +5745,56 @@ class ConsoleSettingsModal(
     ) -> ConsoleSettingsReadiness:
         """Build readiness with evidence only for the exact mounted draft."""
         identity = self._current_connection_probe_identity()
-        evidence = (
+        exact_evidence = (
             self._connection_evidence_store.evidence_for(identity)
             if identity is not None
             else None
         )
+        latest_evidence = self._connection_evidence_store.latest_evidence()
+        if exact_evidence is not None:
+            evidence = exact_evidence
+        elif latest_evidence is not None and latest_evidence.endpoint in {
+            "reachable",
+            "unreachable",
+            "model_listing_unavailable",
+        }:
+            evidence = latest_evidence
+        elif (
+            identity is not None
+            and latest_evidence is not None
+            and latest_evidence.generation
+            in {"succeeded", "failed", "changed_since_test"}
+        ):
+            evidence = ProviderTestEvidence(
+                identity,
+                "not_tested",
+                (),
+                credential=(
+                    "not_required"
+                    if identity.credential_source == "none"
+                    else "present_unverified"
+                ),
+                generation="changed_since_test",
+            )
+        else:
+            evidence = None
+        if (
+            self._generation_changed_since_test
+            and identity is not None
+            and evidence is not None
+            and evidence.identity.provider_key == identity.provider_key
+            and evidence.identity.connection_identity == identity.connection_identity
+            and evidence.identity.credential_source == identity.credential_source
+            and evidence.identity.credential_revision == identity.credential_revision
+        ):
+            evidence = ProviderTestEvidence(
+                identity,
+                evidence.endpoint,
+                evidence.model_ids,
+                evidence.category,
+                evidence.credential,
+                "changed_since_test",
+            )
         return build_console_settings_readiness(
             draft,
             app_config=self._app_config,

@@ -323,6 +323,7 @@ from ...Chat.console_session_settings import (
     build_console_settings_summary_state,
     build_target_default_console_session_settings,
     unsaved_console_endpoint_warning,
+    validate_console_session_settings,
 )
 from ...Chat.console_chat_store import (
     MAX_PENDING_ATTACHMENTS,
@@ -334,8 +335,16 @@ from ...Chat.console_chat_store import (
     ConsoleSettingsPolicyFailureLabel,
 )
 from ...Chat.console_provider_gateway import (
+    AuxiliaryCompletionRequest,
     DEFAULT_LLAMACPP_BASE_URL,
     normalize_llamacpp_base_url,
+)
+from ...Chat.Chat_Deps import (
+    ChatAuthenticationError,
+    ChatBadRequestError,
+    ChatConfigurationError,
+    ChatProviderError,
+    ChatRateLimitError,
 )
 from ...Chat.console_provider_endpoints import (
     first_configured_endpoint,
@@ -378,7 +387,12 @@ from ...Chat.provider_readiness import (
     provider_config_key,
     resolve_provider_credential,
 )
-from ...Chat.provider_test_evidence import ProviderDraftIdentity, ProviderProbeResult
+from ...Chat.provider_test_evidence import (
+    ConsoleGenerationTestRequest,
+    ProviderDraftIdentity,
+    ProviderGenerationProbeResult,
+    ProviderProbeResult,
+)
 from .settings_endpoint_probe import (
     SettingsEndpointProbePurpose,
     probe_settings_endpoint,
@@ -2906,6 +2920,71 @@ class ChatScreen(BaseAppScreen):
         )
         return provider_probe_result_from_settings_outcome(outcome)
 
+    async def _test_console_generation(
+        self,
+        session_id: str,
+        request: ConsoleGenerationTestRequest,
+    ) -> ProviderGenerationProbeResult:
+        """Run one isolated, bounded completion against a validated modal draft."""
+        if type(request) is not ConsoleGenerationTestRequest:
+            return ProviderGenerationProbeResult("failed", "bad_request")
+        try:
+            selection = self._build_console_provider_selection_for_settings(
+                session_id, request.settings
+            )
+            gateway = self._ensure_console_provider_gateway()
+            async with asyncio.timeout(20.0):
+                resolution = await gateway.resolve_for_send(selection)
+                if not resolution.ready:
+                    return ProviderGenerationProbeResult("failed", "bad_request")
+                test_resolution = replace(
+                    resolution,
+                    streaming=False,
+                    reasoning_effort=None,
+                    reasoning_summary=None,
+                    verbosity=None,
+                    thinking_effort=None,
+                    thinking_budget_tokens=None,
+                    request_timeout=15.0,
+                    request_retries=0,
+                    request_retry_delay=0.0,
+                )
+                auxiliary_request = AuxiliaryCompletionRequest(
+                    resolution=test_resolution,
+                    messages=(
+                        {"role": "user", "content": "Reply with one short token."},
+                    ),
+                    response_format=None,
+                    max_output_tokens=1,
+                )
+                await gateway.complete_auxiliary(auxiliary_request)
+        except asyncio.CancelledError:
+            raise
+        except (TimeoutError, asyncio.TimeoutError):
+            return ProviderGenerationProbeResult("failed", "timeout")
+        except ChatAuthenticationError:
+            return ProviderGenerationProbeResult("failed", "authentication")
+        except ChatRateLimitError:
+            return ProviderGenerationProbeResult("failed", "rate_limit")
+        except (ChatBadRequestError, ChatConfigurationError, ValueError, TypeError):
+            return ProviderGenerationProbeResult("failed", "bad_request")
+        except (ConnectionError, OSError):
+            return ProviderGenerationProbeResult("failed", "connection_error")
+        except ChatProviderError as exc:
+            category = {
+                400: "bad_request",
+                401: "authentication",
+                403: "authentication",
+                408: "timeout",
+                504: "timeout",
+                429: "rate_limit",
+                503: "connection_error",
+            }.get(exc.status_code, "provider_error")
+            return ProviderGenerationProbeResult("failed", category)
+        except Exception:
+            return ProviderGenerationProbeResult("failed", "provider_error")
+        return ProviderGenerationProbeResult("succeeded")
+
     async def _open_console_settings(
         self,
         *,
@@ -3012,6 +3091,9 @@ class ChatScreen(BaseAppScreen):
             default_recovery_handler=self._handle_console_default_recovery,
             suspended_draft=suspended_draft,
             connection_tester=self._test_console_connection,
+            generation_tester=lambda request: self._test_console_generation(
+                session_id, request
+            ),
         )
 
         transfer_revoked = False
@@ -7965,6 +8047,43 @@ class ChatScreen(BaseAppScreen):
         else:
             chat_defaults = self._config_section(app_config, "chat_defaults")
             legacy_model = chat_defaults.get("model")
+        return self._build_console_provider_selection_from_settings(
+            target_session_id,
+            selection_settings,
+            legacy_model=legacy_model,
+        )
+
+    def _build_console_provider_selection_for_settings(
+        self,
+        session_id: str,
+        settings: ConsoleSessionSettings,
+    ) -> ConsoleProviderSelection:
+        """Project a validated modal draft without writing session state."""
+        app_config = self._provider_readiness_app_config()
+        store = self._ensure_console_chat_store()
+        store.session_settings_revision(session_id)
+        validation_errors = validate_console_session_settings(
+            settings,
+            app_config=app_config,
+        )
+        if validation_errors:
+            raise ValueError("Console generation test settings are invalid.")
+        return self._build_console_provider_selection_from_settings(
+            session_id,
+            settings,
+            legacy_model=settings.model,
+        )
+
+    def _build_console_provider_selection_from_settings(
+        self,
+        target_session_id: str | None,
+        selection_settings: ConsoleSessionSettings,
+        *,
+        legacy_model: object,
+    ) -> ConsoleProviderSelection:
+        """Build a provider selection from one immutable settings snapshot."""
+        app_config = self._provider_readiness_app_config()
+        store = self._ensure_console_chat_store()
         provider = provider_config_key(selection_settings.provider) or "llama_cpp"
         explicit_model = (
             str(selection_settings.model).strip()

@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import StrEnum
 from threading import RLock
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Collection, Literal, Protocol
 from unicodedata import category as unicode_category
 
 from .provider_endpoint_contract import canonical_connection_identity
+
+if TYPE_CHECKING:
+    from .console_session_settings import ConsoleSessionSettings
 
 ConfigurationFacet = Literal["incomplete", "configured"]
 EndpointFacet = Literal[
@@ -157,6 +161,34 @@ _MAX_MODEL_ID_CHARS = 120
 _MAX_MODEL_IDS = 100
 _MAX_VERDICT_DETAIL_CHARS = 256
 _UNSAFE_MODEL_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
+_BOUNDED_GENERATION_TEST_EXECUTION_KEYS = frozenset(
+    {"llama_cpp", "local_llamacpp", "moonshot", "zai"}
+)
+
+
+class ConsoleGenerationTestAvailability(StrEnum):
+    """Whether Console can dispatch a bounded generation test."""
+
+    SUPPORTED = "supported"
+    UNSUPPORTED = "unsupported"
+
+
+def console_generation_test_availability(
+    provider: str,
+    *,
+    handler_keys: Collection[str] | None = None,
+) -> ConsoleGenerationTestAvailability:
+    """Project generation-test support from Console's real dispatch catalog."""
+
+    from .console_provider_support import resolve_console_provider_identity
+
+    identity = resolve_console_provider_identity(provider, handler_keys=handler_keys)
+    if (
+        identity.is_supported
+        and identity.execution_key in _BOUNDED_GENERATION_TEST_EXECUTION_KEYS
+    ):
+        return ConsoleGenerationTestAvailability.SUPPORTED
+    return ConsoleGenerationTestAvailability.UNSUPPORTED
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,7 +341,7 @@ class ProviderDraftIdentity:
     """Secret-free semantic identity for one provider settings draft."""
 
     provider_key: str
-    connection_identity: tuple[str, str]
+    connection_identity: tuple[str, str] = field(repr=False)
     credential_source: CredentialSource
     credential_revision: int
     draft_generation: int
@@ -370,6 +402,22 @@ class ProviderGenerationProbeResult:
 
     def __post_init__(self) -> None:
         _validate_generation_result(self.generation, self.category)
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleGenerationTestRequest:
+    """Validated modal draft and exact evidence identity for one paid test."""
+
+    settings: ConsoleSessionSettings = field(repr=False)
+    identity: ProviderDraftIdentity = field(repr=False)
+
+    def __post_init__(self) -> None:
+        from .console_session_settings import ConsoleSessionSettings
+
+        if type(self.settings) is not ConsoleSessionSettings:
+            raise TypeError("settings must be ConsoleSessionSettings")
+        if type(self.identity) is not ProviderDraftIdentity:
+            raise TypeError("identity must be ProviderDraftIdentity")
 
 
 @dataclass(frozen=True, slots=True)
@@ -491,6 +539,11 @@ class ProviderTestEvidenceStore:
         self._current_generation_token_epoch: int | None = None
         self._current_generation_identity: ProviderDraftIdentity | None = None
         self._generation_settling: tuple[ProviderDraftIdentity, int] | None = None
+        self._generation_cancel_restore: tuple[
+            ProviderDraftIdentity,
+            Literal["succeeded", "failed"],
+            GenerationFailureCategory | None,
+        ] | None = None
         self._save_lease: tuple[
             _ProviderEvidenceSaveLease, ProviderDraftIdentity, int
         ] | None = None
@@ -589,6 +642,19 @@ class ProviderTestEvidenceStore:
             if self._owned_identity() not in {None, identity}:
                 self._clear_all_test_state()
                 self._advance_operation()
+            if self._current_generation_token is None:
+                evidence = self._evidence
+                self._generation_cancel_restore = (
+                    (
+                        identity,
+                        evidence.generation,
+                        evidence.generation_category,
+                    )
+                    if evidence is not None
+                    and evidence.identity == identity
+                    and evidence.generation in {"succeeded", "failed"}
+                    else None
+                )
             self._advance_generation_operation()
             token = _ProviderGenerationTestToken()
             self._current_generation_token = token
@@ -651,6 +717,7 @@ class ProviderTestEvidenceStore:
                 generation=generation,
                 category=category,
             )
+            self._generation_cancel_restore = None
             self._advance_generation_operation()
             return True
 
@@ -665,6 +732,36 @@ class ProviderTestEvidenceStore:
             if self._evidence is None or self._evidence.identity != identity:
                 return None
             return self._evidence
+
+    def latest_evidence(self) -> ProviderTestEvidence | None:
+        """Return the latest bounded snapshot for changed-since-test projection."""
+
+        with self._lock:
+            return self._evidence
+
+    def mark_generation_changed(self, identity: ProviderDraftIdentity) -> bool:
+        """Mark settled generation evidence stale without touching endpoint work."""
+
+        if type(identity) is not ProviderDraftIdentity:
+            return False
+        with self._lock:
+            evidence = self._evidence
+            if (
+                evidence is None
+                or evidence.identity != identity
+                or evidence.generation not in {"succeeded", "failed"}
+            ):
+                return False
+            self._evidence = _replace_generation_evidence(
+                evidence,
+                identity=identity,
+                generation="changed_since_test",
+                category=None,
+            )
+            self._save_lease = None
+            self._generation_cancel_restore = None
+            self._advance_generation_operation()
+            return True
 
     def invalidate(self, identity: ProviderDraftIdentity | None = None) -> bool:
         """Remove exact or current evidence and cancel its active operation."""
@@ -699,6 +796,35 @@ class ProviderTestEvidenceStore:
             self._settling = None
             self._clear_endpoint_evidence(identity)
             self._advance_operation()
+            return True
+
+    def cancel_generation_probe(self, token: object) -> bool:
+        """Cancel only the active generation test owned by ``token``."""
+
+        with self._lock:
+            if (
+                type(token) is not _ProviderGenerationTestToken
+                or token is not self._current_generation_token
+                or self._current_generation_token_epoch
+                != self._generation_operation_epoch
+            ):
+                return False
+            identity = self._current_generation_identity
+            self._current_generation_token = None
+            self._current_generation_token_epoch = None
+            self._current_generation_identity = None
+            self._generation_settling = None
+            self._clear_generation_evidence(identity)
+            restore = self._generation_cancel_restore
+            self._generation_cancel_restore = None
+            if restore is not None and restore[0] == identity:
+                self._evidence = _replace_generation_evidence(
+                    self._evidence,
+                    identity=restore[0],
+                    generation=restore[1],
+                    category=restore[2],
+                )
+            self._advance_generation_operation()
             return True
 
     def begin_save(self, identity: ProviderDraftIdentity) -> object | None:
@@ -885,6 +1011,7 @@ class ProviderTestEvidenceStore:
         self._current_generation_token_epoch = None
         self._current_generation_identity = None
         self._generation_settling = None
+        self._generation_cancel_restore = None
 
     def _advance_operation(self) -> None:
         self._operation_epoch += 1
