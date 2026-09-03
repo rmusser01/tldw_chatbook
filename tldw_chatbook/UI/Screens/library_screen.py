@@ -589,6 +589,10 @@ from ..Library_Modules.library_notes_work_session import (
     NotesWorkSessionPhase,
     reduce_notes_work_session,
 )
+from ..Library_Modules.library_rag_search_state import (
+    SEARCH_PREFIXED_STATE_FIELDS,
+    LibraryRagSearchState,
+)
 from ..Library_Modules.library_snapshot_cache import (
     clone_library_source_snapshot,
 )
@@ -2143,104 +2147,16 @@ class LibraryScreen(BaseAppScreen):
             "quizzes": None,
         }
         self._library_loaded = False
-        self._library_rag_mode: str = "search"
-        self._library_rag_query = ""
-        self._library_rag_results = ()
-        self._library_rag_retrieval_status = ""
-        self._library_rag_recovery_state: DestinationRecoveryState | None = None
-        self._library_rag_selected_result_id = ""
-        # Task 8: the current results' non-result-shaped retrieval
-        # diagnostics (e.g. `semantic_scope_coverage`) -- travels with
-        # `_library_rag_results` through every reset/outcome/save-restore
-        # path below so the coverage note built from it can never drift
-        # from the results it describes.
-        self._library_rag_diagnostics: Mapping[str, Any] = {}
-        # task-15 finding I3: the query the CURRENT `_library_rag_results`/
-        # `_library_rag_retrieval_status` were actually retrieved for --
-        # travels with them through every reset/outcome/save-restore path
-        # exactly like `_library_rag_diagnostics` above, so the quiet
-        # no-match line (`library_rag_empty_state_quiet_copy`) can never
-        # quote query text the "empty" outcome it explains wasn't actually
-        # run against.
-        self._library_rag_searched_query: str = ""
-        # PR-3 Task 4: the grounded answer generated for the CURRENT results
-        # (`generate_library_rag_answer`), plus the query/mode it was
-        # generated for. Those two are the answer worker's staleness guards,
-        # mirroring `_apply_library_rag_search_outcome`'s query/mode guards
-        # for retrieval: every transition that invalidates an answer (a new
-        # search, a mode toggle) clears them, so an answer that lands
-        # afterwards is discarded instead of overwriting a newer panel.
-        self._library_rag_answer: LibraryRagAnswer | None = None
-        self._library_rag_answer_query: str = ""
-        self._library_rag_answer_mode: str = ""
-        # Whether the single provider call is running right now. Kept
-        # SEPARATE from `_library_rag_retrieval_status` (rather than
-        # overwriting it with "answering") so the retrieval's own settled
-        # status is never destroyed and settling the answer is just clearing
-        # a flag -- there is no "restore the right previous value" step to
-        # get wrong. Deliberately NOT persisted by `save_state`: a restored
-        # screen is a new instance with no worker running, so a restored
-        # "answering" status could never be resolved by anything.
-        self._library_rag_answer_in_flight: bool = False
-        # The provider `resolve_library_rag_answer_provider` resolved for
-        # the answer call `_library_rag_answer_in_flight` is currently
-        # tracking (PR-3 Task 3) -- feeds the in-flight "Asking
-        # <provider>..." line. Cleared everywhere the flag above is
-        # cleared; the panel-state builder additionally only ever forwards
-        # this value while the flag is True, so a value left behind by a
-        # reset gap could never surface on its own.
-        self._library_rag_answer_in_flight_provider: str = ""
-        # What the Answer region currently shows, as
-        # `(mode, is_answering, answer_object)` -- the three inputs
-        # `library_rag_answer_children` reads. `_refresh_library_rag_answer_
-        # widgets` skips its teardown/remount when this still matches, which
-        # is what keeps a landed answer (up to
-        # `LIBRARY_RAG_ANSWER_DISPLAY_MAX_LENGTH` characters of `Static`)
-        # from being remounted on every keystroke in rag mode -- the exact
-        # churn class task-284 removed for results/history. `None` means
-        # "unknown, rebuild" and is set on every compose.
-        self._library_rag_answer_render_key: tuple[str, bool, Any] | None = None
-        # B2: source types the user has toggled OFF (deselected) in the
-        # scope region. Empty = every available source is in scope (the
-        # default). Persists across rail switches within the session, same
-        # as mode, but is never written to config.
-        self._library_rag_scope_deselected: set[str] = set()
-        # D1: whether the `Recent searches` collapsible should render
-        # collapsed. Only `_apply_library_rag_search_outcome` (the
-        # results-arrival transition) is allowed to change this; every
-        # other refresh must leave the user's manual expand/collapse alone.
-        self._library_rag_history_collapsed: bool = False
-        self._library_search_history: tuple[str, ...] = (
-            self._load_library_search_history()
+        # Combined Search+RAG canvas state; see LibraryRagSearchState's own
+        # module docstring/field comments for the per-field detail that
+        # used to live here. `history` has a genuinely computed default
+        # (`self._load_library_search_history()`) so it is passed as a
+        # constructor argument here rather than folded into the
+        # dataclass's own default, preserving the original __init__
+        # evaluation order.
+        self._rag_search_state = LibraryRagSearchState(
+            history=self._load_library_search_history()
         )
-        # Serializes history-collapsible content rebuilds: the "searching"
-        # status refresh (called synchronously before the search worker is
-        # scheduled) and that worker's own "outcome" refresh can otherwise
-        # interleave mid-rebuild and mount duplicate row IDs.
-        self._library_rag_history_refresh_lock = asyncio.Lock()
-        # Serializes whole-panel refreshes (PR-3 Task 4). Two-phase answering
-        # made an always-latent race reachable on ordinary input: the
-        # retrieval outcome's refresh and the answer's own refresh can now be
-        # in flight at once (the no-evidence path resolves generation almost
-        # immediately after retrieval), and both tear down and remount the
-        # same fixed-id widgets -- each captures its removal list, awaits,
-        # and then mounts, so interleaving raises `DuplicateIds`
-        # (`library-rag-query-quiet-line`, observed). One lock around the
-        # whole sequence means a refresh always finishes before the next
-        # starts, and the next then rebuilds from state that is by then
-        # settled.
-        self._library_rag_panel_refresh_lock = asyncio.Lock()
-        # (task-2075 D5) Cache of the last `library_rag_scope_shows_recovery`
-        # result actually mirrored into the DOM, read by
-        # `_sync_library_rag_scope_toggle_and_run_gate_widgets` to change-gate
-        # the recovery-block mirror it schedules. `None` until the first
-        # in-place snapshot sync runs -- deliberately distinct from both
-        # `True`/`False` so that first call always reconciles the DOM
-        # against whatever `compose()` actually rendered (cheap: at most an
-        # empty remove + empty mount when nothing needs to change), while
-        # every later snapshot with an unchanged value takes the no-op path
-        # RAG-27 requires.
-        self._library_rag_scope_recovery_visible: bool | None = None
         self._library_workspace_depth_state_cache: LibraryWorkspaceDepthState | None = (
             None
         )
@@ -43975,3 +43891,33 @@ LibraryExportController._safe_text = staticmethod(LibraryScreen._safe_text)
 # nothing on `LibraryScreen` needs the flat property names anymore -- see
 # `LibraryCollectionsController`'s own generated shim loop (installed by
 # task 6) for where the SAME shape now lives permanently, one layer down.
+
+# --- BEGIN generated search+rag-state shims (delete wholesale at cleanup) ---
+# wave-3 task 2: keeps every original `_library_rag_<field>`/
+# `_library_search_<field>` name working as a property over
+# `self._rag_search_state`; attached programmatically so the class body
+# gains no FunctionDefs (the size ratchet counts those). Every field uses
+# the cluster's default `_library_rag_` prefix except the ones named in
+# `SEARCH_PREFIXED_STATE_FIELDS` (imported from `library_rag_search_state`
+# -- the single authoritative home for that one-name exception, not a
+# second, independently-drifting copy; see the conversations exemplar's
+# own task-8 fix-round lesson for why this mattered enough to avoid from
+# the start).
+for _rss_field in dataclasses.fields(LibraryRagSearchState):
+    _rss_prefix = (
+        "_library_search_"
+        if _rss_field.name in SEARCH_PREFIXED_STATE_FIELDS
+        else "_library_rag_"
+    )
+    setattr(
+        LibraryScreen,
+        _rss_prefix + _rss_field.name,
+        property(
+            lambda self, _n=_rss_field.name: getattr(self._rag_search_state, _n),
+            lambda self, value, _n=_rss_field.name: setattr(
+                self._rag_search_state, _n, value
+            ),
+        ),
+    )
+del _rss_field, _rss_prefix
+# --- END generated search+rag-state shims ---

@@ -247,7 +247,13 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # landed on dev while this PR was in flight (dev's own pin going into
     # this merge was 45522/1331). Measured on the merged tree: 42420/1267
     # -> 43977/1316.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43977, 1316),
+    #
+    # 2026-09-03, wave-3 task 2 (combined search+RAG state PR, series 1/3):
+    # the 20-field `__init__` block (19 `_library_rag_*` + 1
+    # `_library_search_history`) collapsed into one `LibraryRagSearchState`
+    # constructor call plus a generated shim loop; methods unchanged (pure
+    # field move, zero FunctionDefs touched). 43977/1316 -> 43923/1316.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43923, 1316),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide
