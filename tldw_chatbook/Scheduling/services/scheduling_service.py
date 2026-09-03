@@ -12,6 +12,7 @@ import asyncio
 from dataclasses import dataclass
 from dataclasses import field as _dataclass_field
 from datetime import datetime, timedelta, timezone
+from types import EllipsisType
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
@@ -425,9 +426,38 @@ class SchedulingService:
         rows = self.db.list_reminder_tasks(owner_id=self.owner_id)
         return [self._row_to_reminder(row) for row in rows]
 
-    async def list_tasks(self) -> list[ReminderTask | ScheduledTask]:
-        """Return reminders plus watchlist/briefing projections for the current owner."""
-        tasks: list[ReminderTask | ScheduledTask] = list(await self.list_reminders())
+    async def list_tasks(
+        self, owner_id: str | None | EllipsisType = ...
+    ) -> list[ReminderTask | ScheduledTask]:
+        """Return reminders plus watchlist/briefing projections.
+
+        Args:
+            owner_id: Reminder owner scope. The default (``...``, i.e. the
+                parameter is left unset) preserves every existing caller
+                byte-for-byte: reminders scope to ``self.owner_id``, same
+                as before this parameter existed. Pass ``None`` for a
+                spans-owners listing -- every owner's reminders, via
+                `ScheduledTasksDB.list_reminder_tasks`'s own
+                ``owner_id=None`` "no WHERE clause" behavior (redesign
+                PR-2's unified Queue list) -- or a specific owner id
+                string to scope reminders to that one owner.
+                Watchlist/briefing projections always stay scoped to
+                ``self.owner_id`` regardless of this argument: their
+                `list_jobs` only STAMPS the given owner id onto every row
+                (their underlying read has no per-owner filter at all),
+                so a ``None`` owner would fail their `ScheduledTask.
+                owner_id: str` field instead of "spanning owners".
+
+        Returns:
+            Reminders (in the requested owner scope) plus this device's
+            watchlist/briefing projections, sorted by ``next_run_at``
+            ascending (``None`` last).
+        """
+        reminder_owner_id = self.owner_id if owner_id is ... else owner_id
+        rows = self.db.list_reminder_tasks(owner_id=reminder_owner_id)
+        tasks: list[ReminderTask | ScheduledTask] = [
+            self._row_to_reminder(row) for row in rows
+        ]
         if self.watchlist_projection is not None:
             tasks.extend(self.watchlist_projection.list_jobs(owner_id=self.owner_id))
         if self.briefing_projection is not None:

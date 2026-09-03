@@ -24,6 +24,16 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import DataTable, Static
 
+# `index_definitions_by_id`/`definition_for_result` moved to
+# `unified_rows.py` (redesign PR-2 Task 1 -- that pure module resolves
+# results across the same dual local/server id space and cannot import a
+# Textual-heavy module without dragging Textual in as a side effect);
+# imported back here unchanged so every existing call site keeps working.
+from .unified_rows import (
+    definition_for_result,
+    index_definitions_by_id,  # noqa: F401  (re-export: schedules_workbench.py imports this from here)
+)
+
 _KIND_GLYPHS = {"finding": "●", "failure": "✕"}  # ● / ✕
 
 #: The tab's heading when every stored result fits in the listing.
@@ -131,62 +141,6 @@ def _review_state_cell(review_state: str) -> Text:
     if review_state == "unread":
         return Text(f"● {review_state}", style="bold")
     return Text(review_state or "-")
-
-
-def index_definitions_by_id(
-    rows: list[dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
-    """Index definition rows under BOTH id spaces they are referred to by.
-
-    A result's `definition_id` is whatever the side that produced it
-    calls the definition: a locally-created result carries the LOCAL row
-    id, while a result mirrored down from the server carries the
-    SERVER's id (`upsert_automation_results_from_server` copies
-    `definition_id` verbatim -- it has no local id to translate it to).
-    Indexing by `row["id"]` alone therefore missed every synced result,
-    so mark-solved refused with "definition could not be found" on
-    exactly the rows the feature exists for (live verification task 6,
-    D3). Local ids are UUID4 and server ids are the server's own opaque
-    ids, so the two key spaces do not collide in practice; the local id
-    is written first regardless, so a pathological clash still resolves
-    to a row this device owns.
-
-    Args:
-        rows: Definition rows from
-            `ScheduledTasksDB.list_automation_definitions`.
-
-    Returns:
-        Each row keyed by its local ``id`` and, when present, by its
-        ``server_id`` too.
-    """
-    index: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        index[str(row["id"])] = row
-    for row in rows:
-        server_id = row.get("server_id")
-        if server_id:
-            index.setdefault(str(server_id), row)
-    return index
-
-
-def definition_for_result(
-    result: dict[str, Any], definitions_by_id: dict[str, dict[str, Any]]
-) -> dict[str, Any] | None:
-    """The definition row a result belongs to, across both id spaces.
-
-    Pairs with `index_definitions_by_id`; the one lookup both the
-    eligibility gate and the mark-solved action route through, so they
-    can never disagree about which definition a row resolves to.
-
-    Args:
-        result: An ``automation_results`` row.
-        definitions_by_id: The index built by `index_definitions_by_id`.
-
-    Returns:
-        The owning definition row, or ``None`` when the result's
-        ``definition_id`` matches neither id space.
-    """
-    return definitions_by_id.get(str(result.get("definition_id") or ""))
 
 
 def solved_eligibility(

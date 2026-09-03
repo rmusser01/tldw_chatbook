@@ -461,6 +461,102 @@ async def test_list_tasks_filters_watchlist_by_owner(db):
     projection.list_jobs.assert_called_once_with(owner_id="server:1")
 
 
+# --- spans-owners `owner_id` parameter (schedules-redesign PR-2, Task 1) ---
+#
+# `list_tasks()` (zero args, the default `...` sentinel) must keep behaving
+# EXACTLY as every test above pins it -- these add the new opt-in shape
+# without touching that default path.
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_default_still_scopes_to_current_owner(db):
+    """Byte-for-byte preservation: calling with no argument at all must
+    still scope reminders to `self.owner_id`, same as before this
+    parameter existed."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    db.create_reminder_task(
+        owner_id="local",
+        title="Local reminder",
+        schedule_kind="one_time",
+        run_at="2026-07-20T14:00:00+00:00",
+    )
+    db.create_reminder_task(
+        owner_id="server:9",
+        title="Server reminder",
+        schedule_kind="one_time",
+        run_at="2026-07-21T14:00:00+00:00",
+    )
+
+    tasks = await svc.list_tasks()
+
+    assert [t.title for t in tasks] == ["Local reminder"]
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_owner_id_none_spans_every_owner(db):
+    """The new spans-owners seam: `owner_id=None` returns reminders from
+    EVERY owner, not just `self.owner_id` -- the redesign's unified Queue
+    list (plan ruling, survey SS2's cross-owner listing gap)."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    db.create_reminder_task(
+        owner_id="local",
+        title="Local reminder",
+        schedule_kind="one_time",
+        run_at="2026-07-20T14:00:00+00:00",
+    )
+    db.create_reminder_task(
+        owner_id="server:9",
+        title="Server reminder",
+        schedule_kind="one_time",
+        run_at="2026-07-21T14:00:00+00:00",
+    )
+
+    tasks = await svc.list_tasks(owner_id=None)
+
+    assert {t.title for t in tasks} == {"Local reminder", "Server reminder"}
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_owner_id_explicit_string_scopes_to_that_owner(db):
+    """A specific owner id (not the service's current one) scopes
+    reminders to just that owner."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    db.create_reminder_task(
+        owner_id="local",
+        title="Local reminder",
+        schedule_kind="one_time",
+        run_at="2026-07-20T14:00:00+00:00",
+    )
+    db.create_reminder_task(
+        owner_id="server:9",
+        title="Server reminder",
+        schedule_kind="one_time",
+        run_at="2026-07-21T14:00:00+00:00",
+    )
+
+    tasks = await svc.list_tasks(owner_id="server:9")
+
+    assert [t.title for t in tasks] == ["Server reminder"]
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_spans_owners_keeps_projections_scoped_to_current_owner(db):
+    """Watchlist/briefing `list_jobs` only STAMP the owner id onto every
+    row (their underlying read has no per-owner filter) -- passing them
+    `owner_id=None` would fail their `ScheduledTask.owner_id: str` field.
+    A spans-owners reminder listing must not do that: projections stay
+    scoped to `self.owner_id` regardless of the reminder-side argument."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    projection = MagicMock(spec=WatchlistProjection)
+    projection.list_jobs.return_value = []
+    svc.watchlist_projection = projection
+
+    tasks = await svc.list_tasks(owner_id=None)
+
+    assert tasks == []
+    projection.list_jobs.assert_called_once_with(owner_id="local")
+
+
 # --- briefing projection (task-1810): scheduled briefings on the unified list ---
 #
 # Mirrors the watchlist-projection tests immediately above -- same shape,
