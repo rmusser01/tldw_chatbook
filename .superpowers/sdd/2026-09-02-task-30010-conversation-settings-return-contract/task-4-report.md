@@ -24,12 +24,14 @@ source contracts; no new state owner, schema, persistence, or ADR was added.
   `settings-provider-return-without-save`, plus
   `settings-provider-conflict-review`, `settings-provider-conflict-discard`,
   and `settings-provider-conflict-return`.
-- `ChatScreen.apply_navigation_context()` consumes an exact
-  `ConsoleSettingsReturnTarget`, validates the claim coordinates and origin
-  session/settings revision, restores the exact suspended modal snapshot and
-  logical focus, then acknowledges only restoration or terminal rejection.
-  Transient modal failures release the claim while retaining the exact safe
-  retry target; a later mount or resume reclaims that same revision.
+- `ChatScreen.apply_navigation_context()` parses and stages an exact
+  `ConsoleSettingsReturnTarget` without taking handoff ownership. The mounted,
+  stack-owning deferred consumer claims and validates the coordinates and
+  origin session/settings revision, restores the exact suspended modal snapshot
+  and logical focus, then acknowledges only restoration or terminal rejection.
+  Transient modal failures and unmount cancellation release the exact claim
+  while retaining the safe retry coordinate; a later mount or resume reclaims
+  that same revision.
 
 ## Changes
 
@@ -61,6 +63,16 @@ source contracts; no new state owner, schema, persistence, or ADR was added.
 - Added a production-router journey from the real Console Configure action,
   through a fresh Settings screen and its navigation completion callback, to a
   fresh Console screen's deferred modal restoration.
+- Moved the return claim from pre-mount navigation-context application into the
+  mounted deferred worker. Router veto therefore leaves the revision pending,
+  and both worker cancellation and screen unmount release only that worker's
+  exact claim without disturbing a newer staged return.
+- Made every Settings Return entry point exact single-flight at the handler
+  boundary as well as visibly disabled while navigation is outstanding. A
+  failed/vetoed completion clears the fence and restores the continuation;
+  successful navigation settles the outgoing continuation state once.
+- Replaced state-dependent superseded wording with the fixed truthful copy
+  `This return was superseded by a newer request.`
 
 ## RED evidence
 
@@ -99,6 +111,26 @@ hidden/non-primary continuation, silent terminal outcomes, lost retry target,
 old fixed success wording, and the final in-flight/settled ambiguity. The
 test-authoring error was not counted as evidence of missing production behavior.
 
+Round-2 review regressions were run before their production changes:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_native_chat_flow.py -k 'single_flight_and_retries_after_failed_navigation or superseded_route_preserves_latest_handoff or router_failure_before_mount_keeps_handoff_pending or rapid_unmount_before_consumer_keeps_handoff_pending or unmount_releases_acquired_exact_claim' -q --tb=short
+5 failed, 694 deselected, 1 warning
+
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_settings_configuration_hub.py -k 'conversation_settings_return_is_single_flight_and_retries_after_failed_navigation' -q --tb=short
+1 failed, 368 deselected, 1 warning in 2.19s
+```
+
+The five failures matched the review findings: duplicate Return navigation,
+state-dependent superseded copy, a pre-mount router-veto claim, a rapid-unmount
+claim, and an acquired claim stranded during unmount cancellation. The first
+combined command was interrupted only after pytest had reported all five
+failures because the new cancellation test's failed assertion skipped its
+release signal; its cleanup was moved into `finally` before production edits.
+There were no fixture or collection failures. The isolated RED then exercised
+a queued production `Button.Pressed` directly and proved that disabled visual
+state alone did not enforce the single-flight fence.
+
 ## GREEN evidence
 
 Required journey selection:
@@ -123,6 +155,19 @@ PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/State/test_pending_handoff_s
 
 PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/State/test_pending_handoff_store.py -q --tb=short
 90 passed, 1 warning in 0.46s
+```
+
+Round-2 review slice and cumulative Task 4 selection:
+
+```text
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_native_chat_flow.py -k 'single_flight_and_retries_after_failed_navigation or superseded_route_preserves_latest_handoff or router_failure_before_mount_keeps_handoff_pending or rapid_unmount_before_consumer_keeps_handoff_pending or unmount_releases_acquired_exact_claim' -q --tb=short
+5 passed, 694 deselected, 1 warning in 30.90s
+
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/State/test_pending_handoff_store.py Tests/State/test_screen_state_store.py Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_native_chat_flow.py Tests/UI/test_console_session_settings.py -k 'conversation_settings or provider_navigation or credential or screen_state' -q --tb=short
+96 passed, 1025 deselected, 1 warning in 76.21s
+
+PYTHONPATH=. ../../.venv/bin/python -m pytest Tests/State/test_pending_handoff_store.py -q --tb=short
+90 passed, 1 warning in 0.62s
 ```
 
 The warning in these runs is the repository environment's existing Requests
@@ -155,6 +200,10 @@ exit 0
   modal mount failure releases the exact claim, retains the suspended snapshot
   and safe typed target, restores the previously active session, and retries by
   exact revision on a later mount/resume.
+- Applying a route before the destination mounts never claims the return.
+  Cancellation and unmount settle only the opaque claim object acquired by that
+  mounted worker; a replacement revision staged during the in-flight attempt
+  remains pending and claimable.
 
 ## Files
 

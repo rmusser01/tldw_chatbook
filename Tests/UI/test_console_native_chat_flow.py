@@ -536,20 +536,19 @@ async def test_conversation_settings_return_superseded_route_preserves_latest_ha
             HandoffChannel.CONVERSATION_SETTINGS_RETURN,
             latest_intent,
         )
+        latest_claim = app.pending_handoffs.claim(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN
+        )
+        assert latest_claim is not None
+        assert latest_claim.revision == latest_revision
+        assert app.pending_handoffs.acknowledge(latest_claim)
 
         console.apply_navigation_context(stale_target.to_context())
         await pilot.pause()
 
         assert host.screen_stack[-1] is console
-        claim = app.pending_handoffs.claim(
-            HandoffChannel.CONVERSATION_SETTINGS_RETURN
-        )
-        assert claim is not None
-        assert claim.revision == latest_revision
-        assert claim.value == latest_intent
-        app.pending_handoffs.release(claim)
         assert (
-            "A newer Conversation settings return is waiting. "
+            "This return was superseded by a newer request. "
             "Open Conversation settings again."
         ) in notices
         assert console._suspended_conversation_settings is snapshot
@@ -946,6 +945,225 @@ async def test_conversation_settings_return_real_navigation_restores_fresh_conso
         assert app.screen.query_one(
             "#settings-provider-return-continuation"
         ).display is False
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_router_failure_before_mount_keeps_handoff_pending(
+    monkeypatch,
+):
+    """Applying context to an unmounted target must not acquire its handoff."""
+
+    app = _build_production_app(configured_default="chat")
+    _configure_native_ready_console(app)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        original_console = None
+        for _ in range(200):
+            content = app._navigation_outgoing_screen()
+            if isinstance(content, ChatScreen):
+                original_console = content
+                break
+            await pilot.pause(0.05)
+        assert original_console is not None
+        await _wait_for_selector(
+            original_console,
+            pilot,
+            "#console-native-composer",
+            timeout=10.0,
+        )
+        store = original_console._ensure_console_chat_store()
+        session = store.ensure_session()
+        snapshot = _conversation_settings_return_snapshot()
+        original_console._suspended_conversation_settings = snapshot
+        original_console._suspended_conversation_settings_token = 41
+        target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=snapshot,
+        )
+
+        await app.handle_screen_navigation(NavigateToScreen("settings"))
+        assert isinstance(app._navigation_outgoing_screen(), SettingsScreen)
+        monkeypatch.setattr(
+            app,
+            "_dismiss_navigation_overlays",
+            AsyncMock(return_value=False),
+        )
+
+        outcomes: list[bool] = []
+        await app.handle_screen_navigation(
+            NavigateToScreen(
+                "chat",
+                target.to_context(),
+                on_completion=outcomes.append,
+            )
+        )
+
+        assert outcomes == [False]
+        assert isinstance(app._navigation_outgoing_screen(), SettingsScreen)
+        assert (
+            app.pending_handoffs.exact_revision_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                target.return_revision,
+            )
+            == "pending"
+        )
+        claim = app.pending_handoffs.claim(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN
+        )
+        assert claim is not None
+        assert claim.revision == target.return_revision
+        assert app.pending_handoffs.release(claim)
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_rapid_unmount_before_consumer_keeps_handoff_pending(
+    monkeypatch,
+):
+    """A newly mounted Console can leave before its deferred consumer runs."""
+
+    app = _build_production_app(configured_default="chat")
+    _configure_native_ready_console(app)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        original_console = None
+        for _ in range(200):
+            content = app._navigation_outgoing_screen()
+            if isinstance(content, ChatScreen):
+                original_console = content
+                break
+            await pilot.pause(0.05)
+        assert original_console is not None
+        await _wait_for_selector(
+            original_console,
+            pilot,
+            "#console-native-composer",
+            timeout=10.0,
+        )
+        store = original_console._ensure_console_chat_store()
+        session = store.ensure_session()
+        snapshot = _conversation_settings_return_snapshot()
+        original_console._suspended_conversation_settings = snapshot
+        original_console._suspended_conversation_settings_token = 42
+        target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=snapshot,
+        )
+
+        await app.handle_screen_navigation(NavigateToScreen("settings"))
+        monkeypatch.setattr(
+            ChatScreen,
+            "_consume_pending_conversation_settings_return",
+            lambda self: None,
+        )
+        await app.handle_screen_navigation(
+            NavigateToScreen("chat", target.to_context())
+        )
+        returned_console = app._navigation_outgoing_screen()
+        assert isinstance(returned_console, ChatScreen)
+
+        await app.handle_screen_navigation(NavigateToScreen("settings"))
+
+        assert returned_console not in app.screen_stack
+        assert (
+            app.pending_handoffs.exact_revision_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                target.return_revision,
+            )
+            == "pending"
+        )
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_unmount_releases_acquired_exact_claim(
+    monkeypatch,
+):
+    """Unmount is a settlement boundary even when restore suppresses cancellation."""
+
+    app = _build_production_app(configured_default="chat")
+    _configure_native_ready_console(app)
+    restore_started = asyncio.Event()
+    restore_cancelled = asyncio.Event()
+    allow_restore_exit = asyncio.Event()
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        console = None
+        for _ in range(200):
+            content = app._navigation_outgoing_screen()
+            if isinstance(content, ChatScreen):
+                console = content
+                break
+            await pilot.pause(0.05)
+        assert console is not None
+        await _wait_for_selector(console, pilot, "#console-native-composer", timeout=10.0)
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        snapshot = _conversation_settings_return_snapshot()
+        console._suspended_conversation_settings = snapshot
+        console._suspended_conversation_settings_token = 43
+        target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=snapshot,
+        )
+
+        async def hold_restore(**_kwargs):
+            restore_started.set()
+            while not allow_restore_exit.is_set():
+                try:
+                    await allow_restore_exit.wait()
+                except asyncio.CancelledError:
+                    restore_cancelled.set()
+            return False
+
+        monkeypatch.setattr(console, "_open_console_settings", hold_restore)
+        console.apply_navigation_context(target.to_context())
+        console._consume_pending_conversation_settings_return()
+        await wait_for_signal(restore_started, what="Conversation settings restore claim")
+        assert (
+            app.pending_handoffs.exact_revision_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                target.return_revision,
+            )
+            == "in_flight"
+        )
+        replacement_revision = app.pending_handoffs.stage(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+            ConversationSettingsReturnIntent(
+                session.id,
+                store.session_settings_revision(session.id),
+                "model",
+                None,
+            ),
+        )
+
+        await app.handle_screen_navigation(NavigateToScreen("settings"))
+        await wait_for_signal(
+            restore_cancelled,
+            what="Conversation settings restore worker cancellation",
+        )
+
+        try:
+            assert console not in app.screen_stack
+            assert (
+                app.pending_handoffs.exact_revision_status(
+                    HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                    target.return_revision,
+                )
+                == "superseded"
+            )
+            replacement_claim = app.pending_handoffs.claim(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN
+            )
+            assert replacement_claim is not None
+            assert replacement_claim.revision == replacement_revision
+            assert app.pending_handoffs.release(replacement_claim)
+        finally:
+            allow_restore_exit.set()
 
 
 def test_console_store_uses_app_citation_repository_for_matching_database():

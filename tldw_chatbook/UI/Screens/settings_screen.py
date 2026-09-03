@@ -10764,9 +10764,18 @@ class SettingsScreen(BaseAppScreen):
             self.query_one(
                 "#settings-provider-return-continuation-status", Static
             ).update(self._provider_return_continuation_copy())
+            self.query_one("#settings-provider-return", Button).disabled = (
+                self._provider_return_navigation_in_progress
+            )
             self.query_one(
                 "#settings-provider-return-without-save", Button
             ).display = self._provider_can_return_without_saving()
+            self.query_one(
+                "#settings-provider-return-without-save", Button
+            ).disabled = self._provider_return_navigation_in_progress
+            self.query_one("#settings-provider-conflict-return", Button).disabled = (
+                self._provider_return_navigation_in_progress
+            )
         except QueryError:
             return
 
@@ -10812,6 +10821,8 @@ class SettingsScreen(BaseAppScreen):
     ) -> bool:
         """Post one typed Console return without retaining its private intent."""
 
+        if self._provider_return_navigation_in_progress:
+            return False
         claimed = self._claim_provider_return_intent()
         if claimed is None:
             self.app.notify(
@@ -10831,11 +10842,14 @@ class SettingsScreen(BaseAppScreen):
             return False
 
         self._provider_return_navigation_in_progress = True
+        self._update_provider_return_widgets()
 
         def settle_navigation(succeeded: bool) -> None:
-            self._provider_return_navigation_in_progress = False
             if succeeded:
                 self._settle_provider_return_state()
+                return
+            self._provider_return_navigation_in_progress = False
+            self._update_provider_return_widgets()
 
         navigation = NavigateToScreen(
             TAB_CHAT,
@@ -10850,6 +10864,8 @@ class SettingsScreen(BaseAppScreen):
     def _stay_in_provider_settings(self) -> bool:
         """Explicitly abandon only this exact return handoff."""
 
+        if self._provider_return_navigation_in_progress:
+            return False
         claimed = self._claim_provider_return_intent()
         if claimed is None:
             self._settle_provider_return_state()
@@ -14568,6 +14584,7 @@ class SettingsScreen(BaseAppScreen):
                 yield Button(
                     "Return to Conversation settings",
                     id="settings-provider-conflict-return",
+                    disabled=self._provider_return_navigation_in_progress,
                 )
             continuation = Vertical(id="settings-provider-return-continuation")
             continuation.display = self._provider_return_outcome is not None
@@ -14582,11 +14599,16 @@ class SettingsScreen(BaseAppScreen):
                     "Return to Conversation settings",
                     id="settings-provider-return",
                     variant="primary",
+                    disabled=self._provider_return_navigation_in_progress,
                 )
-                yield Button("Stay in Settings", id="settings-provider-stay")
+                yield Button(
+                    "Stay in Settings",
+                    id="settings-provider-stay",
+                )
             return_without_saving = Button(
                 "Return without saving",
                 id="settings-provider-return-without-save",
+                disabled=self._provider_return_navigation_in_progress,
             )
             return_without_saving.display = self._provider_can_return_without_saving()
             yield return_without_saving

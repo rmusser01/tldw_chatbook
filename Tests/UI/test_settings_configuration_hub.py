@@ -7519,6 +7519,59 @@ async def test_conversation_settings_return_save_shows_typed_continuation(
 
 
 @pytest.mark.asyncio
+async def test_conversation_settings_return_is_single_flight_and_retries_after_failed_navigation(
+    monkeypatch,
+):
+    """Queued duplicate Return events cannot release and repost the handoff."""
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    _intent, target = _stage_conversation_settings_return_intent(app)
+    _capture_provider_settings_mutations(monkeypatch)
+    host = ConversationReturnSettingsHarness(app)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        screen.query_one("#settings-provider-api-key", Input).value = (
+            "DUMMY-SINGLE-FLIGHT-KEY"
+        )
+        await pilot.pause()
+        screen.action_settings_save_category(allow_text_entry_focus=True)
+        await pilot.pause()
+
+        return_button = screen.query_one("#settings-provider-return", Button)
+        return_button.press()
+        for _ in range(20):
+            if host.navigation_messages:
+                break
+            await pilot.pause(0.01)
+        screen.handle_provider_return(Button.Pressed(return_button))
+        await pilot.pause()
+
+        assert len(host.navigation_messages) == 1
+        assert screen._provider_return_navigation_in_progress is True
+        assert return_button.disabled is True
+
+        host.navigation_messages[0].report_completion(False)
+
+        assert screen._provider_return_navigation_in_progress is False
+        assert return_button.disabled is False
+        assert screen.query_one("#settings-provider-return-continuation").display is True
+
+        return_button.press()
+        for _ in range(20):
+            if len(host.navigation_messages) == 2:
+                break
+            await pilot.pause(0.01)
+
+        assert len(host.navigation_messages) == 2
+
+
+@pytest.mark.asyncio
 async def test_conversation_settings_return_continuation_survives_fresh_settings_screen(
     monkeypatch,
 ):

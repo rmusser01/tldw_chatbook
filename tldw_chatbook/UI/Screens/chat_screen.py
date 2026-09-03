@@ -3189,19 +3189,9 @@ class ChatScreen(BaseAppScreen):
         if target is None:
             logger.debug("Ignoring invalid Conversation settings return context")
             return
-        handoffs = getattr(self.app_instance, "pending_handoffs", None)
-        if not isinstance(handoffs, PendingHandoffStore):
-            return
-        existing_claim = self._pending_conversation_settings_return_claim
-        if (
-            self._pending_conversation_settings_return_target == target
-            and existing_claim is not None
-            and handoffs.is_current_claim(existing_claim)
-        ):
+        if self._pending_conversation_settings_return_target == target:
             return
         self._pending_conversation_settings_return_target = target
-        if not self._claim_conversation_settings_return(handoffs, target):
-            return
         if self.is_mounted:
             self.call_after_refresh(self._consume_pending_conversation_settings_return)
 
@@ -3224,7 +3214,7 @@ class ChatScreen(BaseAppScreen):
                 self._pending_conversation_settings_return_claim = None
                 self._pending_conversation_settings_return_target = None
                 self._notify_conversation_settings_return(
-                    "A newer Conversation settings return is waiting. "
+                    "This return was superseded by a newer request. "
                     "Open Conversation settings again."
                 )
                 return False
@@ -3241,7 +3231,7 @@ class ChatScreen(BaseAppScreen):
             self._pending_conversation_settings_return_claim = None
             self._pending_conversation_settings_return_target = None
             self._notify_conversation_settings_return(
-                "A newer Conversation settings return is waiting. "
+                "This return was superseded by a newer request. "
                 "Open Conversation settings again."
             )
             return False
@@ -3341,15 +3331,10 @@ class ChatScreen(BaseAppScreen):
         if (
             self._conversation_settings_return_restore_in_progress
             or self._pending_conversation_settings_return_target is None
+            or not self.is_mounted
+            or not self._owns_console_screen_stack()
         ):
             return
-        if self._pending_conversation_settings_return_claim is None:
-            handoffs = getattr(self.app_instance, "pending_handoffs", None)
-            if not isinstance(handoffs, PendingHandoffStore) or not self._claim_conversation_settings_return(
-                handoffs,
-                self._pending_conversation_settings_return_target,
-            ):
-                return
         self._conversation_settings_return_restore_in_progress = True
         self.run_worker(
             self._restore_claimed_conversation_settings_return(),
@@ -3360,23 +3345,26 @@ class ChatScreen(BaseAppScreen):
     async def _restore_claimed_conversation_settings_return(self) -> None:
         """Restore the exact suspended draft, then acknowledge its handoff."""
 
-        claim = self._pending_conversation_settings_return_claim
+        claim: HandoffClaim[ConversationSettingsReturnIntent] | None = None
         target = self._pending_conversation_settings_return_target
         handoffs = getattr(self.app_instance, "pending_handoffs", None)
         prior_active_session_id: str | None = None
         switched_session = False
         try:
-            if (
-                claim is None
-                or target is None
-                or not isinstance(handoffs, PendingHandoffStore)
-            ):
+            if target is None or not isinstance(handoffs, PendingHandoffStore):
+                return
+            if not self.is_mounted or not self._owns_console_screen_stack():
+                return
+            if not self._claim_conversation_settings_return(handoffs, target):
+                return
+            claim = self._pending_conversation_settings_return_claim
+            if claim is None:
                 return
             if not handoffs.is_current_claim(claim):
                 handoffs.release(claim)
                 self._pending_conversation_settings_return_target = None
                 self._notify_conversation_settings_return(
-                    "A newer Conversation settings return is waiting. "
+                    "This return was superseded by a newer request. "
                     "Open Conversation settings again."
                 )
                 return
@@ -3463,8 +3451,21 @@ class ChatScreen(BaseAppScreen):
                 except Exception:
                     logger.debug("Unable to restore the prior Console session")
         finally:
-            self._pending_conversation_settings_return_claim = None
+            if isinstance(handoffs, PendingHandoffStore) and claim is not None:
+                handoffs.release(claim)
+            if self._pending_conversation_settings_return_claim is claim:
+                self._pending_conversation_settings_return_claim = None
             self._conversation_settings_return_restore_in_progress = False
+
+    def _release_claimed_conversation_settings_return(self) -> None:
+        """Release this screen's exact claim before its mounted lifetime ends."""
+
+        claim = self._pending_conversation_settings_return_claim
+        handoffs = getattr(self.app_instance, "pending_handoffs", None)
+        if isinstance(handoffs, PendingHandoffStore) and claim is not None:
+            handoffs.release(claim)
+        if self._pending_conversation_settings_return_claim is claim:
+            self._pending_conversation_settings_return_claim = None
 
     async def _mount_conversation_settings_return_status(
         self,
@@ -14364,6 +14365,7 @@ class ChatScreen(BaseAppScreen):
 
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
+        self._release_claimed_conversation_settings_return()
         # task-15470: flush a pending debounced sidebar-state write FIRST,
         # ahead of every other teardown step below -- several of those can
         # raise, and a raised exception must not strand an unpersisted
