@@ -234,6 +234,48 @@ def test_default_library_policy_does_not_dirty_pristine_tab_but_explicit_edit_do
     assert not store.is_pristine_session(session.id, expected_settings=defaults)
 
 
+def test_console_settings_revision_tracks_only_settings_owned_changes():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+
+    assert session.settings_revision == 0
+    assert store.session_settings_revision(session.id) == 0
+
+    store.replace_session_settings(session.id, replace(defaults, temperature=0.2))
+    assert store.session_settings_revision(session.id) == 1
+    store.replace_session_settings(session.id, replace(defaults, temperature=0.2))
+    assert store.session_settings_revision(session.id) == 1
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hello")
+    assert store.session_settings_revision(session.id) == 1
+
+    overrides = ConsoleContextPolicyOverrides(summary_max_tokens=256)
+    store.set_session_context_policy_overrides(session.id, overrides)
+    assert store.session_settings_revision(session.id) == 2
+    store.set_session_context_policy_overrides(session.id, overrides)
+    assert store.session_settings_revision(session.id) == 2
+
+    store.set_session_user_display_name_override(
+        session.id, "Ada", global_default="User"
+    )
+    assert store.session_settings_revision(session.id) == 3
+    store.set_session_user_display_name_override(
+        session.id, "Ada", global_default="User"
+    )
+    assert store.session_settings_revision(session.id) == 3
+
+    store.set_session_system_prompt(session.id, "Be concise.")
+    assert store.session_settings_revision(session.id) == 4
+    store.set_session_system_prompt(session.id, "Be concise.")
+    assert store.session_settings_revision(session.id) == 4
+
+    store.set_session_pinned_prefill(session.id, "Voice:")
+    assert store.session_settings_revision(session.id) == 5
+    store.set_session_pinned_prefill(session.id, "Voice:")
+    assert store.session_settings_revision(session.id) == 5
+
+
 def test_message_completed_subscription_emits_first_live_completion_once():
     store = ConsoleChatStore()
     session = store.create_session()
