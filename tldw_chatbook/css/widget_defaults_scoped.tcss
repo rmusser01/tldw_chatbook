@@ -3069,6 +3069,44 @@
 
 
 
+/* ===== WIDGET: DetailValueRow (Widgets/detail_value_row.py) ===== */
+
+    /* Local pass-through of the $ds-* tokens this block uses, aliased to
+       the exact same underlying values `css/core/_variables.tcss` defines.
+       The widget-defaults CSS tier (BUNDLED_CSS, TASK-15450) is parsed as
+       its own stylesheet source before the app bundle that defines the
+       real $ds-* tokens, so a bare reference is an unresolved-variable
+       parse error in *any* host, including the real app -- see
+       `TldwCli.CSS_PATH`'s own comment on this exact hazard. Not a
+       distinct palette (contrast `PromptBlockEditor`'s intentionally
+       shadowed one); keep these identical to their source of truth. */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* ===== WIDGET: DetailGroup (Widgets/detail_value_row.py) ===== */
+
+    /* Local pass-through fallback -- see `DetailValueRow.BUNDLED_CSS`. */
+
+
+
+
+
+
 /* ===== WIDGET: ProjectSkillsImportModal (Widgets/project_skills_import_modal.py) ===== */
 
 
