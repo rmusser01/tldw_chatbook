@@ -1,10 +1,11 @@
 ---
 id: TASK-25900
 title: 'MCP client: Streamable HTTP and SSE transports'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-31 15:07'
-updated_date: '2026-09-02 06:50'
+updated_date: '2026-09-03 00:24'
 labels:
   - mcp
   - interop
@@ -38,3 +39,9 @@ RESHAPED by ADR-111 Option C (2026-09-02, supersedes the hand-roll plan):
 3. stdio path untouched and extra-free (AC#5); remote servers require the mcp extra.
 Cross-repo dependency: step 1 first.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Server half DONE: tldw_server PR #2861 MERGED to dev (25fb0eca59) 2026-09-02 — Streamable HTTP + SSE transports in apps/mcp-unified federation, ExternalServerDefinition gains streamable_http/sse + static headers, v0.3.0. mcp-unified 0.3.0 publishes to PyPI automatically on the next tldw_server main release + version bump (bump already staged on dev). Chatbook wiring half BLOCKED on that PyPI release (pin mcp-unified==0.2.1 can't move until 0.3.0 resolves). Dep-independent SCAFFOLDING written 2026-09-02: backlog/docs/task-25900-chatbook-wiring-plan.md — URL-record schema sketch for local_store (transport tag + url + header secret-guards reusing the env placeholder/literal split), connect-path branch in local_control_service._get_client via mcp_unified.federation, gate/hash/log reuse (keyed on profile_id not transport), and the concrete transport-reason-code -> ReadinessState/action mapping for AC#6. Build sequence in the doc §6; resume when 0.3.0 is on PyPI.
+<!-- SECTION:NOTES:END -->
