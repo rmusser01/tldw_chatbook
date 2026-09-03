@@ -618,9 +618,11 @@ not combining them into one unsafe change.
    an optional provider-matrix-backed paid generation check, accessibility,
    keyboard behavior, and live 80x24/100x30/160x40 verification.
 
-Workstream 1 is foundational. Workstreams 2 and 3 may follow it independently;
-workstream 4 depends on structured readiness; workstream 5 follows the relevant
-provider/service contracts. Each task repeats this ADR check and links ADR-033.
+Workstream 1 is foundational. Workstream 2 follows it; workstream 3 consumes the
+typed readiness and return seams from workstreams 1 and 2; workstream 4 builds on
+the connection-first structure and readiness evidence; workstream 5 follows the
+relevant provider/service contracts. Each task repeats this ADR check and links
+ADR-033.
 
 ## Acceptance Criteria
 
