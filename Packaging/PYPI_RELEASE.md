@@ -39,8 +39,8 @@ Protect the `dev` and `main` branches and the `testpypi` and `pypi` GitHub
 environments before allowing publishing. The TestPyPI job only runs for manual
 dispatch from protected `dev`; the PyPI job only runs for protected `main`
 branch pushes, and it skips the upload when the built version already exists on
-PyPI. Publish jobs only download built artifacts and request the PyPI OIDC
-token.
+PyPI or is older than the latest published version. Publish jobs only download
+built artifacts and request the PyPI OIDC token.
 
 ## Local Release Gates
 
@@ -101,8 +101,9 @@ Run the full suite only when the release manager explicitly wants a full sweep.
    publish by pushing a tag; tag pushes are intentionally ignored by the PyPI
    workflow.
 3. The `Publish Python package` workflow builds and checks the artifacts from
-   `main`, verifies whether the version already exists on PyPI, and publishes
-   through the protected `pypi` environment only when the version is new.
+   `main`, verifies whether the version is publishable on PyPI, and publishes
+   through the protected `pypi` environment only when the version is absent and
+   newer than the latest published version.
 4. After PyPI is verified, create and push the annotated source tag at the
    `main` release commit for provenance:
 
