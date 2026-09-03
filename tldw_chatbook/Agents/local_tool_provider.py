@@ -1580,6 +1580,26 @@ class LocalToolProvider:
                     )
                     if stale_guard is not None:
                         dispatch_args = stale_guard[0]
+                elif name in {"fs_edit", "fs_patch"}:
+                    _stale = self._stale_targets_for(
+                        name,
+                        clean_args,
+                        authority.root if authority is not None else self._root,
+                    )
+                    if _stale:
+                        shown, stamp, resolved = _stale[0]
+                        message = self._stale_write_refusal(shown, stamp, resolved)
+                        if len(_stale) > 1:
+                            message += f" (+{len(_stale) - 1} more stale targets)"
+                        provider_terminal = LocalProviderTerminal.RETURNED
+                        return LocalToolInvocationResult(
+                            result=ToolResult.blocked(message),
+                            final_gate=gate.verdict,
+                            approval_consumed=gate.approval_consumed,
+                            reason_code=LocalToolInvocationReason.HANDLER_RETURNED,
+                            dispatch_started=True,
+                            provider_terminal=provider_terminal,
+                        )
                 try:
                     selected_spec = (
                         self._path_specs_by_alias[authority.alias][name]
@@ -1983,6 +2003,55 @@ class LocalToolProvider:
         else:
             injected["expected_sha256"] = stamp.sha256
         return injected, stamp, resolved
+
+    def _stale_targets_for(
+        self, name: str, args: dict, root: "Path"
+    ) -> "list[tuple[str, object, Path]]":
+        """Targets of an fs_edit/fs_patch whose ledger stamp mismatches disk."""
+        from tldw_chatbook.Agents.fs_read_ledger import canonical_ledger_key
+        from tldw_chatbook.Agents.run_context import current_run_id
+        from tldw_chatbook.Tools.local_tool_impls import (
+            LocalToolError,
+            resolve_workspace_path,
+        )
+
+        run_id = current_run_id()
+        base = Path(root).resolve()
+        shown_paths: list[str] = []
+        if name == "fs_edit":
+            raw = args.get("path")
+            if isinstance(raw, str) and raw:
+                shown_paths.append(raw)
+        elif name == "fs_patch":
+            from tldw_chatbook.Tools.patch_tool_impls import (
+                FilesystemPatchError,
+                parse_patch_targets,
+            )
+
+            try:
+                plans = parse_patch_targets(args.get("diff") or "")
+            except FilesystemPatchError:
+                return []  # the handler will refuse the malformed diff itself
+            for plan in plans:
+                if plan.new_path is not None:
+                    shown_paths.append(plan.new_path)
+
+        stale: list[tuple[str, object, Path]] = []
+        for shown in shown_paths:
+            try:
+                resolved = resolve_workspace_path(shown, base, intent="write")
+            except (LocalToolError, OSError, ValueError):
+                continue  # handler will refuse identically
+            stamp = self._read_ledger.stamp_for(run_id, canonical_ledger_key(resolved))
+            if stamp is None:
+                continue
+            now = _hash_file(resolved)
+            if stamp.is_absent:
+                if now is not None:
+                    stale.append((shown, stamp, resolved))
+            elif now is None or now[0] != stamp.sha256:
+                stale.append((shown, stamp, resolved))
+        return stale
 
     def _root_is_valid(self) -> bool:
         """Never raise while revalidating an optional selected-root guard."""

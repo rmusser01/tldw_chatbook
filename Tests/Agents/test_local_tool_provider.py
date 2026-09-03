@@ -3939,3 +3939,67 @@ def test_model_supplied_precondition_wins_over_ledger(tmp_path):
     # model's explicit (correct, current) precondition wins -> write proceeds
     assert result.ok
     assert target.read_text() == "mine\n"
+
+
+# --- TASK-28238 phase 1: fs_edit / fs_patch staleness (pre-hash) ---
+
+
+def test_edit_race_refuses_second_writer(tmp_path):
+    target = tmp_path / "shared.py"
+    target.write_text("x = 1\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        assert provider.invoke("local:fs_read", {"path": "shared.py"}).ok
+    with use_run_id("run-b"):
+        assert provider.invoke(
+            "local:fs_write", {"path": "shared.py", "content": "x = 2\n"}
+        ).ok
+    with use_run_id("run-a"):
+        result = provider.invoke(
+            "local:fs_edit",
+            {"path": "shared.py", "old_string": "x = 1", "new_string": "x = 99"},
+        )
+    assert not result.ok
+    # NOTE (ruling 2, same as Task 3): ToolResult.blocked(...) stores the
+    # refusal on .error, not .content -- adapted from the brief's literal
+    # text.
+    assert "Stale write refused" in str(result.error)
+    assert target.read_text() == "x = 2\n"
+
+
+def test_edit_without_prior_read_proceeds(tmp_path):
+    target = tmp_path / "blind.py"
+    target.write_text("y = 1\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        result = provider.invoke(
+            "local:fs_edit", {"path": "blind.py", "old_string": "y = 1", "new_string": "y = 2"}
+        )
+    assert result.ok
+    assert target.read_text() == "y = 2\n"
+
+
+def test_patch_with_one_stale_target_refuses_whole_patch(tmp_path):
+    a = tmp_path / "a.txt"
+    b = tmp_path / "b.txt"
+    a.write_text("alpha\n")
+    b.write_text("beta\n")
+    provider = _guard_provider(tmp_path)
+    with use_run_id("run-a"):
+        assert provider.invoke("local:fs_read", {"path": "a.txt"}).ok
+        assert provider.invoke("local:fs_read", {"path": "b.txt"}).ok
+    with use_run_id("run-b"):
+        assert provider.invoke(
+            "local:fs_write", {"path": "b.txt", "content": "beta CHANGED\n"}
+        ).ok
+    diff = (
+        "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-alpha\n+alpha2\n"
+        "--- a/b.txt\n+++ b/b.txt\n@@ -1 +1 @@\n-beta\n+beta2\n"
+    )
+    with use_run_id("run-a"):
+        result = provider.invoke("local:fs_patch", {"diff": diff})
+    assert not result.ok
+    assert "Stale write refused" in str(result.error)
+    # NEITHER file was touched -- whole patch refused
+    assert a.read_text() == "alpha\n"
+    assert b.read_text() == "beta CHANGED\n"
