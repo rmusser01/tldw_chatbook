@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import threading
 from typing import AsyncIterator, Optional, TypeVar
 
 _T = TypeVar("_T")
@@ -44,6 +45,10 @@ class StreamStallError(RuntimeError):
 
     Distinct from transport/network errors and from ``CancelledError`` so the
     caller can report a stall honestly rather than as a generic failure.
+
+    Args:
+        timeout_seconds: The content-idle window that elapsed with no new item.
+        provider: Optional provider label for the message.
     """
 
     def __init__(self, timeout_seconds: float, provider: Optional[str] = None) -> None:
@@ -111,6 +116,10 @@ class StallTracker:
 
     Repeated stalls against the same provider surface a warning rather than
     silently continuing; a productive turn resets that provider's count.
+
+    Args:
+        warn_threshold: Stalls against one provider before a warning is due
+            (coerced to at least 1).
     """
 
     def __init__(self, warn_threshold: int = DEFAULT_STALL_WARN_THRESHOLD) -> None:
@@ -133,11 +142,22 @@ class StallTracker:
         return count >= self._warn_threshold
 
     def reset(self, provider: Optional[str]) -> None:
-        """Clear the stall count for ``provider`` after a productive turn."""
+        """Clear the stall count for ``provider`` after a productive turn.
+
+        Args:
+            provider: The provider whose count to clear.
+        """
         self._counts.pop(str(provider or ""), None)
 
     def count(self, provider: Optional[str]) -> int:
-        """Return the current stall count for ``provider``."""
+        """Return the current stall count for ``provider``.
+
+        Args:
+            provider: The provider to look up.
+
+        Returns:
+            The number of stalls recorded for ``provider`` (0 if none).
+        """
         return self._counts.get(str(provider or ""), 0)
 
 
@@ -152,6 +172,9 @@ _SESSION_TRACKERS: dict[str, StallTracker] = {}
 #: without a cap a very long-lived process could accumulate one small tracker
 #: per distinct stall-then-die session. Evict the oldest on overflow.
 _MAX_TRACKED_SESSIONS = 512
+#: Guards the process-global registry: the bridge runs the primary turn and each
+#: fleet child on separate threads, all calling the record/reset helpers.
+_REGISTRY_LOCK = threading.Lock()
 
 
 def record_session_stall(
@@ -173,16 +196,17 @@ def record_session_stall(
         warning should be surfaced (AC#4).
     """
     key = str(session_id or "")
-    tracker = _SESSION_TRACKERS.get(key)
-    if tracker is None:
-        if len(_SESSION_TRACKERS) >= _MAX_TRACKED_SESSIONS:
-            # dict preserves insertion order; drop the oldest tracked session.
-            oldest = next(iter(_SESSION_TRACKERS), None)
-            if oldest is not None:
-                _SESSION_TRACKERS.pop(oldest, None)
-        tracker = StallTracker(warn_threshold)
-        _SESSION_TRACKERS[key] = tracker
-    return tracker.record_stall(provider)
+    with _REGISTRY_LOCK:
+        tracker = _SESSION_TRACKERS.get(key)
+        if tracker is None:
+            if len(_SESSION_TRACKERS) >= _MAX_TRACKED_SESSIONS:
+                # dict preserves insertion order; drop the oldest tracked session.
+                oldest = next(iter(_SESSION_TRACKERS), None)
+                if oldest is not None:
+                    _SESSION_TRACKERS.pop(oldest, None)
+            tracker = StallTracker(warn_threshold)
+            _SESSION_TRACKERS[key] = tracker
+        return tracker.record_stall(provider)
 
 
 def reset_session_stalls(
@@ -196,12 +220,13 @@ def reset_session_stalls(
             entry (a fully productive turn).
     """
     key = str(session_id or "")
-    tracker = _SESSION_TRACKERS.get(key)
-    if tracker is None:
-        return
-    if provider is None:
-        _SESSION_TRACKERS.pop(key, None)
-    else:
-        tracker.reset(provider)
-        if tracker.count(provider) == 0 and not tracker._counts:  # fully clear
+    with _REGISTRY_LOCK:
+        tracker = _SESSION_TRACKERS.get(key)
+        if tracker is None:
+            return
+        if provider is None:
             _SESSION_TRACKERS.pop(key, None)
+        else:
+            tracker.reset(provider)
+            if not tracker._counts:  # fully clear
+                _SESSION_TRACKERS.pop(key, None)

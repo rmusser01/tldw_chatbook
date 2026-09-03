@@ -4151,7 +4151,8 @@ rag_auto_retrieve_on_send = false  # New Console chats do not search Library aut
 # for this many seconds is terminated even while keep-alive/heartbeat bytes keep
 # arriving (the transport read timeout never fires in that case). Keep-alives do
 # not reset the clock; normal slow generation keeps emitting content and does
-# not trip. Non-positive disables the watchdog. Default 90s.
+# not trip. Non-positive disables the watchdog. Default 90s. Env override:
+# TLDW_STREAM_STALL_TIMEOUT_SECONDS (precedence: env -> this key -> default).
 # stream_stall_timeout_seconds = 90
 # Default settings specifically for the 'Chat' tab
 user_display_name = "User"

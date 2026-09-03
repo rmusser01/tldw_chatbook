@@ -2588,21 +2588,35 @@ class ConsoleAgentTraceRequestFactory:
 def _stall_timeout_seconds() -> float:
     """Content-stall ceiling for streamed turns (TASK-26003).
 
-    Reads ``[chat_defaults] stream_stall_timeout_seconds``; non-positive disables the
-    watchdog. Read per turn so a config edit takes effect without a restart.
+    Precedence follows the project rule env -> config.toml -> default:
+    ``TLDW_STREAM_STALL_TIMEOUT_SECONDS`` first, then ``[chat_defaults]
+    stream_stall_timeout_seconds``, then :data:`DEFAULT_STALL_TIMEOUT_SECONDS`.
+    A non-positive value disables the watchdog; a non-finite or unparseable
+    value falls back to the default. Read per turn so a config edit takes effect
+    without a restart.
+
+    Returns:
+        The content-idle ceiling in seconds (<= 0 disables the watchdog).
     """
+    import math
+    import os
+
     from tldw_chatbook.config import get_cli_setting
 
-    try:
-        return float(
-            get_cli_setting(
-                "chat_defaults",
-                "stream_stall_timeout_seconds",
-                DEFAULT_STALL_TIMEOUT_SECONDS,
-            )
+    raw: Any = os.environ.get("TLDW_STREAM_STALL_TIMEOUT_SECONDS")
+    if raw is None or not str(raw).strip():
+        raw = get_cli_setting(
+            "chat_defaults",
+            "stream_stall_timeout_seconds",
+            DEFAULT_STALL_TIMEOUT_SECONDS,
         )
+    try:
+        value = float(raw)
     except (TypeError, ValueError):
         return DEFAULT_STALL_TIMEOUT_SECONDS
+    if not math.isfinite(value):
+        return DEFAULT_STALL_TIMEOUT_SECONDS
+    return value
 
 
 class _StreamingModelAdapter:

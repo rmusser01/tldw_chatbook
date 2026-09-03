@@ -199,3 +199,51 @@ def test_session_registry_is_capped():
     finally:
         w._MAX_TRACKED_SESSIONS = orig
         w._SESSION_TRACKERS.clear()
+
+
+# --- Qodo round: env override, non-finite guard, concurrency ---
+
+def test_env_override_takes_precedence(monkeypatch):
+    """Qodo #1: env -> config -> default precedence."""
+    from tldw_chatbook.Chat import console_agent_bridge as bridge_mod
+    monkeypatch.setenv("TLDW_STREAM_STALL_TIMEOUT_SECONDS", "12.5")
+    monkeypatch.setattr(
+        bridge_mod, "get_cli_setting", lambda *a, **k: 999, raising=False
+    )
+    assert bridge_mod._stall_timeout_seconds() == 12.5
+
+
+def test_non_finite_config_falls_back_to_default(monkeypatch):
+    """Qodo #2: inf/nan never reach asyncio.wait_for."""
+    from tldw_chatbook.Chat import console_agent_bridge as bridge_mod
+    from tldw_chatbook.Chat.stream_stall_watchdog import DEFAULT_STALL_TIMEOUT_SECONDS
+    monkeypatch.delenv("TLDW_STREAM_STALL_TIMEOUT_SECONDS", raising=False)
+    for bad in ("inf", "nan", "-inf", "notanumber"):
+        monkeypatch.setattr(bridge_mod, "get_cli_setting", lambda *a, **k: bad)
+        got = bridge_mod._stall_timeout_seconds()
+        if bad == "notanumber":
+            assert got == DEFAULT_STALL_TIMEOUT_SECONDS
+        else:
+            # inf/nan -> default (never a non-finite timeout)
+            import math
+            assert math.isfinite(got)
+
+
+def test_concurrent_record_session_stall_is_thread_safe():
+    """Qodo #5: concurrent fleet + primary completions must not lose counts."""
+    import threading
+    import tldw_chatbook.Chat.stream_stall_watchdog as w
+    w._SESSION_TRACKERS.clear()
+
+    def hammer():
+        for _ in range(200):
+            w.record_session_stall("sess", "acme", warn_threshold=10_000)
+
+    threads = [threading.Thread(target=hammer) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    # no lost increments under the lock: exactly 8 * 200
+    assert w._SESSION_TRACKERS["sess"].count("acme") == 1600
+    w._SESSION_TRACKERS.clear()
