@@ -78,7 +78,7 @@ filter timings include the deliberate 200 ms debounce and Textual repaint.
   It also produced a born-red native regression, the core semantic-query repair,
   review hardening for Unicode/multi-word/bounded workspace filtering, a
   per-token metadata-union correction for mixed searches, and a post-fix
-  199-test focused rail. See
+  200-test focused rail after Qodo compliance follow-up. See
   `task-21351-iterm2-uat-2026-09-02.md` and its checksummed JPEG captures.
 - Windows Terminal parity remains blocked by TASK-20937.6.
 

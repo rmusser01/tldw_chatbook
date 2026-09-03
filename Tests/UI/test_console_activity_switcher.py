@@ -173,6 +173,37 @@ def test_active_projection_reads_open_sessions_without_any_persistence_reader():
 
 
 @pytest.mark.asyncio
+async def test_history_loader_revalidates_query_before_storage_search():
+    calls: list[dict[str, object]] = []
+
+    def list_conversations(**kwargs):
+        calls.append(kwargs)
+        return {"items": [], "pagination": {"total": 0}}
+
+    app = SimpleNamespace(
+        console_runtime=SimpleNamespace(
+            profile_authority="profile-a",
+            authority_token="runtime-a",
+            activity_receipts=_ReceiptSnapshot(),
+        ),
+        local_chat_conversation_service=SimpleNamespace(
+            list_conversations=list_conversations
+        ),
+    )
+    controller = _projection_controller(app)
+
+    page = await controller.load_console_session_switcher_history(
+        query="x" * 513,
+        offset=0,
+        limit=50,
+    )
+
+    assert calls == []
+    assert page.entries == ()
+    assert page.error == "Search is limited to 512 characters."
+
+
+@pytest.mark.asyncio
 async def test_history_uses_one_all_local_bounded_page_with_explicit_targets():
     calls: list[dict[str, object]] = []
 

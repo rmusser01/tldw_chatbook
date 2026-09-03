@@ -8,7 +8,7 @@ from enum import Enum
 from typing import Any, Iterable, Literal, Sequence
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserInputRow,
@@ -126,6 +126,34 @@ class ConsoleSwitcherHistoryQuery:
     workspace_terms: tuple[str, ...] = ()
     ordered_terms: tuple[ConsoleSwitcherHistoryTerm, ...] = ()
     can_match: bool = True
+
+
+class _ConsoleHistoryTimezoneConfig(BaseModel):
+    """Strict configuration boundary for an optional explicit IANA timezone."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    configured_name: str | None = Field(default=None, max_length=255)
+
+    @field_validator("configured_name", mode="before")
+    @classmethod
+    def _normalize_configured_name(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("configured_name must be text or None")
+        return value.strip() or None
+
+    @field_validator("configured_name")
+    @classmethod
+    def _require_known_iana_zone(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            ZoneInfo(value)
+        except (KeyError, ValueError):
+            raise ValueError("configured_name must identify an IANA timezone") from None
+        return value
 
 
 @dataclass(frozen=True)
@@ -1100,14 +1128,27 @@ def resolve_console_history_timezone(
     *,
     system_timezone: tzinfo | None = None,
 ) -> tzinfo | None:
-    """Resolve an explicit IANA zone; None delegates to host-local rules."""
-    timezone_name = str(configured_name or "").strip()
-    if timezone_name:
-        try:
-            return ZoneInfo(timezone_name)
-        except (KeyError, ValueError):
-            pass
-    return system_timezone
+    """Resolve an explicit IANA zone or delegate to host-local rules.
+
+    Args:
+        configured_name: Optional configured IANA timezone name. Invalid,
+            oversized, or non-text values use the system fallback.
+        system_timezone: Explicit host timezone used by tests; ``None`` lets
+            ``datetime.astimezone`` apply the host's rules per instant.
+
+    Returns:
+        The validated explicit IANA timezone, or ``system_timezone`` when no
+        valid explicit configuration is present.
+    """
+    try:
+        config = _ConsoleHistoryTimezoneConfig.model_validate(
+            {"configured_name": configured_name}
+        )
+    except ValidationError:
+        return system_timezone
+    if config.configured_name is None:
+        return system_timezone
+    return ZoneInfo(config.configured_name)
 
 
 def console_history_section(

@@ -103,7 +103,12 @@ from ...Workspaces.display_state import (
     build_console_workspace_state,
     console_workspace_conversation_result_copy,
 )
-from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Utils.input_validation import (
+    CONSOLE_SWITCHER_QUERY_MAX_LENGTH,
+    sanitize_string,
+    validate_console_switcher_query,
+    validate_text_input,
+)
 from ...Workspaces.registry_service import (
     WorkspaceNotFound,
     WorkspaceRegistryServiceError,
@@ -2782,10 +2787,30 @@ class ConsoleWorkspaceController:
         offset: int,
         limit: int,
     ) -> ConsoleSwitcherHistoryPage:
-        """Load one bounded all-local History page off the event loop."""
+        """Load one validated, bounded all-local History page off the event loop.
+
+        Args:
+            query: Exact switcher query from the UI validation boundary.
+            offset: Requested zero-based result offset.
+            limit: Requested maximum result count.
+
+        Returns:
+            One bounded History page. Invalid queries return an empty page with
+            the same recovery copy used by the switcher input.
+        """
         bounded_limit = min(CONSOLE_SWITCHER_PAGE_LIMIT, max(1, int(limit)))
         bounded_offset = max(0, int(offset))
-        query_plan = plan_console_history_query(query)
+        try:
+            validated_query = validate_console_switcher_query(query)
+        except ValueError:
+            return ConsoleSwitcherHistoryPage(
+                (),
+                bounded_offset,
+                bounded_limit,
+                0,
+                f"Search is limited to {CONSOLE_SWITCHER_QUERY_MAX_LENGTH} characters.",
+            )
+        query_plan = plan_console_history_query(validated_query)
         if not query_plan.can_match:
             return ConsoleSwitcherHistoryPage((), bounded_offset, bounded_limit, 0)
         service = getattr(

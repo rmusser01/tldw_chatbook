@@ -318,6 +318,14 @@ def test_history_timezone_defaults_to_host_calendar_but_explicit_zone_wins():
         "UTC",
         system_timezone=host_zone,
     )
+    non_text_zone = resolve_console_history_timezone(
+        42,
+        system_timezone=host_zone,
+    )
+    oversized_zone = resolve_console_history_timezone(
+        "x" * 256,
+        system_timezone=host_zone,
+    )
 
     assert (
         console_history_section(
@@ -328,6 +336,8 @@ def test_history_timezone_defaults_to_host_calendar_but_explicit_zone_wins():
         == "Today"
     )
     assert invalid_zone is host_zone
+    assert non_text_zone is host_zone
+    assert oversized_zone is host_zone
     assert (
         console_history_section(
             recent,
