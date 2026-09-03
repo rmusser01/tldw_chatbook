@@ -121,14 +121,41 @@ def _worktree_root_identity(path: Path) -> tuple[tuple[str, int, int, int], ...]
     return tuple(identities)
 
 
-def discard_agent_worktree(repo_root: Path, wt: AgentWorktree) -> WorktreeRefusal | None:
-    """Remove the worktree and delete its branch. None on success."""
-    code, _out, err = _git(repo_root, "worktree", "remove", "--force", str(wt.worktree_path))
+def discard_agent_worktree(
+    repo_root: Path, wt: AgentWorktree, *, force: bool = True
+) -> WorktreeRefusal | None:
+    """Remove the worktree and (best-effort) delete its branch. None on success.
+
+    Args:
+        repo_root: The shared workspace root.
+        wt: The child's worktree record.
+        force: True (default) is the explicit discard TOOL's contract --
+            the user has confirmed a deliberate destruction, so this is
+            `git worktree remove --force` (removes even a DIRTY worktree)
+            plus `git branch -D` (deletes even an UNMERGED branch).
+            `prune_stale_agent_worktrees` passes False instead: it is
+            implicit GC, not a confirmed decision, so it must never
+            destroy unmerged work. False means plain `git worktree
+            remove` (no `--force`) -- git itself refuses a dirty
+            worktree, surfacing the ordinary `worktree_remove_failed`
+            refusal and leaving the worktree on disk untouched -- and, on
+            a successful removal, `git branch -d` (lowercase), which
+            best-effort refuses to delete a branch not fully merged; the
+            ref survives on purpose rather than losing the commit.
+    """
+    remove_args = (
+        "worktree",
+        "remove",
+        *(("--force",) if force else ()),
+        str(wt.worktree_path),
+    )
+    code, _out, err = _git(repo_root, *remove_args)
     if code != 0 and wt.worktree_path.exists():
         return WorktreeRefusal(
             "worktree_remove_failed", f"git worktree remove failed: {err.strip()[:200]}"
         )
-    _git(repo_root, "branch", "-D", wt.branch)  # best-effort; branch may be merged
+    # best-effort; branch may be merged already (force) or unmerged (not force)
+    _git(repo_root, "branch", "-D" if force else "-d", wt.branch)
     return None
 
 
@@ -328,7 +355,13 @@ def prune_stale_agent_worktrees(repo_root: Path, live_run_ids: set[str]) -> int:
                     wt = AgentWorktree(
                         run_id=run_id, worktree_path=current_path, branch=branch, base_sha=""
                     )
-                    if discard_agent_worktree(repo_root, wt) is None:
+                    # force=False: this is implicit GC, not the explicit
+                    # discard TOOL's confirmed destruction -- a dirty
+                    # worktree must stay on disk exactly as the tool
+                    # schemas promise ("left on disk", DISCARD_AGENT_
+                    # WORKTREE_SCHEMA's description in tool_catalog.py),
+                    # never silently destroyed by a background sweep.
+                    if discard_agent_worktree(repo_root, wt, force=False) is None:
                         removed += 1
             current_path = None
     return removed

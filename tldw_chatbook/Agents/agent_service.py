@@ -3893,7 +3893,12 @@ class AgentService:
                 workspace_executor=WorkspaceToolExecutor(created.worktree_path),
             )
             provider.admit_run_workspace_root(child_run_id, authority)
-        except (WorkspaceToolExecutionError, ValueError) as exc:
+        except (WorkspaceToolExecutionError, ValueError, OSError) as exc:
+            # M2 (TASK-28238 P2 T7 final fix wave): `_worktree_root_identity`
+            # does a raw `os.lstat` walk -- a transient OS-level failure
+            # there must land here too, so the refusal path (including
+            # the worktree cleanup below) runs instead of an unhandled
+            # exception escaping the tool call.
             agent_worktree.discard_agent_worktree(provider.workspace_root, created)
             return f"worktree isolation refused [admit_failed]: {exc}"
         self._agent_worktrees[handle.handle_id] = created
@@ -3917,21 +3922,71 @@ class AgentService:
         Callers wrap this in try/except -- teardown must never mask a
         child's real terminal outcome.
         """
-        wt = self._agent_worktrees.get(handle_id)
-        if wt is None:
-            return
         from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 
         owner = self.registry.resolve_owner_for_name("fs_read")
         provider = owner[1] if owner is not None else None
+        # M1 (TASK-28238 P2 T7 final fix wave): the provider-routing retire
+        # must run even when `self._agent_worktrees` has already lost this
+        # handle's entry (e.g. a map reset between turns) -- it is a
+        # SEPARATE map from the provider's own `_agent_roots`, and
+        # returning early below used to skip this call entirely, leaking
+        # `_agent_roots[run_id]` and its alias's dispatch-spec cache entry
+        # for the rest of the process. `retire_run_workspace_root` is
+        # already a no-op when `run_id` was never admitted.
         if isinstance(provider, LocalToolProvider):
             provider.retire_run_workspace_root(run_id)
+        wt = self._agent_worktrees.get(handle_id)
+        if wt is None:
+            return
         if discard:
             del self._agent_worktrees[handle_id]
             if isinstance(provider, LocalToolProvider):
                 from tldw_chatbook.Agents import agent_worktree
 
                 agent_worktree.discard_agent_worktree(provider.workspace_root, wt)
+
+    def _sweep_stale_agent_worktrees(self) -> None:
+        """End-of-turn GC: remove agent worktrees this service no longer
+        considers live -- force=False, so git itself refuses to touch a
+        dirty one (see `discard_agent_worktree`'s own docstring).
+
+        I3 (TASK-28238 P2 T7 final fix wave). `prune_stale_agent_worktrees`
+        has existed since Task 4 but nothing ever called it: every
+        isolated child's worktree accumulated on disk forever once its
+        turn ended without an explicit merge/discard. Called from
+        `run_turn`'s teardown, after `_settle_fleet`.
+
+        `live_run_ids` reuses `live_subagent_handles` -- the same
+        turn-scoped "is this still my responsibility" view `_settle_fleet`
+        itself is built on (`self._fleet_cancels`) -- so a survivor
+        (`subagents_outlive_turn`, the default) is never swept out from
+        under its own still-running thread just because ITS turn ended;
+        only a handle this service has already stopped tracking (or
+        driven terminal) is eligible.
+
+        Never raises: GC must not cost a turn its outcome, and this
+        deliberately adds no new logging -- a missed sweep is invisible
+        by design, not a signal an operator needs paged on.
+        """
+        try:
+            from tldw_chatbook.Agents import agent_worktree
+            from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+
+            owner = self.registry.resolve_owner_for_name("fs_read")
+            provider = owner[1] if owner is not None else None
+            if not isinstance(provider, LocalToolProvider):
+                return
+            live_run_ids = {
+                handle.run_id
+                for handle in self.live_subagent_handles()
+                if handle.run_id is not None
+            }
+            agent_worktree.prune_stale_agent_worktrees(
+                provider.workspace_root, live_run_ids
+            )
+        except Exception:  # noqa: BLE001 — GC must never break a turn
+            pass
 
     def _service_error_step(self, run_id: str, summary: str) -> AgentStep:
         """Allocate a causal error after this run's durable observations."""
@@ -4681,6 +4736,12 @@ class AgentService:
                 refusal = self._admit_agent_worktree(handle, child_run_id)
                 if refusal is not None:
                     fleet.finish(handle.handle_id, RUN_ERROR, error=refusal)
+                    # I1 (TASK-28238 P2 T7 final fix wave): `db.create_run`
+                    # above already wrote this row as "running" -- attach_run
+                    # (below) never happens on this path, so nothing else
+                    # ever marks it terminal. Match the sibling thread-
+                    # start-failure path's call shape exactly.
+                    self._set_terminal_status(child_run_id, RUN_ERROR)
                     sub_agent_spawns -= 1
                     return None, ToolResult(ok=False, error=refusal)
             child_kwargs["lifecycle_owner_seq_start"] = owner_seq
@@ -5199,6 +5260,24 @@ class AgentService:
                 # record numbers unique across it.
                 run_log_writer=writer,
             )
+            if isolation not in (None, "worktree"):
+                # I2 (TASK-28238 P2 T7 final fix wave): the model-supplied
+                # value is an unenforced JSON-fence string, not a schema
+                # enum -- without this, anything other than the literal
+                # "worktree" (a typo, "sandbox", "work-tree", ...) fell
+                # through every isolation check below and silently
+                # launched a NORMAL shared-tree child with a success
+                # message, the opposite of what was asked. No child was
+                # created, so this costs no spawn slot -- same rule as the
+                # cap/unknown-agent/no_fleet refusals.
+                sub_agent_spawns -= 1
+                return ToolResult(
+                    ok=False,
+                    error=(
+                        f'unknown isolation "{isolation}" [invalid_isolation]; '
+                        'valid values: "worktree" or omit'
+                    ),
+                )
             if isolation == "worktree" and (fleet is None or inline):
                 # TASK-28238 P2 T4 (review fix): the INLINE path never
                 # reaches `_launch_fleet_child`, so it can never create or
@@ -7400,6 +7479,11 @@ class AgentService:
             logger.error(
                 "settling sub-agents at end of turn failed; finalizing the run anyway"
             )
+        # I3 (TASK-28238 P2 T7 final fix wave): GC any agent worktree this
+        # service no longer considers live, now that settling above has
+        # resolved every non-survivor to a terminal status. Swallows its
+        # own exceptions -- see `_sweep_stale_agent_worktrees`'s docstring.
+        self._sweep_stale_agent_worktrees()
         # Manifest needs run-level metadata the writer itself does not have
         # (including supersession), so it is written once the whole run
         # tree finishes, here rather than inside _run_one.
