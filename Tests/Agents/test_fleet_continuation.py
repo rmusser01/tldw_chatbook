@@ -47,8 +47,10 @@ from hypothesis import strategies as st
 from Tests.Agents.test_agent_service import fence
 from Tests.Agents.test_fleet_runtime import (
     _JOIN_TIMEOUT,
+    _fs_local_provider,
     _tool_results,
     _wait_until,
+    git_repo,
     make_fleet_service,
 )
 from tldw_chatbook.Agents.agent_models import (
@@ -878,6 +880,7 @@ def test_send_to_agent_to_a_finished_child_starts_a_resumed_seeded_run(db):
     assert resumed_event["source_event_id"] == f"agent-run:{old_run_id}"
     old_row = next(r for r in rows if r["id"] == old_run_id)
     assert old_row["resumed_from_run_id"] is None
+
     assert old_row["parent_run_id"] == run1
     _wait_until(
         lambda: db.get_run_fresh(resumed_row["id"])["status"] == RUN_DONE,
@@ -895,6 +898,69 @@ def test_send_to_agent_to_a_finished_child_starts_a_resumed_seeded_run(db):
     )
     assert new_handle.handle_id not in sends[0]
     assert f"run:{resumed_row['id']}" in sends[0]
+
+
+#: Isolation-capable resume config: spawn + wait + resume, no fs tools
+#: needed (the child never writes -- this test only checks worktree
+#: ADMISSION happens again on resume, not diff content).
+ISO_RESUME_CFG = AgentConfig(
+    model="test-model",
+    system_prompt="You are helpful.",
+    allowed_tools=(SPAWN_TOOL_NAME, WAIT_AGENTS_TOOL_NAME, SEND_TO_AGENT_TOOL_NAME),
+    budget=RunBudget(max_steps=60, max_model_turns=60, max_subagents=4),
+)
+
+
+def test_resumed_worktree_isolated_child_gets_a_fresh_worktree(db, git_repo):
+    """Finding 7 (Qodo round): `RetainedTranscript` now threads the
+    original child's isolation flag through to a resume -- a resumed
+    isolation="worktree" child must get its OWN fresh worktree (a new
+    run_id, so a new admission is the correct outcome, per the T4
+    refusal machinery `_admit_agent_worktree` already covers), not
+    silently fall back to sharing the tree the way passing a literal
+    ``None`` for isolation used to.
+    """
+    provider = _fs_local_provider(git_repo)
+    holder: dict = {}
+
+    def resume():
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME,
+            {"id": holder["handle_id"], "message": "keep going"},
+        )
+
+    service, chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "iso task", "isolation": "worktree"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn one answer",
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn two answer",
+        ],
+        {"iso task": ["done once", "done twice"]},
+        providers=(provider,),
+    )
+    run1, outcome1 = _run(service, config=ISO_RESUME_CFG)
+    assert outcome1.status == RUN_DONE
+    finished = _finished_child(coordinator)
+    holder["handle_id"] = finished.handle_id
+    _await_retained(coordinator, finished.handle_id)
+    retained = coordinator.get_retained(finished.handle_id)
+    assert retained.isolation == "worktree", (
+        "the original spawn's isolation was not recorded on retention"
+    )
+
+    run2, outcome2 = _run(service, config=ISO_RESUME_CFG)
+    assert outcome2.status == RUN_DONE
+
+    resumed_handle = next(
+        h for h in coordinator.snapshot() if h.handle_id != finished.handle_id
+    )
+    assert resumed_handle.handle_id in service._agent_worktrees, (
+        "the resumed isolated child never got a fresh worktree admission"
+    )
 
 
 class _AgentLessonsCatalogProvider:

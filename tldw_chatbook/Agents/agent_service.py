@@ -4673,7 +4673,9 @@ class AgentService:
             """
             nonlocal sub_agent_spawns
             # -- FLEET path: register, launch, return a handle.
-            handle = fleet.reserve(task=spawn_task, agent=agent_name)
+            handle = fleet.reserve(
+                task=spawn_task, agent=agent_name, isolation=isolation
+            )
             if handle is None:
                 # At the live cap. Unlike a budget refusal this is
                 # RETRYABLE -- collecting a finished child frees a slot --
@@ -5846,10 +5848,17 @@ class AgentService:
                 retained.task,
                 (resolved.name if resolved else None),
                 child_kwargs,
-                # TASK-28238 P2 T4: `RetainedTranscript` carries no
-                # isolation flag -- a resumed child never re-establishes
-                # worktree isolation, even if the original spawn had it.
-                None,
+                # TASK-28238 P2 T7 Qodo round, finding 7 (was T4: a
+                # literal `None` here silently dropped isolation on
+                # resume -- `RetainedTranscript` now carries the
+                # original child's isolation, recorded at retention time
+                # off its `FleetHandle`). A resumed run is a NEW run_id,
+                # so re-admitting a FRESH worktree here is correct, not
+                # merely tolerated -- the existing `_admit_agent_
+                # worktree` refusal machinery (non-git root, no local
+                # provider, admit failure) already covers every way that
+                # can fail.
+                retained.isolation,
             )
             if failure is not None:
                 return failure
