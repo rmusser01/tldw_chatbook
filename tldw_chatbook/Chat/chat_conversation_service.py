@@ -678,12 +678,51 @@ class ChatConversationService:
         offset: int = 0,
         scope_type: str | None = None,
         workspace_id: str | None = None,
+        workspace_ids: Sequence[str] | None = None,
+        include_global_scope: bool = False,
+        query_terms: Sequence[str] | None = None,
+        query_workspace_ids_by_term: Sequence[Sequence[str]] | None = None,
+        query_include_global_scope_by_term: Sequence[bool] | None = None,
         include_deleted: bool = False,
         deleted_only: bool = False,
         state: str | None = None,
         topic_label: str | None = None,
         character_id: int | None = None,
     ) -> dict[str, Any]:
+        """Return one normalized, bounded page of local conversations.
+
+        Args:
+            query: Optional literal title, identifier, or message-content query.
+            limit: Maximum number of conversations to return.
+            offset: Zero-based result offset.
+            scope_type: ``global``, ``workspace``, or the cross-scope ``all``
+                search seam.
+            workspace_id: Exact workspace for a workspace-scoped listing.
+            workspace_ids: Workspace IDs included in an ``all``-scope union.
+            include_global_scope: Whether an ``all``-scope union also includes
+                global conversations.
+            query_terms: Ordered literal terms that must each match at least one
+                approved conversation metadata field.
+            query_workspace_ids_by_term: Workspace-ID matches aligned one-to-one
+                with ``query_terms``.
+            query_include_global_scope_by_term: Global-scope matches aligned
+                one-to-one with ``query_terms``.
+            include_deleted: Whether soft-deleted conversations are eligible.
+            deleted_only: Whether only soft-deleted conversations are eligible.
+            state: Optional normalized conversation-state filter.
+            topic_label: Optional exact topic-label filter.
+            character_id: Optional exact character owner.
+
+        Returns:
+            A mapping containing normalized ``items`` and a ``pagination``
+            envelope with limit, offset, total, and has-more state.
+
+        Raises:
+            ValueError: If page coordinates, scope, workspace, or state are
+                invalid.
+            InputError: If storage-level workspace or per-term query unions are
+                malformed or incompatible with the selected scope.
+        """
         if (
             isinstance(limit, bool)
             or not isinstance(limit, int)
@@ -718,6 +757,11 @@ class ChatConversationService:
             query,
             scope_type=normalized_scope,
             workspace_id=normalized_workspace_id,
+            workspace_ids=workspace_ids,
+            include_global_scope=include_global_scope,
+            query_terms=query_terms,
+            query_workspace_ids_by_term=query_workspace_ids_by_term,
+            query_include_global_scope_by_term=query_include_global_scope_by_term,
             include_deleted=include_deleted,
             deleted_only=deleted_only,
             state=_normalize_state(state) if state is not None else None,

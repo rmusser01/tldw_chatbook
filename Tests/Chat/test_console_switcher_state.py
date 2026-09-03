@@ -15,6 +15,7 @@ from tldw_chatbook.Chat.console_switcher_state import (
     build_console_switcher_entries,
     console_history_section,
     filter_console_active_results,
+    resolve_console_history_timezone,
 )
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserInputRow,
@@ -297,6 +298,53 @@ def test_history_calendar_sections_obey_local_dates_dst_and_invalid_values():
     )
     assert (
         console_history_section("not-a-time", now=now, local_timezone=zone) == "Older"
+    )
+
+
+def test_history_timezone_defaults_to_host_calendar_but_explicit_zone_wins():
+    host_zone = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 9, 3, 1, 0, tzinfo=timezone.utc)
+    recent = datetime(2026, 9, 2, 23, 0, tzinfo=timezone.utc)
+
+    default_zone = resolve_console_history_timezone(
+        None,
+        system_timezone=host_zone,
+    )
+    invalid_zone = resolve_console_history_timezone(
+        "Not/A-Timezone",
+        system_timezone=host_zone,
+    )
+    explicit_zone = resolve_console_history_timezone(
+        "UTC",
+        system_timezone=host_zone,
+    )
+    non_text_zone = resolve_console_history_timezone(
+        42,
+        system_timezone=host_zone,
+    )
+    oversized_zone = resolve_console_history_timezone(
+        "x" * 256,
+        system_timezone=host_zone,
+    )
+
+    assert (
+        console_history_section(
+            recent,
+            now=now,
+            local_timezone=default_zone,
+        )
+        == "Today"
+    )
+    assert invalid_zone is host_zone
+    assert non_text_zone is host_zone
+    assert oversized_zone is host_zone
+    assert (
+        console_history_section(
+            recent,
+            now=now,
+            local_timezone=explicit_zone,
+        )
+        == "Yesterday"
     )
 
 

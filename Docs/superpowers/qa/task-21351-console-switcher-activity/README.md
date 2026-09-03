@@ -72,12 +72,17 @@ filter timings include the deliberate 200 ms debounce and Textual repaint.
 
 ## Native terminal parity status
 
-- iTerm2 is installed and was selected for the macOS equal-cell check, but the
-  native accessibility driver could not connect because the host process lacks
-  macOS Accessibility/TCC permission. No focus-stealing AppleScript workaround
-  was used.
+- iTerm2 native parity passes at 160×45. The walkthrough covers reciprocal MRU
+  blank-Enter switching, the 11-row History fixture, visible chrome/controls,
+  `workspace:roleplay` semantic search, and exact saved-destination activation.
+  It also produced a born-red native regression, the core semantic-query repair,
+  review hardening for Unicode/multi-word/bounded workspace filtering, a
+  per-token metadata-union correction for mixed searches, and a post-fix
+  200-test focused rail after Qodo compliance follow-up. See
+  `task-21351-iterm2-uat-2026-09-02.md` and its checksummed JPEG captures.
 - Windows Terminal parity remains blocked by TASK-20937.6.
 
-Therefore TASK-21351 and TASK-21351.1 remain In Progress. Equal-cell iTerm2 and
-Windows Terminal parity is the sole final closeout gate; the automated
-production-stylesheet evidence above is available now.
+Therefore TASK-21351 and TASK-21351.1 remain In Progress. Equal-cell native
+terminal parity was the final closeout gate; iTerm2 is now complete, so Windows
+Terminal is the sole remaining blocker. The automated production-stylesheet
+evidence above remains available.

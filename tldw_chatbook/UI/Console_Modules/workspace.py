@@ -27,7 +27,6 @@ import asyncio
 from datetime import datetime, timezone
 import inspect
 import time
-from zoneinfo import ZoneInfo
 
 from loguru import logger
 from rich.markup import escape as escape_markup
@@ -52,6 +51,8 @@ from ...Chat.console_switcher_state import (
     build_console_active_results,
     group_console_history_entries,
     parse_console_switcher_instant,
+    plan_console_history_query,
+    resolve_console_history_timezone,
 )
 from ...Chat.console_conversation_hydration import (
     ConversationLoadFailed,
@@ -102,7 +103,12 @@ from ...Workspaces.display_state import (
     build_console_workspace_state,
     console_workspace_conversation_result_copy,
 )
-from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Utils.input_validation import (
+    CONSOLE_SWITCHER_QUERY_MAX_LENGTH,
+    sanitize_string,
+    validate_console_switcher_query,
+    validate_text_input,
+)
 from ...Workspaces.registry_service import (
     WorkspaceNotFound,
     WorkspaceRegistryServiceError,
@@ -2781,9 +2787,32 @@ class ConsoleWorkspaceController:
         offset: int,
         limit: int,
     ) -> ConsoleSwitcherHistoryPage:
-        """Load one bounded all-local History page off the event loop."""
+        """Load one validated, bounded all-local History page off the event loop.
+
+        Args:
+            query: Exact switcher query from the UI validation boundary.
+            offset: Requested zero-based result offset.
+            limit: Requested maximum result count.
+
+        Returns:
+            One bounded History page. Invalid queries return an empty page with
+            the same recovery copy used by the switcher input.
+        """
         bounded_limit = min(CONSOLE_SWITCHER_PAGE_LIMIT, max(1, int(limit)))
         bounded_offset = max(0, int(offset))
+        try:
+            validated_query = validate_console_switcher_query(query)
+        except ValueError:
+            return ConsoleSwitcherHistoryPage(
+                (),
+                bounded_offset,
+                bounded_limit,
+                0,
+                f"Search is limited to {CONSOLE_SWITCHER_QUERY_MAX_LENGTH} characters.",
+            )
+        query_plan = plan_console_history_query(validated_query)
+        if not query_plan.can_match:
+            return ConsoleSwitcherHistoryPage((), bounded_offset, bounded_limit, 0)
         service = getattr(
             self.app_instance, "local_chat_conversation_service", None
         )
@@ -2798,12 +2827,76 @@ class ConsoleWorkspaceController:
             return ConsoleSwitcherHistoryPage(
                 (), bounded_offset, bounded_limit, 0, "History is unavailable."
             )
+        labels = self._console_browser_workspace_labels()
+        consumed_text_indexes: set[int] = set()
+        workspace_terms: list[str] = []
+        for index, term in enumerate(query_plan.ordered_terms):
+            if term.kind != "workspace":
+                continue
+            phrase_terms = [term.value]
+            following_index = index + 1
+            while (
+                following_index < len(query_plan.ordered_terms)
+                and query_plan.ordered_terms[following_index].kind == "text"
+            ):
+                following_term = query_plan.ordered_terms[following_index].value
+                extended_terms = (*phrase_terms, following_term)
+                if not any(
+                    all(
+                        value.casefold() in str(label or "").casefold()
+                        for value in extended_terms
+                    )
+                    for label in labels.values()
+                ):
+                    break
+                phrase_terms.append(following_term)
+                consumed_text_indexes.add(following_index)
+                following_index += 1
+            workspace_terms.extend(phrase_terms)
+        text_terms = [
+            term.value
+            for index, term in enumerate(query_plan.ordered_terms)
+            if term.kind == "text" and index not in consumed_text_indexes
+        ]
+
+        text_query = " ".join(text_terms)
         kwargs: dict[str, Any] = {
-            "query": str(query or ""),
+            "query": text_query,
             "scope_type": "all",
             "limit": bounded_limit,
             "offset": bounded_offset,
         }
+        if workspace_terms:
+            workspace_ids = tuple(
+                workspace_id
+                for workspace_id, label in labels.items()
+                if all(
+                    term in str(label or "").casefold()
+                    for term in (item.casefold() for item in workspace_terms)
+                )
+            )
+            include_global_scope = all(
+                term.casefold() in "chats" for term in workspace_terms
+            )
+            if not workspace_ids and not include_global_scope:
+                return ConsoleSwitcherHistoryPage((), bounded_offset, bounded_limit, 0)
+            if workspace_ids:
+                kwargs["workspace_ids"] = workspace_ids
+            if include_global_scope:
+                kwargs["include_global_scope"] = True
+        if text_terms:
+            kwargs["query_terms"] = tuple(text_terms)
+            kwargs["query_workspace_ids_by_term"] = tuple(
+                tuple(
+                    workspace_id
+                    for workspace_id, label in labels.items()
+                    if term.casefold() in str(label or "").casefold()
+                )
+                for term in text_terms
+            )
+            kwargs["query_include_global_scope_by_term"] = tuple(
+                term.casefold() in "chats" for term in text_terms
+            )
         if include_mode:
             kwargs["mode"] = "local"
         try:
@@ -2898,13 +2991,9 @@ class ConsoleWorkspaceController:
                     lifecycle=lifecycle,
                 )
             )
-        timezone_name = str(
-            getattr(self.app_instance, "local_timezone_name", "UTC") or "UTC"
+        local_timezone = resolve_console_history_timezone(
+            getattr(self.app_instance, "local_timezone_name", None)
         )
-        try:
-            local_timezone = ZoneInfo(timezone_name)
-        except (KeyError, ValueError):
-            local_timezone = ZoneInfo("UTC")
         grouped = group_console_history_entries(
             entries,
             now=history_now,
