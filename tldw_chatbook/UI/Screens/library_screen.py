@@ -42419,10 +42419,14 @@ class LibraryScreen(BaseAppScreen):
         Called on explicit media-area entry (rail select, screen mount). The
         worker re-checks the surface right before opening, so an entry that
         gets yanked away (cold-start initial-tab switch) aborts cleanly.
+
+        Its OWN exclusive group, not ``library_review_set`` -- joining the
+        entry-point builders' group would CANCEL an in-flight "Review these"
+        build when the user clicks the Media rail mid-build (Qodo #2342).
         """
         self.run_worker(
             self._auto_resume_review_set_worker(),
-            group="library_review_set",
+            group="library_review_set_resume",
             exclusive=True,
             exit_on_error=False,
         )

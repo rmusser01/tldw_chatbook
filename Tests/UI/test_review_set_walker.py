@@ -727,6 +727,32 @@ async def test_auto_resume_opens_the_active_sets_cursor_item_once(tmp_path):
     assert fake._opened == ["local:media:11"]  # once per set
 
 
+def test_auto_resume_runs_in_its_own_worker_group():
+    """Auto-resume must not share the exclusive creation group (Qodo #2342).
+
+    ``library_review_set`` is the exclusive group the entry-point build
+    workers run in; if auto-resume joined it, clicking the Media rail while
+    "Review these" was still paging would CANCEL the set creation.
+    """
+
+    async def noop():
+        return None
+
+    recorded: dict = {}
+
+    def run_worker(coro, **kwargs):
+        recorded.update(kwargs)
+        coro.close()
+
+    fake = SimpleNamespace(
+        run_worker=run_worker, _auto_resume_review_set_worker=noop
+    )
+    LibraryScreen._maybe_auto_resume_review_set(fake)
+
+    assert recorded["group"] != "library_review_set"
+    assert recorded["exclusive"] is True  # still debounces its own re-entries
+
+
 @pytest.mark.asyncio
 async def test_auto_resume_is_a_no_op_without_an_active_set(tmp_path):
     fake = _auto_resume_fake(_service(tmp_path))
