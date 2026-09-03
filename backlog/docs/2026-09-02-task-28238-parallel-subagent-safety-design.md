@@ -72,7 +72,10 @@ dispatch the PROVIDER resolves the path itself via `resolve_workspace_path`:
   (`local_tool_impls.py:349`); the provider-side hash is a second read of the
   file (accepted cost — keeps `local_tool_impls` stateless; noted as avoidable
   later by recording inside the impl if large-file double-reads ever matter).
-- A binary-file refusal is an error -> record nothing.
+- A binary file: fs_read itself still refuses (error), but the provider-
+  side observation records the file's DISK state (hash) anyway — the
+  ledger tracks what was on disk, not what the model saw, and that is the
+  correct base for a later staleness comparison.
 
 Only `fs_read` records — `fs_list`/`fs_glob`/`fs_grep` don't establish "I saw
 the content I'm about to base a write on."
