@@ -32,3 +32,23 @@ This task previously held id TASK-28228, colliding with the
 within the hour after this batch's sweep; re-verified at the wave-2 dev merge,
 2026-09-02). Per the TASK-19601 owner rule the younger task renumbers with
 provenance; it is now TASK-28238.
+
+
+## Design 2026-09-02 (approved, phased)
+
+Design approved via brainstorming. Spec:
+backlog/docs/2026-09-02-task-28238-parallel-subagent-safety-design.md
+
+Scoped as two phases under this task:
+- Phase 1 (primary): stale-write guard on fs_write/fs_edit/fs_patch, keyed by
+  (run_id, resolved_path) -- NOT per-provider-instance, because fleet children
+  share one provider (a per-instance ledger would mask a sibling's race). Auto-
+  records each fs_read's whole-file hash (incl. an ABSENT sentinel); refuses at
+  execution when a file read this run changed on disk, naming the conflict;
+  blind writes/creates proceed (single-agent unchanged). No git dependency.
+- Phase 2 (later, sketch): opt-in git-worktree isolation per fleet child with
+  explicit (never silent) merge-back; refuses cleanly if the workspace is not a
+  git repo.
+
+Not yet planned/implemented. Implementation is unblocked (no dependency on the
+mcp-unified 0.3.0 release that gates 25900).
