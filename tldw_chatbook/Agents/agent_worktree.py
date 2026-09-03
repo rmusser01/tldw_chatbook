@@ -185,6 +185,53 @@ def _apply_patch(repo_root: Path, patch: str, *, check_only: bool) -> WorktreeRe
     )
 
 
+def preview_agent_worktree_diffstat(repo_root: Path, wt: AgentWorktree) -> str:
+    """Cheap, non-mutating diffstat preview for a confirm card.
+
+    A child's work is typically still UNCOMMITTED in its own worktree --
+    nothing commits it there; `merge_agent_worktree_changes` is the one
+    that does, right before computing its own (post-commit) diffstat. A
+    preview must run BEFORE the user consents to anything, so it cannot
+    perform that commit -- it diffs `wt.base_sha` against the worktree's
+    own WORKING TREE instead (`git diff --stat <base_sha>`, no second
+    ref), which reads uncommitted MODIFICATIONS too.
+
+    `git diff` alone never lists untracked files, though, and a new file
+    is as common a shape of "child's work" as an edited one (`git add -A`
+    is exactly why `merge_agent_worktree_changes` sees them) -- so this
+    also lists untracked paths from a plain `git status --porcelain`
+    (still read-only; no `git add -N` staging, which would leave the
+    child's worktree index touched by a preview alone).
+
+    Args:
+        repo_root: Unused by this preview (kept for signature parity with
+            this module's other `repo_root`-first functions); everything
+            runs inside `wt.worktree_path`.
+        wt: The child's worktree record.
+
+    Returns:
+        The diffstat text (plus an untracked-files line when any exist),
+        or `""` on any git failure (never raises) or when nothing has
+        changed yet.
+
+    # ponytail: no rename-detection tuning, no line-count for untracked
+    # files (just their names), and filenames with unusual characters
+    # print in git's quoted form -- good enough for a confirm card. If a
+    # child's diff turns out to need more nuance, revisit then.
+    """
+    del repo_root
+    lines: list[str] = []
+    code, out, _err = _git(wt.worktree_path, "diff", "--stat", wt.base_sha)
+    if code == 0 and out.strip():
+        lines.append(out.strip())
+    code, status, _err = _git(wt.worktree_path, "status", "--porcelain")
+    if code == 0:
+        untracked = [line[3:] for line in status.splitlines() if line.startswith("??")]
+        if untracked:
+            lines.append(f"new (untracked): {', '.join(untracked)}")
+    return "\n".join(lines)
+
+
 def merge_agent_worktree_changes(
     repo_root: Path, wt: AgentWorktree, mode: str = "apply"
 ) -> MergeOutcome | WorktreeRefusal:

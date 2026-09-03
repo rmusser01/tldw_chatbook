@@ -4689,6 +4689,13 @@ class ConsoleAgentBridge:
         turn_bundle_block: str = "",
         request_skill_install_confirm: Callable[[str], bool] | None = None,
         request_skill_script_confirm: Callable[[dict], dict] | None = None,
+        # TASK-28238 phase 2 Task 6: forwarded straight to
+        # `AgentService.run_turn(request_worktree_merge_confirm=...)` --
+        # unlike `request_skill_script_confirm` above, this is never
+        # consumed inside a bridge-built closure; `merge_agent_worktree`/
+        # `discard_agent_worktree` are the service's OWN closures (Task 5),
+        # so there is nothing for `run_reply` to do with it but pass it on.
+        request_worktree_merge_confirm: Callable[[dict], dict] | None = None,
         local_provider: Any | None = None,
         virtual_cli_provider: Any | None = None,
         raw_shell_provider: Any | None = None,
@@ -6010,6 +6017,7 @@ class ConsoleAgentBridge:
                 continuation_target=continuation_target,
                 continuation_owner_key=continuation_owner_key,
                 first_request_schema_plan=first_request_plan.schemas,
+                request_worktree_merge_confirm=request_worktree_merge_confirm,
             )
         finally:
             # PR3a-2 Task 4: this turn is over -- from here on a settling

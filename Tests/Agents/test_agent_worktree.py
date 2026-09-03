@@ -97,6 +97,7 @@ def test_create_refuses_when_worktree_base_unwritable(tmp_path, repo, monkeypatc
 from tldw_chatbook.Agents.agent_worktree import (  # noqa: E402
     MergeOutcome,
     merge_agent_worktree_changes,
+    preview_agent_worktree_diffstat,
 )
 
 
@@ -213,3 +214,50 @@ def test_auto_commit_failure_is_refusal_not_silent_nothing_to_merge(repo, monkey
     assert isinstance(refusal, WorktreeRefusal)
     assert refusal.reason_code == "worktree_commit_failed"
     discard_agent_worktree(repo, wt)
+
+
+# -- TASK-28238 phase 2 T6: preview_agent_worktree_diffstat ----------------
+#
+# The confirm card must show a diffstat before the user consents to a
+# merge -- but a child's work is typically still UNCOMMITTED in its own
+# worktree (nothing commits it there; `merge_agent_worktree_changes` only
+# does so itself, right before computing its own post-commit diffstat).
+# A preview that diffed `base_sha..branch` in `repo_root` (mirroring that
+# post-commit diff verbatim) would therefore read empty for the common
+# case. This diffs `base_sha` against the WORKTREE's own working tree
+# instead (`git diff --stat <base_sha>`, no second ref, run in
+# `wt.worktree_path`) -- a single non-mutating command that sees
+# uncommitted work too.
+
+
+def test_preview_diffstat_sees_uncommitted_child_work(repo):
+    wt = create_agent_worktree(repo, "run-preview1")
+    (wt.worktree_path / "a.txt").write_text("child version\n")
+    diffstat = preview_agent_worktree_diffstat(repo, wt)
+    assert "a.txt" in diffstat
+    # non-mutating: nothing was committed by computing the preview.
+    assert _git(wt.worktree_path, "status", "--porcelain").strip() != ""
+    discard_agent_worktree(repo, wt)
+
+
+def test_preview_diffstat_sees_untracked_new_file(repo):
+    """`git diff` alone never lists untracked files -- a brand-new file is
+    as common a shape of "child's work" as an edited one."""
+    wt = create_agent_worktree(repo, "run-preview4")
+    (wt.worktree_path / "new.txt").write_text("brand new\n")
+    diffstat = preview_agent_worktree_diffstat(repo, wt)
+    assert "new.txt" in diffstat
+    assert _git(wt.worktree_path, "status", "--porcelain").strip() == "?? new.txt"
+    discard_agent_worktree(repo, wt)
+
+
+def test_preview_diffstat_empty_for_untouched_worktree(repo):
+    wt = create_agent_worktree(repo, "run-preview2")
+    assert preview_agent_worktree_diffstat(repo, wt) == ""
+    discard_agent_worktree(repo, wt)
+
+
+def test_preview_diffstat_never_raises_on_missing_worktree(repo):
+    wt = create_agent_worktree(repo, "run-preview3")
+    discard_agent_worktree(repo, wt)  # worktree_path no longer exists
+    assert preview_agent_worktree_diffstat(repo, wt) == ""

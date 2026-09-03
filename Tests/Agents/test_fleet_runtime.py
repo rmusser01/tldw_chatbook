@@ -4252,3 +4252,78 @@ def test_merge_refuses_without_a_local_provider(db, git_repo):
     assert outcome.status == RUN_DONE
     results = _tool_results(db.get_run(run_id), MERGE_AGENT_WORKTREE_TOOL_NAME)
     assert results and all("no local filesystem provider" in r for r in results), results
+
+
+# -- TASK-28238 phase 2 T6: the confirm payload carries a diffstat preview --
+
+
+def test_merge_confirm_payload_carries_uncommitted_diffstat(db, git_repo):
+    """The child never commits inside its own worktree, so the confirm
+    card's diffstat must come from `preview_agent_worktree_diffstat`
+    (which reads uncommitted work) -- not from a `base..branch` diff in
+    `repo_root`, which would still be empty at confirm time."""
+    provider = _fs_local_provider(git_repo)
+    service, chat, coordinator = make_fleet_service(
+        db, parent_replies=[], providers=(provider,)
+    )
+    handle = coordinator.reserve("child task", None)
+    coordinator.finish(handle.handle_id, RUN_DONE)
+    wt = agent_worktree.create_agent_worktree(git_repo, handle.handle_id)
+    (wt.worktree_path / "child.txt").write_text("child made this\n")
+    confirmed = {}
+
+    def confirm(payload):
+        confirmed.update(payload)
+        return {"allow": True}
+
+    chat.parent_replies.extend(
+        [
+            _seed_worktree_reply(
+                service, handle.handle_id, wt, MERGE_AGENT_WORKTREE_TOOL_NAME
+            ),
+            "done",
+        ]
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+        request_worktree_merge_confirm=confirm,
+    )
+    assert outcome.status == RUN_DONE
+    assert "child.txt" in confirmed.get("diffstat", "")
+
+
+def test_discard_confirm_payload_carries_diffstat(db, git_repo):
+    provider = _fs_local_provider(git_repo)
+    service, chat, coordinator = make_fleet_service(
+        db, parent_replies=[], providers=(provider,)
+    )
+    handle = coordinator.reserve("child task", None)
+    coordinator.finish(handle.handle_id, RUN_DONE)
+    wt = agent_worktree.create_agent_worktree(git_repo, handle.handle_id)
+    (wt.worktree_path / "child.txt").write_text("about to be discarded\n")
+    confirmed = {}
+
+    def confirm(payload):
+        confirmed.update(payload)
+        return {"allow": True}
+
+    chat.parent_replies.extend(
+        [
+            _seed_worktree_reply(
+                service, handle.handle_id, wt, DISCARD_AGENT_WORKTREE_TOOL_NAME
+            ),
+            "done",
+        ]
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+        request_worktree_merge_confirm=confirm,
+    )
+    assert outcome.status == RUN_DONE
+    assert "child.txt" in confirmed.get("diffstat", "")

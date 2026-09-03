@@ -5503,16 +5503,19 @@ class AgentService:
                     error="no local filesystem provider is reachable for this run",
                 )
             # Preview only -- never mutate before the user consents.
+            from tldw_chatbook.Agents.agent_worktree import (
+                preview_agent_worktree_diffstat,
+            )
+
             decision = request_worktree_merge_confirm(
                 {
                     "handle_id": handle_id,
                     "mode": mode,
                     "branch": wt.branch,
                     "worktree": str(wt.worktree_path),
+                    "diffstat": preview_agent_worktree_diffstat(worktree_repo_root, wt),
                 }
             )
-            # ponytail: decision contract is {"allow": bool} pending Task
-            # 6's real confirm-card shape; reconcile there if it differs.
             if not decision.get("allow", False):
                 return ToolResult(ok=False, error="The user declined the worktree merge.")
             from tldw_chatbook.Agents.agent_worktree import merge_agent_worktree_changes
@@ -5555,12 +5558,17 @@ class AgentService:
                     ok=False,
                     error="no local filesystem provider is reachable for this run",
                 )
+            from tldw_chatbook.Agents.agent_worktree import (
+                preview_agent_worktree_diffstat,
+            )
+
             decision = request_worktree_merge_confirm(
                 {
                     "handle_id": handle_id,
                     "action": "discard",
                     "branch": wt.branch,
                     "worktree": str(wt.worktree_path),
+                    "diffstat": preview_agent_worktree_diffstat(worktree_repo_root, wt),
                 }
             )
             if not decision.get("allow", False):
@@ -7159,10 +7167,14 @@ class AgentService:
                 the approval surface merge_agent_worktree/
                 discard_agent_worktree call before mutating anything.
                 Takes a dict describing the proposed action (handle id,
-                mode, branch, worktree path) and returns a decision dict;
-                ``{"allow": True}`` proceeds, anything else refuses.
-                ``None`` (the default) means neither tool has an approval
-                surface in this session, so both fail closed.
+                mode/action, branch, worktree path, a cheap non-mutating
+                diffstat preview) and returns a decision dict;
+                ``{"allow": True}`` proceeds, anything else refuses. Task
+                6 wires ``ConsoleChatController.request_worktree_merge_
+                confirm`` here, mirroring ``request_skill_script_confirm``'s
+                round machinery. ``None`` (the default) means neither tool
+                has an approval surface in this session, so both fail
+                closed.
 
         Returns:
             A ``(run_id, outcome)`` tuple: the new primary run's id and its
