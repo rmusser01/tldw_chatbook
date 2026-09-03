@@ -10,7 +10,6 @@ import pytest
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
-from textual.containers import Horizontal
 from textual.widgets import Button, DataTable, Input, Select, Static
 from textual.widgets._collapsible import CollapsibleTitle
 
@@ -91,7 +90,7 @@ class MockSchedulingService(_MockSchedulingServiceMixin):
             )
         ]
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None):
         return await self.list_reminders()
 
     async def create_reminder(self, payload: dict, *, owner_id: str | None = None):
@@ -137,7 +136,7 @@ class MockSchedulingServiceWithWatchlist(_MockSchedulingServiceMixin):
             )
         ]
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None):
         reminder_tasks = await self.list_reminders()
         return reminder_tasks + [
             ScheduledTask(
@@ -463,7 +462,7 @@ class EmptyMockSchedulingService(_MockSchedulingServiceMixin):
     async def list_reminders(self):
         return []
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None):
         return await self.list_reminders()
 
 
@@ -486,7 +485,7 @@ class DistinctMetadataMockSchedulingService(_MockSchedulingServiceMixin):
             )
         ]
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None):
         return await self.list_reminders()
 
 
@@ -496,7 +495,7 @@ class FailingMockSchedulingService(_MockSchedulingServiceMixin):
     async def list_reminders(self):
         raise RuntimeError("service unavailable")
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None):
         raise RuntimeError("service unavailable")
 
 
@@ -635,7 +634,7 @@ async def test_conflict_card_shows_for_conflict_status():
                 )
             ]
 
-        async def list_tasks(self):
+        async def list_tasks(self, owner_id=None):
             return await self.list_reminders()
 
     class WorkbenchTestAppWithConflict(ConsolidatedCSSApp):
@@ -693,84 +692,37 @@ async def test_load_tasks_service_error_notifies_and_uses_empty_state():
         assert "No scheduled tasks yet" in empty_state.visual.plain
 
 
+# redesign PR-2, Task 2: the four watchlist-row tests that used to live
+# here (renders/selects/inspects/hides-lifecycle for a watchlist
+# projection AT ROW 1 of the queue table) pinned the OLD single-primitive
+# table's shape -- a flat reminder+projection list with Title/Type/
+# Status/Next-Run columns. Spec S2 locked decision 2 ("Briefing and
+# watchlist projections stay out") and Task 1's own report ("Task 2 is
+# expected to filter list_tasks' spans-owners result down to real
+# ReminderTask instances") retire that: the unified Queue list is
+# reminders + automation definitions only. Replaced by the single
+# exclusion test below; the detail-pane/inspector rendering for a
+# `ScheduledTask` projection stays covered directly by `task_detail.py`'s
+# own unit tests (`TaskDetail.set_task`/`TaskInspector.set_task` are
+# still general-purpose, just no longer reachable with a projection FROM
+# this table).
 @pytest.mark.asyncio
-async def test_workbench_renders_watchlist_job_row():
-    """The workbench renders both reminders and watchlist projection rows."""
+async def test_watchlist_projection_excluded_from_unified_queue():
+    """A watchlist projection never appears in the unified Queue list."""
     async with WorkbenchTestAppWithMixedService().run_test() as pilot:
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
 
-        table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
-        assert table.row_count == 2
-
-        watchlist_row = table.get_row_at(1)
-        assert "Watchlist Title" in str(watchlist_row[0])
-        assert "Watchlist Job" in str(watchlist_row[1])
-        assert "Waiting" in str(watchlist_row[2])
-        # task-23111: the queue column drops the TZ token and appends a
-        # relative form ("2026-07-20 11:00 (overdue 39d)").
-        assert "2026-07-20 11:00" in str(watchlist_row[3])
-
-
-@pytest.mark.asyncio
-async def test_select_watchlist_task_updates_detail():
-    """Selecting a watchlist row updates the detail pane with projection metadata."""
-    async with WorkbenchTestAppWithMixedService().run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-
-        table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
-        table.cursor_coordinate = (1, 0)
-        pilot.app.screen._update_detail_for_index(1)
-        await pilot.pause()
-
-        detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
-        type_label = detail.query_one("#scheduling-task-detail-type", Static)
-        schedule = detail.query_one("#scheduling-task-detail-schedule", Static)
-
-        assert "Watchlist Job" in type_label.visual.plain
-        assert "Every 1h" in schedule.visual.plain
-
-
-@pytest.mark.asyncio
-async def test_inspector_shows_read_only_projection_for_watchlist():
-    """The inspector surfaces the read-only projection state for watchlist jobs."""
-    async with WorkbenchTestAppWithMixedService().run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-
-        table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
-        table.cursor_coordinate = (1, 0)
-        pilot.app.screen._update_detail_for_index(1)
-        await pilot.pause()
-
-        inspector = pilot.app.screen.query_one(
-            "#scheduling-task-inspector", TaskInspector
-        )
-        sync = inspector.query_one("#scheduling-inspector-sync", Static)
-        last_run = inspector.query_one("#scheduling-inspector-last-run", Static)
-        owner = inspector.query_one("#scheduling-inspector-owner", Static)
-
-        assert "local (read-only projection)" in sync.visual.plain
-        assert "-" == last_run.visual.plain.strip()
-        assert "local" in owner.visual.plain
-
-
-@pytest.mark.asyncio
-async def test_watchlist_task_hides_lifecycle_actions():
-    """Watchlist projections do not expose reminder lifecycle buttons."""
-    async with WorkbenchTestAppWithMixedService().run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-
-        table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
-        table.cursor_coordinate = (1, 0)
-        pilot.app.screen._update_detail_for_index(1)
-        await pilot.pause()
-
-        detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
-        lifecycle = detail.query_one("#scheduling-task-detail-lifecycle", Horizontal)
-        assert lifecycle.display is False
+        workbench = pilot.app.screen
+        table = workbench.query_one("#scheduling-task-table", DataTable)
+        assert table.row_count == 1
+        assert "Reminder" in str(table.get_row_at(0)[1])
+        assert not any(
+            row.kind != "reminder" for row in workbench._visible_rows
+        ), "only reminder rows are unified-list eligible until definitions exist"
+        assert all(
+            task.id != "watchlist:1" for task in workbench._tasks
+        ), "the projection must never enter the reminder-only _tasks list"
 
 
 def test_humanize_cron_daily_pattern():
@@ -812,7 +764,7 @@ class ToggleFailingMockSchedulingService(_MockSchedulingServiceMixin):
             )
         ]
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None):
         return await self.list_reminders()
 
 
@@ -864,7 +816,7 @@ class RecordingMockSchedulingService(_MockSchedulingServiceMixin):
             )
         ]
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None):
         return await self.list_reminders()
 
     async def delete_reminder(self, task_id: str) -> None:
@@ -916,7 +868,7 @@ class ControlledRefreshSchedulingService(_MockSchedulingServiceMixin):
             next_run_at=timestamp,
         )
 
-    async def list_tasks(self) -> list[ReminderTask]:
+    async def list_tasks(self, owner_id=None) -> list[ReminderTask]:
         """Return the next controlled task snapshot.
 
         Returns:
@@ -1039,7 +991,9 @@ async def test_delete_mutation_refresh_cannot_repaint_after_newer_user_refresh()
         assert [task.id for task in workbench._tasks] == ["newest-task"]
         table = workbench.query_one("#scheduling-task-table", DataTable)
         assert table.row_count == 1
-        assert "Newest user snapshot" in str(table.get_row_at(0)[0])
+        # redesign PR-2, Task 2: column 0 is now the glyph, column 1 the
+        # title (old single-primitive shape was Title/Type/Status/Next Run).
+        assert "Newest user snapshot" in str(table.get_row_at(0)[1])
 
 
 @pytest.mark.asyncio

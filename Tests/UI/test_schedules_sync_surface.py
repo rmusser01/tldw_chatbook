@@ -42,7 +42,7 @@ class _SyncService(MockSchedulingServiceMixin):
         self._outcome = outcome
         self.db = MockSchedulingDB()
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None):
         return [
             ReminderTask(
                 id="task-1",

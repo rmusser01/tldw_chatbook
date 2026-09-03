@@ -30,6 +30,33 @@ Server, last pull/push) above **Queue**, **Automations**, **Conflicts**,
 and **Results** tabs, with panels for the Schedule Queue, Task Detail, and
 Inspector.
 
+## The unified Queue list
+
+The Queue tab's Schedule Queue lists **both** reminders and recurring-
+question automation definitions in one table, spanning both owners
+(this device and any connected server) — no need to check the
+Automations tab separately just to see whether something is scheduled.
+A chip row above the table (**All · Active · Paused · Completed**)
+narrows it: **Active** is everything still armed to run (an enabled
+reminder or a `configured` automation, including one mid-transfer to the
+server — it keeps running locally until the server actually accepts
+it); **Paused** is anything disabled or explicitly paused; **Completed**
+is a fired one-time reminder or an archived automation, kept out of the
+default **All** view so it stays uncluttered. Each row shows a status
+glyph (`○` recurring, `▶` one-shot, `⏸` paused, `✓` completed), the
+title with the same owner/transfer-badge suffixes described below, and
+a subtitle line (the schedule summary plus a relative next-run time, or
+"— (paused)"/"— (disabled)" when nothing will fire). An automation row
+with unread results carries a bold unread dot after its title.
+
+Automation-definition rows are **view-only from the Queue tab** —
+highlighting one opens the same read-only detail pane the Automations
+tab uses, but editing, running, transferring, or deleting a recurring
+question still happens from the **Automations** tab. Every reminder
+action described in the rest of this page (edit, run now, delete, mark,
+enable/disable, move between owners) is unchanged and still reachable
+from the Queue tab exactly as before.
+
 ## Getting there
 
 - Press **Ctrl+7**, click **⌃7 Schedules** in the nav bar, or press
@@ -176,13 +203,17 @@ carries it.
 
 Press **space** on a highlighted task (or the **Disable** button in the
 detail pane) to disable it. A disabled task shows the text status
-**Disabled** in both the queue row and the detail badge, and its Next Run
-reads **— (disabled)** instead of a concrete time it will not honor.
+**Disabled** in the detail badge, the `⏸` glyph in the queue row (the
+unified list conveys status via glyph, not a separate Status column),
+and its Next Run reads **— (disabled)** instead of a concrete time it
+will not honor, in both the detail pane and the queue row's subtitle.
 Enabling it restores the recorded last outcome and the real next run.
 
 This covers a one-time reminder that has already fired: running it
-disables it and clears its next run, so it reads **Disabled** with a Next
-Run of **— (disabled)** — the same as a task you disabled by hand.
+disables it and clears its next run, so it reads **Disabled** in the
+detail badge with a Next Run of **— (disabled)** — the same as a task
+you disabled by hand. A fired one-time reminder shows the `✓` glyph in
+the queue and moves under the **Completed** chip.
 
 ## Ran late — what happens to overdue reminders
 
@@ -212,9 +243,11 @@ not running at the scheduled time.
   time, not from where it left off. Skipped occurrences are counted and
   surfaced, never re-run.
 - **The queue marks late tasks with a ◇ glyph** before the title, so a
-  glance at the Queue tab shows what fell behind. Typing `missed` into the
-  queue filter finds them (it also matches tasks whose last dispatch
-  *failed*, which is a different thing — see below).
+  glance at the Queue tab shows what fell behind. The queue filter
+  searches title and body text only (it no longer matches status words
+  like `missed` — the unified list dropped the old status/type keyword
+  search along with the Status/Type columns); search for the task's own
+  title to find it, or scan for the ◇ glyph.
 
 This state describes the **last** dispatch and heals itself: the next
 on-time firing clears the marker and the notice.
@@ -541,6 +574,19 @@ The default bound is `handler_timeout_seconds` under `[scheduling]` in
 `config.toml` (**300** seconds). Set it to `0` (or negative) to disable the
 bound entirely — every handler may then run as long as it likes, and a
 wedged handler will wedge the scheduler, which is why the default is on.
+
+*Verified against the schedules redesign PR-2 Task 2 fix wave —
+2026-09-03 (docs pass against shipped code/tests, live check pending the
+redesign program's later PRs per spec §14: the Queue tab's unified list
+— reminders + automation definitions spanning both owners in one table,
+the All/Active/Paused/Completed chip row, per-row status glyphs, the
+combined schedule-summary-plus-next-run subtitle line replacing the old
+Type/Status/Next-Run columns, the unread dot on a definition row, and
+detail-pane routing between the reminder and definition detail panes on
+highlight. Automation-definition rows stay view-only from the Queue tab
+in this PR; every reminder action is unchanged. Pinned by
+`Tests/UI/test_schedules_unified_list.py` and the updated assertions in
+`Tests/UI/test_schedules_workbench.py`.)*
 
 *Verified against the schedules redesign PR-1 fix wave — 2026-09-02
 (docs pass against shipped code/tests, live check pending the redesign

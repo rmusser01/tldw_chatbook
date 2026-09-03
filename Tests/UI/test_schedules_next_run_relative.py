@@ -86,7 +86,7 @@ from Tests.UI.schedules_test_helpers import MockSchedulingServiceMixin
 
 
 class _Service(MockSchedulingServiceMixin):
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None):
         return [
             ReminderTask(
                 id="task-1",
@@ -115,7 +115,10 @@ async def test_queue_cell_and_detail_pane_agree_on_the_relative_form():
         await pilot.pause()
 
         table = workbench.query_one("#scheduling-task-table", DataTable)
-        cell = str(table.get_row_at(0)[3])
+        # redesign PR-2, Task 2: column 2 is now the subtitle (schedule
+        # summary + relative next-run), replacing the old standalone
+        # Next-Run column at index 3.
+        cell = str(table.get_row_at(0)[2])
         detail = str(
             workbench.query_one(
                 "#scheduling-task-detail-next-run", Static
@@ -135,7 +138,7 @@ class _FixedTaskService(_Service):
 
     RUN_AT = datetime(2026, 8, 28, 9, 0, tzinfo=timezone.utc)
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None):
         return [
             ReminderTask(
                 id="task-1",
@@ -169,10 +172,10 @@ async def test_render_table_uses_one_injectable_now():
         run_at = _FixedTaskService.RUN_AT
 
         workbench._render_table(now=run_at - timedelta(hours=14))
-        assert "(in 14h)" in str(table.get_row_at(0)[3])
+        assert "(in 14h)" in str(table.get_row_at(0)[2])
 
         workbench._render_table(now=run_at - timedelta(minutes=25))
-        assert "(in 25m)" in str(table.get_row_at(0)[3])
+        assert "(in 25m)" in str(table.get_row_at(0)[2])
 
 
 @pytest.mark.asyncio

@@ -73,6 +73,7 @@ from ....Widgets.confirmation_dialog import ConfirmationDialog
 # `automation_execution_target_label` from THIS module) keep working.
 from .definition_detail import (
     DefinitionDetail,
+    _definition_transfer_suffix,
     automation_execution_target_label,
     automation_name_cell,
 )
@@ -84,15 +85,22 @@ from .task_detail import (
     TaskDetail,
     TaskInspector,
     _format_next_run,
+    _format_relative,
     _managed_elsewhere_notice,
     _queue_owner_suffix,
-    _task_status,
-    _task_type_label,
     _transfer_row_suffix,
-    _underlying_status,
     _was_missed_while_away,
-    status_badge_text,
     transfer_row_dict,
+)
+# schedules-redesign PR-2, Task 2: the pure row adapter -- see that
+# module's docstring for why it is a standalone, Textual-free file.
+from .unified_rows import (
+    Chip,
+    RowKind,
+    UnifiedRow,
+    build_unified_rows,
+    filter_rows,
+    sort_rows,
 )
 
 if TYPE_CHECKING:
@@ -175,6 +183,64 @@ def _cancel_toast_text(name: str) -> str:
 AUTOMATION_HISTORY_FOLLOWUP_SECONDS = 5.0
 
 
+def _row_title_cell(
+    row: UnifiedRow, *, marked_ids: set[str], compact_owner_suffix: bool
+) -> Text:
+    """Queue-row title cell for one `UnifiedRow` (redesign PR-2, spec S4).
+
+    Each primitive keeps its OWN existing title-suffix/prefix rendering
+    verbatim -- a reminder row is byte-identical to the pre-redesign
+    Title column (`_transfer_row_suffix`/`_queue_owner_suffix`), a
+    definition row reuses the Automations tab's own Name-cell rendering
+    (`automation_name_cell`/`_definition_transfer_suffix`) -- rather than
+    inventing one shared format neither primitive used before.
+    """
+    if row.kind == "reminder":
+        task = row.source_row
+        assert isinstance(task, ReminderTask)
+        text = Text(
+            ("● " if task.id in marked_ids else "")
+            + ("◇ " if _was_missed_while_away(task) else "")
+            + task.title
+            + _transfer_row_suffix(task)
+            + _queue_owner_suffix(task, compact=compact_owner_suffix)
+        )
+    else:
+        definition = row.source_row
+        assert isinstance(definition, dict)
+        text = Text(
+            automation_name_cell(definition) + _definition_transfer_suffix(definition)
+        )
+    if row.unread_count > 0:
+        # Same "bold leading dot" idiom `results_tab._review_state_cell`
+        # uses for an unread result -- reused rather than inventing a
+        # second unread affordance.
+        text.append(" ●", style="bold")
+    return text
+
+
+def _row_subtitle(row: UnifiedRow, now: datetime) -> str:
+    """Queue-row subtitle: schedule summary + relative next-run (spec S4).
+
+    A reminder row reuses `_format_next_run` verbatim (the exact text the
+    pre-redesign Next-Run column showed). A definition row has no
+    existing per-row relative-time formatter to reuse (`_format_next_run`
+    is typed for `ReminderTask | ScheduledTask`), so this derives the
+    same "absolute (relative)" shape from `UnifiedRow`'s own
+    already-normalized `next_run_at` + `bucket`.
+    """
+    if row.kind == "reminder":
+        next_text = _format_next_run(row.source_row, now=now, compact=True)
+    elif row.bucket == "paused":
+        next_text = "— (paused)"
+    elif row.next_run_at is None:
+        next_text = "-"
+    else:
+        absolute = row.next_run_at.strftime("%Y-%m-%d %H:%M")
+        next_text = f"{absolute} ({_format_relative(row.next_run_at, now)})"
+    return f"{row.schedule_summary} · {next_text}"
+
+
 class SchedulesWorkbench(BaseAppScreen):
     """Main workbench for managing scheduled runs, reminders, and jobs."""
 
@@ -230,8 +296,19 @@ class SchedulesWorkbench(BaseAppScreen):
     ):
         super().__init__(app_instance, screen_name, **kwargs)
         self._scheduling_service = getattr(app_instance, "scheduling_service", None)
-        self._tasks: list[ReminderTask | ScheduledTask] = []
-        self._visible_tasks: list[ReminderTask | ScheduledTask] = []
+        # redesign PR-2, Task 2: `self._tasks`/`self._visible_tasks` stay
+        # reminder-only (never watchlist/briefing `ScheduledTask`
+        # projections -- spec S2 locked decision 2, Task 1's report) so
+        # EVERY existing reminder action (`_selected_task`, mark/toggle/
+        # edit/delete, the timezone/marks-legend helpers below) keeps
+        # reading them unchanged. `self._all_rows`/`self._visible_rows`
+        # are the NEW unified source of truth the DataTable itself
+        # renders from (reminders + automation definitions, spans owners).
+        self._tasks: list[ReminderTask] = []
+        self._visible_tasks: list[ReminderTask] = []
+        self._all_rows: list[UnifiedRow] = []
+        self._visible_rows: list[UnifiedRow] = []
+        self._chip: Chip = "all"
         self._filter_text = ""
         self._filter_debounce_timer: Timer | None = None
         self._next_run_refresh_timer: Timer | None = None
@@ -239,6 +316,12 @@ class SchedulesWorkbench(BaseAppScreen):
         # panes, tracked independently of row index so a filter keystroke
         # can restore the same selection instead of always jumping to row 0.
         self._selected_task_id: str | None = None
+        # redesign PR-2, Task 2: the highlighted UnifiedRow's own id
+        # (`"reminder:<id>"`/`"definition:<id>"`), the general cursor-
+        # restoration key `_render_table` uses across BOTH kinds --
+        # `_selected_task_id` above stays reminder-only for the existing
+        # action code that reads it directly.
+        self._selected_row_id: str | None = None
         self._marked_ids: set[str] = set()
         #: The current hidden-panes notice from on_resize; combined with
         #: the marks/glyph legend in _update_pane_notice (task-23107).
@@ -340,6 +423,32 @@ class SchedulesWorkbench(BaseAppScreen):
                                     variant="primary",
                                     tooltip="Schedule a new task (c).",
                                 )
+                            # redesign PR-2, Task 2: the chip row (spec S3)
+                            # -- one of the four buttons always carries
+                            # variant="primary" for "current", the same
+                            # idiom `SyncStatusWidget`'s owner toggle uses.
+                            with Horizontal(id="scheduling-queue-chips"):
+                                yield Button(
+                                    "All",
+                                    id="scheduling-chip-all",
+                                    variant="primary",
+                                    classes="scheduling-queue-chip",
+                                )
+                                yield Button(
+                                    "Active",
+                                    id="scheduling-chip-active",
+                                    classes="scheduling-queue-chip",
+                                )
+                                yield Button(
+                                    "Paused",
+                                    id="scheduling-chip-paused",
+                                    classes="scheduling-queue-chip",
+                                )
+                                yield Button(
+                                    "Completed",
+                                    id="scheduling-chip-completed",
+                                    classes="scheduling-queue-chip",
+                                )
                             yield Input(
                                 placeholder="Filter: title, type, or status…",
                                 id="scheduling-queue-filter",
@@ -350,6 +459,16 @@ class SchedulesWorkbench(BaseAppScreen):
                             yield Static("", id="scheduling-pane-notice")
                         with Vertical(id="scheduling-detail-pane"):
                             yield TaskDetail(id="scheduling-task-detail")
+                            # redesign PR-2, Task 2: a sibling of TaskDetail
+                            # in the SAME pane -- highlight routes between
+                            # the two via the `pane-hidden` class (survey
+                            # section 3's recipe), never both visible.
+                            # Definition rows are viewable + detail-only
+                            # here (no actions until PR-4).
+                            yield DefinitionDetail(
+                                id="scheduling-queue-definition-detail",
+                                classes="pane-hidden",
+                            )
                         with Vertical(id="scheduling-inspector-pane"):
                             yield TaskInspector(id="scheduling-task-inspector")
                 with TabPane("Automations", id="scheduling-automations-tab"):
@@ -419,8 +538,11 @@ class SchedulesWorkbench(BaseAppScreen):
         self._refresh_owner_select()
         self._refresh_conflicts_tab()
         self._refresh_results_tab()
+        # redesign PR-2, Task 2: glyph/title/subtitle (spec S4) replaces
+        # the old Title/Type/Status/Next-Run shape -- a single primitive's
+        # column set no longer fits a mixed reminder+definition list.
         table = self.query_one("#scheduling-task-table", DataTable)
-        table.add_columns("Title", "Type", "Status", "Next Run")
+        table.add_columns("", "Title", "Details")
         automations_table = self.query_one("#scheduling-automations-table", DataTable)
         automations_table.add_columns(
             "Name", "Family", "Lifecycle", "Health", "Model"
@@ -731,7 +853,10 @@ class SchedulesWorkbench(BaseAppScreen):
         # TASK-26025: refresh liveness even on an empty queue -- a stall
         # with nothing queued is exactly the case AC#2 must distinguish.
         self._refresh_scheduler_liveness()
-        if not self._visible_tasks:
+        # redesign PR-2, Task 2: `_visible_rows`, not the reminder-only
+        # `_visible_tasks` -- a Queue showing only definition rows still
+        # has relative next-run text that must not go stale.
+        if not self._visible_rows:
             return
         self._render_table()
 
@@ -771,7 +896,20 @@ class SchedulesWorkbench(BaseAppScreen):
         )  # type: ignore[arg-type]
 
     async def load_tasks(self) -> None:
-        """Fetch reminders from the scheduling service and populate the table."""
+        """Fetch reminders + automation definitions and build the unified
+        Queue rows (redesign PR-2, Task 2).
+
+        Three listings feed Task 1's `build_unified_rows`: reminders
+        spans-owners (`SchedulingService.list_tasks(owner_id=None)`,
+        filtered to real `ReminderTask` rows -- watchlist/briefing
+        projections stay out per spec S2 locked decision 2 and Task 1's
+        own report), both definition halves (the Automations tab's
+        existing local+server merge, reused verbatim), and one
+        all-owners results listing (unread-count derivation only). The
+        results read + row build are pushed off the event loop
+        (`asyncio.to_thread`), the same "local DB read, off-thread"
+        discipline `_load_local_automations` already uses.
+        """
         service = self._scheduling_service
         if service is None:
             logger.debug("No scheduling_service available; cannot load tasks")
@@ -779,7 +917,17 @@ class SchedulesWorkbench(BaseAppScreen):
             return
 
         try:
-            tasks = await service.list_tasks()
+            combined = await service.list_tasks(owner_id=None)
+            reminders = [task for task in combined if isinstance(task, ReminderTask)]
+            definitions = await self._load_queue_definitions(service)
+
+            def _build_rows() -> list[UnifiedRow]:
+                results = service.db.list_automation_results(
+                    owner_id=None, limit=RESULTS_INBOX_LIMIT
+                )
+                return build_unified_rows(reminders, definitions, results)
+
+            all_rows = await asyncio.to_thread(_build_rows)
         except Exception:  # noqa: BLE001
             logger.exception("Failed to load tasks")
             self.app_instance.notify(
@@ -787,30 +935,72 @@ class SchedulesWorkbench(BaseAppScreen):
                 severity="error",
             )
             self._tasks = []
+            self._all_rows = []
             table = self.query_one("#scheduling-task-table", DataTable)
             table.clear()
             self.query_one("#scheduling-task-detail", TaskDetail).set_task(
                 None, queue_empty=True
             )
             self.query_one("#scheduling-task-inspector", TaskInspector).set_task(None)
+            self.query_one(
+                "#scheduling-queue-definition-detail", DefinitionDetail
+            ).set_definition(None)
             await self._refresh_console_context()
             return
 
-        self._tasks = list(tasks)
+        self._tasks = reminders
         # Marks must always refer to rows that still exist (task-23107
         # review F1): a task deleted or filtered out of existence must not
         # linger as an invisible mark a bulk verb would act on.
         self._marked_ids.intersection_update({task.id for task in self._tasks})
+        self._all_rows = all_rows
         self._render_table()
         await self._refresh_console_context()
 
-    def _render_table(self, now: datetime | None = None) -> None:
-        """Rebuild the queue rows from the current tasks + filter text.
+    async def _load_queue_definitions(
+        self, service: "SchedulingService"
+    ) -> list[dict[str, Any]]:
+        """Local + server automation-definition rows for the unified list.
 
-        Restores the previously selected task's row (by id) when it is
-        still visible after the filter narrows, instead of always jumping
-        the detail/inspector panes back to row 0 (task-15476): a filter
-        keystroke must not discard what the user was looking at.
+        Reuses the Automations tab's own both-owners merge precedent
+        (`_load_local_automations` + `_load_server_automations`) rather
+        than a third fetch shape -- this is a SEPARATE fetch from
+        `load_automations`'s own cadence (own tab, own refresh triggers),
+        not a shared cache.
+        """
+        local_items = await self._load_local_automations(service)
+        server_client = getattr(service, "server_client", None)
+        server_available = server_client is not None and self._server_available(
+            service, self._active_server_id()
+        )
+        if not server_available:
+            return local_items
+        try:
+            server_items, _total = await self._load_server_automations(server_client)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Failed to load server automations for the Queue list (server_id={})",
+                self._active_server_id(),
+            )
+            return local_items
+        return local_items + server_items
+
+    def _render_table(self, now: datetime | None = None) -> None:
+        """Rebuild the unified queue rows from `self._all_rows` + the
+        current chip + filter text (redesign PR-2, Task 2).
+
+        Chip + search narrowing and ordering are Task 1's own pure
+        functions (`filter_rows`/`sort_rows`) -- never re-derived here.
+        `self._visible_rows` becomes the new 1:1 source of truth for the
+        `DataTable`'s row index; `self._visible_tasks` is DERIVED from it
+        (reminder rows only, in table order) purely so every existing
+        reminder-action helper below keeps reading an unchanged shape.
+
+        Restores the previously selected row (by its `UnifiedRow.row_id`,
+        stable across BOTH kinds) when it is still visible after the
+        chip/filter narrows, instead of always jumping back to row 0
+        (task-15476): a filter keystroke or chip switch must not discard
+        what the user was looking at.
 
         ``now`` is one shared reference for every row's relative
         next-run rendering (review F9: per-row ``datetime.now()`` let a
@@ -818,83 +1008,90 @@ class SchedulesWorkbench(BaseAppScreen):
         deterministic tests.
         """
         render_now = now if now is not None else datetime.now(timezone.utc)
-        previous_selected_id = self._selected_task_id
-        text = self._filter_text.strip().lower()
+        previous_selected_row_id = self._selected_row_id
+        self._visible_rows = sort_rows(
+            filter_rows(self._all_rows, chip=self._chip, query=self._filter_text),
+            self._chip,
+        )
         self._visible_tasks = [
-            task
-            for task in self._tasks
-            if not text
-            or text in task.title.lower()
-            or text in _task_type_label(task).lower()
-            or text in _task_status(task).value.lower().replace("_", " ")
-            or text in _task_status(task).value.lower()
-            # Underlying status too (review F5): a disabled task whose
-            # last dispatch failed must still answer a "missed" filter.
-            or text in _underlying_status(task).value.lower().replace("_", " ")
-            or text in _underlying_status(task).value.lower()
-            # task-18937: filtering for "missed" finds late-dispatch rows too,
-            # not just handler-failure ones -- both are honest matches for a
-            # user asking "what went wrong while I wasn't looking".
-            or (_was_missed_while_away(task) and "missed" in text)
+            row.source_row for row in self._visible_rows if row.kind == "reminder"
         ]
         # Owner suffix (plan ruling 4): hidden at compact width, evaluated
         # once per render pass -- `_sync_responsive_workbench` (on_mount/
         # on_resize) always runs before this, so `self.size` is current.
         compact_owner_suffix = self.size.width <= SCHEDULES_COMPACT_WORKBENCH_MAX_WIDTH
-        rows: list[tuple[Text, str, Text, str]] = [
-            (
-                # `Text`: the title is user-authored, so it must never be
-                # re-parsed as markup by the DataTable cell formatter
-                # (D8's class -- the owner suffix here happens to use
-                # parens and survived live, but `[bold]` in a reminder
-                # title would not have). The other two str cells are built
-                # from this module's own vocabulary, not outside text.
-                Text(
-                    ("● " if task.id in self._marked_ids else "")
-                    + ("◇ " if _was_missed_while_away(task) else "")
-                    + task.title
-                    + _transfer_row_suffix(task)
-                    + _queue_owner_suffix(task, compact=compact_owner_suffix)
-                ),
-                _task_type_label(task),
-                status_badge_text(_task_status(task)),
-                # Compact: same relative form as the detail pane, without
-                # the timezone token (task-23111); one shared `now` for
-                # every row (review F9).
-                _format_next_run(task, now=render_now, compact=True),
-            )
-            for task in self._visible_tasks
-        ]
 
         table = self.query_one("#scheduling-task-table", DataTable)
         table.clear()
-        for row in rows:
-            table.add_row(*row)
+        for row in self._visible_rows:
+            # Every cell is `Text`, never `str` (D8: `DataTable` runs a
+            # `str` cell through `Text.from_markup`, which eats
+            # user-authored `[...]` tokens -- the reminder title's own
+            # bracket-safety precedent, reused for definition rows too).
+            table.add_row(
+                Text(row.glyph),
+                _row_title_cell(
+                    row,
+                    marked_ids=self._marked_ids,
+                    compact_owner_suffix=compact_owner_suffix,
+                ),
+                Text(_row_subtitle(row, render_now)),
+                key=row.row_id,
+            )
         self._update_pane_notice()
 
-        if rows:
+        if self._visible_rows:
             target_index = 0
-            if previous_selected_id is not None:
-                for index, task in enumerate(self._visible_tasks):
-                    if task.id == previous_selected_id:
+            if previous_selected_row_id is not None:
+                for index, row in enumerate(self._visible_rows):
+                    if row.row_id == previous_selected_row_id:
                         target_index = index
                         break
             if table.row_count:
                 table.move_cursor(row=target_index)
             self._update_detail_for_index(target_index)
         else:
+            self._selected_row_id = None
             self._selected_task_id = None
             self.query_one("#scheduling-task-detail", TaskDetail).set_task(
                 None, queue_empty=not self._tasks
             )
             self.query_one("#scheduling-task-inspector", TaskInspector).set_task(None)
-            if self._tasks and self._filter_text.strip():
+            self.query_one(
+                "#scheduling-queue-definition-detail", DefinitionDetail
+            ).set_definition(None)
+            self._show_queue_detail_pane("reminder")
+            if self._all_rows and (self._filter_text.strip() or self._chip != "all"):
                 # Everything filtered out: say so instead of "select a task".
+                filter_text = self._filter_text.strip()
+                notice = (
+                    f"No tasks match '{filter_text}'. "
+                    "Clear the filter to see the queue."
+                    if filter_text
+                    else "No tasks in this view. Choose a different chip "
+                    "to see the queue."
+                )
                 self._update_static_content(
                     self.query_one("#scheduling-task-detail-empty-state", Static),
-                    f"No tasks match '{self._filter_text.strip()}'. "
-                    "Clear the filter to see the queue.",
+                    notice,
                 )
+
+    def _show_queue_detail_pane(self, kind: RowKind) -> None:
+        """Toggle which Queue detail widget is visible (redesign PR-2,
+        Task 2): `TaskDetail` for a reminder row, `DefinitionDetail` for a
+        definition row -- via the `pane-hidden` class, the SAME mechanism
+        `on_resize` already uses for width-based hiding of independent
+        panes (survey section 3's routing recipe). Orthogonal to that
+        width-based hide: this only ever runs while `#scheduling-detail-
+        pane` itself is shown.
+        """
+        is_reminder = kind == "reminder"
+        self.query_one("#scheduling-task-detail", TaskDetail).set_class(
+            not is_reminder, "pane-hidden"
+        )
+        self.query_one(
+            "#scheduling-queue-definition-detail", DefinitionDetail
+        ).set_class(is_reminder, "pane-hidden")
 
     @on(Input.Changed, "#scheduling-queue-filter")
     def _on_queue_filter_changed(self, event: Input.Changed) -> None:
@@ -912,6 +1109,33 @@ class SchedulesWorkbench(BaseAppScreen):
 
     def _apply_queue_filter_debounced(self) -> None:
         self._filter_debounce_timer = None
+        self._render_table()
+
+    #: redesign PR-2, Task 2: chip button id -> `Chip` value.
+    _CHIP_BY_BUTTON_ID: dict[str, Chip] = {
+        "scheduling-chip-all": "all",
+        "scheduling-chip-active": "active",
+        "scheduling-chip-paused": "paused",
+        "scheduling-chip-completed": "completed",
+    }
+
+    @on(Button.Pressed, ".scheduling-queue-chip")
+    def _on_queue_chip_pressed(self, event: Button.Pressed) -> None:
+        """Switch the Queue's active chip (spec S3: All/Active/Paused/
+        Completed) -- one handler for all four buttons, matched by id."""
+        event.stop()
+        chip = self._CHIP_BY_BUTTON_ID.get(event.button.id or "")
+        if chip is not None:
+            self._set_queue_chip(chip)
+
+    def _set_queue_chip(self, chip: Chip) -> None:
+        if chip == self._chip:
+            return
+        self._chip = chip
+        for button_id, candidate in self._CHIP_BY_BUTTON_ID.items():
+            self.query_one(f"#{button_id}", Button).variant = (
+                "primary" if candidate == chip else "default"
+            )
         self._render_table()
 
     @on(DataTable.RowHighlighted)
@@ -955,25 +1179,51 @@ class SchedulesWorkbench(BaseAppScreen):
             return []
 
     def _update_detail_for_index(self, index: int) -> None:
-        """Render task details in the detail and inspector panes."""
-        if not (0 <= index < len(self._visible_tasks)):
+        """Render the highlighted Queue row's detail, routed by kind
+        (redesign PR-2, Task 2). ``index`` is a `self._visible_rows`
+        index (the table's own row index), NOT a `self._visible_tasks`
+        one -- the two lists diverge whenever a definition row precedes
+        the highlighted one.
+        """
+        if not (0 <= index < len(self._visible_rows)):
+            self._selected_row_id = None
             self._selected_task_id = None
             self.query_one("#scheduling-task-detail", TaskDetail).set_task(
                 None, queue_empty=not self._tasks
             )
             self.query_one("#scheduling-task-inspector", TaskInspector).set_task(None)
+            self.query_one(
+                "#scheduling-queue-definition-detail", DefinitionDetail
+            ).set_definition(None)
             return
 
-        task = self._visible_tasks[index]
-        self._selected_task_id = task.id
-        task_detail = self.query_one("#scheduling-task-detail", TaskDetail)
-        task_detail.set_task(
-            task,
-            run_history=self._run_history_for(task.id),
-            incidents=self._incidents_for(task.id),
-        )
-        self._update_transfer_actions(task_detail, task)
-        self.query_one("#scheduling-task-inspector", TaskInspector).set_task(task)
+        row = self._visible_rows[index]
+        self._selected_row_id = row.row_id
+        if row.kind == "reminder":
+            task = row.source_row
+            assert isinstance(task, ReminderTask)
+            self._selected_task_id = task.id
+            self._show_queue_detail_pane("reminder")
+            task_detail = self.query_one("#scheduling-task-detail", TaskDetail)
+            task_detail.set_task(
+                task,
+                run_history=self._run_history_for(task.id),
+                incidents=self._incidents_for(task.id),
+            )
+            self._update_transfer_actions(task_detail, task)
+            self.query_one("#scheduling-task-inspector", TaskInspector).set_task(task)
+        else:
+            # Definition rows expose no actions in this PR (viewable +
+            # detail only, plan ruling 1) -- `_selected_task_id = None`
+            # means every existing reminder action (`_selected_task`,
+            # edit/mark/toggle/delete) already no-ops gracefully here,
+            # with no new guard branches needed.
+            self._selected_task_id = None
+            self._show_queue_detail_pane("definition")
+            self.query_one("#scheduling-task-inspector", TaskInspector).set_task(None)
+            definition = row.source_row
+            assert isinstance(definition, dict)
+            self._request_queue_definition_detail(row.row_id, definition)
 
     def _update_transfer_actions(
         self, task_detail: TaskDetail, task: ReminderTask | ScheduledTask
@@ -2174,6 +2424,35 @@ class SchedulesWorkbench(BaseAppScreen):
             )
             return
 
+        run_count, last_run, unread_count, history_error = (
+            await self._fetch_definition_detail_counts(
+                service, definition, definition_id
+            )
+        )
+        if definition_id != self._selected_automation_id:
+            return
+        detail.set_definition(
+            definition,
+            run_count=run_count,
+            last_run=last_run,
+            unread_count=unread_count,
+            history_error=history_error,
+        )
+
+    async def _fetch_definition_detail_counts(
+        self,
+        service: "SchedulingService",
+        definition: dict[str, Any],
+        definition_id: str,
+    ) -> tuple[int, dict[str, Any] | None, int, bool]:
+        """Off-thread run_count/last_run/unread_count read for one
+        definition -- shared by the Automations tab's own detail pane
+        (`_load_automation_detail`) and the Queue tab's definition-row
+        routing (redesign PR-2, Task 2: `_load_queue_definition_detail`),
+        same DB reads, same owner-scoping (final review F11), same
+        never-paint-0-off-a-failed-read guard (F14).
+        """
+
         def _read_counts() -> tuple[int, dict[str, Any] | None, int]:
             # Both run reads are owner-scoped (final review F11): they sit
             # in one group on screen, and `convert_row_to_server_mirror`'s
@@ -2188,9 +2467,9 @@ class SchedulesWorkbench(BaseAppScreen):
             )
             return run_count, (runs[0] if runs else None), unread_count
 
-        history_error = False
         try:
             run_count, last_run, unread_count = await asyncio.to_thread(_read_counts)
+            return run_count, last_run, unread_count, False
         except Exception:  # noqa: BLE001
             logger.exception(
                 "Failed to load automation detail counts (definition_id={})",
@@ -2199,8 +2478,52 @@ class SchedulesWorkbench(BaseAppScreen):
             # Never paint 0/Never run off a read that blew up (F14): the
             # pane says the read failed, matching how `_load_automation_
             # history` reports its own read failure.
-            run_count, last_run, unread_count, history_error = 0, None, 0, True
-        if definition_id != self._selected_automation_id:
+            return 0, None, 0, True
+
+    def _request_queue_definition_detail(
+        self, row_id: str, definition: dict[str, Any]
+    ) -> None:
+        """Schedule the Queue tab's definition-detail counts through their
+        own exclusive worker group (redesign PR-2, Task 2) -- mirrors
+        `_request_automation_detail`'s shape, separate group so a Queue
+        selection and an Automations-tab selection can never contend."""
+
+        async def _load() -> None:
+            await self._load_queue_definition_detail(row_id, definition)
+
+        self.run_worker(
+            _load,
+            exclusive=True,
+            group="schedules-load-queue-definition-detail",
+        )  # type: ignore[arg-type]
+
+    async def _load_queue_definition_detail(
+        self, row_id: str, definition: dict[str, Any]
+    ) -> None:
+        """Paint the Queue tab's `DefinitionDetail` sibling for the
+        highlighted definition row (redesign PR-2, Task 2). Reuses how
+        the Automations tab loads its own detail pane's counts, off the
+        event loop.
+        """
+        detail = self.query_one(
+            "#scheduling-queue-definition-detail", DefinitionDetail
+        )
+        definition_id = str(definition.get("id") or "")
+        service = self._scheduling_service
+        if service is None:
+            if row_id == self._selected_row_id:
+                detail.set_definition(
+                    definition, run_count=0, last_run=None, unread_count=0
+                )
+            return
+        run_count, last_run, unread_count, history_error = (
+            await self._fetch_definition_detail_counts(
+                service, definition, definition_id
+            )
+        )
+        # A newer selection may have won the race with this worker; render
+        # nothing for a stale row (same guard `_load_automation_detail` uses).
+        if row_id != self._selected_row_id:
             return
         detail.set_definition(
             definition,
@@ -3288,15 +3611,27 @@ class SchedulesWorkbench(BaseAppScreen):
             group="schedules-bulk-delete",
         )  # type: ignore[arg-type]
 
-    def _selected_task(self) -> ReminderTask | ScheduledTask | None:
-        """Return the task under the queue cursor, if any."""
-        if not self._visible_tasks:
+    def _selected_task(self) -> ReminderTask | None:
+        """Return the reminder under the queue cursor, if any.
+
+        redesign PR-2, Task 2: routes through `self._visible_rows` (the
+        table's own 1:1 row index) rather than `self._visible_tasks`
+        directly -- the two diverge whenever a definition row precedes
+        the cursor. A definition row under the cursor returns ``None``,
+        the same "nothing to act on" result every caller (`action_edit_
+        task`/`action_mark_task`/`action_toggle_enabled`/`action_delete`)
+        already handles -- definition rows expose no actions in this PR.
+        """
+        if not self._visible_rows:
             return None
         table = self.query_one("#scheduling-task-table", DataTable)
-        row = table.cursor_row
-        if row is None or not (0 <= row < len(self._visible_tasks)):
+        row_index = table.cursor_row
+        if row_index is None or not (0 <= row_index < len(self._visible_rows)):
             return None
-        return self._visible_tasks[row]
+        row = self._visible_rows[row_index]
+        if row.kind != "reminder":
+            return None
+        return row.source_row
 
     def action_edit_task(self) -> None:
         """Open the highlighted task/definition in its edit form (e key).

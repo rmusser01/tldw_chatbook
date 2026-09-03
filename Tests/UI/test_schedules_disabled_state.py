@@ -229,7 +229,7 @@ class _DisabledTaskService(MockSchedulingServiceMixin):
     def __init__(self) -> None:
         self.enabled = False
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None):
         return [_reminder(enabled=self.enabled)]
 
     async def update_reminder(self, task_id, fields):
@@ -252,12 +252,20 @@ async def test_disabled_row_and_badge_read_disabled_and_survive_refresh():
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
+        # redesign PR-2, Task 2: glyph/title/subtitle (spec S4) replaces
+        # the old Title/Type/Status/Next-Run columns -- "Disabled" is now
+        # conveyed by the paused glyph, not a separate Status cell. The
+        # subtitle's schedule-summary half legitimately still names the
+        # configured 2099 date (descriptive, unaffected by enabled state
+        # -- same as the create/edit form would show); the "no concrete
+        # future time" promise-avoidance rule (task-23101) applies only
+        # to the next-run half, after the "·" separator.
         table = workbench.query_one("#scheduling-task-table", DataTable)
         row = table.get_row_at(0)
-        # Queue row: text says Disabled, and no concrete future time.
-        assert "Disabled" in str(row[2])
-        assert "2099" not in str(row[3])
-        assert "disabled" in str(row[3]).lower()
+        assert str(row[0]) == "⏸"
+        next_run_text = str(row[2]).rsplit("·", 1)[-1]
+        assert "2099" not in next_run_text
+        assert "disabled" in next_run_text.lower()
 
         badge = workbench.query_one("#scheduling-task-status-badge", Static)
         assert "Disabled" in str(badge.render())
@@ -271,7 +279,7 @@ async def test_disabled_row_and_badge_read_disabled_and_survive_refresh():
         await workbench.load_tasks()
         await pilot.pause()
         row = table.get_row_at(0)
-        assert "Disabled" in str(row[2])
+        assert str(row[0]) == "⏸"
 
 
 # --- review F5: mounted consumers of the underlying status ----------------
@@ -280,7 +288,7 @@ async def test_disabled_row_and_badge_read_disabled_and_survive_refresh():
 class _DisabledMissedService(MockSchedulingServiceMixin):
     """One disabled task whose last dispatch failed, one with a conflict."""
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None):
         return [
             _reminder_with(
                 "task-m", "Failed backup", TaskStatus.MISSED, enabled=False
@@ -342,13 +350,27 @@ async def test_disabled_missed_task_keeps_the_retry_affordance():
 
 @pytest.mark.asyncio
 async def test_missed_filter_matches_a_disabled_missed_task():
+    """redesign PR-2, Task 2: the old ad hoc queue filter substring-
+    matched status/type vocabulary too, so typing "missed" found a row
+    whose `_was_missed_while_away` flag was set regardless of its title
+    -- that was the old single-primitive table's own filter shape. Spec
+    S4's unified search is explicitly title + question/body only (ruling
+    5, `unified_rows.filter_rows`), so a bare status keyword no longer
+    narrows the list; a title search still does.
+    """
     app = _MissedApp()
     async with app.run_test(size=(160, 48)) as pilot:
         workbench = await _mounted_missed_workbench(pilot)
+
         workbench._filter_text = "missed"
         workbench._render_table()
         await pilot.pause()
+        titles = [task.title for task in workbench._visible_tasks]
+        assert "Failed backup" not in titles, titles
 
+        workbench._filter_text = "Failed backup"
+        workbench._render_table()
+        await pilot.pause()
         titles = [task.title for task in workbench._visible_tasks]
         assert "Failed backup" in titles, titles
 

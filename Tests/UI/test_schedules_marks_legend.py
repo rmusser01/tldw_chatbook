@@ -17,14 +17,14 @@ from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
 )
 
 
-from Tests.UI.schedules_test_helpers import MockSchedulingServiceMixin
+from Tests.UI.schedules_test_helpers import MockSchedulingDB, MockSchedulingServiceMixin
 
 
 class _Service(MockSchedulingServiceMixin):
     def __init__(self, *, with_missed: bool = False) -> None:
         self._with_missed = with_missed
 
-    async def list_tasks(self):
+    async def list_tasks(self, owner_id=None):
         tasks = [
             ReminderTask(
                 id="task-1",
@@ -144,27 +144,40 @@ async def test_resize_notice_and_mark_legend_coexist():
 
 
 class _MixedService(MockSchedulingServiceMixin):
-    """One reminder plus one read-only watchlist projection."""
+    """One reminder plus one read-only automation-definition row.
+
+    redesign PR-2, Task 2: used to be a reminder + a watchlist
+    projection, but projections no longer enter the unified Queue list
+    at all (spec S2 locked decision 2) -- a definition row is the
+    actual "second, non-markable row kind" the unified list now has.
+    """
 
     def __init__(self) -> None:
         self.updated: list = []
+        self.db = MockSchedulingDB(
+            automation_definitions=[
+                {
+                    "id": "def-1",
+                    "server_id": None,
+                    "owner_id": "local",
+                    "name": "Definition Title",
+                    "lifecycle": "configured",
+                    "schedule": {
+                        "kind": "one_time",
+                        "run_at": "2099-01-02T00:00:00+00:00",
+                    },
+                    "input": {"question": "What changed?"},
+                }
+            ]
+        )
 
-    async def list_tasks(self):
-        from tldw_chatbook.Scheduling.models import ScheduledTask, TaskStatus
-
+    async def list_tasks(self, owner_id=None):
         return [
             ReminderTask(
                 id="task-1",
                 title="First",
                 schedule_kind=ScheduleKind.ONE_TIME,
                 run_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
-            ),
-            ScheduledTask(
-                id="watchlist:1",
-                title="Watchlist Title",
-                type="watchlist_job",
-                status=TaskStatus.WAITING,
-                next_run_at=datetime(2099, 1, 2, tzinfo=timezone.utc),
             ),
         ]
 
@@ -173,12 +186,18 @@ class _MixedService(MockSchedulingServiceMixin):
 
 
 @pytest.mark.asyncio
-async def test_projection_rows_are_not_markable():
+async def test_definition_rows_are_not_markable():
+    """redesign PR-2, Task 2: definition rows expose no actions in this
+    PR (plan ruling 1) -- marking one must not-op, same as the
+    since-retired projection-row case this test used to cover (a
+    watchlist projection can no longer even enter the Queue list, spec
+    S2 locked decision 2)."""
     app = _App(_MixedService())
     async with app.run_test(size=(160, 48)) as pilot:
         workbench = await _mounted(pilot)
         table = workbench.query_one("#scheduling-task-table", DataTable)
-        table.move_cursor(row=1)  # the projection
+        assert workbench._visible_rows[1].kind == "definition"
+        table.move_cursor(row=1)  # the definition
         await pilot.pause()
 
         workbench.action_mark_task()
@@ -187,7 +206,7 @@ async def test_projection_rows_are_not_markable():
         assert not workbench._marked_ids
         assert "marked" not in _notice_text(workbench)
         messages = [n.message for n in pilot.app._notifications]
-        assert any("Managed by Watchlists" in m for m in messages), messages
+        assert any("select a task first" in m.lower() for m in messages), messages
 
 
 @pytest.mark.asyncio
