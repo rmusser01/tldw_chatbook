@@ -96,6 +96,15 @@ class LibraryMediaViewer(Vertical):
         review_banner: str = "",
         **kwargs: Any,
     ) -> None:
+        """Hold the viewer's compose inputs.
+
+        Args:
+            viewer: Pure display state for the loaded item.
+            review_banner: One-line active review-set banner ("Reviewing:
+                <name> — X of M · N reviewed · ✓ reviewed"), or "" when no
+                set is active (task-30045). Rendered as literal text (set
+                names derive from user input).
+        """
         super().__init__(**kwargs)
         self.viewer = viewer
         self.editing = editing

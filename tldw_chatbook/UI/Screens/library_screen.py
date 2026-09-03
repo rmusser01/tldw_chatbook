@@ -21765,16 +21765,24 @@ class LibraryScreen(BaseAppScreen):
                 # when an image was actually EXPECTED -- a plain document
                 # with no image type hint reads as a document, never as a
                 # failed image with a Retry button above its text.
-                if (
-                    eligibility.reason == "unavailable"
-                    and image_preview_expected(detail)
-                    and self._library_media_preview_request_is_current(
-                        request_generation, canonical_id
-                    )
+                if not self._library_media_preview_request_is_current(
+                    request_generation, canonical_id
+                ):
+                    return
+                if eligibility.reason == "unavailable" and image_preview_expected(
+                    detail
                 ):
                     self._library_media_preview_status[canonical_id] = (
                         "Image preview unavailable — showing complete stored text"
                     )
+                    self._sync_library_media_viewer_or_recompose()
+                elif (
+                    self._library_media_preview_status.pop(canonical_id, None)
+                    is not None
+                ):
+                    # Qodo #2351: an item that STOPPED being image-expected
+                    # (edited type, refreshed detail) must also shed any
+                    # previously stamped failure text.
                     self._sync_library_media_viewer_or_recompose()
                 return
             receipt = await self._run_library_service_call(
@@ -42034,7 +42042,10 @@ class LibraryScreen(BaseAppScreen):
                 ),
                 None,
             )
-            if current is not None:
+            if current is not None and current.backing_media_id in live_ids:
+                # Live items only (Qodo #2351): progress counts live items,
+                # so claiming a state for a tombstoned (deleted-but-open)
+                # item would contradict the set's own arithmetic.
                 item_state = (
                     " · ✓ reviewed" if current.done else " · not yet reviewed"
                 )

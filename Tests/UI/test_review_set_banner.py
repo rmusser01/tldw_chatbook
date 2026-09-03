@@ -131,3 +131,23 @@ async def test_viewer_omits_the_banner_without_an_active_set():
     async with app.run_test(size=(90, 30)) as pilot:
         await pilot.pause()
         assert not app.query("#library-media-review-banner")
+
+
+def test_banner_omits_item_state_for_a_tombstoned_loaded_item(tmp_path):
+    """A deleted-but-still-open item shows no per-item state (Qodo #2351).
+
+    Progress is live-only, so claiming "✓ reviewed" for an item excluded
+    from "X of M" would contradict the set's own arithmetic.
+    """
+    service = _service(tmp_path)
+    set_id = service.create_review_set(
+        "All media", origin="browse", items=[(10, "A"), (11, "B")]
+    )
+    service.mark_item_done(set_id, backing_media_id=10, done=True)
+    fake = _banner_fake(service, loaded=10)
+    fake._review_set_live_ids = lambda ids: {11}  # 10 is a tombstone
+
+    banner = LibraryScreen._active_review_set_banner(fake)
+
+    assert banner is not None and "All media" in banner
+    assert "✓ reviewed" not in banner and "not yet" not in banner
