@@ -117,9 +117,7 @@ async def test_apply_world_info_multimodal_history_and_message():
 async def test_apply_world_info_command_message_skipped():
     controller, store = _controller(_stub_wi)
     session = _session_with_conv(store)
-    messages = [
-        {"role": ConsoleMessageRole.USER.value, "content": "/do a thing"}
-    ]
+    messages = [{"role": ConsoleMessageRole.USER.value, "content": "/do a thing"}]
     out = await controller._apply_world_info(messages, session.id)
     assert out[-1]["content"] == "/do a thing"
 

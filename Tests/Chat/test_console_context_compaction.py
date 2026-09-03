@@ -814,10 +814,7 @@ def _range_semantic(
 
 def _semantic_unit_for_test(unit: DurableConversationUnit) -> ConsoleConversationUnit:
     return ConsoleConversationUnit(
-        tuple(
-            {"role": row.role, "content": row.content}
-            for row in unit.messages
-        )
+        tuple({"role": row.role, "content": row.content} for row in unit.messages)
     )
 
 
@@ -860,9 +857,11 @@ def test_range_to_prefix_orders_early_memory_and_largest_later_prefix() -> None:
     ).plan
 
     assert planned is not None
-    assert [
-        unit.messages[0].message_id for unit in planned.selected_units
-    ] == ["u0", "u2", "u3"]
+    assert [unit.messages[0].message_id for unit in planned.selected_units] == [
+        "u0",
+        "u2",
+        "u3",
+    ]
     assert planned.boundary_message_id == "a3"
     envelope = planned.auxiliary_messages[1]["content"]
     assert envelope.index("UNIT-0-USER") < envelope.index("SEALED-RANGE-MEMORY")
@@ -979,9 +978,9 @@ def test_range_to_prefix_sends_mandatory_early_visual_in_effective_order() -> No
     assert prepared_auxiliary
     content = planned.auxiliary_messages[1]["content"]
     assert isinstance(content, (list, tuple))
-    expected_url = units[0].messages[0].visual_attachments[0].provider_part()[
-        "image_url"
-    ]["url"]
+    expected_url = (
+        units[0].messages[0].visual_attachments[0].provider_part()["image_url"]["url"]
+    )
     early_index = next(
         index
         for index, part in enumerate(content)
@@ -996,14 +995,12 @@ def test_range_to_prefix_sends_mandatory_early_visual_in_effective_order() -> No
     assistant_index = next(
         index
         for index, part in enumerate(content)
-        if part.get("type") == "text"
-        and "early answer" in part.get("text", "")
+        if part.get("type") == "text" and "early answer" in part.get("text", "")
     )
     marker_index = next(
         index
         for index, part in enumerate(content)
-        if part.get("type") == "text"
-        and "SEALED-RANGE-MEMORY" in part.get("text", "")
+        if part.get("type") == "text" and "SEALED-RANGE-MEMORY" in part.get("text", "")
     )
     assert early_index < image_index < assistant_index
     assert assistant_index == marker_index
@@ -1020,9 +1017,7 @@ def test_range_to_prefix_sends_mandatory_early_visual_in_effective_order() -> No
 def test_range_to_prefix_frames_one_tool_bearing_multimodal_unit() -> None:
     tool_unit = DurableConversationUnit(
         (
-            _visual_user_message(
-                "u2", "VISUAL-TOOL-USER " + "x " * 80, image_count=2
-            ),
+            _visual_user_message("u2", "VISUAL-TOOL-USER " + "x " * 80, image_count=2),
             DurableMessageSnapshot(
                 message_id="a2-call",
                 version=1,
@@ -1155,14 +1150,13 @@ def test_ordinary_automatic_compaction_sends_selected_visual() -> None:
     assert planned is not None
     content = planned.auxiliary_messages[1]["content"]
     assert isinstance(content, (list, tuple))
-    expected_url = units[0].messages[0].visual_attachments[0].provider_part()[
-        "image_url"
-    ]["url"]
+    expected_url = (
+        units[0].messages[0].visual_attachments[0].provider_part()["image_url"]["url"]
+    )
     user_index = next(
         index
         for index, part in enumerate(content)
-        if part.get("type") == "text"
-        and "VISUAL-ORDINARY" in part.get("text", "")
+        if part.get("type") == "text" and "VISUAL-ORDINARY" in part.get("text", "")
     )
     image_index = next(
         index
@@ -1253,9 +1247,7 @@ def test_range_to_prefix_refuses_mandatory_visuals_before_auxiliary_preparation(
     units = (
         DurableConversationUnit(
             (
-                _visual_user_message(
-                    "u0", "visual early " + "x " * 80, image_count=2
-                ),
+                _visual_user_message("u0", "visual early " + "x " * 80, image_count=2),
                 _message("a0", "assistant", "early answer " + "y " * 80),
             )
         ),
@@ -1563,9 +1555,7 @@ class _Gateway:
             await self.release.wait()
         scripted = getattr(self, "texts", None)
         text = (
-            scripted[min(self.calls - 1, len(scripted) - 1)]
-            if scripted
-            else self.text
+            scripted[min(self.calls - 1, len(scripted) - 1)] if scripted else self.text
         )
         return AuxiliaryCompletionResult(
             provider="openai",
@@ -1798,9 +1788,7 @@ def _canonical_automatic_body_tokens(plan, summary: str) -> int:
         memory=(tagged_memory_message(summary),),
     )
     after = _prepare(candidate)
-    empty_memory = _prepare(
-        replace(candidate, memory=(tagged_memory_message(""),))
-    )
+    empty_memory = _prepare(replace(candidate, memory=(tagged_memory_message(""),)))
     return max(
         0,
         after.accounting.memory_tokens - empty_memory.accounting.memory_tokens,
@@ -1808,7 +1796,9 @@ def _canonical_automatic_body_tokens(plan, summary: str) -> int:
 
 
 @pytest.mark.asyncio
-async def test_automatic_compaction_commits_prefix_scope_selection_and_provenance() -> None:
+async def test_automatic_compaction_commits_prefix_scope_selection_and_provenance() -> (
+    None
+):
     repository = _Repository()
     service = ConsoleCompactionService(repository, _Gateway(text="New prefix memory."))
     plan, prompt, prefix, admission, _commit = _transaction_inputs()
@@ -2131,7 +2121,9 @@ async def test_range_compaction_progress_counts_active_thinking_candidate() -> N
     assert repository.commits == []
 
 
-def _manual_transaction_inputs(focus: str = "") -> tuple[
+def _manual_transaction_inputs(
+    focus: str = "",
+) -> tuple[
     ManualMemoryPlan,
     CompactionPromptSnapshot,
     BranchMemoryCommit,
@@ -2168,9 +2160,7 @@ def _manual_transaction_inputs(focus: str = "") -> tuple[
     lineage = tuple(
         PersistedLineageFenceRow(
             message_id=row.message_id,
-            parent_message_id=(
-                snapshots[index - 1].message_id if index else None
-            ),
+            parent_message_id=(snapshots[index - 1].message_id if index else None),
             version=1,
             deleted=False,
             content_digest=f"digest-{row.message_id}",
@@ -2246,7 +2236,9 @@ def _canonical_manual_body_tokens(plan: ManualMemoryPlan, summary: str) -> int:
 
 
 @pytest.mark.asyncio
-async def test_manual_transaction_rejects_mismatched_plan_before_call_or_ledger() -> None:
+async def test_manual_transaction_rejects_mismatched_plan_before_call_or_ledger() -> (
+    None
+):
     repository = _Repository()
     gateway = _Gateway()
     service = ConsoleCompactionService(repository, gateway)
@@ -2272,7 +2264,9 @@ async def test_manual_transaction_rejects_mismatched_plan_before_call_or_ledger(
 
 
 @pytest.mark.asyncio
-async def test_manual_transaction_rejects_non_suppressing_selection_before_call_or_ledger() -> None:
+async def test_manual_transaction_rejects_non_suppressing_selection_before_call_or_ledger() -> (
+    None
+):
     repository = _Repository()
     gateway = _Gateway()
     service = ConsoleCompactionService(repository, gateway)
@@ -3081,9 +3075,7 @@ class _ControllerRepository(_Repository):
         selection_id,
         expected_revision,
     ):
-        self.undo_calls.append(
-            (conversation_id, selection_id, expected_revision)
-        )
+        self.undo_calls.append((conversation_id, selection_id, expected_revision))
         if (
             not self.reset_selections
             or self.reset_selections[-1].selection_id != selection_id
@@ -3288,9 +3280,7 @@ def _insert_real_prefix_memory(
             conversation_id=conversation_id,
             boundary_message_id=boundary_message_id,
             captured_leaf_message_id=activation_message_id,
-            lineage_json=json.dumps(
-                [boundary_message_id, activation_message_id]
-            ),
+            lineage_json=json.dumps([boundary_message_id, activation_message_id]),
             summary_text=f"Summary for {memory_id}.",
             provider="openai",
             model="gpt-test",
@@ -3412,8 +3402,7 @@ def test_effective_memory_crosses_sibling_event_and_memory_pages(tmp_path) -> No
         for selection in repository.list_active_memory_selections(conversation_id)
     }
     assert "current-memory" not in {
-        memory.memory_id
-        for memory in repository.list_active_memories(conversation_id)
+        memory.memory_id for memory in repository.list_active_memories(conversation_id)
     }
 
     effective = controller._select_session_effective_memory(
@@ -3744,9 +3733,7 @@ async def test_automatic_preflight_uses_active_model_visual_limit(monkeypatch) -
         captured_plan_arguments.update(kwargs)
         return real_plan_compaction(**kwargs)
 
-    monkeypatch.setattr(
-        controller_module, "plan_compaction", capture_plan_arguments
-    )
+    monkeypatch.setattr(controller_module, "plan_compaction", capture_plan_arguments)
     snapshots = controller._durable_context_snapshots(session.id)
     assert snapshots is not None
     assert len(snapshots[0].visual_attachments) == 1
@@ -3814,9 +3801,7 @@ async def test_automatic_preflight_refuses_selected_non_image_attachment_before_
 
 
 @pytest.mark.asyncio
-async def test_bounded_budget_without_older_units_does_not_block_fitting_send() -> (
-    None
-):
+async def test_bounded_budget_without_older_units_does_not_block_fitting_send() -> None:
     """Allow a fitting bounded send when no older unit remains to compact."""
     controller, _store, session, assistant, gateway, provider_messages = (
         _controller_preflight_fixture(
@@ -4166,7 +4151,9 @@ def test_reset_all_invalidates_an_outstanding_exact_undo_token() -> None:
 
 
 @pytest.mark.asyncio
-async def test_hung_auxiliary_call_times_out_distinctly_and_leaves_memory_intact() -> None:
+async def test_hung_auxiliary_call_times_out_distinctly_and_leaves_memory_intact() -> (
+    None
+):
     """TASK-26016: the auxiliary call was unbounded -- a hung summarizer
     blocked the send that triggered it forever. The timeout must finish the
     ledger as TIMED_OUT (not FAILED-as-model-error, not CANCELLED), return
@@ -4243,8 +4230,7 @@ def test_auxiliary_timeout_coercion_never_goes_unbounded() -> None:
             repository, gateway, auxiliary_timeout_seconds=bad
         )
         assert (
-            service._auxiliary_timeout
-            == DEFAULT_COMPACTION_AUXILIARY_TIMEOUT_SECONDS
+            service._auxiliary_timeout == DEFAULT_COMPACTION_AUXILIARY_TIMEOUT_SECONDS
         )
     service = ConsoleCompactionService(
         repository, gateway, auxiliary_timeout_seconds=45
@@ -4639,9 +4625,9 @@ async def test_native_failure_falls_back_to_the_local_path() -> None:
     assert gateway.calls == 1
     assert result.memory.summary_text == "Local summary."
     provenance = json.loads(result.memory.selected_units_json)
-    assert not any(
-        row.get("kind") == "compaction_engine" for row in provenance
-    ), "a fallback commit must not claim the native engine"
+    assert not any(row.get("kind") == "compaction_engine" for row in provenance), (
+        "a fallback commit must not claim the native engine"
+    )
 
 
 @pytest.mark.asyncio

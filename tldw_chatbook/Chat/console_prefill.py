@@ -51,9 +51,7 @@ class PrefillCommandAction:
 
 def _validated(kind: str, text: str) -> PrefillCommandAction:
     if not text:
-        return PrefillCommandAction(
-            kind=ACTION_ERROR, error="Prefill text is empty."
-        )
+        return PrefillCommandAction(kind=ACTION_ERROR, error="Prefill text is empty.")
     if len(text) > PREFILL_MAX_CHARS:
         return PrefillCommandAction(
             kind=ACTION_ERROR,
