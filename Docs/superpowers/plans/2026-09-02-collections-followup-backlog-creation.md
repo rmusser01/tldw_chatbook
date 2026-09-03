@@ -17,6 +17,8 @@
 - Filing rule: use the official Backlog MCP for Server records whenever it is callable, with the
   Backlog.md CLI only as the Server fallback. Use Chatbook's documented Backlog.md CLI workflow for
   Chatbook records. Do not edit generated task files manually.
+- Server MCP project: `/Users/macbook-dev/Documents/GitHub/tldw_server2/.worktrees/collections-followup-backlog`.
+  Pass this exact absolute path as the `project` argument on every Server Backlog MCP call.
 
 ## Task 1: Freeze the reviewed design and refresh repository bases
 
@@ -61,8 +63,10 @@ the read-back counts rather than by assuming how repeated CLI flags are parsed.
 - Create through Backlog interface/MCP: `tldw_server2/backlog/tasks/task-<allocated> - Add complete restart-safe Reading export jobs.md`
 - Create through Backlog interface/MCP: `tldw_server2/backlog/tasks/task-<allocated> - Add Server-native Reading export re-import.md`
 
-1. Use the official Backlog MCP `task_create`, `task_edit`, and `task_view` tools when callable. If
-   those tools are unavailable at execution time, record that result and use the documented
+1. Use the official Backlog MCP `task_create`, `task_edit`, and `task_view` tools when callable.
+   Every Server call to any of those tools must pass
+   `project=/Users/macbook-dev/Documents/GitHub/tldw_server2/.worktrees/collections-followup-backlog`.
+   If those tools are unavailable at execution time, record that result and use the documented
    Backlog.md CLI fallback only for Server filing.
 2. Create S1 through S5b in the design's order with status `To Do`, the corresponding description,
    and exact priority and labels from the filing table through the selected Server interface.
@@ -73,9 +77,11 @@ the read-back counts rather than by assuming how repeated CLI flags are parsed.
    are S1=6, S2=5, S3=5, S4=6, S5a=6, and S5b=6.
 4. Add stable textual references to `tldw_chatbook:TASK-18919` and the Chatbook design path in each description.
 5. Capture each interface-assigned task ID immediately; make S5b depend on the actual S5a ID and do not add dependencies among the other Server tasks.
-6. Inspect every generated record with Backlog MCP `task_view`, or with
-   `backlog task <id> --plain` after a CLI fallback; verify title, description, acceptance criteria,
-   labels, priority, status, and dependency.
+6. After every Server Backlog MCP `task_create`, `task_edit`, or `task_view` call, verify every
+   returned file path belongs to the exact Server filing worktree above; stop before another
+   mutation if any returned path is outside it. Inspect every generated record with Backlog MCP
+   `task_view`, or with `backlog task <id> --plain` after a CLI fallback; verify title, description,
+   acceptance criteria, labels, priority, status, and dependency.
 7. Repeat the all-remote-ref/all-worktree occupied-ID and normalized-title census. If any provisional ID or title collides, renumber/recreate it before commit using the repository's documented owner rule.
 8. Run the repository's task-ID/metadata checks when present, run `git diff --check`, inspect the complete Server diff, and commit only the six generated records and any Backlog CLI index metadata.
 
