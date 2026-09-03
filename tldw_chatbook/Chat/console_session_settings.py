@@ -103,8 +103,11 @@ ConsoleSettingsBlockerCode = Literal[
     "endpoint_invalid",
     "endpoint_not_saved",
     "credential_missing",
+    "credential_rejected",
     "model_missing",
     "endpoint_unreachable",
+    "active_run",
+    "readiness_unknown",
 ]
 ConsoleSettingsRecoveryAction = Literal[
     "select_provider",
@@ -115,7 +118,95 @@ ConsoleSettingsRecoveryAction = Literal[
     "configure_credential",
     "select_model",
     "retry_connection",
+    "wait_for_active_run",
 ]
+_CONSOLE_OPERABILITY_VALUES = frozenset({"ready_to_send", "not_ready"})
+_CONSOLE_SETTINGS_BLOCKER_VALUES = frozenset(
+    {
+        "provider_missing",
+        "provider_unsupported",
+        "provider_configuration_invalid",
+        "endpoint_invalid",
+        "endpoint_not_saved",
+        "credential_missing",
+        "credential_rejected",
+        "model_missing",
+        "endpoint_unreachable",
+        "active_run",
+        "readiness_unknown",
+    }
+)
+_CONSOLE_SETTINGS_RECOVERY_VALUES = frozenset(
+    {
+        "select_provider",
+        "select_supported_provider",
+        "review_provider_settings",
+        "configure_endpoint",
+        "save_endpoint",
+        "configure_credential",
+        "select_model",
+        "retry_connection",
+        "wait_for_active_run",
+    }
+)
+_BLOCKER_RECOVERY_ACTIONS = {
+    "provider_missing": frozenset({"select_provider"}),
+    "provider_unsupported": frozenset({"select_supported_provider"}),
+    "provider_configuration_invalid": frozenset({"review_provider_settings"}),
+    "endpoint_invalid": frozenset({"configure_endpoint"}),
+    "endpoint_not_saved": frozenset({"save_endpoint"}),
+    "credential_missing": frozenset({"configure_credential"}),
+    "credential_rejected": frozenset({"configure_credential"}),
+    "model_missing": frozenset({"select_model"}),
+    "endpoint_unreachable": frozenset(
+        {"retry_connection", "review_provider_settings"}
+    ),
+    "active_run": frozenset({"wait_for_active_run"}),
+    "readiness_unknown": frozenset({"review_provider_settings"}),
+}
+_CONFIGURATION_VALUES = frozenset({"incomplete", "configured"})
+_CONFIGURATION_ISSUE_VALUES = frozenset(
+    {"provider_missing", "credential_missing", "endpoint_missing", "invalid_settings"}
+)
+_CREDENTIAL_VALUES = frozenset(
+    {"not_required", "missing", "present_unverified", "authenticated"}
+)
+_CREDENTIAL_SOURCE_VALUES = frozenset({"none", "stored", "environment", "draft"})
+_ENDPOINT_VALUES = frozenset(
+    {
+        "not_tested",
+        "testing",
+        "reachable",
+        "unreachable",
+        "model_listing_unavailable",
+        "changed_since_test",
+    }
+)
+_ENDPOINT_FAILURE_CATEGORY_VALUES = frozenset(
+    {
+        "timeout",
+        "connection_refused",
+        "unauthorized",
+        "forbidden",
+        "http_status",
+        "invalid_payload",
+        "connection_error",
+    }
+)
+_MODEL_VALUES = frozenset({"missing", "confirmed", "unconfirmed"})
+_GENERATION_VALUES = frozenset(
+    {"not_tested", "testing", "succeeded", "failed", "changed_since_test"}
+)
+_GENERATION_FAILURE_CATEGORY_VALUES = frozenset(
+    {
+        "authentication",
+        "rate_limit",
+        "bad_request",
+        "timeout",
+        "connection_error",
+        "provider_error",
+    }
+)
 CONSOLE_MODEL_TOKEN_LIMITS = {
     "gpt-4": 8192,
     "gpt-4-32k": 32768,
@@ -367,13 +458,158 @@ class ConsoleSettingsReadiness:
     generation_category: GenerationFailureCategory | None = None
 
     def __post_init__(self) -> None:
-        """Derive operability for legacy three-positional-argument callers."""
+        """Normalize legacy construction and reject contradictory typed states."""
+        if type(self.native_send_supported) is not bool:
+            raise ValueError("Console native-send support flag is invalid.")
         if self.operability is None:
-            object.__setattr__(
-                self,
-                "operability",
-                "ready_to_send" if self.native_send_supported else "not_ready",
-            )
+            self._normalize_legacy_state()
+        self._validate_structured_state()
+
+    def _normalize_legacy_state(self) -> None:
+        if self.native_send_supported:
+            replacements = {
+                "operability": "ready_to_send",
+                "blocker": None,
+                "recovery_action": None,
+                "configuration": "configured",
+                "configuration_issue": None,
+                "credential": "not_required",
+                "credential_source": "none",
+                "endpoint": "not_tested",
+                "endpoint_category": None,
+                "model": "unconfirmed",
+                "generation": "not_tested",
+                "generation_category": None,
+            }
+        else:
+            replacements = {
+                "operability": "not_ready",
+                "blocker": "readiness_unknown",
+                "recovery_action": "review_provider_settings",
+                "configuration": "incomplete",
+                "configuration_issue": "invalid_settings",
+                "credential": "missing",
+                "credential_source": "none",
+                "endpoint": "not_tested",
+                "endpoint_category": None,
+                "model": "missing",
+                "generation": "not_tested",
+                "generation_category": None,
+            }
+        for field_name, value in replacements.items():
+            object.__setattr__(self, field_name, value)
+
+    def _validate_structured_state(self) -> None:
+        _validate_console_readiness_literals(self)
+        expected_operability = (
+            "ready_to_send" if self.native_send_supported else "not_ready"
+        )
+        if self.operability != expected_operability:
+            raise ValueError("Console operability contradicts native-send support.")
+        if self.operability == "ready_to_send":
+            if self.blocker is not None or self.recovery_action is not None:
+                raise ValueError("Ready Console settings cannot include a blocker.")
+            if (
+                self.configuration != "configured"
+                or self.credential == "missing"
+                or self.model == "missing"
+                or self.endpoint == "unreachable"
+            ):
+                raise ValueError("Ready Console settings contain blocking facets.")
+        else:
+            if self.blocker is None or self.recovery_action is None:
+                raise ValueError("Blocked Console settings require recovery.")
+            if self.recovery_action not in _BLOCKER_RECOVERY_ACTIONS[self.blocker]:
+                raise ValueError("Console blocker and recovery action conflict.")
+
+        if self.configuration == "configured" and self.configuration_issue is not None:
+            raise ValueError("Configured Console settings cannot include an issue.")
+        if self.configuration_issue is not None and self.configuration != "incomplete":
+            raise ValueError("Console configuration issue conflicts with its facet.")
+        if self.credential in {"missing", "not_required"}:
+            if self.credential_source != "none":
+                raise ValueError("Console credential source conflicts with its facet.")
+        elif self.credential_source == "none":
+            raise ValueError("Present Console credential requires a source.")
+        if self.configuration == "incomplete" and self.credential == "authenticated":
+            raise ValueError("Incomplete Console settings cannot be authenticated.")
+
+        if self.endpoint == "unreachable":
+            pass
+        elif self.endpoint == "model_listing_unavailable":
+            if self.endpoint_category not in {None, "http_status"}:
+                raise ValueError("Console endpoint category conflicts with its facet.")
+        elif self.endpoint_category is not None:
+            raise ValueError("Console endpoint category conflicts with its facet.")
+        if self.generation == "failed":
+            if self.generation_category is None:
+                raise ValueError("Failed Console generation requires a category.")
+        elif self.generation_category is not None:
+            raise ValueError("Console generation category conflicts with its facet.")
+
+        if self.blocker == "credential_missing" and self.credential != "missing":
+            raise ValueError("Missing-credential blocker conflicts with evidence.")
+        if self.blocker == "credential_rejected" and (
+            self.endpoint != "unreachable"
+            or self.endpoint_category not in {"unauthorized", "forbidden"}
+        ):
+            raise ValueError("Rejected-credential blocker conflicts with evidence.")
+        if self.blocker == "model_missing" and self.model != "missing":
+            raise ValueError("Missing-model blocker conflicts with evidence.")
+        if self.blocker == "endpoint_unreachable" and self.endpoint != "unreachable":
+            raise ValueError("Endpoint blocker conflicts with evidence.")
+        if self.blocker == "provider_configuration_invalid" and (
+            self.configuration_issue != "invalid_settings"
+        ):
+            raise ValueError("Provider-configuration blocker conflicts with evidence.")
+
+
+def _validate_console_readiness_literals(readiness: ConsoleSettingsReadiness) -> None:
+    for value, allowed, label in (
+        (readiness.operability, _CONSOLE_OPERABILITY_VALUES, "operability"),
+        (readiness.blocker, _CONSOLE_SETTINGS_BLOCKER_VALUES, "blocker"),
+        (
+            readiness.recovery_action,
+            _CONSOLE_SETTINGS_RECOVERY_VALUES,
+            "recovery action",
+        ),
+        (readiness.configuration, _CONFIGURATION_VALUES, "configuration"),
+        (
+            readiness.configuration_issue,
+            _CONFIGURATION_ISSUE_VALUES,
+            "configuration issue",
+        ),
+        (readiness.credential, _CREDENTIAL_VALUES, "credential"),
+        (
+            readiness.credential_source,
+            _CREDENTIAL_SOURCE_VALUES,
+            "credential source",
+        ),
+        (readiness.endpoint, _ENDPOINT_VALUES, "endpoint"),
+        (
+            readiness.endpoint_category,
+            _ENDPOINT_FAILURE_CATEGORY_VALUES,
+            "endpoint category",
+        ),
+        (readiness.model, _MODEL_VALUES, "model"),
+        (readiness.generation, _GENERATION_VALUES, "generation"),
+        (
+            readiness.generation_category,
+            _GENERATION_FAILURE_CATEGORY_VALUES,
+            "generation category",
+        ),
+    ):
+        if value is not None and (type(value) is not str or value not in allowed):
+            raise ValueError(f"Console {label} is invalid.")
+    if not all(
+        type(value) is str
+        for value in (
+            readiness.label,
+            readiness.detail,
+            readiness.provider_display_name,
+        )
+    ):
+        raise ValueError("Console readiness display value is invalid.")
 
 
 @dataclass(frozen=True)
@@ -995,8 +1231,11 @@ def build_console_settings_readiness(
     native_provider_keys: set[str] | None = None,
     evidence: ProviderTestEvidence | None = None,
     current_identity: ProviderDraftIdentity | None = None,
+    active_run: bool = False,
 ) -> ConsoleSettingsReadiness:
     """Project one deterministic Console blocker and independent evidence."""
+    if type(active_run) is not bool:
+        raise ValueError("Active-run state must be boolean.")
     identity = resolve_console_provider_identity(
         settings.provider,
         handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
@@ -1006,14 +1245,11 @@ def build_console_settings_readiness(
     send_capable_keys = _send_capable_readiness_keys(native_provider_keys)
 
     base_url = _string_value(settings.base_url)
-    provider_settings = _provider_settings(app_config, provider_key)
-    readiness = get_provider_readiness(provider_key, app_config, environ=environ)
-    snapshot = readiness.snapshot(
-        selected_model=settings.model,
-        evidence=evidence,
-        current_identity=current_identity,
+    provider_settings, provider_configuration_invalid = (
+        _provider_settings_with_validity(app_config, provider_key)
     )
-    evidence_is_current = bool(
+    readiness = get_provider_readiness(provider_key, app_config, environ=environ)
+    exact_identity_evidence = bool(
         evidence is not None
         and current_identity is not None
         and evidence.identity == current_identity
@@ -1021,13 +1257,7 @@ def build_console_settings_readiness(
     )
 
     credential_source: CredentialSource = "none"
-    if (
-        current_identity is not None
-        and current_identity.provider_key == provider_key
-        and current_identity.credential_source != "none"
-    ):
-        credential_source = current_identity.credential_source
-    elif readiness.api_key_source:
+    if readiness.api_key_source:
         credential_source = (
             "environment"
             if readiness.api_key_source.startswith("env:")
@@ -1036,12 +1266,26 @@ def build_console_settings_readiness(
 
     if not readiness.requires_api_key:
         credential: CredentialFacet = "not_required"
-    elif evidence_is_current and evidence is not None:
-        credential = evidence.credential
-    elif credential_source != "none" or readiness.ready:
-        credential = "present_unverified"
-    else:
+    elif not readiness.ready:
         credential = "missing"
+    elif (
+        exact_identity_evidence
+        and evidence is not None
+        and evidence.credential == "authenticated"
+    ):
+        credential = "authenticated"
+    else:
+        credential = "present_unverified"
+
+    evidence_is_current = bool(
+        exact_identity_evidence
+        and (not readiness.requires_api_key or readiness.ready)
+    )
+    snapshot = readiness.snapshot(
+        selected_model=settings.model,
+        evidence=evidence,
+        current_identity=current_identity if evidence_is_current else None,
+    )
 
     if evidence_is_current and evidence is not None:
         generation: GenerationFacet = evidence.generation
@@ -1079,19 +1323,23 @@ def build_console_settings_readiness(
         )
     elif endpoint_invalid:
         blocker, recovery_action = "endpoint_invalid", "configure_endpoint"
-    elif endpoint_not_saved:
-        blocker, recovery_action = "endpoint_not_saved", "save_endpoint"
-    elif readiness.configuration_issue == "invalid_settings":
+    elif provider_configuration_invalid or (
+        readiness.configuration_issue == "invalid_settings"
+    ):
         blocker, recovery_action = (
             "provider_configuration_invalid",
             "review_provider_settings",
         )
+    elif endpoint_not_saved:
+        blocker, recovery_action = "endpoint_not_saved", "save_endpoint"
     elif credential == "missing":
         blocker, recovery_action = "credential_missing", "configure_credential"
     elif model_missing:
         blocker, recovery_action = "model_missing", "select_model"
     elif snapshot.endpoint == "unreachable":
-        blocker, recovery_action = "endpoint_unreachable", "retry_connection"
+        blocker, recovery_action = _endpoint_failure_blocker(snapshot.category)
+    elif active_run:
+        blocker, recovery_action = "active_run", "wait_for_active_run"
     else:
         blocker, recovery_action = None, None
 
@@ -1127,6 +1375,12 @@ def build_console_settings_readiness(
         label = "Ready"
         detail = readiness.user_message
 
+    configuration = snapshot.configuration
+    configuration_issue = snapshot.configuration_issue
+    if provider_configuration_invalid:
+        configuration = "incomplete"
+        configuration_issue = "invalid_settings"
+
     return ConsoleSettingsReadiness(
         label=label,
         detail=detail,
@@ -1135,8 +1389,8 @@ def build_console_settings_readiness(
         blocker=blocker,
         recovery_action=recovery_action,
         provider_display_name=provider_display_name(provider_key),
-        configuration=snapshot.configuration,
-        configuration_issue=snapshot.configuration_issue,
+        configuration=configuration,
+        configuration_issue=configuration_issue,
         credential=credential,
         credential_source=credential_source,
         endpoint=snapshot.endpoint,
@@ -1415,6 +1669,39 @@ def _provider_settings(
         return provider_settings_for_key(api_settings, provider_key)
     except ProviderSettingsError:
         return {}
+
+
+def _provider_settings_with_validity(
+    app_config: Mapping[str, object], provider_key: str
+) -> tuple[Mapping[str, object], bool]:
+    """Return selected provider settings and whether their table is malformed."""
+
+    raw_api_settings = app_config.get("api_settings", {})
+    if not isinstance(raw_api_settings, Mapping):
+        return {}, "api_settings" in app_config
+    try:
+        settings = provider_settings_for_key(raw_api_settings, provider_key)
+    except ProviderSettingsError:
+        return {}, True
+    if provider_key in {"moonshot", "qwencloud", "zai"}:
+        return settings, False
+    for configured_provider, configured_settings in raw_api_settings.items():
+        if provider_config_key(configured_provider) != provider_key:
+            continue
+        return settings, not isinstance(configured_settings, Mapping)
+    return settings, False
+
+
+def _endpoint_failure_blocker(
+    category: EndpointFailureCategory | None,
+) -> tuple[ConsoleSettingsBlockerCode, ConsoleSettingsRecoveryAction]:
+    """Map bounded endpoint evidence to one actionable recovery."""
+
+    if category in {"unauthorized", "forbidden"}:
+        return "credential_rejected", "configure_credential"
+    if category in {"timeout", "connection_refused", "connection_error"}:
+        return "endpoint_unreachable", "retry_connection"
+    return "endpoint_unreachable", "review_provider_settings"
 
 
 def _model_default_profile(
