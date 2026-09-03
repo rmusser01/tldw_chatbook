@@ -763,24 +763,47 @@ class LocalToolProvider:
         Args:
             run_id: The isolated child run's id.
             authority: The worktree authority (own executor, guard, perms).
+
+        Raises:
+            ValueError: ``authority.alias`` collides with a statically
+                admitted Console binding's alias, or with another run's
+                currently-admitted agent root. Admitting either would
+                hijack that alias's dispatch-spec cache out from under the
+                run that legitimately owns it (and a later retire of
+                either run would then delete it for both). Callers own
+                run-id generation, so a collision here is a caller bug --
+                a loud raise is the right contract, not a silent overwrite.
         """
-        # The dispatch sites below (`_invoke_detailed`) resolve the actual
-        # per-call handler via `self._path_specs_by_alias[authority.alias]`
-        # -- a cache the constructor only populates for roots known at
-        # `__init__` time. An agent authority admitted later needs the same
-        # cache entry, bound to ITS root/executor, or dispatch would either
-        # KeyError or (worse) silently fall back to the generic spec bound
-        # to the provider's own base root.
-        executor = authority.workspace_executor or WorkspaceToolExecutor(
-            authority.root
-        )
-        authority_specs = {
-            spec.name: spec
-            for spec in _default_specs(authority.root, workspace_executor=executor)
-            if spec.name in _PATH_AUTHORITY_LOCAL_NAMES
-        }
+        run_id = str(run_id)
         with self._agent_roots_lock:
-            self._agent_roots[str(run_id)] = authority
+            if self._admitted_roots and authority.alias in self._admitted_roots:
+                raise ValueError(
+                    f"agent root alias {authority.alias!r} is already in use"
+                )
+            if any(
+                other_run_id != run_id and other.alias == authority.alias
+                for other_run_id, other in self._agent_roots.items()
+            ):
+                raise ValueError(
+                    f"agent root alias {authority.alias!r} is already in use"
+                )
+            # The dispatch sites below (`_invoke_detailed`) resolve the
+            # actual per-call handler via
+            # `self._path_specs_by_alias[authority.alias]` -- a cache the
+            # constructor only populates for roots known at `__init__`
+            # time. An agent authority admitted later needs the same cache
+            # entry, bound to ITS root/executor, or dispatch would either
+            # KeyError or (worse) silently fall back to the generic spec
+            # bound to the provider's own base root.
+            executor = authority.workspace_executor or WorkspaceToolExecutor(
+                authority.root
+            )
+            authority_specs = {
+                spec.name: spec
+                for spec in _default_specs(authority.root, workspace_executor=executor)
+                if spec.name in _PATH_AUTHORITY_LOCAL_NAMES
+            }
+            self._agent_roots[run_id] = authority
             self._path_specs_by_alias[authority.alias] = authority_specs
 
     def retire_run_workspace_root(self, run_id: str) -> None:
@@ -791,8 +814,16 @@ class LocalToolProvider:
         """
         with self._agent_roots_lock:
             authority = self._agent_roots.pop(str(run_id), None)
-            if authority is not None:
-                self._path_specs_by_alias.pop(authority.alias, None)
+            if authority is None:
+                return
+            # Belt-and-suspenders: `admit_run_workspace_root`'s own guard
+            # should already make this unreachable, but retire must not be
+            # the one thing that deletes a statically-admitted Console
+            # binding's dispatch cache just because some agent authority
+            # ended up sharing its alias.
+            if self._admitted_roots and authority.alias in self._admitted_roots:
+                return
+            self._path_specs_by_alias.pop(authority.alias, None)
 
     def _select_admitted_root(
         self, name: str, args: Mapping[str, Any]
@@ -1555,11 +1586,29 @@ class LocalToolProvider:
                 dispatch_started=False,
                 provider_terminal=LocalProviderTerminal.NOT_STARTED,
             )
-        selected_spec = (
-            self._path_specs_by_alias[authority.alias][name]
-            if authority is not None and name in _PATH_AUTHORITY_LOCAL_NAMES
-            else spec
-        )
+        if authority is not None and name in _PATH_AUTHORITY_LOCAL_NAMES:
+            # TASK-28238 P2 T3 review fix: this cache was construction-time
+            # -immutable before agent admit/retire made it mutable
+            # mid-flight, so a retire racing this lookup (the run's mapping
+            # in `_agent_roots` still resolved a moment ago, but its alias
+            # entry here is now gone) is now reachable. Falling back to the
+            # generic `spec` would be dishonest -- it closes over the
+            # PROVIDER's own base root, not `authority.root`, so it would
+            # dispatch a path tool against the wrong root instead of
+            # refusing. An explicit blocked result is the honest one here.
+            authority_specs = self._path_specs_by_alias.get(authority.alias)
+            if authority_specs is None or name not in authority_specs:
+                return LocalToolInvocationResult(
+                    result=ToolResult.blocked(LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
+                    final_gate="not_checked",
+                    approval_consumed=False,
+                    reason_code=LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
+                    dispatch_started=False,
+                    provider_terminal=LocalProviderTerminal.NOT_STARTED,
+                )
+            selected_spec = authority_specs[name]
+        else:
+            selected_spec = spec
         promotion_invocation = self._invoke_promotion(
             name,
             args,

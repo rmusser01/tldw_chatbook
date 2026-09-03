@@ -4325,3 +4325,81 @@ def test_agent_root_write_permission_enforced(tmp_path):
             "local:fs_write", {"path": "no.txt", "content": "x\n"}
         )
     assert not result.ok  # write refused by authority machinery
+
+
+# --- TASK-28238 phase 2 T3 review fixes: alias-collision guard + TOCTOU ---
+
+def test_admit_rejects_alias_colliding_with_static_admitted_root(tmp_path):
+    shared = tmp_path / "shared"
+    worktree = tmp_path / "wt"
+    shared.mkdir()
+    worktree.mkdir()
+    static_root = admitted_root(
+        alias="folder-stable-a",
+        root=shared,
+        allow_write=True,
+        executor=RecordingWorkspaceExecutor(),
+    )
+    provider = make_provider(root=shared, admitted_roots=(static_root,))
+    with pytest.raises(ValueError, match="already in use"):
+        provider.admit_run_workspace_root(
+            "run-iso", _agent_authority(worktree, alias="folder-stable-a")
+        )
+
+
+def test_admit_rejects_alias_colliding_with_another_live_agent_run(tmp_path):
+    shared = tmp_path / "shared"
+    wt_a = tmp_path / "wt-a"
+    wt_b = tmp_path / "wt-b"
+    shared.mkdir()
+    wt_a.mkdir()
+    wt_b.mkdir()
+    provider = _guard_provider(shared)
+    provider.admit_run_workspace_root("run-a", _agent_authority(wt_a, alias="agent-x"))
+    with pytest.raises(ValueError, match="already in use"):
+        provider.admit_run_workspace_root(
+            "run-b", _agent_authority(wt_b, alias="agent-x")
+        )
+
+
+def test_retire_never_drops_a_static_alias_spec_cache(tmp_path):
+    shared = tmp_path / "shared"
+    worktree = tmp_path / "wt"
+    shared.mkdir()
+    worktree.mkdir()
+    static_root = admitted_root(
+        alias="folder-stable-a",
+        root=shared,
+        allow_write=True,
+        executor=RecordingWorkspaceExecutor(),
+    )
+    provider = make_provider(root=shared, admitted_roots=(static_root,))
+    # Bypass admit's own collision guard to exercise retire's independent
+    # belt-and-suspenders check -- admit should never let this state occur,
+    # but retire must not rely on that alone.
+    colliding = _agent_authority(worktree, alias="folder-stable-a")
+    provider._agent_roots["run-iso"] = colliding
+    assert "folder-stable-a" in provider._path_specs_by_alias
+    provider.retire_run_workspace_root("run-iso")
+    assert "folder-stable-a" in provider._path_specs_by_alias
+
+
+def test_vanished_agent_alias_cache_returns_honest_refusal_not_crash(tmp_path):
+    shared = tmp_path / "shared"
+    worktree = tmp_path / "wt"
+    shared.mkdir()
+    worktree.mkdir()
+    provider = _guard_provider(shared)
+    authority = _agent_authority(worktree)
+    provider.admit_run_workspace_root("run-iso", authority)
+    # Simulate the narrow TOCTOU: the alias's dispatch-spec cache entry
+    # vanishes (e.g. a concurrent retire elsewhere) between authority
+    # selection and the dispatch site's raw index -- `_agent_roots` still
+    # maps the run; only the spec cache is gone.
+    provider._path_specs_by_alias.pop(authority.alias, None)
+    with use_run_id("run-iso"):
+        result = provider.invoke(
+            "local:fs_write", {"path": "out.txt", "content": "x\n"}
+        )
+    assert not result.ok
+    assert not (worktree / "out.txt").exists()
