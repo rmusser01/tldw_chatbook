@@ -2468,6 +2468,92 @@ def test_list_automation_results_orders_mixed_offset_timestamps_correctly(tmp_pa
     assert [row["server_id"] for row in rows] == ["srv-true-later", "srv-true-earlier"]
 
 
+def test_list_automation_results_orders_z_suffix_against_plus_offset(tmp_path):
+    """The format mix the LIVE server actually produces (task 6, D4).
+
+    `_to_utc_iso` writes local rows as ``...+00:00``; a mirrored row
+    copies the server's ``...Z`` verbatim. Both denote UTC, so the suffix
+    only decides the comparison when everything before it is equal --
+    i.e. WITHIN one second -- and there ``'Z'`` (0x5A) beats ``'.'``
+    (0x2E), ranking the EARLIER whole-second row above a later
+    fractional one under raw text.
+
+    That is also why the ordering expression is ``strftime(...%f...)``
+    and not ``datetime()``: `datetime()` truncates to whole seconds, so
+    it collapses exactly the window where this can go wrong into a tie
+    broken by the UUID `id`. A pull that mirrors a page of results all
+    stamped in the same second is the normal case.
+    """
+    db = _mk_db(tmp_path)
+    db.upsert_automation_results_from_server(
+        "owner-a",
+        [_result_item(
+            id="srv-zulu-earlier", dedupe_key="key-zulu",
+            # 23:09:06.000 UTC -- the EARLIER instant, but its raw text
+            # sorts above the row below ('Z' > '.').
+            created_at="2026-09-02T23:09:06Z",
+            updated_at="2026-09-02T23:09:06Z",
+        )],
+    )
+    db.upsert_automation_results_from_server(
+        "owner-a",
+        [_result_item(
+            id="srv-offset-later", dedupe_key="key-offset",
+            created_at="2026-09-02T23:09:06.500000+00:00",
+            updated_at="2026-09-02T23:09:06.500000+00:00",
+        )],
+    )
+    rows = db.list_automation_results("owner-a")
+    # Both formats survive the mirror verbatim -- that mix is the premise.
+    stored = {row["server_id"]: row["created_at"] for row in rows}
+    assert stored["srv-zulu-earlier"].endswith("Z")
+    assert stored["srv-offset-later"].endswith("+00:00")
+
+    # Newest first by true instant, not by text.
+    assert [row["server_id"] for row in rows] == [
+        "srv-offset-later",
+        "srv-zulu-earlier",
+    ]
+
+
+def test_definition_mirror_normalizes_a_z_suffix_on_write(tmp_path):
+    """Definitions close the same hazard at the WRITE boundary instead
+    (task 6, D4 sweep), which is why `list_automation_definitions` still
+    orders on the raw string.
+
+    Every write routes through `_serialize_definition_fields` ->
+    `_to_utc_iso`, so a server's ``Z`` timestamp is stored as a
+    normalized ``+00:00`` one and the stored text order is the instant
+    order at full microsecond precision -- better than any SQLite date
+    function could give back.
+    """
+    db = _mk_db(tmp_path)
+    db.upsert_automation_definitions_from_server(
+        "owner-a",
+        [
+            {
+                "id": "srv-older-zulu",
+                "name": "Older",
+                "created_at": "2026-09-02T23:09:06.500360Z",
+            },
+            {
+                "id": "srv-newer-offset",
+                "name": "Newer",
+                "created_at": "2026-09-02T23:25:45.681750+00:00",
+            },
+        ],
+    )
+    rows = db.list_automation_definitions(owner_id="owner-a")
+    assert [row["created_at"] for row in rows] == [
+        "2026-09-02T23:09:06.500360+00:00",
+        "2026-09-02T23:25:45.681750+00:00",
+    ]
+    assert [row["server_id"] for row in rows] == [
+        "srv-older-zulu",
+        "srv-newer-offset",
+    ]
+
+
 def test_get_pending_mutation_for_local_id_returns_newest_across_owners(tmp_path):
     """A row that failed-and-retried under two different server scopes must
     surface the NEWEST mutation's error, not a stale one (re-review residual:

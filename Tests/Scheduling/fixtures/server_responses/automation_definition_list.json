@@ -2,7 +2,7 @@
   "items": [
     {
       "id": "def_01J5RHPQWXYZ1234567890AB",
-      "owner_id": "server:42",
+      "owner_id": "1",
       "version": 1,
       "family": "recurring_question",
       "name": "Daily stand-up summary",
@@ -44,7 +44,7 @@
     },
     {
       "id": "def_01J5RHPQWXYZ1234567890CD",
-      "owner_id": "server:42",
+      "owner_id": "1",
       "version": 2,
       "family": "agent_task",
       "name": "Weekly library digest",
@@ -87,7 +87,7 @@
     },
     {
       "id": "def_01J5RHPQWXYZ1234567890EF",
-      "owner_id": "server:42",
+      "owner_id": "1",
       "version": 1,
       "family": "recurring_question",
       "name": "Retired weekly check-in",

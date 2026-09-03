@@ -1857,7 +1857,20 @@ class ScheduledTasksDB(BaseDB):
         lifecycle: Optional[str] = None,
         family: Optional[str] = None,
     ) -> list[dict[str, Any]]:
-        """List automation definitions with optional filters."""
+        """List automation definitions with optional filters.
+
+        Deliberately ordered by the RAW ``created_at`` string, unlike
+        `list_automation_results` (task 6, D4 sweep). Every write path
+        into this table -- both server-mirror upserts included -- routes
+        through `_serialize_definition_fields` -> `_to_utc_iso`, so every
+        stored value is a normalized ``+00:00`` microsecond timestamp:
+        text order IS instant order here, at full precision. Wrapping it
+        the way the results query is wrapped would be a net LOSS, because
+        SQLite's datetime functions truncate below the millisecond (and
+        `datetime()` below the second), collapsing rows this ordering can
+        currently separate. The guard for mixed formats lives at the
+        write boundary for this table, not at the read.
+        """
         conditions: list[str] = []
         params: list[Any] = []
 
@@ -1875,7 +1888,8 @@ class ScheduledTasksDB(BaseDB):
 
         with closing(self._get_connection()) as conn:
             cursor = conn.execute(
-                f"SELECT * FROM automation_definitions {where_clause} ORDER BY created_at",
+                f"SELECT * FROM automation_definitions {where_clause} "
+                "ORDER BY created_at",
                 params,
             )
             return self._rows_to_dicts(
@@ -2381,11 +2395,25 @@ class ScheduledTasksDB(BaseDB):
         filtered by ``review_state`` and/or ``definition_id``; paginated
         via ``limit``/``offset``.
 
-        Ordered by ``datetime(created_at)`` rather than a raw string
-        comparison: server-mirrored rows copy ``created_at`` verbatim from
-        the server payload (see ``upsert_automation_results_from_server``),
-        so a mix of offset formats between locally-created and mirrored
-        rows would otherwise sort wrong under plain string ``ORDER BY``.
+        Ordered by ``strftime('%Y-%m-%dT%H:%M:%f', created_at)`` rather
+        than a raw string comparison: server-mirrored rows copy
+        ``created_at`` verbatim from the server payload (see
+        ``upsert_automation_results_from_server``), so a mix of formats
+        between locally-created and mirrored rows would otherwise sort by
+        text instead of by instant.
+
+        ``%f`` (millisecond precision), NOT the plain ``datetime()`` this
+        started as: SQLite's ``datetime()`` truncates to whole seconds,
+        and whole seconds is exactly the resolution at which the live
+        server's ``Z``-suffixed timestamps and our own ``+00:00`` ones
+        can disagree (task 6, D4). Both denote UTC, so the suffix only
+        decides the comparison when everything before it is equal -- i.e.
+        WITHIN one second -- which is precisely what ``datetime()``
+        throws away, leaving those rows tied and ordered arbitrarily by
+        the UUID tiebreak. A sync pull mirroring a page of results all
+        stamped in the same second is the normal case, not a corner one.
+        ``'…:06Z'`` (0x5A) vs ``'…:06.5+00:00'`` (0x2E) is the concrete
+        inversion: raw text ranks the earlier row first.
         """
         conditions: list[str] = []
         params: list[Any] = []
@@ -2408,7 +2436,8 @@ class ScheduledTasksDB(BaseDB):
         with closing(self._get_connection()) as conn:
             cursor = conn.execute(
                 f"SELECT * FROM automation_results {where_clause} "
-                "ORDER BY datetime(created_at) DESC, id DESC LIMIT ? OFFSET ?",
+                "ORDER BY strftime('%Y-%m-%dT%H:%M:%f', created_at) DESC, "
+                "id DESC LIMIT ? OFFSET ?",
                 params,
             )
             return self._rows_to_dicts(

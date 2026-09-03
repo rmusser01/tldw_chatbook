@@ -48,7 +48,12 @@ from ....Scheduling.services.server_client import (
     ServerClientValidationError,
 )
 from ....UI.Screens.scheduling.conflicts_tab import ConflictsTab
-from ....UI.Screens.scheduling.results_tab import ResultsTab, solved_eligibility
+from ....UI.Screens.scheduling.results_tab import (
+    ResultsTab,
+    definition_for_result,
+    index_definitions_by_id,
+    solved_eligibility,
+)
 from ....UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
 from ....Widgets.confirmation_dialog import ConfirmationDialog
 from .forms.automation_definition_form import AutomationDefinitionForm
@@ -1914,11 +1919,25 @@ class SchedulesWorkbench(BaseAppScreen):
         of a large definition list; the cap is a defensive bound, not an
         expected cliff.
 
-        Every item is stamped with `owner_id` if the response omitted one
-        (some fixtures/older server versions do): these rows are known to
-        be server-scoped by construction (this IS the server fetch), so
-        the run-now/history/edit routing that reads `owner_id` off the row
-        must never depend on the wire response actually including it.
+        Every item's `owner_id` is OVERWRITTEN with this connection's
+        `server:<active-server-id>` scope -- never read from the payload.
+        These rows are server-scoped by construction (this IS the server
+        fetch), and a server's self-reported `owner_id` is its own raw
+        user id, which has no reason to match our scoping convention:
+        live verification against a real tldw_server (task 6, D1) got
+        `"owner_id": "1"`, so the older stamp-only-when-absent guard
+        passed a present, non-prefixed value straight through. Every
+        downstream consumer (`is_server_scoped_owner`, the Name-cell
+        prefix, run-now routing, `_resolve_local_definition_id`'s mirror
+        lookup, transfer refusals) then read the row as LOCAL: server
+        automations rendered `[This device]`, `r` refused with the
+        local-health message, and `m` refused with "This automation no
+        longer exists."
+
+        This is the only ingestion boundary that needed the fix: both DB
+        mirror upserts (`upsert_automation_definitions_from_server`,
+        `upsert_automation_results_from_server`) already exclude the
+        payload's `owner_id` and stamp the caller's owner scope instead.
         """
         items: list[dict[str, Any]] = []
         total = 0
@@ -1937,10 +1956,9 @@ class SchedulesWorkbench(BaseAppScreen):
                 or len(items) >= AUTOMATIONS_LOAD_MAX_ROWS
             ):
                 break
-        active_server_id = self._active_server_id()
+        owner_id = f"server:{self._active_server_id()}"
         for item in items:
-            if not item.get("owner_id"):
-                item["owner_id"] = f"server:{active_server_id}"
+            item["owner_id"] = owner_id
         return items, total
 
     @staticmethod
@@ -2679,10 +2697,21 @@ class SchedulesWorkbench(BaseAppScreen):
                 severity="warning",
             )
             return
+        # `resolve_definition` takes a LOCAL definition id (its own
+        # contract), but a synced result's `definition_id` is the SERVER's
+        # id -- passing it through unresolved refused with "Automation
+        # definition <server id> was not found" on exactly the rows the
+        # action exists for (live verification task 6, D3). The gate above
+        # already resolved the row across both id spaces; reuse it rather
+        # than re-deriving the id a second, divergent way. Non-None here
+        # by construction: `solved_eligibility` returns ineligible when
+        # the same lookup misses.
+        definition = definition_for_result(result, results_tab.definitions_by_id)
+        local_definition_id = str((definition or {}).get("id") or "")
 
         async def _mark_solved() -> None:
             outcome = await service.resolve_definition(
-                result["definition_id"], solved=True, result_id=result["id"]
+                local_definition_id, solved=True, result_id=result["id"]
             )
             if outcome.status == "saved":
                 self.app_instance.notify("Marked solved.", severity="information")
@@ -2980,11 +3009,29 @@ class SchedulesWorkbench(BaseAppScreen):
         )
         conflicts_tab.populate(conflicts)
         # Surface the conflict count on the tab label itself (UX-063).
+        self._set_tab_label(
+            "scheduling-conflicts-tab",
+            f"Conflicts ({len(conflicts)})" if conflicts else "Conflicts",
+        )
+
+    def _set_tab_label(self, pane_id: str, label: str) -> None:
+        """Relabel one tab in the workbench's `TabbedContent`.
+
+        `TabPane.label` does not exist in Textual 8.x -- a pane stores its
+        title in `_title` and exposes no `label` reactive, so the previous
+        `pane.label = ...` assignment silently created an inert Python
+        attribute and the rendered tab text never changed (live
+        verification task 6, D2: both the Results unread badge and the
+        Conflicts badge it was copied from were no-ops on screen while
+        their tests passed by reading the attribute back). The real seam
+        is `TabbedContent.get_tab(pane_id)` -> the `Tab` widget's own
+        `label` setter, which calls `Tab.update` and repaints.
+        """
         try:
-            pane = self.query_one("#scheduling-conflicts-tab", TabPane)
-            pane.label = f"Conflicts ({len(conflicts)})" if conflicts else "Conflicts"
-        except Exception:  # noqa: BLE001 - pane not mounted
-            pass
+            tab = self.query_one("#scheduling-tabs", TabbedContent).get_tab(pane_id)
+        except Exception:  # noqa: BLE001 - tabs/pane not mounted yet
+            return
+        tab.label = label
 
     def _refresh_results_tab(self) -> None:
         """Reload the Results tab and its unread badge (schedules-handoff
@@ -3001,18 +3048,16 @@ class SchedulesWorkbench(BaseAppScreen):
         results_tab = self.query_one("#scheduling-results", ResultsTab)
         results = service.db.list_automation_results(owner_id=None)
         unread = service.db.count_unread_results(owner_id=None)
-        definitions_by_id = {
-            row["id"]: row
-            for row in service.db.list_automation_definitions(owner_id=None)
-        }
+        definitions_by_id = index_definitions_by_id(
+            service.db.list_automation_definitions(owner_id=None)
+        )
         results_tab.populate(results, definitions_by_id)
         # Surface the unread count on the tab label itself (spec §4's
         # inbox badge, same UX-063 idiom as the Conflicts tab above).
-        try:
-            pane = self.query_one("#scheduling-results-tab", TabPane)
-            pane.label = f"Results ({unread})" if unread else "Results"
-        except Exception:  # noqa: BLE001 - pane not mounted
-            pass
+        self._set_tab_label(
+            "scheduling-results-tab",
+            f"Results ({unread})" if unread else "Results",
+        )
 
     def action_delete(self) -> None:
         """Delete marked tasks in bulk, else the selected one (confirmed).

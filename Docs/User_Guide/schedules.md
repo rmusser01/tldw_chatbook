@@ -356,17 +356,6 @@ device" automation shows up here immediately (the tab refreshes after
 every save). With no server connected the tab shows local automations
 alone instead of an empty list.
 
-> **Known gap (live verification, 2026-09-02).** Against a real server
-> every row is currently prefixed `[This device]`, including genuine
-> server automations, because the owner id the server sends is not in the
-> form this screen recognises. The pane's own count line ("2 automations
-> on the server") stays correct, so the two disagree. The same
-> misreading routes the keys below: **r** on a server automation refuses
-> with the *local* health message instead of dispatching on the server,
-> and **m** refuses with "This automation no longer exists." Until this
-> is fixed, treat the count line — not the row prefixes — as the truth
-> about ownership, and drive server automations from the server.
-
 Press **r** on a highlighted definition to run it immediately — a real
 dispatch, not a preview, routed by that row's own owner. A local
 automation runs through the same claim/spawn machinery the scheduler's
@@ -407,17 +396,9 @@ skipped, the same events the server records for reconciliation.
 
 The **Results** tab lists every `automation_results` row a recurring
 question has produced, across **both** owners (this device and any
-connected server) in one inbox, newest first. Its tab label is meant to
-carry an unread badge — "Results (3)" — updating after every sync and
-after every action below, and reading plain "Results" with nothing
-unread.
-
-> **Known gap (live verification, 2026-09-02).** The badge does not
-> render today: the unread count is computed correctly but written to an
-> attribute this Textual version's tab bar never reads, so the label
-> stays plain "Results" whatever the count is. The Conflicts tab's count
-> has the same problem. The per-row "● unread" state in the table below
-> is unaffected, and is the honest reading until this is fixed.
+connected server) in one inbox, newest first. Its tab label carries an
+unread badge — "Results (3)" — updating after every sync and after every
+action below, and reading plain "Results" with nothing unread.
 
 Each row shows a kind glyph (● for a **finding**, ✕ for a **failure** —
 failure rows are styled distinctly since they are diagnostic, not
@@ -464,15 +445,6 @@ refuses honestly ("…this action requires a server connection") rather
 than silently queuing something that might already be stale by the time
 it would send.
 
-> **Known gap (live verification, 2026-09-02).** For a result that came
-> down from a server, mark-solved never becomes eligible: the detail pane
-> reports "This result's automation definition could not be found" even
-> when that definition is mirrored on this device, because the result
-> carries the server's id for it and the eligibility check looks the id
-> up among local ones. `o` therefore refuses on exactly the rows the
-> action exists for. Read/dismiss (`r`/`d`) and their server pushback are
-> unaffected.
-
 ## Execution timeouts
 
 A scheduled task's handler is bounded: if it is still running after its
@@ -500,9 +472,15 @@ detail pane; `r` marking a result read and that read reaching the server
 (`review_state: read` + `reviewed_at`); and the Results tab refreshing
 on a server finish notification with no `s` pressed. Not verified in
 that run: reminder transfer round-trips, including the past-`run_at`
-one-time case — the create form could not be driven to Save. The three
-"Known gap" callouts above were found by this run. Full record:
-`.superpowers/sdd/plan-2026-09-02-schedules-handoff-pr6/task-6-report.md`.
+one-time case — the create form could not be driven to Save. The three defects that
+run found — every server automation reading as `[This device]` (and the
+`r`/`m` refusals that followed from it), the inert Results/Conflicts
+unread badge, and mark-solved never becoming eligible for a synced
+result — were fixed in the same-day live-fix round; the fixes are pinned
+by tests but have NOT themselves been re-driven against a live server
+yet. Full record:
+`.superpowers/sdd/plan-2026-09-02-schedules-handoff-pr6/task-6-report.md`
+and `live-fix-report.md` beside it.
 Supersedes the same-day PR-6 task
 4 stamp: the Queue tab's own "(server: \<id\>)" owner suffix, hidden at
 compact width; and the Results tab's automatic refresh on a server

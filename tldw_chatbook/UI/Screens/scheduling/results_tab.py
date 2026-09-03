@@ -18,7 +18,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
@@ -26,6 +25,22 @@ from textual.containers import Vertical
 from textual.widgets import DataTable, Static
 
 _KIND_GLYPHS = {"finding": "●", "failure": "✕"}  # ● / ✕
+
+
+def escape_markup(value: str) -> str:
+    """Escape EVERY ``[`` so the detail pane renders content literally.
+
+    Deliberately NOT `rich.markup.escape` (nor `textual.markup.escape`,
+    which shares its regex): both only escape tags matching
+    ``\\[[a-z#/@]...]``, but the parser this pane actually renders
+    through -- `Static.update(str)` -> `Content.from_markup` -- consumes
+    ANY ``[...]`` token, uppercase included. Live verification (task 6)
+    lost a literal ``[PR-6]`` out of a real result answer while the
+    existing escaping test passed, because that test only used a
+    lowercase ``[bold]`` token, which rich DOES escape. Escaping every
+    bracket is the only escape that matches this parser.
+    """
+    return str(value).replace("[", "\\[")
 
 #: Failure rows get the same red-toned Rich style `status_badge_text`
 #: (task_detail.py) uses for BLOCKED/CONFLICT -- there is no Rich-usable
@@ -107,6 +122,46 @@ def _review_state_cell(review_state: str) -> Text:
     return Text(review_state or "-")
 
 
+def index_definitions_by_id(
+    rows: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Index definition rows under BOTH id spaces they are referred to by.
+
+    A result's `definition_id` is whatever the side that produced it
+    calls the definition: a locally-created result carries the LOCAL row
+    id, while a result mirrored down from the server carries the
+    SERVER's id (`upsert_automation_results_from_server` copies
+    `definition_id` verbatim -- it has no local id to translate it to).
+    Indexing by `row["id"]` alone therefore missed every synced result,
+    so mark-solved refused with "definition could not be found" on
+    exactly the rows the feature exists for (live verification task 6,
+    D3). Local ids are UUID4 and server ids are the server's own opaque
+    ids, so the two key spaces do not collide in practice; the local id
+    is written first regardless, so a pathological clash still resolves
+    to a row this device owns.
+    """
+    index: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        index[str(row["id"])] = row
+    for row in rows:
+        server_id = row.get("server_id")
+        if server_id:
+            index.setdefault(str(server_id), row)
+    return index
+
+
+def definition_for_result(
+    result: dict[str, Any], definitions_by_id: dict[str, dict[str, Any]]
+) -> dict[str, Any] | None:
+    """The definition row a result belongs to, across both id spaces.
+
+    Pairs with `index_definitions_by_id`; the one lookup both the
+    eligibility gate and the mark-solved action route through, so they
+    can never disagree about which definition a row resolves to.
+    """
+    return definitions_by_id.get(str(result.get("definition_id") or ""))
+
+
 def solved_eligibility(
     result: dict[str, Any], definitions_by_id: dict[str, dict[str, Any]]
 ) -> tuple[bool, str | None]:
@@ -125,7 +180,7 @@ def solved_eligibility(
     """
     if result.get("kind") != "finding":
         return False, "Only findings can be marked solved."
-    definition = definitions_by_id.get(result.get("definition_id"))
+    definition = definition_for_result(result, definitions_by_id)
     if definition is None:
         return False, "This result's automation definition could not be found."
     if definition.get("resolution_state") == "solved":

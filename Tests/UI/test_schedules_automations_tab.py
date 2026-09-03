@@ -28,7 +28,16 @@ from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWor
 
 
 class AutomationsServerClient:
-    """Stub scheduling server client with the automation control plane."""
+    """Stub scheduling server client with the automation control plane.
+
+    The definition items carry `"owner_id": "1"` because that is what a
+    real tldw_server puts on the wire (live-verified task 6, D1 -- its
+    raw user id, NOT the client's `server:<id>` scope convention). Do not
+    "fix" this to a prefixed value: the ingestion boundary derives the
+    scope from the connection, and a prefixed fixture is exactly the
+    drift that hid D1 for a whole slice. Same rule as
+    `Tests/Scheduling/fixtures/server_responses/README.md`'s drift guard.
+    """
 
     def __init__(self, notifications_service=None) -> None:
         self.notifications_service = notifications_service or object()
@@ -37,6 +46,7 @@ class AutomationsServerClient:
                 "items": [
                     {
                         "id": "def-1",
+                        "owner_id": "1",
                         "name": "Morning brief",
                         "family": "recurring_question",
                         "lifecycle": "configured",
@@ -44,6 +54,7 @@ class AutomationsServerClient:
                     },
                     {
                         "id": "def-2",
+                        "owner_id": "1",
                         "name": "Paused one",
                         "family": "recurring_question",
                         "lifecycle": "paused",
@@ -174,6 +185,33 @@ async def test_automations_tab_loads_server_definitions():
         table.cursor_coordinate = (0, 0)
         await pilot.pause()
         assert workbench._selected_automation_id == "def-1"
+
+
+@pytest.mark.asyncio
+async def test_server_rows_are_rebound_to_the_connection_owner_scope():
+    """Live verification task 6, D1: the server sends its own raw user id
+    as `owner_id` ("1"), which is NOT the client's `server:<id>` scope.
+    Every row from the server fetch must be rebound to the CONNECTION's
+    scope at ingestion, or the whole downstream stack reads it as local:
+    the Name cell says "[This device]", run-now routes to the local
+    executor, and "move to this device" refuses as not-found.
+    """
+    server_client = AutomationsServerClient()
+    app = AutomationsTestApp(AutomationsMockService(server_client))
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+
+        assert [row["owner_id"] for row in workbench._automations] == [
+            "server:server-1",
+            "server:server-1",
+        ]
+
+        table = workbench.query_one("#scheduling-automations-table", DataTable)
+        first_cell = str(table.get_cell_at((0, 0)))
+        assert first_cell == "[server-1] Morning brief"
+        assert "This device" not in first_cell
 
 
 @pytest.mark.asyncio

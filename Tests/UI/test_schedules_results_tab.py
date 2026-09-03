@@ -21,7 +21,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from textual.widgets import DataTable, TabbedContent, TabPane
+from textual.widgets import DataTable, TabbedContent
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
@@ -264,6 +264,49 @@ async def test_bracket_tokens_in_answer_and_title_render_literally():
 
 
 @pytest.mark.asyncio
+async def test_uppercase_bracket_tokens_survive_both_render_paths():
+    """Live verification task 6: a literal `[PR-6]` in a real result
+    answer VANISHED from the detail pane.
+
+    `rich.markup.escape` only escapes tags matching `[a-z#/@]...`, but the
+    parser this pane renders through (`Static.update(str)` ->
+    `Content.from_markup`) consumes ANY `[...]` token. The existing
+    bracket test above passed only because it used a lowercase `[bold]`,
+    which rich does escape. This pins an uppercase token on both the
+    normal and the degraded (`(unparsed — ...)`) branches.
+    """
+    app = _BareResultsApp()
+    async with app.run_test() as pilot:
+        tab = pilot.app.query_one(ResultsTab)
+        await pilot.pause()
+
+        normal = await _detail_text_for(
+            pilot,
+            tab,
+            _base_result(
+                title="Digest [PR-6]",
+                answer="the note [PR-6] describes the inbox",
+                source_refs=[{"source_type": "note", "source_id": "[PR-6]"}],
+            ),
+        )
+        assert "Digest [PR-6]" in normal
+        assert "the note [PR-6] describes the inbox" in normal
+        assert "note: [PR-6]" in normal
+
+        degraded = await _detail_text_for(
+            pilot,
+            tab,
+            _base_result(
+                id="res-2",
+                answer={"text": "Draft answer about [PR-6] behaviour."},
+                source_refs=42,
+            ),
+        )
+        assert "unparsed" in degraded
+        assert "[PR-6]" in degraded
+
+
+@pytest.mark.asyncio
 async def test_empty_state_shown_when_no_results():
     app = _BareResultsApp()
     async with app.run_test() as pilot:
@@ -363,6 +406,17 @@ def _seed_result(
     return result_id
 
 
+def _rendered_tab_title(workbench, pane_id: str) -> str:
+    """The text the tab bar actually shows for one pane.
+
+    Goes through `TabbedContent.get_tab()` -> the `Tab` widget's own
+    rendered visual, so it can only pass if the label really reached the
+    widget that paints the tab bar.
+    """
+    tab = workbench.query_one("#scheduling-tabs", TabbedContent).get_tab(pane_id)
+    return str(tab.render())
+
+
 async def _open_results_tab(pilot, *, row: int = 0):
     workbench = pilot.app.screen
     tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
@@ -404,11 +458,90 @@ async def test_badge_and_table_span_every_owner(results_db):
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
 
-        pane = pilot.app.screen.query_one("#scheduling-results-tab", TabPane)
-        assert str(pane.label) == "Results (2)"
+        # Assert the RENDERED tab title through the real widget tree, not
+        # an attribute the code just set. The previous assertion read back
+        # `TabPane.label` -- an attribute Textual 8.x's TabPane does not
+        # have (it stores `_title`), so the assignment created an inert
+        # Python attribute, this test confirmed itself, and the badge was
+        # invisible on screen (live verification task 6, D2).
+        assert _rendered_tab_title(pilot.app.screen, "scheduling-results-tab") == (
+            "Results (2)"
+        )
 
         table = pilot.app.screen.query_one("#scheduling-results-table", DataTable)
         assert table.row_count == 3
+
+
+@pytest.mark.asyncio
+async def test_conflicts_badge_renders_too(results_db):
+    """The Conflicts badge is the one PR-6's Results badge was copied from
+    and was equally inert (live verification task 6, D2). Both go through
+    the same `_set_tab_label` seam now, so both are pinned on the render.
+    """
+    db = results_db
+    db.record_conflict(
+        local_id="l1",
+        primitive="reminder_task",
+        owner_id="local",
+        server_state={"title": "Server"},
+        local_state={"title": "Local"},
+    )
+
+    app = ResultsWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        assert _rendered_tab_title(
+            pilot.app.screen, "scheduling-conflicts-tab"
+        ) == "Conflicts (1)"
+        # No results seeded -> the Results badge stays a bare label.
+        assert _rendered_tab_title(
+            pilot.app.screen, "scheduling-results-tab"
+        ) == "Results"
+
+
+@pytest.mark.asyncio
+async def test_mark_solved_resolves_a_server_keyed_result(results_db):
+    """Live verification task 6, D3: a synced result's `definition_id` is
+    the SERVER's id, but the tab indexed definitions by their LOCAL id and
+    `resolve_definition` takes a LOCAL id -- so `o` refused ("definition
+    could not be found") on exactly the rows the feature exists for.
+    """
+    db = results_db
+    local_definition_id = _seed_definition(
+        db, owner_id="local", server_id="srv-def-1"
+    )
+    _seed_result(
+        db,
+        # The server's id for the definition, as a mirrored row carries it.
+        definition_id="srv-def-1",
+        owner_id="local",
+        dedupe_key="d1",
+    )
+
+    app = ResultsWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = await _open_results_tab(pilot)
+
+        # The eligibility gate resolves through the server id space...
+        results_tab = workbench.query_one("#scheduling-results", ResultsTab)
+        detail_text = str(
+            results_tab.query_one("#scheduling-results-detail").render()
+        )
+        assert "Solve: eligible" in detail_text
+
+        # ...and so does the action, which must hand `resolve_definition`
+        # the LOCAL id it contracts for.
+        workbench.action_mark_result_solved()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        row = db.get_automation_definition(local_definition_id)
+        assert row["resolution_state"] == "solved"
 
 
 @pytest.mark.asyncio
@@ -431,8 +564,9 @@ async def test_read_action_marks_local_result_read(results_db):
 
         row = db.get_automation_result(result_id)
         assert row["review_state"] == "read"
-        pane = workbench.query_one("#scheduling-results-tab", TabPane)
-        assert str(pane.label) == "Results"
+        # Badge clears once nothing is unread -- asserted on the render,
+        # same reason as the badge test above (task 6, D2).
+        assert _rendered_tab_title(workbench, "scheduling-results-tab") == "Results"
 
 
 @pytest.mark.asyncio
