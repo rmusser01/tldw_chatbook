@@ -11004,3 +11004,22 @@ a direct-method fake that dev added after you forked will not be in your
 branch's test list. Regenerate derived inventories on the merged head, not on
 the branch tip. A green check on the pre-merge head is evidence about the
 branch, not about dev-plus-branch.
+
+## Strengthening a postcondition can expose an incomplete green fixture (TASK-30013, 2026-09-03)
+
+**What happened.** Endpoint setup compare-and-swap observations were expanded
+to include credential routing, so changing an unset environment-variable
+declaration could no longer evade the locked precondition. The new focused
+tests passed, but the broader provider-setup gate turned an older postcondition
+test red. Its simulated successful `after` snapshot omitted
+`credential_source = "stored"`, even though `build_provider_setup_mutation()`
+had always written that field. The old, weaker observation simply could not
+notice that the fixture described a state the production mutation would never
+produce.
+
+**What to do.** When a stronger invariant breaks an established postcondition
+fixture, compare the fixture with the exact projected mutation before weakening
+the invariant. A newly red old test may be revealing missing state in its
+oracle, not a compatibility regression. Then run a cross-file gate that covers
+both the new invariant and the existing projection tests; the isolated new
+tests alone cannot expose disagreements with older test models.
