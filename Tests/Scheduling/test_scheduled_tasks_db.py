@@ -2516,6 +2516,64 @@ def test_list_automation_results_orders_z_suffix_against_plus_offset(tmp_path):
     ]
 
 
+def test_list_automation_results_orders_within_one_millisecond(tmp_path):
+    """`strftime('%f')` is MILLISECOND precision, but `_to_utc_iso` writes
+    MICROSECONDS -- so rows created inside the same millisecond tie on the
+    ordering key and used to fall through to the UUID `id`, i.e. arbitrary
+    order. A results burst written in one tick is exactly that case.
+
+    The raw `created_at` column is the intermediate tiebreak: at this
+    resolution the offsets are already normalized, so raw text order IS
+    instant order and the sub-millisecond digits decide.
+    """
+    db = _mk_db(tmp_path)
+    # All five land in the same `%f` bucket (...:06.123 -- `%f` ROUNDS to
+    # ms), differing only in microseconds. Five rather than two so the
+    # discarded `id DESC` fallback cannot reproduce this order by luck:
+    # local ids are UUID4, so a 2-row assertion would pass 1 time in 2 even
+    # unfixed, and 1 in 120 here.
+    micros = ["123100", "123200", "123300", "123400", "123499"]
+    for index, suffix in enumerate(micros):  # seeded oldest-first
+        stamp = f"2026-09-02T23:09:06.{suffix}+00:00"
+        db.upsert_automation_results_from_server(
+            "owner-a",
+            [_result_item(
+                id=f"srv-{index}", dedupe_key=f"key-{index}",
+                created_at=stamp, updated_at=stamp,
+            )],
+        )
+
+    rows = db.list_automation_results("owner-a")
+    assert [row["server_id"] for row in rows] == [
+        f"srv-{index}" for index in reversed(range(len(micros)))
+    ]
+    # The premise: the strftime key alone really does tie these two.
+    with closing(db._get_connection()) as conn:
+        keys = [
+            row[0]
+            for row in conn.execute(
+                "SELECT strftime('%Y-%m-%dT%H:%M:%f', created_at) "
+                "FROM automation_results"
+            )
+        ]
+    assert len(set(keys)) == 1, "test is stale: the rows no longer tie on %f"
+
+
+def test_count_automation_results_counts_every_state(tmp_path):
+    """The honest "of N" denominator for the capped inbox listing: it
+    counts EVERY result, not just unread ones (which is what made a
+    50-row listing disagree with the badge in the first place)."""
+    db = _mk_db(tmp_path)
+    rid = db.create_automation_result("owner-a", "d1", "r1", "finding", "A", "S", "key-a")
+    db.create_automation_result("owner-b", "d1", "r2", "finding", "B", "S", "key-b")
+    db.update_result_review(rid, "read")
+
+    assert db.count_automation_results(None) == 2
+    assert db.count_unread_results(None) == 1
+    assert db.count_automation_results("owner-a") == 1
+    assert db.count_automation_results(None, review_state="read") == 1
+
+
 def test_definition_mirror_normalizes_a_z_suffix_on_write(tmp_path):
     """Definitions close the same hazard at the WRITE boundary instead
     (task 6, D4 sweep), which is why `list_automation_definitions` still

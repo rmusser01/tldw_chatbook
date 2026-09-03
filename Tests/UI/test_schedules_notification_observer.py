@@ -519,3 +519,71 @@ async def test_sustained_failure_warns_once_then_debugs_then_info_on_reconnect(
             await pilot.pause()
     finally:
         loguru_logger.remove(sink_id)
+
+
+@pytest.mark.asyncio
+async def test_mount_pulls_results_once_to_catch_up_on_acked_events(notif_db):
+    """HIGH (Qodo): `_on_server_notification_event` acks BEFORE the pull it
+    schedules has run, so an event acked just before this screen went away
+    advanced the observer's durable cursor and was never redelivered --
+    its results were lost until some later trigger happened to arrive.
+
+    Closed by catching up on mount rather than by re-timing the ack (the
+    ack-then-advance contract is what stops an unrelated stream replaying
+    forever). The pull is a newest-window walk, i.e. idempotent, so one at
+    mount recovers whatever any number of lost events would have fetched.
+    """
+    server_client = _ConnectedServerClient()
+    scope_service = FakeNotificationsScopeService()
+    app = NotificationWorkbenchTestApp(
+        notif_db, server_client=server_client, scope_service=scope_service
+    )
+    async with app.run_test() as pilot:
+        screen = SchedulesWorkbench(app_instance=pilot.app)
+        await pilot.app.push_screen(screen)
+        await pilot.pause()
+        assert server_client.calls == 0  # still inside the debounce window
+
+        await pilot.pause(_WAIT)
+        await _wait_until(pilot, lambda: server_client.calls >= 1)
+        # Exactly one -- mounting must not fan out into repeated pulls.
+        assert server_client.calls == 1
+        assert screen._results_pull_running is False
+
+
+@pytest.mark.asyncio
+async def test_mount_catch_up_and_an_event_burst_stay_single_flight(notif_db):
+    """The catch-up pull shares the live-event path, so mounting straight
+    into a burst of `automation_run_*` events costs ONE pull, not one per
+    trigger plus one for the mount."""
+    server_client = _ConnectedServerClient()
+    scope_service = FakeNotificationsScopeService(
+        burst=[{"kind": "automation_run_completed"}] * 3
+    )
+    app = NotificationWorkbenchTestApp(
+        notif_db, server_client=server_client, scope_service=scope_service
+    )
+    async with app.run_test() as pilot:
+        screen = SchedulesWorkbench(app_instance=pilot.app)
+        await pilot.app.push_screen(screen)
+        await pilot.pause()
+        assert scope_service.call_count == 1  # observer delivered the burst
+
+        await pilot.pause(_WAIT)
+        await _wait_until(pilot, lambda: server_client.calls >= 1)
+        assert server_client.calls == 1
+        assert screen._results_pull_rerun_requested is False
+
+
+@pytest.mark.asyncio
+async def test_no_catch_up_pull_without_a_server_connection(notif_db):
+    """No server configured -- nothing to catch up on, and `_run_phase`
+    would only record a sync error. Same gate as the observer's."""
+    app = NotificationWorkbenchTestApp(notif_db)
+    async with app.run_test() as pilot:
+        screen = SchedulesWorkbench(app_instance=pilot.app)
+        await pilot.app.push_screen(screen)
+        await pilot.pause()
+        assert screen._results_pull_debounce_timer is None
+        await pilot.pause(_WAIT)
+        assert screen._results_pull_running is False

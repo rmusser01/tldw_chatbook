@@ -2414,6 +2414,29 @@ class ScheduledTasksDB(BaseDB):
         stamped in the same second is the normal case, not a corner one.
         ``'…:06Z'`` (0x5A) vs ``'…:06.5+00:00'`` (0x2E) is the concrete
         inversion: raw text ranks the earlier row first.
+
+        ``%f`` is itself only MILLISECOND precision, while every locally
+        written row carries MICROSECONDS (``_to_utc_iso`` ->
+        ``datetime.isoformat()``). Rows stamped inside the same
+        millisecond therefore tie on the strftime key and used to fall
+        straight through to the UUID ``id`` -- i.e. arbitrary order for a
+        burst of results written in the same tick. Raw ``created_at`` is
+        the intermediate tiebreak: inside one millisecond the extra
+        digits are what distinguishes the rows, and the write boundary
+        has already normalised the offset, so raw text and true instant
+        agree at that resolution. ``id`` stays last, purely as a
+        deterministic final tiebreak.
+
+        Args:
+            owner_id: Owner to scope to, or ``None`` for every owner.
+            review_state: Optional ``review_state`` equality filter.
+            definition_id: Optional ``definition_id`` equality filter.
+            limit: Maximum number of rows to return.
+            offset: Rows to skip before collecting ``limit`` rows.
+
+        Returns:
+            Matching rows as dicts (JSON fields already decoded), newest
+            first.
         """
         conditions: list[str] = []
         params: list[Any] = []
@@ -2437,31 +2460,60 @@ class ScheduledTasksDB(BaseDB):
             cursor = conn.execute(
                 f"SELECT * FROM automation_results {where_clause} "
                 "ORDER BY strftime('%Y-%m-%dT%H:%M:%f', created_at) DESC, "
-                "id DESC LIMIT ? OFFSET ?",
+                "created_at DESC, id DESC LIMIT ? OFFSET ?",
                 params,
             )
             return self._rows_to_dicts(
                 cursor.fetchall(), json_fields=self._AUTOMATION_RESULT_JSON_FIELDS
             )
 
+    def count_automation_results(
+        self, owner_id: str | None, review_state: str | None = None
+    ) -> int:
+        """Count automation results matching ``list_automation_results``.
+
+        The unfiltered form is the honest denominator for the inbox's
+        capped listing ("showing newest 200 of N") -- the listing takes a
+        newest-window ``limit``, so it cannot report the total itself.
+
+        Args:
+            owner_id: Owner to scope to, or ``None`` for every owner.
+            review_state: Optional ``review_state`` equality filter --
+                ``None`` counts every state.
+
+        Returns:
+            The number of matching ``automation_results`` rows.
+        """
+        conditions: list[str] = []
+        params: list[Any] = []
+        if review_state is not None:
+            conditions.append("review_state = ?")
+            params.append(review_state)
+        if owner_id is not None:
+            conditions.append("owner_id = ?")
+            params.append(owner_id)
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                f"SELECT COUNT(*) FROM automation_results {where_clause}",
+                params,
+            )
+            row = cursor.fetchone()
+            return int(row[0]) if row else 0
+
     def count_unread_results(self, owner_id: str | None) -> int:
         """Count unread results (spec §4's inbox badge).
 
         ``owner_id=None`` counts across every owner, matching
         ``list_automation_results``'s all-owners mode.
+
+        Args:
+            owner_id: Owner to scope to, or ``None`` for every owner.
+
+        Returns:
+            The number of ``review_state='unread'`` rows.
         """
-        conditions = ["review_state = 'unread'"]
-        params: list[Any] = []
-        if owner_id is not None:
-            conditions.append("owner_id = ?")
-            params.append(owner_id)
-        with closing(self._get_connection()) as conn:
-            cursor = conn.execute(
-                f"SELECT COUNT(*) FROM automation_results WHERE {' AND '.join(conditions)}",
-                params,
-            )
-            row = cursor.fetchone()
-            return int(row[0]) if row else 0
+        return self.count_automation_results(owner_id, review_state="unread")
 
     def get_automation_result(self, result_id: str) -> Optional[dict[str, Any]]:
         """Fetch an automation result by local id.

@@ -46,6 +46,10 @@ from ....Scheduling.services.server_client import (
     ServerClientError,
     ServerClientValidationError,
 )
+from ....Scheduling.services.sync_engine import (
+    _RESULTS_PAGE_SIZE,
+    _SYNC_MAX_PAGES,
+)
 from ....UI.Screens.scheduling.conflicts_tab import ConflictsTab
 from ....UI.Screens.scheduling.results_tab import (
     ResultsTab,
@@ -111,6 +115,15 @@ AUTOMATIONS_LOAD_MAX_ROWS = 500
 #: collapses into ONE pull (plan ruling 3), same stop-and-restart timer
 #: shape as the queue filter's own debounce above.
 RESULTS_PULL_DEBOUNCE_SECONDS = 0.3
+
+#: How many results the inbox lists. The DB default (50) silently hid older
+#: rows while the badge counted EVERY unread one, so the tab could read
+#: "Results (120)" over 50 rows. This is the sync-mirrored window --
+#: exactly the newest-pages walk `SyncEngine._pull_results` performs -- so
+#: the inbox shows everything a pull could have brought down and nothing it
+#: could not. Beyond the cap the tab says so out loud (`ResultsTab.
+#: populate`'s `total`); deliberately no pagination machinery.
+RESULTS_INBOX_LIMIT = _RESULTS_PAGE_SIZE * _SYNC_MAX_PAGES
 
 #: How many transport reconnects `EventObserver.run()` absorbs internally
 #: (its own built-in exponential backoff, capped at 5s per attempt) before
@@ -475,6 +488,7 @@ class SchedulesWorkbench(BaseAppScreen):
         self._request_automations_refresh()
         self._refresh_scheduler_liveness()
         self._start_server_notification_observer()
+        self._schedule_catch_up_results_pull()
 
     def on_unmount(self) -> None:
         """Stop the notification observer + any pending pull debounce.
@@ -628,6 +642,32 @@ class SchedulesWorkbench(BaseAppScreen):
         if isinstance(kind, str) and kind.startswith("automation_run_"):
             self._schedule_results_pull()
         return True
+
+    def _schedule_catch_up_results_pull(self) -> None:
+        """Recover results whose notification was acked while unmounted.
+
+        `_on_server_notification_event` acks EVERY event before the pull
+        it schedules has run (it must -- the observer's ack-then-advance
+        contract is what stops an unrelated stream replaying forever), so
+        an event acked just before this screen went away advances the
+        durable cursor and is never redelivered. Re-timing the ack is the
+        wrong lever: the pull is a newest-window walk keyed on nothing but
+        "what does the server have now", i.e. idempotent, so one pull at
+        mount recovers whatever the lost event would have fetched -- and
+        any number of lost events, not just one.
+
+        Goes through the same debounced single-flight path as a live
+        event, so mounting into an event burst still costs exactly one
+        pull. Gated on a configured server for the same reason
+        `_start_server_notification_observer` is: with no server there is
+        nothing to pull and `_run_phase` would only record a sync error.
+        """
+        service = self._service()
+        if service is None or not self._server_available(
+            service, self._active_server_id()
+        ):
+            return
+        self._schedule_results_pull()
 
     def _schedule_results_pull(self) -> None:
         """Debounce a notification-triggered results pull (plan ruling
@@ -3071,17 +3111,25 @@ class SchedulesWorkbench(BaseAppScreen):
         DB-only read, same cost class as `get_conflicts`. Also called
         after Task 4's notification-triggered pull and after every
         read/dismiss/mark-solved/mark-all-read action below.
+
+        Lists `RESULTS_INBOX_LIMIT` rows, not the DB's own default 50: the
+        badge counts EVERY unread result, so a 50-row listing made the two
+        numbers disagree and quietly hid the rest. `total` is passed so the
+        tab can say "showing newest N of M" once the cap bites.
         """
         service = self._service()
         if service is None:
             return
         results_tab = self.query_one("#scheduling-results", ResultsTab)
-        results = service.db.list_automation_results(owner_id=None)
+        results = service.db.list_automation_results(
+            owner_id=None, limit=RESULTS_INBOX_LIMIT
+        )
         unread = service.db.count_unread_results(owner_id=None)
+        total = service.db.count_automation_results(owner_id=None)
         definitions_by_id = index_definitions_by_id(
             service.db.list_automation_definitions(owner_id=None)
         )
-        results_tab.populate(results, definitions_by_id)
+        results_tab.populate(results, definitions_by_id, total=total)
         # Surface the unread count on the tab label itself (spec §4's
         # inbox badge, same UX-063 idiom as the Conflicts tab above).
         self._set_tab_label(

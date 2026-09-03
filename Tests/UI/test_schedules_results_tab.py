@@ -29,6 +29,7 @@ from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.services import SchedulingService
 from tldw_chatbook.Scheduling.services.server_client import SchedulingServerClient
 from tldw_chatbook.UI.Screens.scheduling.results_tab import (
+    RESULTS_HEADING,
     ResultsTab,
     _format_result_created,
     _result_kind_cell,
@@ -36,7 +37,10 @@ from tldw_chatbook.UI.Screens.scheduling.results_tab import (
     _review_state_cell,
     solved_eligibility,
 )
-from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
+from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
+    RESULTS_INBOX_LIMIT,
+    SchedulesWorkbench,
+)
 
 # ---------------------------------------------------------------------------
 # Pure-function pins
@@ -813,3 +817,60 @@ async def test_results_actions_refuse_off_the_results_tab(results_db):
         notifications = list(pilot.app._notifications)
         assert len(notifications) == 2
         assert all("Results tab" in n.message for n in notifications)
+
+
+@pytest.mark.asyncio
+async def test_inbox_lists_the_sync_window_and_says_what_it_hides(results_db):
+    """HIGH (Qodo): the refresh took the DB's default `limit=50` while the
+    badge counted EVERY unread result, so the tab could read "Results
+    (201)" over 50 rows with nothing saying the rest existed.
+
+    The listing is now the sync-mirrored window -- `RESULTS_INBOX_LIMIT`,
+    i.e. exactly the newest-pages walk `SyncEngine._pull_results` does --
+    and once it bites, the heading says so. Deliberately no pagination:
+    saying what is hidden is the fix.
+    """
+    db = results_db
+    definition_id = _seed_definition(db)
+    total = RESULTS_INBOX_LIMIT + 1
+    for index in range(total):
+        _seed_result(db, definition_id=definition_id, dedupe_key=f"d{index}")
+
+    app = ResultsWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = await _open_results_tab(pilot)
+
+        table = workbench.query_one("#scheduling-results-table", DataTable)
+        assert table.row_count == RESULTS_INBOX_LIMIT
+
+        heading = workbench.query_one("#scheduling-results-heading")
+        assert (
+            f"showing newest {RESULTS_INBOX_LIMIT} of {total}"
+            in str(heading.render())
+        )
+        # The badge still counts every unread result -- that honesty is
+        # the whole reason the truncation has to be stated.
+        assert f"Results ({total})" in _rendered_tab_title(
+            workbench, "scheduling-results-tab"
+        )
+
+
+@pytest.mark.asyncio
+async def test_inbox_heading_stays_plain_when_everything_fits(results_db):
+    """The count line is truncation-only -- an inbox that fits must not
+    grow a permanent "showing newest 2 of 2" tail."""
+    db = results_db
+    definition_id = _seed_definition(db)
+    for index in range(2):
+        _seed_result(db, definition_id=definition_id, dedupe_key=f"d{index}")
+
+    app = ResultsWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = await _open_results_tab(pilot)
+
+        heading = workbench.query_one("#scheduling-results-heading")
+        assert str(heading.render()).strip() == RESULTS_HEADING

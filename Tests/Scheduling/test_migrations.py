@@ -312,6 +312,62 @@ def test_v7_migration_dedupe_handles_mixed_offset_updated_at(tmp_path):
     assert [row["id"] for row in kept] == ["true-newer"]
 
 
+def test_v7_migration_dedupe_keeps_the_true_newest_within_one_second(tmp_path):
+    """The dedupe used to order on `datetime()`, which is WHOLE-SECOND
+    precision -- and a pull mirroring a page of results stamps them all
+    inside the same second, so the duplicates this DELETE adjudicates are
+    normally sub-second apart. Under `datetime()` every one of them ties
+    and the survivor is picked by UUID `id`: a coin flip that permanently
+    discards the real newest row.
+
+    Five duplicates inside one second, the newest three sharing a rounded
+    millisecond so the raw-column tiebreak behind `%f` is exercised too.
+    Ids run ANTI-correlated with recency, so every discarded ordering
+    picks a demonstrably wrong survivor rather than the right one by luck:
+    under `datetime()` all five tie and `id DESC` keeps the OLDEST; under
+    `%f` alone the newest three tie and `id DESC` keeps the oldest of
+    those.
+    """
+    from tldw_chatbook.Scheduling.db.migrations.v6_to_v7 import migrate, rollback
+
+    db = ScheduledTasksDB(str(tmp_path / "s.db"), client_id="t")
+    rollback(db)
+    assert db.get_schema_version() == 6
+
+    # One shared created_at -- these are duplicate mirrors of the SAME
+    # server result, so only updated_at separates them (and it also keeps
+    # the created_at legs of the ORDER BY from masking the updated_at ones).
+    created_at = "2026-08-30T09:00:00.000000+00:00"
+    # (id, updated_at) ascending by instant, DESCENDING by id.
+    rows = (
+        ("row-e", "2026-08-30T09:00:00.100000+00:00"),
+        ("row-d", "2026-08-30T09:00:00.200000+00:00"),
+        ("row-c", "2026-08-30T09:00:00.400100+00:00"),  # these three share
+        ("row-b", "2026-08-30T09:00:00.400200+00:00"),  # the same rounded
+        ("row-a", "2026-08-30T09:00:00.400300+00:00"),  # millisecond
+    )
+    with closing(db._get_connection()) as conn:
+        for row_id, updated_at in rows:
+            conn.execute(
+                "INSERT INTO automation_results "
+                "(id, server_id, owner_id, definition_id, run_id, kind, "
+                "title, summary, dedupe_key, review_state, answer_mode, "
+                "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    row_id, "srv-dup", "owner-a", "d1", "r1", "finding",
+                    row_id, "S", f"key-{row_id}", "unread", "none",
+                    created_at, updated_at,
+                ),
+            )
+        conn.commit()
+
+    migrate(db)
+
+    assert db.get_schema_version() == 7
+    kept = db.list_automation_results("owner-a")
+    assert [row["id"] for row in kept] == ["row-a"]
+
+
 def test_v7_migrate_then_rollback_round_trips_to_v6(tmp_path):
     from tldw_chatbook.Scheduling.db.migrations.v6_to_v7 import migrate, rollback
 

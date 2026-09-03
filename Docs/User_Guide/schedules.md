@@ -406,11 +406,19 @@ skipped, the same events the server records for reconciliation.
 
 ## Results tab — the automation findings inbox
 
-The **Results** tab lists every `automation_results` row a recurring
+The **Results** tab lists the `automation_results` rows a recurring
 question has produced, across **both** owners (this device and any
 connected server) in one inbox, newest first. Its tab label carries an
 unread badge — "Results (3)" — updating after every sync and after every
 action below, and reading plain "Results" with nothing unread.
+
+The table holds the newest 200 results: the same window a sync pull
+mirrors down, so it shows everything a sync could have fetched. Past
+that the heading says which slice you are looking at ("Automation
+results — showing newest 200 of 214"). It has to, because the unread
+badge counts *every* unread result — a silently truncated table beside
+that number would misreport how much is there. Older results stay in
+the database; there is no paging here.
 
 Each row shows a kind glyph (● for a **finding**, ✕ for a **failure** —
 failure rows are styled distinctly since they are diagnostic, not
@@ -426,7 +434,9 @@ moment the server reports that an automation run finished — no need to
 press **s**. A short pause (well under a second) absorbs a burst of
 several finish notifications arriving close together into a single
 pull, so opening a chatty automation's run history does not fire one
-network round trip per event.
+network round trip per event. Opening the screen pulls once as well, so
+results announced while you were on another screen are picked up rather
+than waiting for the next notification.
 
 Actions are keys, not buttons — the tab has no per-row detail widget
 here either:

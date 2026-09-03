@@ -26,6 +26,9 @@ from textual.widgets import DataTable, Static
 
 _KIND_GLYPHS = {"finding": "●", "failure": "✕"}  # ● / ✕
 
+#: The tab's heading when every stored result fits in the listing.
+RESULTS_HEADING = "Automation results"
+
 
 def escape_markup(value: str) -> str:
     """Escape EVERY ``[`` so the detail pane renders content literally.
@@ -39,8 +42,16 @@ def escape_markup(value: str) -> str:
     existing escaping test passed, because that test only used a
     lowercase ``[bold]`` token, which rich DOES escape. Escaping every
     bracket is the only escape that matches this parser.
+
+    Args:
+        value: Text to render literally. Coerced via `str()`, so a
+            non-string stored-JSON value is safe to pass straight in.
+
+    Returns:
+        The same text with every ``[`` backslash-escaped.
     """
     return str(value).replace("[", "\\[")
+
 
 #: Failure rows get the same red-toned Rich style `status_badge_text`
 #: (task_detail.py) uses for BLOCKED/CONFLICT -- there is no Rich-usable
@@ -139,6 +150,14 @@ def index_definitions_by_id(
     ids, so the two key spaces do not collide in practice; the local id
     is written first regardless, so a pathological clash still resolves
     to a row this device owns.
+
+    Args:
+        rows: Definition rows from
+            `ScheduledTasksDB.list_automation_definitions`.
+
+    Returns:
+        Each row keyed by its local ``id`` and, when present, by its
+        ``server_id`` too.
     """
     index: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -158,6 +177,14 @@ def definition_for_result(
     Pairs with `index_definitions_by_id`; the one lookup both the
     eligibility gate and the mark-solved action route through, so they
     can never disagree about which definition a row resolves to.
+
+    Args:
+        result: An ``automation_results`` row.
+        definitions_by_id: The index built by `index_definitions_by_id`.
+
+    Returns:
+        The owning definition row, or ``None`` when the result's
+        ``definition_id`` matches neither id space.
     """
     return definitions_by_id.get(str(result.get("definition_id") or ""))
 
@@ -177,6 +204,14 @@ def solved_eligibility(
     actually runs, from `ResolveOutcome.reason` (UX-073) -- this is a
     client-side "does this even make sense" gate, not a connectivity
     probe.
+
+    Args:
+        result: The ``automation_results`` row under the cursor.
+        definitions_by_id: The index built by `index_definitions_by_id`.
+
+    Returns:
+        ``(True, None)`` when mark-solved applies, else ``(False,
+        reason)`` with user-facing copy explaining the refusal.
     """
     if result.get("kind") != "finding":
         return False, "Only findings can be marked solved."
@@ -215,8 +250,12 @@ class ResultsTab(Vertical):
     }
     """
 
-    def __init__(self, **kwargs) -> None:
-        """Initialize the results tab."""
+    def __init__(self, **kwargs: Any) -> None:
+        """Initialize the results tab.
+
+        Args:
+            **kwargs: Forwarded verbatim to `Vertical` (id, classes, ...).
+        """
         super().__init__(**kwargs)
         self._results_by_id: dict[str, dict[str, Any]] = {}
         self._definitions_by_id: dict[str, dict[str, Any]] = {}
@@ -224,7 +263,7 @@ class ResultsTab(Vertical):
 
     def compose(self) -> ComposeResult:
         """Build the tab layout."""
-        yield Static("Automation results")
+        yield Static(RESULTS_HEADING, id="scheduling-results-heading")
         table = DataTable(id="scheduling-results-table")
         table.add_columns("Kind", "Result", "Created", "State")
         yield table
@@ -253,17 +292,34 @@ class ResultsTab(Vertical):
         self,
         results: list[dict[str, Any]],
         definitions_by_id: dict[str, dict[str, Any]] | None = None,
+        total: int | None = None,
     ) -> None:
         """Rebuild the table from a fresh `list_automation_results` page.
+
+        The listing is a capped newest-window (see
+        `schedules_workbench.RESULTS_INBOX_LIMIT`), so when `total`
+        exceeds the rows given the heading says so outright rather than
+        letting the table imply it holds everything -- the unread badge
+        counts EVERY result, and a silently truncated table next to it is
+        the disagreement this reports honestly. There is deliberately no
+        pagination: saying what is hidden is the whole fix.
 
         Args:
             results: Rows from `ScheduledTasksDB.list_automation_results`.
             definitions_by_id: The owning definitions, by id, for the
                 mark-solved eligibility gate (`solved_eligibility`).
+            total: How many results exist in total
+                (`count_automation_results`). ``None`` means "not
+                measured" and never renders a count line.
         """
         self._definitions_by_id = dict(definitions_by_id or {})
         previous_selection = self._selected_result_id
         self._results_by_id = {result["id"]: result for result in results}
+        self.query_one("#scheduling-results-heading", Static).update(
+            f"{RESULTS_HEADING} — showing newest {len(results)} of {total}"
+            if total is not None and total > len(results)
+            else RESULTS_HEADING
+        )
 
         table = self.query_one("#scheduling-results-table", DataTable)
         table.clear()

@@ -28,14 +28,24 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 # Keep exactly one row per (owner_id, server_id): the newest by updated_at
 # (NULLs sort last), tiebroken by created_at then id -- same ROW_NUMBER()
-# dedupe idiom as `prune_task_runs`. updated_at/created_at are wrapped in
-# datetime() rather than compared as raw strings -- the same F7 mixed-offset
+# dedupe idiom as `prune_task_runs`. updated_at/created_at are compared
+# through strftime() rather than as raw strings -- the same F7 mixed-offset
 # fix `list_automation_results` applies: a server-mirrored row's timestamp
 # is copied verbatim from the server payload (unenforced UTC assumption,
 # see `_serialize_result_fields`), so a "+05:00"-offset string can be
 # lexically greater than an actually-later "+00:00" string. This is a
 # one-time DELETE -- picking the wrong "newest" here is not a display bug,
 # it permanently discards the real newest row.
+#
+# strftime('%Y-%m-%dT%H:%M:%f', ...) and NOT datetime(...): datetime() is
+# WHOLE-SECOND precision, and a pull mirroring a page of results stamps them
+# all inside the same second -- exactly the window it throws away, leaving
+# the "which one is newest" DELETE decided by the UUID id. %f recovers
+# milliseconds; the RAW column follows it as the next tiebreak because
+# locally written rows carry MICROSECONDS (`_to_utc_iso` ->
+# `datetime.isoformat()`), which %f in turn truncates. So: true instant
+# (strftime), then sub-millisecond digits (raw), for updated_at and then
+# created_at, with id last only as a deterministic backstop.
 _DEDUPE_DUPLICATE_RESULTS = """
     DELETE FROM automation_results
     WHERE server_id IS NOT NULL
@@ -43,7 +53,11 @@ _DEDUPE_DUPLICATE_RESULTS = """
         SELECT id FROM (
             SELECT id, ROW_NUMBER() OVER (
                 PARTITION BY owner_id, server_id
-                ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC, id DESC
+                ORDER BY strftime('%Y-%m-%dT%H:%M:%f', updated_at) DESC,
+                         updated_at DESC,
+                         strftime('%Y-%m-%dT%H:%M:%f', created_at) DESC,
+                         created_at DESC,
+                         id DESC
             ) AS rn
             FROM automation_results
             WHERE server_id IS NOT NULL
@@ -59,7 +73,19 @@ _CREATE_RESULTS_SERVER_ID_UNIQUE_INDEX = """
 
 
 def migrate(db: _MigrationCapableDB) -> None:
-    """Apply the v6 -> v7 schema migration. Idempotent."""
+    """Apply the v6 -> v7 schema migration. Idempotent.
+
+    Deletes any pre-existing ``(owner_id, server_id)`` duplicates (keeping
+    the newest, see ``_DEDUPE_DUPLICATE_RESULTS``), creates the partial
+    UNIQUE index, and stamps ``schema_version`` at 7.
+
+    Args:
+        db: A DB exposing ``_get_connection()``; a database with no
+            ``automation_results`` table is left untouched.
+
+    Returns:
+        None.
+    """
     with closing(db._get_connection()) as conn:
         existing = conn.execute("PRAGMA table_info(automation_results)").fetchall()
         if not existing:
@@ -84,7 +110,17 @@ def migrate(db: _MigrationCapableDB) -> None:
 
 
 def rollback(db: _MigrationCapableDB) -> None:
-    """Drop the unique index, returning ``db`` to schema version 6."""
+    """Drop the unique index, returning ``db`` to schema version 6.
+
+    Rows the forward migration deduped are NOT restored -- that DELETE is
+    one-way.
+
+    Args:
+        db: A DB exposing ``_get_connection()``.
+
+    Returns:
+        None.
+    """
     with closing(db._get_connection()) as conn:
         conn.execute("DROP INDEX IF EXISTS idx_automation_results_owner_server_id")
         row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()

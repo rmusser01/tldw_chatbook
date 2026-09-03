@@ -109,17 +109,26 @@ class MockSchedulingDB:
         rows.sort(key=lambda row: row.get("created_at") or "", reverse=True)
         return rows[offset : offset + limit]
 
-    def count_unread_results(self, owner_id: str | None) -> int:
-        """Stub: mirrors the real `count_unread_results` (Results tab
-        badge, schedules-handoff PR-6 task 3)."""
+    def count_automation_results(
+        self, owner_id: str | None, review_state: str | None = None
+    ) -> int:
+        """Stub: mirrors the real `count_automation_results` -- the "of N"
+        denominator for the capped inbox listing. `_refresh_results_tab`
+        calls it unconditionally, so every workbench test built on this
+        fake needs it even when it never opens the Results tab."""
         return len(
             [
                 row
                 for row in self._automation_results
-                if row.get("review_state") == "unread"
+                if (review_state is None or row.get("review_state") == review_state)
                 and (owner_id is None or row.get("owner_id") == owner_id)
             ]
         )
+
+    def count_unread_results(self, owner_id: str | None) -> int:
+        """Stub: mirrors the real `count_unread_results` (Results tab
+        badge, schedules-handoff PR-6 task 3)."""
+        return self.count_automation_results(owner_id, review_state="unread")
 
     def upsert_automation_definitions_from_server(self, owner_id: str, items: list[dict]):
         inserted = 0
