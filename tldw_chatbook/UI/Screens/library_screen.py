@@ -2450,6 +2450,11 @@ class LibraryScreen(BaseAppScreen):
         Binding("l", "library_media_read_later", "Read later", show=False),
         Binding("c", "library_media_use_in_console", "Use in Console", show=False),
         Binding("t", "library_media_move_to_trash", "Move to trash", show=False),
+        # task-28241: review-set keys, gated in check_action to a plain Reader
+        # with a set active. "R" exits (the set stays resumable); "m" toggles
+        # the current item's done mark (the manual counterpart to ]'s auto-mark).
+        Binding("R", "library_media_exit_review", "Exit review", show=False),
+        Binding("m", "library_media_toggle_reviewed", "Toggle reviewed", show=False),
     ]
 
     #: task-4023 AC#7: which canvas's "Export…" action opened the Export
@@ -4977,10 +4982,21 @@ class LibraryScreen(BaseAppScreen):
                 # neighbour that way, so the footer stops teaching a key
                 # that no-ops at the list ends.
                 if self._library_media_item_traversal_active():
-                    if self._library_media_adjacent_row(1) is not None:
-                        shortcuts.append(("]", "next item"))
-                    if self._library_media_adjacent_row(-1) is not None:
-                        shortcuts.append(("[", "prev item"))
+                    progress = self._active_review_set_progress()
+                    if progress is not None:
+                        # task-28241: in a review set, ] / [ walk the pinned set
+                        # (whole thing, not the page), and the footer carries
+                        # the progress plus an exit-review key.
+                        shortcuts.append(("]", "next in set"))
+                        shortcuts.append(("[", "prev in set"))
+                        shortcuts.append(("m", "toggle reviewed"))
+                        shortcuts.append(("R", "exit review"))
+                        shortcuts.append(("", progress))
+                    else:
+                        if self._library_media_adjacent_row(1) is not None:
+                            shortcuts.append(("]", "next item"))
+                        if self._library_media_adjacent_row(-1) is not None:
+                            shortcuts.append(("[", "prev item"))
                 shortcuts.append(("esc", self._library_media_escape_label()))
                 return tuple(shortcuts)
             return self.LIBRARY_DETAIL_BACK_SHORTCUTS
@@ -30766,6 +30782,17 @@ class LibraryScreen(BaseAppScreen):
             if action == "library_media_use_in_console":
                 return True
             return not session.external_detail
+        if action in (
+            "library_media_exit_review",
+            "library_media_toggle_reviewed",
+        ):
+            # task-28241: only in a plain Reader while a review set is active
+            # (so the keys -- and their footer hints -- appear exactly when
+            # there is a review to act on).
+            return (
+                self._library_media_item_traversal_active()
+                and self._review_set_active()
+            )
         if action == "focus_previous_workbench_pane":
             return bool(self._library_selected_row_id)
         return True
@@ -41701,11 +41728,208 @@ class LibraryScreen(BaseAppScreen):
     def _select_library_media_adjacent_item(self, direction: int) -> None:
         if not self._library_media_item_traversal_active():
             return
+        # task-28241: an active review set supersedes the browse-row traversal
+        # -- ] / [ walk its pinned cursor over the whole set instead of the
+        # mounted (current-page) rows. With no active set, fall through to
+        # task-28005's browse-row behavior.
+        if self._walk_active_review_set(direction):
+            return
         neighbour = self._library_media_adjacent_row(direction)
         if neighbour is None:
             return
         media_id, title = neighbour
         self._select_library_media_reader_row(media_id, title, immediate=True)
+
+    def _review_set_service(self):
+        """Return the review-set service, or ``None`` when storage is absent.
+
+        Lazily built from the app's Library collections DB and cached on the
+        screen. Returns ``None`` (never raises) when that DB is unavailable, so
+        every review-set call site can guard on it and fall back cleanly.
+
+        Returns:
+            A ``ReviewSetService`` or ``None``.
+        """
+        service = getattr(self, "_cached_review_set_service", None)
+        if service is not None:
+            return service
+        db = getattr(self.app_instance, "local_library_collections_db", None)
+        if db is None:
+            return None
+        from tldw_chatbook.Library.review_set_service import ReviewSetService
+
+        service = ReviewSetService(db)
+        self._cached_review_set_service = service
+        return service
+
+    def _review_set_live_ids(self, backing_ids: "Iterable[int]") -> set[int]:
+        """Return the subset of backing media ids that are still live.
+
+        Live means present in the Media table with ``deleted = 0`` and
+        ``is_trash = 0``. Resolved in ONE query so walking a capped set costs a
+        single round-trip per keypress, not one per item. When the Media DB is
+        unavailable the ids are treated as live -- the walker must not hide
+        items it cannot check.
+
+        Args:
+            backing_ids: The set's backing media ids.
+
+        Returns:
+            The subset that resolves to a live media item.
+        """
+        ids = [int(backing_id) for backing_id in backing_ids]
+        if not ids:
+            return set()
+        media_db = getattr(self.app_instance, "media_db", None)
+        if media_db is None:
+            return set(ids)
+        placeholders = ",".join("?" * len(ids))
+        try:
+            cursor = media_db.execute_query(
+                f"SELECT id FROM Media WHERE id IN ({placeholders}) "
+                "AND deleted = 0 AND is_trash = 0",
+                tuple(ids),
+            )
+            return {int(row[0]) for row in cursor.fetchall()}
+        except Exception:
+            logger.debug("Review-set liveness query failed", exc_info=True)
+            return set(ids)
+
+    def _walk_active_review_set(self, direction: int) -> bool:
+        """Walk the active review set one step; return ``True`` if it handled it.
+
+        task-28241: a forward step marks the item being left done (the
+        completion gesture on the last item), Prev never marks, and tombstones
+        are skipped -- all decided by the pure ``plan_walk``. The item at the
+        new cursor is loaded through the same actuator the browse traversal
+        uses, so fenced loading, scroll capture/restore, and mode-persistence
+        keep working.
+
+        Args:
+            direction: ``+1`` for Next, ``-1`` for Prev.
+
+        Returns:
+            ``True`` when an active set consumed the step; ``False`` to let the
+            browse-row traversal handle it.
+        """
+        service = self._review_set_service()
+        if service is None:
+            return False
+        review_set = service.get_active_review_set()
+        if review_set is None:
+            return False
+        from tldw_chatbook.Library.review_set_state import plan_walk
+
+        live_ids = self._review_set_live_ids(
+            item.backing_media_id for item in review_set.items
+        )
+        is_live = lambda backing_id: backing_id in live_ids  # noqa: E731
+        outcome = plan_walk(review_set.items, review_set.cursor, direction, is_live)
+        if outcome.mark_done_backing_id is not None:
+            service.mark_item_done(
+                review_set.set_id, outcome.mark_done_backing_id, True
+            )
+        if outcome.new_cursor != review_set.cursor:
+            service.set_cursor(review_set.set_id, outcome.new_cursor)
+        service.refresh_completion(review_set.set_id, is_live)
+        if outcome.target is not None:
+            self._select_library_media_reader_row(
+                f"local:media:{outcome.target.backing_media_id}",
+                outcome.target.title_snapshot,
+                immediate=True,
+            )
+        return True
+
+    def _active_review_set_progress(self) -> str | None:
+        """Return the active set's Reader progress line, or ``None``.
+
+        task-28241 (AC3): ``"12 of 40 · 7 reviewed"`` / ``"All N reviewed"`` /
+        ``"No items to review"`` -- computed over LIVE items so a deleted item
+        never inflates the count.
+
+        Returns:
+            The formatted progress string when a set is active, else ``None``.
+        """
+        service = self._review_set_service()
+        if service is None:
+            return None
+        review_set = service.get_active_review_set()
+        if review_set is None:
+            return None
+        from tldw_chatbook.Library.review_set_state import (
+            format_review_progress,
+            review_progress,
+        )
+
+        live_ids = self._review_set_live_ids(
+            item.backing_media_id for item in review_set.items
+        )
+        is_live = lambda backing_id: backing_id in live_ids  # noqa: E731
+        return format_review_progress(
+            review_progress(review_set.items, review_set.cursor, is_live)
+        )
+
+    def _review_set_active(self) -> bool:
+        """True when a review set is active (drives the Reader footer + gating)."""
+        service = self._review_set_service()
+        return service is not None and service.get_active_review_set() is not None
+
+    def action_library_media_exit_review(self) -> None:
+        """Exit review mode: deactivate the active set, keeping it resumable.
+
+        task-28241 (AC3): distinct from Escape (which keeps the set active and
+        just leaves the Reader). Only meaningful in the plain Reader with an
+        active set; a no-op otherwise.
+        """
+        if not self._library_media_item_traversal_active():
+            return
+        service = self._review_set_service()
+        if service is None or service.get_active_review_set() is None:
+            return
+        service.deactivate_active()
+        self._sync_library_media_viewer_or_recompose()
+
+    def action_library_media_toggle_reviewed(self) -> None:
+        """Toggle the current item's done mark in the active review set.
+
+        task-28241 (AC2): the explicit counterpart to forward-advance's
+        auto-mark -- lets a user un-mark a skimmed item, or mark the last one
+        without advancing. A no-op outside a plain Reader with an active set
+        whose cursor item is loaded.
+        """
+        if not self._library_media_item_traversal_active():
+            return
+        service = self._review_set_service()
+        if service is None:
+            return
+        review_set = service.get_active_review_set()
+        if review_set is None:
+            return
+        backing_id = self._library_media_reader_session.loaded_backing_id
+        if backing_id is None:
+            return
+        try:
+            backing_id = int(backing_id)
+        except (TypeError, ValueError):
+            return
+        current = next(
+            (
+                item
+                for item in review_set.items
+                if item.backing_media_id == backing_id
+            ),
+            None,
+        )
+        if current is None:
+            return
+        service.mark_item_done(review_set.set_id, backing_id, not current.done)
+        live_ids = self._review_set_live_ids(
+            item.backing_media_id for item in review_set.items
+        )
+        service.refresh_completion(
+            review_set.set_id, lambda candidate: candidate in live_ids
+        )
+        self._sync_library_media_viewer_or_recompose()
 
     def _focus_library_media_items_pane(self) -> None:
         """Focus the Items pane at its most useful control (task-28004).

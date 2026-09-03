@@ -200,6 +200,92 @@ def review_progress(
     return ReviewProgress(index=index, total=total, reviewed=reviewed)
 
 
+@dataclass(frozen=True)
+class WalkOutcome:
+    """The result of planning one Next/Prev step over a set.
+
+    Attributes:
+        new_cursor: The absolute cursor position after the step.
+        mark_done_backing_id: The backing id to auto-mark done (the item being
+            left on a forward step), or ``None`` (Prev never marks; a no-op step
+            marks nothing except a forward press on the last item -- the
+            completion gesture).
+        target: The item to load at ``new_cursor``, or ``None`` when the step
+            did not move (nothing new to open).
+    """
+
+    new_cursor: int
+    mark_done_backing_id: int | None
+    target: ReviewSetItem | None
+
+
+def plan_walk(
+    items: tuple[ReviewSetItem, ...], cursor: int, step: int, is_live: IsLive
+) -> WalkOutcome:
+    """Plan one Reader step over the set (pure; the screen applies the effects).
+
+    Forward (``step > 0``) marks the current live item done -- "advancing marks
+    the item you leave" -- including a forward press on the last item, which
+    marks it done in place (the completion gesture). Prev (``step < 0``) never
+    marks. Tombstones are skipped when choosing the target.
+
+    Args:
+        items: The set's pinned items.
+        cursor: The current absolute position.
+        step: ``+1`` for Next, ``-1`` for Prev.
+        is_live: Liveness predicate.
+
+    Returns:
+        A :class:`WalkOutcome` describing the new cursor, any done mark, and the
+        item to load (``None`` when the cursor did not move).
+    """
+    # One live snapshot for the whole plan, so the resolve, the step, and the
+    # mark can never disagree if liveness flips mid-call (task-28241 review).
+    live = _live_items(items, is_live)
+    live_backing_ids = {item.backing_media_id for item in live}
+    live_positions = [item.position for item in live]
+    resolved = _resolve_within(live_positions, cursor)
+    if live_positions:
+        current_index = live_positions.index(resolved)
+        step_delta = 1 if step > 0 else -1 if step < 0 else 0
+        new_index = max(0, min(current_index + step_delta, len(live_positions) - 1))
+        new_cursor = live_positions[new_index]
+    else:
+        new_cursor = cursor
+    by_position = {item.position: item for item in items}
+    resolved_item = by_position.get(resolved)
+    mark_done_backing_id = (
+        resolved_item.backing_media_id
+        if step > 0
+        and resolved_item is not None
+        and resolved_item.backing_media_id in live_backing_ids
+        else None
+    )
+    target = by_position.get(new_cursor) if new_cursor != resolved else None
+    return WalkOutcome(
+        new_cursor=new_cursor,
+        mark_done_backing_id=mark_done_backing_id,
+        target=target,
+    )
+
+
+def format_review_progress(progress: ReviewProgress) -> str:
+    """Render the Reader's compact progress line.
+
+    Args:
+        progress: The live progress to render.
+
+    Returns:
+        ``"No items to review"`` for an empty set, ``"All N reviewed"`` once
+        every live item is done, else ``"X of M · N reviewed"``.
+    """
+    if progress.total == 0:
+        return "No items to review"
+    if progress.reviewed >= progress.total:
+        return f"All {progress.total} reviewed"
+    return f"{progress.index} of {progress.total} · {progress.reviewed} reviewed"
+
+
 def is_empty(items: tuple[ReviewSetItem, ...], is_live: IsLive) -> bool:
     """True when the set has no live items (every pinned item is a tombstone).
 
