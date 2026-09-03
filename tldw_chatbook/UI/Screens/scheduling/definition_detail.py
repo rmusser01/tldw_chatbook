@@ -71,6 +71,7 @@ from .task_detail import (
     _TRANSFER_STATE_ROW_LABELS,
     _format_timezone,
     _humanize_cron,
+    definition_cron_expression,
     owner_display_label,
 )
 
@@ -311,20 +312,6 @@ def _definition_repeat_label(schedule: dict[str, Any]) -> str:
     return "-"
 
 
-def _definition_cron_expression(schedule: dict[str, Any]) -> Any:
-    """The cron string, under either key the two writers use.
-
-    Final review F1: this read `schedule["cron"]` only -- the key THIS
-    client's writer emits (`automation_definition_form.py`) -- so every
-    server-owned definition rendered `At: -`. The real server sends
-    `schedule.expression` (recorded fixture
-    `Tests/Scheduling/fixtures/server_responses/
-    automation_definition_list.json`), and `_load_server_automations`
-    passes the payload through raw, stamping only `owner_id`.
-    """
-    return schedule.get("cron") or schedule.get("expression")
-
-
 def _definition_at_label(schedule: dict[str, Any]) -> str:
     """'At' row value (Frequency group): the full schedule summary, reusing
     `_humanize_cron` for a cron-kind schedule -- the same formatter
@@ -335,7 +322,7 @@ def _definition_at_label(schedule: dict[str, Any]) -> str:
     kind = schedule.get("kind")
     if kind == "cron":
         return _humanize_cron(
-            _definition_cron_expression(schedule), schedule.get("timezone")
+            definition_cron_expression(schedule), schedule.get("timezone")
         )
     if kind == "one_time":
         run_at = schedule.get("run_at")

@@ -391,6 +391,34 @@ def _task_sync_label(task: ReminderTask | ScheduledTask) -> str:
     return "local (read-only projection)"
 
 
+def definition_cron_expression(schedule: dict[str, Any]) -> Any:
+    """An automation definition's cron string, under EITHER key.
+
+    The two writers disagree: this client writes `schedule["cron"]`
+    (`AutomationDefinitionForm`'s save payload), the real server sends
+    `schedule["expression"]` (recorded fixture
+    `Tests/Scheduling/fixtures/server_responses/
+    automation_definition_list.json`), and `_load_server_automations`
+    passes the payload through raw, stamping only `owner_id`.
+
+    Both readers of that field go through here (final review F1 + its
+    carry-forward), and it lives in this leaf module because the two are
+    in packages that cannot import each other: `definition_detail`'s "At"
+    row -- where a cron-only read rendered `At: -` for EVERY server-owned
+    definition -- and `AutomationDefinitionForm._prefill_from_row`, where
+    the same read was worse than cosmetic: editing a mirrored server-only
+    definition fell through to the form's default preset, so a save wrote
+    that default OVER the server's real schedule.
+
+    Args:
+        schedule: A definition's `schedule` dict, from either source.
+
+    Returns:
+        The cron string, or ``None``/empty when neither key carries one.
+    """
+    return schedule.get("cron") or schedule.get("expression")
+
+
 def owner_display_label(owner_id: Any) -> str:
     """Prose owner label shared by BOTH detail panes (final review F6/F7).
 

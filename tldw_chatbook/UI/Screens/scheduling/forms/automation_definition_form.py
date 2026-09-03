@@ -36,6 +36,8 @@ from textual.widgets import Button, Checkbox, Input, Label, Select, Static, Text
 
 from tldw_chatbook.Scheduling.models import PreviewStatus, ScheduleKind
 
+from ..task_detail import definition_cron_expression
+
 from .reminder_form import (
     _CURATED_TIMEZONES,
     _DEFAULT_TIMEZONE,
@@ -497,11 +499,15 @@ class AutomationDefinitionForm(ModalScreen):
             )
             self.query_one("#automation-run-at", Input).value = str(schedule["run_at"])
             self._update_schedule_field_visibility(ScheduleKind.ONE_TIME.value)
-        elif kind == "cron" and schedule.get("cron"):
+        # `cron` OR `expression` (final review F1 carry-forward): the
+        # server sends the second key, so a cron-only read left a mirrored
+        # server-only definition on the form's DEFAULT preset -- and saving
+        # then wrote that default over the server's real schedule.
+        elif kind == "cron" and definition_cron_expression(schedule):
             self.query_one("#automation-schedule-kind", Select).value = (
                 ScheduleKind.RECURRING.value
             )
-            cron_value = str(schedule["cron"])
+            cron_value = str(definition_cron_expression(schedule))
             self.query_one("#automation-cron", Input).value = cron_value
             preset_key, time_text = cron_to_preset(cron_value)
             self.query_one("#automation-cron-preset", Select).value = preset_key
