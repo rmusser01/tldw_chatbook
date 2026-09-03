@@ -3788,7 +3788,7 @@ async def test_prompts_export_selected_uses_canonical_ids_and_preserves_selectio
         await _wait_for_selector(screen, pilot, "#library-export-header")
 
         selected_scope = ExportScope(kind="prompts", ids=(str(low_id), str(high_id)))
-        assert screen._library_export_scope == selected_scope
+        assert screen._export_state.scope == selected_scope
         assert screen._library_prompt_selection == captured
         assert screen._library_prompt_select_mode is True
 
@@ -6790,7 +6790,7 @@ async def test_library_prompt_mutation_route_vetoes_before_every_flush_or_transi
         assert screen._library_prompt_selection == captured_selection
         assert screen._library_prompt_delete_receipt is prior_receipt
         assert screen._library_prompt_browse_controller.scope == captured_scope
-        assert screen._library_export_scope.kind != "prompts"
+        assert screen._export_state.scope.kind != "prompts"
         file_flush.assert_not_awaited()
         note_flush.assert_not_awaited()
         prompt_flush.assert_not_awaited()
@@ -10543,14 +10543,14 @@ async def test_library_prompts_export_opens_prompt_scope_without_media_controls(
         export_button.press()
         await _wait_for_selector(screen, pilot, "#library-export-header")
         for _ in range(150):
-            if screen._library_export_counts is not None:
+            if screen._export_state.counts is not None:
                 break
             await pilot.pause(0.02)
         else:
             raise AssertionError("Prompt export counts never landed")
 
-        assert screen._library_export_scope == ExportScope(kind="prompts")
-        assert screen._library_export_counts == {
+        assert screen._export_state.scope == ExportScope(kind="prompts")
+        assert screen._export_state.counts == {
             "media": 0,
             "conversations": 0,
             "notes": 0,

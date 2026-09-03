@@ -1,0 +1,848 @@
+# Review package: 477704580..f4e8acecf
+
+## Commits
+f4e8acecf refactor(library): export state object + shims (export series 1/3)
+a0c8a6410 test(library): characterization pins for the export extraction series
+
+## Files changed
+ Tests/Architecture/test_library_export_wiring.py   |  33 ++
+ Tests/Architecture/test_screen_size_ratchet.py     |   2 +-
+ Tests/UI/test_library_export_characterization.py   | 402 +++++++++++++++++++++
+ backlog/docs/library-decomposition-recipe.md       |  25 ++
+ .../UI/Library_Modules/library_export_state.py     | 123 +++++++
+ tldw_chatbook/UI/Screens/library_screen.py         | 101 ++----
+ 6 files changed, 617 insertions(+), 69 deletions(-)
+
+## Diff
+diff --git a/Tests/Architecture/test_library_export_wiring.py b/Tests/Architecture/test_library_export_wiring.py
+new file mode 100644
+index 000000000..9575042dd
+--- /dev/null
++++ b/Tests/Architecture/test_library_export_wiring.py
+@@ -0,0 +1,33 @@
++"""Export extraction series: state object exists and is screen-wired.
++
++Wave-2 Task 2 (recipe: backlog/docs/library-decomposition-recipe.md;
++conversations series precedent: Tests/Architecture/
++test_library_conversations_wiring.py, its state-PR-era shape). Every field
++LibraryExportState declares must have a matching generated property shim on
++LibraryScreen under the `_library_export_<field>` name -- the single prefix
++every export field uses (unlike conversations, no field needed a plural
++`_library_exports_` variant; the ownership analysis found none, see the
++export series' task-2 report).
++"""
++from __future__ import annotations
++
++import dataclasses
++
++import pytest
++
++from tldw_chatbook.UI.Library_Modules.library_export_state import (
++    LibraryExportState,
++)
++
++
++@pytest.mark.unit
++def test_state_object_fields_match_the_shim_surface() -> None:
++    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
++
++    field_names = {f.name for f in dataclasses.fields(LibraryExportState)}
++    assert field_names, "state object is empty"
++    for name in field_names:
++        shim = getattr(LibraryScreen, "_library_export_" + name, None)
++        assert isinstance(shim, property), (
++            f"no screen shim property found for state field {name!r}"
++        )
+diff --git a/Tests/Architecture/test_screen_size_ratchet.py b/Tests/Architecture/test_screen_size_ratchet.py
+index 7ec7a9872..629aa5185 100644
+--- a/Tests/Architecture/test_screen_size_ratchet.py
++++ b/Tests/Architecture/test_screen_size_ratchet.py
+@@ -141,21 +141,21 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
+     # reviewer AST-verified 15 more dead imports (`Enum`, `TypeAlias`,
+     # `AdaptiveReaderLayoutProfile`, `ConversationReaderRequest`,
+     # `NormalizedDatabaseNote`, `DatabaseNotePortLoadReply`,
+     # `DatabaseNotePortSaveReply`, the four `parse_*_prompts_from_content`
+     # names, `event_principal_id_from_active_context`, `is_gguf_file`,
+     # `Filters`, `PostRecomposeCallback`) that the cleanup PR's own
+     # 12-import ledger missed -- each confirmed single-occurrence (its own
+     # import line only), not pinned by
+     # `test_screen_still_re_exports_every_moved_name`, and not imported by
+     # anything outside this module. Method count unchanged (imports only).
+-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43965, 1282),
++    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43930, 1282),
+ }
+ 
+ # Task 22507.4 started from this reviewed measurement. The repository-wide
+ # ratchet predates concurrent Console growth, so this explicit comparison
+ # proves this task does not add to that debt while the stale ceiling is fixed
+ # independently.
+ _TASK_22507_4_CHAT_SCREEN_BASE = (20099, 633)
+ 
+ 
+ @lru_cache(maxsize=None)
+diff --git a/Tests/UI/test_library_export_characterization.py b/Tests/UI/test_library_export_characterization.py
+new file mode 100644
+index 000000000..ba56cfad0
+--- /dev/null
++++ b/Tests/UI/test_library_export_characterization.py
+@@ -0,0 +1,402 @@
++"""Pre-extraction characterization pins for the Library Export subsystem.
++
++Wave-2 Task 2 (`.superpowers/sdd/2026-09-02-library-decomposition-wave2-
++cold-trio/task-2-brief.md`; recipe: `backlog/docs/library-decomposition-
++recipe.md`; conversations series precedent: `Tests/UI/
++test_library_conversations_characterization.py`). Before the export
++subsystem's state PR moves any `_library_export*` field into
++`LibraryExportState`, this file pins the CURRENT behavior of every export
++``@on`` handler a plain ``grep -rn "#<button-id>" Tests/`` (the brief's
++Step-1 enumeration script) reported as either wholly unreferenced or
++referenced only for ``.disabled``/existence assertions -- never actually
++``.press()``-ed through a real DOM/Pilot interaction.
++
++Enumeration: an ``ast`` walk of ``LibraryScreen`` for method names
++containing "export" found 51 methods (2026-09-02 snapshot, re-derived, not
++carried over from planning). Of those, 20 distinct ``@on``-bound button/
++input selectors were checked with a per-id ``grep -rn "#<id>" Tests/``
++followed by a manual look at the surrounding lines for an actual
++``.press()``/``.click()``/``insert_text_at_cursor`` call (not merely an id
++reference, e.g. a ``.disabled`` assertion or an unbound
++``LibraryScreen.<method>(fake, event)`` call, per the recipe §3 lesson on
++bypass shapes). 15 of the 20 are already exercised this way; this file
++pins the 5 genuine gaps:
++
++- ``handle_library_export_cancel`` (``#library-export-cancel``) -- the
++  button is ``query_one``-d only for a ``.display`` check
++  (``test_library_export_cancel.py::test_cancel_button_visible_only_while_
++  running``); the handler itself is only ever driven by three unbound
++  ``LibraryScreen.handle_library_export_cancel(fake, None)`` calls in that
++  same file -- never a real press.
++- ``handle_library_export_description_changed``
++  (``#library-export-description``) -- zero references anywhere in
++  ``Tests/`` or ``tldw_chatbook/`` outside its own ``@on`` line and its
++  compose site. Its sibling ``handle_library_export_name_changed`` IS
++  driven through real typing (``name_input.insert_text_at_cursor(...)`` in
++  ``test_library_shell.py``); the description field never is.
++- ``handle_library_conversations_export_selected``
++  (``#library-conversations-export-selected``) -- the id is referenced
++  across ``test_library_selection_updates.py``,
++  ``test_library_multiselect_conversations.py``, and
++  ``test_library_shell.py``, but every occurrence is a ``.disabled``
++  assertion; nothing presses it.
++- ``handle_library_media_export_selected``
++  (``#library-media-export-selected``) -- same pattern across
++  ``test_library_media_side_by_side.py``, ``test_library_multiselect_
++  media.py``, ``test_library_honesty_accessibility.py``, and
++  ``test_library_shell.py``: only ``.disabled``/existence checks.
++- ``choose_library_collection_legacy_recovery_export``
++  (``#library-collections-legacy-recovery-export``) -- zero references
++  anywhere in ``Tests/``. The write-path it eventually calls,
++  ``_export_library_collection_legacy_recovery``, IS pinned by
++  ``test_library_collections_capture_reader.py::
++  test_legacy_recovery_inspector_and_export_reach_every_page`` -- but only
++  via a direct ``await screen._export_library_collection_legacy_recovery(
++  destination)`` call that bypasses this handler and its ``FileSave`` push
++  entirely.
++
++One id was checked and deliberately SKIPPED, with its rationale recorded
++rather than silently omitted:
++
++- ``#library-note-export-txt`` -- never itself pressed, but it shares its
++  handler (``handle_library_note_export_text``) with
++  ``#library-note-context-export-txt`` via a second ``@on`` decorator on
++  the SAME method (no ``event.button.id`` branching inside the body); the
++  sibling id IS pressed by
++  ``test_library_shell.py::test_library_shell_note_export_pushes_file_
++  save_dialog``, so the handler's actual behavior is already exercised.
++
++Every OTHER export ``@on`` handler this enumeration considered (submit,
++name-changed, quality/quality-choice, choose-destination, the note
++markdown/context exports, the prompt/prompts/media/conversations/notes
++bulk-export actions, the RAG canvas's Import-media recovery button) is
++already driven through a real ``Button.Pressed``/``Input.Changed`` in one
++of ``test_library_export_receipt.py``, ``test_library_shell.py``,
++``test_library_choice_strips.py``, ``test_library_prompts_canvas.py``,
++``test_library_notes_reader.py``, or
++``test_library_multiselect_notes.py`` -- confirmed per-id, not assumed.
++The 31 non-``@on`` private export helpers are all reached transitively by
++that same well-covered submit/counts/destination/note/prompt pipeline
++(mirrors the conversations exemplar's identical blanket finding for its
++own 34 private helpers) and are not individually re-pinned here.
++
++Every test below drives the screen only through DOM queries/presses and
++public screen attributes (the pre-extraction ``_library_export_*`` names,
++which the state PR's generated property shim keeps resolving identically),
++per the recipe's byte-for-byte move discipline, so each keeps working
++unmodified once the export series' controller PR relocates the method
++bodies.
++"""
++
++from __future__ import annotations
++
++import threading
++
++import pytest
++from textual.widgets import Button, Input, Static
++
++from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
++from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
++from tldw_chatbook.Library.library_export_scope import ExportScope
++from tldw_chatbook.Library.library_shell_state import (
++    LIBRARY_ROW_BROWSE_CONVERSATIONS,
++    LIBRARY_ROW_BROWSE_MEDIA,
++    LIBRARY_ROW_INGEST_EXPORT,
++)
++from tldw_chatbook.Third_Party.textual_fspicker import FileSave
++from Tests.UI.test_library_collections_capture_reader import _seed_legacy_records
++from Tests.UI.test_library_shell import (
++    LIBRARY_TEST_SIZE,
++    LibraryHarness,
++    _active_library_screen,
++    _build_test_app,
++    _seed_conversations,
++    _two_conversations,
++    _two_media_items,
++    _wait_for_condition,
++    _wait_for_library_shell,
++    _wait_for_selector,
++    _wire_empty_export_prompts_db,
++)
++
++_GATE_TIMEOUT_SECONDS = 30.0
++
++
++class _CancelAwareExportService:
++    """Fake ``local_chatbook_service``: blocks until ``gate`` is set, then
++    honors ``cancel_check`` -- mirrors ``test_library_shell.py``'s own
++    ``_FakeLibraryExportService`` gating convention, extended to actually
++    report a cancelled outcome so this file can pin the real
++    press-cancel-observe-cancellation round trip without duplicating that
++    class (which does not check ``cancel_check`` at all).
++    """
++
++    def __init__(self, gate: threading.Event) -> None:
++        self._gate = gate
++        self.export_calls: list[dict] = []
++
++    async def export_chatbook(self, request_data, *, progress_callback=None, cancel_check=None):
++        assert self._gate.wait(timeout=_GATE_TIMEOUT_SECONDS), "export gate never released"
++        self.export_calls.append(dict(request_data))
++        if cancel_check is not None and cancel_check():
++            return {
++                "success": False,
++                "message": "Cancelled",
++                "path": "",
++                "dependency_info": {},
++                "cancelled": True,
++            }
++        return {
++            "success": True,
++            "message": "",
++            "path": request_data.get("output_path", ""),
++            "dependency_info": {},
++        }
++
++    async def create_chatbook(self, **kwargs):
++        return {"chatbook_id": 1, **kwargs}
++
++
++@pytest.mark.asyncio
++async def test_cancel_button_press_sets_the_cancel_event_and_settles_cancelled(
++    tmp_path,
++) -> None:
++    """Characterization (pre-extraction): pins handle_library_export_cancel.
++
++    Real press, not the unbound-fake pattern ``test_library_export_
++    cancel.py`` uses for its own unit-level pins. Also exercises the
++    downstream ``_marshal_library_export_cancelled``/
++    ``_apply_library_export_cancelled`` completion path this handler's
++    cancel event feeds.
++    """
++    app = _build_test_app()
++    _wire_empty_export_prompts_db(app, "export-char-cancel-prompts")
++    _seed_conversations(app, _two_conversations())
++    app.media_db = MediaDatabase(":memory:", client_id="export-char-cancel-media")
++    app.media_db.add_media_with_keywords(title="M1", content="c1", media_type="video")
++    app.chachanotes_db = CharactersRAGDB(":memory:", client_id="export-char-cancel-ccn")
++    app.chachanotes_db.add_conversation({"title": "Conv"})
++
++    gate = threading.Event()
++    service = _CancelAwareExportService(gate)
++    app.local_chatbook_service = service
++
++    host = LibraryHarness(app)
++
++    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
++        screen = _active_library_screen(host)
++        await _wait_for_library_shell(screen, pilot)
++
++        screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
++        await _wait_for_selector(screen, pilot, "#library-export-destination")
++        await _wait_for_condition(
++            pilot,
++            lambda: screen._library_export_counts is not None,
++            message="Export counts never landed.",
++        )
++        screen.refresh(recompose=True)
++        await pilot.pause()
++
++        screen._apply_library_export_destination(tmp_path / "out")
++        await pilot.pause()
++
++        submit = screen.query_one("#library-export-submit", Button)
++        assert submit.disabled is False
++        submit.press()
++        await pilot.pause()
++        await pilot.pause()
++
++        assert screen._library_export_running is True
++        cancel_event = screen._library_export_cancel_event
++        assert cancel_event is not None and not cancel_event.is_set()
++
++        cancel_button = screen.query_one("#library-export-cancel", Button)
++        cancel_button.press()
++        await pilot.pause()
++
++        assert cancel_event.is_set()
++        assert screen._library_export_status == "Cancelling…"
++        status_widget = screen.query_one("#library-export-status-line", Static)
++        assert str(status_widget.renderable) == "Cancelling…"
++
++        gate.set()
++        await _wait_for_condition(
++            pilot,
++            lambda: screen._library_export_running is False,
++            message="Cancelled export never settled.",
++        )
++        await pilot.pause()
++
++        assert screen._library_export_status == "Export cancelled."
++        assert screen._library_export_error == ""
++        assert len(service.export_calls) == 1
++
++
++@pytest.mark.asyncio
++async def test_description_input_updates_the_export_form_state() -> None:
++    """Characterization (pre-extraction): pins handle_library_export_description_changed.
++
++    ``#library-export-description`` has zero references anywhere in
++    ``Tests/``. Its sibling ``#library-export-name`` IS driven through real
++    typing elsewhere; this field never is.
++    """
++    app = _build_test_app()
++    _wire_empty_export_prompts_db(app, "export-char-description-prompts")
++    _seed_conversations(app, _two_conversations())
++    app.media_db = MediaDatabase(":memory:", client_id="export-char-description-media")
++    app.chachanotes_db = CharactersRAGDB(":memory:", client_id="export-char-description-ccn")
++    host = LibraryHarness(app)
++
++    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
++        screen = _active_library_screen(host)
++        await _wait_for_library_shell(screen, pilot)
++        screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
++        await _wait_for_selector(screen, pilot, "#library-export-description")
++
++        description_input = screen.query_one("#library-export-description", Input)
++        screen.set_focus(description_input)
++        await pilot.pause()
++        assert screen.focused is description_input
++        description_input.insert_text_at_cursor("quarterly bundle")
++        await pilot.pause()
++
++        assert description_input.value == "quarterly bundle"
++        assert screen._library_export_form["description"] == "quarterly bundle"
++
++
++@pytest.mark.asyncio
++async def test_export_selected_conversations_opens_export_canvas_scoped_to_the_selection() -> None:
++    """Characterization (pre-extraction): pins handle_library_conversations_export_selected.
++
++    The button's id is referenced in three test files, always for a
++    ``.disabled`` assertion; nothing presses it.
++    """
++    app = _build_test_app()
++    _seed_conversations(app, _two_conversations())
++    host = LibraryHarness(app)
++
++    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
++        screen = _active_library_screen(host)
++        await _wait_for_library_shell(screen, pilot)
++        screen.query_one("#library-row-browse-conversations").press()
++        await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
++
++        screen.query_one("#library-conversations-select-toggle", Button).press()
++        await pilot.pause()
++        screen.query_one("#library-conversation-row-0", Button).press()
++        await pilot.pause()
++        assert screen._conversations_state.row_selection.is_selected("chat-1")
++
++        export_selected = screen.query_one(
++            "#library-conversations-export-selected", Button
++        )
++        assert export_selected.disabled is False
++        export_selected.press()
++        await _wait_for_condition(
++            pilot,
++            lambda: screen._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT,
++            message="Export-selected press never opened the Export canvas.",
++        )
++        await pilot.pause()
++
++        assert screen._library_export_scope == ExportScope(
++            kind="conversations", ids=("chat-1",)
++        )
++        assert screen._library_export_origin_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
++
++
++@pytest.mark.asyncio
++async def test_export_selected_media_opens_export_canvas_scoped_to_the_selection() -> None:
++    """Characterization (pre-extraction): pins handle_library_media_export_selected.
++
++    Same pattern as the conversations sibling above: the id is referenced
++    across four test files, always for a ``.disabled``/existence check.
++    """
++    app = _build_test_app()
++    _seed_conversations(app, [], media=_two_media_items())
++    host = LibraryHarness(app)
++
++    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
++        screen = _active_library_screen(host)
++        await _wait_for_library_shell(screen, pilot)
++        screen.query_one("#library-row-browse-media", Button).press()
++        await _wait_for_selector(screen, pilot, "#library-media-row-0")
++
++        screen.query_one("#library-media-select-toggle", Button).press()
++        await _wait_for_condition(
++            pilot,
++            lambda: bool(screen.query("#library-media-row-0")),
++            message="Media select controls never settled.",
++        )
++        # The scope service's default sort (most-recently-modified first)
++        # lands "media-2" (last_modified 10:00) at row-0, "media-1" (08:00)
++        # at row-1 -- the row's backing id is the scope service's own
++        # ``local:media:<numeric backing id>`` scheme, not the raw seed
++        # dict's "id" string.
++        selected_row = screen.query_one("#library-media-row-0", Button)
++        expected_id = selected_row.media_id
++        selected_row.press()
++        await pilot.pause()
++        assert screen._library_media_row_selection.is_selected(expected_id)
++
++        export_selected = screen.query_one("#library-media-export-selected", Button)
++        assert export_selected.disabled is False
++        export_selected.press()
++        await _wait_for_condition(
++            pilot,
++            lambda: screen._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT,
++            message="Export-selected press never opened the Export canvas.",
++        )
++        await pilot.pause()
++
++        assert screen._library_export_scope == ExportScope(
++            kind="media", ids=(expected_id,)
++        )
++        assert screen._library_export_origin_row_id == LIBRARY_ROW_BROWSE_MEDIA
++
++
++@pytest.mark.asyncio
++async def test_legacy_recovery_export_button_pushes_file_save_dialog() -> None:
++    """Characterization (pre-extraction): pins choose_library_collection_legacy_recovery_export.
++
++    LIVE GAP recorded rather than fixed (out of this task's scope): a
++    repo-wide ``grep -rn "library-collections-legacy-recovery-export"
++    Tests/`` turns up zero hits. The write-path this handler eventually
++    reaches, ``_export_library_collection_legacy_recovery``, IS pinned by
++    ``test_library_collections_capture_reader.py::
++    test_legacy_recovery_inspector_and_export_reach_every_page`` -- but
++    only via a direct method call that bypasses this handler and the
++    ``FileSave`` dialog it pushes entirely.
++    """
++    app = _build_test_app()
++    _seed_legacy_records(app.local_library_collections_db, count=1)
++    host = LibraryHarness(app)
++
++    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
++        screen = _active_library_screen(host)
++        await _wait_for_library_shell(screen, pilot)
++        screen.query_one("#library-row-browse-collections", Button).press()
++        await _wait_for_selector(screen, pilot, "#library-collections-legacy-recovery")
++        screen.query_one("#library-collections-legacy-recovery", Button).press()
++        await _wait_for_selector(
++            screen, pilot, "#library-collections-legacy-recovery-export"
++        )
++
++        screen.query_one(
++            "#library-collections-legacy-recovery-export", Button
++        ).press()
++        for _ in range(150):
++            if isinstance(host.screen_stack[-1], FileSave):
++                break
++            await pilot.pause(0.02)
++        else:
++            raise AssertionError(
++                "Legacy recovery export button never pushed a FileSave dialog."
++            )
++
++        dialog = host.screen_stack[-1]
++        assert isinstance(dialog, FileSave)
++        assert dialog._default_file == "legacy-collections-recovery.json"
++
++        await host.pop_screen()
++        await pilot.pause()
+diff --git a/backlog/docs/library-decomposition-recipe.md b/backlog/docs/library-decomposition-recipe.md
+index e28ebff5b..77add2660 100644
+--- a/backlog/docs/library-decomposition-recipe.md
++++ b/backlog/docs/library-decomposition-recipe.md
+@@ -308,20 +308,45 @@ rediscover the same red from scratch.
+   rather than surfaced as a unique-to-branch or unique-to-baseline name.
+   Only a direct per-file run surfaces it; run each retargeted test file
+   individually, not just the aggregate sweeps, and don't summarize that
+   check as "all green" without checking every file's own result.)
+ - `Tests/Architecture/test_screen_size_ratchet.py`'s two `chat_screen.py`-scoped
+   rows (`test_screen_does_not_grow_past_its_budget[chat_screen.py]`,
+   `test_task_22507_4_does_not_worsen_chat_screen_base`) — concurrent,
+   unrelated `chat_screen.py` growth from other work on `dev`; reconfirmed
+   pre-existing by every task in this series via the same `git stash -u`
+   method.
++- Wave-2 Task 2 (export state PR) found 14 more, all reconfirmed identical
++  (same 14, no more/fewer) on a `git stash -u` baseline of the pre-task
++  tree via a direct node-id rerun (not the xdist sweep):
++  `Tests/UI/test_library_export_cancel.py::
++  test_cancel_apply_current_run_sets_cancelled_status` (an unbound-fake
++  `SimpleNamespace` call into `_apply_library_export_cancelled` hits
++  `AttributeError: 'types.SimpleNamespace' object has no attribute
++  '_sync_library_emergency_guard_presentation'` — that call was added to
++  the method by other work after this fake's flat attribute list was last
++  updated); `Tests/UI/test_library_honesty_accessibility.py::
++  test_escape_works_on_export_and_staging_canvases`,
++  `test_rail_entry_to_export_after_media_origin_does_not_claim_media`;
++  `Tests/UI/test_library_per_click_recompose_t21116.py::
++  test_export_open_from_media_is_canvas_scoped`; six
++  `Tests/UI/test_library_shell.py` tests (the three
++  `test_library_shell_note_export_pushes_file_save_dialog` parametrizations,
++  `test_library_shell_note_write_export_file_writes_expected_content`,
++  `test_library_shell_note_write_export_file_rejects_invalid_path`,
++  `test_library_shell_notes_selected_export_opens_exact_selection_scope`)
++  and four `test_library_note_keyboard_capability_matrix` parametrizations
++  (`multi_select_export`, `export_markdown_text` × two terminal sizes) —
++  these all time out waiting for `#library-notes-row-0` (or a sibling
++  selector) to mount within its 30s budget, consistent with machine-load-
++  sensitive DOM-mount flakiness rather than a logic bug, but confirmed
++  100% reproducible (same set, both runs) rather than randomly flipping.
+ 
+ ## 8. Subsystem order (spec, "Order of work")
+ 
+ Sequenced cold-to-hot so the conversations exemplar never fights rebases,
+ and hot subsystems migrate in short, fast series once the recipe above is
+ rehearsed. Churn = commits touching `library_screen.py` in the trailing 30
+ days whose subjects name the subsystem (measured 2026-09-01):
+ 
+ | Order | Subsystem | Churn | Notes |
+ |---|---|---|---|
+diff --git a/tldw_chatbook/UI/Library_Modules/library_export_state.py b/tldw_chatbook/UI/Library_Modules/library_export_state.py
+new file mode 100644
+index 000000000..e47e80a35
+--- /dev/null
++++ b/tldw_chatbook/UI/Library_Modules/library_export_state.py
+@@ -0,0 +1,123 @@
++"""``LibraryExportState`` -- the Export subsystem's own fields.
++
++State PR of the Export extraction series (wave-2 task 2 of
++``.superpowers/sdd/2026-09-02-library-decomposition-wave2-cold-trio``; recipe:
++``backlog/docs/library-decomposition-recipe.md``; conversations series is
++the worked example this mirrors). Every field here was moved verbatim out
++of ``LibraryScreen`` in ``tldw_chatbook/UI/Screens/library_screen.py`` --
++same default, same type. ``library_screen.py`` keeps every original
++``_library_export_<field>`` attribute name alive as a generated getter/
++setter ``@property`` shim pointing at ``self._export_state.<field>`` (see
++the sentinel-wrapped block right after the ``LibraryScreen`` class body); a
++later controller PR in this series moves the subsystem's methods here too.
++
++Every field uses the SAME ``_library_export_`` prefix -- unlike
++Conversations, the ownership analysis found no field needing a plural
++variant, so there is no ``EXPORT_PLURAL_STATE_FIELDS`` constant here (see
++the task-2 report's ownership table for the per-field census that
++established this).
++
++One field, ``origin_row_id``, was never assigned in ``LibraryScreen.
++__init__`` at all -- it was a plain class-level annotated default
++(``_library_export_origin_row_id: str = ""``, task-4023 AC#7's "which
++canvas's Export… action opened the Export canvas" flag), read by two
++shell/plumbing methods (``_library_route_shortcuts_for_current_state``, the
++footer/F1 shortcut projector; ``_select_library_rail_row_after_source_
++admission``, the rail-switch clear) and written/cleared only by
++Export-owned methods (``_open_library_export_canvas``,
++``action_library_export_back``). Per the recipe §2 ownership script,
++shell/plumbing-only non-subsystem consumers still move with the
++subsystem; the class-level attribute is removed and this dataclass's own
++default (``""``) supplies the identical value through the generated
++property shim.
++
++One field, ``form``, has a genuinely computed (not static-literal) default
++in the original code -- ``self._default_library_export_form()``, a
++``@staticmethod`` stamping today's export-name default. Per the recipe's
++"computed defaults become constructor arguments" rule, ``__init__`` still
++calls that method (at the exact position the removed ``self._library_
++export_form = ...`` line occupied) and passes the result into the
++``LibraryExportState(...)`` constructor call; this dataclass's own
++``form`` default (an empty dict, via ``default_factory``) is therefore a
++momentary placeholder, identical in spirit to the conversations state
++object's three entangled-field placeholders, overwritten before anything
++else in ``__init__`` reads it.
++"""
++from __future__ import annotations
++
++import threading
++from dataclasses import dataclass, field
++from typing import Any
++
++from ...Library.library_export_scope import ExportScope
++
++
++@dataclass
++class LibraryExportState:
++    """Every field the Export subsystem exclusively owns."""
++
++    scope: ExportScope = ExportScope(kind="everything")
++    counts: dict[str, int] | None = None
++    # Monotonic ownership for the counts request, separate from the export
++    # execution token below. Scope/route/generation can all repeat after a
++    # leave -> return ABA visit, so none of them can identify the newest
++    # counts worker on its own.
++    counts_request_id: int = 0
++
++    # Placeholder default only -- see module docstring: the original
++    # `__init__` line's `self._default_library_export_form()` call still
++    # runs, at the position of this field's removed assignment, and is
++    # passed into the state constructor call directly.
++    form: dict[str, Any] = field(default_factory=dict)
++
++    # task-14902: True while the export quality chooser's direct-pick
++    # strip renders below its (still-visible) opener button.
++    quality_choices_visible: bool = False
++    running: bool = False
++    error: str = ""
++    # Task 3: the running export's quiet status line ("Exporting…
++    # (N items)"); no backing field existed after Task 2 (its report
++    # flagged this as the natural next attr). Cleared alongside
++    # ``error`` on every canvas reset and on run completion.
++    status: str = ""
++    # Task 3 review fix: a monotonic token identifying the CURRENT
++    # export attempt. Bumped both when a new export starts
++    # (``handle_library_export_submit``) and whenever the export
++    # canvas's transient state is reset out from under an in-flight
++    # run (``_reset_library_export_transient_state`` -- reachable via
++    # any rail-row switch or "Export…" section action while a worker
++    # is still executing on its own OS thread, which cannot be
++    # preempted mid-``asyncio.run`` by ``Worker.cancel()``). The
++    # worker captures the token at dispatch time and the completion
++    # handlers compare it back against the live value before mutating
++    # ``running``/``error``/``status`` or touching the DOM -- an
++    # orphaned run's late completion still notifies (the export
++    # genuinely happened) but can never stomp whatever the user is now
++    # looking at, mirroring ``_apply_library_export_counts``'s
++    # scope-mismatch staleness guard for the sibling counts worker.
++    run_id: int = 0
++    # Task 4: the current run's cancellation signal. Created fresh at
++    # every submit (``handle_library_export_submit``); the worker reads
++    # ``event.is_set`` as the service's ``cancel_check``.
++    cancel_event: threading.Event | None = None
++    # task-2858 AC#3 (LIB-12): the last successful export's destination
++    # + completion timestamp, for the durable "Last export: ..."
++    # receipt. Deliberately NOT touched by
++    # ``_reset_library_export_transient_state`` -- every OTHER export
++    # field resets on every canvas entry (a fresh form each visit is
++    # correct), but the receipt must survive leaving and re-entering
++    # the canvas within the session. Also round-tripped through
++    # ``save_state``/``restore_state`` so it survives a full navigate-
++    # away-and-back to Library too (the "persist further" half of the
++    # AC, via that already-existing seam).
++    last_path: str = ""
++    last_at: float | None = None
++
++    # task-4023 AC#7: which canvas's "Export…" action opened the Export
++    # canvas ("" = entered from the rail/deep link). Escape returns
++    # there; a plain rail switch clears it. See module docstring: this
++    # field alone was never a `__init__` assignment -- only a class-level
++    # default -- so it has no matching entry in `LibraryScreen.__init__`'s
++    # constructor call; the dataclass default below supplies the same
++    # value the class-level attribute used to.
++    origin_row_id: str = ""
+diff --git a/tldw_chatbook/UI/Screens/library_screen.py b/tldw_chatbook/UI/Screens/library_screen.py
+index 02407ecf1..c95ea63b7 100644
+--- a/tldw_chatbook/UI/Screens/library_screen.py
++++ b/tldw_chatbook/UI/Screens/library_screen.py
+@@ -575,20 +575,21 @@ from ..Library_Modules.library_collections_capture_controller import (
+     CollectionsCaptureControllerState,
+     LibraryCollectionsCaptureController,
+ )
+ from ..Library_Modules.library_conversation_reader_controller import (
+     LibraryConversationReaderController,
+ )
+ from ..Library_Modules.library_conversations_controller import (
+     LibraryConversationsController,
+ )
+ from ..Library_Modules.library_conversations_state import LibraryConversationsState
++from ..Library_Modules.library_export_state import LibraryExportState
+ from ..Library_Modules.library_note_import_controller import (
+     LibraryNoteImportController,
+ )
+ from ..Library_Modules.library_notes_sync_controller import (
+     InertLastingSyncRuntime,
+     LibraryNotesSyncController,
+ )
+ from ..Library_Modules.library_notes_work_session import (
+     NotesWorkSessionEvent,
+     NotesWorkSessionPhase,
+@@ -974,26 +975,20 @@ class LibraryScreen(BaseAppScreen):
+         Binding("o", "library_rag_result_card_open", "Open evidence", show=False),
+         # task-3313: "Retry this batch" accelerator. ``check_action`` gates
+         # it to the Ingest canvas WITH a last-submission snapshot; a
+         # focused Input/TextArea consumes the printable key before any
+         # screen binding sees it, so `r` still types normally in the form
+         # fields. Advertised via ``LIBRARY_INGEST_SHORTCUTS`` (footer+F1),
+         # so ``show=False`` like the other contextual keys.
+         Binding("r", "library_ingest_retry_last", "Retry this batch", show=False),
+     ]
+ 
+-    #: task-4023 AC#7: which canvas's "Export…" action opened the Export
+-    #: canvas ("" = entered from the rail/deep link). Escape returns
+-    #: there; a plain rail switch clears it. Class-level default for the
+-    #: same restored-session reason as the other class-level route defaults.
+-    _library_export_origin_row_id: str = ""
+-
+     #: Footer hint set while the Search/RAG canvas is active — mirrors the
+     #: show=True bindings the retired Textual Footer used to render
+     #: (task-264 review: per-screen AppFooterStatus renders registered
+     #: contexts, not bindings).
+     #: Task 12/RAG-36 fix-review: the `enter`/`o` evidence-card `Binding`s
+     #: are `show=False` (Textual's own key panel doesn't need them), which
+     #: made this the ONLY on-screen advertisement of those keys -- and it
+     #: was left unedited, so the keys shipped completely undiscoverable.
+     #: That reproduces the exact defect RAG-36 exists to close (a
+     #: keyboard-only user cannot find a hidden key), so both are listed here
+@@ -3223,82 +3218,30 @@ class LibraryScreen(BaseAppScreen):
+         # shown to the user.
+         self._parakeet_v2_install_worker: Worker | None = None
+         # TASK-1696: the immutable PreflightReport a completed preflight
+         # worker handed to the consent modal -- read back by
+         # ``_run_parakeet_v2_install`` (kept zero-argument; see
+         # ``Tests/UI/test_parakeet_v2_install_ui.py::
+         # test_confirmation_starts_background_installer_worker``) once the
+         # user confirms.
+         self._parakeet_v2_pending_report: "PreflightReport | None" = None
+         self._parakeet_v2_install_progress = None
+-        # Export canvas state (F4 Task 2). ``_library_export_counts`` is
+-        # ``None`` until the counts worker lands a result for the current
+-        # scope (drives ``LibraryExportFormState.counts_loading`` --
+-        # deliberately not a separate boolean flag, so "loading" and "no
+-        # result yet" can never drift apart). ``_library_export_form`` is
+-        # a plain dict (not a dataclass, unlike the ingest form echo)
+-        # since Task 3 reads specific keys off it directly per the F4
+-        # plan's screen-attrs contract.
+-        self._library_export_scope: ExportScope = ExportScope(kind="everything")
+-        self._library_export_counts: dict[str, int] | None = None
+-        # Monotonic ownership for the counts request, separate from the export
+-        # execution token below.  Scope/route/generation can all repeat after a
+-        # leave -> return ABA visit, so none of them can identify the newest
+-        # counts worker on its own.
+-        self._library_export_counts_request_id: int = 0
+-        self._library_export_form: dict[str, Any] = self._default_library_export_form()
+-        # task-14902: True while the export quality chooser's direct-pick
+-        # strip renders below its (still-visible) opener button.
+-        self._library_export_quality_choices_visible: bool = False
+-        self._library_export_running: bool = False
+-        self._library_export_error: str = ""
+-        # Task 3: the running export's quiet status line ("Exporting…
+-        # (N items)"); no backing field existed after Task 2 (its report
+-        # flagged this as the natural next attr). Cleared alongside
+-        # ``_library_export_error`` on every canvas reset and on run
+-        # completion.
+-        self._library_export_status: str = ""
+-        # Task 3 review fix: a monotonic token identifying the CURRENT
+-        # export attempt. Bumped both when a new export starts
+-        # (``handle_library_export_submit``) and whenever the export
+-        # canvas's transient state is reset out from under an in-flight
+-        # run (``_reset_library_export_transient_state`` -- reachable via
+-        # any rail-row switch or "Export…" section action while a worker
+-        # is still executing on its own OS thread, which cannot be
+-        # preempted mid-``asyncio.run`` by ``Worker.cancel()``). The
+-        # worker captures the token at dispatch time and the completion
+-        # handlers compare it back against the live value before mutating
+-        # ``_library_export_running``/``_library_export_error``/
+-        # ``_library_export_status`` or touching the DOM -- an orphaned
+-        # run's late completion still notifies (the export genuinely
+-        # happened) but can never stomp whatever the user is now looking
+-        # at, mirroring ``_apply_library_export_counts``'s scope-mismatch
+-        # staleness guard for the sibling counts worker.
+-        self._library_export_run_id: int = 0
+-        # Task 4: the current run's cancellation signal. Created fresh at
+-        # every submit (``handle_library_export_submit``); the worker reads
+-        # ``event.is_set`` as the service's ``cancel_check``. Nothing sets
+-        # it yet in this task -- the Cancel button and navigate-away wiring
+-        # land in Task 5.
+-        self._library_export_cancel_event: threading.Event | None = None
+-        # task-2858 AC#3 (LIB-12): the last successful export's destination
+-        # + completion timestamp, for the durable "Last export: ..."
+-        # receipt. Deliberately NOT touched by
+-        # ``_reset_library_export_transient_state`` -- every OTHER export
+-        # field resets on every canvas entry (a fresh form each visit is
+-        # correct), but the receipt must survive leaving and re-entering
+-        # the canvas within the session. Also round-tripped through
+-        # ``save_state``/``restore_state`` so it survives a full navigate-
+-        # away-and-back to Library too (the "persist further" half of the
+-        # AC, via that already-existing seam).
+-        self._library_export_last_path: str = ""
+-        self._library_export_last_at: float | None = None
++        # Export canvas state (F4 Task 2); see LibraryExportState's own
++        # module docstring/field comments for the per-field detail that
++        # used to live here. ``form`` has a genuinely computed default
++        # (``self._default_library_export_form()``) so it is passed as a
++        # constructor argument here rather than folded into the
++        # dataclass's own default, preserving the original __init__
++        # evaluation order.
++        self._export_state = LibraryExportState(
++            form=self._default_library_export_form()
++        )
+         # task-2856: armed by every "enter/return to a list canvas" seam
+         # (``_arm_library_list_entry_focus``) right before it schedules its
+         # OWN ``call_after_refresh(self._focus_library_list_entry)``. That
+         # first attempt wins the common case, but this screen has SEVERAL
+         # independent ``@work``/``run_worker`` background workers that each
+         # end in their own LATER ``self.refresh(recompose=True)`` --
+         # ``_refresh_local_source_snapshot`` (skill/note/prompt editor
+         # exits all kick it), the skills trust-posture load it itself
+         # triggers, per-item detail fetches, etc. Any one of those landing
+         # AFTER the first attempt rebuilds the list's row Buttons as fresh
+@@ -43956,10 +43899,32 @@ class LibraryScreen(BaseAppScreen):
+ # serves both call shapes in the cluster's moved bodies:
+ # `self._safe_text(...)` (3 regular-method sites) and `cls._safe_text(...)`
+ # (2 classmethod sites) -- one binding, not two. A test constructing
+ # `LibraryConversationsController` directly without ever importing
+ # `library_screen` will not have this class attribute at all (an
+ # `AttributeError`, not a working injected stub) -- an accepted
+ # consequence of the class-level-only design, not a bug to route around;
+ # production code always imports `library_screen` before any instance of
+ # this controller can exist.
+ LibraryConversationsController._safe_text = staticmethod(LibraryScreen._safe_text)
++
++# --- BEGIN generated export-state shims (delete wholesale at cleanup) ---
++# wave-2 task 2: keeps every original `_library_export_<field>` name
++# working as a property over `self._export_state`; attached programmatically
++# so the class body gains no FunctionDefs (the size ratchet counts those).
++# Every export field uses the same `_library_export_` prefix -- the
++# ownership analysis found no field needing a plural variant (see
++# LibraryConversationsState's own shim block for that pattern, and the
++# task-2 report's ownership table for why export never needed it).
++for _es_field in dataclasses.fields(LibraryExportState):
++    setattr(
++        LibraryScreen,
++        "_library_export_" + _es_field.name,
++        property(
++            lambda self, _n=_es_field.name: getattr(self._export_state, _n),
++            lambda self, value, _n=_es_field.name: setattr(
++                self._export_state, _n, value
++            ),
++        ),
++    )
++del _es_field
++# --- END generated export-state shims ---

@@ -164,8 +164,12 @@ def test_prompt_memory_database_forces_inline_count_resolution():
         return LibraryEntryReconcileResult.APPLIED
 
     fake = SimpleNamespace(
-        _library_export_scope=scope,
-        _library_export_counts_request_id=0,
+        # Task 4 cleanup: the screen's flat `_library_export_<field>` shim
+        # is gone -- `_start_library_export_counts_worker`'s body now reads
+        # `self._export_state.<field>`, so this fake nests its export
+        # fields under `_export_state` (recipe §11's "unbound fake-self"
+        # retarget precedent).
+        _export_state=SimpleNamespace(scope=scope, counts_request_id=0),
         _library_snapshot_state_generation=7,
         _library_entry_route_key=lambda: route_key,
         app_instance=SimpleNamespace(

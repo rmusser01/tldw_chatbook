@@ -29,3 +29,33 @@
 # per-line change is a mechanical receiver swap or a removal, not new
 # logic, so blame still resolves better through it than stopping short.
 81f536dd547336431d904255f4e2ad36b0959ca0
+
+# Wave-2 task 3: export controller move (export series 2/3). 22 method
+# bodies moved verbatim from library_screen.py to the new
+# LibraryExportController (UI/Library_Modules/library_export_controller.py),
+# replaced by one-line delegators. Byte-for-byte canon verified two ways
+# (AST-unparse + raw-text comparison) against base commit 264314c5f.
+4cc9b6109b47d39e4622d6db9f4d1158e1d9cdd0
+
+# Wave-2 task 4: export cleanup PR (export series 3/3, closing commit). Not a
+# pure relocation in the strictest sense (receiver rewrites + a shim-block
+# deletion + one dead delegator pruned + 5 dead imports pruned), same shape
+# as the conversations exemplar's own Task 9 closing commit above -- every
+# per-line change is a mechanical receiver swap or a removal, not new logic.
+cdb43ebcc1a1e2e113ac78d0e16f2c88ac016b3f
+
+# Wave-2 task 6: collections controller move (collections series 2/3). 64
+# method bodies moved verbatim from library_screen.py to the new
+# LibraryCollectionsController (UI/Library_Modules/library_collections_
+# controller.py), replaced by one-line delegators. Byte-for-byte canon
+# verified by an AST extract-and-compare script against base commit
+# bca923b4c.
+09d238f5039ae415260a9e818f9f7bd06c17a7ec
+
+# Wave-2 task 7: collections cleanup PR (collections series 3/3, closing
+# commit). Not a pure relocation in the strictest sense (receiver rewrites +
+# a shim-block deletion + 14 dead delegators pruned + 10 dead imports
+# pruned), same shape as the export series' own Task 4 closing commit above
+# -- every per-line change is a mechanical receiver swap or a removal, not
+# new logic.
+39a9763215eab9b8a832e45e4ebb7e85893d8b60

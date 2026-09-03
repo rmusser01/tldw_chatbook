@@ -1,0 +1,197 @@
+# Review package: 68636a8fc..477704580
+
+## Commits
+477704580 test(library): census anti-slack guard (task-27019); file settings ratchet-row task
+
+## Files changed
+ Tests/UI/test_library_recompose_ratchet.py         | 62 ++++++++++++++++++++++
+ ...ds-an-anti-slack-guard-like-the-size-ratchet.md | 28 ++++++++--
+ ...gs_screen.py-needs-a-size-ratchet-budget-row.md | 21 ++++++++
+ 3 files changed, 107 insertions(+), 4 deletions(-)
+
+## Diff
+diff --git a/Tests/UI/test_library_recompose_ratchet.py b/Tests/UI/test_library_recompose_ratchet.py
+index 16a8afc2d..b2ad681bd 100644
+--- a/Tests/UI/test_library_recompose_ratchet.py
++++ b/Tests/UI/test_library_recompose_ratchet.py
+@@ -49,20 +49,54 @@ from pathlib import Path
+ #: reason TASK-22228 named: the single-file pin of 74 had already drifted
+ #: 11 sites above the true single-file count of 63 (measured against the
+ #: PR-0a merge base) -- more silent headroom. The widened,
+ #: exemption-filtered census (screen 59 + canvas_sync.py 4 + 0 from the one
+ #: exempted modal class = 63) confirms PR 0a moved sites without gaining or
+ #: losing any, so the pin is re-based down to that measured 63 -- see
+ #: ``Docs/superpowers/specs/2026-09-01-library-screen-decomposition-
+ #: design.md`` ("PR 0b").
+ LIBRARY_WHOLE_SCREEN_RECOMPOSE_MAX = 63
+ 
++#: TASK-27019: how far the pin may sit above the measured count before the
++#: anti-slack guard (``test_census_pin_is_not_left_slack`` below) fires.
++#: Mirrors ``Tests/Architecture/test_screen_size_ratchet.py``'s
++#: ``test_budget_is_not_left_slack_after_a_wave`` -- a ceiling-only ratchet
++#: lets a wave's gain silently buy the next feature headroom the wave never
++#: earned it, which is exactly what happened to THIS pin twice: 107 -> 80
++#: (drifted 23 sites before TASK-22228 caught it) and 74 -> 63 (drifted 11
++#: sites before TASK-3's surface-widening audit caught it).
++#:
++#: The size ratchet's own tolerance (200 lines / 10 methods on a ~44,000
++#: line / ~1,300 method budget) does NOT transfer here by scaling -- applied
++#: proportionally to a census of 63 it rounds to noise (<1). That ratio was
++#: never the point: the size ratchet's 200/10 is sized to absorb *ordinary,
++#: unrelated in-file edits* that grow or shrink a screen's line/method count
++#: for reasons that have nothing to do with a decomposition wave. This
++#: census has no equivalent noise floor -- a `self.refresh(recompose=True)`
++#: / `self.recompose()` statement is never an incidental byproduct of an
++#: unrelated edit, so the count essentially only moves when someone
++#: deliberately adds, removes, or relocates a whole-screen recompose site
++#: (via a targeted-seam conversion, exactly the change this ratchet exists
++#: to police).
++#:
++#: The number is instead sized against this census's OWN documented drift
++#: history: the smallest single silent step on record is the 6-site drop
++#: from "routing the six Reader sub-state presses through
++#: `_sync_library_media_viewer_or_recompose`" (80 -> 74, comment above).
++#: A tolerance of 5 sits strictly below that smallest observed step, so the
++#: guard would have fired on every drift increment ever recorded against
++#: this pin, including its smallest one, while still forgiving a couple of
++#: sites of legitimate same-PR churn (e.g. sites shuffling across files
++#: during the widened multi-file scan without a net change) that isn't
++#: itself an unlowered wave.
++_CENSUS_SLACK_TOLERANCE = 5
++
+ _LIBRARY_SCREEN_PATH = (
+     Path(__file__).resolve().parents[2]
+     / "tldw_chatbook"
+     / "UI"
+     / "Screens"
+     / "library_screen.py"
+ )
+ 
+ _LIBRARY_MODULES_DIR = (
+     Path(__file__).resolve().parents[2]
+@@ -314,20 +348,48 @@ def test_library_screen_whole_screen_recompose_count_is_ratcheted() -> None:
+         )
+         raise AssertionError(
+             _RATCHET_GUIDANCE.format(
+                 count=count,
+                 maximum=LIBRARY_WHOLE_SCREEN_RECOMPOSE_MAX,
+                 inventory=inventory,
+             )
+         )
+ 
+ 
++def test_census_pin_is_not_left_slack() -> None:
++    """TASK-27019: the recorded pin should track reality, not drift above it.
++
++    A ceiling-only ratchet lets a wave that lowers the real count without
++    also lowering the pin quietly buy the next feature headroom it was
++    never meant to have -- this happened to this exact pin twice (107 -> 80,
++    then 74 -> 63; see the drift history in ``LIBRARY_WHOLE_SCREEN_RECOMPOSE_
++    MAX``'s docstring). Mirrors ``Tests/Architecture/test_screen_size_
++    ratchet.py``'s ``test_budget_is_not_left_slack_after_a_wave``, with the
++    tolerance re-derived for this census rather than copied -- see
++    ``_CENSUS_SLACK_TOLERANCE`` for why the size ratchet's absolute number
++    does not transfer and how this one was chosen instead.
++    """
++    count = len(_widened_library_surface_sites())
++    slack = LIBRARY_WHOLE_SCREEN_RECOMPOSE_MAX - count
++
++    assert slack <= _CENSUS_SLACK_TOLERANCE, (
++        f"The Library recompose census pin is {slack} sites above the "
++        f"measured count ({count} vs pin {LIBRARY_WHOLE_SCREEN_RECOMPOSE_MAX}), "
++        f"more than the {_CENSUS_SLACK_TOLERANCE}-site tolerance "
++        f"(Tests/UI/test_library_recompose_ratchet.py, "
++        f"_CENSUS_SLACK_TOLERANCE). A wave landed without lowering the "
++        f"ratchet -- set LIBRARY_WHOLE_SCREEN_RECOMPOSE_MAX to {count} in "
++        f"the same PR so the gain is locked in, per this file's module "
++        f"docstring and TASK-27019."
++    )
++
++
+ def test_ratchet_counter_measures_its_subject() -> None:
+     """The AST counter recognizes every counted spelling (and only those)."""
+     counted = """
+ class S:
+     def a(self):
+         self.refresh(recompose=True)
+     def b(self):
+         self.refresh(repaint=True, recompose=True)
+     async def c(self):
+         await self.recompose()
+diff --git a/backlog/tasks/task-27019 - Recompose-census-needs-an-anti-slack-guard-like-the-size-ratchet.md b/backlog/tasks/task-27019 - Recompose-census-needs-an-anti-slack-guard-like-the-size-ratchet.md
+index e5e63d2ed..44354a2c7 100644
+--- a/backlog/tasks/task-27019 - Recompose-census-needs-an-anti-slack-guard-like-the-size-ratchet.md	
++++ b/backlog/tasks/task-27019 - Recompose-census-needs-an-anti-slack-guard-like-the-size-ratchet.md	
+@@ -1,21 +1,41 @@
+ ---
+ id: TASK-27019
+ title: Recompose census needs an anti-slack guard like the size ratchet
+-status: To Do
+-assignee: []
++status: Done
++assignee:
++  - '@claude'
+ created_date: '2026-09-02 15:14'
++updated_date: '2026-09-02 19:24'
+ labels: []
+ dependencies: []
+ ---
+ 
+ ## Description
+ 
+ <!-- SECTION:DESCRIPTION:BEGIN -->
+ Final review of the library decomposition foundation: Tests/UI/test_library_recompose_ratchet.py pins a ceiling only; headroom drift happened twice before (107->80, 74->63). Mirror test_budget_is_not_left_slack_after_a_wave.
+ <!-- SECTION:DESCRIPTION:END -->
+ 
+ ## Acceptance Criteria
+ <!-- AC:BEGIN -->
+-- [ ] #1 Census pin has a slack guard with a documented tolerance
+-- [ ] #2 Guard is mutation-tested (headroom injected -> fails)
++- [x] #1 Census pin has a slack guard with a documented tolerance
++- [x] #2 Guard is mutation-tested (headroom injected -> fails)
+ <!-- AC:END -->
++
++## Implementation Plan
++
++<!-- SECTION:PLAN:BEGIN -->
++1. Read task-27019, the size-ratchet model test (test_budget_is_not_left_slack_after_a_wave) and the recompose census file fully.
++2. Choose a documented tolerance for the census slack guard, scaled to a small integer count (63) rather than the size ratchet's line/method budgets (~44k/1300) -- the absolute tolerance does not transfer.
++3. Implement test_census_pin_is_not_left_slack in Tests/UI/test_library_recompose_ratchet.py, asserting (pin - actual_count) <= tolerance.
++4. Mutation-test both directions via scratch edits to the pin constant: headroom injected (pin raised beyond tolerance) -> test fails; exact/near pin -> test passes. Capture outputs, then restore the real pin.
++5. Mark task-27019 Done with Implementation Notes.
++6. File the settings_screen.py size-ratchet-budget-row follow-up task via the CLI, --ac repeated per criterion.
++7. Run the recompose ratchet test file plus ./scripts/preflight.sh; commit.
++<!-- SECTION:PLAN:END -->
++
++## Implementation Notes
++
++<!-- SECTION:NOTES:BEGIN -->
++Added test_census_pin_is_not_left_slack to Tests/UI/test_library_recompose_ratchet.py, mirroring test_budget_is_not_left_slack_after_a_wave. Tolerance set to 5 sites (_CENSUS_SLACK_TOLERANCE), documented at the constant: below the smallest historically-observed silent drift step (6 sites, the Reader sub-state routing change), so the guard would have fired on both past drift incidents (107->80, 74->63). Unlike the size ratchet's line/method budgets, this census has no ordinary-edit noise floor to absorb -- a recompose call site is never an incidental byproduct of unrelated work -- so the tolerance is derived from this census's own drift history rather than scaled from the size ratchet's 200/10. Mutation-tested both directions via scratch edits to the pin constant (restored after each): pin=73 (slack 10) FAILED; pin=69 (slack 6, one over tolerance) FAILED; pin=68 (slack 5, exactly at tolerance) PASSED; pin=63 (slack 0, real value) PASSED. Modified: Tests/UI/test_library_recompose_ratchet.py only.
++<!-- SECTION:NOTES:END -->
+diff --git a/backlog/tasks/task-27020 - settings_screen.py-needs-a-size-ratchet-budget-row.md b/backlog/tasks/task-27020 - settings_screen.py-needs-a-size-ratchet-budget-row.md
+new file mode 100644
+index 000000000..275f8d2ff
+--- /dev/null
++++ b/backlog/tasks/task-27020 - settings_screen.py-needs-a-size-ratchet-budget-row.md	
+@@ -0,0 +1,21 @@
++---
++id: TASK-27020
++title: settings_screen.py needs a size-ratchet budget row
++status: To Do
++assignee: []
++created_date: '2026-09-02 19:25'
++labels: []
++dependencies: []
++---
++
++## Description
++
++<!-- SECTION:DESCRIPTION:BEGIN -->
++Spec 2026-09-01 non-goal follow-up: the ratchet that let library_screen triple also has no settings row; settings_screen.py was 15,922 lines at the 2026-08-02 doctrine baseline.
++<!-- SECTION:DESCRIPTION:END -->
++
++## Acceptance Criteria
++<!-- AC:BEGIN -->
++- [ ] #1 Budget row added at measured values
++- [ ] #2 Mutation-checked (dummy method -> fails)
++<!-- AC:END -->

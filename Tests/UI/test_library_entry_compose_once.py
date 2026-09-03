@@ -692,7 +692,7 @@ def _entry_worker_terminal(case: _EntryWorkerCase, screen: LibraryScreen) -> boo
     if case.name in {"media", "pending-media"}:
         return screen._library_media_detail is not None and selector_ready
     if case.name == "export":
-        return screen._library_export_counts is not None and selector_ready
+        return screen._export_state.counts is not None and selector_ready
     if case.name == "pending-conversations":
         return screen._selected_conversation_id == "chat-2" and selector_ready
     if case.name == "pending-prompt":
@@ -2235,18 +2235,18 @@ async def test_export_counts_reject_same_route_stale_generation(tmp_path: Path) 
         )
         await _wait_for_condition(
             pilot,
-            lambda: active_screen._library_export_counts is not None,
+            lambda: active_screen._export_state.counts is not None,
             message="Initial Export counts did not settle.",
         )
         rendered_before = str(scope_line.renderable)
-        counts_before = dict(active_screen._library_export_counts or {})
+        counts_before = dict(active_screen._export_state.counts or {})
         generation = active_screen._library_snapshot_state_generation
         route_key = active_screen._library_entry_route_key()
-        request_id = active_screen._library_export_counts_request_id
+        request_id = active_screen._export_state.counts_request_id
         active_screen._library_snapshot_state_generation += 1
 
         result = active_screen._apply_library_export_counts(
-            active_screen._library_export_scope,
+            active_screen._export_state.scope,
             {"media": 99, "conversations": 99, "notes": 99, "prompts": 99},
             generation=generation,
             route_key=route_key,
@@ -2254,7 +2254,7 @@ async def test_export_counts_reject_same_route_stale_generation(tmp_path: Path) 
         )
 
         assert result is LibraryEntryReconcileResult.SUPERSEDED
-        assert active_screen._library_export_counts == counts_before
+        assert active_screen._export_state.counts == counts_before
         assert str(scope_line.renderable) == rendered_before
 
 
@@ -2328,7 +2328,7 @@ async def test_export_counts_leave_return_same_scope_rejects_older_request(
 
         assert newest_result is LibraryEntryReconcileResult.APPLIED
         assert stale_result is LibraryEntryReconcileResult.SUPERSEDED
-        assert screen._library_export_counts == newest_counts
+        assert screen._export_state.counts == newest_counts
         assert (
             screen.query_one("#library-export-canvas").state.scope_line
             == rendered_newest

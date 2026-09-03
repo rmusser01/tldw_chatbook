@@ -88,17 +88,7 @@ from ...Library.export_progress import (
     ExportProgressThrottle,
     format_export_progress_line,
 )
-from ...Library.collections_capture_models import (
-    CAPTURE_SORTS,
-    CaptureCapabilities,
-    CaptureHighlight,
-    CaptureIdentity,
-    CapturePageRequest,
-    CaptureSaveRequest,
-    CollectionsCaptureError,
-    ExternalNoteReference,
-    SavedCaptureSearch,
-)
+from ...Library.collections_capture_models import CaptureIdentity
 from ...Library.library_content_evidence import (
     LibraryContentEvidence,
     LibraryEvidenceStatus,
@@ -124,17 +114,13 @@ from ...Library.library_conversation_reader_state import (
 )
 from ...Library.library_export_scope import (
     ExportScope,
-    count_export_scope,
     resolve_export_selections,
 )
 from ...Library.library_export_state import (
     DEFAULT_MEDIA_QUALITY,
-    MEDIA_QUALITY_OPTIONS,
     LibraryExportFormState,
     build_library_export_form_state,
-    default_export_name,
     format_last_export_line,
-    normalize_export_destination,
 )
 from ...Widgets.Library.library_export_canvas import (
     apply_library_export_submit_gate,
@@ -387,7 +373,6 @@ from ...Library.library_shell_state import (
     LIBRARY_DELETE_SELECTED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
-    LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP,
     LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_REVIEW_SELECTED_TOOLTIP,
     LIBRARY_ROW_BROWSE_COLLECTIONS,
@@ -460,7 +445,6 @@ from ...Widgets.workbench_focus import (
 from ...Widgets.Library import (
     AdaptiveReaderShellResized,
     CollectionsCaptureReaderPresentation,
-    CollectionsReaderMode,
     LIBRARY_SKILLS_FILTER_ID,
     LIBRARY_SKILLS_PAGE_NEXT_ID,
     LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
@@ -578,9 +562,12 @@ from ..Library_Modules.library_media_trash_browse_controller import (
     MediaTrashMutationClaim,
 )
 from ..Library_Modules.library_collections_capture_controller import (
-    CollectionsCaptureControllerState,
     LibraryCollectionsCaptureController,
 )
+from ..Library_Modules.library_collections_controller import (
+    LibraryCollectionsController,
+)
+from ..Library_Modules.library_collections_state import LibraryCollectionsState
 from ..Library_Modules.library_conversation_reader_controller import (
     LibraryConversationReaderController,
 )
@@ -588,6 +575,8 @@ from ..Library_Modules.library_conversations_controller import (
     LibraryConversationsController,
 )
 from ..Library_Modules.library_conversations_state import LibraryConversationsState
+from ..Library_Modules.library_export_controller import LibraryExportController
+from ..Library_Modules.library_export_state import LibraryExportState
 from ..Library_Modules.library_note_import_controller import (
     LibraryNoteImportController,
 )
@@ -865,17 +854,33 @@ def _assign_library_reader_preferences_attribute(
     destination (media, collections, conversations, notes, notes_files,
     prompts, skills) through a ``{destination: attribute_name}`` dict, read
     with plain ``getattr``/``operator.attrgetter`` and written with plain
-    ``setattr``. Every destination except conversations still keeps its
-    reader-preferences object as a flat screen attribute, so a bare
+    ``setattr``. Every destination except conversations and collections still
+    keeps its reader-preferences object as a flat screen attribute, so a bare
     attribute-name string has always been enough. Conversations' own
     ``reader_preferences`` field moved to ``self._conversations_state.reader_preferences``
     (Task 6/9) -- one extra hop the generic dispatch's plain ``setattr``
     cannot express. This resolves the last (dotted) segment's owner via
     ``operator.attrgetter`` and assigns onto it, and is a no-op passthrough
     (``setattr(owner, attribute, value)``) for every other, undotted,
-    destination -- so the six not-yet-extracted subsystems are unaffected.
+    destination -- so the five not-yet-extracted subsystems are unaffected.
     Future subsystem extractions hit this exact same shape; this helper is
     meant to keep serving them, not to be re-derived per subsystem.
+
+    Second use, added by Task 4 (Export cleanup): ``_close_open_library_
+    choice_strip`` dispatches across a DIFFERENT dict-of-name-strings
+    (media/prompts/skills/export choice-strip visibility, built by
+    ``_library_open_choice_strip``) with the identical possibly-dotted-path
+    shape -- Export's own visibility field moved to ``self._export_state.
+    quality_choices_visible`` (Task 2/4), while media/prompts/skills keep
+    flat screen attributes, so the same generic dotted-vs-flat passthrough
+    this docstring already describes serves that dispatcher too, without a
+    second near-identical helper.
+
+    Third use, added by Task 7 (Collections cleanup): the same two dicts'
+    ``"collections"`` entry moved from the flat ``_library_collections_
+    reader_preferences`` name to ``self._collections_state.reader_preferences``
+    (Task 5/7) -- exactly the same dotted-vs-flat shape Conversations already
+    established, requiring no change to this helper's own logic.
     """
     head, _, tail = attribute.rpartition(".")
     target = operator.attrgetter(head)(owner) if head else owner
@@ -1028,12 +1033,6 @@ class LibraryScreen(BaseAppScreen):
         Binding("R", "library_media_exit_review", "Exit review", show=False),
         Binding("m", "library_media_toggle_reviewed", "Toggle reviewed", show=False),
     ]
-
-    #: task-4023 AC#7: which canvas's "Export…" action opened the Export
-    #: canvas ("" = entered from the rail/deep link). Escape returns
-    #: there; a plain rail switch clears it. Class-level default for the
-    #: same restored-session reason as the other class-level route defaults.
-    _library_export_origin_row_id: str = ""
 
     #: Footer hint set while the Search/RAG canvas is active — mirrors the
     #: show=True bindings the retired Textual Footer used to render
@@ -2254,6 +2253,8 @@ class LibraryScreen(BaseAppScreen):
         ) = None
         self._library_navigation_context_generation: int = 0
         self._conversations_state = LibraryConversationsState()
+        # Constructed early -- see LibraryCollectionsState's docstring.
+        self._collections_state = LibraryCollectionsState()
         self._conversation_reader_controller = LibraryConversationReaderController(
             self,
             conversations_state_accessor=lambda: self._conversations_state,
@@ -2348,10 +2349,89 @@ class LibraryScreen(BaseAppScreen):
                 lambda: self._selected_conversation_handoff_payload()
             ),
         )
+        # Sentinel: `self._export_state` does NOT exist yet at this point in
+        # `__init__` -- it is constructed later, at ~:3288, specifically to
+        # preserve the computed `form` default's original `__init__`
+        # evaluation position (see `LibraryExportState`'s module docstring).
+        # Every dependency below is a lazy accessor (a `lambda`, not a bound
+        # value), and no controller method may run during `__init__` -- an
+        # eager `export_state_accessor()` call made from here would raise
+        # `AttributeError: 'LibraryScreen' object has no attribute
+        # '_export_state'`.
+        self._export_controller = LibraryExportController(
+            self,
+            export_state_accessor=lambda: self._export_state,
+            apply_open_item_surface=(
+                lambda *a, **k: self._apply_library_open_item_surface(*a, **k)
+            ),
+            flush_note_save=lambda: self._flush_library_note_save(),
+            set_library_destination_with_conversation_fence=(
+                lambda value: self._set_library_destination_with_conversation_fence(
+                    value
+                )
+            ),
+            sync_library_emergency_guard_presentation=(
+                lambda: self._sync_library_emergency_guard_presentation()
+            ),
+            close_open_library_choice_strip=(
+                lambda: self._close_open_library_choice_strip()
+            ),
+            focus_library_hub_entry=lambda: self._focus_library_hub_entry(),
+            select_library_rail_row=(
+                lambda *a, **k: self._select_library_rail_row(*a, **k)
+            ),
+            focus_library_choice_strip_active=(
+                lambda *a, **k: self._focus_library_choice_strip_active(*a, **k)
+            ),
+            focus_library_control=(
+                lambda *a, **k: self._focus_library_control(*a, **k)
+            ),
+            library_selected_row_id_accessor=lambda: self._library_selected_row_id,
+            library_prompts_mutation_in_flight_accessor=(
+                lambda: self._library_prompts_mutation_in_flight
+            ),
+            build_library_export_state=lambda: self._build_library_export_state(),
+            start_library_export_counts_worker=(
+                lambda: self._start_library_export_counts_worker()
+            ),
+            start_library_export_worker=(
+                lambda **k: self._start_library_export_worker(**k)
+            ),
+            apply_library_export_success=(
+                lambda *a, **k: self._apply_library_export_success(*a, **k)
+            ),
+            apply_library_export_cancelled=(
+                lambda run_id: self._apply_library_export_cancelled(run_id)
+            ),
+            update_library_export_canvas_after_run=(
+                lambda: self._update_library_export_canvas_after_run()
+            ),
+            handle_library_export_cancel=(
+                lambda event: self.handle_library_export_cancel(event)
+            ),
+        )
+        self._collections_controller = LibraryCollectionsController(
+            self,
+            collections_state_accessor=lambda: self._collections_state,
+            library_adaptive_reader_allocation_is_current=(
+                lambda reader: self._library_adaptive_reader_allocation_is_current(
+                    reader
+                )
+            ),
+            library_selected_row_id_accessor=lambda: self._library_selected_row_id,
+            library_collections_capture_controller_accessor=(
+                lambda: self._library_collections_capture_controller
+            ),
+            set_library_collections_capture_controller=(
+                lambda value: setattr(
+                    self, "_library_collections_capture_controller", value
+                )
+            ),
+        )
         (
             self._library_reader_shared_preferences,
             self._library_media_reader_preferences,
-            self._library_collections_reader_preferences,
+            self._collections_state.reader_preferences,
             self._conversations_state.reader_preferences,
             self._library_notes_reader_preferences,
             self._library_file_notes_reader_preferences,
@@ -2368,32 +2448,9 @@ class LibraryScreen(BaseAppScreen):
             if collections_capture_scope is not None
             else None
         )
-        self._library_collections_capture_capabilities: CaptureCapabilities | None = None
-        self._library_collections_saved_searches: tuple[SavedCaptureSearch, ...] = ()
-        self._library_collections_saved_searches_total = 0
-        self._library_collections_active_scope = "all"
-        self._library_collections_requested_page = 1
-        self._library_collections_reader_mode: CollectionsReaderMode = "read"
-        self._library_collections_highlights: tuple[CaptureHighlight, ...] = ()
-        self._library_collections_quick_capture_open = False
-        self._library_collections_quick_capture_url = ""
-        self._library_collections_quick_capture_title = ""
-        self._library_collections_quick_capture_tags = ""
-        self._library_collections_quick_capture_note = ""
-        self._library_collections_save_outcome_unknown = False
-        self._library_collections_confirming_save_retry = False
-        self._library_collections_quick_capture_saving = False
-        self._library_collections_filters_open = False
-        self._library_collections_more_open = False
-        self._library_collections_confirming_hard_delete = False
-        self._library_collections_legacy_recovery_rows = 0
-        self._library_collections_legacy_recovery_open = False
-        self._library_collections_legacy_recovery_lines: tuple[str, ...] = ()
-        self._library_collections_action_status = ""
-        self._library_collections_action_content = ""
-        self._library_collections_reader_layout = resolve_adaptive_reader_layout(
+        self._collections_state.reader_layout = resolve_adaptive_reader_layout(
             0,
-            self._library_collections_reader_preferences,
+            self._collections_state.reader_preferences,
             LIBRARY_COLLECTIONS_READER_PROFILE,
         )
         self._library_notes_reader_layout: AdaptiveReaderEffectiveLayout = (
@@ -2448,7 +2505,7 @@ class LibraryScreen(BaseAppScreen):
         }
         self._library_reader_durable_preferences = {
             "library": self._conversations_state.reader_preferences.library_open,
-            "collections_items": self._library_collections_reader_preferences.items_open,
+            "collections_items": self._collections_state.reader_preferences.items_open,
             "conversations_items": self._conversations_state.reader_preferences.items_open,
             "notes_items": self._library_notes_reader_preferences.items_open,
             "notes_file_items": self._library_file_notes_reader_preferences.items_open,
@@ -2459,7 +2516,7 @@ class LibraryScreen(BaseAppScreen):
             "library": library_pane_persistence_lock,
             "items": asyncio.Lock(),
         }
-        self._library_collections_reader_persistence_locks = {
+        self._collections_state.reader_persistence_locks = {
             "library": library_pane_persistence_lock,
             "items": asyncio.Lock(),
         }
@@ -3313,68 +3370,16 @@ class LibraryScreen(BaseAppScreen):
         # user confirms.
         self._parakeet_v2_pending_report: "PreflightReport | None" = None
         self._parakeet_v2_install_progress = None
-        # Export canvas state (F4 Task 2). ``_library_export_counts`` is
-        # ``None`` until the counts worker lands a result for the current
-        # scope (drives ``LibraryExportFormState.counts_loading`` --
-        # deliberately not a separate boolean flag, so "loading" and "no
-        # result yet" can never drift apart). ``_library_export_form`` is
-        # a plain dict (not a dataclass, unlike the ingest form echo)
-        # since Task 3 reads specific keys off it directly per the F4
-        # plan's screen-attrs contract.
-        self._library_export_scope: ExportScope = ExportScope(kind="everything")
-        self._library_export_counts: dict[str, int] | None = None
-        # Monotonic ownership for the counts request, separate from the export
-        # execution token below.  Scope/route/generation can all repeat after a
-        # leave -> return ABA visit, so none of them can identify the newest
-        # counts worker on its own.
-        self._library_export_counts_request_id: int = 0
-        self._library_export_form: dict[str, Any] = self._default_library_export_form()
-        # task-14902: True while the export quality chooser's direct-pick
-        # strip renders below its (still-visible) opener button.
-        self._library_export_quality_choices_visible: bool = False
-        self._library_export_running: bool = False
-        self._library_export_error: str = ""
-        # Task 3: the running export's quiet status line ("Exporting…
-        # (N items)"); no backing field existed after Task 2 (its report
-        # flagged this as the natural next attr). Cleared alongside
-        # ``_library_export_error`` on every canvas reset and on run
-        # completion.
-        self._library_export_status: str = ""
-        # Task 3 review fix: a monotonic token identifying the CURRENT
-        # export attempt. Bumped both when a new export starts
-        # (``handle_library_export_submit``) and whenever the export
-        # canvas's transient state is reset out from under an in-flight
-        # run (``_reset_library_export_transient_state`` -- reachable via
-        # any rail-row switch or "Export…" section action while a worker
-        # is still executing on its own OS thread, which cannot be
-        # preempted mid-``asyncio.run`` by ``Worker.cancel()``). The
-        # worker captures the token at dispatch time and the completion
-        # handlers compare it back against the live value before mutating
-        # ``_library_export_running``/``_library_export_error``/
-        # ``_library_export_status`` or touching the DOM -- an orphaned
-        # run's late completion still notifies (the export genuinely
-        # happened) but can never stomp whatever the user is now looking
-        # at, mirroring ``_apply_library_export_counts``'s scope-mismatch
-        # staleness guard for the sibling counts worker.
-        self._library_export_run_id: int = 0
-        # Task 4: the current run's cancellation signal. Created fresh at
-        # every submit (``handle_library_export_submit``); the worker reads
-        # ``event.is_set`` as the service's ``cancel_check``. Nothing sets
-        # it yet in this task -- the Cancel button and navigate-away wiring
-        # land in Task 5.
-        self._library_export_cancel_event: threading.Event | None = None
-        # task-2858 AC#3 (LIB-12): the last successful export's destination
-        # + completion timestamp, for the durable "Last export: ..."
-        # receipt. Deliberately NOT touched by
-        # ``_reset_library_export_transient_state`` -- every OTHER export
-        # field resets on every canvas entry (a fresh form each visit is
-        # correct), but the receipt must survive leaving and re-entering
-        # the canvas within the session. Also round-tripped through
-        # ``save_state``/``restore_state`` so it survives a full navigate-
-        # away-and-back to Library too (the "persist further" half of the
-        # AC, via that already-existing seam).
-        self._library_export_last_path: str = ""
-        self._library_export_last_at: float | None = None
+        # Export canvas state (F4 Task 2); see LibraryExportState's own
+        # module docstring/field comments for the per-field detail that
+        # used to live here. ``form`` has a genuinely computed default
+        # (``self._default_library_export_form()``) so it is passed as a
+        # constructor argument here rather than folded into the
+        # dataclass's own default, preserving the original __init__
+        # evaluation order.
+        self._export_state = LibraryExportState(
+            form=self._default_library_export_form()
+        )
         # task-2856: armed by every "enter/return to a list canvas" seam
         # (``_arm_library_list_entry_focus``) right before it schedules its
         # OWN ``call_after_refresh(self._focus_library_list_entry)``. That
@@ -3556,7 +3561,7 @@ class LibraryScreen(BaseAppScreen):
             if self._library_open_choice_strip() is not None:
                 return (("enter", "choose quality"), ("esc", "cancel"))
             origin_label = _LIBRARY_HELP_SURFACE_LABELS.get(
-                self._library_export_origin_row_id, ""
+                self._export_state.origin_row_id, ""
             )
             back_label = f"back to {origin_label}" if origin_label else "back to hub"
             return (
@@ -5203,7 +5208,7 @@ class LibraryScreen(BaseAppScreen):
             or self._library_skill_conflict
             or self._library_skill_confirming_delete
             or self._library_skill_more_actions_open
-            or self._library_export_running
+            or self._export_state.running
             or self._library_ingest_start_consent is not None
             or self._library_media_confirming_bulk_delete
             or self._library_media_bulk_delete_in_flight
@@ -7025,32 +7030,7 @@ class LibraryScreen(BaseAppScreen):
         self,
         priority: Literal["library", "items"] | None = None,
     ) -> None:
-        """Resolve the settled Collections shell and patch it in place."""
-        try:
-            shell = self.query_one(
-                "#library-collections-reader-shell", LibraryAdaptiveReaderShell
-            )
-        except (NoMatches, QueryError):
-            return
-        width = shell.content_size.width
-        if width <= 0 or not self._library_adaptive_reader_allocation_is_current(shell):
-            return
-        previous = self._library_collections_reader_layout
-        if (
-            previous.reader_width == 0
-            and previous.library_width == 0
-            and previous.items_width == 0
-        ):
-            previous = None
-        layout = resolve_adaptive_reader_layout(
-            width,
-            self._library_collections_reader_preferences,
-            LIBRARY_COLLECTIONS_READER_PROFILE,
-            previous=previous,
-            priority=priority,
-        )
-        shell.sync_layout(layout)
-        self._library_collections_reader_layout = layout
+        return self._collections_controller._sync_library_collections_reader_layout_from_shell(priority)
 
     def _mirror_library_conversation_reader_preference(
         self,
@@ -7066,20 +7046,7 @@ class LibraryScreen(BaseAppScreen):
         key: Literal["library_open", "items_open"],
         value: bool,
     ) -> None:
-        """Mirror one optimistic Collections pane choice into app config."""
-        app_config = getattr(self.app_instance, "app_config", None)
-        if not isinstance(app_config, dict):
-            return
-        library_config = app_config.setdefault("library", {})
-        if not isinstance(library_config, dict):
-            library_config = {}
-            app_config["library"] = library_config
-        section_name = "reader" if key == "library_open" else "collections_reader"
-        section = library_config.setdefault(section_name, {})
-        if not isinstance(section, dict):
-            section = {}
-            library_config[section_name] = section
-        section[key] = value
+        return self._collections_controller._mirror_library_collections_reader_preference(key, value)
 
     def _mirror_library_notes_reader_preference(
         self,
@@ -7171,7 +7138,7 @@ class LibraryScreen(BaseAppScreen):
         """Replace one pane choice, sharing only the Library-pane preference."""
         attributes = {
             "media": "_library_media_reader_preferences",
-            "collections": "_library_collections_reader_preferences",
+            "collections": "_collections_state.reader_preferences",
             "conversations": "_conversations_state.reader_preferences",
             "notes": "_library_notes_reader_preferences",
             "notes_files": "_library_file_notes_reader_preferences",
@@ -7315,7 +7282,7 @@ class LibraryScreen(BaseAppScreen):
         authority = self._library_reader_persistence_key(destination, pane)
         preferences_attribute = {
             "media": "_library_media_reader_preferences",
-            "collections": "_library_collections_reader_preferences",
+            "collections": "_collections_state.reader_preferences",
             "conversations": "_conversations_state.reader_preferences",
             "notes": "_library_notes_reader_preferences",
             "notes_files": "_library_file_notes_reader_preferences",
@@ -7324,7 +7291,7 @@ class LibraryScreen(BaseAppScreen):
         }[destination]
         locks = {
             "media": self._library_media_reader_persistence_locks,
-            "collections": self._library_collections_reader_persistence_locks,
+            "collections": self._collections_state.reader_persistence_locks,
             "conversations": self._conversations_state.reader_persistence_locks,
             "notes": self._library_notes_reader_persistence_locks,
             "notes_files": self._library_file_notes_reader_persistence_locks,
@@ -7644,7 +7611,7 @@ class LibraryScreen(BaseAppScreen):
         (
             self._library_reader_shared_preferences,
             self._library_media_reader_preferences,
-            self._library_collections_reader_preferences,
+            self._collections_state.reader_preferences,
             self._conversations_state.reader_preferences,
             self._library_notes_reader_preferences,
             self._library_file_notes_reader_preferences,
@@ -7653,7 +7620,7 @@ class LibraryScreen(BaseAppScreen):
         ) = self._load_library_reader_preference_snapshot()
         current_values = {
             "library": self._library_reader_shared_preferences.library_open,
-            "collections_items": self._library_collections_reader_preferences.items_open,
+            "collections_items": self._collections_state.reader_preferences.items_open,
             "conversations_items": self._conversations_state.reader_preferences.items_open,
             "media_items": self._library_media_reader_preferences.items_open,
             "notes_items": self._library_notes_reader_preferences.items_open,
@@ -7746,7 +7713,7 @@ class LibraryScreen(BaseAppScreen):
         """Apply and persist one manual preferred pane choice."""
         event.stop()
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
-            layout = self._library_collections_reader_layout
+            layout = self._collections_state.reader_layout
             opening = not (
                 layout.library_open if event.pane == "library" else layout.items_open
             )
@@ -9507,14 +9474,14 @@ class LibraryScreen(BaseAppScreen):
             )
         if (
             self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
-            and self._library_export_counts is None
+            and self._export_state.counts is None
         ):
             # Same restored-placeholder class as the media viewer/notes
             # editor above: a cross-visit ``restore_state`` (or a tab
             # round-trip whose ``save_state`` persisted
             # ``_library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT``)
             # lands a fresh instance on the export canvas with
-            # ``_library_export_counts is None`` -> the scope line renders
+            # ``_export_state.counts is None`` -> the scope line renders
             # "Counting…" and Export stays disabled. But the counts worker
             # is only kicked from the two LIVE entry points
             # (``_select_library_rail_row`` and
@@ -9696,9 +9663,7 @@ class LibraryScreen(BaseAppScreen):
 
     @staticmethod
     def _restore_library_collections_page(state: Mapping[str, Any]) -> int:
-        """Return one strict page number for the capture reader."""
-        page = state.get("library_collections_page", 1)
-        return page if type(page) is int and 1 <= page <= 2**31 - 1 else 1
+        return LibraryCollectionsController._restore_library_collections_page(state)
 
     def save_state(self) -> dict[str, Any]:
         """Persist Library selection/view state for the next visit.
@@ -9794,8 +9759,8 @@ class LibraryScreen(BaseAppScreen):
         # task-2858 AC#3 (LIB-12): extend the receipt's durability past a
         # full navigate-away-and-back, not just within-instance canvas
         # switches (see the field's own ``__init__`` comment).
-        state["library_export_last_path"] = self._library_export_last_path
-        state["library_export_last_at"] = self._library_export_last_at
+        state["library_export_last_path"] = self._export_state.last_path
+        state["library_export_last_at"] = self._export_state.last_at
         return state
 
     @staticmethod
@@ -10185,7 +10150,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_skills_browse_controller.invalidate(restored_skills_scope)
         self._library_skills_sort = restored_skills_scope.sort
         self._library_skills_filter = restored_skills_scope.query
-        self._library_collections_requested_page = (
+        self._collections_state.requested_page = (
             self._restore_library_collections_page(state)
         )
         selected_prompt_id = state.get("selected_prompt_id")
@@ -10254,7 +10219,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_skills_view = "list"
                 self._selected_skill_name = ""
             elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
-                self._library_collections_requested_page = scope.get("page", 1)
+                self._collections_state.requested_page = scope.get("page", 1)
             elif row_id == LIBRARY_ROW_BROWSE_SEARCH:
                 self._library_rag_query = scope["query"]
                 self._library_rag_mode = scope["mode"]
@@ -10263,11 +10228,11 @@ class LibraryScreen(BaseAppScreen):
         # (see the field's ``__init__`` comment) -- a foreign/corrupted
         # dict degrades to "no receipt yet" rather than raising.
         last_export_path = state.get("library_export_last_path")
-        self._library_export_last_path = (
+        self._export_state.last_path = (
             last_export_path if isinstance(last_export_path, str) else ""
         )
         last_export_at = state.get("library_export_last_at")
-        self._library_export_last_at = (
+        self._export_state.last_at = (
             float(last_export_at)
             if isinstance(last_export_at, (int, float))
             and not isinstance(last_export_at, bool)
@@ -14066,50 +14031,7 @@ class LibraryScreen(BaseAppScreen):
     def _library_collections_capture_presentation(
         self,
     ) -> CollectionsCaptureReaderPresentation:
-        """Project source-neutral capture state into the render-only panes."""
-        runtime_policy = getattr(self.app_instance, "runtime_policy", None)
-        runtime_state = runtime_policy.state if runtime_policy is not None else None
-        active_source = str(
-            getattr(runtime_state, "active_source", "local") or "local"
-        ).lower()
-        controller = self._library_collections_capture_controller
-        state = (
-            controller.state
-            if controller is not None
-            else CollectionsCaptureControllerState(
-                page_error="capture_authority_unavailable"
-            )
-        )
-        return CollectionsCaptureReaderPresentation(
-            state=state,
-            capabilities=self._library_collections_capture_capabilities,
-            saved_searches=self._library_collections_saved_searches,
-            saved_searches_total=self._library_collections_saved_searches_total,
-            active_scope=self._library_collections_active_scope,
-            authority_label="Server" if active_source == "server" else "Local",
-            mode=self._library_collections_reader_mode,
-            highlights=self._library_collections_highlights,
-            quick_capture_open=self._library_collections_quick_capture_open,
-            quick_capture_url=self._library_collections_quick_capture_url,
-            quick_capture_title=self._library_collections_quick_capture_title,
-            quick_capture_tags=self._library_collections_quick_capture_tags,
-            quick_capture_note=self._library_collections_quick_capture_note,
-            save_outcome_unknown=self._library_collections_save_outcome_unknown,
-            confirming_save_retry=(
-                self._library_collections_confirming_save_retry
-            ),
-            quick_capture_saving=self._library_collections_quick_capture_saving,
-            filters_open=self._library_collections_filters_open,
-            more_open=self._library_collections_more_open,
-            confirming_hard_delete=(
-                self._library_collections_confirming_hard_delete
-            ),
-            legacy_recovery_rows=self._library_collections_legacy_recovery_rows,
-            legacy_recovery_open=self._library_collections_legacy_recovery_open,
-            legacy_recovery_lines=self._library_collections_legacy_recovery_lines,
-            action_status=self._library_collections_action_status,
-            action_content=self._library_collections_action_content,
-        )
+        return self._collections_controller._library_collections_capture_presentation()
 
     def _workspace_handoff_summary_label(
         self, state: LibraryWorkspaceDepthState
@@ -14610,7 +14532,7 @@ class LibraryScreen(BaseAppScreen):
                     library=rail,
                     items=items_host,
                     work=work,
-                    layout=self._library_collections_reader_layout,
+                    layout=self._collections_state.reader_layout,
                     id_prefix="library-collections",
                     library_label="Library",
                     items_label="Items",
@@ -19853,153 +19775,20 @@ class LibraryScreen(BaseAppScreen):
 
     @staticmethod
     def _default_library_export_form() -> dict[str, Any]:
-        """Build a fresh export form echo: today's stamped name, nothing else set."""
-        return {
-            "name": default_export_name(),
-            "description": "",
-            "quality": DEFAULT_MEDIA_QUALITY,
-            "destination": "",
-            "destination_exists": False,
-        }
+        return LibraryExportController._default_library_export_form()
 
-    def _reset_library_export_transient_state(
-        self, scope: ExportScope | None = None
-    ) -> None:
-        """Clear the export canvas's scope/counts/form to defaults on entry.
-
-        Called from both entry points into the export canvas -- the rail
-        row's own ``_select_library_rail_row`` switch (always the default
-        Everything ``scope``) and the browse-canvas "Export…" section
-        actions (``_open_library_export_canvas``, their own pre-scoped
-        ``ExportScope``) -- so neither a stale form from a previous Export
-        visit nor a stale scope/counts pairing from a different section
-        ever reappears. The name field re-stamps today's local date every
-        time (mirrors the ingest form's own from-scratch reset), never
-        carrying a previous visit's edited name forward.
-
-        Also invalidates any export run still executing on its own OS
-        thread (bumps ``_library_export_run_id``) -- navigating away mid-
-        run resets ``running`` to ``False`` for THIS fresh visit, but the
-        abandoned worker keeps running regardless (it cannot be preempted
-        mid-``asyncio.run``); bumping the token here ensures that worker's
-        eventual completion is recognized as stale and cannot stomp
-        whatever the user is looking at by the time it lands. See
-        ``_library_export_run_id``'s docstring in ``__init__``.
-
-        Args:
-            scope: The scope to open the canvas with; defaults to
-                ``ExportScope(kind="everything")`` when omitted.
-        """
-        self._library_export_scope = scope or ExportScope(kind="everything")
-        self._library_export_counts = None
-        self._library_export_form = self._default_library_export_form()
-        # task-14902: a fresh visit never inherits a half-open quality strip.
-        self._library_export_quality_choices_visible = False
-        self._library_export_running = False
-        self._library_export_error = ""
-        self._library_export_status = ""
-        if self._library_export_cancel_event is not None:
-            self._library_export_cancel_event.set()
-        self._library_export_run_id += 1
+    def _reset_library_export_transient_state(self, scope: ExportScope | None=None) -> None:
+        return self._export_controller._reset_library_export_transient_state(scope)
 
     async def _open_library_export_canvas(self, scope: ExportScope) -> None:
-        """Open the export canvas pre-scoped to a browse section's own filter.
-
-        Wired to each browse canvas's "Export…" action (media/
-        conversations/notes/Prompts) -- mirrors ``_select_library_rail_row``'s
-        dirty-note-flush discipline for switching canvases, but only
-        touches the export-specific state (the rail row's own switch
-        already resets everything else on the way past); the caller's
-        ``scope`` survives untouched (unlike a plain rail-row switch,
-        which always resets to Everything).
-
-        Args:
-            scope: The section-specific scope to open the form with (e.g.
-                ``ExportScope(kind="media", media_type=...)``).
-        """
-        if self._library_prompts_mutation_in_flight:
-            return
-        if self._library_export_is_server_mode():
-            # The section "Export..." actions bypass the rail row's own
-            # server-disabled gate, so re-check here (Qodo review): export
-            # reads the LOCAL DBs, so running it while the Library is in
-            # server runtime mode would package the wrong dataset.
-            self.app_instance.notify(
-                LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP, severity="warning"
-            )
-            return
-        note_flush = await self._flush_library_note_save()
-        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
-            return
-        # task-4023 AC#7: remember which canvas opened Export so Escape
-        # (action_library_export_back) can return there -- "Export… from
-        # within Media navigates away with no return path". Recorded
-        # AFTER the flush admits the switch, BEFORE the row id moves.
-        self._library_export_origin_row_id = self._library_selected_row_id
-        self._set_library_destination_with_conversation_fence(LIBRARY_ROW_INGEST_EXPORT)
-        self._reset_library_export_transient_state(scope)
-        # task-21116: rail selection + canvas-child swap only, never a
-        # whole-screen rebuild for a per-click section "Export…" action.
-        await self._apply_library_open_item_surface(
-            lambda: LibraryExportCanvas(
-                self._build_library_export_state(),
-                id="library-export-canvas",
-            )
-        )
-        self._start_library_export_counts_worker()
-
-    def _library_export_is_server_mode(self) -> bool:
-        """True when the Library is in server runtime mode.
-
-        Export packages LOCAL content only (it reads the local media /
-        ChaChaNotes / Prompt DBs), so both the rail Export row and the section
-        "Export..." actions must refuse to run in server mode.
-        """
-        runtime_policy = getattr(self.app_instance, "runtime_policy", None)
-        runtime_state = runtime_policy.state if runtime_policy is not None else None
-        active_source = str(
-            getattr(runtime_state, "active_source", "local") or "local"
-        ).lower()
-        return active_source == "server"
+        return await self._export_controller._open_library_export_canvas(scope)
 
     def _resolve_library_export_chachanotes_db(self) -> Any:
-        """Return the ChaChaNotes DB handle for export counts.
-
-        Mirrors ``_resolve_library_notes_sync_db``'s exact access path
-        (prefer ``app_instance.chachanotes_db``, fall back to
-        ``notes_service.db``) -- the same canonical DB-access path this
-        screen already uses elsewhere, per the F4 brief's requirement that
-        the counts worker reach the DB the same way the rest of the
-        screen does.
-        """
-        notes_service = getattr(self.app_instance, "notes_service", None)
-        return getattr(self.app_instance, "chachanotes_db", None) or getattr(
-            notes_service, "db", None
-        )
+        return self._export_controller._resolve_library_export_chachanotes_db()
 
     @staticmethod
-    def _compute_library_export_counts(
-        scope: ExportScope,
-        media_db: Any,
-        chachanotes_db: Any,
-        prompts_db: Any,
-    ) -> dict[str, int]:
-        """Run the full-query, uncapped counts for ``scope`` (never a rendered snapshot).
-
-        A quiet-degrade failure (a missing DB seam, an unexpected DB
-        error) reports all-zero counts rather than raising -- the export
-        canvas simply shows "Nothing to export in this scope." rather
-        than crashing the recompose; the failure is still logged.
-        """
-        try:
-            return count_export_scope(scope, media_db, chachanotes_db, prompts_db)
-        except Exception as exc:
-            logger.warning(
-                "Library export counts failed scope_kind={} category={}",
-                scope.kind,
-                type(exc).__name__,
-            )
-            return {"media": 0, "conversations": 0, "notes": 0, "prompts": 0}
+    def _compute_library_export_counts(scope: ExportScope, media_db: Any, chachanotes_db: Any, prompts_db: Any) -> dict[str, int]:
+        return LibraryExportController._compute_library_export_counts(scope, media_db, chachanotes_db, prompts_db)
 
     def _start_library_export_counts_worker(self) -> None:
         """Kick off the export scope's full-query counts (Task 1's resolver).
@@ -20013,9 +19802,9 @@ class LibraryScreen(BaseAppScreen):
         A real (file-backed) deployment always takes the
         ``group="library_export_counts"`` worker-thread path.
         """
-        self._library_export_counts_request_id += 1
-        request_id = self._library_export_counts_request_id
-        scope = self._library_export_scope
+        self._export_state.counts_request_id += 1
+        request_id = self._export_state.counts_request_id
+        scope = self._export_state.scope
         generation = self._library_snapshot_state_generation
         route_key = self._library_entry_route_key()
         media_db = getattr(self.app_instance, "media_db", None)
@@ -20138,9 +19927,9 @@ class LibraryScreen(BaseAppScreen):
                 "prompts").
             request_id: Monotonic identity of the Export visit/count request.
         """
-        if request_id != self._library_export_counts_request_id:
+        if request_id != self._export_state.counts_request_id:
             return LibraryEntryReconcileResult.SUPERSEDED
-        if scope != self._library_export_scope:
+        if scope != self._export_state.scope:
             return LibraryEntryReconcileResult.SUPERSEDED
         if (
             generation is not None
@@ -20168,7 +19957,7 @@ class LibraryScreen(BaseAppScreen):
         active_route_key = self._library_entry_route_key()
         if not self._library_entry_reconcile_is_current(generation, active_route_key):
             return LibraryEntryReconcileResult.SUPERSEDED
-        self._library_export_counts = counts
+        self._export_state.counts = counts
         state = self._build_library_export_state()
         try:
             canvas = self.query_one("#library-export-canvas", LibraryExportCanvas)
@@ -20202,117 +19991,53 @@ class LibraryScreen(BaseAppScreen):
 
     def _build_library_export_state(self) -> LibraryExportFormState:
         """Build the export canvas's full display state from screen fields."""
-        form = self._library_export_form
+        form = self._export_state.form
         last_export_line = (
             format_last_export_line(
-                self._library_export_last_path, self._library_export_last_at
+                self._export_state.last_path, self._export_state.last_at
             )
-            if self._library_export_last_path
-            and self._library_export_last_at is not None
+            if self._export_state.last_path
+            and self._export_state.last_at is not None
             else ""
         )
         return build_library_export_form_state(
-            scope=self._library_export_scope,
-            counts=self._library_export_counts,
+            scope=self._export_state.scope,
+            counts=self._export_state.counts,
             name=str(form.get("name", "")),
             description=str(form.get("description", "")),
             media_quality=str(form.get("quality", DEFAULT_MEDIA_QUALITY)),
             destination=str(form.get("destination", "")),
             destination_exists=bool(form.get("destination_exists", False)),
-            running=self._library_export_running,
-            status_line=self._library_export_status,
-            error_line=self._library_export_error,
+            running=self._export_state.running,
+            status_line=self._export_state.status,
+            error_line=self._export_state.error,
             last_export_line=last_export_line,
-            quality_choices_visible=self._library_export_quality_choices_visible,
+            quality_choices_visible=self._export_state.quality_choices_visible,
         )
 
     # ----- Export canvas: execution (Task 3) ------------------------------
 
     @on(Button.Pressed, "#library-export-submit")
     def handle_library_export_submit(self, event: Button.Pressed) -> None:
-        """Validate and kick off the chatbook export worker.
-
-        Re-validates on the UI thread (destination chosen, scope non-empty,
-        not already running) rather than trusting the button's ``disabled``
-        state alone. A second press while an export is already running is a
-        guarded no-op here (``self._library_export_running``) -- on top of
-        the button itself being disabled while running and the worker's own
-        ``group="library_export"``/``exclusive=True`` single-flight, this is
-        belt-and-suspenders against a stale/racing ``Pressed`` event.
-
-        The transition INTO ``running`` is the one place this feature uses
-        a full recompose rather than a targeted update (see
-        ``_update_library_export_canvas_after_run``'s docstring for the
-        reverse transition's targeted-update discipline): the user's last
-        action was clicking this button, not typing, so nothing is
-        mid-keystroke -- unlike the counts-landing case Task 2 fixed, or
-        the run-completion case below, where the (long-running) wait window
-        gives the user time to resume typing in the still-editable name/
-        description fields. Worker dispatch runs after that refresh so an
-        immediate completion always targets the newly mounted running canvas,
-        never the outgoing form that the recompose is replacing.
-        """
-        event.stop()
-        if self._library_export_running:
-            return
-        form = self._library_export_form
-        destination = str(form.get("destination", "")).strip()
-        counts = self._library_export_counts
-        total = sum(counts.values()) if counts else 0
-        if not destination or total <= 0:
-            return
-        if self._library_export_is_server_mode():
-            # Defense in depth: the rail row and section actions already
-            # gate on server mode, but re-check at submit in case the
-            # runtime source flipped while the form was open (Qodo review).
-            self.app_instance.notify(
-                LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP, severity="warning"
-            )
-            return
-        # Sanitize name/description at the UI boundary before they flow into
-        # the export payload, chatbook manifest, and Artifacts registry
-        # (Qodo review) -- bound length + strip unsafe content via the shared
-        # input_validation helpers, mirroring the media-field path.
-        name = self._safe_text(form.get("name", ""), "Chatbook", max_length=200)
-        description = self._safe_text(form.get("description", ""), "", max_length=2000)
-        media_quality = str(form.get("quality", DEFAULT_MEDIA_QUALITY))
-        self._library_export_running = True
-        self._library_export_error = ""
-        self._library_export_status = f"Exporting… ({total} items)"
-        self._library_export_run_id += 1
-        run_id = self._library_export_run_id
-        self._library_export_cancel_event = threading.Event()
-        cancel_event = self._library_export_cancel_event
-        self.refresh(recompose=True)
-        self.call_after_refresh(self._sync_library_emergency_guard_presentation)
-        self.call_after_refresh(
-            self._start_library_export_worker,
-            run_id=run_id,
-            scope=self._library_export_scope,
-            name=name,
-            description=description,
-            media_quality=media_quality,
-            destination=destination,
-            cancel_event=cancel_event,
-        )
+        return self._export_controller.handle_library_export_submit(event)
 
     @on(Button.Pressed, "#library-export-cancel")
     def handle_library_export_cancel(self, event: "Button.Pressed") -> None:
         """Request cancellation of the in-flight export.
 
         Sets the worker's cancel Event (idempotent) and flips the status line to
-        "Cancelling…". Deliberately does NOT bump _library_export_run_id: the run
+        "Cancelling…". Deliberately does NOT bump _export_state.run_id: the run
         is still the current, visible one until the worker reports back with the
         cancelled outcome (see _apply_library_export_cancelled).
         """
-        if not self._library_export_running:
+        if not self._export_state.running:
             return
         if event is not None:
             event.stop()
-        event_obj = self._library_export_cancel_event
+        event_obj = self._export_state.cancel_event
         if event_obj is not None:
             event_obj.set()
-        self._library_export_status = "Cancelling…"
+        self._export_state.status = "Cancelling…"
         self._refresh_library_export_status_line()
 
     def _start_library_export_worker(
@@ -20386,121 +20111,12 @@ class LibraryScreen(BaseAppScreen):
         )
 
     @staticmethod
-    def _build_library_export_payload(
-        *,
-        name: str,
-        description: str,
-        selections: Mapping[ContentType, list[str]],
-        destination: str,
-        media_quality: str,
-    ) -> dict[str, Any]:
-        """Build the ``local_chatbook_service.export_chatbook`` request payload.
-
-        ``include_media`` is spec-critical (F4 plan Global Constraints):
-        it MUST be ``True`` whenever ``ContentType.MEDIA`` is present in
-        ``selections`` -- ``ChatbookCreator`` silently skips all media
-        content otherwise, even when media ids ARE present in
-        ``content_selections``. Since ``resolve_export_selections`` omits
-        a ``ContentType`` key entirely when that source resolves zero ids
-        (see its docstring), keying off simple membership is automatically
-        correct for every scope, including an "everything" scope whose
-        library happens to have no media at all.
-        """
-        return {
-            "name": name,
-            "description": description,
-            "content_selections": dict(selections),
-            "output_path": destination,
-            "media_quality": media_quality,
-            "include_media": ContentType.MEDIA in selections,
-        }
+    def _build_library_export_payload(*, name: str, description: str, selections: Mapping[ContentType, list[str]], destination: str, media_quality: str) -> dict[str, Any]:
+        return LibraryExportController._build_library_export_payload(name=name, description=description, selections=selections, destination=destination, media_quality=media_quality)
 
     @staticmethod
-    def _run_library_export_via_service(
-        service: Any,
-        payload: dict[str, Any],
-        *,
-        name: str,
-        description: str,
-        progress_callback=None,
-        cancel_check=None,
-    ) -> dict[str, Any]:
-        """Execute one export through ``service``, synchronously: zip first, registry only on success.
-
-        Runs both of ``service``'s async-signature/sync-body methods
-        through ``asyncio.run`` -- they never touch the app's own event
-        loop, so this is only ever safe to call from a genuine OS thread
-        (never the UI thread, which already owns a running loop). Exposed
-        as its own (non-``@work``) static method so tests can call it
-        directly with a fake ``service`` and assert call ordering /
-        the include_media invariant without booting a real thread.
-
-        ``create_chatbook`` (the registry record) is attempted ONLY when
-        ``export_chatbook`` reports ``success`` -- the F4 plan's Global
-        Constraints' "zip first, registry record only on success". A
-        registry-recording failure AFTER a successful zip does not flip
-        the overall outcome to failure (the artifact genuinely exists on
-        disk; only the bookkeeping failed) -- ``registry_recorded``
-        reports that separately for callers/tests that care.
-
-        Returns a plain dict: ``success``, ``message``, ``path``,
-        ``dependency_info``, ``registry_recorded``.
-        """
-        try:
-            export_result = asyncio.run(  # policy-exception: worker-thread loop
-                service.export_chatbook(
-                    payload,
-                    progress_callback=progress_callback,
-                    cancel_check=cancel_check,
-                )
-            )
-        except Exception as exc:
-            logger.opt(exception=True).warning("Library export service call failed.")
-            return {
-                "success": False,
-                "message": f"Export failed: {exc}",
-                "path": "",
-                "dependency_info": {},
-                "registry_recorded": False,
-                "cancelled": False,
-            }
-
-        if not export_result.get("success"):
-            return {
-                "success": False,
-                "message": str(export_result.get("message") or "Export failed."),
-                "path": export_result.get("path") or payload.get("output_path", ""),
-                "dependency_info": export_result.get("dependency_info") or {},
-                "registry_recorded": False,
-                "cancelled": bool(export_result.get("cancelled", False)),
-            }
-
-        output_path = export_result.get("path") or payload.get("output_path", "")
-        dependency_info = export_result.get("dependency_info") or {}
-        registry_recorded = False
-        try:
-            asyncio.run(  # policy-exception: worker-thread loop
-                service.create_chatbook(
-                    name=name,
-                    description=description,
-                    file_path=output_path,
-                    tags=["library-export"],
-                )
-            )
-            registry_recorded = True
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Library export succeeded but registry recording failed for {output_path!r}."
-            )
-
-        return {
-            "success": True,
-            "message": export_result.get("message") or "",
-            "path": output_path,
-            "dependency_info": dependency_info,
-            "registry_recorded": registry_recorded,
-            "cancelled": False,
-        }
+    def _run_library_export_via_service(service: Any, payload: dict[str, Any], *, name: str, description: str, progress_callback=None, cancel_check=None) -> dict[str, Any]:
+        return LibraryExportController._run_library_export_via_service(service, payload, name=name, description=description, progress_callback=progress_callback, cancel_check=cancel_check)
 
     @work(thread=True, exclusive=True, group="library_export")
     def _run_library_export_worker(
@@ -20591,121 +20207,28 @@ class LibraryScreen(BaseAppScreen):
         else:
             self._marshal_library_export_failure(run_id, outcome["message"])
 
-    def _marshal_library_export_success(
-        self,
-        run_id: int,
-        path: str,
-        dependency_info: Any,
-        registry_recorded: bool,
-        message: str = "",
-    ) -> None:
-        """Marshal a successful run onto the UI thread (called from the worker)."""
-        try:
-            self.app.call_from_thread(
-                self._apply_library_export_success,
-                run_id,
-                path,
-                dependency_info,
-                registry_recorded,
-                message,
-            )
-        except Exception:
-            # A shutdown/detach mid-marshal can raise RuntimeError OR
-            # Textual's NoApp (which subclasses Exception, not RuntimeError)
-            # -- either way the worker thread must not crash on teardown.
-            pass
+    def _marshal_library_export_success(self, run_id: int, path: str, dependency_info: Any, registry_recorded: bool, message: str='') -> None:
+        return self._export_controller._marshal_library_export_success(run_id, path, dependency_info, registry_recorded, message)
 
     def _marshal_library_export_failure(self, run_id: int, message: str) -> None:
-        """Marshal a failed run onto the UI thread (called from the worker)."""
-        try:
-            self.app.call_from_thread(
-                self._apply_library_export_failure, run_id, message
-            )
-        except Exception:
-            # A shutdown/detach mid-marshal can raise RuntimeError OR
-            # Textual's NoApp (which subclasses Exception, not RuntimeError)
-            # -- either way the worker thread must not crash on teardown.
-            pass
+        return self._export_controller._marshal_library_export_failure(run_id, message)
 
     def _marshal_library_export_cancelled(self, run_id: int) -> None:
-        """Marshal a cancelled run onto the UI thread (called from the worker)."""
-        try:
-            self.app.call_from_thread(self._apply_library_export_cancelled, run_id)
-        except Exception:
-            # A shutdown/detach mid-marshal can raise RuntimeError OR
-            # Textual's NoApp (which subclasses Exception, not RuntimeError)
-            # -- either way the worker thread must not crash on teardown.
-            pass
+        return self._export_controller._marshal_library_export_cancelled(run_id)
 
     def _apply_library_export_cancelled(self, run_id: int) -> None:
         """UI-thread completion for a cancelled run: clear running, show cancelled, return to form."""
-        if run_id != self._library_export_run_id:
+        if run_id != self._export_state.run_id:
             return
-        self._library_export_running = False
-        self._library_export_status = "Export cancelled."
-        self._library_export_error = ""
+        self._export_state.running = False
+        self._export_state.status = "Export cancelled."
+        self._export_state.error = ""
         self._sync_library_emergency_guard_presentation()
         self._update_library_export_canvas_after_run()
 
     @staticmethod
-    def _build_library_export_success_message(
-        path: Any, dependency_info: Any, creator_message: Any = ""
-    ) -> str:
-        """Build the success notification text.
-
-        Three pieces, in order:
-
-        1. The destination path (always present), ``escape_markup``'d:
-           Textual notifications render Rich console markup, so a
-           user-chosen path containing ``[...]`` (legal in filenames on
-           any platform) would otherwise mis-render or raise in the
-           markup parser.
-        2. The creator's own ``outcome["message"]`` detail (task-158):
-           ``ChatbookCreator.create_chatbook`` returns a message carrying
-           its own counts (e.g. missing-dependency warnings) that was
-           previously discarded entirely by the caller. Its redundant
-           ``"Chatbook created successfully at <path>"`` prefix -- the
-           path is already the primary notify line above -- is stripped
-           so only the actual detail remains; an unrecognized message
-           shape (e.g. a different service implementation) is kept
-           verbatim rather than guessed at.
-        3. The ``dependency_info.get("auto_included")`` count suffix (the
-           character ids ``ChatbookCreator`` pulled in automatically as
-           conversation dependencies) -- BUT only when the creator detail
-           above does not already state it. ``create_chatbook`` already
-           puts an ``"Auto-included N character dependencies"`` clause
-           into its own message (that clause and ``auto_included`` derive
-           from the same ``self.auto_included_characters`` state), so
-           emitting the suffix on top of a detail that carries that clause
-           would restate the identical fact twice. The suffix therefore
-           only fires when the auto-included count would otherwise go
-           unstated (e.g. an empty creator message, or a creator message
-           whose only detail is a missing-dependency warning).
-        """
-        message = f"Exported bundle to {escape_markup(str(path))}"
-
-        detail = str(creator_message or "").strip()
-        known_prefix = f"Chatbook created successfully at {path}"
-        if detail.startswith(known_prefix):
-            detail = detail[len(known_prefix) :].strip(" .")
-        if detail:
-            message += f": {escape_markup(detail)}"
-
-        auto_included = (
-            dependency_info.get("auto_included")
-            if isinstance(dependency_info, dict)
-            else None
-        )
-        # De-dup: skip the suffix when the surfaced detail already states
-        # the auto-included count (see point 3 above).
-        if auto_included and "auto-included" not in detail.lower():
-            try:
-                count = len(auto_included)
-            except TypeError:
-                count = auto_included
-            message += f" ({count} characters auto-included)"
-
-        return message
+    def _build_library_export_success_message(path: Any, dependency_info: Any, creator_message: Any='') -> str:
+        return LibraryExportController._build_library_export_success_message(path, dependency_info, creator_message)
 
     def _apply_library_export_success(
         self,
@@ -20734,15 +20257,15 @@ class LibraryScreen(BaseAppScreen):
         would otherwise never learn the artifact is missing from
         Artifacts.
 
-        ``run_id`` is compared against the live ``_library_export_run_id``
+        ``run_id`` is compared against the live ``_export_state.run_id``
         BEFORE any state/DOM mutation: an export genuinely finished, so the
         notifications always fire, but a run the user has since navigated
-        away from (see ``_library_export_run_id``'s docstring) must not
-        stomp ``_library_export_running``/``_error``/``_status`` or the
+        away from (see ``_export_state.run_id``'s docstring, ``LibraryExportState``)
+        must not stomp ``_export_state.running``/``.error``/``.status`` or the
         canvas DOM out from under whatever the user is now looking at.
 
         The task-2858 AC#3 (LIB-12) receipt fields
-        (``_library_export_last_path``/``_last_at``) are set here too,
+        (``_export_state.last_path``/``.last_at``) are set here too,
         BEFORE the staleness guard, for the identical reason the
         notifications above are unconditional: the zip genuinely landed on
         disk regardless of which run/canvas is currently displayed. The
@@ -20766,61 +20289,30 @@ class LibraryScreen(BaseAppScreen):
                     "appear under Artifacts.",
                     severity="warning",
                 )
-        self._library_export_last_path = str(path)
-        self._library_export_last_at = time.time()
-        if run_id != self._library_export_run_id:
+        self._export_state.last_path = str(path)
+        self._export_state.last_at = time.time()
+        if run_id != self._export_state.run_id:
             return
-        self._library_export_running = False
-        self._library_export_error = ""
-        self._library_export_status = ""
+        self._export_state.running = False
+        self._export_state.error = ""
+        self._export_state.status = ""
         self._sync_library_emergency_guard_presentation()
         self._update_library_export_canvas_after_run()
 
     def _apply_library_export_failure(self, run_id: int, message: str) -> None:
-        """UI-thread completion: render the escaped error, clear running, re-enable Export.
-
-        See ``_apply_library_export_success``'s docstring for the
-        ``run_id`` staleness guard -- a superseded run's failure is
-        dropped silently here (no error line to render it into, since the
-        canvas may now belong to a different scope/visit entirely) rather
-        than notified, since surfacing a failure banner for a run the user
-        has already navigated away from and possibly re-run successfully
-        would be actively misleading.
-        """
-        if run_id != self._library_export_run_id:
-            logger.info(
-                f"Library export run {run_id} failed after being superseded "
-                f"(current run {self._library_export_run_id}): {message}"
-            )
-            return
-        self._library_export_running = False
-        self._library_export_status = ""
-        self._library_export_error = escape_markup(str(message))
-        self._sync_library_emergency_guard_presentation()
-        self._update_library_export_canvas_after_run()
+        return self._export_controller._apply_library_export_failure(run_id, message)
 
     def _apply_library_export_progress(
         self, run_id: int, phase: str, current: int, total: int
     ) -> None:
         """UI-thread progress tick: update the status line in place if this run is current."""
-        if run_id != self._library_export_run_id or not self._library_export_running:
+        if run_id != self._export_state.run_id or not self._export_state.running:
             return
-        self._library_export_status = format_export_progress_line(phase, current, total)
+        self._export_state.status = format_export_progress_line(phase, current, total)
         self._refresh_library_export_status_line()
 
     def _refresh_library_export_status_line(self) -> None:
-        """Update only the #library-export-status-line widget (no recompose)."""
-        if (
-            not self.is_mounted
-            or self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT
-        ):
-            return
-        try:
-            widget = self.query_one("#library-export-status-line", Static)
-            widget.update(self._library_export_status)
-            widget.display = bool(self._library_export_status)
-        except (NoMatches, QueryError):
-            pass
+        return self._export_controller._refresh_library_export_status_line()
 
     def _update_library_export_canvas_after_run(self) -> None:
         """Targeted DOM update once an export run finishes (success or failure).
@@ -20861,7 +20353,7 @@ class LibraryScreen(BaseAppScreen):
             error_widget.update(state.error_line)
             error_widget.display = bool(state.error_line)
             # task-2858 AC#3 (LIB-12): the durable receipt -- rendered from
-            # ``_library_export_last_path``/``_last_at``, set by
+            # ``_export_state.last_path``/``.last_at``, set by
             # ``_apply_library_export_success`` just before this runs on a
             # genuine success completion.
             last_export_widget = self.query_one("#library-export-last-line", Static)
@@ -23922,7 +23414,7 @@ class LibraryScreen(BaseAppScreen):
         # task-4023 AC#7: a plain rail switch is a fresh entry -- only
         # ``_open_library_export_canvas`` (which bypasses this seam) may
         # arm an Export back-origin.
-        self._library_export_origin_row_id = ""
+        self._export_state.origin_row_id = ""
         # task-420: keep the footer's "u" hint in sync with the row gate.
         self._register_footer_shortcuts()
         self._library_notes_explicit_stage_intent = row_id in {
@@ -28654,33 +28146,7 @@ class LibraryScreen(BaseAppScreen):
             self.call_after_refresh(self._focus_library_hub_entry)
 
     async def action_library_export_back(self) -> None:
-        """Escape: leave the Export canvas (task-4023 AC#7).
-
-        Returns to the canvas whose "Export…" action opened it (Media/
-        Conversations/Notes/Prompts -- the "navigates away with no return path"
-        finding), or to the hub landing when Export was entered from the
-        rail. A running export keeps running; the canvas's own state
-        (including the durable last-export receipt) survives exactly as a
-        rail switch would leave it.
-
-        task-14902: an open quality strip consumes the Escape first --
-        cancelling a half-made pick must not eject the user from the form.
-        """
-        if self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT:
-            return
-        if self._close_open_library_choice_strip():
-            return
-        if self._library_export_running:
-            self.handle_library_export_cancel(None)
-            return
-        origin = self._library_export_origin_row_id
-        self._library_export_origin_row_id = ""
-        if origin:
-            await self._select_library_rail_row(origin)
-            return
-        await self._select_library_rail_row("")
-        if self.is_mounted:
-            self.call_after_refresh(self._focus_library_hub_entry)
+        return await self._export_controller.action_library_export_back()
 
     async def action_library_handoff_back(self) -> None:
         """Escape: leave a Study staging canvas for the hub (task-4023 AC#7).
@@ -32234,12 +31700,12 @@ class LibraryScreen(BaseAppScreen):
             )
         if (
             self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
-            and self._library_export_quality_choices_visible
+            and self._export_state.quality_choices_visible
         ):
             return (
                 "quality",
                 "#library-export-quality",
-                "_library_export_quality_choices_visible",
+                "_export_state.quality_choices_visible",
             )
         return None
 
@@ -32254,14 +31720,14 @@ class LibraryScreen(BaseAppScreen):
         if open_strip is None:
             return False
         _subject, opener_selector, visibility_attr = open_strip
-        setattr(self, visibility_attr, False)
+        _assign_library_reader_preferences_attribute(self, visibility_attr, False)
         self._sync_library_emergency_guard_presentation()
         canvas_kind = {
             "_library_media_type_choices_visible": "media",
             "_library_media_sort_choices_visible": "media",
             "_library_prompts_sort_choices_visible": "prompts",
             "_library_skills_sort_choices_visible": "skills",
-            "_library_export_quality_choices_visible": "export",
+            "_export_state.quality_choices_visible": "export",
         }[visibility_attr]
         _sync_library_canvas(
             self,
@@ -37469,134 +36935,26 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Input.Changed, "#library-export-name")
     def handle_library_export_name_changed(self, event: Input.Changed) -> None:
-        """Track the export name text as the user types it (state only)."""
-        event.stop()
-        self._library_export_form["name"] = event.value
+        return self._export_controller.handle_library_export_name_changed(event)
 
     @on(Input.Changed, "#library-export-description")
     def handle_library_export_description_changed(self, event: Input.Changed) -> None:
-        """Track the export description text as the user types it (state only)."""
-        event.stop()
-        self._library_export_form["description"] = event.value
+        return self._export_controller.handle_library_export_description_changed(event)
 
     @on(Button.Pressed, "#library-export-quality")
     def handle_library_export_quality(self, event: Button.Pressed) -> None:
-        """Open or close the quality chooser's direct-pick strip.
-
-        task-14902: the per-press thumbnail/compressed/original cycle
-        retired -- the chooser opens a strip of all three values below the
-        (still-visible) button, so a second press here also closes it.
-
-        Args:
-            event: Button press event emitted by the quality control.
-        """
-        event.stop()
-        self._library_export_quality_choices_visible = (
-            not self._library_export_quality_choices_visible
-        )
-        self.refresh(recompose=True)
-        if self._library_export_quality_choices_visible:
-            self.call_after_refresh(
-                self._focus_library_choice_strip_active,
-                ".library-export-quality-choice",
-                str(self._library_export_form.get("quality", DEFAULT_MEDIA_QUALITY)),
-            )
-        else:
-            self.call_after_refresh(
-                self._focus_library_control, "#library-export-quality"
-            )
+        return self._export_controller.handle_library_export_quality(event)
 
     @on(Button.Pressed, ".library-export-quality-choice")
     def handle_library_export_quality_choice(self, event: Button.Pressed) -> None:
-        """Apply the exact quality value carried by one strip choice.
-
-        Args:
-            event: Button press event emitted by a quality-strip option.
-        """
-        event.stop()
-        requested = str(getattr(event.button, "choice_value", "") or "")
-        self._library_export_quality_choices_visible = False
-        if requested in MEDIA_QUALITY_OPTIONS:
-            self._library_export_form["quality"] = requested
-        self.refresh(recompose=True)
-        self.call_after_refresh(self._focus_library_control, "#library-export-quality")
+        return self._export_controller.handle_library_export_quality_choice(event)
 
     @on(Button.Pressed, "#library-export-destination")
     def handle_library_export_choose_destination(self, event: Button.Pressed) -> None:
-        """Push a ``FileSave`` dialog to pick the export's destination path.
-
-        Mirrors ``_export_library_note``'s dialog flow: a sanitized
-        default filename derived from the export name field, callback via
-        ``call_after_refresh`` so the write-path runs after this handler
-        returns. ``FileSave`` DOES have overwrite handling of its own
-        (``can_overwrite: bool = True`` -- ``False`` blocks picking an
-        existing file outright), but its default imposes no friction, and
-        more importantly it can only ever judge the RAW picked path: the
-        creator coerces the suffix to ``.zip``, so the path that must be
-        confirmed for overwrite is the *normalized* one, which the dialog
-        never sees. The form therefore owns overwrite confirmation of the
-        normalized path (see ``_apply_library_export_destination``), and
-        the dialog is deliberately left at its permissive default rather
-        than ``can_overwrite=False`` (which would wrongly block picking
-        ``report.zip`` even though the user is knowingly replacing it,
-        while failing to block picking ``report`` when ``report.zip``
-        exists).
-
-        Args:
-            event: Button press event emitted by the "Choose destination…"
-                action.
-        """
-        event.stop()
-        raw_name = str(self._library_export_form.get("name", "")).strip() or "bundle"
-        safe_name = (
-            "".join(
-                char for char in raw_name if char.isalnum() or char in (" ", "-", "_")
-            ).rstrip()
-            or "bundle"
-        )
-        self.app.push_screen(
-            FileSave(
-                location=str(Path.home()),
-                title="Choose Export Destination",
-                default_file=f"{safe_name}.zip",
-            ),
-            callback=lambda path: self.call_after_refresh(
-                self._apply_library_export_destination, path
-            ),
-        )
+        return self._export_controller.handle_library_export_choose_destination(event)
 
     def _apply_library_export_destination(self, selected_path: Path | None) -> None:
-        """Validate, ``.zip``-normalize, and apply a ``FileSave``-picked destination.
-
-        Runs the dialog-returned path through ``validate_path_simple``
-        (same base-directory-free validator ``_write_library_note_export_file``
-        uses for any user-chosen save path) BEFORE normalizing its suffix
-        to ``.zip`` -- and normalizes BEFORE checking whether it already
-        exists, so the overwrite line the form shows always names the
-        actual path that will be written, never the raw picked one (the
-        F4 design spec's explicit ordering: "normalized to .zip BEFORE any
-        overwrite confirmation").
-
-        Args:
-            selected_path: The chosen destination, or ``None`` if the
-                dialog was cancelled.
-        """
-        if not selected_path:
-            return
-        try:
-            validated_path = validate_path_simple(selected_path, require_exists=False)
-        except ValueError as exc:
-            logger.warning(
-                f"Rejected Library export destination {selected_path!r}: {exc}"
-            )
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify(f"Rejected export destination: {exc}", severity="warning")
-            return
-        normalized_path = normalize_export_destination(validated_path)
-        self._library_export_form["destination"] = str(normalized_path)
-        self._library_export_form["destination_exists"] = normalized_path.exists()
-        self.refresh(recompose=True)
+        return self._export_controller._apply_library_export_destination(selected_path)
 
     @on(Button.Pressed, ".library-notes-row")
     async def handle_library_notes_row(self, event: Button.Pressed) -> None:
@@ -42307,270 +41665,45 @@ class LibraryScreen(BaseAppScreen):
         return self._conversations_controller.handle_library_conversations_next(event)
 
 
-    def _library_collections_capture_request(
-        self,
-        *,
-        page: int | None = None,
-        search: str | None = None,
-    ) -> CapturePageRequest | None:
-        """Build the exact request for the active capture scope."""
-        controller = self._library_collections_capture_controller
-        if controller is None or controller.state.authority_key is None:
-            return None
-        authority_key = controller.state.authority_key
-        requested_page = page or self._library_collections_requested_page
-        current = controller.state.requested_scope
-        if (
-            current is not None
-            and current.authority_key == authority_key
-            and self._library_collections_active_scope.startswith("search:")
-        ):
-            request = dataclasses.replace(current, page=requested_page)
-        else:
-            status_by_scope = {
-                "saved": ("saved",),
-                "reading": ("reading",),
-                "read": ("read",),
-                "archived": ("archived",),
-            }
-            request = CapturePageRequest(
-                authority_key,
-                statuses=status_by_scope.get(
-                    self._library_collections_active_scope, ()
-                ),
-                favorite=(
-                    True
-                    if self._library_collections_active_scope == "favorites"
-                    else None
-                ),
-                page=requested_page,
-            )
-        if search is not None:
-            request = dataclasses.replace(request, search=search, page=1)
-        return request
-
     def _refresh_library_collections_capture_reader(self) -> None:
-        """Recompose the destination-owned capture panes from controller state."""
-        if (
-            self.is_mounted
-            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
-        ):
-            self.refresh(recompose=True)
+        return self._collections_controller._refresh_library_collections_capture_reader()
 
     async def _load_library_collections_capture_entry(self) -> None:
-        """Adopt app authority, load bounded rail data, page, and first detail."""
-        controller = self._ensure_library_collections_capture_controller()
-        if controller is None:
-            self._refresh_library_collections_capture_reader()
-            return
-        controller.adopt_active_authority()
-        self._refresh_library_collections_capture_reader()
-
-        if controller.state.authority_key is None:
-            return
-        scope = controller.scope_service
-        try:
-            self._library_collections_capture_capabilities = (
-                await scope.capabilities()
-            )
-        except Exception:
-            self._library_collections_capture_capabilities = None
-        try:
-            saved = await scope.list_saved_searches(1)
-        except Exception:
-            self._library_collections_saved_searches = ()
-            self._library_collections_saved_searches_total = 0
-        else:
-            self._library_collections_saved_searches = tuple(saved.items)
-            self._library_collections_saved_searches_total = saved.total
-        recovery = getattr(
-            self.app_instance, "collections_legacy_recovery_service", None
-        )
-        if recovery is not None:
-            try:
-                legacy = await asyncio.to_thread(
-                    recovery.list_collections,
-                    page=1,
-                    size=1,
-                )
-            except Exception:
-                self._library_collections_legacy_recovery_rows = 0
-            else:
-                self._library_collections_legacy_recovery_rows = legacy.total
-        request = self._library_collections_capture_request()
-        if request is None:
-            self._refresh_library_collections_capture_reader()
-            return
-        await controller.load_page(request)
-        self._library_collections_requested_page = (
-            controller.state.applied_scope.page
-            if controller.state.applied_scope is not None
-            else request.page
-        )
-        self._refresh_library_collections_capture_reader()
-        if controller.state.selected_identity is not None:
-            await controller.load_selected_now()
-        self._refresh_library_collections_capture_reader()
-
-    def _ensure_library_collections_capture_controller(
-        self,
-    ) -> LibraryCollectionsCaptureController | None:
-        """Bind the reader controller to the lazily composed app scope."""
-        controller = self._library_collections_capture_controller
-        if controller is not None:
-            return controller
-        ensure = getattr(
-            self.app_instance,
-            "ensure_collections_capture_services",
-            None,
-        )
-        if callable(ensure):
-            ensure()
-        scope = getattr(
-            self.app_instance,
-            "collections_capture_scope_service",
-            None,
-        )
-        if scope is None:
-            return None
-        controller = LibraryCollectionsCaptureController(scope)
-        self._library_collections_capture_controller = controller
-        return controller
+        return await self._collections_controller._load_library_collections_capture_entry()
 
     async def _run_library_collections_capture_transition(
         self,
         operation: Awaitable[bool],
     ) -> bool:
-        """Let loading state paint before awaiting one controller transition."""
-        task = asyncio.create_task(operation)
-        await asyncio.sleep(0)
-        self._refresh_library_collections_capture_reader()
-        result = await task
-        self._refresh_library_collections_capture_reader()
-        return result
-
-    def _notify_library_collections_warning(self, message: str) -> None:
-        notify = getattr(self.app_instance, "notify", None)
-        if callable(notify):
-            notify(message or "Collections action failed.", severity="warning")
+        return await self._collections_controller._run_library_collections_capture_transition(operation)
 
     @on(Button.Pressed, ".library-collections-item-row")
     async def select_library_collection_capture(self, event: Button.Pressed) -> None:
-        """Select a capture immediately and settle its detail request."""
-        event.stop()
-        identity = getattr(event.button, "capture_identity", None)
-        if identity is None:
-            return
-        await self._select_library_collection_capture(identity)
+        return await self._collections_controller.select_library_collection_capture(event)
 
     async def _select_library_collection_capture(
         self,
         identity: CaptureIdentity,
     ) -> None:
-        """Select one identity and clear results owned by the prior selection."""
-        controller = self._library_collections_capture_controller
-        if controller is None:
-            return
-        self._library_collections_action_status = ""
-        self._library_collections_action_content = ""
-        try:
-            await self._run_library_collections_capture_transition(
-                controller.select_item(identity)
-            )
-        except CollectionsCaptureError as exc:
-            self._notify_library_collections_warning(exc.reason)
+        return await self._collections_controller._select_library_collection_capture(identity)
 
     @on(Button.Pressed, ".library-collections-scope-row")
     async def select_library_collection_capture_scope(
         self, event: Button.Pressed
     ) -> None:
-        """Apply one built-in or saved capture scope from the Library rail."""
-        event.stop()
-        button_id = event.button.id or ""
-        prefix = "library-collections-scope-"
-        if button_id.startswith(prefix):
-            self._library_collections_active_scope = button_id[len(prefix) :]
-            request = self._library_collections_capture_request(page=1)
-        else:
-            search = next(
-                (
-                    item
-                    for item in self._library_collections_saved_searches
-                    if button_id.endswith(
-                        re.sub(r"[^a-zA-Z0-9_-]+", "-", item.search_id)
-                        .strip("-")[:48]
-                        or "item"
-                    )
-                ),
-                None,
-            )
-            if search is None:
-                return
-            self._library_collections_active_scope = f"search:{search.search_id}"
-            request = dataclasses.replace(search.request, page=1)
-        controller = self._library_collections_capture_controller
-        if controller is None or request is None:
-            return
-        self._library_collections_requested_page = 1
-        await self._run_library_collections_capture_transition(
-            controller.load_page(request)
-        )
-        if controller.state.selected_identity is not None:
-            await self._run_library_collections_capture_transition(
-                controller.load_selected_now()
-            )
+        return await self._collections_controller.select_library_collection_capture_scope(event)
 
     @on(Input.Submitted, "#library-collections-filter")
     async def filter_library_collection_captures(
         self, event: Input.Submitted
     ) -> None:
-        """Apply the literal capture filter as a fresh authoritative page."""
-        event.stop()
-        controller = self._library_collections_capture_controller
-        current = controller.state.requested_scope if controller is not None else None
-        request = (
-            dataclasses.replace(current, search=event.value, page=1)
-            if current is not None
-            else self._library_collections_capture_request(page=1, search=event.value)
-        )
-        if controller is None or request is None:
-            return
-        self._library_collections_requested_page = 1
-        await self._run_library_collections_capture_transition(
-            controller.load_page(request)
-        )
-        if controller.state.selected_identity is not None:
-            await self._run_library_collections_capture_transition(
-                controller.load_selected_now()
-            )
+        return await self._collections_controller.filter_library_collection_captures(event)
 
     @on(Button.Pressed, "#library-collections-quick-capture")
     def toggle_library_collection_quick_capture(
         self, event: Button.Pressed
     ) -> None:
-        """Open or close the compact capture form in the Items pane."""
-        event.stop()
-        self._library_collections_quick_capture_open = (
-            not self._library_collections_quick_capture_open
-        )
-        if not self._library_collections_quick_capture_open:
-            self._reset_library_collection_quick_capture_draft()
-        self._refresh_library_collections_capture_reader()
-
-    def _capture_library_collection_quick_capture_draft(self) -> None:
-        """Retain mounted form values across reader recomposition."""
-        self._library_collections_quick_capture_url = self.query_one(
-            "#library-collections-capture-url", Input
-        ).value
-        self._library_collections_quick_capture_title = self.query_one(
-            "#library-collections-capture-title", Input
-        ).value
-        self._library_collections_quick_capture_tags = self.query_one(
-            "#library-collections-capture-tags", Input
-        ).value
-        self._library_collections_quick_capture_note = self.query_one(
-            "#library-collections-capture-note", TextArea
-        ).text
+        return self._collections_controller.toggle_library_collection_quick_capture(event)
 
     @on(
         Input.Changed,
@@ -42580,326 +41713,67 @@ class LibraryScreen(BaseAppScreen):
     def retain_library_collection_quick_capture_input(
         self, event: Input.Changed
     ) -> None:
-        """Retain an in-progress capture when unrelated state recomposes."""
-        attributes = {
-            "library-collections-capture-url": (
-                "_library_collections_quick_capture_url"
-            ),
-            "library-collections-capture-title": (
-                "_library_collections_quick_capture_title"
-            ),
-            "library-collections-capture-tags": (
-                "_library_collections_quick_capture_tags"
-            ),
-        }
-        attribute = attributes.get(event.input.id or "")
-        if attribute is not None:
-            setattr(self, attribute, event.value)
+        return self._collections_controller.retain_library_collection_quick_capture_input(event)
 
     @on(TextArea.Changed, "#library-collections-capture-note")
     def retain_library_collection_quick_capture_note(
         self, event: TextArea.Changed
     ) -> None:
-        """Retain the capture note across unrelated reader recomposition."""
-        self._library_collections_quick_capture_note = event.text_area.text
-
-    def _reset_library_collection_quick_capture_draft(self) -> None:
-        """Clear the capture draft and any uncertain-save confirmation state."""
-        self._library_collections_quick_capture_url = ""
-        self._library_collections_quick_capture_title = ""
-        self._library_collections_quick_capture_tags = ""
-        self._library_collections_quick_capture_note = ""
-        self._library_collections_save_outcome_unknown = False
-        self._library_collections_confirming_save_retry = False
-        self._library_collections_quick_capture_saving = False
+        return self._collections_controller.retain_library_collection_quick_capture_note(event)
 
     @on(Button.Pressed, "#library-collections-capture-cancel")
     def cancel_library_collection_quick_capture(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        self._library_collections_quick_capture_open = False
-        self._reset_library_collection_quick_capture_draft()
-        self._refresh_library_collections_capture_reader()
+        return self._collections_controller.cancel_library_collection_quick_capture(event)
 
     @on(Button.Pressed, "#library-collections-capture-save")
     async def save_library_collection_quick_capture(
         self, event: Button.Pressed
     ) -> None:
-        """Persist a URL through the active capture authority and select it."""
-        event.stop()
-        if self._library_collections_quick_capture_saving:
-            return
-        self._capture_library_collection_quick_capture_draft()
-        if self._library_collections_save_outcome_unknown:
-            self._library_collections_confirming_save_retry = True
-            self._library_collections_action_status = (
-                "Confirm retry only after checking the refreshed capture list."
-            )
-            self._refresh_library_collections_capture_reader()
-            return
-        await self._submit_library_collection_quick_capture()
+        return await self._collections_controller.save_library_collection_quick_capture(event)
 
     @on(Button.Pressed, "#library-collections-capture-retry-confirm")
     async def retry_library_collection_quick_capture(
         self, event: Button.Pressed
     ) -> None:
-        """Issue one explicit retry after an indeterminate Server response."""
-        event.stop()
-        if self._library_collections_quick_capture_saving:
-            return
-        self._capture_library_collection_quick_capture_draft()
-        await self._submit_library_collection_quick_capture()
+        return await self._collections_controller.retry_library_collection_quick_capture(event)
 
     @on(Button.Pressed, "#library-collections-capture-retry-back")
     def cancel_library_collection_quick_capture_retry(
         self, event: Button.Pressed
     ) -> None:
-        """Return to the retained draft without issuing another save."""
-        event.stop()
-        self._capture_library_collection_quick_capture_draft()
-        self._library_collections_confirming_save_retry = False
-        self._refresh_library_collections_capture_reader()
+        return self._collections_controller.cancel_library_collection_quick_capture_retry(event)
 
     @on(Button.Pressed, "#library-collections-capture-refresh")
     async def refresh_library_collection_quick_capture(
         self, event: Button.Pressed
     ) -> None:
-        """Refresh authority state while retaining an indeterminate save draft."""
-        event.stop()
-        self._capture_library_collection_quick_capture_draft()
-        controller = self._library_collections_capture_controller
-        if controller is None or controller.state.authority_key is None:
-            return
-        request = controller.state.requested_scope
-        if request is None:
-            request = self._library_collections_capture_request(
-                page=self._library_collections_requested_page
-            )
-        if request is None:
-            return
-        await self._run_library_collections_capture_transition(
-            controller.load_page(request)
-        )
-        if controller.state.selected_identity is not None:
-            await self._run_library_collections_capture_transition(
-                controller.load_selected_now()
-            )
-        self._library_collections_action_status = (
-            "Capture list refreshed. Confirm whether the URL is present before retrying."
-        )
-        self._refresh_library_collections_capture_reader()
-
-    async def _submit_library_collection_quick_capture(self) -> None:
-        """Submit the retained capture draft exactly once."""
-        controller = self._library_collections_capture_controller
-        if controller is None or controller.state.authority_key is None:
-            return
-        url = self._library_collections_quick_capture_url.strip()
-        if not validate_url(url):
-            self._library_collections_action_status = (
-                "Enter a valid http or https URL before saving."
-            )
-            self._notify_library_collections_warning(
-                self._library_collections_action_status
-            )
-            self._refresh_library_collections_capture_reader()
-            return
-        title = self._library_collections_quick_capture_title.strip()
-        tags = tuple(
-            part.strip()
-            for part in self._library_collections_quick_capture_tags.split(",")
-            if part.strip()
-        )
-        note = self._library_collections_quick_capture_note
-        self._library_collections_quick_capture_saving = True
-        self._library_collections_action_status = "Saving capture…"
-        self._library_collections_action_content = ""
-        self._refresh_library_collections_capture_reader()
-        try:
-            outcome = await controller.scope_service.save_capture(
-                CaptureSaveRequest(
-                    controller.state.authority_key,
-                    url,
-                    title=title or None,
-                    tags=tags,
-                    freeform_note=note or None,
-                )
-            )
-        except CollectionsCaptureError as exc:
-            self._library_collections_quick_capture_saving = False
-            self._library_collections_action_status = (
-                f"Capture was not saved: {exc.reason.replace('_', ' ')}."
-            )
-            self._notify_library_collections_warning(exc.reason)
-            self._refresh_library_collections_capture_reader()
-            return
-        except Exception:
-            self._library_collections_quick_capture_saving = False
-            self._library_collections_action_status = "Capture was not saved."
-            self._notify_library_collections_warning("capture_save_failed")
-            self._refresh_library_collections_capture_reader()
-            return
-        if outcome.outcome_unknown:
-            self._library_collections_quick_capture_saving = False
-            self._library_collections_save_outcome_unknown = True
-            self._library_collections_confirming_save_retry = False
-            self._library_collections_action_status = (
-                "Save outcome unknown. Refresh before retrying."
-            )
-            self._refresh_library_collections_capture_reader()
-            return
-
-        authority = controller.scope_service.active_authority
-        owner = "locally" if authority is not None and authority.kind == "local" else "to Server"
-        self._library_collections_action_status = (
-            f"Saved {owner}; extraction continues in the background."
-            if outcome.extraction_pending
-            else f"Saved {owner}."
-        )
-        self._library_collections_quick_capture_open = False
-        self._reset_library_collection_quick_capture_draft()
-        request = self._library_collections_capture_request(page=1)
-        if request is None:
-            self._refresh_library_collections_capture_reader()
-            return
-        self._library_collections_requested_page = 1
-        await self._run_library_collections_capture_transition(
-            controller.load_page(request)
-        )
-        if (
-            outcome.capture is not None
-            and controller.state.page is not None
-            and outcome.capture.identity
-            in {item.identity for item in controller.state.page.items}
-        ):
-            await self._run_library_collections_capture_transition(
-                controller.select_item(outcome.capture.identity)
-            )
-        elif controller.state.selected_identity is not None:
-            await self._run_library_collections_capture_transition(
-                controller.load_selected_now()
-            )
+        return await self._collections_controller.refresh_library_collection_quick_capture(event)
 
     @on(Button.Pressed, "#library-collections-filters")
     def toggle_library_collection_capture_filters(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        self._library_collections_filters_open = (
-            not self._library_collections_filters_open
-        )
-        self._refresh_library_collections_capture_reader()
-
-    def _library_collection_capture_filter_request(
-        self, *, clear: bool = False
-    ) -> CapturePageRequest | None:
-        """Build one validated filter disclosure request from mounted inputs."""
-        controller = self._library_collections_capture_controller
-        current = controller.state.requested_scope if controller is not None else None
-        if current is None:
-            return self._library_collections_capture_request(page=1)
-        if clear:
-            return dataclasses.replace(
-                current,
-                domain=None,
-                tags=(),
-                date_from=None,
-                date_to=None,
-                page=1,
-            )
-        domain = self.query_one(
-            "#library-collections-filter-domain", Input
-        ).value.strip()
-        tags = tuple(
-            part.strip()
-            for part in self.query_one(
-                "#library-collections-filter-tags", Input
-            ).value.split(",")
-            if part.strip()
-        )
-        date_from = self.query_one(
-            "#library-collections-filter-date-from", Input
-        ).value.strip()
-        date_to = self.query_one(
-            "#library-collections-filter-date-to", Input
-        ).value.strip()
-        for value in (date_from, date_to):
-            if value:
-                try:
-                    datetime.strptime(value, "%Y-%m-%d")
-                except ValueError as exc:
-                    raise CollectionsCaptureError("invalid_filter_date") from exc
-        return dataclasses.replace(
-            current,
-            domain=domain or None,
-            tags=tags,
-            date_from=date_from or None,
-            date_to=date_to or None,
-            page=1,
-        )
-
-    async def _apply_library_collection_capture_request(
-        self, request: CapturePageRequest
-    ) -> None:
-        """Apply a page-one request and settle its selected reader detail."""
-        controller = self._library_collections_capture_controller
-        if controller is None:
-            return
-        self._library_collections_requested_page = request.page
-        await self._run_library_collections_capture_transition(
-            controller.load_page(request)
-        )
-        if controller.state.selected_identity is not None:
-            await self._run_library_collections_capture_transition(
-                controller.load_selected_now()
-            )
+        return self._collections_controller.toggle_library_collection_capture_filters(event)
 
     @on(Button.Pressed, "#library-collections-filters-apply")
     async def apply_library_collection_capture_filters(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        try:
-            request = self._library_collection_capture_filter_request()
-        except CollectionsCaptureError as exc:
-            self._library_collections_action_status = (
-                "Use dates in YYYY-MM-DD order, with From no later than To."
-            )
-            self._notify_library_collections_warning(exc.reason)
-            self._refresh_library_collections_capture_reader()
-            return
-        if request is not None:
-            await self._apply_library_collection_capture_request(request)
+        return await self._collections_controller.apply_library_collection_capture_filters(event)
 
     @on(Button.Pressed, "#library-collections-filters-clear")
     async def clear_library_collection_capture_filters(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        request = self._library_collection_capture_filter_request(clear=True)
-        if request is not None:
-            await self._apply_library_collection_capture_request(request)
+        return await self._collections_controller.clear_library_collection_capture_filters(event)
 
     @on(Button.Pressed, "#library-collections-sort")
     async def cycle_library_collection_capture_sort(
         self, event: Button.Pressed
     ) -> None:
-        """Cycle supported sorts, omitting relevance without a search query."""
-        event.stop()
-        controller = self._library_collections_capture_controller
-        current = controller.state.requested_scope if controller is not None else None
-        if current is None:
-            return
-        sorts = tuple(
-            value
-            for value in CAPTURE_SORTS
-            if value != "relevance" or current.search
-        )
-        next_sort = sorts[(sorts.index(current.sort) + 1) % len(sorts)]
-        await self._apply_library_collection_capture_request(
-            dataclasses.replace(current, sort=next_sort, page=1)
-        )
+        return await self._collections_controller.cycle_library_collection_capture_sort(event)
 
     @on(Input.Changed, "#library-rag-query-input")
     async def update_library_rag_query(self, event: Input.Changed) -> None:
@@ -43169,61 +42043,29 @@ class LibraryScreen(BaseAppScreen):
             self.call_after_refresh(self._reveal_library_rag_results)
         self._execute_library_rag_search(request)
 
-    async def _page_library_collection_captures(self, delta: int) -> None:
-        controller = self._library_collections_capture_controller
-        if controller is None or not controller.state.paging_enabled:
-            return
-        current = controller.state.applied_scope
-        if current is None:
-            return
-        page = max(1, current.page + delta)
-        if page == current.page:
-            return
-        self._library_collections_requested_page = page
-        await self._run_library_collections_capture_transition(
-            controller.load_page(dataclasses.replace(current, page=page))
-        )
-        if controller.state.selected_identity is not None:
-            await self._run_library_collections_capture_transition(
-                controller.load_selected_now()
-            )
-
     @on(Button.Pressed, "#library-collections-page-previous")
     async def previous_library_collection_captures(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        await self._page_library_collection_captures(-1)
+        return await self._collections_controller.previous_library_collection_captures(event)
 
     @on(Button.Pressed, "#library-collections-page-next")
     async def next_library_collection_captures(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        await self._page_library_collection_captures(1)
+        return await self._collections_controller.next_library_collection_captures(event)
 
     @on(Button.Pressed, "#library-collections-page-retry")
     async def retry_library_collection_captures(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        controller = self._library_collections_capture_controller
-        request = self._library_collections_capture_request()
-        if controller is not None and request is not None:
-            await self._run_library_collections_capture_transition(
-                controller.load_page(request)
-            )
+        return await self._collections_controller.retry_library_collection_captures(event)
 
     @on(Button.Pressed, "#library-collections-reader-retry")
     async def retry_library_collection_capture_detail(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        controller = self._library_collections_capture_controller
-        if controller is not None and controller.state.selected_identity is not None:
-            await self._run_library_collections_capture_transition(
-                controller.load_selected_now()
-            )
+        return await self._collections_controller.retry_library_collection_capture_detail(event)
 
     @on(
         Button.Pressed,
@@ -43233,544 +42075,138 @@ class LibraryScreen(BaseAppScreen):
     async def set_library_collection_capture_mode(
         self, event: Button.Pressed
     ) -> None:
-        """Keep one reader mode active across capture traversal."""
-        event.stop()
-        mode = (event.button.id or "").removeprefix("library-collections-mode-")
-        if mode in {"read", "highlights", "notes", "info"}:
-            self._library_collections_reader_mode = mode
-            if mode == "highlights":
-                await self._load_library_collection_capture_highlights()
-            self._refresh_library_collections_capture_reader()
+        return await self._collections_controller.set_library_collection_capture_mode(event)
 
     @on(Button.Pressed, "#library-collections-more")
     def toggle_library_collection_capture_more(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        self._library_collections_more_open = (
-            not self._library_collections_more_open
-        )
-        self._library_collections_confirming_hard_delete = False
-        self._refresh_library_collections_capture_reader()
+        return self._collections_controller.toggle_library_collection_capture_more(event)
 
     @on(Button.Pressed, "#library-collections-legacy-recovery")
     async def inspect_library_collection_legacy_recovery(
         self, event: Button.Pressed
     ) -> None:
-        """Load bounded read-only previews of untouched generic Collections."""
-        event.stop()
-        recovery = getattr(
-            self.app_instance, "collections_legacy_recovery_service", None
-        )
-        if recovery is None:
-            return
-        self._library_collections_more_open = True
-        self._library_collections_legacy_recovery_open = True
-        self._library_collections_action_status = "Loading legacy recovery data…"
-        self._refresh_library_collections_capture_reader()
-        try:
-            collections, memberships = await asyncio.gather(
-                asyncio.to_thread(recovery.list_collections, page=1, size=20),
-                asyncio.to_thread(recovery.list_memberships, page=1, size=20),
-            )
-        except Exception as exc:
-            reason = str(getattr(exc, "reason", "legacy_recovery_failed"))
-            self._library_collections_action_status = (
-                f"Legacy recovery could not be loaded: {reason.replace('_', ' ')}."
-            )
-            self._library_collections_legacy_recovery_lines = ()
-            self._refresh_library_collections_capture_reader()
-            return
-        lines = [
-            f"Collections: {collections.total} total · showing {len(collections.items)}",
-            *(f"• {item.name}" for item in collections.items),
-            f"Memberships: {memberships.total} total · showing {len(memberships.items)}",
-            *(f"• {item.title}" for item in memberships.items),
-            (
-                "Export safety: verified private publication"
-                if recovery.export_publication_posture
-                == "verified_private_parent_dirfd"
-                else "Export safety: platform guarantees are unverified"
-            ),
-        ]
-        self._library_collections_legacy_recovery_lines = tuple(lines)
-        self._library_collections_action_status = (
-            "Legacy data is read-only. Export includes every page."
-        )
-        self._refresh_library_collections_capture_reader()
+        return await self._collections_controller.inspect_library_collection_legacy_recovery(event)
 
     @on(Button.Pressed, "#library-collections-legacy-recovery-close")
     def close_library_collection_legacy_recovery(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        self._library_collections_legacy_recovery_open = False
-        self._library_collections_legacy_recovery_lines = ()
-        self._refresh_library_collections_capture_reader()
+        return self._collections_controller.close_library_collection_legacy_recovery(event)
 
     @on(Button.Pressed, "#library-collections-legacy-recovery-export")
     async def choose_library_collection_legacy_recovery_export(
         self, event: Button.Pressed
     ) -> None:
-        """Choose a destination for a complete coherent legacy JSON export."""
-        event.stop()
-        await self.app.push_screen(
-            FileSave(
-                location=str(Path.home()),
-                title="Export Legacy Collections Recovery",
-                default_file="legacy-collections-recovery.json",
-            ),
-            callback=lambda path: self.call_after_refresh(
-                self._export_library_collection_legacy_recovery, path
-            ),
-        )
+        return await self._collections_controller.choose_library_collection_legacy_recovery_export(event)
 
     async def _export_library_collection_legacy_recovery(
         self, selected_path: Path | None
     ) -> None:
-        """Validate and publish a complete recovery snapshot off the UI loop."""
-        if selected_path is None:
-            return
-        recovery = getattr(
-            self.app_instance, "collections_legacy_recovery_service", None
-        )
-        if recovery is None:
-            return
-        try:
-            destination = validate_path_simple(
-                selected_path,
-                require_exists=False,
-            )
-            if destination.suffix.casefold() != ".json":
-                destination = destination.with_suffix(".json")
-            overwrite_identity = None
-            if destination.exists():
-                metadata = destination.lstat()
-                overwrite_identity = (metadata.st_dev, metadata.st_ino)
-            await asyncio.to_thread(
-                recovery.export_json,
-                destination,
-                overwrite_identity=overwrite_identity,
-            )
-        except Exception as exc:
-            reason = str(getattr(exc, "reason", "legacy_export_failed"))
-            self._library_collections_action_status = (
-                f"Legacy export failed: {reason.replace('_', ' ')}."
-            )
-            self._notify_library_collections_warning(reason)
-        else:
-            self._library_collections_action_status = (
-                "Legacy recovery export complete."
-            )
-        self._refresh_library_collections_capture_reader()
-
-    async def _update_selected_library_collection_capture(
-        self,
-        changes: Mapping[str, Any],
-    ) -> bool:
-        controller = self._library_collections_capture_controller
-        if controller is None:
-            return False
-        try:
-            return await self._run_library_collections_capture_transition(
-                controller.update_selected(changes)
-            )
-        except CollectionsCaptureError as exc:
-            self._notify_library_collections_warning(exc.reason)
-            return False
-
-    def _library_collection_loaded_capture(self):
-        """Return the current identity-safe capture detail, or ``None``."""
-        controller = self._library_collections_capture_controller
-        if (
-            controller is None
-            or controller.state.loaded_detail is None
-            or not controller.state.identity_actions_enabled
-        ):
-            return None
-        return controller.state.loaded_detail.capture
-
-    def _library_collection_capture_is_current(
-        self, identity: CaptureIdentity
-    ) -> bool:
-        """Return whether an asynchronous result still belongs to the reader."""
-        capture = self._library_collection_loaded_capture()
-        return capture is not None and capture.identity == identity
-
-    async def _load_library_collection_capture_highlights(self) -> None:
-        """Load highlight state for the identity currently safe to mutate."""
-        controller = self._library_collections_capture_controller
-        capture = self._library_collection_loaded_capture()
-        if controller is None or capture is None:
-            self._library_collections_highlights = ()
-            return
-        identity = capture.identity
-        try:
-            highlights = await controller.scope_service.list_highlights(identity)
-        except CollectionsCaptureError as exc:
-            if not self._library_collection_capture_is_current(identity):
-                return
-            self._library_collections_highlights = ()
-            self._notify_library_collections_warning(exc.reason)
-            return
-        if not self._library_collection_capture_is_current(identity):
-            return
-        self._library_collections_highlights = highlights.items
+        return await self._collections_controller._export_library_collection_legacy_recovery(selected_path)
 
     @on(Button.Pressed, "#library-collections-highlight-save")
     async def save_library_collection_capture_highlight(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        controller = self._library_collections_capture_controller
-        capture = self._library_collection_loaded_capture()
-        if controller is None or capture is None:
-            return
-        quote = self.query_one(
-            "#library-collections-highlight-quote", TextArea
-        ).text
-        note = self.query_one(
-            "#library-collections-highlight-note", Input
-        ).value
-        try:
-            await controller.scope_service.save_highlight(
-                capture.identity,
-                quote=quote,
-                note=note or None,
-            )
-            if not self._library_collection_capture_is_current(capture.identity):
-                return
-            self._library_collections_highlights = (
-                await controller.scope_service.list_highlights(capture.identity)
-            ).items
-        except CollectionsCaptureError as exc:
-            if not self._library_collection_capture_is_current(capture.identity):
-                return
-            self._notify_library_collections_warning(exc.reason)
-            self._library_collections_action_status = (
-                f"Highlight was not saved: {exc.reason.replace('_', ' ')}."
-            )
-        else:
-            if not self._library_collection_capture_is_current(capture.identity):
-                return
-            self._library_collections_action_status = "Highlight saved."
-            self._library_collections_action_content = ""
-        self._refresh_library_collections_capture_reader()
+        return await self._collections_controller.save_library_collection_capture_highlight(event)
 
     @on(Button.Pressed, ".library-collections-highlight-delete")
     async def delete_library_collection_capture_highlight(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        controller = self._library_collections_capture_controller
-        capture = self._library_collection_loaded_capture()
-        highlight_id = getattr(event.button, "highlight_id", "")
-        if controller is None or capture is None or not highlight_id:
-            return
-        try:
-            await controller.scope_service.delete_highlight(
-                capture.identity,
-                highlight_id,
-            )
-            if not self._library_collection_capture_is_current(capture.identity):
-                return
-            self._library_collections_highlights = (
-                await controller.scope_service.list_highlights(capture.identity)
-            ).items
-        except CollectionsCaptureError as exc:
-            if not self._library_collection_capture_is_current(capture.identity):
-                return
-            self._notify_library_collections_warning(exc.reason)
-            return
-        if not self._library_collection_capture_is_current(capture.identity):
-            return
-        self._library_collections_action_status = "Highlight deleted."
-        self._library_collections_action_content = ""
-        self._refresh_library_collections_capture_reader()
+        return await self._collections_controller.delete_library_collection_capture_highlight(event)
 
     @on(Button.Pressed, "#library-collections-freeform-note-save")
     async def save_library_collection_capture_note(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        note = self.query_one(
-            "#library-collections-freeform-note", TextArea
-        ).text
-        capture = self._library_collection_loaded_capture()
-        if capture is None:
-            return
-        if await self._update_selected_library_collection_capture(
-            {"freeform_note": note}
-        ) and self._library_collection_capture_is_current(capture.identity):
-            self._library_collections_action_status = "Capture note saved."
-            self._library_collections_action_content = ""
-            self._refresh_library_collections_capture_reader()
+        return await self._collections_controller.save_library_collection_capture_note(event)
 
     @on(Button.Pressed, "#library-collections-linked-note-save")
     async def link_library_collection_capture_note(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        controller = self._library_collections_capture_controller
-        capture = self._library_collection_loaded_capture()
-        if controller is None or capture is None:
-            return
-        note_id = self.query_one(
-            "#library-collections-linked-note-id", Input
-        ).value.strip()
-        if not note_id:
-            self._notify_library_collections_warning("Enter a Note ID to link.")
-            return
-        try:
-            await controller.scope_service.link_note(
-                capture.identity,
-                ExternalNoteReference(capture.identity.authority_key, note_id),
-            )
-            if not self._library_collection_capture_is_current(capture.identity):
-                return
-            await self._run_library_collections_capture_transition(
-                controller.refresh_selected_detail()
-            )
-        except CollectionsCaptureError as exc:
-            if not self._library_collection_capture_is_current(capture.identity):
-                return
-            self._notify_library_collections_warning(exc.reason)
-            return
-        if not self._library_collection_capture_is_current(capture.identity):
-            return
-        self._library_collections_action_status = f"Linked Note {note_id}."
-        self._library_collections_action_content = ""
-        self._refresh_library_collections_capture_reader()
+        return await self._collections_controller.link_library_collection_capture_note(event)
 
     @on(Button.Pressed, ".library-collections-linked-note-unlink")
     async def unlink_library_collection_capture_note(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        controller = self._library_collections_capture_controller
-        capture = self._library_collection_loaded_capture()
-        link_id = getattr(event.button, "link_id", "")
-        if controller is None or capture is None or not link_id:
-            return
-        try:
-            await controller.scope_service.unlink_note(capture.identity, link_id)
-            if not self._library_collection_capture_is_current(capture.identity):
-                return
-            await self._run_library_collections_capture_transition(
-                controller.refresh_selected_detail()
-            )
-        except CollectionsCaptureError as exc:
-            if not self._library_collection_capture_is_current(capture.identity):
-                return
-            self._notify_library_collections_warning(exc.reason)
-            return
-        if not self._library_collection_capture_is_current(capture.identity):
-            return
-        self._library_collections_action_status = "Linked Note removed."
-        self._library_collections_action_content = ""
-        self._refresh_library_collections_capture_reader()
-
-    async def _run_library_collection_capture_content_action(
-        self, action: str
-    ) -> None:
-        """Run one capability-gated result action for the loaded capture."""
-        controller = self._library_collections_capture_controller
-        capture = self._library_collection_loaded_capture()
-        if controller is None or capture is None:
-            return
-        identity = capture.identity
-        labels = {
-            "summarize": "Summary",
-            "listen": "Audio",
-            "save_offline_copy": "Offline copy",
-        }
-        label = labels[action]
-        self._library_collections_action_status = f"{label} in progress…"
-        self._library_collections_action_content = ""
-        self._refresh_library_collections_capture_reader()
-        try:
-            result = await getattr(controller.scope_service, action)(identity)
-        except CollectionsCaptureError as exc:
-            current = self._library_collection_loaded_capture()
-            if current is None or current.identity != identity:
-                return
-            self._library_collections_action_status = (
-                f"{label} failed: {exc.reason.replace('_', ' ')}."
-            )
-            self._notify_library_collections_warning(exc.reason)
-            self._refresh_library_collections_capture_reader()
-            return
-        current = self._library_collection_loaded_capture()
-        if current is None or current.identity != identity:
-            return
-        if action == "summarize":
-            self._library_collections_action_status = "Summary ready."
-            self._library_collections_action_content = result.text or ""
-        elif action == "listen":
-            self._library_collections_action_status = "Audio is ready."
-            self._library_collections_action_content = ""
-        else:
-            await self._run_library_collections_capture_transition(
-                controller.refresh_selected_detail()
-            )
-            if not self._library_collection_capture_is_current(identity):
-                return
-            self._library_collections_action_status = "Offline copy saved."
-            self._library_collections_action_content = ""
-        self._refresh_library_collections_capture_reader()
+        return await self._collections_controller.unlink_library_collection_capture_note(event)
 
     @on(Button.Pressed, "#library-collections-summarize")
     async def summarize_library_collection_capture(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        await self._run_library_collection_capture_content_action("summarize")
+        return await self._collections_controller.summarize_library_collection_capture(event)
 
     @on(Button.Pressed, "#library-collections-listen")
     async def listen_to_library_collection_capture(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        await self._run_library_collection_capture_content_action("listen")
+        return await self._collections_controller.listen_to_library_collection_capture(event)
 
     @on(Button.Pressed, "#library-collections-save-offline")
     async def save_library_collection_capture_offline(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        await self._run_library_collection_capture_content_action(
-            "save_offline_copy"
-        )
+        return await self._collections_controller.save_library_collection_capture_offline(event)
 
     @on(Button.Pressed, "#library-collections-mark-read")
     async def mark_library_collection_capture_read(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        await self._update_selected_library_collection_capture({"status": "read"})
+        return await self._collections_controller.mark_library_collection_capture_read(event)
 
     @on(Button.Pressed, "#library-collections-favorite")
     async def favorite_library_collection_capture(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        controller = self._library_collections_capture_controller
-        detail = controller.state.loaded_detail if controller is not None else None
-        if detail is not None:
-            await self._update_selected_library_collection_capture(
-                {"favorite": not detail.capture.favorite}
-            )
+        return await self._collections_controller.favorite_library_collection_capture(event)
 
     @on(Button.Pressed, "#library-collections-archive")
     async def archive_library_collection_capture(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        controller = self._library_collections_capture_controller
-        if controller is None:
-            return
-        try:
-            await self._run_library_collections_capture_transition(
-                controller.archive_selected()
-            )
-        except CollectionsCaptureError as exc:
-            self._notify_library_collections_warning(exc.reason)
+        return await self._collections_controller.archive_library_collection_capture(event)
 
     @on(Button.Pressed, "#library-collections-archive-undo")
     async def undo_library_collection_capture_archive(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        controller = self._library_collections_capture_controller
-        identity = getattr(event.button, "capture_identity", None)
-        if controller is None or not isinstance(identity, CaptureIdentity):
-            return
-        try:
-            await self._run_library_collections_capture_transition(
-                controller.undo_archive(identity)
-            )
-        except CollectionsCaptureError as exc:
-            self._notify_library_collections_warning(exc.reason)
+        return await self._collections_controller.undo_library_collection_capture_archive(event)
 
     @on(Button.Pressed, "#library-collections-retry-extraction")
     async def retry_library_collection_capture_extraction(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        controller = self._library_collections_capture_controller
-        if controller is None:
-            return
-        try:
-            await self._run_library_collections_capture_transition(
-                controller.retry_extraction()
-            )
-        except CollectionsCaptureError as exc:
-            self._notify_library_collections_warning(exc.reason)
+        return await self._collections_controller.retry_library_collection_capture_extraction(event)
 
     @on(Button.Pressed, "#library-collections-open-original")
     def open_library_collection_capture_original(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        controller = self._library_collections_capture_controller
-        detail = controller.state.loaded_detail if controller is not None else None
-        if detail is None or not controller.state.identity_actions_enabled:
-            return
-        try:
-            webbrowser.open(detail.capture.canonical_url)
-        except Exception:
-            self._notify_library_collections_warning(
-                "Could not open the original capture URL."
-            )
+        return self._collections_controller.open_library_collection_capture_original(event)
 
     @on(Button.Pressed, "#library-collections-hard-delete")
     def arm_library_collection_capture_hard_delete(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        self._library_collections_confirming_hard_delete = True
-        self._refresh_library_collections_capture_reader()
+        return self._collections_controller.arm_library_collection_capture_hard_delete(event)
 
     @on(Button.Pressed, "#library-collections-hard-delete-cancel")
     def cancel_library_collection_capture_hard_delete(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        self._library_collections_confirming_hard_delete = False
-        self._refresh_library_collections_capture_reader()
+        return self._collections_controller.cancel_library_collection_capture_hard_delete(event)
 
     @on(Button.Pressed, "#library-collections-hard-delete-confirm")
     async def confirm_library_collection_capture_hard_delete(
         self, event: Button.Pressed
     ) -> None:
-        event.stop()
-        controller = self._library_collections_capture_controller
-        if (
-            controller is None
-            or controller.state.loaded_detail is None
-            or not controller.state.identity_actions_enabled
-        ):
-            return
-        capture = controller.state.loaded_detail.capture
-        try:
-            await controller.scope_service.hard_delete(
-                capture.identity,
-                capture.revision,
-            )
-        except Exception as exc:
-            reason = (
-                exc.reason
-                if isinstance(exc, CollectionsCaptureError)
-                else "hard_delete_failed"
-            )
-            self._notify_library_collections_warning(reason)
-        else:
-            self._library_collections_confirming_hard_delete = False
-            request = self._library_collections_capture_request()
-            if request is not None:
-                await self._run_library_collections_capture_transition(
-                    controller.load_page(request)
-                )
+        return await self._collections_controller.confirm_library_collection_capture_hard_delete(event)
 
     @on(Button.Pressed, ".library-rag-result-action")
     async def select_library_rag_result(self, event: Button.Pressed) -> None:
@@ -45520,3 +43956,22 @@ class LibraryScreen(BaseAppScreen):
 # production code always imports `library_screen` before any instance of
 # this controller can exist.
 LibraryConversationsController._safe_text = staticmethod(LibraryScreen._safe_text)
+
+# Same class-level rebinding, one more subsystem: `handle_library_export_submit`
+# (moved to `LibraryExportController`, wave-2 task 3) calls `self._safe_text(...)`
+# on a regular (non-classmethod) instance method, so the SAME staticmethod
+# serves it identically to the conversations controller's own three sites --
+# see that binding's comment immediately above for the full incident this
+# class-level-only shape resolves (a plain class attribute assignment always
+# overwrites a same-named property, so there is deliberately no separate
+# per-instance constructor-dependency for `_safe_text` here either).
+LibraryExportController._safe_text = staticmethod(LibraryScreen._safe_text)
+
+# wave-2 task 7 (collections cleanup, collections series 3/3) deleted the
+# generated collections-state shim block that used to live here (wave-2
+# task 5): every remaining screen-side `_library_collections_<field>`
+# reference was retargeted to `self._collections_state.<field>` and every
+# test attribute path/dynamic-dispatch string was retargeted to match, so
+# nothing on `LibraryScreen` needs the flat property names anymore -- see
+# `LibraryCollectionsController`'s own generated shim loop (installed by
+# task 6) for where the SAME shape now lives permanently, one layer down.

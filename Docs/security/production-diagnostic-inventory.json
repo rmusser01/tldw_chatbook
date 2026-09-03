@@ -2595,6 +2595,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 5,
+      "diagnostic_digest": "704efb5b3474b991a687",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Library_Modules/library_export_controller.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 2,
       "diagnostic_digest": "a5d9efad9e09d4fd1244",
       "owner": "TASK-494",
@@ -2798,8 +2805,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 113,
-      "diagnostic_digest": "839254766b77db7bb230",
+      "call_count": 108,
+      "diagnostic_digest": "91a2a19d731954e8dd84",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/library_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -9398,6 +9405,29 @@
     {
       "candidates": [
         {
+          "call_digest": "3257e5602c81e133",
+          "method": "warning",
+          "path_expressions": [
+            "selected_path"
+          ],
+          "scope": "LibraryExportController._apply_library_export_destination",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "a681fe8e3d43c47b",
+          "method": "warning",
+          "path_expressions": [
+            "output_path"
+          ],
+          "scope": "LibraryExportController._run_library_export_via_service",
+          "status": "legacy_unreviewed"
+        }
+      ],
+      "path": "tldw_chatbook/UI/Library_Modules/library_export_controller.py"
+    },
+    {
+      "candidates": [
+        {
           "call_digest": "1654c8f3ddd90aa4",
           "method": "error",
           "path_expressions": [
@@ -9411,15 +9441,6 @@
     },
     {
       "candidates": [
-        {
-          "call_digest": "3257e5602c81e133",
-          "method": "warning",
-          "path_expressions": [
-            "selected_path"
-          ],
-          "scope": "LibraryScreen._apply_library_export_destination",
-          "status": "legacy_unreviewed"
-        },
         {
           "call_digest": "5be7379e1bb9fb38",
           "method": "debug",
@@ -9436,15 +9457,6 @@
             "raw_path"
           ],
           "scope": "LibraryScreen._resolve_ingest_source",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "a681fe8e3d43c47b",
-          "method": "warning",
-          "path_expressions": [
-            "output_path"
-          ],
-          "scope": "LibraryScreen._run_library_export_via_service",
           "status": "legacy_unreviewed"
         },
         {
@@ -11288,7 +11300,7 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 567,
+    "owner_files": 568,
     "path_privacy_candidate_calls": 714,
     "persistent_sink_files": 10,
     "task_492_calls": 1337,

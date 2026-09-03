@@ -246,10 +246,10 @@ async def test_live_local_45_capture_geometry_paging_collapse_resize_and_focus()
             lambda: screen.size == SIZES[0],
             message="Collections wide resize did not restore",
         )
-        assert screen._library_collections_reader_preferences.library_open is True
-        assert screen._library_collections_reader_preferences.items_open is True
-        assert screen._library_collections_reader_layout.library_open is True
-        assert screen._library_collections_reader_layout.items_open is True
+        assert screen._collections_state.reader_preferences.library_open is True
+        assert screen._collections_state.reader_preferences.items_open is True
+        assert screen._collections_state.reader_layout.library_open is True
+        assert screen._collections_state.reader_layout.items_open is True
 
     after = await scope.list_page(CapturePageRequest(authority.key))
     after_database_path = Path(app.collections_capture_repository.db.db_path).resolve()
@@ -439,8 +439,8 @@ async def test_live_server_45_capture_source_replacement_geometry_and_lifecycle(
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    not screen._library_collections_reader_layout.library_open
-                    and screen._library_collections_reader_layout.items_open
+                    not screen._collections_state.reader_layout.library_open
+                    and screen._collections_state.reader_layout.items_open
                     and screen.query_one(
                         "#library-collections-reader-shell"
                     ).items.region.width
@@ -448,8 +448,8 @@ async def test_live_server_45_capture_source_replacement_geometry_and_lifecycle(
                 ),
                 message=lambda: (
                     "Closing Server Library did not expand Items: "
-                    f"screen_layout={screen._library_collections_reader_layout!r}, "
-                    f"prefs={screen._library_collections_reader_preferences!r}, "
+                    f"screen_layout={screen._collections_state.reader_layout!r}, "
+                    f"prefs={screen._collections_state.reader_preferences!r}, "
                     f"before={items_before}, after={screen.query_one('#library-collections-reader-shell').items.region.width}"
                 ),
             )
@@ -457,7 +457,7 @@ async def test_live_server_45_capture_source_replacement_geometry_and_lifecycle(
             shell.items_grip.press()
             await _wait_for_condition(
                 pilot,
-                lambda: not screen._library_collections_reader_layout.items_open,
+                lambda: not screen._collections_state.reader_layout.items_open,
                 message="Server Items did not close",
             )
             shell = screen.query_one("#library-collections-reader-shell")
@@ -465,8 +465,8 @@ async def test_live_server_45_capture_source_replacement_geometry_and_lifecycle(
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    screen._library_collections_reader_layout.library_open
-                    and not screen._library_collections_reader_layout.items_open
+                    screen._collections_state.reader_layout.library_open
+                    and not screen._collections_state.reader_layout.items_open
                 ),
                 message="Server Library-only posture did not settle",
             )
@@ -475,8 +475,8 @@ async def test_live_server_45_capture_source_replacement_geometry_and_lifecycle(
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    screen._library_collections_reader_layout.library_open
-                    and screen._library_collections_reader_layout.items_open
+                    screen._collections_state.reader_layout.library_open
+                    and screen._collections_state.reader_layout.items_open
                 ),
                 message="Server optional panes did not restore",
             )
@@ -521,7 +521,7 @@ async def test_live_server_45_capture_source_replacement_geometry_and_lifecycle(
                 await _wait_for_condition(
                     pilot,
                     lambda mode=mode, selector=selector: (
-                        screen._library_collections_reader_mode == mode
+                        screen._collections_state.reader_mode == mode
                         and bool(screen.query(selector))
                     ),
                     message=f"Server Collections {mode} mode did not settle",
@@ -560,7 +560,7 @@ async def test_live_server_45_capture_source_replacement_geometry_and_lifecycle(
             await _wait_for_condition(
                 pilot,
                 lambda: bool(
-                    screen._library_collections_quick_capture_open
+                    screen._collections_state.quick_capture_open
                     and screen.query("#library-collections-capture-url")
                 ),
                 message="Server Quick Capture did not open after workspace switch",
@@ -591,7 +591,7 @@ async def test_live_server_45_capture_source_replacement_geometry_and_lifecycle(
                     and controller.state.loaded_detail
                     and controller.state.loaded_detail.capture.title
                     == "Confirmed Server UI save"
-                    and screen._library_collections_action_status.startswith(
+                    and screen._collections_state.action_status.startswith(
                         "Saved to Server"
                     )
                 ),
@@ -673,11 +673,11 @@ async def test_live_server_45_capture_source_replacement_geometry_and_lifecycle(
             ).press()
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_collections_save_outcome_unknown,
+                lambda: screen._collections_state.save_outcome_unknown,
                 message="Controlled unknown Server save did not retain its draft",
             )
             assert uncertain_calls == 1
-            assert screen._library_collections_action_status == (
+            assert screen._collections_state.action_status == (
                 "Save outcome unknown. Refresh before retrying."
             )
             (
@@ -689,7 +689,7 @@ async def test_live_server_45_capture_source_replacement_geometry_and_lifecycle(
             ).press()
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_collections_confirming_save_retry,
+                lambda: screen._collections_state.confirming_save_retry,
                 message="Unknown Server save did not require explicit confirmation",
             )
             assert uncertain_calls == 1
@@ -704,7 +704,7 @@ async def test_live_server_45_capture_source_replacement_geometry_and_lifecycle(
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    not screen._library_collections_confirming_save_retry
+                    not screen._collections_state.confirming_save_retry
                     and bool(screen.query("#library-collections-capture-cancel"))
                 ),
                 message="Unknown Server save Back action did not restore its draft",
@@ -882,7 +882,7 @@ async def test_live_local_capture_commit_failure_retry_modes_archive_delete_and_
                 screen.query_one(f"#library-collections-mode-{mode}", Button).press()
                 await _wait_for_condition(
                     pilot,
-                    lambda mode=mode: screen._library_collections_reader_mode == mode,
+                    lambda mode=mode: screen._collections_state.reader_mode == mode,
                     message=f"Collections {mode} mode did not settle",
                 )
 
@@ -953,7 +953,7 @@ async def test_live_local_capture_commit_failure_retry_modes_archive_delete_and_
             exported = json.loads(destination.read_text(encoding="utf-8"))
             assert len(exported["collections"]) == 45
             assert len(exported["memberships"]) == 45
-            assert screen._library_collections_action_status == (
+            assert screen._collections_state.action_status == (
                 "Legacy recovery export complete."
             )
     finally:

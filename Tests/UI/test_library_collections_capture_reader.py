@@ -630,7 +630,7 @@ async def test_unknown_quick_capture_preserves_draft_and_does_not_auto_retry(
 
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_collections_save_outcome_unknown,
+            lambda: screen._collections_state.save_outcome_unknown,
             message="Unknown save state did not settle",
         )
         await _wait_for_selector(screen, pilot, "#library-collections-capture-refresh")
@@ -645,7 +645,7 @@ async def test_unknown_quick_capture_preserves_draft_and_does_not_auto_retry(
         screen.query_one("#library-collections-capture-save", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_collections_confirming_save_retry,
+            lambda: screen._collections_state.confirming_save_retry,
             message="Explicit retry warning did not open",
         )
         assert len(calls) == 1
@@ -699,7 +699,7 @@ async def test_real_local_capture_actions_persist_reader_results() -> None:
         screen.query_one("#library-collections-summarize", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_collections_action_content
+            lambda: screen._collections_state.action_content
             == "Summary of Action capture",
             message="Summarize result did not reach the reader",
         )
@@ -707,7 +707,7 @@ async def test_real_local_capture_actions_persist_reader_results() -> None:
         screen.query_one("#library-collections-listen", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_collections_action_status == "Audio is ready.",
+            lambda: screen._collections_state.action_status == "Audio is ready.",
             message="Listen result did not reach the reader",
         )
         await _wait_for_selector(screen, pilot, "#library-collections-save-offline")
@@ -733,7 +733,7 @@ async def test_real_local_capture_actions_persist_reader_results() -> None:
         screen.query_one("#library-collections-highlight-save", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: len(screen._library_collections_highlights) == 1,
+            lambda: len(screen._collections_state.highlights) == 1,
             message="Highlight was not persisted",
         )
 
@@ -840,8 +840,8 @@ async def test_summarize_result_is_discarded_after_selecting_another_capture(
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_collections_action_content == ""
-        assert screen._library_collections_action_status == ""
+        assert screen._collections_state.action_content == ""
+        assert screen._collections_state.action_status == ""
 
 
 async def test_legacy_recovery_inspector_and_export_reach_every_page(
@@ -876,6 +876,6 @@ async def test_legacy_recovery_inspector_and_export_reach_every_page(
         payload = json.loads(destination.read_text(encoding="utf-8"))
         assert len(payload["collections"]) == 45
         assert len(payload["memberships"]) == 45
-        assert screen._library_collections_action_status == (
+        assert screen._collections_state.action_status == (
             "Legacy recovery export complete."
         )

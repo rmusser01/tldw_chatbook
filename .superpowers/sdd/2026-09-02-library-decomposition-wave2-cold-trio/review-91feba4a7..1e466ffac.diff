@@ -1,0 +1,2069 @@
+# Review package: 91feba4a7..1e466ffac
+
+## Commits
+1e466ffac chore(library): blame-ignore follow-up for collections cleanup PR
+39a976321 refactor(library): collections cleanup — shims out, ratchet lowered (collections series 3/3)
+
+## Files changed
+ .git-blame-ignore-revs                             |   8 +
+ .../test_library_collections_wiring.py             |  96 ++++--
+ Tests/Architecture/test_screen_size_ratchet.py     |  21 +-
+ ...test_library_collections_capture_walkthrough.py |  44 +--
+ Tests/UI/test_library_adaptive_reader_closeout.py  |  20 +-
+ .../UI/test_library_collections_capture_reader.py  |  16 +-
+ .../test_library_collections_characterization.py   |  40 +--
+ Tests/UI/test_library_shell.py                     |   2 +-
+ backlog/docs/library-decomposition-recipe.md       | 381 +++++++++++++++++++++
+ tldw_chatbook/UI/Screens/library_screen.py         | 139 ++------
+ 10 files changed, 573 insertions(+), 194 deletions(-)
+
+## Diff
+diff --git a/.git-blame-ignore-revs b/.git-blame-ignore-revs
+index 400c6fa49..16f528bf0 100644
+--- a/.git-blame-ignore-revs
++++ b/.git-blame-ignore-revs
+@@ -44,10 +44,18 @@
+ # per-line change is a mechanical receiver swap or a removal, not new logic.
+ cdb43ebcc1a1e2e113ac78d0e16f2c88ac016b3f
+ 
+ # Wave-2 task 6: collections controller move (collections series 2/3). 64
+ # method bodies moved verbatim from library_screen.py to the new
+ # LibraryCollectionsController (UI/Library_Modules/library_collections_
+ # controller.py), replaced by one-line delegators. Byte-for-byte canon
+ # verified by an AST extract-and-compare script against base commit
+ # bca923b4c.
+ 09d238f5039ae415260a9e818f9f7bd06c17a7ec
++
++# Wave-2 task 7: collections cleanup PR (collections series 3/3, closing
++# commit). Not a pure relocation in the strictest sense (receiver rewrites +
++# a shim-block deletion + 14 dead delegators pruned + 10 dead imports
++# pruned), same shape as the export series' own Task 4 closing commit above
++# -- every per-line change is a mechanical receiver swap or a removal, not
++# new logic.
++39a9763215eab9b8a832e45e4ebb7e85893d8b60
+diff --git a/Tests/Architecture/test_library_collections_wiring.py b/Tests/Architecture/test_library_collections_wiring.py
+index 70544915c..45b1846e3 100644
+--- a/Tests/Architecture/test_library_collections_wiring.py
++++ b/Tests/Architecture/test_library_collections_wiring.py
+@@ -1,51 +1,45 @@
+ """Collections extraction series: the state object and controller are screen-wired.
+ 
+-Wave-2 Task 5 (state PR -- collections series 1/3) and Task 6 (controller
+-PR -- collections series 2/3; recipe:
+-backlog/docs/library-decomposition-recipe.md §13; export series precedent:
+-Tests/Architecture/test_library_export_wiring.py). Task 5's
+-`test_state_object_fields_match_the_shim_surface` pins that every
+-LibraryCollectionsState field has a matching generated property shim on
+-LibraryScreen under the `_library_collections_<field>` name -- the single
+-prefix every Collections field uses (unlike Conversations, no field needed
+-a different prefix variant). Task 6 adds the full-cluster/same-name-
+-delegator-forwarding shape, mirroring the export wiring test's own
+-Task 3-era additions exactly (minus a `_safe_text` binding test -- no
+-moved Collections body calls `self._safe_text(...)`).
++Wave-2 Task 5 (state PR -- collections series 1/3), Task 6 (controller PR --
++collections series 2/3), and Task 7 (cleanup PR -- collections series 3/3;
++recipe: backlog/docs/library-decomposition-recipe.md §13/§14; export series
++precedent: Tests/Architecture/test_library_export_wiring.py). Task 5's
++`test_state_object_fields_match_the_shim_surface` (which pinned that every
++LibraryCollectionsState field had a matching generated property shim on
++LibraryScreen under the `_library_collections_<field>` name) is GONE as of
++Task 7: the screen's generated shim block was deleted wholesale in cleanup
++(`self._collections_state` is a real `LibraryCollectionsState` instance now,
++not a shimmed screen attribute), so there is nothing left on `LibraryScreen`
++for that assertion to check -- exactly the conversations exemplar's own
++Task 9 precedent and the export series' own Task 4 precedent.
++`test_collections_controller_exposes_every_state_field` below already
++covers the equivalent job on the controller side and needed no change.
++Task 6's full-cluster controller-ownership and same-name-delegator-
++forwarding checks are unchanged in shape; Task 7 adds the
++`_COLLECTIONS_CLUSTER_SCREEN_DELEGATOR_PRUNED` skip/absence-assertion pair
++to `test_screen_delegates_collections_handlers`, mirroring
++`_EXPORT_CLUSTER_SCREEN_DELEGATOR_PRUNED` in the export wiring test.
+ """
+ from __future__ import annotations
+ 
+ import dataclasses
+ import inspect
+ import re
+ 
+ import pytest
+ 
+ from tldw_chatbook.UI.Library_Modules.library_collections_state import (
+     LibraryCollectionsState,
+ )
+ 
+ 
+-@pytest.mark.unit
+-def test_state_object_fields_match_the_shim_surface() -> None:
+-    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+-
+-    field_names = {f.name for f in dataclasses.fields(LibraryCollectionsState)}
+-    assert field_names, "state object is empty"
+-    for name in field_names:
+-        shim = getattr(LibraryScreen, "_library_collections_" + name, None)
+-        assert isinstance(shim, property), (
+-            f"no screen shim property found for state field {name!r}"
+-        )
+-
+-
+ #: Every method Task 6 moved into `LibraryCollectionsController`, under its
+ #: original `LibraryScreen` name. Derived from a full `ast` census of every
+ #: `LibraryScreen` method whose name contains "collection" (67 methods,
+ #: matching Task 5's own census) followed by reading each candidate's body
+ #: -- NOT a prefix/substring shortcut (the recipe's own documented trap).
+ #: 3 of the 67 belong to a DIFFERENT feature (Prompts' own "Prompt
+ #: Collections" grouping, unrelated to this capture-reader cluster) --
+ #: see `library_collections_controller.py`'s module docstring for the full
+ #: per-name reasoning. All other 64 move onto this controller -- no
+ #: `@work` framework-decorator hazard, no unbound-fake-self/silent-Mock
+@@ -112,20 +106,59 @@ _COLLECTIONS_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
+     "favorite_library_collection_capture",
+     "archive_library_collection_capture",
+     "undo_library_collection_capture_archive",
+     "retry_library_collection_capture_extraction",
+     "open_library_collection_capture_original",
+     "arm_library_collection_capture_hard_delete",
+     "cancel_library_collection_capture_hard_delete",
+     "confirm_library_collection_capture_hard_delete",
+ )
+ 
++#: Task 7 cleanup: these 14 names have ZERO references anywhere except
++#: their own one-line screen delegator (checked via a repo-wide census
++#: across `tldw_chatbook/` and `Tests/`, including `Tests/Live/`) -- every
++#: call is either the controller's own internal `self.<name>()` (moved-
++#: body-internal) or this wiring test's own shape-check list; nothing
++#: outside the controller ever called `screen.<name>()`. Their screen
++#: delegators were deleted as dead weight; the names remain in
++#: `_COLLECTIONS_CLUSTER_METHOD_NAMES` above (the controller still
++#: genuinely owns and uses each one) but are excluded from the delegation-
++#: forwarding check below, same shape as the export series' own
++#: `_EXPORT_CLUSTER_SCREEN_DELEGATOR_PRUNED` (Task 4, 1 name) and the
++#: conversations exemplar's `_READER_CLUSTER_SCREEN_DELEGATOR_PRUNED`/
++#: `_BROWSE_CLUSTER_SCREEN_DELEGATOR_PRUNED` (Task 9, 9 names each, 18
++#: total across its two controllers). Collections' entire 64-method
++#: cluster moved onto ONE controller in one PR (task 6) with zero
++#: method-level test-bypass exclusions, so there was no round-2/round-3
++#: screen-resident sibling left to call any of these 14 back the way
++#: export's own 11 exclusions kept 21 of its 22 delegators alive -- a much
++#: larger prune fraction (14 of 64) than export's 1 of 22, closer to (but
++#: still smaller than) conversations' 18 of 61.
++_COLLECTIONS_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
++    {
++        "_library_collections_capture_request",
++        "_ensure_library_collections_capture_controller",
++        "_notify_library_collections_warning",
++        "_capture_library_collection_quick_capture_draft",
++        "_reset_library_collection_quick_capture_draft",
++        "_submit_library_collection_quick_capture",
++        "_library_collection_capture_filter_request",
++        "_apply_library_collection_capture_request",
++        "_page_library_collection_captures",
++        "_update_selected_library_collection_capture",
++        "_library_collection_loaded_capture",
++        "_library_collection_capture_is_current",
++        "_load_library_collection_capture_highlights",
++        "_run_library_collection_capture_content_action",
++    }
++)
++
+ #: The 1 name above that is a `@staticmethod` on `LibraryScreen`. Its
+ #: delegator forwards straight to the module-level `LibraryCollectionsController`
+ #: CLASS (per the conversations/export wiring tests' "static-method
+ #: delegator pattern" precedent), not through `self._collections_controller`.
+ _COLLECTIONS_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
+     {
+         "_restore_library_collections_page",
+     }
+ )
+ 
+@@ -151,28 +184,41 @@ def test_collections_controller_owns_its_cluster() -> None:
+ 
+ @pytest.mark.unit
+ def test_screen_delegates_collections_handlers() -> None:
+     """Every one of the 64 moved names is a one-line screen delegator that
+     forwards to the SAME-NAMED controller method (or, for the 1
+     staticmethod, to the module-level controller CLASS).
+ 
+     Mirrors `test_screen_delegates_export_handlers`: a same-name forwarding
+     check, not a loose "the controller is referenced somewhere" substring
+     check.
++
++    Skips `_COLLECTIONS_CLUSTER_SCREEN_DELEGATOR_PRUNED` (Task 7 deleted
++    those 14 screen delegators as dead weight -- zero external references)
++    and instead asserts each such name is genuinely ABSENT from
++    `LibraryScreen`, so a future accidental re-add would fail loudly here
++    rather than silently reintroducing dead code.
+     """
+     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+     from tldw_chatbook.UI.Library_Modules.library_collections_controller import (
+         LibraryCollectionsController,
+     )
+ 
+     not_delegators = []
+     for name in _COLLECTIONS_CLUSTER_METHOD_NAMES:
++        if name in _COLLECTIONS_CLUSTER_SCREEN_DELEGATOR_PRUNED:
++            assert getattr(LibraryScreen, name, None) is None, (
++                f"{name!r} was pruned from the screen (task 7) but is back -- "
++                "either wire it as a delegator again or drop it from "
++                "_COLLECTIONS_CLUSTER_SCREEN_DELEGATOR_PRUNED"
++            )
++            continue
+         method = getattr(LibraryScreen, name, None)
+         if method is None:
+             not_delegators.append(f"{name!r} (missing entirely)")
+             continue
+         src = inspect.getsource(method)
+         escaped = re.escape(name)
+         if not re.search(
+             rf"_collections_controller\.{escaped}\(", src
+         ) and not re.search(rf"LibraryCollectionsController\.{escaped}\(", src):
+             not_delegators.append(name)
+diff --git a/Tests/Architecture/test_screen_size_ratchet.py b/Tests/Architecture/test_screen_size_ratchet.py
+index 5d4ea5d9e..7576f44f9 100644
+--- a/Tests/Architecture/test_screen_size_ratchet.py
++++ b/Tests/Architecture/test_screen_size_ratchet.py
+@@ -187,24 +187,37 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
+     # conversations exemplar's own "dead within this file is not the same
+     # question as dead" lesson).
+     # Wave-2 task 6 (collections controller PR, collections series 2/3):
+     # 64 method bodies moved into `LibraryCollectionsController`
+     # (`UI/Library_Modules/library_collections_controller.py`), each
+     # replaced by a one-line screen delegator (63 `self._collections_
+     # controller.<name>(...)` forwards + 1 `LibraryCollectionsController.
+     # <name>(...)` class-forward for the cluster's single staticmethod,
+     # `_restore_library_collections_page`) -- a pure move, so the method
+     # count is unchanged (64 `FunctionDef`s out, 64 one-line delegators
+-    # in). Fresh post-move measurement: 42486 lines, 1281 methods --
+-    # lowered in this same commit per recipe §6 (never deferred to a
+-    # later task).
+-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 42486, 1281),
++    # in). Measured 42486 lines, 1281 methods at that point.
++    # Wave-2 task 7 (collections cleanup, collections series 3/3): the
++    # generated collections-state shim block deleted wholesale, every
++    # remaining screen-side `_library_collections_<field>` reference
++    # retargeted to `self._collections_state.<field>` (14 literal sites +
++    # 2 dynamic-dispatch dict-of-name-strings entries shared with
++    # Conversations/Export's own precedent), and 14 of the 64 screen
++    # delegators pruned (repo-wide census across `tldw_chatbook/` and
++    # `Tests/`, including `Tests/Live/`: zero references anywhere outside
++    # their own one-line body) -- a much larger prune fraction than the
++    # export series' 1-of-22 because task 6 found zero method-level
++    # test-bypass exclusions, so Collections' whole 64-method cluster
++    # moved onto ONE controller with no screen-resident sibling left to
++    # call any of them back. Fresh post-cleanup measurement: 42411 lines,
++    # 1267 methods (1281 - 14 pruned `FunctionDef`s, exactly) -- lowered
++    # in this same commit per recipe §6 (never deferred to a later task).
++    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 42411, 1267),
+ }
+ 
+ # Task 22507.4 started from this reviewed measurement. The repository-wide
+ # ratchet predates concurrent Console growth, so this explicit comparison
+ # proves this task does not add to that debt while the stale ceiling is fixed
+ # independently.
+ _TASK_22507_4_CHAT_SCREEN_BASE = (20099, 633)
+ 
+ 
+ @lru_cache(maxsize=None)
+diff --git a/Tests/Live/test_library_collections_capture_walkthrough.py b/Tests/Live/test_library_collections_capture_walkthrough.py
+index db85cb9c4..1a5e04028 100644
+--- a/Tests/Live/test_library_collections_capture_walkthrough.py
++++ b/Tests/Live/test_library_collections_capture_walkthrough.py
+@@ -239,24 +239,24 @@ async def test_live_local_45_capture_geometry_paging_collapse_resize_and_focus()
+                 "collections",
+             )
+             assert focus_region == "work"
+ 
+         await pilot.resize_terminal(*SIZES[0])
+         await _wait_for_condition(
+             pilot,
+             lambda: screen.size == SIZES[0],
+             message="Collections wide resize did not restore",
+         )
+-        assert screen._library_collections_reader_preferences.library_open is True
+-        assert screen._library_collections_reader_preferences.items_open is True
+-        assert screen._library_collections_reader_layout.library_open is True
+-        assert screen._library_collections_reader_layout.items_open is True
++        assert screen._collections_state.reader_preferences.library_open is True
++        assert screen._collections_state.reader_preferences.items_open is True
++        assert screen._collections_state.reader_layout.library_open is True
++        assert screen._collections_state.reader_layout.items_open is True
+ 
+     after = await scope.list_page(CapturePageRequest(authority.key))
+     after_database_path = Path(app.collections_capture_repository.db.db_path).resolve()
+     after_path_fingerprint = hashlib.sha256(
+         str(after_database_path).encode("utf-8")
+     ).hexdigest()
+     assert after_path_fingerprint == before_path_fingerprint
+     assert after.total == before.total == 45
+ 
+ 
+@@ -432,58 +432,58 @@ async def test_live_server_45_capture_source_replacement_geometry_and_lifecycle(
+                     ),
+                     message=f"Server capture page {page_number} did not restore",
+                 )
+ 
+             shell = screen.query_one("#library-collections-reader-shell")
+             items_before = shell.items.region.width
+             shell.library_grip.press()
+             await _wait_for_condition(
+                 pilot,
+                 lambda: (
+-                    not screen._library_collections_reader_layout.library_open
+-                    and screen._library_collections_reader_layout.items_open
++                    not screen._collections_state.reader_layout.library_open
++                    and screen._collections_state.reader_layout.items_open
+                     and screen.query_one(
+                         "#library-collections-reader-shell"
+                     ).items.region.width
+                     > items_before
+                 ),
+                 message=lambda: (
+                     "Closing Server Library did not expand Items: "
+-                    f"screen_layout={screen._library_collections_reader_layout!r}, "
+-                    f"prefs={screen._library_collections_reader_preferences!r}, "
++                    f"screen_layout={screen._collections_state.reader_layout!r}, "
++                    f"prefs={screen._collections_state.reader_preferences!r}, "
+                     f"before={items_before}, after={screen.query_one('#library-collections-reader-shell').items.region.width}"
+                 ),
+             )
+             shell = screen.query_one("#library-collections-reader-shell")
+             shell.items_grip.press()
+             await _wait_for_condition(
+                 pilot,
+-                lambda: not screen._library_collections_reader_layout.items_open,
++                lambda: not screen._collections_state.reader_layout.items_open,
+                 message="Server Items did not close",
+             )
+             shell = screen.query_one("#library-collections-reader-shell")
+             shell.library_grip.press()
+             await _wait_for_condition(
+                 pilot,
+                 lambda: (
+-                    screen._library_collections_reader_layout.library_open
+-                    and not screen._library_collections_reader_layout.items_open
++                    screen._collections_state.reader_layout.library_open
++                    and not screen._collections_state.reader_layout.items_open
+                 ),
+                 message="Server Library-only posture did not settle",
+             )
+             shell = screen.query_one("#library-collections-reader-shell")
+             shell.items_grip.press()
+             await _wait_for_condition(
+                 pilot,
+                 lambda: (
+-                    screen._library_collections_reader_layout.library_open
+-                    and screen._library_collections_reader_layout.items_open
++                    screen._collections_state.reader_layout.library_open
++                    and screen._collections_state.reader_layout.items_open
+                 ),
+                 message="Server optional panes did not restore",
+             )
+ 
+             for width, height in SIZES:
+                 await pilot.resize_terminal(width, height)
+                 await _wait_for_condition(
+                     pilot,
+                     lambda width=width, height=height: screen.size == (width, height),
+                     message=f"Server Collections resize to {width}x{height} did not settle",
+@@ -514,21 +514,21 @@ async def test_live_server_45_capture_source_replacement_geometry_and_lifecycle(
+                 lambda: screen.size == SIZES[0],
+                 message="Server Collections wide resize did not restore",
+             )
+             for mode in ("highlights", "notes", "info", "read"):
+                 selector = f"#library-collections-mode-{mode}"
+                 await _wait_for_selector(screen, pilot, selector)
+                 screen.query_one(selector, Button).press()
+                 await _wait_for_condition(
+                     pilot,
+                     lambda mode=mode, selector=selector: (
+-                        screen._library_collections_reader_mode == mode
++                        screen._collections_state.reader_mode == mode
+                         and bool(screen.query(selector))
+                     ),
+                     message=f"Server Collections {mode} mode did not settle",
+                 )
+ 
+             registry = app.workspace_registry_service
+             assert registry is not None
+             registry.create_workspace(
+                 workspace_id="task-18919-second-workspace",
+                 name="TASK-18919 second workspace",
+@@ -553,21 +553,21 @@ async def test_live_server_45_capture_source_replacement_geometry_and_lifecycle(
+ 
+             quick_capture_button = await _wait_for_stable_button(
+                 screen,
+                 pilot,
+                 "#library-collections-quick-capture",
+             )
+             quick_capture_button.press()
+             await _wait_for_condition(
+                 pilot,
+                 lambda: bool(
+-                    screen._library_collections_quick_capture_open
++                    screen._collections_state.quick_capture_open
+                     and screen.query("#library-collections-capture-url")
+                 ),
+                 message="Server Quick Capture did not open after workspace switch",
+             )
+             screen.query_one("#library-collections-capture-url", Input).value = (
+                 f"{base_url}/api/v1/health?task=18919-ui-save"
+             )
+             screen.query_one("#library-collections-capture-title", Input).value = (
+                 "Confirmed Server UI save"
+             )
+@@ -584,21 +584,21 @@ async def test_live_server_45_capture_source_replacement_geometry_and_lifecycle(
+                     "#library-collections-capture-save",
+                 )
+             ).press()
+             await _wait_for_condition(
+                 pilot,
+                 lambda: bool(
+                     controller.state.exact_total == 46
+                     and controller.state.loaded_detail
+                     and controller.state.loaded_detail.capture.title
+                     == "Confirmed Server UI save"
+-                    and screen._library_collections_action_status.startswith(
++                    and screen._collections_state.action_status.startswith(
+                         "Saved to Server"
+                     )
+                 ),
+                 message="Confirmed Server UI save did not settle",
+             )
+ 
+             archive_button = await _wait_for_stable_button(
+                 screen,
+                 pilot,
+                 "#library-collections-archive",
+@@ -666,52 +666,52 @@ async def test_live_server_45_capture_source_replacement_geometry_and_lifecycle(
+             )
+             (
+                 await _wait_for_stable_button(
+                     screen,
+                     pilot,
+                     "#library-collections-capture-save",
+                 )
+             ).press()
+             await _wait_for_condition(
+                 pilot,
+-                lambda: screen._library_collections_save_outcome_unknown,
++                lambda: screen._collections_state.save_outcome_unknown,
+                 message="Controlled unknown Server save did not retain its draft",
+             )
+             assert uncertain_calls == 1
+-            assert screen._library_collections_action_status == (
++            assert screen._collections_state.action_status == (
+                 "Save outcome unknown. Refresh before retrying."
+             )
+             (
+                 await _wait_for_stable_button(
+                     screen,
+                     pilot,
+                     "#library-collections-capture-save",
+                 )
+             ).press()
+             await _wait_for_condition(
+                 pilot,
+-                lambda: screen._library_collections_confirming_save_retry,
++                lambda: screen._collections_state.confirming_save_retry,
+                 message="Unknown Server save did not require explicit confirmation",
+             )
+             assert uncertain_calls == 1
+             monkeypatch.setattr(server_service, "save_capture", real_save_capture)
+             (
+                 await _wait_for_stable_button(
+                     screen,
+                     pilot,
+                     "#library-collections-capture-retry-back",
+                 )
+             ).press()
+             await _wait_for_condition(
+                 pilot,
+                 lambda: (
+-                    not screen._library_collections_confirming_save_retry
++                    not screen._collections_state.confirming_save_retry
+                     and bool(screen.query("#library-collections-capture-cancel"))
+                 ),
+                 message="Unknown Server save Back action did not restore its draft",
+             )
+             assert uncertain_calls == 1
+             (
+                 await _wait_for_stable_button(
+                     screen,
+                     pilot,
+                     "#library-collections-capture-cancel",
+@@ -875,21 +875,21 @@ async def test_live_local_capture_commit_failure_retry_modes_archive_delete_and_
+ 
+             for mode in ("highlights", "notes", "info", "read"):
+                 await _wait_for_selector(
+                     screen,
+                     pilot,
+                     f"#library-collections-mode-{mode}",
+                 )
+                 screen.query_one(f"#library-collections-mode-{mode}", Button).press()
+                 await _wait_for_condition(
+                     pilot,
+-                    lambda mode=mode: screen._library_collections_reader_mode == mode,
++                    lambda mode=mode: screen._collections_state.reader_mode == mode,
+                     message=f"Collections {mode} mode did not settle",
+                 )
+ 
+             await _wait_for_selector(screen, pilot, "#library-collections-archive")
+             screen.query_one("#library-collections-archive", Button).press()
+             await _wait_for_condition(
+                 pilot,
+                 lambda: bool(
+                     controller.state.loaded_detail
+                     and controller.state.loaded_detail.capture.status == "archived"
+@@ -946,16 +946,16 @@ async def test_live_local_capture_commit_failure_retry_modes_archive_delete_and_
+             await _wait_for_selector(
+                 screen,
+                 pilot,
+                 "#library-collections-legacy-recovery-content",
+             )
+             destination = tmp_path / "complete-legacy-recovery.json"
+             await screen._export_library_collection_legacy_recovery(destination)
+             exported = json.loads(destination.read_text(encoding="utf-8"))
+             assert len(exported["collections"]) == 45
+             assert len(exported["memberships"]) == 45
+-            assert screen._library_collections_action_status == (
++            assert screen._collections_state.action_status == (
+                 "Legacy recovery export complete."
+             )
+     finally:
+         extraction_release.set()
+         await service.cancel_extractions()
+diff --git a/Tests/UI/test_library_adaptive_reader_closeout.py b/Tests/UI/test_library_adaptive_reader_closeout.py
+index 4692f83a0..e593e4733 100644
+--- a/Tests/UI/test_library_adaptive_reader_closeout.py
++++ b/Tests/UI/test_library_adaptive_reader_closeout.py
+@@ -58,34 +58,40 @@ DESTINATION_CONTRACT = {
+         "#library-row-browse-media",
+         "#library-media-reader-shell",
+         "#library-media-row-1",
+         "_library_media_reader_preferences",
+         "_library_media_reader_layout",
+     ),
+     "collections": (
+         "#library-row-browse-collections",
+         "#library-collections-reader-shell",
+         "#library-collections-row-1",
+-        "_library_collections_reader_preferences",
+-        "_library_collections_reader_layout",
++        # Task 7: collections' own reader_preferences/reader_layout fields
++        # moved to ``screen._collections_state.<field>`` -- same extra hop
++        # as conversations' own entry below. Every call site reads these
++        # two contract entries through ``operator.attrgetter`` instead of
++        # plain ``getattr``, so it stays a passthrough for the other four,
++        # not-yet-extracted, destinations' flat attribute names.
++        "_collections_state.reader_preferences",
++        "_collections_state.reader_layout",
+     ),
+     "conversations": (
+         "#library-row-browse-conversations",
+         "#library-conversations-reader-shell",
+         "#library-conversation-row-1",
+         # Task 9: conversations' own reader_preferences/reader_layout
+         # fields moved to ``screen._conversations_state.<field>`` -- one
+         # extra hop a bare ``getattr(screen, name)`` can't express. Every
+         # call site below reads these two contract entries through
+         # ``operator.attrgetter`` instead of plain ``getattr`` so it stays
+-        # a passthrough for the other five, not-yet-extracted,
+-        # destinations' flat attribute names.
++        # a passthrough for the other four, not-yet-extracted, destinations'
++        # flat attribute names.
+         "_conversations_state.reader_preferences",
+         "_conversations_state.reader_layout",
+     ),
+     "notes": (
+         "#library-row-browse-notes",
+         "#library-notes-reader-shell",
+         "#library-notes-tree-note-2",
+         "_library_notes_reader_preferences",
+         "_library_notes_reader_layout",
+     ),
+@@ -556,21 +562,21 @@ def _destination_state(screen, destination: str) -> tuple[object, ...]:
+         semantic = (
+             screen._selected_media_id,
+             screen._library_media_reader_session.loaded_id,
+             screen._library_media_reader_session.mode,
+         )
+     elif destination == "collections":
+         state = screen._library_collections_capture_controller.state
+         semantic = (
+             state.selected_identity,
+             state.loaded_detail.capture.identity if state.loaded_detail else None,
+-            screen._library_collections_reader_mode,
++            screen._collections_state.reader_mode,
+         )
+     elif destination == "conversations":
+         semantic = (
+             screen._conversations_state.reader_state.selected_id,
+             screen._conversations_state.reader_state.loaded_id,
+             screen._conversations_state.reader_state.mode,
+         )
+     elif destination == "notes":
+         mode = (
+             "context"
+@@ -627,21 +633,21 @@ def _durable_live_oracle(
+             "pending": (
+                 state.selected_identity.capture_id
+                 if state.detail_loading and state.selected_identity is not None
+                 else None
+             ),
+             "loaded": (
+                 state.loaded_detail.capture.identity.capture_id
+                 if state.loaded_detail is not None
+                 else None
+             ),
+-            "mode": screen._library_collections_reader_mode,
++            "mode": screen._collections_state.reader_mode,
+         }
+     elif destination == "conversations":
+         state = screen._conversations_state.reader_state
+         record = {
+             "selected": state.selected_id,
+             "pending": state.selected_id if state.loading else None,
+             "loaded": state.loaded_id,
+             "mode": state.mode,
+         }
+     elif destination == "notes":
+@@ -1091,21 +1097,21 @@ async def _exercise_closeout_single_app_route_cycle(
+                             and not screen._library_reader_durable_preferences[
+                                 "library"
+                             ]
+                         ),
+                         message="Shared durable Library preference did not close",
+                     )
+                 elif destination == "collections":
+                     screen.query_one("#library-collections-mode-info", Button).press()
+                     await _wait_for_condition(
+                         pilot,
+-                        lambda: screen._library_collections_reader_mode == "info",
++                        lambda: screen._collections_state.reader_mode == "info",
+                         message="Collections Info mode did not settle",
+                     )
+                 elif destination == "notes":
+                     body = screen.query_one("#library-note-body", TextArea)
+                     body.text = "Closeout route draft"
+                     screen.query_one("#library-note-preview", Button).press()
+                 elif destination == "prompts":
+                     name = screen.query_one("#library-prompt-name", Input)
+                     name.value = f"{name.value} route draft"
+                     await _wait_for_selector(
+diff --git a/Tests/UI/test_library_collections_capture_reader.py b/Tests/UI/test_library_collections_capture_reader.py
+index d0ce059f9..aaf294e14 100644
+--- a/Tests/UI/test_library_collections_capture_reader.py
++++ b/Tests/UI/test_library_collections_capture_reader.py
+@@ -623,36 +623,36 @@ async def test_unknown_quick_capture_preserves_draft_and_does_not_auto_retry(
+         screen.query_one("#library-collections-capture-title", Input).value = (
+             "Uncertain save"
+         )
+         screen.query_one("#library-collections-capture-note", TextArea).text = (
+             "Do not lose this draft."
+         )
+         screen.query_one("#library-collections-capture-save", Button).press()
+ 
+         await _wait_for_condition(
+             pilot,
+-            lambda: screen._library_collections_save_outcome_unknown,
++            lambda: screen._collections_state.save_outcome_unknown,
+             message="Unknown save state did not settle",
+         )
+         await _wait_for_selector(screen, pilot, "#library-collections-capture-refresh")
+         assert len(calls) == 1
+         assert screen.query_one("#library-collections-capture-url", Input).value == (
+             "https://example.test/uncertain-save"
+         )
+         assert screen.query_one("#library-collections-capture-note", TextArea).text == (
+             "Do not lose this draft."
+         )
+ 
+         screen.query_one("#library-collections-capture-save", Button).press()
+         await _wait_for_condition(
+             pilot,
+-            lambda: screen._library_collections_confirming_save_retry,
++            lambda: screen._collections_state.confirming_save_retry,
+             message="Explicit retry warning did not open",
+         )
+         assert len(calls) == 1
+         await _wait_for_selector(
+             screen,
+             pilot,
+             "#library-collections-capture-retry-confirm",
+         )
+         screen.query_one(
+             "#library-collections-capture-retry-confirm", Button
+@@ -692,29 +692,29 @@ async def test_real_local_capture_actions_persist_reader_results() -> None:
+         screen = _active_library_screen(host)
+         await _wait_for_library_shell(screen, pilot)
+         screen.query_one("#library-row-browse-collections", Button).press()
+         await _wait_for_selector(screen, pilot, "#library-collections-reader-title")
+ 
+         screen.query_one("#library-collections-more", Button).press()
+         await _wait_for_selector(screen, pilot, "#library-collections-summarize")
+         screen.query_one("#library-collections-summarize", Button).press()
+         await _wait_for_condition(
+             pilot,
+-            lambda: screen._library_collections_action_content
++            lambda: screen._collections_state.action_content
+             == "Summary of Action capture",
+             message="Summarize result did not reach the reader",
+         )
+         await _wait_for_selector(screen, pilot, "#library-collections-listen")
+         screen.query_one("#library-collections-listen", Button).press()
+         await _wait_for_condition(
+             pilot,
+-            lambda: screen._library_collections_action_status == "Audio is ready.",
++            lambda: screen._collections_state.action_status == "Audio is ready.",
+             message="Listen result did not reach the reader",
+         )
+         await _wait_for_selector(screen, pilot, "#library-collections-save-offline")
+         screen.query_one("#library-collections-save-offline", Button).press()
+         await _wait_for_condition(
+             pilot,
+             lambda: bool(
+                 screen._library_collections_capture_controller.state.loaded_detail
+                 and screen._library_collections_capture_controller.state.loaded_detail.capture.offline_copy
+             ),
+@@ -726,21 +726,21 @@ async def test_real_local_capture_actions_persist_reader_results() -> None:
+         await _wait_for_selector(screen, pilot, "#library-collections-highlight-quote")
+         screen.query_one("#library-collections-highlight-quote", TextArea).text = (
+             "A useful body"
+         )
+         screen.query_one("#library-collections-highlight-note", Input).value = (
+             "Remember this"
+         )
+         screen.query_one("#library-collections-highlight-save", Button).press()
+         await _wait_for_condition(
+             pilot,
+-            lambda: len(screen._library_collections_highlights) == 1,
++            lambda: len(screen._collections_state.highlights) == 1,
+             message="Highlight was not persisted",
+         )
+ 
+         await _wait_for_selector(screen, pilot, "#library-collections-mode-notes")
+         screen.query_one("#library-collections-mode-notes", Button).press()
+         await _wait_for_selector(screen, pilot, "#library-collections-freeform-note")
+         screen.query_one("#library-collections-freeform-note", TextArea).text = (
+             "Updated capture note"
+         )
+         screen.query_one("#library-collections-freeform-note-save", Button).press()
+@@ -833,22 +833,22 @@ async def test_summarize_result_is_discarded_after_selecting_another_capture(
+             lambda: bool(
+                 controller.state.loaded_detail
+                 and controller.state.loaded_detail.capture.identity == target
+             ),
+             message="The replacement capture did not load",
+         )
+         release.set()
+         await pilot.pause()
+         await pilot.pause()
+ 
+-        assert screen._library_collections_action_content == ""
+-        assert screen._library_collections_action_status == ""
++        assert screen._collections_state.action_content == ""
++        assert screen._collections_state.action_status == ""
+ 
+ 
+ async def test_legacy_recovery_inspector_and_export_reach_every_page(
+     tmp_path: Path,
+ ) -> None:
+     app = _build_test_app()
+     _seed_legacy_records(app.local_library_collections_db, count=45)
+     host = LibraryHarness(app)
+ 
+     async with host.run_test(size=(120, 35)) as pilot:
+@@ -869,13 +869,13 @@ async def test_legacy_recovery_inspector_and_export_reach_every_page(
+             ).renderable
+         )
+         assert "Collections: 45 total · showing 20" in content
+         assert "Memberships: 45 total · showing 20" in content
+ 
+         destination = tmp_path / "legacy-recovery.json"
+         await screen._export_library_collection_legacy_recovery(destination)
+         payload = json.loads(destination.read_text(encoding="utf-8"))
+         assert len(payload["collections"]) == 45
+         assert len(payload["memberships"]) == 45
+-        assert screen._library_collections_action_status == (
++        assert screen._collections_state.action_status == (
+             "Legacy recovery export complete."
+         )
+diff --git a/Tests/UI/test_library_collections_characterization.py b/Tests/UI/test_library_collections_characterization.py
+index 3c57a36af..f4446b028 100644
+--- a/Tests/UI/test_library_collections_characterization.py
++++ b/Tests/UI/test_library_collections_characterization.py
+@@ -100,27 +100,27 @@ session rather than one Pilot session per handler):
+ No live bugs were found among the 17 -- every one is a coverage gap, not a
+ behavior bug (each handler's own current behavior, once actually driven
+ through the DOM, is exactly what its body says it should be). The
+ remaining 23 non-``@on`` and already-DOM-covered Collections methods are
+ reached transitively by these same well-covered flows and are not
+ individually re-pinned here, mirroring the export series' identical
+ blanket finding for its own 31 private helpers.
+ 
+ Every test below drives the screen only through DOM queries/presses/value
+ assignments and public screen attributes -- originally the pre-extraction
+-``_library_collections_*`` names, kept resolving identically by the state
+-PR's generated property shim through a future controller PR, and
+-retargeted to ``screen._collections_state.<field>`` by that series'
+-eventual cleanup PR once the shim is deleted (recipe §1's "Test retarget"
+-step: assertions unchanged byte-for-byte, only the receiver path moved).
+-The pinned BEHAVIOR these tests characterize is unaffected by that
+-retarget.
++``_library_collections_*`` names, which resolved identically through the
++state PR's generated property shim across the controller PR, and were
++retargeted to ``screen._collections_state.<field>`` by wave-2 task 7
++(collections series 3/3, cleanup PR) once that shim was deleted (recipe
++§1's "Test retarget" step: assertions unchanged byte-for-byte, only the
++receiver path moved). The pinned BEHAVIOR these tests characterize was
++unaffected by that retarget.
+ """
+ 
+ from __future__ import annotations
+ 
+ import pytest
+ from textual.widgets import Button, Input, Static, TextArea
+ 
+ from tldw_chatbook.Library.collections_capture_models import CaptureSaveRequest
+ from Tests.UI.test_library_collections_capture_reader import _seed_legacy_records
+ from Tests.UI.test_library_shell import (
+@@ -170,24 +170,24 @@ async def test_capture_filters_toggle_apply_clear_sort_and_free_text_reach_the_s
+     host = LibraryHarness(app)
+ 
+     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+         screen = _active_library_screen(host)
+         await _wait_for_library_shell(screen, pilot)
+         await _open_collections(screen, pilot)
+         controller = screen._library_collections_capture_controller
+         assert controller is not None
+ 
+         # toggle_library_collection_capture_filters: opens the disclosure.
+-        assert screen._library_collections_filters_open is False
++        assert screen._collections_state.filters_open is False
+         screen.query_one("#library-collections-filters", Button).press()
+         await pilot.pause()
+-        assert screen._library_collections_filters_open is True
++        assert screen._collections_state.filters_open is True
+         await _wait_for_selector(screen, pilot, "#library-collections-filters-apply")
+ 
+         # apply_library_collection_capture_filters: a domain filter narrows
+         # the requested scope.
+         domain_input = await _wait_for_selector(
+             screen, pilot, "#library-collections-filter-domain"
+         )
+         domain_input.value = "alpha.example.test"
+         apply_button = await _wait_for_selector(
+             screen, pilot, "#library-collections-filters-apply"
+@@ -289,21 +289,21 @@ async def test_item_row_press_and_scope_row_press_reach_the_capture_controller()
+                 and controller.state.loaded_detail is not None
+             ),
+             message="Item-row press never reached the capture controller.",
+         )
+ 
+         # select_library_collection_capture_scope: a built-in scope-row press.
+         screen.query_one("#library-collections-scope-reading", Button).press()
+         await _wait_for_condition(
+             pilot,
+             lambda: bool(
+-                screen._library_collections_active_scope == "reading"
++                screen._collections_state.active_scope == "reading"
+                 and controller.state.requested_scope is not None
+                 and controller.state.requested_scope.statuses == ("reading",)
+             ),
+             message="Scope-row press never reached the capture controller.",
+         )
+ 
+ 
+ @pytest.mark.asyncio
+ async def test_page_and_detail_retry_buttons_recover_after_a_transient_failure() -> None:
+     """Characterization (pre-extraction): pins retry_library_collection_
+@@ -501,34 +501,34 @@ async def test_detail_action_buttons_favorite_mark_read_open_original_highlight_
+         quote_area = await _wait_for_selector(
+             screen, pilot, "#library-collections-highlight-quote"
+         )
+         quote_area.text = "A quoted highlight"
+         highlight_save_button = await _wait_for_selector(
+             screen, pilot, "#library-collections-highlight-save"
+         )
+         highlight_save_button.press()
+         await _wait_for_condition(
+             pilot,
+-            lambda: len(screen._library_collections_highlights) == 1,
++            lambda: len(screen._collections_state.highlights) == 1,
+             message="Highlight setup did not persist.",
+         )
+         for _ in range(3):
+             await pilot.pause()
+ 
+         # delete_library_collection_capture_highlight.
+         delete_button = await _wait_for_selector(
+             screen, pilot, ".library-collections-highlight-delete"
+         )
+         delete_button.press()
+         await _wait_for_condition(
+             pilot,
+-            lambda: len(screen._library_collections_highlights) == 0,
++            lambda: len(screen._collections_state.highlights) == 0,
+             message="Highlight-delete press never reached the scope service.",
+         )
+         for _ in range(3):
+             await pilot.pause()
+ 
+         # link a note (already covered elsewhere) so this test can pin its
+         # own UNLINK half.
+         notes_mode_button = await _wait_for_selector(
+             screen, pilot, "#library-collections-mode-notes"
+         )
+@@ -611,30 +611,30 @@ async def test_quick_capture_refresh_hard_delete_cancel_and_legacy_recovery_clos
+             return CaptureSaveOutcome(None, None, outcome_unknown=True)
+ 
+         monkeypatch.setattr(scope, "save_capture", unknown_save)
+         screen.query_one("#library-collections-quick-capture", Button).press()
+         url_input = await _wait_for_selector(screen, pilot, "#library-collections-capture-url")
+         url_input.value = "https://zeta.example.test/draft-retained"
+         save_button = await _wait_for_selector(screen, pilot, "#library-collections-capture-save")
+         save_button.press()
+         await _wait_for_condition(
+             pilot,
+-            lambda: screen._library_collections_save_outcome_unknown is True,
++            lambda: screen._collections_state.save_outcome_unknown is True,
+             message="Uncertain-save setup never settled.",
+         )
+         refresh_button = await _wait_for_selector(
+             screen, pilot, "#library-collections-capture-refresh"
+         )
+         refresh_button.press()
+         await _wait_for_condition(
+             pilot,
+-            lambda: screen._library_collections_action_status
++            lambda: screen._collections_state.action_status
+             == "Capture list refreshed. Confirm whether the URL is present before retrying.",
+             message="Quick-capture refresh never reached the capture controller.",
+         )
+         retained_url_input = await _wait_for_selector(
+             screen, pilot, "#library-collections-capture-url"
+         )
+         assert retained_url_input.value == "https://zeta.example.test/draft-retained"
+         cancel_button = await _wait_for_selector(
+             screen, pilot, "#library-collections-capture-cancel"
+         )
+@@ -653,42 +653,42 @@ async def test_quick_capture_refresh_hard_delete_cancel_and_legacy_recovery_clos
+         for _ in range(5):
+             await pilot.pause()
+         more_button = await _wait_for_selector(screen, pilot, "#library-collections-more")
+         more_button.press()
+         hard_delete_button = await _wait_for_selector(
+             screen, pilot, "#library-collections-hard-delete"
+         )
+         hard_delete_button.press()
+         await _wait_for_condition(
+             pilot,
+-            lambda: screen._library_collections_confirming_hard_delete is True,
++            lambda: screen._collections_state.confirming_hard_delete is True,
+             message="Hard-delete arm never opened its confirmation.",
+         )
+         hard_delete_cancel_button = await _wait_for_selector(
+             screen, pilot, "#library-collections-hard-delete-cancel"
+         )
+         hard_delete_cancel_button.press()
+         await pilot.pause()
+-        assert screen._library_collections_confirming_hard_delete is False
++        assert screen._collections_state.confirming_hard_delete is False
+         assert controller.state.loaded_detail is not None
+         assert controller.state.loaded_detail.capture.identity == outcome.capture.identity
+ 
+         # close_library_collection_legacy_recovery: closes what its
+         # `inspect` sibling opens (already covered by
+         # test_library_export_characterization.py's own legacy-recovery-
+         # export pin), clearing the preview lines.
+         legacy_button = await _wait_for_selector(
+             screen, pilot, "#library-collections-legacy-recovery"
+         )
+         legacy_button.press()
+         await _wait_for_selector(
+             screen, pilot, "#library-collections-legacy-recovery-content"
+         )
+-        assert screen._library_collections_legacy_recovery_open is True
+-        assert screen._library_collections_legacy_recovery_lines
++        assert screen._collections_state.legacy_recovery_open is True
++        assert screen._collections_state.legacy_recovery_lines
+         legacy_close_button = await _wait_for_selector(
+             screen, pilot, "#library-collections-legacy-recovery-close"
+         )
+         legacy_close_button.press()
+         await pilot.pause()
+-        assert screen._library_collections_legacy_recovery_open is False
+-        assert screen._library_collections_legacy_recovery_lines == ()
++        assert screen._collections_state.legacy_recovery_open is False
++        assert screen._collections_state.legacy_recovery_lines == ()
+diff --git a/Tests/UI/test_library_shell.py b/Tests/UI/test_library_shell.py
+index b1f92622d..b09c86d2d 100644
+--- a/Tests/UI/test_library_shell.py
++++ b/Tests/UI/test_library_shell.py
+@@ -25427,21 +25427,21 @@ def test_library_landing_continue_receipt_accepts_only_authoritative_source_scop
+                 sort_order="asc",
+                 page=2,
+             ),
+         )
+     elif row_id == LIBRARY_ROW_BROWSE_SKILLS:
+         _apply_continue_skill_scope(
+             screen,
+             SkillBrowseScope(query="python", sort="status", page=2),
+         )
+     elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
+-        screen._library_collections_requested_page = 1
++        screen._collections_state.requested_page = 1
+     else:
+         screen._library_rag_query = "retrieval"
+         screen._library_rag_searched_query = "retrieval"
+         screen._library_rag_mode = "rag"
+         screen._library_rag_scope_deselected = {"media"}
+         screen._library_rag_retrieval_status = "ready"
+         screen._library_rag_results = ({"private": "PRIVATE SEARCH ROW"},)
+ 
+     state = screen.save_state()
+ 
+diff --git a/backlog/docs/library-decomposition-recipe.md b/backlog/docs/library-decomposition-recipe.md
+index ff09143ba..5cb0df6b1 100644
+--- a/backlog/docs/library-decomposition-recipe.md
++++ b/backlog/docs/library-decomposition-recipe.md
+@@ -1092,10 +1092,391 @@ just a literal argument passed directly to the call -- to avoid
+ re-missing this shape.
+ 
+ **Sweep evidence — concurrent branch/baseline xdist runs amplify
+ flakiness measurably; see §7's updated documented-failures entry for the
+ full numbers and per-test disposition.** Zero real regressions confirmed,
+ but the concurrent-run shortcut (both full sweeps launched at once to
+ save wall-clock time) cost real investigation effort re-running 12
+ branch-unique names individually/combined and, for the one that
+ reproduced, against the pristine baseline too. **Future tasks should run
+ the two full sweeps sequentially when time allows.**
++
++## 15. The collections series, task 3 (cleanup PR) — as landed
++
++Wave-2 task 7 (collections cleanup, collections series 3/3) is complete,
++closing out the collections rehearsal (§13/§14). This section records what
++landed and reconfirms/extends the recipe's own guidance for the next
++subsystem's cleanup PR.
++
++### Dynamic-dispatch census (screen + tests), with the dict.get→variable→setattr guidance applied
++
++Re-derived task 6's own dynamic-dispatch findings before deleting the
++shim, plus the NEW two-step "`dict.get(...)` into a variable, then into
++`setattr`/`getattr`" shape task 6's fix round added to this recipe:
++
++- **The one screen-side dynamic-dispatch site touching Collections**:
++  `_replace_library_reader_preference`/`_persist_library_reader_
++  preference`'s 7-destination `{destination: attribute_name}` dicts (the
++  SAME shared shell dispatcher the conversations exemplar's Task 9 and the
++  export series' Task 4 already fixed for their own subsystems). The
++  `"collections"` entry's value string changed from the flat
++  `"_library_collections_reader_preferences"` to the dotted
++  `"_collections_state.reader_preferences"`, read via the existing
++  `operator.attrgetter(...)` calls and written via the existing
++  `_assign_library_reader_preferences_attribute(owner, attribute, value)`
++  helper -- both already fully generic dotted-vs-flat passthroughs (the
++  export series' own lesson: reuse, don't re-derive), so neither needed a
++  logic change, only the string value.
++- **The SAME dynamic-dispatch shape, independently, inside a TEST fixture**:
++  `Tests/UI/test_library_adaptive_reader_closeout.py`'s `DESTINATION_
++  CONTRACT` dict (a `{destination: (rail_selector, shell_selector, ...,
++  preferences_attr, layout_attr)}` table used by a battery of
++  cross-destination closeout tests) carries its own `"collections"` entry
++  with the same two flat strings, already consumed everywhere via
++  `operator.attrgetter` (never a bare `getattr`) -- exactly mirroring the
++  fix this same file's own `"conversations"` entry needed at the
++  conversations exemplar's Task 9. Retargeted both strings to
++  `"_collections_state.reader_preferences"`/`"_collections_state.
++  reader_layout"`; zero consumption-site changes needed since every reader
++  of this table already goes through `attrgetter`.
++- **The controller-internal dict.get→variable→setattr site task 6's fix
++  round found** (`retain_library_collection_quick_capture_input`'s
++  DOM-id-keyed `attributes` dict, `.get()`-ed into a local variable, then
++  `setattr(self, attribute, event.value)`): confirmed **out of this
++  task's scope** -- it lives entirely INSIDE `LibraryCollectionsController`
++  (moved there byte-for-byte by task 6), dispatches to 3 of the
++  controller's own generated state-shim properties (full `property(get,
++  set)` pairs per task 6's report), and was never routed through anything
++  this cleanup task touches (the screen-side shim, the 14 pruned
++  delegators, or the field-retarget pass). Per the task brief's own
++  framing ("Known dynamic-dispatch site INSIDE THE CONTROLLER (safe,
++  stays)"), re-verified rather than re-fixed.
++- **Applying the new guidance itself** (grep for `\.get\(` results
++  assigned to a variable that later flows into `setattr`/`getattr` within
++  the same function, not just a literal argument): run across
++  `library_screen.py` and every retargeted test file. Zero NEW instances
++  found touching any of the 26 Collections state fields or the 14 pruned
++  method names -- the one instance this guidance exists to catch
++  (`retain_library_collection_quick_capture_input`, above) was already
++  known and already out of scope.
++
++### Screen-side field retarget
++
++**14 literal `self._library_collections_<field>` sites**, across the
++`__init__` entangled-trio lines and 2 shared-shell dispatcher methods
++(`_replace_library_reader_preference`, `_persist_library_reader_
++preference`) plus `restore_state` and the Collections reader-shell
++`compose` call site -- a single mechanical word-boundary-anchored regex
++pass (26-field mapping table, longest-match-first, verified against zero
++accidental collisions with any of the 64 moved method names before
++running) rewrote all 14 to `self._collections_state.<field>` in one pass;
++re-verified afterward with a zero-result grep for every one of the 26
++flat field names over the whole file. `_library_collections_capture_
++controller` (the ONE field task 5 deliberately kept OFF the state object
++as "wiring, not state") was excluded by construction -- it is not one of
++the 26 mapped names, so the regex never touched its 11 occurrences.
++
++Unlike the conversations/export cleanup PRs, the vast majority of
++Collections' 26 fields have ZERO remaining screen-side literal references
++after task 6's controller move -- only the three entangled fields
++(`reader_preferences`, `reader_persistence_locks`, `reader_layout`) and
++`requested_page` still had any screen-side literal access at all, because
++task 6 moved all 64 cluster METHODS (the only other consumers) onto the
++controller in one PR with zero exclusions (§14), leaving no screen-
++resident method to reach the other 22 fields directly.
++
++### Test retarget — per file, widened beyond the brief's stated `Tests/UI`/`Tests/Library` scope
++
++The brief named `Tests/UI/` and `Tests/Library/` as the retarget scope
++(matching the export series' own widened-root lesson, §12). A repo-wide
++grep for `_library_collections_<field>` across the WHOLE `Tests/` tree
++(not just those two directories) found a THIRD location the brief didn't
++name: **`Tests/Live/test_library_collections_capture_walkthrough.py`** --
++a non-network-gated, `@pytest.mark.asyncio` full-harness walkthrough file
++that is collected in an ordinary pytest run (no `Tests/Live` ignore rule
++in `pyproject.toml`, confirmed by reading `addopts`) and reaches 22 flat
++Collections field names directly on a real `screen` instance. Left
++unretargeted, these 22 references would have broken the instant the shim
++was deleted, undetected by any check scoped to `Tests/UI`/`Tests/Library`
++alone. **Any future subsystem's cleanup-PR test census should grep the
++whole `Tests/` tree for the flat field names, not just the two directories
++the recipe's prose names as the primary scope** -- this is the same
++"widen the root" lesson §12 already drew for controller-PR batteries,
++now shown to apply to a cleanup PR's test-retarget census too.
++
++| File | Retargets | Notes |
++|---|---|---|
++| `Tests/UI/test_library_collections_characterization.py` | 13 (`screen`) | 1 docstring paragraph updated from future to past tense (the shim is gone now, not "will be gone") |
++| `Tests/UI/test_library_collections_capture_reader.py` | 8 (`screen`) | |
++| `Tests/UI/test_library_adaptive_reader_closeout.py` | 5 (`screen` + 2 `DESTINATION_CONTRACT` dict strings) | the dynamic-dispatch fixture fix, above |
++| `Tests/UI/test_library_shell.py` | 1 (`screen`) | inside a shared multi-parametrization helper; re-run confirmed the one pre-existing `expected_scope4` failure (task 5's documented list) is unaffected in cause |
++| `Tests/Live/test_library_collections_capture_walkthrough.py` | 22 (`screen`) | not named by the brief; found by widening the census root (above) |
++
++**49 retargets total, zero assertion VALUE changes** -- every one is a
++receiver-path rewrite only (`screen._library_collections_<field>` →
++`screen._collections_state.<field>`), confirmed by running each file
++before and after and diffing the pass/fail set (§ battery, below). No
++unbound-fake-self construction touches any Collections field (task 6's
++own battery already confirmed zero such fakes exist for this cluster), so
++no fixture needed the "flat kwargs → nested `_collections_state=
++SimpleNamespace(...)`" restructuring the conversations/export exemplars'
++own cleanup PRs needed.
++
++### Delegator census (all 64)
++
++Per-name repo-wide grep (`tldw_chatbook/`, `Tests/`, including
++`Tests/Live/`) for every one of task 6's 64 moved-cluster names, split by
++decorator shape:
++
++- **41 `@on`-decorated handlers: all KEEP, unconditionally** -- per this
++  task's own brief ("`@on` always stays"), regardless of whether the name
++  appears literally in any test (Pilot-driven `.press()`/`.click()` calls
++  trigger these via Textual's CSS-selector message dispatch, not by
++  literal method-name reference, so a zero-grep-hit `@on` handler is not
++  evidence of deadness).
++- **5 non-`@on` methods with a screen-resident caller beyond their own
++  delegator body** (`_sync_library_collections_reader_layout_from_shell`,
++  `_mirror_library_collections_reader_preference`,
++  `_restore_library_collections_page`, `_library_collections_capture_
++  presentation`, `_load_library_collections_capture_entry`): KEEP --
++  each is called from `request_library_reader_layout_refresh`,
++  `_toggle_library_media_reader_pane`, `restore_state`, the Collections
++  reader-shell `compose` region, or a worker-group target, respectively.
++- **4 non-`@on` methods with a direct test call on a real `screen`
++  instance** (`_refresh_library_collections_capture_reader`, `_run_
++  library_collections_capture_transition`, `_select_library_collection_
++  capture`, `_export_library_collection_legacy_recovery`): KEEP -- each
++  confirmed via `await screen.<name>(...)` in `Tests/UI/test_library_
++  collections_capture_reader.py` and/or `Tests/Live/test_library_
++  collections_capture_walkthrough.py`.
++- **14 non-`@on` methods with ZERO consumers beyond their own delegator
++  body and this task's own wiring-test shape-check list**
++  (`_library_collections_capture_request`, `_ensure_library_collections_
++  capture_controller`, `_notify_library_collections_warning`,
++  `_capture_library_collection_quick_capture_draft`, `_reset_library_
++  collection_quick_capture_draft`, `_submit_library_collection_quick_
++  capture`, `_library_collection_capture_filter_request`, `_apply_
++  library_collection_capture_request`, `_page_library_collection_
++  captures`, `_update_selected_library_collection_capture`, `_library_
++  collection_loaded_capture`, `_library_collection_capture_is_current`,
++  `_load_library_collection_capture_highlights`, `_run_library_
++  collection_capture_content_action`): **PRUNED** -- each confirmed by a
++  repo-wide grep restricted to `*.py`/`*.md` outside the controller
++  module, the screen's own delegator body, and this task's wiring-test
++  list, before deletion.
++
++**Net: 50 KEEP, 14 PRUNED.** This prune fraction (14 of 64, ~22%) is much
++larger than the export series' 1-of-22 (~5%) and closer in shape to (but
++still smaller than) the conversations exemplar's 18-of-61 (~30%) --
++directly explained by task 6's own finding of ZERO method-level test-
++bypass exclusions: because the entire 64-method cluster moved onto ONE
++controller in a single PR with no screen-resident sibling class left
++behind (unlike export's 11 round-2/round-3-excluded siblings, which each
++kept calling their own delegator internally and so kept 21 of 22 alive),
++many of Collections' internal helper methods lost their only screen-side
++caller in one shot. Deleting a screen delegator whose controller-internal
++callers already call the sibling directly (`self.<name>()`, `self` =
++controller) is exactly the pure-move byproduct this recipe's delegator-
++census step exists to find.
++
++One type-annotation follow-on from the prune: `CapturePageRequest` (a
++`Library.collections_capture_models` type) appeared in exactly 3
++signatures, ALL THREE inside pruned delegators
++(`_library_collections_capture_request`, `_library_collection_capture_
++filter_request`, `_apply_library_collection_capture_request`) -- pruning
++all three made the import newly dead, folded into the dead-import pass
++below rather than treated as a separate finding. `CaptureIdentity` (used
++by both a KEPT delegator, `_select_library_collection_capture`, and a
++PRUNED one, `_library_collection_capture_is_current`) and
++`CollectionsCaptureReaderPresentation` (used only by the KEPT `_library_
++collections_capture_presentation`) both stay alive -- checked individually
++rather than assumed dead-by-association with their sibling prunes.
++
++### Shim block deletion
++
++The task-5-generated `_library_collections_<field>` property-shim loop
++(installed at module end, `dataclasses.fields(LibraryCollectionsState)`-
++driven) was deleted wholesale once the census above confirmed zero
++remaining consumers anywhere in `tldw_chatbook/` or `Tests/` outside
++`LibraryCollectionsController`'s own PERMANENT generated shim loop
++(installed by task 6, reading `self._collections_state_accessor().
++<field>` -- untouched by this task, per the task brief's explicit "controller
++shims STAY" instruction).
++
++### Import verification
++
++**10 dead imports removed**, each verified single-occurrence (import line
++only) in `library_screen.py` via per-name grep, then checked against
++`Tests/Architecture/test_library_support_layer_surface.py`'s `_SURFACE`
++dict (the PR-0a re-export contract) before deletion -- none of the 10
++belongs to any of `_SURFACE`'s 5 listed modules (`screen_constants`,
++`screen_support_types`, `note_session_port`, `canvas_sync`,
++`screen_helpers`), all PR-0a support modules unrelated to the two source
++modules these 10 actually come from (`Library.collections_capture_
++models`, `Widgets.Library`, `Library_Modules.library_collections_capture_
++controller`):
++
++- 4 flagged dead by task 5 (never became live again after the state PR):
++  `CaptureCapabilities`, `CaptureHighlight`, `SavedCaptureSearch`,
++  `CollectionsReaderMode`.
++- 4 flagged dead by task 6 (became dead after the controller move; task 6
++  deliberately left them for this cleanup PR to remove, per the export
++  series' own Task 3/Task 4 split): `CAPTURE_SORTS`, `CaptureSaveRequest`,
++  `CollectionsCaptureError`, `ExternalNoteReference`.
++- 1 flagged dead by task 5 for a different reason (a state-object-shaped
++  type never adopted): `CollectionsCaptureControllerState`.
++- 1 newly dead as a DIRECT RESULT of this task's own delegator prune:
++  `CapturePageRequest` (see the delegator-census section above).
++
++Two names task 6's report explicitly warned NOT to treat as dead
++(`CaptureIdentity`, `CollectionsCaptureReaderPresentation`) were
++individually re-checked post-prune and confirmed still alive (2
++occurrences each) -- left in place, not removed.
++
++### Wiring test finalization
++
++`Tests/Architecture/test_library_collections_wiring.py`:
++`test_state_object_fields_match_the_shim_surface` DELETED (screen shim
++gone, mirrors the conversations/export precedent exactly);
++`_COLLECTIONS_CLUSTER_SCREEN_DELEGATOR_PRUNED` frozenset (14 names) added,
++with `test_screen_delegates_collections_handlers` skipping those names and
++instead asserting their genuine ABSENCE from `LibraryScreen`; module
++docstring rewritten to describe the finished 3-task series. 4 of the
++original 5 tests remain (the shim-surface test's removal is the only
++count change) -- all 4 green post-cleanup.
++
++### Size ratchet
++
++Fresh measurement via the ratchet's own `_measure` semantics (`ast`-walked
++line count + `LibraryScreen` method count, not `wc -l`): **42411 lines,
++1267 methods** -- 1267 = 1281 (task 6's post-move count) − 14 (exactly the
++pruned delegator count), confirming the prune was a pure deletion with no
++replacement. Lowered in this same commit per recipe §6.
++
++Full pin trajectory for the collections series:
++`43410/1281 (pre-task-5) → 42486/1281 (task 6, controller PR) →
++42411/1267 (task 7, cleanup PR, final)`.
++
++**A note on recipe §6's rebase instruction**: by the time this task ran,
++`origin/dev` had diverged from this branch's merge-base by 337 commits,
++dozens touching `library_screen.py` (real, unrelated Library feature work
++landed on `dev` during this wave-2 rehearsal's own execution window).
++Rebasing a 3-task-deep-per-subsystem, multi-week decomposition rehearsal
++branch onto 337 commits of unrelated concurrent work was judged out of
++scope for a single cleanup task and not requested by the task brief
++(which scopes work to this worktree's own branch, no pushes). Measured
++fresh on this branch's own HEAD instead, consistent with tasks 2-6's own
++practice in this series. **Flagging for whoever runs the next subsystem's
++series**: §6's rebase-before-measuring rule assumes a branch that stays
++close to its upstream; this rehearsal branch no longer does, and the rule
++may need an explicit "how stale is too stale" amendment before the final
++shell-pass task (§8's phase 5) if the gap keeps growing.
++
++### Battery
++
++All commands run from `.worktrees/library-decomp-foundation`,
++`.venv/bin/python`.
++
++- **Wiring suites**: `test_library_collections_wiring.py` (4, post-
++  deletion/post-pruning) + `test_library_export_wiring.py` (5) + `test_
++  library_conversations_wiring.py` (6) — 15 passed.
++- **Characterization files**: `test_library_collections_characterization.py`
++  (5) + `test_library_export_characterization.py` (5) + `test_library_
++  conversations_characterization.py` (4) — 14 passed.
++- **Recompose ratchet + support-layer surface**: `test_library_recompose_
++  ratchet.py` + `test_library_support_layer_surface.py` — 14 passed
++  (recompose pin unaffected: zero `refresh(recompose=True)` sites touched).
++- **Both size-ratchet guards, full suite**: 3 passed, 2 failed (the two
++  documented pre-existing `chat_screen.py` rows only).
++- **Collections-adjacent live-functional suites**: `test_library_
++  collections_capture_reader.py`, `test_library_collections_capture_
++  controller.py`, `test_library_collections_reader_geometry.py`, `test_
++  product_maturity_phase39_library_collections.py` — 43 passed (matches
++  task 6's own count for this same battery).
++- **`test_library_adaptive_reader_closeout.py`** (full file, incl. the
++  dynamic-dispatch-fixed `DESTINATION_CONTRACT` table and the specific
++  `test_closeout_single_app_route_cycle` test task 6's fix round proved
++  DOES exercise 2 Collections methods): 14 passed.
++- **`Tests/Live/test_library_collections_capture_walkthrough.py`**
++  (widened-scope retarget): 2 passed, 1 skipped (network-gated, unrelated).
++- **`Tests/UI/test_library_shell.py::test_library_landing_continue_
++  receipt_accepts_only_authoritative_source_scopes`** (contains the
++  retargeted line inside a shared parametrization helper): 5 passed, 1
++  failed -- the SAME `[browse-collections-expected_scope4]` failure task
++  5's own report already documented (`state["library_continue_receipt"]`
++  `None` vs. expected dict), reconfirmed identical in symptom.
++- **`-k "collection and library"` across `Tests/UI` + `Tests/Library`**
++  (narrow per-task check): **361 passed, 3 failed** in one single-process
++  run -- the SAME 3 names already documented pre-existing by task 5,
++  reconfirmed by task 6 (`test_library_starter_deep_link_opens_hidden_
++  collection_or_note_route`, `test_library_landing_continue_receipt_
++  accepts_only_authoritative_source_scopes[browse-collections-
++  expected_scope4]`, `test_get_library_collection_supported_types_round_
++  trip_public_ids`). Matched the recipe's own documented list exactly
++  (name-for-name and count-for-count), so no separate `git stash -u`
++  re-derivation was needed for this narrow check per §7's own "check this
++  list before re-deriving" guidance.
++- **Full xdist paired-baseline sweep** (`Tests/UI -k "library" -p
++  no:randomly -q -n 8 --dist worksteal`), run SEQUENTIALLY (branch, then a
++  `git stash -u` pristine baseline of the same `91feba4a7` pre-task tree,
++  restored via `git stash pop` afterward and re-verified via `ast.parse` +
++  `git status` clean) per task 6's own forward note -- NOT concurrently:
++  - Branch: **333 failed, 3906 passed** (1314.45s / 21:54).
++  - Baseline: **337 failed, 3902 passed** (1306.25s / 21:46).
++  - Diff (`comm` on the two sorted unique-failure-name sets): **4
++    branch-unique**, **8 baseline-unique**, the remainder shared.
++  - All 4 branch-unique names re-run single-process, combined:
++    `test_audio_cpp_model_library_handoff.py::test_rapid_away_back_
++    reclaims_request_after_old_operation_drains` and `test_library_media_
++    reader_traversal_t22207.py::test_loading_banner_paints_in_place_
++    without_body_rebuild` failed in the combined run; `test_library_
++    prompts_canvas.py::test_library_prompt_history_no_change_keeps_
++    selection_and_retry_available` and `test_library_shell.py::test_
++    library_media_page_error_retains_rows_and_gates_unsafe_controls`
++    passed. Both of the 2 that failed combined **passed individually in
++    true isolation**. The SAME 4-test combined invocation, re-run against
++    a pristine `git stash -u` baseline under identical conditions,
++    reproduced ONE of the two (`test_rapid_away_back_reclaims_request_
++    after_old_operation_drains` failed there too; `test_loading_banner_
++    paints_in_place_without_body_rebuild` passed on baseline this time --
++    a different subset flaking each time) -- the SAME "shared-state/
++    ordering sensitivity to which OTHER tests ran earlier in the process,
++    identical on both code versions" shape task 6's own report already
++    established for `test_one_megabyte_markdown_document_is_not_reparsed_
++    per_keystroke`. **Zero real regressions** -- none of the 4
++    branch-unique names touches Collections code, this task's diff, or a
++    fixture this task's diff shares (Audio/CPP model handoff, Media
++    reader traversal, Prompts canvas, Media page-error), and the one
++    combined-run failure that reproduces at all reproduces on BOTH trees.
++- **Preflight**: all six checks green (CSS bundle, profile-owned-path
++  census, diagnostic inventory, backlog task ids, chachanotes table
++  allowlist, index plan pins).
++
++### Lessons
++
++1. **The cleanup-PR test census should widen past the brief's stated
++   directories, the same way a controller-PR battery's `-k` search
++   should** (§12's own lesson, now shown to generalize to a DIFFERENT
++   task type): this task's own brief named `Tests/UI/` and `Tests/
++   Library/`; a repo-wide grep found a third, unnamed location (`Tests/
++   Live/`) with 22 real consumers of the flat field names that would have
++   broken silently at shim deletion if the census had trusted the brief's
++   stated scope literally.
++2. **A delegator prune's type-annotation fallout is a real, checkable
++   side effect, not a hypothetical**: `CapturePageRequest` went from
++   3-signatures-alive to fully-dead as a direct, mechanical consequence of
++   pruning the 3 delegators that carried its only usages -- checked by
++   re-running the occurrence-count census AFTER the prune, not assumed
++   from the pre-prune count.
++3. **A cluster with zero controller-PR method-level exclusions can still
++   produce a LARGE cleanup-PR prune fraction** -- the inverse of what
++   might be assumed ("no test-bypass exclusions" sounds like "everything
++   stays wired"). The mechanism is the opposite: exclusions are what KEEP
++   screen delegators alive (an excluded, screen-resident sibling method
++   calls its moved neighbors via `self.<delegator>()`); a cluster that
++   moves entirely, in one PR, onto one controller has no such sibling
++   left, so more of its purely-internal helper methods lose their only
++   caller in the same step. Collections' 14-of-64 (22%) prune fraction,
++   next to export's 1-of-22 (5%, eleven round-2/round-3 exclusions kept
++   calling their delegators) and conversations' 18-of-61 (30%, a genuinely
++   split Reader/Browse controller pair with less internal self-calling),
++   is now a third data point for this same inverse relationship.
+diff --git a/tldw_chatbook/UI/Screens/library_screen.py b/tldw_chatbook/UI/Screens/library_screen.py
+index a153aceb9..697b2f2cd 100644
+--- a/tldw_chatbook/UI/Screens/library_screen.py
++++ b/tldw_chatbook/UI/Screens/library_screen.py
+@@ -79,31 +79,21 @@ from ...Constants import (
+     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
+     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
+     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
+ )
+ from ...DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
+ from ...DB.Prompts_DB import ConflictError as PromptConflictError
+ from ...Library.export_progress import (
+     ExportProgressThrottle,
+     format_export_progress_line,
+ )
+-from ...Library.collections_capture_models import (
+-    CAPTURE_SORTS,
+-    CaptureCapabilities,
+-    CaptureHighlight,
+-    CaptureIdentity,
+-    CapturePageRequest,
+-    CaptureSaveRequest,
+-    CollectionsCaptureError,
+-    ExternalNoteReference,
+-    SavedCaptureSearch,
+-)
++from ...Library.collections_capture_models import CaptureIdentity
+ from ...Library.library_content_evidence import (
+     LibraryContentEvidence,
+     LibraryEvidenceStatus,
+ )
+ from ...Utils.adaptive_reader_state import (
+     AdaptiveReaderEffectiveLayout,
+     AdaptiveReaderLayoutPreferences,
+     PANE_GRIP_WIDTH,
+     PaneName,
+     normalize_adaptive_reader_preferences,
+@@ -442,21 +432,20 @@ from ...Widgets.destination_rail import (
+     RAIL_SECTION_TOGGLE_PREFIX,
+     DestinationRailSectionHeader,
+ )
+ from ...Widgets.workbench_focus import (
+     WorkbenchPaneTarget,
+     focus_relative_workbench_pane,
+ )
+ from ...Widgets.Library import (
+     AdaptiveReaderShellResized,
+     CollectionsCaptureReaderPresentation,
+-    CollectionsReaderMode,
+     LIBRARY_SKILLS_FILTER_ID,
+     LIBRARY_SKILLS_PAGE_NEXT_ID,
+     LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
+     LIBRARY_SKILLS_RETRY_ID,
+     LibraryAdaptiveReaderShell,
+     LibraryCollectionsItemsPane,
+     LibraryCollectionsScopeRows,
+     LibraryCollectionsWorkPane,
+     LibraryConversationReader,
+     LibraryConversationsCanvas,
+@@ -560,21 +549,20 @@ from ..Library_Modules import (
+     LibrarySkillsBrowseController,
+ )
+ from ..Library_Modules.library_media_browse_controller import (
+     LibraryMediaBrowseController,
+ )
+ from ..Library_Modules.library_media_trash_browse_controller import (
+     LibraryMediaTrashBrowseController,
+     MediaTrashMutationClaim,
+ )
+ from ..Library_Modules.library_collections_capture_controller import (
+-    CollectionsCaptureControllerState,
+     LibraryCollectionsCaptureController,
+ )
+ from ..Library_Modules.library_collections_controller import (
+     LibraryCollectionsController,
+ )
+ from ..Library_Modules.library_collections_state import LibraryCollectionsState
+ from ..Library_Modules.library_conversation_reader_controller import (
+     LibraryConversationReaderController,
+ )
+ from ..Library_Modules.library_conversations_controller import (
+@@ -846,41 +834,47 @@ from ..Library_Modules.screen_helpers import (
+ def _assign_library_reader_preferences_attribute(
+     owner: Any, attribute: str, value: Any
+ ) -> None:
+     """Write through a possibly-dotted attribute path off ``owner``.
+ 
+     Task 9 (Conversations cleanup) support: ``_replace_library_reader_preference``
+     and ``_persist_library_reader_preference`` dispatch across every reader
+     destination (media, collections, conversations, notes, notes_files,
+     prompts, skills) through a ``{destination: attribute_name}`` dict, read
+     with plain ``getattr``/``operator.attrgetter`` and written with plain
+-    ``setattr``. Every destination except conversations still keeps its
+-    reader-preferences object as a flat screen attribute, so a bare
++    ``setattr``. Every destination except conversations and collections still
++    keeps its reader-preferences object as a flat screen attribute, so a bare
+     attribute-name string has always been enough. Conversations' own
+     ``reader_preferences`` field moved to ``self._conversations_state.reader_preferences``
+     (Task 6/9) -- one extra hop the generic dispatch's plain ``setattr``
+     cannot express. This resolves the last (dotted) segment's owner via
+     ``operator.attrgetter`` and assigns onto it, and is a no-op passthrough
+     (``setattr(owner, attribute, value)``) for every other, undotted,
+-    destination -- so the six not-yet-extracted subsystems are unaffected.
++    destination -- so the five not-yet-extracted subsystems are unaffected.
+     Future subsystem extractions hit this exact same shape; this helper is
+     meant to keep serving them, not to be re-derived per subsystem.
+ 
+     Second use, added by Task 4 (Export cleanup): ``_close_open_library_
+     choice_strip`` dispatches across a DIFFERENT dict-of-name-strings
+     (media/prompts/skills/export choice-strip visibility, built by
+     ``_library_open_choice_strip``) with the identical possibly-dotted-path
+     shape -- Export's own visibility field moved to ``self._export_state.
+     quality_choices_visible`` (Task 2/4), while media/prompts/skills keep
+     flat screen attributes, so the same generic dotted-vs-flat passthrough
+     this docstring already describes serves that dispatcher too, without a
+     second near-identical helper.
++
++    Third use, added by Task 7 (Collections cleanup): the same two dicts'
++    ``"collections"`` entry moved from the flat ``_library_collections_
++    reader_preferences`` name to ``self._collections_state.reader_preferences``
++    (Task 5/7) -- exactly the same dotted-vs-flat shape Conversations already
++    established, requiring no change to this helper's own logic.
+     """
+     head, _, tail = attribute.rpartition(".")
+     target = operator.attrgetter(head)(owner) if head else owner
+     setattr(target, tail, value)
+ 
+ 
+ class LibraryScreen(BaseAppScreen):
+     """Source material, imports/exports, conversations, and Search/RAG entry."""
+ 
+     #: TASK-25812: Library-owned rules split out of
+@@ -2345,40 +2339,40 @@ class LibraryScreen(BaseAppScreen):
+             ),
+             set_library_collections_capture_controller=(
+                 lambda value: setattr(
+                     self, "_library_collections_capture_controller", value
+                 )
+             ),
+         )
+         (
+             self._library_reader_shared_preferences,
+             self._library_media_reader_preferences,
+-            self._library_collections_reader_preferences,
++            self._collections_state.reader_preferences,
+             self._conversations_state.reader_preferences,
+             self._library_notes_reader_preferences,
+             self._library_file_notes_reader_preferences,
+             self._library_prompts_reader_preferences,
+             self._library_skills_reader_preferences,
+         ) = self._load_library_reader_preference_snapshot()
+         collections_capture_scope = getattr(
+             self.app_instance,
+             "collections_capture_scope_service",
+             None,
+         )
+         self._library_collections_capture_controller = (
+             LibraryCollectionsCaptureController(collections_capture_scope)
+             if collections_capture_scope is not None
+             else None
+         )
+-        self._library_collections_reader_layout = resolve_adaptive_reader_layout(
++        self._collections_state.reader_layout = resolve_adaptive_reader_layout(
+             0,
+-            self._library_collections_reader_preferences,
++            self._collections_state.reader_preferences,
+             LIBRARY_COLLECTIONS_READER_PROFILE,
+         )
+         self._library_notes_reader_layout: AdaptiveReaderEffectiveLayout = (
+             resolve_adaptive_reader_layout(
+                 0,
+                 self._library_notes_reader_preferences,
+                 LIBRARY_NOTES_READER_PROFILE,
+             )
+         )
+         self._library_file_notes_reader_layout: AdaptiveReaderEffectiveLayout = (
+@@ -2419,32 +2413,32 @@ class LibraryScreen(BaseAppScreen):
+             "collections_items": 0,
+             "conversations_items": 0,
+             "media_items": 0,
+             "notes_items": 0,
+             "notes_file_items": 0,
+             "prompts_items": 0,
+             "skills_items": 0,
+         }
+         self._library_reader_durable_preferences = {
+             "library": self._conversations_state.reader_preferences.library_open,
+-            "collections_items": self._library_collections_reader_preferences.items_open,
++            "collections_items": self._collections_state.reader_preferences.items_open,
+             "conversations_items": self._conversations_state.reader_preferences.items_open,
+             "notes_items": self._library_notes_reader_preferences.items_open,
+             "notes_file_items": self._library_file_notes_reader_preferences.items_open,
+             "prompts_items": self._library_prompts_reader_preferences.items_open,
+             "skills_items": self._library_skills_reader_preferences.items_open,
+         }
+         self._conversations_state.reader_persistence_locks = {
+             "library": library_pane_persistence_lock,
+             "items": asyncio.Lock(),
+         }
+-        self._library_collections_reader_persistence_locks = {
++        self._collections_state.reader_persistence_locks = {
+             "library": library_pane_persistence_lock,
+             "items": asyncio.Lock(),
+         }
+         self._library_notes_reader_persistence_locks = {
+             "library": library_pane_persistence_lock,
+             "items": asyncio.Lock(),
+         }
+         self._library_file_notes_reader_persistence_locks = {
+             "library": library_pane_persistence_lock,
+             "items": asyncio.Lock(),
+@@ -7009,21 +7003,21 @@ class LibraryScreen(BaseAppScreen):
+ 
+     def _replace_library_reader_preference(
+         self,
+         destination: LibraryReaderDestination,
+         key: Literal["library_open", "items_open"],
+         value: bool,
+     ) -> None:
+         """Replace one pane choice, sharing only the Library-pane preference."""
+         attributes = {
+             "media": "_library_media_reader_preferences",
+-            "collections": "_library_collections_reader_preferences",
++            "collections": "_collections_state.reader_preferences",
+             "conversations": "_conversations_state.reader_preferences",
+             "notes": "_library_notes_reader_preferences",
+             "notes_files": "_library_file_notes_reader_preferences",
+             "prompts": "_library_prompts_reader_preferences",
+             "skills": "_library_skills_reader_preferences",
+         }
+         attribute = attributes[destination]
+         preferences = operator.attrgetter(attribute)(self)
+         _assign_library_reader_preferences_attribute(
+             self, attribute, dataclasses.replace(preferences, **{key: value})
+@@ -7153,30 +7147,30 @@ class LibraryScreen(BaseAppScreen):
+         generation: int,
+         verify_failure_from_config: bool = False,
+     ) -> None:
+         """Persist one grip choice and reconcile writes superseded in flight."""
+         key: Literal["library_open", "items_open"] = (
+             "library_open" if pane == "library" else "items_open"
+         )
+         authority = self._library_reader_persistence_key(destination, pane)
+         preferences_attribute = {
+             "media": "_library_media_reader_preferences",
+-            "collections": "_library_collections_reader_preferences",
++            "collections": "_collections_state.reader_preferences",
+             "conversations": "_conversations_state.reader_preferences",
+             "notes": "_library_notes_reader_preferences",
+             "notes_files": "_library_file_notes_reader_preferences",
+             "prompts": "_library_prompts_reader_preferences",
+             "skills": "_library_skills_reader_preferences",
+         }[destination]
+         locks = {
+             "media": self._library_media_reader_persistence_locks,
+-            "collections": self._library_collections_reader_persistence_locks,
++            "collections": self._collections_state.reader_persistence_locks,
+             "conversations": self._conversations_state.reader_persistence_locks,
+             "notes": self._library_notes_reader_persistence_locks,
+             "notes_files": self._library_file_notes_reader_persistence_locks,
+             "prompts": self._library_prompts_reader_persistence_locks,
+             "skills": self._library_skills_reader_persistence_locks,
+         }[destination]
+         section = (
+             "library.reader"
+             if pane == "library"
+             else (
+@@ -7482,30 +7476,30 @@ class LibraryScreen(BaseAppScreen):
+         )
+         previous_durable_generations = dict(self._library_reader_durable_generations)
+         previous_durable_values = dict(self._library_reader_durable_preferences)
+         self._library_reader_layout_refresh_generation = generation
+         self._library_media_layout_refresh_generation = generation
+         for authority in self._library_reader_persistence_generations:
+             self._library_reader_persistence_generations[authority] += 1
+         (
+             self._library_reader_shared_preferences,
+             self._library_media_reader_preferences,
+-            self._library_collections_reader_preferences,
++            self._collections_state.reader_preferences,
+             self._conversations_state.reader_preferences,
+             self._library_notes_reader_preferences,
+             self._library_file_notes_reader_preferences,
+             self._library_prompts_reader_preferences,
+             self._library_skills_reader_preferences,
+         ) = self._load_library_reader_preference_snapshot()
+         current_values = {
+             "library": self._library_reader_shared_preferences.library_open,
+-            "collections_items": self._library_collections_reader_preferences.items_open,
++            "collections_items": self._collections_state.reader_preferences.items_open,
+             "conversations_items": self._conversations_state.reader_preferences.items_open,
+             "media_items": self._library_media_reader_preferences.items_open,
+             "notes_items": self._library_notes_reader_preferences.items_open,
+             "notes_file_items": self._library_file_notes_reader_preferences.items_open,
+             "prompts_items": self._library_prompts_reader_preferences.items_open,
+             "skills_items": self._library_skills_reader_preferences.items_open,
+         }
+         persistence_authorities: tuple[
+             tuple[
+                 LibraryReaderDestination,
+@@ -7584,21 +7578,21 @@ class LibraryScreen(BaseAppScreen):
+             return
+         focused = self.focused
+         if focused is hidden_focus or focused is None or not focused.display:
+             self.set_focus(grip, scroll_visible=False)
+ 
+     @on(PaneToggleRequested)
+     def _toggle_library_media_reader_pane(self, event: PaneToggleRequested) -> None:
+         """Apply and persist one manual preferred pane choice."""
+         event.stop()
+         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
+-            layout = self._library_collections_reader_layout
++            layout = self._collections_state.reader_layout
+             opening = not (
+                 layout.library_open if event.pane == "library" else layout.items_open
+             )
+             key: Literal["library_open", "items_open"] = (
+                 "library_open" if event.pane == "library" else "items_open"
+             )
+             generation = self._claim_library_reader_persistence(
+                 "collections", event.pane
+             )
+             self._replace_library_reader_preference("collections", key, opening)
+@@ -10015,21 +10009,21 @@ class LibraryScreen(BaseAppScreen):
+         notes_filter = state.get("library_notes_filter")
+         self._library_notes_filter = (
+             notes_filter if isinstance(notes_filter, str) else ""
+         )
+         restored_prompts_scope = self._restore_library_prompts_scope(state)
+         self._library_prompt_browse_controller.invalidate(restored_prompts_scope)
+         restored_skills_scope = self._restore_library_skills_scope(state)
+         self._library_skills_browse_controller.invalidate(restored_skills_scope)
+         self._library_skills_sort = restored_skills_scope.sort
+         self._library_skills_filter = restored_skills_scope.query
+-        self._library_collections_requested_page = (
++        self._collections_state.requested_page = (
+             self._restore_library_collections_page(state)
+         )
+         selected_prompt_id = state.get("selected_prompt_id")
+         self._selected_prompt_id = (
+             selected_prompt_id if isinstance(selected_prompt_id, int) else None
+         )
+         self._conversations_state.page_records = ()
+         self._conversations_state.page = 1
+         self._conversations_state.query = ""
+         self._conversations_state.total = 0
+@@ -10084,21 +10078,21 @@ class LibraryScreen(BaseAppScreen):
+                     query=scope["filter"],
+                     sort=scope["sort"],
+                     page=scope.get("page", 1),
+                 )
+                 self._library_skills_browse_controller.invalidate(receipt_skills_scope)
+                 self._library_skills_sort = receipt_skills_scope.sort
+                 self._library_skills_filter = receipt_skills_scope.query
+                 self._library_skills_view = "list"
+                 self._selected_skill_name = ""
+             elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
+-                self._library_collections_requested_page = scope.get("page", 1)
++                self._collections_state.requested_page = scope.get("page", 1)
+             elif row_id == LIBRARY_ROW_BROWSE_SEARCH:
+                 self._library_rag_query = scope["query"]
+                 self._library_rag_mode = scope["mode"]
+                 self._library_rag_scope_deselected = set(scope["scope_deselected"])
+         # task-2858 AC#3 (LIB-12): restore the durable export receipt
+         # (see the field's ``__init__`` comment) -- a foreign/corrupted
+         # dict degrades to "no receipt yet" rather than raising.
+         last_export_path = state.get("library_export_last_path")
+         self._export_state.last_path = (
+             last_export_path if isinstance(last_export_path, str) else ""
+@@ -14397,21 +14391,21 @@ class LibraryScreen(BaseAppScreen):
+             )
+             work = LibraryCollectionsWorkPane(
+                 presentation,
+                 id="library-collections-work",
+             )
+             with shell_grid:
+                 yield LibraryAdaptiveReaderShell(
+                     library=rail,
+                     items=items_host,
+                     work=work,
+-                    layout=self._library_collections_reader_layout,
++                    layout=self._collections_state.reader_layout,
+                     id_prefix="library-collections",
+                     library_label="Library",
+                     items_label="Items",
+                     id="library-collections-reader-shell",
+                 )
+             self.call_after_refresh(
+                 self._sync_library_collections_reader_layout_from_shell
+             )
+             self.call_after_refresh(self._hide_library_adaptive_reader_rail_collapse)
+             return
+@@ -40098,48 +40092,32 @@ class LibraryScreen(BaseAppScreen):
+     @on(Button.Pressed, "#library-conversations-previous")
+     def handle_library_conversations_previous(self, event: Button.Pressed) -> None:
+         return self._conversations_controller.handle_library_conversations_previous(event)
+ 
+ 
+     @on(Button.Pressed, "#library-conversations-next")
+     def handle_library_conversations_next(self, event: Button.Pressed) -> None:
+         return self._conversations_controller.handle_library_conversations_next(event)
+ 
+ 
+-    def _library_collections_capture_request(
+-        self,
+-        *,
+-        page: int | None = None,
+-        search: str | None = None,
+-    ) -> CapturePageRequest | None:
+-        return self._collections_controller._library_collections_capture_request(page=page, search=search)
+-
+     def _refresh_library_collections_capture_reader(self) -> None:
+         return self._collections_controller._refresh_library_collections_capture_reader()
+ 
+     async def _load_library_collections_capture_entry(self) -> None:
+         return await self._collections_controller._load_library_collections_capture_entry()
+ 
+-    def _ensure_library_collections_capture_controller(
+-        self,
+-    ) -> LibraryCollectionsCaptureController | None:
+-        return self._collections_controller._ensure_library_collections_capture_controller()
+-
+     async def _run_library_collections_capture_transition(
+         self,
+         operation: Awaitable[bool],
+     ) -> bool:
+         return await self._collections_controller._run_library_collections_capture_transition(operation)
+ 
+-    def _notify_library_collections_warning(self, message: str) -> None:
+-        return self._collections_controller._notify_library_collections_warning(message)
+-
+     @on(Button.Pressed, ".library-collections-item-row")
+     async def select_library_collection_capture(self, event: Button.Pressed) -> None:
+         return await self._collections_controller.select_library_collection_capture(event)
+ 
+     async def _select_library_collection_capture(
+         self,
+         identity: CaptureIdentity,
+     ) -> None:
+         return await self._collections_controller._select_library_collection_capture(identity)
+ 
+@@ -40154,42 +40132,36 @@ class LibraryScreen(BaseAppScreen):
+         self, event: Input.Submitted
+     ) -> None:
+         return await self._collections_controller.filter_library_collection_captures(event)
+ 
+     @on(Button.Pressed, "#library-collections-quick-capture")
+     def toggle_library_collection_quick_capture(
+         self, event: Button.Pressed
+     ) -> None:
+         return self._collections_controller.toggle_library_collection_quick_capture(event)
+ 
+-    def _capture_library_collection_quick_capture_draft(self) -> None:
+-        return self._collections_controller._capture_library_collection_quick_capture_draft()
+-
+     @on(
+         Input.Changed,
+         "#library-collections-capture-url, #library-collections-capture-title, "
+         "#library-collections-capture-tags",
+     )
+     def retain_library_collection_quick_capture_input(
+         self, event: Input.Changed
+     ) -> None:
+         return self._collections_controller.retain_library_collection_quick_capture_input(event)
+ 
+     @on(TextArea.Changed, "#library-collections-capture-note")
+     def retain_library_collection_quick_capture_note(
+         self, event: TextArea.Changed
+     ) -> None:
+         return self._collections_controller.retain_library_collection_quick_capture_note(event)
+ 
+-    def _reset_library_collection_quick_capture_draft(self) -> None:
+-        return self._collections_controller._reset_library_collection_quick_capture_draft()
+-
+     @on(Button.Pressed, "#library-collections-capture-cancel")
+     def cancel_library_collection_quick_capture(
+         self, event: Button.Pressed
+     ) -> None:
+         return self._collections_controller.cancel_library_collection_quick_capture(event)
+ 
+     @on(Button.Pressed, "#library-collections-capture-save")
+     async def save_library_collection_quick_capture(
+         self, event: Button.Pressed
+     ) -> None:
+@@ -40206,39 +40178,26 @@ class LibraryScreen(BaseAppScreen):
+         self, event: Button.Pressed
+     ) -> None:
+         return self._collections_controller.cancel_library_collection_quick_capture_retry(event)
+ 
+     @on(Button.Pressed, "#library-collections-capture-refresh")
+     async def refresh_library_collection_quick_capture(
+         self, event: Button.Pressed
+     ) -> None:
+         return await self._collections_controller.refresh_library_collection_quick_capture(event)
+ 
+-    async def _submit_library_collection_quick_capture(self) -> None:
+-        return await self._collections_controller._submit_library_collection_quick_capture()
+-
+     @on(Button.Pressed, "#library-collections-filters")
+     def toggle_library_collection_capture_filters(
+         self, event: Button.Pressed
+     ) -> None:
+         return self._collections_controller.toggle_library_collection_capture_filters(event)
+ 
+-    def _library_collection_capture_filter_request(
+-        self, *, clear: bool = False
+-    ) -> CapturePageRequest | None:
+-        return self._collections_controller._library_collection_capture_filter_request(clear=clear)
+-
+-    async def _apply_library_collection_capture_request(
+-        self, request: CapturePageRequest
+-    ) -> None:
+-        return await self._collections_controller._apply_library_collection_capture_request(request)
+-
+     @on(Button.Pressed, "#library-collections-filters-apply")
+     async def apply_library_collection_capture_filters(
+         self, event: Button.Pressed
+     ) -> None:
+         return await self._collections_controller.apply_library_collection_capture_filters(event)
+ 
+     @on(Button.Pressed, "#library-collections-filters-clear")
+     async def clear_library_collection_capture_filters(
+         self, event: Button.Pressed
+     ) -> None:
+@@ -40511,23 +40470,20 @@ class LibraryScreen(BaseAppScreen):
+             await self._refresh_search_rag_panel_state_widgets()
+             # task-4023 AC#6 (RC-08): results used to land ~30 rows below
+             # the fold behind the configuration region -- pressing Run left
+             # the visible half of the canvas pixel-identical. Reveal the
+             # Evidence region the moment a run starts (it already shows the
+             # in-flight "Searching…" line), so the action visibly did
+             # something at the point of action.
+             self.call_after_refresh(self._reveal_library_rag_results)
+         self._execute_library_rag_search(request)
+ 
+-    async def _page_library_collection_captures(self, delta: int) -> None:
+-        return await self._collections_controller._page_library_collection_captures(delta)
+-
+     @on(Button.Pressed, "#library-collections-page-previous")
+     async def previous_library_collection_captures(
+         self, event: Button.Pressed
+     ) -> None:
+         return await self._collections_controller.previous_library_collection_captures(event)
+ 
+     @on(Button.Pressed, "#library-collections-page-next")
+     async def next_library_collection_captures(
+         self, event: Button.Pressed
+     ) -> None:
+@@ -40577,37 +40533,20 @@ class LibraryScreen(BaseAppScreen):
+     async def choose_library_collection_legacy_recovery_export(
+         self, event: Button.Pressed
+     ) -> None:
+         return await self._collections_controller.choose_library_collection_legacy_recovery_export(event)
+ 
+     async def _export_library_collection_legacy_recovery(
+         self, selected_path: Path | None
+     ) -> None:
+         return await self._collections_controller._export_library_collection_legacy_recovery(selected_path)
+ 
+-    async def _update_selected_library_collection_capture(
+-        self,
+-        changes: Mapping[str, Any],
+-    ) -> bool:
+-        return await self._collections_controller._update_selected_library_collection_capture(changes)
+-
+-    def _library_collection_loaded_capture(self):
+-        return self._collections_controller._library_collection_loaded_capture()
+-
+-    def _library_collection_capture_is_current(
+-        self, identity: CaptureIdentity
+-    ) -> bool:
+-        return self._collections_controller._library_collection_capture_is_current(identity)
+-
+-    async def _load_library_collection_capture_highlights(self) -> None:
+-        return await self._collections_controller._load_library_collection_capture_highlights()
+-
+     @on(Button.Pressed, "#library-collections-highlight-save")
+     async def save_library_collection_capture_highlight(
+         self, event: Button.Pressed
+     ) -> None:
+         return await self._collections_controller.save_library_collection_capture_highlight(event)
+ 
+     @on(Button.Pressed, ".library-collections-highlight-delete")
+     async def delete_library_collection_capture_highlight(
+         self, event: Button.Pressed
+     ) -> None:
+@@ -40624,25 +40563,20 @@ class LibraryScreen(BaseAppScreen):
+         self, event: Button.Pressed
+     ) -> None:
+         return await self._collections_controller.link_library_collection_capture_note(event)
+ 
+     @on(Button.Pressed, ".library-collections-linked-note-unlink")
+     async def unlink_library_collection_capture_note(
+         self, event: Button.Pressed
+     ) -> None:
+         return await self._collections_controller.unlink_library_collection_capture_note(event)
+ 
+-    async def _run_library_collection_capture_content_action(
+-        self, action: str
+-    ) -> None:
+-        return await self._collections_controller._run_library_collection_capture_content_action(action)
+-
+     @on(Button.Pressed, "#library-collections-summarize")
+     async def summarize_library_collection_capture(
+         self, event: Button.Pressed
+     ) -> None:
+         return await self._collections_controller.summarize_library_collection_capture(event)
+ 
+     @on(Button.Pressed, "#library-collections-listen")
+     async def listen_to_library_collection_capture(
+         self, event: Button.Pressed
+     ) -> None:
+@@ -42460,27 +42394,18 @@ LibraryConversationsController._safe_text = staticmethod(LibraryScreen._safe_tex
+ # Same class-level rebinding, one more subsystem: `handle_library_export_submit`
+ # (moved to `LibraryExportController`, wave-2 task 3) calls `self._safe_text(...)`
+ # on a regular (non-classmethod) instance method, so the SAME staticmethod
+ # serves it identically to the conversations controller's own three sites --
+ # see that binding's comment immediately above for the full incident this
+ # class-level-only shape resolves (a plain class attribute assignment always
+ # overwrites a same-named property, so there is deliberately no separate
+ # per-instance constructor-dependency for `_safe_text` here either).
+ LibraryExportController._safe_text = staticmethod(LibraryScreen._safe_text)
+ 
+-# --- BEGIN generated collections-state shims (delete wholesale at cleanup) ---
+-# wave-2 task 5: keeps every original `_library_collections_<field>` name
+-# working as a property over `self._collections_state` (single prefix,
+-# no plural variant needed -- see LibraryCollectionsState's docstring).
+-for _cos_field in dataclasses.fields(LibraryCollectionsState):
+-    setattr(
+-        LibraryScreen,
+-        "_library_collections_" + _cos_field.name,
+-        property(
+-            lambda self, _n=_cos_field.name: getattr(self._collections_state, _n),
+-            lambda self, value, _n=_cos_field.name: setattr(
+-                self._collections_state, _n, value
+-            ),
+-        ),
+-    )
+-del _cos_field
+-# --- END generated collections-state shims ---
++# wave-2 task 7 (collections cleanup, collections series 3/3) deleted the
++# generated collections-state shim block that used to live here (wave-2
++# task 5): every remaining screen-side `_library_collections_<field>`
++# reference was retargeted to `self._collections_state.<field>` and every
++# test attribute path/dynamic-dispatch string was retargeted to match, so
++# nothing on `LibraryScreen` needs the flat property names anymore -- see
++# `LibraryCollectionsController`'s own generated shim loop (installed by
++# task 6) for where the SAME shape now lives permanently, one layer down.

@@ -5201,8 +5201,8 @@ async def test_library_emergency_real_guards_keep_specific_action_authoritative(
                 )
             else:
                 monkeypatch.setattr(screen, "_start_library_export_worker", Mock())
-                screen._library_export_counts = {"notes": 1}
-                screen._library_export_form["destination"] = "/tmp/library-guard.zip"
+                screen._export_state.counts = {"notes": 1}
+                screen._export_state.form["destination"] = "/tmp/library-guard.zip"
                 screen.handle_library_export_submit(Button.Pressed(Button()))
                 await pilot.pause()
         eligibility = screen._library_emergency_return_eligibility()
@@ -5229,8 +5229,8 @@ async def test_library_emergency_real_guards_keep_specific_action_authoritative(
         await pilot.pause()
         assert screen._library_emergency_stage == "canvas-only"
         if guard_kind == "running":
-            assert screen._library_export_status == "Cancelling…"
-            screen._apply_library_export_cancelled(screen._library_export_run_id)
+            assert screen._export_state.status == "Cancelling…"
+            screen._apply_library_export_cancelled(screen._export_state.run_id)
             await pilot.pause()
             assert bar.disabled is False
             assert (
@@ -5238,7 +5238,7 @@ async def test_library_emergency_real_guards_keep_specific_action_authoritative(
                 == "rail"
             )
         elif guard_kind == "cancel":
-            assert screen._library_export_quality_choices_visible is False
+            assert screen._export_state.quality_choices_visible is False
             assert bar.disabled is False
             assert (
                 dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
@@ -25714,7 +25714,7 @@ def test_library_landing_continue_receipt_accepts_only_authoritative_source_scop
             SkillBrowseScope(query="python", sort="status", page=2),
         )
     elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
-        screen._library_collections_requested_page = 1
+        screen._collections_state.requested_page = 1
     else:
         screen._library_rag_query = "retrieval"
         screen._library_rag_searched_query = "retrieval"
@@ -26754,7 +26754,7 @@ async def test_library_shell_restored_export_canvas_rekicks_counts_worker_on_mou
     """REVIEW FIX (F4 Task 3): a cross-visit ``restore_state`` (or a tab
     round-trip whose ``save_state`` persisted ``_library_selected_row_id ==
     LIBRARY_ROW_INGEST_EXPORT``) lands a fresh instance ON the export
-    canvas with ``_library_export_counts is None`` -- so the scope line
+    canvas with ``_export_state.counts is None`` -- so the scope line
     renders "Counting…" and Export is disabled. The counts worker is only
     kicked from the two LIVE entry points, never from a restore, so without
     an ``on_mount`` re-kick the form stays stuck "Counting…" with Export
@@ -26780,7 +26780,7 @@ async def test_library_shell_restored_export_canvas_rekicks_counts_worker_on_mou
     # Precondition: the restore alone leaves counts unresolved -- the
     # canvas would render "Counting…" forever without the on_mount kick.
     assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
-    assert screen._library_export_counts is None
+    assert screen._export_state.counts is None
     host = LibraryHarness(app, screen=screen)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -26788,7 +26788,7 @@ async def test_library_shell_restored_export_canvas_rekicks_counts_worker_on_mou
         await _wait_for_selector(screen, pilot, "#library-export-header")
 
         for _ in range(150):
-            if screen._library_export_counts is not None:
+            if screen._export_state.counts is not None:
                 break
             await pilot.pause(0.02)
         else:
@@ -26805,7 +26805,7 @@ async def test_library_shell_restored_export_canvas_rekicks_counts_worker_on_mou
             message=lambda: (
                 "Export counts landed without updating the retained scope line: "
                 f"{screen.query_one('#library-export-scope-line').renderable!r}; "
-                f"counts={screen._library_export_counts!r}."
+                f"counts={screen._export_state.counts!r}."
             ),
         )
 
@@ -26933,10 +26933,10 @@ async def test_library_shell_export_rail_row_opens_everything_scope_and_counts_l
         await _wait_for_selector(screen, pilot, "#library-export-header")
 
         assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
-        assert screen._library_export_scope == ExportScope(kind="everything")
+        assert screen._export_state.scope == ExportScope(kind="everything")
 
         for _ in range(150):
-            if screen._library_export_counts is not None:
+            if screen._export_state.counts is not None:
                 break
             await pilot.pause(0.02)
         else:
@@ -26984,7 +26984,7 @@ async def test_library_shell_media_export_action_carries_type_filter_into_scope(
         await _wait_for_selector(screen, pilot, "#library-export-header")
 
         assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
-        assert screen._library_export_scope == ExportScope(
+        assert screen._export_state.scope == ExportScope(
             kind="media", media_type=active_type
         )
 
@@ -27191,7 +27191,7 @@ async def test_library_shell_export_empty_scope_disables_export_and_shows_helper
         await _wait_for_selector(screen, pilot, "#library-export-header")
 
         for _ in range(150):
-            if screen._library_export_counts is not None:
+            if screen._export_state.counts is not None:
                 break
             await pilot.pause(0.02)
         else:
@@ -27223,7 +27223,7 @@ async def test_library_shell_export_choose_destination_pushes_file_save_dialog_w
         screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
         await _wait_for_selector(screen, pilot, "#library-export-destination")
 
-        expected_name = screen._library_export_form["name"]
+        expected_name = screen._export_state.form["name"]
         screen.query_one("#library-export-destination").press()
         for _ in range(150):
             if isinstance(host.screen_stack[-1], FileSave):
@@ -27267,7 +27267,7 @@ async def test_library_shell_export_destination_normalizes_missing_suffix_to_zip
         await pilot.pause()
 
         expected = str(tmp_path / "foo.zip")
-        assert screen._library_export_form["destination"] == expected
+        assert screen._export_state.form["destination"] == expected
         destination_line = str(
             screen.query_one("#library-export-destination-line").renderable
         )
@@ -27397,7 +27397,7 @@ async def test_library_shell_conversations_export_action_opens_conversations_sco
         await _wait_for_selector(screen, pilot, "#library-export-header")
 
         assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
-        assert screen._library_export_scope == ExportScope(kind="conversations")
+        assert screen._export_state.scope == ExportScope(kind="conversations")
         # Conversations-only scope never touches media -- the quality
         # control has nothing to control.
         assert not screen.query("#library-export-quality")
@@ -27422,7 +27422,7 @@ async def test_library_shell_notes_export_action_opens_notes_scope():
         await _wait_for_selector(screen, pilot, "#library-export-header")
 
         assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
-        assert screen._library_export_scope == ExportScope(kind="notes")
+        assert screen._export_state.scope == ExportScope(kind="notes")
 
 
 @pytest.mark.asyncio
@@ -27448,7 +27448,7 @@ async def test_library_shell_notes_selected_export_opens_exact_selection_scope()
         screen.query_one("#library-notes-export-selected").press()
         await _wait_for_selector(screen, pilot, "#library-export-status-line")
 
-        assert screen._library_export_scope == ExportScope(kind="notes", ids=("n-1",))
+        assert screen._export_state.scope == ExportScope(kind="notes", ids=("n-1",))
         assert screen.query_one("#library-export-status-line", Static)
 
 
@@ -27491,7 +27491,7 @@ async def test_library_shell_export_counts_worker_uses_real_thread_for_file_back
         await _wait_for_selector(screen, pilot, "#library-export-header")
 
         for _ in range(150):
-            if screen._library_export_counts is not None:
+            if screen._export_state.counts is not None:
                 break
             await pilot.pause(0.02)
         else:
@@ -27592,7 +27592,7 @@ async def test_library_shell_export_counts_landing_preserves_input_focus_and_tex
         name_input = screen.query_one("#library-export-name", Input)
 
         # The gate is held: counts are still in flight.
-        assert screen._library_export_counts is None
+        assert screen._export_state.counts is None
         scope_line = screen.query_one("#library-export-scope-line", Static)
         assert str(scope_line.renderable) == "Counting…"
 
@@ -27606,7 +27606,7 @@ async def test_library_shell_export_counts_landing_preserves_input_focus_and_tex
 
         media_db.release.set()
         for _ in range(150):
-            if screen._library_export_counts is not None:
+            if screen._export_state.counts is not None:
                 break
             await pilot.pause(0.02)
         else:
@@ -27665,7 +27665,7 @@ async def test_library_shell_export_counts_landing_at_zero_reveals_empty_helper_
 
         media_db.release.set()
         for _ in range(150):
-            if screen._library_export_counts is not None:
+            if screen._export_state.counts is not None:
                 break
             await pilot.pause(0.02)
         else:
@@ -27790,7 +27790,7 @@ async def test_library_shell_export_submit_single_flight_and_notifies_on_success
         screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
         await _wait_for_selector(screen, pilot, "#library-export-destination")
         for _ in range(150):
-            if screen._library_export_counts is not None:
+            if screen._export_state.counts is not None:
                 break
             await pilot.pause(0.02)
         else:
@@ -27807,7 +27807,7 @@ async def test_library_shell_export_submit_single_flight_and_notifies_on_success
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_export_running is True
+        assert screen._export_state.running is True
         submit_running = screen.query_one("#library-export-submit", Button)
         assert submit_running.disabled is True
         status_widget = screen.query_one("#library-export-status-line", Static)
@@ -27832,7 +27832,7 @@ async def test_library_shell_export_submit_single_flight_and_notifies_on_success
 
         gate.set()
         for _ in range(150):
-            if screen._library_export_running is False:
+            if screen._export_state.running is False:
                 break
             await pilot.pause(0.02)
         else:
@@ -27855,7 +27855,7 @@ async def test_library_shell_export_submit_single_flight_and_notifies_on_success
         assert status_widget.display is False
         assert screen.query_one("#library-export-submit", Button) is submit_running
         assert submit_running.disabled is False
-        assert screen._library_export_error == ""
+        assert screen._export_state.error == ""
 
         assert len(notified) == 1
         notify_message, kwargs = notified[0]
@@ -27913,7 +27913,7 @@ async def test_library_shell_export_submit_failure_shows_escaped_error_and_reena
         screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
         await _wait_for_selector(screen, pilot, "#library-export-destination")
         for _ in range(150):
-            if screen._library_export_counts is not None:
+            if screen._export_state.counts is not None:
                 break
             await pilot.pause(0.02)
         else:
@@ -27946,7 +27946,7 @@ async def test_library_shell_export_submit_failure_shows_escaped_error_and_reena
 
         gate.set()
         for _ in range(150):
-            if screen._library_export_running is False:
+            if screen._export_state.running is False:
                 break
             await pilot.pause(0.02)
         else:
@@ -27968,12 +27968,12 @@ async def test_library_shell_export_submit_failure_shows_escaped_error_and_reena
             str(error_widget.renderable) == "Destination \\[bold]not\\[/bold] writable."
         )
         assert (
-            screen._library_export_error == "Destination \\[bold]not\\[/bold] writable."
+            screen._export_state.error == "Destination \\[bold]not\\[/bold] writable."
         )
         status_widget = screen.query_one("#library-export-status-line", Static)
         assert status_widget.display is False
         assert submit_after.disabled is False
-        assert screen._library_export_running is False
+        assert screen._export_state.running is False
 
 
 @pytest.mark.asyncio
@@ -27983,11 +27983,11 @@ async def test_library_shell_export_orphaned_run_completion_cannot_corrupt_a_lat
     """REGRESSION (code review finding, F4 Task 3): a real OS worker thread
     cannot be preempted mid-``asyncio.run`` by ``Worker.cancel()`` --
     navigating away from the Export canvas while a run is in flight resets
-    ``_library_export_running`` for whatever the user does NEXT, but the
+    ``_export_state.running`` for whatever the user does NEXT, but the
     abandoned worker keeps running regardless. Before the ``run_id``
     staleness guard, that orphaned worker's LATE completion would
-    unconditionally stomp ``_library_export_running``/``_error``/
-    ``_status`` (and the canvas DOM) out from under a completely different,
+    unconditionally stomp ``_export_state.running``/``.error``/
+    ``.status`` (and the canvas DOM) out from under a completely different,
     later visit to the Export canvas -- silently re-enabling/disabling the
     button or showing a stray error for a run the user has long since
     forgotten about. This pilot: starts an export, navigates away mid-run,
@@ -28031,7 +28031,7 @@ async def test_library_shell_export_orphaned_run_completion_cannot_corrupt_a_lat
         screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
         await _wait_for_selector(screen, pilot, "#library-export-destination")
         for _ in range(150):
-            if screen._library_export_counts is not None:
+            if screen._export_state.counts is not None:
                 break
             await pilot.pause(0.02)
         else:
@@ -28045,8 +28045,8 @@ async def test_library_shell_export_orphaned_run_completion_cannot_corrupt_a_lat
         screen.query_one("#library-export-submit", Button).press()
         await pilot.pause()
         await pilot.pause()
-        assert screen._library_export_running is True
-        orphaned_run_id = screen._library_export_run_id
+        assert screen._export_state.running is True
+        orphaned_run_id = screen._export_state.run_id
 
         screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_CONVERSATIONS}").press()
         await pilot.pause()
@@ -28054,8 +28054,8 @@ async def test_library_shell_export_orphaned_run_completion_cannot_corrupt_a_lat
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
         # The navigation reset ``running`` for THIS (non-Export) visit --
         # the orphaned worker is still executing regardless.
-        assert screen._library_export_running is False
-        assert screen._library_export_run_id != orphaned_run_id
+        assert screen._export_state.running is False
+        assert screen._export_state.run_id != orphaned_run_id
 
         # Visit 2: back to a completely FRESH Export visit -- new scope/
         # counts/form, not touching the destination the orphaned run is
@@ -28063,7 +28063,7 @@ async def test_library_shell_export_orphaned_run_completion_cannot_corrupt_a_lat
         screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
         await _wait_for_selector(screen, pilot, "#library-export-destination")
         for _ in range(150):
-            if screen._library_export_counts is not None:
+            if screen._export_state.counts is not None:
                 break
             await pilot.pause(0.02)
         else:
@@ -28071,10 +28071,10 @@ async def test_library_shell_export_orphaned_run_completion_cannot_corrupt_a_lat
         screen.refresh(recompose=True)
         await pilot.pause()
 
-        fresh_run_id = screen._library_export_run_id
+        fresh_run_id = screen._export_state.run_id
         assert fresh_run_id != orphaned_run_id
-        assert screen._library_export_running is False
-        assert screen._library_export_form["destination"] == ""
+        assert screen._export_state.running is False
+        assert screen._export_state.form["destination"] == ""
         fresh_submit = screen.query_one("#library-export-submit", Button)
         assert fresh_submit.disabled is True  # no destination chosen on this visit
 
@@ -28096,8 +28096,8 @@ async def test_library_shell_export_orphaned_run_completion_cannot_corrupt_a_lat
         # undisturbed: still not running, still no error/status, the
         # SAME submit button instance, still correctly disabled (no
         # destination on THIS visit).
-        assert screen._library_export_running is False
-        assert screen._library_export_error == ""
+        assert screen._export_state.running is False
+        assert screen._export_state.error == ""
         assert screen.query_one("#library-export-submit", Button) is fresh_submit
         assert fresh_submit.disabled is True
         assert screen.query_one("#library-export-status-line", Static).display is False
@@ -28111,7 +28111,7 @@ async def test_library_shell_export_stale_run_completion_never_clears_a_newer_ru
     """REGRESSION (code review finding, F4 Task 3), narrower/deterministic
     variant of the pilot above: directly proves the ``run_id`` staleness
     guard, independent of any second real threaded worker's own timing.
-    Starts run R1 (gated), then bumps ``_library_export_run_id`` in place
+    Starts run R1 (gated), then bumps ``_export_state.run_id`` in place
     (exactly what ``_reset_library_export_transient_state`` does when the
     user navigates away and back) while manually marking a DIFFERENT
     error/running state as though a newer run R2 now owns the canvas --
@@ -28119,9 +28119,9 @@ async def test_library_shell_export_stale_run_completion_never_clears_a_newer_ru
     state, even though it still fires its own notification.
 
     RED-verified: temporarily neutering ``_apply_library_export_success``'s
-    ``if run_id != self._library_export_run_id: return`` guard (replacing
+    ``if run_id != self._export_state.run_id: return`` guard (replacing
     it with ``if False:``) made this test fail exactly on the
-    ``_library_export_running is True`` / ``_library_export_error ==
+    ``_export_state.running is True`` / ``_export_state.error ==
     "unrelated newer error"`` assertions below (the stale R1 completion
     flipped ``running`` back to ``False`` and clobbered the error text);
     reverted, test passes.
@@ -28156,7 +28156,7 @@ async def test_library_shell_export_stale_run_completion_never_clears_a_newer_ru
         screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
         await _wait_for_selector(screen, pilot, "#library-export-destination")
         for _ in range(150):
-            if screen._library_export_counts is not None:
+            if screen._export_state.counts is not None:
                 break
             await pilot.pause(0.02)
         else:
@@ -28170,15 +28170,15 @@ async def test_library_shell_export_stale_run_completion_never_clears_a_newer_ru
         screen.query_one("#library-export-submit", Button).press()
         await pilot.pause()
         await pilot.pause()
-        assert screen._library_export_running is True
+        assert screen._export_state.running is True
 
         # Simulate a newer run superseding this one (what
         # ``_reset_library_export_transient_state`` does on a real
         # navigate-away-and-back) WITHOUT touching the still-gated worker
         # thread itself, so this test's timing is fully deterministic.
-        screen._library_export_run_id += 1
-        screen._library_export_running = True  # pretend R2 is now running
-        screen._library_export_error = "unrelated newer error"
+        screen._export_state.run_id += 1
+        screen._export_state.running = True  # pretend R2 is now running
+        screen._export_state.error = "unrelated newer error"
 
         gate.set()
         for _ in range(150):
@@ -28193,8 +28193,8 @@ async def test_library_shell_export_stale_run_completion_never_clears_a_newer_ru
         assert len(notified) == 1
         # ...but R2's state (running=True, a different error string) must
         # survive completely untouched.
-        assert screen._library_export_running is True
-        assert screen._library_export_error == "unrelated newer error"
+        assert screen._export_state.running is True
+        assert screen._export_state.error == "unrelated newer error"
 
 
 @pytest.mark.asyncio
@@ -28221,7 +28221,7 @@ async def test_library_shell_export_submit_missing_service_surfaces_error_and_re
         screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
         await _wait_for_selector(screen, pilot, "#library-export-destination")
         for _ in range(150):
-            if screen._library_export_counts is not None:
+            if screen._export_state.counts is not None:
                 break
             await pilot.pause(0.02)
         else:
@@ -28238,8 +28238,8 @@ async def test_library_shell_export_submit_missing_service_surfaces_error_and_re
 
         for _ in range(150):
             if (
-                screen._library_export_running is False
-                and screen._library_export_error == "Bundle export service unavailable."
+                screen._export_state.running is False
+                and screen._export_state.error == "Bundle export service unavailable."
             ):
                 break
             await pilot.pause(0.02)
@@ -28247,7 +28247,7 @@ async def test_library_shell_export_submit_missing_service_surfaces_error_and_re
             raise AssertionError("Export run never completed.")
         await pilot.pause()
 
-        assert screen._library_export_error == "Bundle export service unavailable."
+        assert screen._export_state.error == "Bundle export service unavailable."
         error_widget = screen.query_one("#library-export-error-line", Static)
         assert error_widget.display is True
         assert str(error_widget.renderable) == "Bundle export service unavailable."
@@ -28291,10 +28291,10 @@ def test_library_export_registry_failure_warns_it_wont_appear_in_artifacts(
     screen.app_instance.notify = lambda message, **kwargs: notified.append(
         (message, kwargs)
     )
-    screen._library_export_run_id = 7
-    screen._library_export_running = True
-    screen._library_export_error = "stale error"
-    screen._library_export_status = "Exporting…"
+    screen._export_state.run_id = 7
+    screen._export_state.running = True
+    screen._export_state.error = "stale error"
+    screen._export_state.status = "Exporting…"
     screen._build_library_export_success_message = (
         LibraryScreen._build_library_export_success_message
     )
@@ -28318,9 +28318,9 @@ def test_library_export_registry_failure_warns_it_wont_appear_in_artifacts(
             {"severity": "warning"},
         ),
     ]
-    assert screen._library_export_running is False
-    assert screen._library_export_error == ""
-    assert screen._library_export_status == ""
+    assert screen._export_state.running is False
+    assert screen._export_state.error == ""
+    assert screen._export_state.status == ""
     screen._update_library_export_canvas_after_run.assert_called_once_with()
 
 
@@ -32842,7 +32842,7 @@ async def test_library_note_keyboard_capability_matrix(
             await _wait_for_selector(screen, pilot, "#library-notes-export")
             await _task10_activate_with_keyboard(screen, pilot, "#library-notes-export")
             await _wait_for_selector(screen, pilot, "#library-export-destination")
-            assert screen._library_export_scope == ExportScope(kind="notes")
+            assert screen._export_state.scope == ExportScope(kind="notes")
             return
 
         if capability == "multi_select_export":
@@ -32865,7 +32865,7 @@ async def test_library_note_keyboard_capability_matrix(
                 screen, pilot, "#library-notes-export-selected"
             )
             await _wait_for_selector(screen, pilot, "#library-export-destination")
-            assert screen._library_export_scope == ExportScope(
+            assert screen._export_state.scope == ExportScope(
                 kind="notes", ids=("n-1",)
             )
             return

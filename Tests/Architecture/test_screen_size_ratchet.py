@@ -148,20 +148,106 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # import line only), not pinned by
     # `test_screen_still_re_exports_every_moved_name`, and not imported by
     # anything outside this module. Method count unchanged (imports only).
-    # NOT lowered by the 2026-09-03 dev merge (~380 dev commits absorbed),
-    # same "concurrent growth outran the earned shrink" posture as the
-    # chat_screen wave-5 note above. The merge itself removed zero moved
-    # lines/methods from LibraryScreen (see the transplant list in
-    # merge-update-report.md) -- every net line/method added here is dev's
-    # review-sets phases 2-5, the media sort chooser, and the Reader
-    # accelerator keys, all genuinely new screen-owned code, landed on dev
-    # while this PR was in flight. Measured on the merged tree: 43965/1282
-    # -> 45439/1330.
-    #: Re-measured 2026-09-03 at the second dev catch-up merge (Reader
-    #: review-set banner + distill work landed on dev inside the budgeted
-    #: file): 45439/1330 -> 45522/1331. Post-merge re-measure per the
-    #: wave-5 precedent; the decomposition's own trajectory remains down.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 45522, 1331),
+    # Wave-2 task 3 (export series 2/3, controller PR): 43930 -> 43432 --
+    # 22 method bodies moved verbatim to `LibraryExportController`
+    # (`UI/Library_Modules/library_export_controller.py`), replaced by
+    # 22 one-line screen delegators. Method count unchanged (1282): a pure
+    # move, 22 `FunctionDef`s out, 22 back in as delegators. Of the 51
+    # "export"-named candidates the task's own census started from, 29 stay
+    # screen-resident, unmoved and byte-for-byte untouched (18 belong to
+    # other subsystems; 2 carry `@work` and would fail Textual's
+    # `isinstance(self, DOMNode)` check on a plain controller; 9 more are
+    # reached by unbound-fake-self test calls this task's own verification
+    # battery found -- see `library_export_controller.py`'s module
+    # docstring for the full per-name accounting and its own exclusion
+    # reasoning, which is where that reasoning lives, NOT as inline
+    # comments on the 29 untouched screen methods themselves).
+    # Wave-2 task 4 (export series 3/3, cleanup PR): 43432/1282 -> 43413/1281.
+    # The Task-2-generated export-state shim block (13 properties) is
+    # deleted wholesale; every remaining screen-side `_library_export_*`
+    # field reference (42 literal `self._library_export_<field>` sites, an
+    # AST-driven mechanical pass) is retargeted to
+    # `self._export_state.<field>`, including a dynamic-dispatch site
+    # (`_library_open_choice_strip`/`_close_open_library_choice_strip`'s
+    # visibility-attr string, one of the four converged choice-strip
+    # destinations) via the recipe's own dotted-vs-flat `operator.attrgetter`
+    # passthrough helper (already installed by the conversations exemplar's
+    # Task 9). Exactly ONE of the 22 screen delegators
+    # (`_library_export_is_server_mode`) had zero references anywhere
+    # outside its own one-line body (a repo-wide census; the other 21 all
+    # have a genuine production caller -- mostly the round-2/round-3
+    # screen-resident siblings task 3 excluded -- or a direct test call) and
+    # was pruned: exactly 1 fewer `FunctionDef`, matching the method-count
+    # drop 1-for-1. 5 named dead imports pruned
+    # (`LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP`, `MEDIA_QUALITY_OPTIONS`,
+    # `count_export_scope`, `default_export_name`,
+    # `normalize_export_destination`), each confirmed single-occurrence and
+    # not a member of any `_SURFACE`-shaped re-export contract in
+    # `Tests/Architecture/test_library_support_layer_surface.py` first (the
+    # conversations exemplar's own "dead within this file is not the same
+    # question as dead" lesson).
+    # Wave-2 task 6 (collections controller PR, collections series 2/3):
+    # 64 method bodies moved into `LibraryCollectionsController`
+    # (`UI/Library_Modules/library_collections_controller.py`), each
+    # replaced by a one-line screen delegator (63 `self._collections_
+    # controller.<name>(...)` forwards + 1 `LibraryCollectionsController.
+    # <name>(...)` class-forward for the cluster's single staticmethod,
+    # `_restore_library_collections_page`) -- a pure move, so the method
+    # count is unchanged (64 `FunctionDef`s out, 64 one-line delegators
+    # in). Measured 42486 lines, 1281 methods at that point.
+    # Wave-2 task 7 (collections cleanup, collections series 3/3): the
+    # generated collections-state shim block deleted wholesale, every
+    # remaining screen-side `_library_collections_<field>` reference
+    # retargeted to `self._collections_state.<field>` (14 literal sites +
+    # 2 dynamic-dispatch dict-of-name-strings entries shared with
+    # Conversations/Export's own precedent), and 14 of the 64 screen
+    # delegators pruned (repo-wide census across `tldw_chatbook/` and
+    # `Tests/`, including `Tests/Live/`: zero references anywhere outside
+    # their own one-line body) -- a much larger prune fraction than the
+    # export series' 1-of-22 because task 6 found zero method-level
+    # test-bypass exclusions, so Collections' whole 64-method cluster
+    # moved onto ONE controller with no screen-resident sibling left to
+    # call any of them back. Fresh post-cleanup measurement: 42411 lines,
+    # 1267 methods (1281 - 14 pruned `FunctionDef`s, exactly) -- lowered
+    # in this same commit per recipe §6 (never deferred to a later task).
+    # Raised 2026-09-03 by the wave-2 final review's fix wave: +9
+    # documentation-only lines (a construction-order sentinel comment on
+    # the `LibraryExportController` construction site, finding 3 of the
+    # review) pushed the file to 42420/1267 (methods unchanged -- comment
+    # lines only, no code). Re-measured and raised in this same commit per
+    # the foundation run's own task-8 precedent (a strengthened comment
+    # there pushed the file 24 lines over its just-set ceiling; the fix
+    # was to re-measure and raise with a dated justification comment, not
+    # to leave the ceiling red or strip the comment to fit). Net wave-2
+    # trajectory is still down: 43965 (wave-2 start) -> 42420, a shrink of
+    # 1545 lines despite this fix wave's own small increase.
+    #
+    # NOT lowered by the 2026-09-03 merge of origin/dev (base retargeted
+    # to `dev`, absorbing foundation PR #2315 -- identical commits on both
+    # sides, so trivial -- plus ~435 further dev feature commits), same
+    # "concurrent growth outran the earned shrink" posture as the
+    # chat_screen wave-5 note and this same file's own two prior
+    # dev-catch-up entries above (which this wave-2 branch never saw
+    # directly since the foundation commits are identical on both sides;
+    # this is wave-2's own first catch-up). The merge itself transplanted
+    # zero lines into a wave-2-moved method body: a repo-wide diff of
+    # every export-cluster (22) and collections-cluster (64) method name
+    # between the wave-2 fork point and dev found exactly one body
+    # difference, `_close_open_library_choice_strip` (dev added a
+    # `_library_media_sort_choices_visible` dict entry for the new media
+    # sort chooser) -- and that method is screen-owned, never moved (the
+    # export controller's own same-named method is a callback property
+    # forwarding to it, not the moved logic), so git's ordinary 3-way
+    # merge combined dev's new dict entry with wave-2's unrelated
+    # `_library_export_quality_choices_visible` -> `_export_state.
+    # quality_choices_visible` retarget on separate lines of the same
+    # dict literal with no conflict and no manual transplant needed.
+    # Every other net line/method here is dev's review-sets work, the
+    # media sort chooser, and further Reader/library feature work that
+    # landed on dev while this PR was in flight (dev's own pin going into
+    # this merge was 45522/1331). Measured on the merged tree: 42420/1267
+    # -> 43977/1316.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43977, 1316),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

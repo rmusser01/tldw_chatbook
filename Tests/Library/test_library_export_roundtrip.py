@@ -485,9 +485,16 @@ def test_library_export_success_records_a_durable_receipt_with_the_real_path(
     notified: list[tuple[str, str]] = []
     update_calls: list[str] = []
     fake = SimpleNamespace(
-        _library_export_run_id=1,
-        _library_export_last_path="",
-        _library_export_last_at=None,
+        # Task 4 cleanup: the screen's flat `_library_export_<field>` shim
+        # is gone -- `_apply_library_export_success`'s body now reads
+        # `self._export_state.<field>`, so this fake nests its export
+        # fields under `_export_state` (recipe §11's "unbound fake-self"
+        # retarget precedent).
+        _export_state=SimpleNamespace(
+            run_id=1,
+            last_path="",
+            last_at=None,
+        ),
         app_instance=SimpleNamespace(
             notify=lambda message, severity="information", **kw: notified.append(
                 (message, severity)
@@ -511,10 +518,10 @@ def test_library_export_success_records_a_durable_receipt_with_the_real_path(
     after = time.time()
 
     # The receipt names the REAL path the real service wrote to.
-    assert fake._library_export_last_path == outcome["path"]
-    assert fake._library_export_last_path == str(destination)
+    assert fake._export_state.last_path == outcome["path"]
+    assert fake._export_state.last_path == str(destination)
     # A real, recent timestamp -- not a placeholder/zero value.
-    assert before <= fake._library_export_last_at <= after
+    assert before <= fake._export_state.last_at <= after
     # The current (non-superseded) run's canvas DOM update still ran.
     assert update_calls == ["update"]
     assert notified  # the success notification also fired
