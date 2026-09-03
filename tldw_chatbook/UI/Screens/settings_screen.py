@@ -238,6 +238,7 @@ from .settings_endpoint_probe import (
     SettingsEndpointProbeOutcome,
     SettingsEndpointProbePurpose,
     probe_settings_endpoint,
+    provider_probe_result_from_settings_outcome,
 )
 from .settings_provider_view_model import (
     ProviderPickerGroup,
@@ -305,7 +306,6 @@ from ..Speech.speech_runtime_status import (
     speech_tts_runtime_status_store,
 )
 from ..Speech.speech_settings_contracts import (
-    SpeechTTSConnectionState,
     SpeechTTSNavigationIntent,
     SpeechTTSNavigationTarget,
 )
@@ -13282,19 +13282,7 @@ class SettingsScreen(BaseAppScreen):
     def _provider_probe_result_from_outcome(
         outcome: SettingsEndpointProbeOutcome,
     ) -> ProviderProbeResult:
-        if type(outcome) is not SettingsEndpointProbeOutcome:
-            raise ValueError("Provider probe outcome is invalid.")
-        endpoint = {
-            SpeechTTSConnectionState.REACHABLE: "reachable",
-            SpeechTTSConnectionState.UNREACHABLE: "unreachable",
-            SpeechTTSConnectionState.NOT_TESTED: "not_tested",
-            SpeechTTSConnectionState.UNSUPPORTED: "model_listing_unavailable",
-        }.get(outcome.state, outcome.state)
-        return ProviderProbeResult(
-            endpoint=str(endpoint),
-            model_ids=outcome.model_ids,
-            category=outcome.category,
-        )
+        return provider_probe_result_from_settings_outcome(outcome)
 
     def _apply_provider_endpoint_probe_outcome(
         self,

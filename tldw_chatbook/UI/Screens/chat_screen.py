@@ -378,6 +378,12 @@ from ...Chat.provider_readiness import (
     provider_config_key,
     resolve_provider_credential,
 )
+from ...Chat.provider_test_evidence import ProviderDraftIdentity, ProviderProbeResult
+from .settings_endpoint_probe import (
+    SettingsEndpointProbePurpose,
+    probe_settings_endpoint,
+    provider_probe_result_from_settings_outcome,
+)
 from ...Chat.provider_setup_persistence import (
     ProviderSetupDraft,
     ProviderSetupWriteGuard,
@@ -2888,6 +2894,18 @@ class ChatScreen(BaseAppScreen):
             self.app_instance.console_new_chat_default_generation += 1
         return True
 
+    @staticmethod
+    async def _test_console_connection(
+        identity: ProviderDraftIdentity,
+    ) -> ProviderProbeResult:
+        """Run the existing bounded model-catalog probe for one exact draft."""
+        outcome = await probe_settings_endpoint(
+            identity.connection_identity[1],
+            provider=identity.provider_key,
+            purpose=SettingsEndpointProbePurpose.CHAT_CATALOG,
+        )
+        return provider_probe_result_from_settings_outcome(outcome)
+
     async def _open_console_settings(
         self,
         *,
@@ -2993,6 +3011,7 @@ class ChatScreen(BaseAppScreen):
             default_durability_state=self._console_default_durability_state(),
             default_recovery_handler=self._handle_console_default_recovery,
             suspended_draft=suspended_draft,
+            connection_tester=self._test_console_connection,
         )
 
         transfer_revoked = False

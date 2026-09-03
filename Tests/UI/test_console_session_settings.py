@@ -65,6 +65,10 @@ from tldw_chatbook.Widgets.Console.console_context_controls import (
     build_console_context_control_state,
 )
 from tldw_chatbook.Chat.local_server_discovery import LocalModelProbeResult
+from tldw_chatbook.Chat.provider_test_evidence import (
+    ProviderDraftIdentity,
+    ProviderProbeResult,
+)
 from tldw_chatbook.config import (
     API_MODELS_BY_PROVIDER,
     AtomicConfigSnapshot,
@@ -85,6 +89,10 @@ from tldw_chatbook.UI.Screens import provider_model_resolution
 from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
     ChatScreen,
+)
+from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+    SettingsEndpointProbeOutcome,
+    SettingsEndpointProbePurpose,
 )
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.Widgets.Console import (
@@ -10895,7 +10903,7 @@ async def test_console_settings_modal_discover_models_failure_shows_inline_copy(
         assert discover.tooltip == settings_modal_module.MODEL_DISCOVER_SCOPE_COPY
         discover.press()
         await _wait_for_discover_status(
-            app, pilot, "Could not list models from http://127.0.0.1:9099."
+            app, pilot, "Connection failed: connection error."
         )
         status = app.screen.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static)
         assert "No models endpoint" not in str(status.renderable)
@@ -10929,21 +10937,443 @@ async def test_console_settings_modal_discover_button_only_for_url_based_provide
         discover = app.screen.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
         assert discover.display is False
         assert discover.disabled is True
+        unsupported = app.screen.query_one(
+            "#console-settings-model-discover-scope", Static
+        )
+        assert unsupported.display is True
+        assert str(unsupported.renderable) == (
+            "No non-billable live connection check is available for this provider."
+        )
 
         app.screen.query_one("#console-settings-provider", Select).value = "llama_cpp"
         await pilot.pause()
         assert discover.display is True
         assert discover.disabled is False
+        assert str(discover.label) == "Test connection & list models"
+        assert len(
+            [
+                button
+                for button in app.screen.query(Button)
+                if button.display
+                and str(button.label) == "Test connection & list models"
+            ]
+        ) == 1
+
+
+class _BlockingConnectionTester:
+    def __init__(self, result: ProviderProbeResult) -> None:
+        self.result = result
+        self.calls: list[ProviderDraftIdentity] = []
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.cancelled = False
+
+    async def __call__(self, identity: ProviderDraftIdentity) -> ProviderProbeResult:
+        self.calls.append(identity)
+        self.started.set()
+        try:
+            await self.release.wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        return self.result
+
+
+class _ImmediateConnectionTester:
+    def __init__(self, result: ProviderProbeResult) -> None:
+        self.result = result
+
+    async def __call__(self, _identity: ProviderDraftIdentity) -> ProviderProbeResult:
+        return self.result
+
+
+class _CancellationResistantConnectionTester(_BlockingConnectionTester):
+    async def __call__(self, identity: ProviderDraftIdentity) -> ProviderProbeResult:
+        self.calls.append(identity)
+        self.started.set()
+        try:
+            await self.release.wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            return self.result
+        return self.result
+
+
+@pytest.mark.asyncio
+async def test_console_connection_tester_uses_chat_catalog_and_returns_typed_result(
+    monkeypatch,
+) -> None:
+    """The Console seam must not accidentally invoke TTS or generation traffic."""
+    calls: list[tuple[str, str, object]] = []
+
+    async def probe(endpoint: str, *, provider: str, purpose: object):
+        calls.append((endpoint, provider, purpose))
+        return SettingsEndpointProbeOutcome(
+            state="reachable",
+            summary="reachable (1 model)",
+            model_ids=("served-model",),
+        )
+
+    monkeypatch.setattr(chat_screen_module, "probe_settings_endpoint", probe, raising=False)
+    identity = ProviderDraftIdentity(
+        provider_key="llama_cpp",
+        connection_identity=("llama_cpp", "http://127.0.0.1:9099"),
+        credential_source="none",
+        credential_revision=3,
+        draft_generation=7,
+    )
+
+    result = await ChatScreen._test_console_connection(identity)
+
+    assert result == ProviderProbeResult("reachable", ("served-model",))
+    assert calls == [
+        (
+            "http://127.0.0.1:9099",
+            "llama_cpp",
+            SettingsEndpointProbePurpose.CHAT_CATALOG,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_connection_probe_publishes_only_bounded_current_identity_model_evidence() -> None:
+    """A current typed result must drive provenance without claiming generation."""
+    app = ModalHarness()
+    tester = _BlockingConnectionTester(
+        ProviderProbeResult("reachable", ("served-model",))
+    )
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model=None,
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        providers_models={"llama_cpp": []},
+        connection_tester=tester,
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button).press()
+        await tester.started.wait()
+
+        readiness = modal.query_one("#console-settings-readiness", Static)
+        assert "Endpoint · Testing…" in str(readiness.renderable)
+        testing_evidence = modal._connection_evidence_store.evidence_for(
+            modal._current_connection_probe_identity()
+        )
+        assert testing_evidence is not None
+        assert testing_evidence.endpoint == "testing"
+
+        assert len(tester.calls) == 1
+        identity = tester.calls[0]
+        assert type(identity) is ProviderDraftIdentity
+        assert identity.provider_key == "llama_cpp"
+        assert identity.connection_identity == (
+            "llama_cpp",
+            "http://127.0.0.1:9099",
+        )
+
+        tester.release.set()
+        await _wait_for_discover_status(app, pilot, "1 model listed")
+
+        assert modal._current_model_value() == "served-model"
+        assert modal.query_one(ModelSearchPicker).provenance_for_model(
+            "served-model", provider="llama_cpp"
+        ) == settings_modal_module.ConsoleModelProvenance.SERVED_NOW
+        evidence = modal._connection_evidence_store.evidence_for(
+            modal._current_connection_probe_identity()
+        )
+        assert evidence is not None
+        assert evidence.endpoint == "reachable"
+        assert evidence.model_ids == ("served-model",)
+        assert evidence.generation == "not_tested"
+
+
+@pytest.mark.asyncio
+async def test_endpoint_edit_immediately_removes_reachable_confirmation_from_readiness() -> None:
+    """A changed endpoint must not leave prior reachable/confirmed UI visible."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="served-model",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        providers_models={"llama_cpp": ["served-model"]},
+        connection_tester=_ImmediateConnectionTester(
+            ProviderProbeResult("reachable", ("served-model",))
+        ),
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button).press()
+        await _wait_for_discover_status(app, pilot, "1 model listed")
+
+        readiness = modal.query_one("#console-settings-readiness", Static)
+        assert "Endpoint · Reachable" in str(readiness.renderable)
+        assert "Model · Confirmed" in str(readiness.renderable)
+
+        modal.query_one("#console-settings-base-url", Input).value = (
+            "http://127.0.0.1:9100"
+        )
+        await pilot.pause()
+
+        rendered = str(readiness.renderable)
+        assert "Endpoint · Not tested" in rendered
+        assert "Model · Selected — not verified at this endpoint" in rendered
+        assert "Endpoint · Reachable" not in rendered
+        assert "Model · Confirmed" not in rendered
+        assert modal._connection_evidence_store.evidence_for(
+            modal._current_connection_probe_identity()
+        ) is None
+        cancelled_readiness = str(
+            modal.query_one("#console-settings-readiness", Static).renderable
+        )
+        assert "Endpoint · Not tested" in cancelled_readiness
+        assert "Endpoint · Testing…" not in cancelled_readiness
+        assert "Endpoint · Reachable" not in cancelled_readiness
+
+
+@pytest.mark.parametrize(
+    "change_path",
+    ("select", "input", "picker_selected", "picker_value"),
+)
+@pytest.mark.asyncio
+async def test_model_change_cancels_probe_restores_action_and_rejects_late_result(
+    change_path: str,
+) -> None:
+    """Every model edit path must revoke the probe before a late result settles."""
+    app = ModalHarness()
+    tester = _CancellationResistantConnectionTester(
+        ProviderProbeResult("reachable", ("stale-model",))
+    )
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        providers_models={"llama_cpp": ["model-a", "model-b"]},
+        connection_tester=tester,
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        action = modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        action.press()
+        await tester.started.wait()
+        assert action.disabled is True
+
+        if change_path == "select":
+            model_select = modal.query_one("#console-settings-model-select", Select)
+            modal._model_select_changed(Select.Changed(model_select, "model-b"))
+        elif change_path == "input":
+            model_input = modal.query_one("#console-settings-model-input", Input)
+            modal._model_input_changed(Input.Changed(model_input, "model-b"))
+        elif change_path == "picker_selected":
+            modal._model_picker_selected(ModelSearchPicker.ModelSelected("model-b"))
+        else:
+            modal._model_picker_value_changed(
+                ModelSearchPicker.ModelValueChanged("model-b", custom=True)
+            )
+
+        for _ in range(40):
+            if tester.cancelled:
+                break
+            await pilot.pause(0.01)
+
+        assert tester.cancelled is True
+        assert action.display is True
+        assert action.disabled is False
+        assert "stale-model" not in modal._current_discovered_model_ids
+        assert "model listed" not in str(
+            modal.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static).renderable
+        )
+        assert modal._connection_evidence_store.evidence_for(
+            modal._current_connection_probe_identity()
+        ) is None
+        cancelled_readiness = str(
+            modal.query_one("#console-settings-readiness", Static).renderable
+        )
+        assert "Endpoint · Not tested" in cancelled_readiness
+        assert "Endpoint · Testing…" not in cancelled_readiness
+        assert "Endpoint · Reachable" not in cancelled_readiness
+
+
+@pytest.mark.parametrize(
+    ("result", "expected_copy"),
+    (
+        (
+            ProviderProbeResult("model_listing_unavailable", (), "http_status"),
+            "Connection reached; model listing unavailable. Generation not tested.",
+        ),
+        (
+            ProviderProbeResult("unreachable", (), "timeout"),
+            "Connection failed: request timed out.",
+        ),
+        (
+            ProviderProbeResult("unreachable", (), "connection_refused"),
+            "Connection failed: connection refused.",
+        ),
+        (
+            ProviderProbeResult("unreachable", (), "unauthorized"),
+            "Connection failed: unauthorized.",
+        ),
+        (
+            ProviderProbeResult("unreachable", (), "forbidden"),
+            "Connection failed: forbidden.",
+        ),
+        (
+            ProviderProbeResult("unreachable", (), "http_status"),
+            "Connection failed: endpoint returned an HTTP error.",
+        ),
+        (
+            ProviderProbeResult("unreachable", (), "invalid_payload"),
+            "Connection failed: invalid models response.",
+        ),
+        (
+            ProviderProbeResult("unreachable", (), "connection_error"),
+            "Connection failed: connection error.",
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_connection_probe_renders_only_bounded_terminal_outcomes(
+    result: ProviderProbeResult,
+    expected_copy: str,
+) -> None:
+    """Transport categories must render fixed copy and re-enable the action."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="saved-model",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        providers_models={"llama_cpp": ["saved-model"]},
+        connection_tester=_ImmediateConnectionTester(result),
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        action = modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        action.press()
+        await _wait_for_discover_status(app, pilot, expected_copy)
+
+        assert action.disabled is False
+        assert "127.0.0.1" not in str(
+            modal.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_connection_probe_is_cancelled_and_cannot_publish_after_endpoint_edit() -> None:
+    """Editing the endpoint must cancel, not merely ignore, the obsolete request."""
+    app = ModalHarness()
+    tester = _BlockingConnectionTester(
+        ProviderProbeResult("reachable", ("stale-model",))
+    )
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="saved-model",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        providers_models={"llama_cpp": ["saved-model"]},
+        connection_tester=tester,
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button).press()
+        await tester.started.wait()
+
+        modal.query_one("#console-settings-base-url", Input).value = (
+            "http://127.0.0.1:9100"
+        )
+        for _ in range(40):
+            if tester.cancelled:
+                break
+            await pilot.pause(0.01)
+
+        assert tester.cancelled is True
+        assert modal._connection_evidence_store.evidence_for(
+            modal._current_connection_probe_identity()
+        ) is None
+        assert "stale-model" not in modal._current_discovered_model_ids
+        cancelled_readiness = str(
+            modal.query_one("#console-settings-readiness", Static).renderable
+        )
+        assert "Endpoint · Not tested" in cancelled_readiness
+        assert "Endpoint · Testing…" not in cancelled_readiness
+        assert "Endpoint · Reachable" not in cancelled_readiness
+
+        endpoint = modal.query_one("#console-settings-base-url", Input)
+        endpoint.value = "not a valid endpoint"
+        await pilot.pause()
+        action = modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        assert action.display is False
+        assert str(
+            modal.query_one(
+                "#console-settings-model-discover-scope", Static
+            ).renderable
+        ) == settings_modal_module.CONNECTION_PROBE_UNAVAILABLE_COPY
+
+        endpoint.value = "http://127.0.0.1:9200"
+        await pilot.pause()
+        assert action.display is True
+        assert action.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_connection_probe_is_cancelled_when_modal_closes() -> None:
+    """Closing the modal must cancel its in-flight network request."""
+    app = ModalHarness()
+    tester = _BlockingConnectionTester(
+        ProviderProbeResult("reachable", ("late-model",))
+    )
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="saved-model",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        providers_models={"llama_cpp": ["saved-model"]},
+        connection_tester=tester,
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button).press()
+        await tester.started.wait()
+
+        modal.query_one("#console-settings-cancel", Button).press()
+        for _ in range(40):
+            if tester.cancelled:
+                break
+            await pilot.pause(0.01)
+
+        assert tester.cancelled is True
 
 
 @pytest.mark.asyncio
 async def test_console_settings_modal_discover_rejects_invalid_endpoint_url() -> None:
     """PR #608 review: user-entered endpoint must pass shared URL validation
     before any network probe; the prober must never be called."""
-    from tldw_chatbook.Widgets.Console.console_settings_modal import (
-        MODEL_DISCOVER_INVALID_URL_COPY,
-    )
-
     app = ModalHarness()
     settings = ConsoleSessionSettings(
         provider="llama_cpp",
@@ -10968,8 +11398,14 @@ async def test_console_settings_modal_discover_rejects_invalid_endpoint_url() ->
         await pilot.pause()
 
         discover = app.screen.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
-        discover.press()
-        await _wait_for_discover_status(app, pilot, MODEL_DISCOVER_INVALID_URL_COPY)
+        assert discover.display is False
+        assert discover.disabled is True
+        unavailable = app.screen.query_one(
+            "#console-settings-model-discover-scope", Static
+        )
+        assert str(unavailable.renderable) == (
+            settings_modal_module.CONNECTION_PROBE_UNAVAILABLE_COPY
+        )
 
     assert prober.calls == []
 
@@ -11942,7 +12378,10 @@ async def test_discovery_scope_is_visible_before_activation_and_persists_after_r
 
         modal._switch_provider("openai")
         await pilot.pause(0.1)
-        assert scope.display is False
+        assert scope.display is True
+        assert str(scope.renderable) == (
+            settings_modal_module.CONNECTION_PROBE_UNAVAILABLE_COPY
+        )
 
 
 @pytest.mark.asyncio
@@ -11992,6 +12431,43 @@ async def test_selecting_served_now_row_rebinds_listing_to_new_model_generation(
             "served-b", provider="llama_cpp"
         ) == settings_modal_module.ConsoleModelProvenance.SERVED_NOW
         assert modal._selected_model_requires_confirmation() is False
+
+
+@pytest.mark.asyncio
+async def test_selecting_another_listed_model_rebinds_connection_evidence() -> None:
+    """A model-only choice from the same result must retain endpoint evidence."""
+    app = ModalHarness()
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="served-a",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app,
+        providers_models={"llama_cpp": ["served-a", "served-b"]},
+        connection_tester=_ImmediateConnectionTester(
+            ProviderProbeResult("reachable", ("served-a", "served-b"))
+        ),
+    )
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button).press()
+        await _wait_for_discover_status(app, pilot, "2 models listed")
+
+        picker = modal.query_one(ModelSearchPicker)
+        picker.set_model_value("served-b")
+        modal._model_picker_selected(ModelSearchPicker.ModelSelected("served-b"))
+        await pilot.pause()
+
+        evidence = modal._connection_evidence_store.evidence_for(
+            modal._current_connection_probe_identity()
+        )
+        assert evidence is not None
+        assert evidence.endpoint == "reachable"
+        assert evidence.model_ids == ("served-a", "served-b")
+        assert evidence.generation == "not_tested"
 
 
 @pytest.mark.asyncio

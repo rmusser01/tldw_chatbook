@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from enum import StrEnum
 from ipaddress import ip_address
 from typing import Literal
 from unicodedata import category
@@ -18,6 +19,26 @@ EndpointForm = Literal[
 ]
 
 _LLAMA_PROVIDER_KEYS = frozenset({"llama_cpp", "local_llamacpp"})
+#: Providers whose existing chat endpoint contract exposes a bounded models
+#: route suitable for an explicit, non-generating connection check.
+URL_BASED_PROVIDER_KEYS = frozenset(
+    {
+        "aphrodite",
+        "custom",
+        "custom_2",
+        "koboldcpp",
+        "llama_cpp",
+        "local_llamacpp",
+        "local_llamafile",
+        "local_ollama",
+        "local_vllm",
+        "ollama",
+        "oobabooga",
+        "qwencloud",
+        "tabbyapi",
+        "vllm",
+    }
+)
 _PROVIDER_ALIASES = {
     "Custom": "custom",
     "Custom OpenAI": "custom",
@@ -73,6 +94,28 @@ class ProviderEndpointResolution:
     form: EndpointForm | None
     warnings: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
+
+
+class ConnectionProbeAvailability(StrEnum):
+    """Whether the provider draft has a meaningful non-generating probe."""
+
+    MODELS_ROUTE = "models_route"
+    UNAVAILABLE = "unavailable"
+
+
+def connection_probe_availability(
+    provider: str,
+    endpoint: str | None,
+) -> ConnectionProbeAvailability:
+    """Return probe availability without reading config or performing I/O."""
+
+    provider_key = normalize_provider_key_for_contract(provider)
+    if provider_key not in URL_BASED_PROVIDER_KEYS:
+        return ConnectionProbeAvailability.UNAVAILABLE
+    resolution = resolve_provider_endpoint(provider_key, endpoint)
+    if resolution.errors or resolution.models_url is None:
+        return ConnectionProbeAvailability.UNAVAILABLE
+    return ConnectionProbeAvailability.MODELS_ROUTE
 
 
 def resolve_provider_endpoint(

@@ -29,6 +29,7 @@ from textual.widgets import (
 )
 
 from tldw_chatbook.Chat.provider_readiness import (
+    configured_provider_credential_source,
     get_provider_readiness,
     provider_config_key,
 )
@@ -63,7 +64,14 @@ from tldw_chatbook.Chat.local_server_discovery import (
 )
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Chat.provider_endpoint_contract import (
+    ConnectionProbeAvailability,
     canonical_connection_identity,
+    connection_probe_availability,
+)
+from tldw_chatbook.Chat.provider_test_evidence import (
+    ProviderDraftIdentity,
+    ProviderProbeResult,
+    ProviderTestEvidenceStore,
 )
 from tldw_chatbook.Chat.provider_setup_persistence import canonical_provider_key
 from tldw_chatbook.config import save_settings_to_cli_config
@@ -141,10 +149,13 @@ MODAL_LABEL_WIDTH = 23
 MODEL_CUSTOM_BUTTON_WIDTH = 18
 MODEL_DISCOVER_BUTTON_ID = "console-settings-model-discover"
 MODEL_DISCOVER_STATUS_ID = "console-settings-model-discover-status"
-MODEL_DISCOVER_BUTTON_LABEL = "Discover models"
-MODEL_DISCOVER_BUTTON_WIDTH = 19
+MODEL_DISCOVER_BUTTON_LABEL = "Test connection & list models"
+MODEL_DISCOVER_BUTTON_WIDTH = 31
 MODEL_DISCOVER_SCOPE_COPY = (
-    "List models from this endpoint; this does not test generation."
+    "Tests this endpoint by listing models; this does not test generation."
+)
+CONNECTION_PROBE_UNAVAILABLE_COPY = (
+    "No non-billable live connection check is available for this provider."
 )
 _NO_CONFIGURED_MODELS_VALUE = "__no_configured_models__"
 MODEL_DISCOVER_MISSING_URL_COPY = "Enter a base URL to discover models."
@@ -152,6 +163,7 @@ MODEL_DISCOVER_INVALID_URL_COPY = (
     "Enter a valid http(s) endpoint URL to discover models."
 )
 ModelProber = Callable[[str, str], Awaitable[LocalModelProbeResult]]
+ConnectionTester = Callable[[ProviderDraftIdentity], Awaitable[ProviderProbeResult]]
 CurrentMemoryResetter = Callable[[], tuple[str, int] | None]
 CurrentMemoryUndo = Callable[[str, int], bool]
 AllMemoryResetter = Callable[[], int]
@@ -1142,6 +1154,7 @@ class ConsoleSettingsModal(
         reset_all_memories: AllMemoryResetter | None = None,
         compact_now: ContextCompactor | None = None,
         model_prober: ModelProber | None = None,
+        connection_tester: ConnectionTester | None = None,
         draft_rebaser: DraftRebaser | None = None,
         live_committer: LiveCommitter | None = None,
         default_readiness_resolver: DefaultReadinessResolver | None = None,
@@ -1216,6 +1229,8 @@ class ConsoleSettingsModal(
             raise ValueError("expected settings revision is invalid")
         if persist_and_apply is not None and not callable(persist_and_apply):
             raise TypeError("persist_and_apply must be callable")
+        if connection_tester is not None and not callable(connection_tester):
+            raise TypeError("connection_tester must be callable")
         self._expected_settings_revision = expected_settings_revision
         self._persist_and_apply = persist_and_apply
         self._focus_model = focus_model
@@ -1259,6 +1274,11 @@ class ConsoleSettingsModal(
                 ):
                     self._invalid_generation_choice_drafts[control_id] = raw_value
         self._model_prober: ModelProber = model_prober or _default_model_prober
+        self._connection_tester: ConnectionTester = (
+            connection_tester or self._connection_test_from_model_prober
+        )
+        self._connection_evidence_store = ProviderTestEvidenceStore()
+        self._active_connection_probe_token: object | None = None
         self._draft_rebaser = draft_rebaser
         self._live_committer = live_committer
         self._default_readiness_resolver = default_readiness_resolver
@@ -1778,12 +1798,16 @@ class ConsoleSettingsModal(
                             keep_unverified.display = False
                             yield keep_unverified
                         discovery_scope = Static(
-                            MODEL_DISCOVER_SCOPE_COPY,
+                            (
+                                MODEL_DISCOVER_SCOPE_COPY
+                                if supports_discovery
+                                else CONNECTION_PROBE_UNAVAILABLE_COPY
+                            ),
                             id="console-settings-model-discover-scope",
                             classes="console-settings-field-help",
                             markup=False,
                         )
-                        discovery_scope.display = supports_discovery
+                        discovery_scope.display = True
                         yield discovery_scope
                         discover_status = Static(
                             "",
@@ -2990,21 +3014,7 @@ class ConsoleSettingsModal(
         except (NoMatches, QueryError):
             return
         settings = self._build_draft()
-        if self._endpoint_is_authorized(self._endpoint_draft, settings.provider):
-            readiness = build_console_default_readiness_preview(
-                self._app_config,
-                settings,
-                self._endpoint_draft,
-            )
-        elif self._default_readiness_resolver is not None:
-            readiness = self._default_readiness_resolver(
-                settings.provider, settings.model
-            )
-        else:
-            readiness = build_console_settings_readiness(
-                settings,
-                app_config=self._app_config,
-            )
+        readiness = self._readiness_for_current_draft(settings)
         if not settings.model:
             copy = "Unavailable: choose a model first."
         elif not readiness.native_send_supported:
@@ -4578,6 +4588,7 @@ class ConsoleSettingsModal(
         if self._draft_rebaser is not None:
             self._rebase_to(provider, None)
             return
+        self._cancel_connection_probe()
         self._invalidate_model_discovery_for_provider(self._active_provider)
         self._store_current_model_for_provider(self._active_provider)
         self._store_current_base_url_for_provider(self._active_provider)
@@ -4599,6 +4610,7 @@ class ConsoleSettingsModal(
     def _model_select_changed(self, event: Select.Changed) -> None:
         if self._restoring_suspended_draft:
             return
+        self._cancel_connection_probe()
         model_id = normalize_console_model_value(self._select_value_text(event.value))
         # ``set_options`` queues a transient blank event before the concrete
         # replacement value. By dispatch time the Select already exposes the
@@ -4642,7 +4654,10 @@ class ConsoleSettingsModal(
         """
         if self._restoring_suspended_draft:
             return
-        picker = self.query_one("#console-settings-model-picker", ModelSearchPicker)
+        self._cancel_connection_probe()
+        picker = self.query_one(
+            "#console-settings-model-picker", ModelSearchPicker
+        )
         if picker.custom_mode:
             picker.set_custom_value(event.value)
             self._advance_model_generation_preserving_current_listing()
@@ -4683,6 +4698,7 @@ class ConsoleSettingsModal(
     @on(ModelSearchPicker.ModelSelected)
     def _model_picker_selected(self, event: ModelSearchPicker.ModelSelected) -> None:
         event.stop()
+        self._cancel_connection_probe()
         if self._restoring_suspended_draft:
             return
         if (
@@ -4712,6 +4728,7 @@ class ConsoleSettingsModal(
         event.stop()
         if self._restoring_suspended_draft:
             return
+        self._cancel_connection_probe()
         if event.custom:
             self._schedule_readiness_sync()
             return
@@ -4766,7 +4783,9 @@ class ConsoleSettingsModal(
         """Invalidate request evidence as soon as canonical endpoint input changes."""
         if self._restoring_suspended_draft:
             return
+        self._cancel_connection_probe()
         self._advance_model_discovery_generation()
+        self._sync_model_discover_controls(self._active_provider)
 
     @on(Select.Changed, "#console-context-compaction-representation")
     def _compaction_representation_changed(self, _event: Select.Changed) -> None:
@@ -4792,10 +4811,67 @@ class ConsoleSettingsModal(
         self._sync_model_provenance_copy()
         self._sync_readiness_display()
 
-    @staticmethod
-    def _provider_supports_model_discovery(provider: str) -> bool:
-        """Return whether the provider serves an OpenAI-compatible model list."""
-        return provider_config_key(provider) in URL_BASED_PROVIDER_KEYS
+    def _provider_supports_model_discovery(self, provider: str) -> bool:
+        """Return whether the current endpoint has a bounded models-route probe."""
+        try:
+            endpoint = self._current_base_url_value(provider)
+        except (NoMatches, QueryError):
+            endpoint = self._base_url_for_provider(provider)
+        return connection_probe_availability(
+            provider_config_key(provider),
+            endpoint,
+        ) is ConnectionProbeAvailability.MODELS_ROUTE
+
+    def _current_connection_probe_identity(self) -> ProviderDraftIdentity | None:
+        """Return the secret-free exact identity for the current modal draft."""
+        discovery_identity = self._current_draft_discovery_identity()
+        if discovery_identity is None:
+            return None
+        provider_key = discovery_identity.provider_key
+        provider_settings = self._provider_settings(provider_key)
+        credential_source = configured_provider_credential_source(provider_settings)
+        if credential_source is None:
+            readiness = get_provider_readiness(provider_key, self._app_config)
+            if readiness.api_key_source is None:
+                credential_source = "none"
+            elif readiness.api_key_source.startswith("env:"):
+                credential_source = "environment"
+            else:
+                credential_source = "stored"
+        return ProviderDraftIdentity(
+            provider_key=provider_key,
+            connection_identity=discovery_identity.connection_identity,
+            credential_source=credential_source,
+            credential_revision=self._expected_settings_revision,
+            draft_generation=discovery_identity.draft_generation,
+        )
+
+    async def _connection_test_from_model_prober(
+        self,
+        identity: ProviderDraftIdentity,
+    ) -> ProviderProbeResult:
+        """Adapt the legacy injected prober to the typed connection-test seam."""
+        result = await self._model_prober(
+            identity.connection_identity[1],
+            identity.provider_key,
+        )
+        if result.ok:
+            return ProviderProbeResult("reachable", tuple(result.model_ids))
+        return ProviderProbeResult("unreachable", (), "connection_error")
+
+    def _cancel_connection_probe(self) -> None:
+        """Cancel the active worker and revoke any result settlement capability."""
+        try:
+            self.workers.cancel_group(self, "console-settings-model-discovery")
+        except Exception:
+            pass
+        token = self._active_connection_probe_token
+        self._active_connection_probe_token = None
+        if token is not None:
+            self._connection_evidence_store.cancel_probe(token)
+        if self.is_mounted:
+            self._sync_model_discover_controls(self._active_provider)
+            self._sync_readiness_display()
 
     def _current_draft_discovery_identity(
         self,
@@ -4863,6 +4939,12 @@ class ConsoleSettingsModal(
         """Rebind endpoint-list evidence across a model-only draft transition."""
         preserve_listing = self._current_model_discovery_matches_current_draft()
         listed_model_ids = self._current_discovered_model_ids
+        prior_identity = self._current_connection_probe_identity()
+        prior_evidence = (
+            self._connection_evidence_store.evidence_for(prior_identity)
+            if prior_identity is not None
+            else None
+        )
         changed = self._advance_model_discovery_generation(
             clear_status=not preserve_listing
         )
@@ -4874,6 +4956,17 @@ class ConsoleSettingsModal(
         self._current_model_discovery_identity = rebound
         self._current_discovered_model_ids = listed_model_ids
         self._promote_current_discovery_options()
+        rebound_identity = self._current_connection_probe_identity()
+        if prior_evidence is not None and rebound_identity is not None:
+            token = self._connection_evidence_store.begin(rebound_identity)
+            self._connection_evidence_store.settle(
+                token,
+                ProviderProbeResult(
+                    prior_evidence.endpoint,
+                    prior_evidence.model_ids,
+                    prior_evidence.category,
+                ),
+            )
 
     def _invalidate_model_discovery_for_provider(self, provider: str) -> None:
         """Remove exact-probe overlays without disturbing another provider."""
@@ -4999,7 +5092,7 @@ class ConsoleSettingsModal(
 
     @on(Button.Pressed, f"#{MODEL_DISCOVER_BUTTON_ID}")
     def _model_discover_pressed(self, event: Button.Pressed) -> None:
-        """Probe the current base-URL draft for its served model list."""
+        """Test the current connection through its non-generating models route."""
         event.stop()
         provider = self._select_value_text(
             self.query_one("#console-settings-provider", Select).value
@@ -5016,37 +5109,117 @@ class ConsoleSettingsModal(
         if normalized_probe_url is None or not validate_url(normalized_probe_url):
             self._set_model_discover_status(MODEL_DISCOVER_INVALID_URL_COPY)
             return
-        identity = self._begin_model_discovery_identity(provider, base_url)
+        self._cancel_connection_probe()
+        discovery_identity = self._begin_model_discovery_identity(provider, base_url)
+        identity = self._current_connection_probe_identity()
+        if identity is None:
+            self._set_model_discover_status(MODEL_DISCOVER_INVALID_URL_COPY)
+            return
+        token = self._connection_evidence_store.begin(identity)
+        self._active_connection_probe_token = token
+        event.button.disabled = True
+        self._sync_readiness_display()
         self._set_model_discover_status(
-            f"Listing models from {endpoint_display(base_url)}; "
-            "this does not test generation."
+            f"Testing connection to {endpoint_display(base_url)} by listing models; "
+            "generation not tested."
         )
         self.run_worker(
-            self._run_model_discovery(identity, base_url),
-            exclusive=False,
+            self._run_model_discovery(discovery_identity, identity, token),
+            exclusive=True,
             group="console-settings-model-discovery",
         )
 
     async def _run_model_discovery(
         self,
-        identity: ConsoleModelDiscoveryIdentity,
-        base_url: str,
+        discovery_identity: ConsoleModelDiscoveryIdentity,
+        identity: ProviderDraftIdentity,
+        token: object,
     ) -> None:
-        """Run the model probe off the draft URL and apply the outcome.
+        """Run the injected probe and publish only to its exact current draft.
 
         Args:
-            identity: Exact provider/endpoint/generation captured at press time.
-            base_url: Base-URL draft at press time.
+            discovery_identity: Exact provider/endpoint/generation UI identity.
+            identity: Secret-free evidence identity captured at press time.
+            token: Opaque evidence settlement capability.
         """
         try:
-            result = await self._model_prober(base_url, identity.provider_key)
+            result = await self._connection_tester(identity)
+        except asyncio.CancelledError:
+            self._connection_evidence_store.cancel_probe(token)
+            if self._active_connection_probe_token is token:
+                self._active_connection_probe_token = None
+            raise
         except Exception:
-            result = LocalModelProbeResult(
-                ok=False,
-                base_url=base_url,
-                detail=f"No models endpoint at {endpoint_display(base_url)}.",
+            result = ProviderProbeResult(
+                "unreachable",
+                (),
+                "connection_error",
             )
-        self._apply_model_discovery_result(identity, result)
+        if (
+            type(result) is not ProviderProbeResult
+            or discovery_identity != self._current_draft_discovery_identity()
+            or identity != self._current_connection_probe_identity()
+        ):
+            self._connection_evidence_store.cancel_probe(token)
+            return
+        if not self._connection_evidence_store.settle(token, result):
+            return
+        if self._active_connection_probe_token is token:
+            self._active_connection_probe_token = None
+        self._apply_connection_probe_result(discovery_identity, result)
+
+        # Selecting a sole returned model advances the modal's exact model
+        # generation. Re-publish the same bounded endpoint evidence against
+        # that synchronously rebound identity so readiness stays current.
+        rebound = self._current_connection_probe_identity()
+        if rebound is not None and rebound != identity:
+            rebound_token = self._connection_evidence_store.begin(rebound)
+            self._connection_evidence_store.settle(rebound_token, result)
+        self._sync_readiness_display()
+
+    def _apply_connection_probe_result(
+        self,
+        identity: ConsoleModelDiscoveryIdentity,
+        result: ProviderProbeResult,
+    ) -> None:
+        """Render one bounded endpoint result without implying generation success."""
+        if result.endpoint == "reachable":
+            self._apply_model_discovery_result(
+                identity,
+                LocalModelProbeResult(
+                    ok=True,
+                    base_url=identity.connection_identity[1],
+                    model_ids=result.model_ids,
+                ),
+            )
+            return
+        try:
+            discover = self.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        except (NoMatches, QueryError):
+            return
+        discover.disabled = not self._provider_supports_model_discovery(
+            self._active_provider
+        )
+        if result.endpoint == "model_listing_unavailable":
+            self._set_model_discover_status(
+                "Connection reached; model listing unavailable. Generation not tested."
+            )
+            return
+        category_copy = {
+            "timeout": "Connection failed: request timed out.",
+            "connection_refused": "Connection failed: connection refused.",
+            "unauthorized": "Connection failed: unauthorized.",
+            "forbidden": "Connection failed: forbidden.",
+            "http_status": "Connection failed: endpoint returned an HTTP error.",
+            "invalid_payload": "Connection failed: invalid models response.",
+            "connection_error": "Connection failed: connection error.",
+        }
+        self._set_model_discover_status(
+            category_copy.get(
+                result.category,
+                "Connection failed: connection error.",
+            )
+        )
 
     def _apply_model_discovery_result(
         self,
@@ -5178,17 +5351,17 @@ class ConsoleSettingsModal(
         except (NoMatches, QueryError):
             pass
         else:
-            scope.update(MODEL_DISCOVER_SCOPE_COPY)
-            scope.display = supports_discovery
+            scope.update(
+                MODEL_DISCOVER_SCOPE_COPY
+                if supports_discovery
+                else CONNECTION_PROBE_UNAVAILABLE_COPY
+            )
+            scope.display = True
         self._set_model_discover_status("")
 
     def _sync_readiness_display(self) -> None:
         draft = self._build_draft()
-        readiness = build_console_settings_readiness(
-            draft,
-            app_config=self._app_config,
-            active_run=self._active_run,
-        )
+        readiness = self._readiness_for_current_draft(draft)
         self.query_one("#console-settings-readiness", Static).update(
             self._readiness_copy(readiness)
         )
@@ -5200,6 +5373,25 @@ class ConsoleSettingsModal(
             pass
         self._sync_provider_model_section_emphasis()
         self._sync_completion_actions()
+
+    def _readiness_for_current_draft(
+        self,
+        draft: ConsoleSessionSettings,
+    ) -> ConsoleSettingsReadiness:
+        """Build readiness with evidence only for the exact mounted draft."""
+        identity = self._current_connection_probe_identity()
+        evidence = (
+            self._connection_evidence_store.evidence_for(identity)
+            if identity is not None
+            else None
+        )
+        return build_console_settings_readiness(
+            draft,
+            app_config=self._app_config,
+            evidence=evidence,
+            current_identity=identity,
+            active_run=self._active_run,
+        )
 
     def _sync_provider_model_section_emphasis(self) -> None:
         section = self.query_one("#console-settings-connection", Vertical)
