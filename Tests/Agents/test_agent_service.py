@@ -527,6 +527,11 @@ def test_first_request_plan_contains_exact_named_agent_and_fleet_schemas(monkeyp
         "wait_agents",
         "check_agents",
         "send_to_agent",
+        # TASK-28238 phase 2 Task 5: merge/discard for a worktree-isolated
+        # child, pinned under the same fleet predicate as the three names
+        # directly above.
+        "merge_agent_worktree",
+        "discard_agent_worktree",
     ]
     assert (
         "researcher"
