@@ -1682,7 +1682,24 @@ class SchedulesWorkbench(BaseAppScreen):
         # defect turned on.)
         self._pushed_row_id = row.row_id
         self._pushed_host = host
-        self._update_detail_for_index(index)
+        # Fix wave (finding 7): `index` is a POSITION captured before the
+        # `await` above -- the queue can reorder, refresh, or filter while
+        # the screen mounts, so replaying it here would repaint whatever
+        # row now happens to sit at that position, not the one this pane
+        # was pushed for. Resolve by IDENTITY instead (`row.row_id`,
+        # captured before the await same as `_pushed_row_id`), the same
+        # discipline F2 already applies to RE-feeds via the `_detail_
+        # panes` gate. A row that vanished from `_all_rows` between the
+        # `m`/Enter press and the mount completing takes the SAME
+        # auto-pop-with-notice path `_pop_pushed_detail_if_gone` builds
+        # for that case -- never a wrong-row paint.
+        self._pop_pushed_detail_if_gone()
+        if self._pushed_row_id is None:
+            return
+        for fresh_index, visible_row in enumerate(self._visible_rows):
+            if visible_row.row_id == row.row_id:
+                self._update_detail_for_index(fresh_index)
+                break
 
     def _pushed_detail_dismissed(self) -> None:
         """Drop the pushed pane and re-read the queue behind it.

@@ -780,6 +780,80 @@ async def test_a_pushed_detail_closes_with_a_notice_when_its_row_is_gone(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_a_row_removed_while_the_initial_push_mounts_closes_with_a_notice(
+    tmp_path,
+):
+    """Fix wave finding 7: `_push_row_detail`'s INITIAL paint used to
+    replay the POSITIONAL `index` captured before the screen-mount
+    `await`, rather than resolving the pushed row by identity the way F2
+    already does for re-feeds (`_pushed_row_id` + the `_detail_panes`
+    gate) -- an index-after-an-await bug in the one path F2 had not yet
+    touched. A row that vanishes from `_all_rows` WHILE the screen mounts
+    (`widget_factory` runs from `compose()`, inside the awaited push)
+    must take the same auto-pop-with-notice path as a background refresh
+    that drops it after the fact -- never paint whatever row now happens
+    to sit at that stale position.
+    """
+    app = BundledCSSWorkbenchApp()
+    db, _service = _real_service(tmp_path, app)
+    try:
+        _reminder(db, "AAA First reminder")
+        _reminder(db, "ZZZ Second reminder")
+        async with app.run_test(size=FLOOR) as pilot:
+            workbench = await _open_workbench(pilot)
+            aaa_index = next(
+                index
+                for index, row in enumerate(workbench._visible_rows)
+                if row.title == "AAA First reminder"
+            )
+            await _select_row(pilot, aaa_index)
+
+            notifications: list[str] = []
+            pilot.app.notify = lambda message, **kw: notifications.append(message)
+
+            # `TaskDetail(...)` is built inside `compose()`, i.e. WHILE
+            # `_push_row_detail` is suspended on `await self.app.push_
+            # screen(host)` -- the exact window between the `Enter` press
+            # and the mount completing. Dropping the row from `_all_rows`
+            # here (not through a DB delete + worker round trip, which
+            # would race the very continuation this test pins) is the
+            # deterministic way to land in that window.
+            original_init = TaskDetail.__init__
+
+            def _vanish_during_mount(self, *args, **kwargs):
+                TaskDetail.__init__ = original_init
+                workbench._all_rows = [
+                    row
+                    for row in workbench._all_rows
+                    if row.title != "AAA First reminder"
+                ]
+                workbench._visible_rows = [
+                    row
+                    for row in workbench._visible_rows
+                    if row.title != "AAA First reminder"
+                ]
+                original_init(self, *args, **kwargs)
+
+            TaskDetail.__init__ = _vanish_during_mount
+            try:
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.app.workers.wait_for_complete()
+                await pilot.pause()
+            finally:
+                TaskDetail.__init__ = original_init
+
+            assert pilot.app.screen is workbench, "the stale pane stayed open"
+            assert workbench._pushed_detail is None
+            assert workbench._pushed_row_id is None
+            assert any("AAA First reminder" in text for text in notifications), (
+                "the pane vanished without saying why"
+            )
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
 async def test_resolving_a_conflict_in_the_pushed_view_reloads_the_queue(tmp_path):
     """F3: `ConflictsTab.ConflictResolved` reaches the workbench LIVE.
 

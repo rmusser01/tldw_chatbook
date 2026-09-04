@@ -552,6 +552,15 @@ async def review_selected_result(
     `SchedulingService.review_automation_result` writes the local row
     and, for a server mirror, queues the sync pushback mutation in the
     same DB transaction -- nothing extra to do here for that half.
+
+    Args:
+        service: The `SchedulingService` whose `review_automation_result`
+            performs the write.
+        results_tab: The `ResultsTab` instance whose cursor selects the
+            result to review.
+        review_state: `"read"` or `"dismissed"` (the two states the `r`/
+            `d` actions drive).
+        notify: The caller's notification sink, `(message, severity)`.
     """
     result = results_tab.selected_result()
     if result is None:
@@ -571,7 +580,16 @@ async def mark_selected_result_solved(
     """Mark `result`'s definition solved -- the async half of the `o`
     action. Eligibility (`solved_eligibility`) is checked by the CALLER,
     synchronously, before spawning the worker this runs in (existing
-    tests pin that refusal firing without a worker round-trip)."""
+    tests pin that refusal firing without a worker round-trip).
+
+    Args:
+        service: The `SchedulingService` whose `resolve_definition`
+            performs the write.
+        result: The `automation_results` row under the cursor.
+        definitions_by_id: The index built by `index_definitions_by_id`,
+            used to resolve `result`'s owning definition.
+        notify: The caller's notification sink, `(message, severity)`.
+    """
     definition = definition_for_result(result, definitions_by_id)
     local_definition_id = str((definition or {}).get("id") or "")
     outcome = await service.resolve_definition(
@@ -591,7 +609,16 @@ async def mark_results_read(
     """Per-row `review_automation_result` fan-out for a batch of result
     ids -- there is no bulk DB primitive for this (documented fan-out,
     mirroring `SchedulesWorkbench._on_bulk_delete_confirmed`'s loop-and-
-    count shape)."""
+    count shape).
+
+    Args:
+        service: The `SchedulingService` whose `review_automation_result`
+            performs each write.
+        result_ids: Every result id to mark `"read"` (the `a` action's
+            scope -- global or one definition's, per the caller).
+        notify: The caller's notification sink, `(message, severity)`;
+            called once at the end with the read/failed count.
+    """
     errors = 0
     for result_id in result_ids:
         if not await service.review_automation_result(result_id, "read"):
@@ -679,9 +706,11 @@ class ResultsHostScreen(WorkbenchHostScreen):
         self._results_tab().populate(results, definitions_by_id, total=total)
 
     def action_review_read(self) -> None:
+        """`r`: mark the result under the cursor read."""
         self._run_review("read")
 
     def action_review_dismiss(self) -> None:
+        """`d`: dismiss the result under the cursor."""
         self._run_review("dismissed")
 
     def _run_review(self, review_state: str) -> None:
@@ -696,6 +725,12 @@ class ResultsHostScreen(WorkbenchHostScreen):
         self.run_worker(_do, exclusive=True, group="schedules-results-host")
 
     def action_mark_solved(self) -> None:
+        """`o`: mark the result under the cursor's definition solved.
+
+        The synchronous eligibility gate (`solved_eligibility`) runs here,
+        before the worker -- a refusal notifies without a worker round-
+        trip.
+        """
         results_tab = self._results_tab()
         result = results_tab.selected_result()
         if result is None:
@@ -715,6 +750,11 @@ class ResultsHostScreen(WorkbenchHostScreen):
         self.run_worker(_do, exclusive=True, group="schedules-results-host")
 
     def action_mark_all_read(self) -> None:
+        """`a`: mark every unread result in this screen's scope read.
+
+        Scope is whatever `unread_ids` (constructor arg) was built to
+        return -- the global inbox, or one definition's results.
+        """
         unread_ids = self._unread_ids()
         if not unread_ids:
             self._notify("Nothing unread.", "information")

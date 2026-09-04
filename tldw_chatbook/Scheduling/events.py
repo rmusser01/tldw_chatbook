@@ -205,6 +205,12 @@ class ViewDefinitionResultsRequested(Message):
     """
 
     def __init__(self, definition: dict[str, Any]) -> None:
+        """
+        Args:
+            definition: The raw dict `DefinitionDetail.set_definition`
+                was last painted with (local DB row or raw server
+                list-response dict).
+        """
         super().__init__()
         self.definition = definition
 
@@ -219,6 +225,12 @@ class DefinitionRunNowRequested(Message):
     """
 
     def __init__(self, definition: dict[str, Any]) -> None:
+        """
+        Args:
+            definition: The raw dict `DefinitionDetail.set_definition`
+                was last painted with (local DB row or raw server
+                list-response dict).
+        """
         super().__init__()
         self.definition = definition
 
@@ -235,6 +247,12 @@ class ViewDefinitionAuditRequested(Message):
     """
 
     def __init__(self, definition: dict[str, Any]) -> None:
+        """
+        Args:
+            definition: The raw dict `DefinitionDetail.set_definition`
+                was last painted with (local DB row or raw server
+                list-response dict).
+        """
         super().__init__()
         self.definition = definition
 

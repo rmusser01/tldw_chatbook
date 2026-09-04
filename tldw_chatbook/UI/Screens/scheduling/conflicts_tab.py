@@ -74,7 +74,7 @@ class ConflictsTab(Vertical):
         sync_engine: _SyncEngineProtocol | None,
         *,
         initial_conflicts: list[dict[str, Any]] | None = None,
-        **kwargs,
+        **kwargs: object,
     ) -> None:
         """Initialize the conflicts tab.
 

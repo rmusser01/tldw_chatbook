@@ -165,11 +165,26 @@ class DefinitionAuditView(Vertical):
     def __init__(
         self, service: Any, definition: dict[str, Any], **kwargs: Any
     ) -> None:
+        """Store the fetch inputs; the fetch itself waits for `on_mount`.
+
+        Args:
+            service: The `SchedulingService` (or a test double exposing
+                the same `server_client` attribute), or `None` --
+                forwarded verbatim to `fetch_definition_audit`.
+            definition: The definition row dict this audit trail is for
+                (local DB row or raw server list-response dict).
+            **kwargs: Forwarded to `Vertical.__init__` (e.g. `id`).
+        """
         super().__init__(**kwargs)
         self._service = service
         self._definition = definition
 
     def compose(self) -> ComposeResult:
+        """Yield the loading notice and the (initially empty) audit table.
+
+        `_populate` (kicked off from `on_mount`) fills the table and
+        replaces the notice text once the fetch resolves.
+        """
         yield Static(
             "Loading run history…",
             id="scheduling-audit-view-notice",
@@ -180,6 +195,14 @@ class DefinitionAuditView(Vertical):
         yield table
 
     def on_mount(self) -> None:
+        """Kick off the self-populating fetch (`_populate`).
+
+        `exclusive=True` + a dedicated worker group: this widget is
+        pushed fresh on every activation (Task 1's factory contract), so
+        there is never a prior `_populate` run of THIS instance to
+        collide with -- the group only needs to be distinct from other
+        panes' own worker groups, not de-duplicate repeats.
+        """
         self.run_worker(
             self._populate, exclusive=True, group="schedules-audit-view"
         )
