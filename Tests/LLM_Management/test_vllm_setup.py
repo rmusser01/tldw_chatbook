@@ -4,6 +4,7 @@ import os
 import select as select_module
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -178,6 +179,8 @@ def test_default_probe_normalizes_reader_failure_without_error_text(monkeypatch)
             self.reaped = True
 
         def wait(self, timeout=None) -> int:
+            if not self.reaped:
+                raise subprocess.TimeoutExpired("probe", timeout)
             self.reaped = True
             return 0
 
@@ -186,6 +189,11 @@ def test_default_probe_normalizes_reader_failure_without_error_text(monkeypatch)
 
     process = FakeProcess()
     monkeypatch.setattr(vllm_setup.subprocess, "Popen", lambda *_a, **_k: process)
+    monkeypatch.setattr(
+        vllm_setup,
+        "_read_probe_stdout",
+        lambda *_args: (_ for _ in ()).throw(OSError("READER_EXCEPTION_CANARY")),
+    )
 
     result = vllm_setup._run_default_probe([sys.executable, "ignored.py"])
 
@@ -193,6 +201,10 @@ def test_default_probe_normalizes_reader_failure_without_error_text(monkeypatch)
     assert process.reaped
     assert process.stdout.closed
     assert "READER_EXCEPTION_CANARY" not in repr(result)
+    assert not any(
+        thread.name == "vllm-version-probe-reader" and thread.is_alive()
+        for thread in threading.enumerate()
+    )
 
 
 def test_default_probe_normalizes_wait_failure_and_reaps(monkeypatch):
@@ -232,6 +244,11 @@ def test_default_probe_normalizes_wait_failure_and_reaps(monkeypatch):
     process = FakeProcess()
     monkeypatch.setattr(vllm_setup.subprocess, "Popen", lambda *_a, **_k: process)
 
+    def read_version(_process, output, _stop, _deadline) -> None:
+        output.extend(b"Python 3.12.0")
+
+    monkeypatch.setattr(vllm_setup, "_read_probe_stdout", read_version)
+
     result = vllm_setup._run_default_probe([sys.executable, "ignored.py"])
 
     assert result == (False, None)
@@ -239,6 +256,101 @@ def test_default_probe_normalizes_wait_failure_and_reaps(monkeypatch):
     assert process.waits == 2
     assert process.stdout.closed
     assert "WAIT_EXCEPTION_CANARY" not in repr(result)
+    assert not any(
+        thread.name == "vllm-version-probe-reader" and thread.is_alive()
+        for thread in threading.enumerate()
+    )
+
+
+@pytest.mark.parametrize(
+    ("length", "expected"),
+    ((256, True), (257, False)),
+)
+def test_default_probe_enforces_exact_output_byte_boundary(length: int, expected: bool):
+    result = vllm_setup._run_default_probe(
+        [sys.executable, "-c", f"import sys; sys.stdout.write('V' * {length})"]
+    )
+
+    assert result == ((True, None) if expected else (False, None))
+
+
+def test_default_probe_joins_reader_before_closing_inherited_writer_pipe(
+    monkeypatch,
+):
+    read_fd, write_fd = os.pipe()
+    close_lock = threading.Lock()
+    reader_entered = threading.Event()
+    release_legacy_reader = threading.Event()
+
+    class SynchronizedPipe:
+        closed = False
+
+        def fileno(self) -> int:
+            return read_fd
+
+        def read(self, _size: int) -> bytes:
+            with close_lock:
+                reader_entered.set()
+                release_legacy_reader.wait(1)
+                return b""
+
+        def close(self) -> None:
+            assert not any(
+                thread.name == "vllm-version-probe-reader" and thread.is_alive()
+                for thread in threading.enumerate()
+            )
+            with close_lock:
+                os.close(read_fd)
+                self.closed = True
+
+    class FakeProcess:
+        stdout = SynchronizedPipe()
+        reaped = False
+
+        def poll(self):
+            return 0 if self.reaped else None
+
+        def terminate(self) -> None:
+            self.reaped = True
+
+        def wait(self, timeout=None) -> int:
+            if not self.reaped:
+                raise subprocess.TimeoutExpired("probe", timeout)
+            self.reaped = True
+            return 0
+
+        def kill(self) -> None:
+            self.reaped = True
+
+    process = FakeProcess()
+    monkeypatch.setattr(vllm_setup.subprocess, "Popen", lambda *_a, **_k: process)
+    monkeypatch.setattr(vllm_setup, "_PROBE_TIMEOUT_SECONDS", 0.05)
+    result: list[tuple[bool, str | None]] = []
+    runner = threading.Thread(
+        target=lambda: result.append(
+            vllm_setup._run_default_probe([sys.executable, "ignored.py"])
+        )
+    )
+
+    try:
+        runner.start()
+        reader_entered.wait(0.2)
+        runner.join(0.2)
+        completed_before_release = not runner.is_alive()
+    finally:
+        release_legacy_reader.set()
+        runner.join(1)
+        os.close(write_fd)
+
+    assert completed_before_release
+    assert not reader_entered.is_set()
+    assert result == [(False, None)]
+    assert process.reaped
+    assert process.stdout.closed
+    assert not any(
+        thread.name == "vllm-version-probe-reader" and thread.is_alive()
+        for thread in threading.enumerate()
+    )
 
 
 def test_bare_python_requires_sibling_vllm_not_path_lookup(tmp_path):

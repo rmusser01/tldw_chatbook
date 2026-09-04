@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import math
 from dataclasses import replace
 
 from textual import on
@@ -94,6 +95,18 @@ _LEXICAL_ERROR_COPY = "Value is too long or contains unsupported control charact
 _RAW_ARGUMENTS_ERROR_COPY = (
     "Advanced arguments must be no larger than 16 KiB and cannot contain NUL."
 )
+_NUMERIC_INPUT_FIELDS = (
+    "port",
+    "tensor_parallel_size",
+    "maximum_model_length",
+    "gpu_memory_utilization",
+)
+_NUMERIC_CONTROL_IDS = {
+    "port": "port",
+    "tensor_parallel_size": "tensor_parallel_size",
+    "maximum_model_length": "maximum_model_length",
+    "gpu_memory_utilization": "gpu_memory_utilization",
+}
 
 
 def _control_classes(extra: str = "") -> str:
@@ -269,6 +282,16 @@ class VllmSetupView(VerticalScroll):
         self._profile_store_error = False
         self._rendering = False
         self._accepted_profile_name = initial_profile.name
+        self._numeric_lexemes = self._numeric_lexemes_from_draft(self._draft)
+
+    @staticmethod
+    def _numeric_lexemes_from_draft(draft: VllmLaunchDraft) -> dict[str, str]:
+        """Project every numeric field to one exact editable string."""
+
+        return {
+            field: "" if (value := getattr(draft, field)) is None else str(value)
+            for field in _NUMERIC_INPUT_FIELDS
+        }
 
     def compose(self) -> ComposeResult:
         yield Label("Set up vLLM / OPERATE", classes="section-title")
@@ -658,6 +681,7 @@ class VllmSetupView(VerticalScroll):
         profile_store_error: bool | None = None,
     ) -> None:
         self._draft = draft
+        self._numeric_lexemes = self._numeric_lexemes_from_draft(draft)
         self._state = state
         self._preflight = preflight
         self._connection = connection
@@ -1001,23 +1025,17 @@ class VllmSetupView(VerticalScroll):
                 "#vllm-hf-model": self._draft.model_value,
                 "#vllm-local-model-directory": self._draft.model_value,
                 "#vllm-bind-address": self._draft.bind_address,
-                "#vllm-port": str(self._draft.port),
+                "#vllm-port": self._numeric_lexemes["port"],
                 "#vllm-existing-server-url": self._draft.existing_server_url,
-                "#vllm-tensor-parallel-size": (
-                    ""
-                    if self._draft.tensor_parallel_size is None
-                    else str(self._draft.tensor_parallel_size)
-                ),
-                "#vllm-maximum-model-length": (
-                    ""
-                    if self._draft.maximum_model_length is None
-                    else str(self._draft.maximum_model_length)
-                ),
-                "#vllm-gpu-memory-utilization": (
-                    ""
-                    if self._draft.gpu_memory_utilization is None
-                    else str(self._draft.gpu_memory_utilization)
-                ),
+                "#vllm-tensor-parallel-size": self._numeric_lexemes[
+                    "tensor_parallel_size"
+                ],
+                "#vllm-maximum-model-length": self._numeric_lexemes[
+                    "maximum_model_length"
+                ],
+                "#vllm-gpu-memory-utilization": self._numeric_lexemes[
+                    "gpu_memory_utilization"
+                ],
             }
             advanced_options = self.query_one("#vllm-advanced-options", Collapsible)
             advanced_options.display = local
@@ -1461,6 +1479,98 @@ class VllmSetupView(VerticalScroll):
         self._render_projection()
         self.post_message(self.DraftChanged(self._draft))
 
+    def _change_numeric_lexeme(self, field: str, value: str) -> None:
+        """Retain one exact numeric edit until an action requests normalization."""
+
+        if not self._profiles_ready:
+            return
+        if (
+            self._numeric_lexemes[field] == value
+            and getattr(self._draft, field) == value
+        ):
+            return
+        self._numeric_lexemes[field] = value
+        self._draft = replace(self._draft, **{field: value})
+        self._preflight = None
+        self._state = VllmReadinessState.NOT_CONFIGURED
+        self._render_projection()
+        self.post_message(self.DraftChanged(self._draft))
+
+    def _normalize_numeric_draft(self) -> VllmLaunchDraft | None:
+        """Normalize exact numeric lexemes for a semantic action or show one error."""
+
+        for field, control_id in _NUMERIC_CONTROL_IDS.items():
+            try:
+                validate_vllm_draft_input(control_id, self._numeric_lexemes[field])
+            except ValueError:
+                if field != "port":
+                    self.query_one(
+                        "#vllm-advanced-options", Collapsible
+                    ).collapsed = False
+                self._show_lexical_error(
+                    _PREFLIGHT_HELP_TARGETS[field],
+                    _LEXICAL_ERROR_COPY,
+                )
+                return None
+
+        normalized: dict[str, object] = {}
+        issue: VllmIssue | None = None
+        try:
+            port = int(self._numeric_lexemes["port"])
+            if not 1 <= port <= 65535:
+                raise ValueError
+            normalized["port"] = port
+        except (ValueError, OverflowError):
+            issue = VllmIssue("invalid_port", "port")
+
+        for field, issue_code in (
+            ("tensor_parallel_size", "invalid_tensor_parallel_size"),
+            ("maximum_model_length", "invalid_maximum_model_length"),
+        ):
+            if issue is not None:
+                break
+            lexeme = self._numeric_lexemes[field]
+            try:
+                value = None if not lexeme.strip() else int(lexeme)
+                if value is not None and value < 1:
+                    raise ValueError
+                normalized[field] = value
+            except (ValueError, OverflowError):
+                issue = VllmIssue(issue_code, field)
+
+        if issue is None:
+            lexeme = self._numeric_lexemes["gpu_memory_utilization"]
+            try:
+                utilization = None if not lexeme.strip() else float(lexeme)
+                if utilization is not None and (
+                    not math.isfinite(utilization) or not 0 < utilization <= 1
+                ):
+                    raise ValueError
+                normalized["gpu_memory_utilization"] = utilization
+            except (ValueError, OverflowError):
+                issue = VllmIssue(
+                    "invalid_gpu_memory_utilization",
+                    "gpu_memory_utilization",
+                )
+
+        if issue is not None:
+            if issue.field != "port":
+                self.query_one("#vllm-advanced-options", Collapsible).collapsed = False
+            self._show_lexical_error(
+                _PREFLIGHT_HELP_TARGETS[issue.field],
+                _preflight_issue_copy(issue),
+            )
+            return None
+
+        candidate = replace(self._draft, **normalized)
+        changed = candidate != self._draft
+        self._draft = candidate
+        self._numeric_lexemes = self._numeric_lexemes_from_draft(candidate)
+        self._render_projection()
+        if changed:
+            self.post_message(self.DraftChanged(candidate))
+        return candidate
+
     def _show_lexical_error(self, help_id: str, copy: str) -> None:
         """Show fixed adjacent feedback without retaining or echoing rejected text."""
 
@@ -1546,24 +1656,10 @@ class VllmSetupView(VerticalScroll):
                 self._restore_input_value(event.input, value)
             self._accepted_profile_name = value
             return
-        if field == "port":
-            try:
-                parsed: object = int(value)
-            except ValueError:
-                parsed = value
-        elif field in {"tensor_parallel_size", "maximum_model_length"}:
-            try:
-                parsed = int(value) if value.strip() else None
-            except ValueError:
-                parsed = value
-        elif field == "gpu_memory_utilization":
-            try:
-                parsed = float(value) if value.strip() else None
-            except ValueError:
-                parsed = value
-        else:
-            parsed = value
-        self._change_draft(**{field: parsed})
+        if field in _NUMERIC_INPUT_FIELDS:
+            self._change_numeric_lexeme(field, value)
+            return
+        self._change_draft(**{field: value})
 
     @on(TextArea.Changed, "#vllm-raw-arguments")
     def _on_raw_arguments_changed(self, event: TextArea.Changed) -> None:
@@ -1645,7 +1741,8 @@ class VllmSetupView(VerticalScroll):
             case "vllm-trust-remote-code":
                 self._change_draft(trust_remote_code=not self._draft.trust_remote_code)
             case "vllm-check-setup":
-                self.post_message(self.CheckRequested(self._draft))
+                if (draft := self._normalize_numeric_draft()) is not None:
+                    self.post_message(self.CheckRequested(draft))
             case "vllm-cancel-check":
                 token = (
                     self._connection.current_token
@@ -1655,18 +1752,20 @@ class VllmSetupView(VerticalScroll):
                 if token is not None:
                     self.post_message(self.CancelCheckRequested(token.generation))
             case "vllm-start":
-                self.post_message(self.StartRequested(self._draft))
+                if (draft := self._normalize_numeric_draft()) is not None:
+                    self.post_message(self.StartRequested(draft))
             case "vllm-stop":
                 self.post_message(self.StopRequested())
             case "vllm-recovery-primary":
                 self.post_message(self.RetryRequested())
             case "vllm-restart":
                 snapshot = self._current_launch_snapshot
-                if snapshot is not None:
+                draft = self._normalize_numeric_draft()
+                if snapshot is not None and draft is not None:
                     self.post_message(
                         self.RestartRequested(
-                            self._draft,
-                            changed_launch_field_labels(snapshot, self._draft),
+                            draft,
+                            changed_launch_field_labels(snapshot, draft),
                         )
                     )
             case "vllm-use-console":
@@ -1674,6 +1773,9 @@ class VllmSetupView(VerticalScroll):
             case "vllm-make-default":
                 self.post_message(self.MakeDefaultRequested())
             case "vllm-profile-create-button":
+                draft = self._normalize_numeric_draft()
+                if draft is None:
+                    return
                 profile_name = self.query_one("#vllm-profile-name", Input)
                 try:
                     name = validate_vllm_draft_input("profile_name", profile_name.value)
@@ -1683,11 +1785,12 @@ class VllmSetupView(VerticalScroll):
                         "vllm-profile-name-help", _LEXICAL_ERROR_COPY
                     )
                     return
-                self.post_message(self.CreateProfileRequested(name, self._draft))
+                self.post_message(self.CreateProfileRequested(name, draft))
             case "vllm-profile-save-button":
-                self.post_message(
-                    self.SaveProfileRequested(self._active_profile_id, self._draft)
-                )
+                if (draft := self._normalize_numeric_draft()) is not None:
+                    self.post_message(
+                        self.SaveProfileRequested(self._active_profile_id, draft)
+                    )
             case "vllm-profile-rename-button":
                 profile_name = self.query_one("#vllm-profile-name", Input)
                 try:

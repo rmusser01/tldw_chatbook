@@ -49,6 +49,8 @@ _MANAGED_SHORT_FLAG_ALIASES = {"-tp": "--tensor-parallel-size"}
 _MAX_PROBE_OUTPUT_BYTES = 256
 _PROBE_TIMEOUT_SECONDS = 5.0
 _PROBE_REAP_TIMEOUT_SECONDS = 0.25
+_PROBE_READER_POLL_SECONDS = 0.01
+_PROBE_READER_JOIN_SECONDS = 1.0
 _VERSION_OUTPUT = re.compile(r"^[A-Za-z][A-Za-z0-9 ._+\-]{0,120}$")
 _DTYPE_VALUES = frozenset({"", "auto", "half", "float16", "bfloat16", "float32"})
 _MAX_BIND_ADDRESS_CODEPOINTS = 255
@@ -470,6 +472,77 @@ def _terminate_and_reap_probe(process: subprocess.Popen[bytes]) -> None:
         pass
 
 
+def _windows_pipe_available(fd: int) -> int:
+    """Return currently readable bytes for one Windows anonymous pipe."""
+
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    available = wintypes.DWORD()
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    peek_named_pipe = kernel32.PeekNamedPipe
+    peek_named_pipe.argtypes = (
+        wintypes.HANDLE,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    peek_named_pipe.restype = wintypes.BOOL
+    succeeded = peek_named_pipe(
+        wintypes.HANDLE(msvcrt.get_osfhandle(fd)),
+        None,
+        0,
+        None,
+        ctypes.byref(available),
+        None,
+    )
+    if not succeeded:
+        raise OSError(ctypes.get_last_error(), "pipe probe failed")
+    return available.value
+
+
+def _read_probe_stdout(
+    process: subprocess.Popen[bytes],
+    output: bytearray,
+    stop: threading.Event,
+    deadline: float,
+) -> None:
+    """Read a child pipe without any operation that can outlive the deadline."""
+
+    assert process.stdout is not None
+    fd = process.stdout.fileno()
+    windows = os.name == "nt"
+    if not windows:
+        os.set_blocking(fd, False)
+    while not stop.is_set() and time.monotonic() < deadline:
+        remaining = _MAX_PROBE_OUTPUT_BYTES + 1 - len(output)
+        if remaining <= 0:
+            return
+        try:
+            if windows:
+                available = _windows_pipe_available(fd)
+                if available == 0:
+                    if process.poll() is not None:
+                        return
+                    stop.wait(_PROBE_READER_POLL_SECONDS)
+                    continue
+                read_size = min(remaining, available)
+            else:
+                read_size = remaining
+            chunk = os.read(fd, read_size)
+        except BlockingIOError:
+            if process.poll() is not None:
+                return
+            stop.wait(_PROBE_READER_POLL_SECONDS)
+            continue
+        if not chunk:
+            return
+        output.extend(chunk)
+
+
 def _run_default_probe(argv: list[str]) -> tuple[bool, str | None]:
     """Read a child pipe portably while enforcing time and byte ceilings."""
 
@@ -478,6 +551,7 @@ def _run_default_probe(argv: list[str]) -> tuple[bool, str | None]:
             argv,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
+            bufsize=0,
         )
     except OSError:
         return False, None
@@ -485,15 +559,12 @@ def _run_default_probe(argv: list[str]) -> tuple[bool, str | None]:
     output = bytearray()
     reader_done = threading.Event()
     reader_failed = threading.Event()
+    reader_stop = threading.Event()
+    deadline = time.monotonic() + _PROBE_TIMEOUT_SECONDS
 
     def read_stdout() -> None:
         try:
-            while len(output) <= _MAX_PROBE_OUTPUT_BYTES:
-                remaining = _MAX_PROBE_OUTPUT_BYTES + 1 - len(output)
-                chunk = process.stdout.read(remaining)
-                if not chunk:
-                    break
-                output.extend(chunk)
+            _read_probe_stdout(process, output, reader_stop, deadline)
         except Exception:  # noqa: BLE001 - normalize child pipe failures
             reader_failed.set()
         finally:
@@ -502,38 +573,43 @@ def _run_default_probe(argv: list[str]) -> tuple[bool, str | None]:
     reader = threading.Thread(
         target=read_stdout,
         name="vllm-version-probe-reader",
-        daemon=True,
     )
-    deadline = time.monotonic() + _PROBE_TIMEOUT_SECONDS
-    succeeded = False
-    version: str | None = None
+    result: tuple[bool, str | None] = (False, None)
     reader.start()
     try:
         remaining = deadline - time.monotonic()
-        if remaining <= 0 or not reader_done.wait(remaining):
-            return False, None
-        if reader_failed.is_set() or len(output) > _MAX_PROBE_OUTPUT_BYTES:
-            return False, None
-        try:
-            returncode = process.wait(timeout=max(0.0, deadline - time.monotonic()))
-        except (OSError, subprocess.SubprocessError):
-            return False, None
-        if returncode != 0:
-            return False, None
-        succeeded = True
-        version = _classify_probe_version(output.decode("utf-8", errors="replace"))
-        return succeeded, version
+        if remaining > 0 and reader_done.wait(remaining):
+            if not reader_failed.is_set() and len(output) <= _MAX_PROBE_OUTPUT_BYTES:
+                try:
+                    returncode = process.wait(
+                        timeout=max(0.0, deadline - time.monotonic())
+                    )
+                except (OSError, subprocess.SubprocessError):
+                    returncode = None
+                if returncode == 0:
+                    result = (
+                        True,
+                        _classify_probe_version(
+                            output.decode("utf-8", errors="replace")
+                        ),
+                    )
     finally:
-        if not succeeded:
+        if not result[0]:
             _terminate_and_reap_probe(process)
+        reader_stop.set()
+        join_budget = (
+            max(0.0, deadline - time.monotonic())
+            + _PROBE_READER_JOIN_SECONDS
+            + _PROBE_READER_POLL_SECONDS
+        )
+        reader.join(timeout=join_budget)
+        if reader.is_alive():
+            raise RuntimeError("vLLM probe reader cleanup failed")
         try:
             process.stdout.close()
         except (OSError, ValueError):
             pass
-        reader.join(timeout=_PROBE_REAP_TIMEOUT_SECONDS)
-        if reader.is_alive():
-            _terminate_and_reap_probe(process)
-            reader.join(timeout=_PROBE_REAP_TIMEOUT_SECONDS)
+    return result
 
 
 def _run_probe(run: Callable[..., object], argv: list[str]) -> tuple[bool, str | None]:

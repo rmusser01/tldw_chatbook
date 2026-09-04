@@ -223,6 +223,15 @@ adds a shared strict lexical boundary for every vLLM draft control and raw
 arguments, preserving exact partial edits while rejecting bounded invalid
 events without echo. ADR-117 already governs these preflight and privacy
 boundaries, so no new ADR or contract change was required.
+
+Independent-review follow-up removes the remaining cross-thread buffered-close
+hazard from the default probe. The reader uses deadline-bounded nonblocking file
+descriptor reads (with `PeekNamedPipe` availability on Windows), the owner
+settles the child before cancellation, confirms the non-daemon reader joined,
+and only then closes the wrapper. Synchronized inherited-writer coverage proves
+the close cannot race a live reader; exact 256/257-byte, quiet-timeout,
+read-error, and wait-error cases all pass without retained output. This
+strengthens ADR-117's existing bounded preflight rule without changing it.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

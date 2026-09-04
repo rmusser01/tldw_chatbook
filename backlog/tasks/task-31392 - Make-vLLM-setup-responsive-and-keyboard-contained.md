@@ -486,6 +486,18 @@ cases pass under the GC/FD guard, and two CSS builds reproduce bundle SHA-256
 The shared strict per-control caps and adjacent content-free rejection feedback
 also close forged Input/TextArea mismatch paths. ADR-117 already owns the UI
 and privacy boundary; no new ADR or lesson was required.
+
+Independent-review follow-up retains an exact bounded lexical state for all
+four numeric controls, including empty, partial, leading-zero, and decimal-tail
+edits. Every accepted edit keeps widget and draft synchronized and invalidates
+stale readiness; Check, Start, Restart, Create, and Save re-run the shared
+lexical boundary and normalize to typed range-checked values before posting any
+semantic action. Hydration deterministically resets lexical state from its
+typed draft, while forged oversized hydration remains blocked beside the
+owning control without echo. Focused numeric coverage passes 16 cases and the
+guarded four-file behavioral primary passes 363; the final workflow-only rerun,
+including the added forged-hydration case, passes all 106 cases under the GC/FD
+guard. No layout/focus contract or ADR changed.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

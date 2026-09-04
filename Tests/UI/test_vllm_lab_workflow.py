@@ -75,6 +75,7 @@ class _VllmHost(App[None]):
     def __init__(self) -> None:
         super().__init__()
         self.profile_events = []
+        self.action_events = []
 
     def compose(self) -> ComposeResult:
         yield VllmSetupView(id="vllm-setup")
@@ -86,6 +87,12 @@ class _VllmHost(App[None]):
     @on(VllmSetupView.DeleteProfileRequested)
     def _capture_profile_event(self, event) -> None:
         self.profile_events.append(event)
+
+    @on(VllmSetupView.CheckRequested)
+    @on(VllmSetupView.StartRequested)
+    @on(VllmSetupView.RestartRequested)
+    def _capture_action_event(self, event) -> None:
+        self.action_events.append(event)
 
 
 class _RunningProcess:
@@ -1939,6 +1946,195 @@ async def test_vllm_inputs_use_shared_lexical_caps_and_restore_rejected_events()
         assert help_label.display
         assert "unsupported control characters" in str(help_label.renderable)
         assert "123456" not in str(help_label.renderable)
+
+
+@pytest.mark.parametrize(
+    ("selector", "field", "lexeme"),
+    (
+        ("#vllm-port", "port", ""),
+        ("#vllm-port", "port", "-"),
+        ("#vllm-port", "port", "08000"),
+        ("#vllm-tensor-parallel-size", "tensor_parallel_size", ""),
+        ("#vllm-tensor-parallel-size", "tensor_parallel_size", "-"),
+        ("#vllm-tensor-parallel-size", "tensor_parallel_size", "02"),
+        ("#vllm-maximum-model-length", "maximum_model_length", ""),
+        ("#vllm-maximum-model-length", "maximum_model_length", "1."),
+        ("#vllm-maximum-model-length", "maximum_model_length", "08192"),
+        ("#vllm-gpu-memory-utilization", "gpu_memory_utilization", ""),
+        ("#vllm-gpu-memory-utilization", "gpu_memory_utilization", "."),
+        ("#vllm-gpu-memory-utilization", "gpu_memory_utilization", "1."),
+    ),
+)
+async def test_numeric_edits_preserve_exact_lexeme_and_invalidate_readiness(
+    selector: str,
+    field: str,
+    lexeme: str,
+):
+    app = _VllmHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        view = app.query_one(VllmSetupView)
+        view.apply_state(
+            draft=replace(
+                view.draft,
+                model_value="org/model",
+                tensor_parallel_size=4,
+                maximum_model_length=8192,
+                gpu_memory_utilization=0.75,
+            ),
+            state=VllmReadinessState.READY,
+            preflight=None,
+            profiles_ready=True,
+        )
+        control = view.query_one(selector, Input)
+
+        control.value = lexeme
+        await pilot.pause()
+
+        assert control.value == lexeme
+        assert getattr(view.draft, field) == lexeme
+        assert view._state is VllmReadinessState.NOT_CONFIGURED
+        assert view.preflight is None
+
+
+async def test_numeric_action_boundary_normalizes_exact_values_before_messages():
+    app = _VllmHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        view = app.query_one(VllmSetupView)
+        view.apply_state(
+            draft=replace(view.draft, model_value="org/model"),
+            state=VllmReadinessState.NOT_CONFIGURED,
+            preflight=None,
+            profiles_ready=True,
+        )
+        edits = {
+            "#vllm-port": "08000",
+            "#vllm-tensor-parallel-size": "02",
+            "#vllm-maximum-model-length": "08192",
+            "#vllm-gpu-memory-utilization": "1.",
+        }
+        for selector, lexeme in edits.items():
+            view.query_one(selector, Input).value = lexeme
+            await pilot.pause()
+
+        await pilot.click("#vllm-check-setup")
+        await pilot.pause()
+
+        checked = app.action_events[-1].draft
+        assert checked.port == 8000
+        assert checked.tensor_parallel_size == 2
+        assert checked.maximum_model_length == 8192
+        assert checked.gpu_memory_utilization == 1.0
+        assert view.draft == checked
+        assert view.query_one("#vllm-port", Input).value == "8000"
+        assert view.query_one("#vllm-tensor-parallel-size", Input).value == "2"
+        assert view.query_one("#vllm-maximum-model-length", Input).value == "8192"
+        assert view.query_one("#vllm-gpu-memory-utilization", Input).value == "1.0"
+
+        view.query_one("#vllm-port", Input).value = "08000"
+        await pilot.pause()
+        await pilot.click("#vllm-profile-save-button")
+        await pilot.pause()
+
+        saved = app.profile_events[-1].draft
+        assert saved.port == 8000
+        assert type(saved.port) is int
+        assert view.draft == saved
+
+        view.query_one("#vllm-port", Input).value = "08000"
+        await pilot.pause()
+        start = view.query_one("#vllm-start", Button)
+        start.disabled = False
+        view._on_button_pressed(Button.Pressed(start))
+        await pilot.pause()
+
+        started = app.action_events[-1].draft
+        assert isinstance(app.action_events[-1], VllmSetupView.StartRequested)
+        assert started.port == 8000
+        assert type(started.port) is int
+        assert view.draft == started
+
+
+async def test_invalid_numeric_action_stays_adjacent_and_posts_no_raw_draft():
+    app = _VllmHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        view = app.query_one(VllmSetupView)
+        view.apply_state(
+            draft=replace(view.draft, model_value="org/model"),
+            state=VllmReadinessState.NOT_CONFIGURED,
+            preflight=None,
+            profiles_ready=True,
+        )
+        port = view.query_one("#vllm-port", Input)
+        port.value = "-"
+        await pilot.pause()
+
+        await pilot.click("#vllm-check-setup")
+        await pilot.pause()
+
+        assert app.action_events == []
+        assert view.draft.port == "-"
+        assert port.value == "-"
+        help_label = view.query_one("#vllm-port-help", Label)
+        assert help_label.display
+        assert "1 to 65535" in str(help_label.renderable)
+
+
+async def test_programmatic_state_projection_resets_numeric_lexemes_from_draft():
+    app = _VllmHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        view = app.query_one(VllmSetupView)
+        view.apply_state(
+            draft=view.draft,
+            state=VllmReadinessState.NOT_CONFIGURED,
+            preflight=None,
+            profiles_ready=True,
+        )
+        port = view.query_one("#vllm-port", Input)
+        port.value = "08000"
+        await pilot.pause()
+        assert view.draft.port == "08000"
+
+        hydrated = replace(
+            view.draft,
+            port=9000,
+            tensor_parallel_size=4,
+            maximum_model_length=16384,
+            gpu_memory_utilization=0.75,
+        )
+        view.apply_state(
+            draft=hydrated,
+            state=VllmReadinessState.NOT_CONFIGURED,
+            preflight=None,
+            profiles_ready=True,
+        )
+
+        assert port.value == "9000"
+        assert view.query_one("#vllm-tensor-parallel-size", Input).value == "4"
+        assert view.query_one("#vllm-maximum-model-length", Input).value == "16384"
+        assert view.query_one("#vllm-gpu-memory-utilization", Input).value == "0.75"
+
+
+async def test_numeric_action_revalidates_forged_hydration_without_echo():
+    app = _VllmHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        view = app.query_one(VllmSetupView)
+        canary = "123456_NUMERIC_CANARY"
+        view.apply_state(
+            draft=replace(view.draft, model_value="org/model", port=canary),
+            state=VllmReadinessState.NOT_CONFIGURED,
+            preflight=None,
+            profiles_ready=True,
+        )
+
+        await pilot.click("#vllm-check-setup")
+        await pilot.pause()
+
+        assert app.action_events == []
+        assert view.draft.port == canary
+        help_label = view.query_one("#vllm-port-help", Label)
+        assert help_label.display
+        assert "unsupported control characters" in str(help_label.renderable)
+        assert "NUMERIC_CANARY" not in str(help_label.renderable)
 
 
 @pytest.mark.parametrize(
