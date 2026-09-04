@@ -1188,7 +1188,7 @@ async def test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable(
         "A very long managed model name that must not push actions out · "
         "Q4_K_M · 16384.0 MiB · Managed · local integrity recorded",
     )
-    app, pilot, context, _screen, window, _service = await _mount_models(
+    app, pilot, context, screen, window, _service = await _mount_models(
         monkeypatch,
         size=(80, 24),
         choices=(long_choice,),
@@ -1246,7 +1246,7 @@ async def test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable(
             pilot,
             lambda: (
                 len(window.query("#vllm-hf-model")) == 1
-                and not window.query_one("#vllm-profile-select", Select).disabled
+                and screen._vllm_profiles_loaded
             ),
             message="vLLM pane did not finish profile hydration",
         )
