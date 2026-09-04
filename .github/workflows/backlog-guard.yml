@@ -11,6 +11,7 @@ on:
       - 'backlog/completed/**'
       - 'backlog/archive/tasks/**'
       - 'scripts/check_backlog_task_ids.py'
+      - 'scripts/check_backlog_task_files.py'
   push:
     branches: [dev, main]
     paths:
@@ -20,6 +21,7 @@ on:
       - 'backlog/completed/**'
       - 'backlog/archive/tasks/**'
       - 'scripts/check_backlog_task_ids.py'
+      - 'scripts/check_backlog_task_files.py'
 
 # One PUSH run per workflow per ref: a new push supersedes the previous run instead of
 # queueing another alongside it. Without this, every push to `dev` stacked a full
@@ -49,3 +51,10 @@ jobs:
           # prefix and the YAML frontmatter `id:` -- since they disagree after a
           # hand-edited rename and the backlog CLI resolves by frontmatter.
           python scripts/check_backlog_task_ids.py
+
+      - name: Fail on unreadable backlog task files
+        if: ${{ !cancelled() }}
+        run: |
+          # Frontmatter that does not load makes a task invisible to every
+          # reader without failing anything. Same script the required check runs.
+          python scripts/check_backlog_task_files.py

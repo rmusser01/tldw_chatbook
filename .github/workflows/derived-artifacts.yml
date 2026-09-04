@@ -155,6 +155,15 @@ jobs:
           # workflow nobody is gated on.
           python scripts/check_backlog_task_ids.py
 
+      - name: Backlog task files are readable
+        if: ${{ !cancelled() }}
+        run: |
+          # A task whose frontmatter does not load is skipped by every reader
+          # with one log line, so it silently stops existing. Thirty-two files
+          # had accumulated that way before PR #1954 repaired them; nothing
+          # stopped them coming back.
+          python scripts/check_backlog_task_files.py
+
       - name: ChaChaNotes table allowlist covers every migrated table
         if: ${{ !cancelled() }}
         run: |
