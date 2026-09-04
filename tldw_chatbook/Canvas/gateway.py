@@ -55,8 +55,20 @@ _FRAME_TTL_SECONDS = 20.0
 _ACTION_TTL_SECONDS = 30.0
 _BROWSER_SESSION_TTL_SECONDS = 30 * 60.0
 _MAX_BROWSER_SESSIONS = 64
+_MAX_SHELL_BINDINGS = 64
 _SENSITIVE_QUERY_KEYS = frozenset(
-    {"boot", "bootstrap", "capability", "token", "access_token", "secret"}
+    {
+        "access_token",
+        "boot",
+        "bootstrap",
+        "canvas_frame",
+        "canvas_plan",
+        "canvas_session",
+        "capability",
+        "csrf",
+        "secret",
+        "token",
+    }
 )
 _OTHER_PROXY_HEADERS = frozenset({"x-real-ip", "x-original-host"})
 _EVENT_METADATA_FIELDS = frozenset(
@@ -278,8 +290,10 @@ class CanvasBridgeSettlementLease:
 
     __slots__ = (
         "_effect_allowed",
+        "_finalized",
         "_gateway",
         "_load_id",
+        "_request_id",
         "_selection_epoch",
         "_session",
         "_settled",
@@ -293,14 +307,17 @@ class CanvasBridgeSettlementLease:
         gateway: CanvasGateway,
         session: _BrowserSession,
         load_id: str,
+        request_id: str,
         selection_epoch: int,
         effect_allowed: bool,
     ) -> None:
         self._gateway = gateway
         self._session = session
         self._load_id = load_id
+        self._request_id = request_id
         self._selection_epoch = selection_epoch
         self._effect_allowed = effect_allowed
+        self._finalized = False
         self._used = False
         self._settled = False
         self._stale = False
@@ -313,13 +330,25 @@ class CanvasBridgeSettlementLease:
     def stale(self) -> bool:
         return self._stale
 
+    @property
+    def committed_response(self) -> BridgeConfirmationResponse | None:
+        """Return the exact linearized response, if a host effect committed."""
+
+        with self._gateway._state_lock:
+            if not self._settled:
+                return None
+            return BridgeConfirmationResponse(
+                request_id=self._request_id,
+                status="confirmed",
+            )
+
     def try_settle(self, effect: Callable[[], object]) -> bool:
         """Run one synchronous effect only while the captured load is current."""
 
         if not callable(effect):
             raise TypeError("Canvas bridge settlement effect must be callable")
         with self._gateway._state_lock:
-            if self._used:
+            if self._finalized or self._used:
                 return False
             self._used = True
             if not self._effect_allowed or not self._gateway._bridge_lease_is_current(
@@ -338,10 +367,17 @@ class CanvasBridgeSettlementLease:
             self._settled = True
             return True
 
+    def _finalize(self) -> None:
+        """Permanently close authority access when its callback terminates."""
+
+        with self._gateway._state_lock:
+            self._finalized = True
+
     def __repr__(self) -> str:
         return (
             "CanvasBridgeSettlementLease(used="
-            f"{self._used}, settled={self._settled}, stale={self._stale})"
+            f"{self._used}, finalized={self._finalized}, "
+            f"settled={self._settled}, stale={self._stale})"
         )
 
 
@@ -356,6 +392,7 @@ class CanvasGateway:
         port: int = 0,
         max_request_bytes: int | None = None,
         max_browser_sessions: int = _MAX_BROWSER_SESSIONS,
+        max_shell_bindings: int = _MAX_SHELL_BINDINGS,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         try:
@@ -388,6 +425,14 @@ class CanvasGateway:
         ):
             raise ValueError("max_browser_sessions is outside the safe range")
         self._max_browser_sessions = max_browser_sessions
+        if (
+            not isinstance(max_shell_bindings, int)
+            or isinstance(max_shell_bindings, bool)
+            or max_shell_bindings < 1
+            or max_shell_bindings > _MAX_SHELL_BINDINGS
+        ):
+            raise ValueError("max_shell_bindings is outside the safe range")
+        self._max_shell_bindings = max_shell_bindings
         self.capabilities = CanvasCapabilityStore(clock=clock)
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
@@ -492,26 +537,32 @@ class CanvasGateway:
         """Mint one shell bootstrap and optionally ask Textual to open it."""
 
         origin = await self.start()
-        # A browser-session ID names exactly one shell incarnation. Reusing
-        # it for a new launch invalidates any pending bootstrap or live shell
-        # before the replacement token is minted.
-        self._revoke_session_id(scope.browser_session_id)
-        shell_incarnation_id = f"shell-{uuid4().hex}"
-        self._shell_bindings[shell_incarnation_id] = _ShellBinding(
-            browser_session_id=scope.browser_session_id,
-            expires_at=self._clock() + _BOOT_TTL_SECONDS,
-        )
-        load_id = f"boot-{uuid4()}"
-        grant = self.capabilities.issue(
-            _capability_scope(
-                scope,
-                load_id=load_id,
-                action="shell_boot",
-                gateway_namespace=self._gateway_namespace,
-                shell_incarnation_id=shell_incarnation_id,
-            ),
-            ttl_seconds=_BOOT_TTL_SECONDS,
-        )
+        with self._state_lock:
+            self._discard_expired_sessions()
+            # A browser-session ID names exactly one shell incarnation. Reusing
+            # it for a new launch invalidates any pending bootstrap or live shell
+            # before the replacement token is minted.
+            self._revoke_session_id(scope.browser_session_id)
+            if len(self._shell_bindings) >= self._max_shell_bindings:
+                raise CanvasCapabilityError("Canvas shell capacity reached")
+            shell_incarnation_id = f"shell-{uuid4().hex}"
+            load_id = f"boot-{uuid4()}"
+            # Mint before publishing the route binding: a full/closed capability
+            # store must never leave an unreachable pending shell behind.
+            grant = self.capabilities.issue(
+                _capability_scope(
+                    scope,
+                    load_id=load_id,
+                    action="shell_boot",
+                    gateway_namespace=self._gateway_namespace,
+                    shell_incarnation_id=shell_incarnation_id,
+                ),
+                ttl_seconds=_BOOT_TTL_SECONDS,
+            )
+            self._shell_bindings[shell_incarnation_id] = _ShellBinding(
+                browser_session_id=scope.browser_session_id,
+                expires_at=self._clock() + _BOOT_TTL_SECONDS,
+            )
         clean_url = f"{origin}{self._route_prefix(shell_incarnation_id)}/"
         browser_url = f"{clean_url}#boot={quote(grant.token, safe='')}"
         opened: bool | None = None
@@ -994,16 +1045,33 @@ class CanvasGateway:
             gateway=self,
             session=session,
             load_id=load_id,
+            request_id=confirmation.request.request_id,
             selection_epoch=session.selection_epoch,
             effect_allowed=confirmation.approved,
         )
-        result = await _maybe_await(
-            self._authority.confirm_bridge(
-                scope,
-                confirmation,
-                settlement=settlement,
+        callback_failed = False
+        result: object = None
+        try:
+            result = await _maybe_await(
+                self._authority.confirm_bridge(
+                    scope,
+                    confirmation,
+                    settlement=settlement,
+                )
             )
-        )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - committed effects remain authoritative
+            callback_failed = True
+        finally:
+            settlement._finalize()
+        committed = settlement.committed_response
+        if committed is not None:
+            return web.json_response(
+                {"request_id": committed.request_id, "status": committed.status}
+            )
+        if callback_failed:
+            return _error_response("bridge_refused", 503)
         if not isinstance(result, BridgeConfirmationResponse):
             return _error_response("bridge_refused", 503)
         if settlement.stale or (

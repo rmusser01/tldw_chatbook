@@ -11,6 +11,11 @@ import aiohttp
 import pytest
 from aiohttp import web
 
+from tldw_chatbook.Canvas.capabilities import (
+    CanvasCapabilityError,
+    CanvasCapabilityScope,
+    CanvasCapabilityStore,
+)
 from tldw_chatbook.Canvas.compiler import compile_canvas_document
 from tldw_chatbook.Canvas.gateway import (
     BridgeConfirmationRequest,
@@ -111,6 +116,42 @@ async def _post_json(
     if capability is not None:
         headers["Authorization"] = f"CanvasCapability {capability}"
     return await session.post(url, data=json.dumps(value), headers=headers)
+
+
+async def _ready_bridge(
+    session: aiohttp.ClientSession,
+    gateway: CanvasGateway,
+    launch: CanvasGatewayLaunch,
+) -> tuple[str, str, str]:
+    """Boot one shell, load one frame, and mint one bridge capability."""
+
+    assert gateway.origin is not None
+    origin = gateway.origin
+    boot = await _post_json(
+        session,
+        _launch_url(launch, "api/boot"),
+        {"bootstrap": launch.browser_url.split("#boot=", 1)[1]},
+        origin=origin,
+    )
+    assert boot.status == 200
+    csrf = (await boot.json())["csrf"]
+    frame = await _post_json(
+        session,
+        _launch_url(launch, "api/frame"),
+        {},
+        origin=origin,
+        csrf=csrf,
+    )
+    assert frame.status == 200
+    grant = await _post_json(
+        session,
+        _launch_url(launch, "api/actions"),
+        {"action": "bridge_confirm"},
+        origin=origin,
+        csrf=csrf,
+    )
+    assert grant.status == 200
+    return origin, csrf, (await grant.json())["capability"]
 
 
 @pytest.mark.loopback_network
@@ -311,6 +352,71 @@ async def test_two_loopback_gateways_do_not_overwrite_browser_cookies() -> None:
         assert (await session.get(_launch_url(second, "api/events"))).status == 200
     await first_gateway.aclose()
     await second_gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_expired_shell_binding_is_purged_before_shell_admission() -> None:
+    now = [100.0]
+    gateway = CanvasGateway(
+        authority=_Authority([]),
+        clock=lambda: now[0],
+        max_shell_bindings=1,
+    )
+    first = await gateway.open_shell(_scope())
+    now[0] += 31.0
+
+    second = await gateway.open_shell(_scope(browser_session_id="browser-b"))
+
+    assert first.clean_url != second.clean_url
+    assert len(gateway._shell_bindings) == 1
+    async with aiohttp.ClientSession() as session:
+        assert (await session.get(first.clean_url)).status == 404
+        assert (await session.get(second.clean_url)).status == 200
+    await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_shell_admission_is_capped_without_revoking_unrelated_shell() -> None:
+    gateway = CanvasGateway(authority=_Authority([]), max_shell_bindings=1)
+    first = await gateway.open_shell(_scope())
+
+    with pytest.raises(CanvasCapabilityError, match="shell capacity"):
+        await gateway.open_shell(_scope(browser_session_id="browser-b"))
+
+    assert len(gateway._shell_bindings) == 1
+    async with aiohttp.ClientSession() as session:
+        assert (await session.get(first.clean_url)).status == 200
+    await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_full_capability_store_cannot_leak_pending_shell_bindings() -> None:
+    gateway = CanvasGateway(authority=_Authority([]), max_shell_bindings=2)
+    gateway.capabilities = CanvasCapabilityStore(max_active=1)
+    gateway.capabilities.issue(
+        CanvasCapabilityScope(
+            browser_session_id="capacity-owner",
+            load_id="capacity-load",
+            conversation_session_id="capacity-conversation",
+            canvas_id="capacity-canvas",
+            revision_id="capacity-revision",
+            action="shell_boot",
+        ),
+        ttl_seconds=30,
+    )
+
+    for attempt in range(8):
+        with pytest.raises(CanvasCapabilityError, match="capacity"):
+            await gateway.open_shell(
+                _scope(browser_session_id=f"failed-browser-{attempt}")
+            )
+
+    assert gateway._shell_bindings == {}
+    assert gateway.capabilities.active_count == 1
+    await gateway.aclose()
 
 
 @pytest.mark.loopback_network
@@ -615,6 +721,12 @@ async def test_gateway_rejects_query_credentials_proxy_headers_origin_csrf_type_
             "bootstrap=secret",
             "capability=secret",
             "token=secret",
+            "ACCESS_TOKEN=secret",
+            "Secret=secret",
+            "CsRf=secret",
+            "CANVAS_SESSION=secret",
+            "Canvas_Frame=secret",
+            "canvas_PLAN=secret",
         ):
             response = await session.get(f"{launch.clean_url}?{query}")
             assert response.status == 400
@@ -842,6 +954,188 @@ async def test_bridge_settlement_prevents_host_effect_after_scope_race(
         bridge = await bridge_task
         assert bridge.status == 409
         assert authority.effects == []
+    await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("outcome", "expected_status"),
+    [("refused", 200), ("invalid", 503), ("exception", 503)],
+)
+async def test_bridge_callback_finalizes_an_unused_settlement_lease(
+    outcome: str,
+    expected_status: int,
+) -> None:
+    class RetainingAuthority(_Authority):
+        lease: object | None = None
+
+        async def confirm_bridge(
+            self,
+            scope: CanvasGatewayScope,
+            request: BridgeConfirmationRequest,
+            *,
+            settlement: object | None = None,
+        ) -> object:
+            self.lease = settlement
+            if outcome == "refused":
+                return BridgeConfirmationResponse(
+                    request_id=request.request.request_id,
+                    status="refused",
+                )
+            if outcome == "invalid":
+                return object()
+            raise RuntimeError("private-authority-detail")
+
+    authority = RetainingAuthority([])
+    gateway = CanvasGateway(authority=authority)
+    launch = await gateway.open_shell(_scope())
+    async with aiohttp.ClientSession(
+        cookie_jar=aiohttp.CookieJar(unsafe=True)
+    ) as session:
+        origin, csrf, capability = await _ready_bridge(session, gateway, launch)
+        response = await _post_json(
+            session,
+            _launch_url(launch, "api/bridge"),
+            {
+                "approved": True,
+                "request": {
+                    "version": "canvas-v1",
+                    "request_id": "request-retained",
+                    "kind": "submit",
+                    "value": "bounded",
+                },
+            },
+            origin=origin,
+            csrf=csrf,
+            capability=capability,
+        )
+        assert response.status == expected_status
+        assert "private-authority-detail" not in await response.text()
+
+    effects: list[str] = []
+    assert authority.lease is not None
+    assert not authority.lease.try_settle(  # type: ignore[attr-defined]
+        lambda: effects.append("late-effect")
+    )
+    assert effects == []
+    await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "transition", ["reload", "close", "branch", "same-revision-selection", "error"]
+)
+async def test_committed_bridge_settlement_returns_exact_result_after_transition(
+    transition: str,
+) -> None:
+    class CommittingAuthority(_Authority):
+        def __init__(self) -> None:
+            super().__init__([])
+            self.settled = asyncio.Event()
+            self.release = asyncio.Event()
+            self.effects: list[str] = []
+
+        async def confirm_bridge(
+            self,
+            scope: CanvasGatewayScope,
+            request: BridgeConfirmationRequest,
+            *,
+            settlement: object | None = None,
+        ) -> BridgeConfirmationResponse:
+            assert settlement is not None
+            assert settlement.try_settle(  # type: ignore[attr-defined]
+                lambda: self.effects.append(request.request.request_id)
+            )
+            self.settled.set()
+            await self.release.wait()
+            if transition == "error":
+                raise RuntimeError("post-commit-private-detail")
+            return BridgeConfirmationResponse(
+                request_id="wrong-result-id",
+                status="refused",
+            )
+
+    authority = CommittingAuthority()
+    gateway = CanvasGateway(authority=authority)
+    launch = await gateway.open_shell(_scope())
+    request_body = {
+        "approved": True,
+        "request": {
+            "version": "canvas-v1",
+            "request_id": "request-committed",
+            "kind": "submit",
+            "value": "bounded",
+        },
+    }
+    async with aiohttp.ClientSession(
+        cookie_jar=aiohttp.CookieJar(unsafe=True)
+    ) as session:
+        origin, csrf, capability = await _ready_bridge(session, gateway, launch)
+        bridge_task = asyncio.create_task(
+            _post_json(
+                session,
+                _launch_url(launch, "api/bridge"),
+                request_body,
+                origin=origin,
+                csrf=csrf,
+                capability=capability,
+            )
+        )
+        await asyncio.wait_for(authority.settled.wait(), timeout=2)
+
+        if transition == "reload":
+            assert (
+                await _post_json(
+                    session,
+                    _launch_url(launch, "api/frame"),
+                    {},
+                    origin=origin,
+                    csrf=csrf,
+                )
+            ).status == 200
+        elif transition == "close":
+            assert (
+                await _post_json(
+                    session,
+                    _launch_url(launch, "api/close"),
+                    {},
+                    origin=origin,
+                    csrf=csrf,
+                )
+            ).status == 200
+        elif transition == "branch":
+            gateway.change_selection(
+                browser_session_id="browser-a",
+                scope=_scope(revision_id="revision-b"),
+            )
+        elif transition == "same-revision-selection":
+            gateway.change_selection(
+                browser_session_id="browser-a",
+                scope=_scope(),
+            )
+
+        authority.release.set()
+        response = await bridge_task
+        assert response.status == 200
+        assert await response.json() == {
+            "request_id": "request-committed",
+            "status": "confirmed",
+        }
+
+        # Losing the transport response cannot authorize a duplicate: replay
+        # with the consumed grant never repeats the exact request ID's effect.
+        replay = await _post_json(
+            session,
+            _launch_url(launch, "api/bridge"),
+            request_body,
+            origin=origin,
+            csrf=csrf,
+            capability=capability,
+        )
+        assert replay.status in {401, 403, 409}
+        assert authority.effects == ["request-committed"]
     await gateway.aclose()
 
 
