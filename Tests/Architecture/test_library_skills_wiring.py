@@ -18,7 +18,7 @@ unprefixed field, ``selected_skill_name``) documented in
 prefix works" check, this test asserts the EXACT expected shim name per
 field, not just that some property exists somewhere.
 
-Task 2 adds: every one of the 91 moved names is (a) a callable on
+Task 2 adds: every one of the 86 moved names is (a) a callable on
 ``LibrarySkillsController`` and (b) a one-line screen delegator forwarding
 to the SAME-NAMED controller method (or, for the 1 staticmethod, to the
 module-level controller CLASS) -- mirroring
@@ -26,10 +26,12 @@ module-level controller CLASS) -- mirroring
 ``test_screen_delegates_rag_search_handlers`` exactly, at their
 controller-PR-era (pre-cleanup) shape. See
 ``library_skills_controller.py``'s own module docstring for the full
-91-of-127 derivation and the 36 exclusions (6 merely-delegate-to-existing-
+86-of-127 derivation and the 41 exclusions (6 merely-delegate-to-existing-
 controller properties, 27 unbound-fake-self, 1 instance-attribute
-monkeypatch, 1 module-globals coupling, 1 new bare-self-as-identity-
-argument hazard).
+monkeypatch, 1 module-globals coupling, 6 bare-self-as-identity-
+argument hazard exclusions -- one found by static analysis, five found
+by the verification battery after a first draft moved them and broke
+real Pilot-driven / Tests/Skills tests).
 """
 from __future__ import annotations
 
@@ -116,7 +118,7 @@ def test_wiring_fields_stay_off_the_state_object() -> None:
 #: unique -- matching Task 1's own census), minus 6 merely-delegate-to-
 #: existing-controller properties, 27 unbound-fake-self exclusions, 1
 #: instance-attribute-monkeypatch exclusion, 1 module-globals-coupling
-#: exclusion, and 1 bare-self-as-identity-argument hazard exclusion -- NOT a
+#: exclusion, and 6 bare-self-as-identity-argument hazard exclusions -- NOT a
 #: prefix/substring shortcut. See `library_skills_controller.py`'s module
 #: docstring for the full per-name reasoning behind every exclusion.
 _SKILLS_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
@@ -149,7 +151,6 @@ _SKILLS_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "_mirror_library_skills_reader_preference",
     "_notify_skill_dirty_veto",
     "_open_library_skill_editor_for_review",
-    "_present_library_skills_import_snapshot",
     "_read_library_skill_editor_fields",
     "_read_library_skill_live_name",
     "_refresh_library_skill_detail",
@@ -169,7 +170,6 @@ _SKILLS_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "_setup_library_skill_trust",
     "_skills_context_or_none",
     "_snapshot_library_skill_live_fields",
-    "_start_library_skills_import",
     "_sync_library_skill_description_hint",
     "_sync_library_skill_lifecycle_actions",
     "_sync_library_skills_browse_result",
@@ -201,10 +201,7 @@ _SKILLS_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "handle_library_skill_trust_unlock",
     "handle_library_skill_trust_view_details",
     "handle_library_skill_user_invocable_toggle",
-    "handle_library_skills_import",
-    "handle_library_skills_import_path_changed",
     "handle_library_skills_import_path_submitted",
-    "handle_library_skills_import_retry",
     "handle_library_skills_import_run",
     "handle_library_skills_page_next",
     "handle_library_skills_page_previous",
@@ -233,14 +230,14 @@ def test_skills_cluster_method_names_are_genuinely_skill_named() -> None:
     """
     not_skill_named = [n for n in _SKILLS_CLUSTER_METHOD_NAMES if "skill" not in n.lower()]
     assert not not_skill_named, f"non-skill-named cluster entries: {not_skill_named!r}"
-    assert len(_SKILLS_CLUSTER_METHOD_NAMES) == 91, (
-        f"expected 91 moved names, got {len(_SKILLS_CLUSTER_METHOD_NAMES)}"
+    assert len(_SKILLS_CLUSTER_METHOD_NAMES) == 86, (
+        f"expected 86 moved names, got {len(_SKILLS_CLUSTER_METHOD_NAMES)}"
     )
 
 
 @pytest.mark.unit
 def test_skills_controller_owns_its_cluster() -> None:
-    """Every one of the 91 moved names is a callable on the controller.
+    """Every one of the 86 moved names is a callable on the controller.
 
     Covers the whole cluster, not a hand-picked sample -- mirrors
     `test_rag_search_controller_owns_its_cluster`.
@@ -259,7 +256,7 @@ def test_skills_controller_owns_its_cluster() -> None:
 
 @pytest.mark.unit
 def test_screen_delegates_skills_handlers() -> None:
-    """Every one of the 91 moved names is a one-line screen delegator that
+    """Every one of the 86 moved names is a one-line screen delegator that
     forwards to the SAME-NAMED controller method (or, for the 1
     staticmethod, to the module-level controller CLASS).
 

@@ -348,7 +348,19 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # `LibrarySkillsState` constructor call plus a generated three-prefix
     # shim loop; methods unchanged (pure field move, zero FunctionDefs
     # touched). 43225/1311 -> 43179/1311.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43179, 1311),
+    #
+    # 2026-09-04, wave-4 task 2 (skills controller PR, series 2/3): 86 of
+    # 127 "skill"-named methods moved to `LibrarySkillsController`
+    # (byte-for-byte; 41 excluded -- 6 merely-delegate-to-existing-
+    # controller properties, 27 unbound-fake-self, 1 instance-attribute
+    # monkeypatch, 1 module-globals coupling, 6 bare-self-as-identity-
+    # argument hazard: 1 found by static analysis, 5 found by the
+    # verification battery after a first draft moved them and broke real
+    # Pilot-driven / Tests/Skills tests -- see `library_skills_
+    # controller.py`'s own module docstring, exclusion 5). Methods
+    # unchanged (pure move: 86 FunctionDefs out, 86 one-line delegators
+    # in). 43179/1311 -> 41247/1311.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 41247, 1311),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide
