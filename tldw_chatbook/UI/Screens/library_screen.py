@@ -579,6 +579,10 @@ from ..Library_Modules.library_notes_work_session import (
 )
 from ..Library_Modules.library_rag_search_controller import LibraryRagSearchController
 from ..Library_Modules.library_rag_search_state import LibraryRagSearchState
+from ..Library_Modules.library_skills_state import (
+    LibrarySkillsState,
+    skill_state_shim_attr,
+)
 from ..Library_Modules.library_snapshot_cache import (
     clone_library_source_snapshot,
 )
@@ -2055,7 +2059,6 @@ class LibraryScreen(BaseAppScreen):
         self._library_skill_import_coordinator = (
             ensure_library_skill_import_coordinator(app_instance)
         )
-        self._library_skill_choice_presented_generation = -1
         self._library_new_profile_admission = bool(
             getattr(app_instance, "library_new_profile_admission", False)
         )
@@ -2161,6 +2164,12 @@ class LibraryScreen(BaseAppScreen):
         self._conversations_state = LibraryConversationsState()
         # Constructed early -- see LibraryCollectionsState's docstring.
         self._collections_state = LibraryCollectionsState()
+        # Constructed early -- see LibrarySkillsState's own module docstring
+        # ("new wrinkle" paragraph): must exist before the shared reader-
+        # preferences tuple-unpack below AND before `editor_mode`/
+        # `reader_mode`'s own original lines, both of which keep running
+        # untouched and route through the generated shim into this object.
+        self._skills_state = LibrarySkillsState()
         self._conversation_reader_controller = LibraryConversationReaderController(
             self,
             conversations_state_accessor=lambda: self._conversations_state,
@@ -2915,13 +2924,6 @@ class LibraryScreen(BaseAppScreen):
             if isinstance(library_config, Mapping)
             else None
         )
-        self._library_skill_tool_catalog: tuple[str, ...] = ()
-        self._library_skill_tool_filter: str = ""
-        self._library_skill_tool_captured: tuple[str, ...] = ()
-        self._library_skill_tool_picker_changed: bool = False
-        self._library_skill_more_actions_open: bool = False
-        self._library_skill_trust_details_open: bool = False
-        self._library_skill_mutation_in_flight: bool = False
         # Explicit provenance for an unsaved canonical structured copy.
         # Legacy block edits can clear both lane origins, so origins cannot
         # truthfully distinguish conversion/duplication from ordinary edits.
@@ -2968,87 +2970,13 @@ class LibraryScreen(BaseAppScreen):
         # ``call_after_refresh`` after every prompt-editor (re)compose,
         # mirroring ``_library_note_editor_armed``.
         self._library_prompt_editor_armed: bool = False
-        # Skills list canvas (Task 3 of the Skills sub-project): sort/filter
-        # are pure in-memory operations over the already-fetched
-        # ``get_context`` snapshot payload.
-        # ``_selected_skill_name`` is recording-only for now -- the
-        # in-canvas skill detail/trust editor lands in a later task -- same
-        # posture ``handle_library_prompt_row`` originally had before its
-        # own editor landed.
-        self._library_skills_sort: str = "name"
-        self._library_skills_filter: str = ""
-        self._library_skills_filter_cursor_context: tuple[int, int] | None = None
-        self._selected_skill_name: str = ""
+        # Skills list/detail/trust-editor canvas state now lives in
+        # LibrarySkillsState -- see that module's own docstring/field
+        # comments for the per-field detail that used to live here.
         # Toolbar Import… state is projected from the app-owned coordinator.
         # A Library screen may be replaced while the accepted mutation keeps
         # running, so screen construction must never reset that shared receipt.
-        # Skill detail/trust editor (Task 4 of the Skills sub-project).
-        # Mirrors the prompts editor's own state shape
-        # (``_library_prompts_view``/``_library_prompt_detail``/etc.) --
-        # ``_selected_skill_name`` (above, Task 3) doubles as the
-        # create-vs-update sentinel: ``""`` means "not yet created" (mirrors
-        # ``_selected_prompt_id is None``), a real name means "editing an
-        # existing skill", routed through by NAME (skills are keyed by name,
-        # not a numeric id -- unlike prompts' ``_resolve_editor_prompt_id``
-        # complication, ``detail["name"]`` is already the stable identity).
-        self._library_skills_view: str = "list"
         self._library_skill_reader_mode = coerce_skill_reader_mode(None)
-        # task-14902: True while the skills sort chooser's direct-pick
-        # strip replaces the list toolbar row (the Notes Sort pattern).
-        self._library_skills_sort_choices_visible: bool = False
-        self._library_skill_detail: Mapping[str, Any] | None = None
-        self._library_skill_detail_generation: int = 0
-        self._library_skill_detail_loading: bool = False
-        self._library_skill_detail_error: str = ""
-        self._library_skill_detail_retryable: bool = False
-        self._library_skill_original_name: str = ""
-        self._library_skill_editor_state: SkillEditorState | None = None
-        self._library_skill_dirty: bool = False
-        self._library_skill_status: str = ""
-        self._library_skill_conflict: bool = False
-        # Guards against the spurious ``Input.Changed``/``TextArea.Changed``
-        # Textual fires when a widget mounts with a non-empty initial value
-        # -- same rationale/re-arm timing as ``_library_prompt_editor_armed``.
-        self._library_skill_editor_armed: bool = False
-        # The trust panel's currently-captured review (from
-        # ``capture_review``'s result mapping), or ``None`` when no review
-        # is active for the open skill. Reset every time a (different)
-        # skill is opened -- unlike ``skills_screen.py``'s
-        # ``_active_trust_review`` (which persists across row selection
-        # within one long-lived screen instance and needs its own
-        # staleness reconciliation), this editor always starts a fresh
-        # session per open, so no extra staleness check is needed.
-        self._library_skill_active_review: dict[str, Any] | None = None
-        # Task 7 (skills-script-execution): whether the open skill has a
-        # standing "always allow scripts" grant, cached here since checking
-        # it re-scans the skill's on-disk directory (fingerprint match) and
-        # so is only ever read off-thread -- see
-        # ``_refresh_library_skill_script_grant``. Reset alongside
-        # ``_library_skill_active_review`` on every (re)open; the panel's
-        # compose default of "not granted" is corrected in place moments
-        # later by that off-thread fetch.
-        self._library_skill_script_grant: bool = False
-        # task-415: inline two-step delete (mirrors
-        # ``_library_media_confirming_delete``): the first Delete press
-        # arms this; only the recomposed confirm button actually deletes.
-        self._library_skill_confirming_delete: bool = False
-        # task-417: one-shot flag armed by a create-save; the next editor
-        # recompose scrolls the action row (Save + status) back into view
-        # instead of landing at the top away from what the user pressed.
-        self._library_skill_scroll_pending: bool = False
-        # Task 5 (skills-foundation): the Skills-list header's adaptive
-        # trust posture (``SkillTrustService.trust_posture()`` -- Task 3),
-        # cached here since it's read off-thread (may touch the OS
-        # keyring), never on the compose path. ``""`` hides the header --
-        # see ``_refresh_library_skills_trust_posture``.
-        self._library_skills_trust_posture: str = ""
-        # Confirm-gate for the destructive Reset action (wipes the trust
-        # manifest -- every skill drops back to needs-review). Armed by
-        # either the list header's standalone Reset button or the editor's
-        # ``quarantined_manifest_error`` trust panel's own Reset button --
-        # both share this single flag/handler set since only one of the
-        # two views is ever mounted at a time.
-        self._library_skill_trust_confirming_reset: bool = False
         self._selected_note_id: str = ""
         note_session_port = _LibraryDatabaseNoteSessionPort(
             run_service_call=self._run_library_service_call,
@@ -43223,3 +43151,29 @@ LibraryExportController._safe_text = staticmethod(LibraryScreen._safe_text)
 # `LibraryRagSearchController`'s own generated shim loop (installed by
 # task 3) for where the SAME shape now lives permanently, one layer down,
 # exactly mirroring the collections precedent immediately above.
+
+# --- BEGIN generated skills-state shims (delete wholesale at cleanup) ---
+# wave-4 task 1: keeps every original `_library_skill_<field>`/
+# `_library_skills_<field>`/`_selected_skill_name` name working as a
+# property over `self._skills_state`; attached programmatically so the
+# class body gains no FunctionDefs (the size ratchet counts those).
+# `skill_state_shim_attr` (imported from `library_skills_state` -- the
+# single authoritative home for the three-way prefix mapping, not a
+# second, independently-drifting copy here) resolves each field's real
+# original attribute name -- singular `_library_skill_` default, plural
+# `_library_skills_` for the subset named in `SKILLS_PLURAL_STATE_FIELDS`,
+# or the bare `_` prefix for the one name in `SKILL_UNPREFIXED_STATE_
+# FIELDS` (`selected_skill_name`).
+for _lss_field in dataclasses.fields(LibrarySkillsState):
+    setattr(
+        LibraryScreen,
+        skill_state_shim_attr(_lss_field.name),
+        property(
+            lambda self, _n=_lss_field.name: getattr(self._skills_state, _n),
+            lambda self, value, _n=_lss_field.name: setattr(
+                self._skills_state, _n, value
+            ),
+        ),
+    )
+del _lss_field
+# --- END generated skills-state shims ---

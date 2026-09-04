@@ -339,7 +339,16 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: incl. Console-interaction PRD work landed inside the budgeted file):
     #: 42940/1304 -> 43225/1311. Post-merge re-measure per the standing
     #: dev-race protocol; the decomposition's own trajectory remains down.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43225, 1311),
+    #
+    # 2026-09-04, wave-4 task 1 (skills state PR, series 1/3): the 38-field
+    # skills `__init__` block (26 singular `_library_skill_*` + 9 plural
+    # `_library_skills_*` + 1 bare `_selected_skill_name`; 2 more --
+    # `_library_skill_import_coordinator`/`_library_skills_browse_
+    # controller` -- are WIRING and stay untouched) collapsed into one
+    # `LibrarySkillsState` constructor call plus a generated three-prefix
+    # shim loop; methods unchanged (pure field move, zero FunctionDefs
+    # touched). 43225/1311 -> 43179/1311.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43179, 1311),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide
