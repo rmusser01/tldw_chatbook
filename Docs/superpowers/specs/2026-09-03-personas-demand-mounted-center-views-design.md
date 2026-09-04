@@ -1,9 +1,9 @@
 # Personas demand-mounted center views — design
 
 - **Date:** 2026-09-03
-- **Status:** Draft — awaiting owner review
+- **Status:** Approved
 - **Scope:** TASK-31215, Personas/Roleplay presentation lifecycle only
-- **Decision record:** Proposed [ADR-115](../../../backlog/decisions/115-personas-demand-mounted-center-views.md)
+- **Decision record:** Accepted [ADR-115](../../../backlog/decisions/115-personas-demand-mounted-center-views.md)
 
 ## 1. Problem and evidence
 

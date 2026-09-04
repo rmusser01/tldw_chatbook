@@ -1,6 +1,6 @@
 # ADR-115: Demand-mount heavy Personas center views
 
-Status: Proposed
+Status: Accepted
 Date: 2026-09-03
 Related Task: TASK-31215
 Extends: ADR-007
