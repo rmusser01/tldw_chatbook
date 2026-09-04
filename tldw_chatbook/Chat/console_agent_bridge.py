@@ -1528,6 +1528,53 @@ def format_todo_marker(tasks: list[dict[str, object]]) -> str:
     return "\n".join([header, *lines])
 
 
+
+def format_question_marker(
+    asked_by: str, questions: list[dict[str, Any]], result: dict[str, Any]
+) -> str:
+    """Render the transcript record of a resolved ``ask_user`` round (PRD A14).
+
+    Same conventions as ``format_todo_marker``: display-only, one header line
+    then one line per question, every label passed through
+    ``_sanitize_task_marker_label`` (newlines and terminal controls
+    flattened, truncated) because the text is model-controlled.
+
+    Args:
+        asked_by: ``"agent"`` or ``"sub-agent"``.
+        questions: The validated questions the round showed.
+        result: The PRD A6 result dict the tool returned.
+
+    Returns:
+        The marker text.
+    """
+    who = "a sub-agent" if asked_by == "sub-agent" else "the agent"
+    lines = [f"? Questions from {who} ({len(questions)}):"]
+    answers = result.get("answers") if result.get("answered") else None
+    reason = str(result.get("reason") or "cancelled")
+    stamp = {"timeout": "(timed out)", "cancelled": "(cancelled)"}.get(
+        reason, "(cancelled)"
+    )
+    for index, question in enumerate(questions):
+        label = _sanitize_task_marker_label(str(question.get("question") or "")).strip()
+        if answers is None:
+            outcome = stamp
+        else:
+            answer = answers[index] if index < len(answers) else {}
+            selected = [str(item) for item in (answer.get("selected") or [])]
+            other = answer.get("other_text")
+            parts = []
+            if selected:
+                parts.append(", ".join(selected))
+            if other:
+                parts.append(f"other: {other}")
+            outcome = (
+                _sanitize_task_marker_label("; ".join(parts)).strip()
+                if parts
+                else "(unanswered)"
+            )
+        lines.append(f"  {label} → {outcome}")
+    return "\n".join(lines)
+
 TRANSCRIPT_START_MARKER_ANCHOR = ""
 
 
@@ -8083,6 +8130,25 @@ class ConsoleAgentBridge:
             format_todo_marker(tasks),
             activity_presentation=ConsoleActivityPresentation(
                 "tasks", "Tasks updated", "done"
+            ),
+        )
+
+    def append_question_marker(self, session_id: str, text: str) -> None:
+        """Surface a resolved ``ask_user`` round in the transcript (PRD A14).
+
+        Same seam as ``append_todo_marker``: called on the agent worker
+        thread, in-memory append with ``persist=False``; written on resolve
+        only, so a question pending when the app is killed leaves nothing.
+
+        Args:
+            session_id: The round's owning session.
+            text: ``format_question_marker``'s output.
+        """
+        self._append_marker(
+            session_id,
+            text,
+            activity_presentation=ConsoleActivityPresentation(
+                "feedback", "Question answered", "done"
             ),
         )
 

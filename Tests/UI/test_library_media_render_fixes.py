@@ -19,6 +19,7 @@ the chooser bug needs the screen's focus-on-open):
 from __future__ import annotations
 
 import pytest
+from types import SimpleNamespace
 from textual.widgets import Button, Input, OptionList
 
 from tldw_chatbook.Library.library_media_reader_state import set_mode
@@ -902,3 +903,24 @@ async def test_escape_cancels_an_items_choice_strip_over_the_reader():
         await pilot.pause()
         assert not screen.query("#library-media-type-choices")
         assert screen._library_media_view == "viewer"
+
+@pytest.mark.asyncio
+async def test_find_is_disabled_with_a_reason_when_the_analysis_tab_has_nothing_to_search():
+    """Qodo on #2378: with Find now opening the bar for the tab being read,
+    an Analysis tab with no analysis (or one still generating) has no bar
+    to mount -- pressing Find must not become a silent state toggle. The
+    button says why it is off, and the handler refuses to arm find_open."""
+    host = _host()  # _two_media_items carry no analysis
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        await _switch_to_analysis(screen, pilot)
+        find = screen.query_one("#library-media-reader-find", Button)
+        assert find.disabled is True
+        assert "No analysis" in str(find.tooltip)
+        # Belt and braces: the handler itself refuses.
+        screen.handle_library_media_reader_find(SimpleNamespace(stop=lambda: None))
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_media_find_open is False
+        assert not screen.query("#library-media-content-search-controls")

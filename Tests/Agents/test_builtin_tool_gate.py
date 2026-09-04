@@ -479,7 +479,7 @@ def test_all_tool_gates_enumerates_every_gate_with_sections_and_groups(monkeypat
     # Derived, not a literal (TASK-16174): the arity is "every builtin row
     # plus the local group's two", so adding a gateable built-in must not
     # make this test the thing that fails.
-    assert len(gates) == len(_GATEABLE_BUILTINS) + 2
+    assert len(gates) == len(_GATEABLE_BUILTINS) + 3
     assert all(isinstance(gate, ToolGate) for gate in gates)
 
     # The _GATEABLE_BUILTINS rows come first, in registration order,
@@ -496,9 +496,10 @@ def test_all_tool_gates_enumerates_every_gate_with_sections_and_groups(monkeypat
     )  # real tool descriptions, never blank
     assert all(g.enabled is False for g in builtin_gates)  # no override -> all off
 
-    # The local group: master switch FIRST, then web_deep_search.
+    # The local group: master switch FIRST, then web_deep_search, then
+    # ask_user (PRD A12: the one [tools] gate that defaults ON).
     local_gates = gates[len(_GATEABLE_BUILTINS) :]
-    assert len(local_gates) == 2
+    assert len(local_gates) == 3
     assert local_gates[0].section == "console"
     assert local_gates[0].key == "local_tools_enabled"
     assert local_gates[0].group == "local"
@@ -508,6 +509,11 @@ def test_all_tool_gates_enumerates_every_gate_with_sections_and_groups(monkeypat
     assert local_gates[1].section == "tools"
     assert local_gates[1].key == WEB_DEEP_SEARCH_GATE_KEY
     assert local_gates[1].group == "local"
+    assert local_gates[2].section == "tools"
+    assert local_gates[2].key == "ask_user_enabled"
+    assert local_gates[2].tool_name == "ask_user"
+    assert local_gates[2].group == "local"
+    assert local_gates[2].enabled is True  # missing key -> ON by default
     assert all(g.description for g in local_gates)
 
 

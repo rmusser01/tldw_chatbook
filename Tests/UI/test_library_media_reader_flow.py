@@ -1531,6 +1531,11 @@ def test_find_from_analysis_opens_the_bar_on_the_analysis_tab():
         _library_media_content_match_memo=(object(), "needle", (1, 2, 3), "analysis"),
         _library_media_find_open=False,
         _library_media_find_focus_pending=False,
+        _library_media_generating_analysis=False,
+        _library_media_editing_analysis=False,
+        _library_media_detail={
+            "versions": [{"version_number": 1, "analysis_content": "needle text"}]
+        },
         _sync_library_media_viewer_or_recompose=lambda: None,
         call_after_refresh=lambda *a, **k: None,
         _focus_library_media_content_search_input=lambda: None,
@@ -1540,6 +1545,10 @@ def test_find_from_analysis_opens_the_bar_on_the_analysis_tab():
     )
     fake._close_library_media_find = MethodType(
         LibraryScreen._close_library_media_find, fake
+    )
+    # Qodo on #2378: the handler refuses when the tab has nothing to search.
+    fake._library_media_find_unavailable_reason = MethodType(
+        LibraryScreen._library_media_find_unavailable_reason, fake
     )
     LibraryScreen.handle_library_media_reader_find(
         fake, SimpleNamespace(stop=lambda: None)

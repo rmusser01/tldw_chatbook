@@ -6,6 +6,7 @@ from collections.abc import Set as AbstractSet
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 import asyncio
+import contextlib
 from functools import partial
 import inspect
 import json
@@ -8417,6 +8418,8 @@ class ChatScreen(BaseAppScreen):
             ),
             # PRD Feature B: the pinned task panel above the transcript.
             "set_task_panel": self._set_console_task_panel,
+            # PRD Feature A: the ask_user question card.
+            "set_pending_question": self._set_console_pending_question,
             # PR3a-2 Task 5, user-wins-ties.
             "wake_user_priority_probe": self._fleet._console_wake_user_priority,
             # task-15971: the delivery COMMIT's visibility probe -- a wake
@@ -16737,6 +16740,8 @@ class ChatScreen(BaseAppScreen):
                 )
                 return False
 
+        if self._answer_pending_question_with_draft(draft):
+            return False
         return await self._dispatch_console_draft_send(draft, stash=stash)
 
     async def _dispatch_console_draft_send(
@@ -18370,6 +18375,18 @@ class ChatScreen(BaseAppScreen):
         """Focus the pending approval card from the Console inspector seam."""
         event.stop()
         if self._console_pending_approval_count() <= 0:
+            # PRD A4: the chip's focus action is how keyboard-only users
+            # reach a question card that deliberately never steals focus.
+            question = next(
+                (c for c in self.query("#chat-question-card") if c.display), None
+            )
+            if question is not None:
+                with contextlib.suppress(Exception):
+                    question.scroll_visible(animate=False)
+                target = next(iter(question.query("RadioSet, SelectionList, Input")), None)
+                if target is not None:
+                    target.focus()
+                return
             self.app_instance.notify(
                 CONSOLE_INSPECTOR_NO_APPROVAL_REASON, severity="warning"
             )
@@ -20746,6 +20763,96 @@ class ChatScreen(BaseAppScreen):
                 return
         panel.set_tasks(session_id, tasks)
 
+    def _set_console_pending_question(self, payload: dict[str, Any] | None) -> None:
+        """PRD Feature A: replace only the pending question in the task state.
+
+        UI-thread target of the controller's ``set_pending_question`` hook;
+        ``ChatTaskCards.sync_state`` mounts/updates/hides the card from it.
+
+        Args:
+            payload: The round's card payload, or None to hide the card.
+        """
+        self.set_task_resume_state(
+            replace(self._task_resume_state, pending_question=payload)
+        )
+
+    def _answer_pending_question_with_draft(self, draft: str) -> bool:
+        """PRD A8: let a composer send answer the mounted question card.
+
+        Only a MOUNTED card whose payload belongs to the viewed session
+        intercepts; a parked, background, or stale round never touches the
+        composer. The typed text is cleaned and bounded exactly like the
+        card's own Other box (``clean_other_text``) and becomes
+        ``other_text`` for every question still unanswered on the card, the
+        card's existing selections ride along, the whole payload is
+        validated (``validate_answers``) BEFORE the card or composer is
+        cleared, and the round resolves through the controller's strict
+        request-id match. Staged context
+        (a pending image attachment or a staged Library-evidence launch)
+        refuses interception: carrying it into a tool result is meaningless
+        and discarding it silently would destroy work the user staged.
+        Slash commands never reach this point -- the command branches of
+        ``_send_console_message_from_visible_action`` return before it.
+
+        Args:
+            draft: The composer text as sent.
+
+        Returns:
+            True when the draft answered the question and must NOT also be
+            dispatched as a turn; False to send normally.
+        """
+        # Local import by design: the module stays off the boot path.
+        from ...Agents.ask_user_questions import (
+            AskUserValidationError,
+            clean_other_text,
+            validate_answers,
+        )
+
+        text = draft.strip()
+        if not text or text.startswith("/"):
+            # A `/`-prefixed draft is command text even when the user has
+            # confirmed sending an unknown command as plain text (Qodo
+            # #2380): it dispatches normally and leaves the question up.
+            return False
+        controller = self._console_chat_controller
+        if controller is None:
+            return False
+        card = next((c for c in self.query("#chat-question-card") if c.display), None)
+        if card is None:
+            return False
+        request_id = getattr(card, "_request_id", None)
+        if not request_id:
+            return False
+        payload_session = (getattr(card, "_payload", None) or {}).get("session_id")
+        if payload_session and payload_session != (controller.store.active_session_id or ""):
+            # A stale card mounted for another session must never take the
+            # text typed into this one (Qodo #2380).
+            return False
+        if self._console_pending_image_attachment() is not None:
+            return False
+        if self._retrieval._pending_launch() is not None:
+            return False
+        other_text = clean_other_text(text)
+        if other_text is None:
+            return False
+        answers = card.collect_answers()
+        for answer in answers:
+            if answer.get("unanswered") or (
+                not answer.get("selected") and answer.get("other_text") is None
+            ):
+                answer["other_text"] = other_text
+                answer["unanswered"] = False
+        try:
+            clean_answers = validate_answers(answers)
+        except AskUserValidationError:
+            # Validate BEFORE clearing anything: a payload the controller
+            # would drop must not cost the user their draft or the card.
+            return False
+        card.set_questions(None)
+        self._clear_console_composer_draft()
+        controller.resolve_pending_question(clean_answers, request_id=request_id)
+        return True
+
     def _mount_console_task_panel(self):
         """Mount the task panel right after the Console task cards.
 
@@ -21066,6 +21173,19 @@ class ChatScreen(BaseAppScreen):
         self._skill.handle_console_skill_script_decided(
             event.allow, event.remember, request_id=event.request_id
         )
+
+    @on(ChatTaskCards.QuestionAnswered)
+    def handle_console_question_answered(self, event: Any) -> None:
+        """Forward the card's answers to the controller's armed round.
+
+        Args:
+            event: ``ChatTaskCards.QuestionAnswered`` carrying ``answers``
+                and the round's ``request_id``.
+        """
+        event.stop()
+        controller = self._console_chat_controller
+        if controller is not None:
+            controller.resolve_pending_question(event.answers, request_id=event.request_id)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """

@@ -12,7 +12,9 @@ from textual.css.query import NoMatches, QueryError
 from textual.widget import Widget
 from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
+from tldw_chatbook.Library.library_shell_state import library_disabled_action_label
 from tldw_chatbook.Library.library_media_viewer_state import (
+    analysis_find_unavailable_reason,
     LibraryMediaHighlightRow,
     LibraryMediaViewerState,
     find_content_matches,
@@ -277,7 +279,23 @@ class LibraryMediaViewer(Vertical):
     def _compose_primary_toolbar(self) -> ComposeResult:
         """Render the always-reachable Reader actions."""
         with Horizontal(classes="ds-toolbar", id="library-media-reader-primary-toolbar"):
-            yield Button("Find", id="library-media-reader-find", compact=True)
+            # Qodo on #2378: an Analysis tab with nothing to search has no
+            # bar to mount -- say why Find is off instead of toggling silently.
+            find_reason = analysis_find_unavailable_reason(
+                mode=self.reader_mode,
+                analysis=self.viewer.analysis,
+                generating=self.generating_analysis,
+                editing=self.editing_analysis,
+            )
+            find = Button(
+                library_disabled_action_label("Find", bool(find_reason)),
+                id="library-media-reader-find",
+                compact=True,
+            )
+            if find_reason:
+                find.disabled = True
+                find.tooltip = find_reason
+            yield find
             if not self.external_detail:
                 yield Button(
                     "Remove later" if self.viewer.read_later else "Read later",

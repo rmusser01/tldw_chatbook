@@ -164,6 +164,10 @@ from ...Library.library_ingest_state import (
     library_ingest_retry_label,
     parse_keywords,
 )
+from ...Library.library_media_viewer_state import (
+    analysis_find_unavailable_reason,
+    detail_analysis_text,
+)
 from ...Library.library_media_state import (
     LibraryMediaCanvasState,
     LibraryMediaTrashState,
@@ -722,6 +726,9 @@ def _library_ingest_options_for(owner: Any) -> dict[str, Any]:
 # than moved: it is new screen code, not part of the extracted support layer.)
 _MEDIA_SELECT_MODE_KEY = "s"
 _MEDIA_ROW_SELECT_KEY = "space"
+#: Qodo on #2378: one name for the review-set auto-resume worker group, shared
+#: by registration (_maybe_auto_resume_review_set) and cancellation.
+_REVIEW_SET_RESUME_WORKER_GROUP = "library_review_set_resume"
 #
 # _INGEST_OPTIONS_CACHE_ATTR, _read_library_ingest_options_from_config, and
 # _library_ingest_options_for (just above) STAY here rather than moving to
@@ -39804,7 +39811,7 @@ class LibraryScreen(BaseAppScreen):
         a row press, a deep link, open-by-id -- wins over the entry-time
         auto-resume; plain rail entry with no target still resumes.
         """
-        self.workers.cancel_group(self, "library_review_set_resume")
+        self.workers.cancel_group(self, _REVIEW_SET_RESUME_WORKER_GROUP)
 
     def _maybe_auto_resume_review_set(self) -> None:
         """Kick the once-per-set auto-resume of an active review set.
@@ -39821,7 +39828,7 @@ class LibraryScreen(BaseAppScreen):
         """
         self.run_worker(
             self._auto_resume_review_set_worker(),
-            group="library_review_set_resume",
+            group=_REVIEW_SET_RESUME_WORKER_GROUP,
             exclusive=True,
             exit_on_error=False,
         )
@@ -41363,6 +41370,17 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_content_query = ""
         self._library_media_content_match_index = 0
 
+    def _library_media_find_unavailable_reason(self) -> str:
+        """Why Find cannot open on the current Reader tab, or "" (Qodo on #2378)."""
+        detail = self._library_media_detail
+        analysis = detail_analysis_text(detail) if isinstance(detail, Mapping) else ""
+        return analysis_find_unavailable_reason(
+            mode=self._library_media_reader_session.mode,
+            analysis=analysis,
+            generating=self._library_media_generating_analysis,
+            editing=self._library_media_editing_analysis,
+        )
+
     def _consume_library_media_find_focus(self) -> bool:
         """Return and clear the one-shot Find-gesture focus token (task-31269)."""
         pending = self._library_media_find_focus_pending
@@ -41382,6 +41400,13 @@ class LibraryScreen(BaseAppScreen):
             # bar (live: it did nothing while the bar was open).
             self._close_library_media_find()
             self._sync_library_media_viewer_or_recompose()
+            return
+        reason = self._library_media_find_unavailable_reason()
+        if reason:
+            # Qodo on #2378: nothing to mount on this tab -- never arm
+            # find_open silently (the button is already disabled with the
+            # same reason; this guards the action path).
+            self.notify(reason, severity="warning")
             return
         # task-31269: Find searches the tab you are reading. The Analysis
         # tab's bar is gated exactly like Read's now, so Find no longer

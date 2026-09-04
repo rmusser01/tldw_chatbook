@@ -158,6 +158,31 @@ instead of landing exactly at the local cap.
 
 ---
 
+## A census taken on the next tick is not a census taken at the flag
+
+**PR #2373 / task-31281, 2026-09-04.** The UI-ready module census failed on
+three consecutive CI runs of what was, after the second, the same tree: 973,
+973, then 977 modules against the 972 cap. The first two carried exactly the
+one new module the PR added (fixed by lazy-mounting the widget, ADR-097
+response 1). The third did not contain that module at all -- it carried five
+`Library.collections_capture_*` modules that neither sibling run nor `dev`'s
+own run of the merged tree had. The app sets `_ui_ready` and then keeps
+running its mount path, which arms 0.1s timers that are deferred past
+readiness *by design*; the census polled the flag every 5ms and copied
+`sys.modules` when it woke, and on a starved runner those timers won. `dev`
+sits exactly at the cap, so the "+/-1 wobble headroom" the constant's own
+comment promises does not exist, and a one-run race flips the check red.
+
+**What to do.** When a guard's contract is "resident at instant X", sample at
+instant X -- here, a class-level property whose setter copies `sys.modules`
+synchronously inside the `self._ui_ready = True` assignment -- never on the
+next scheduler turn after observing X. And when a non-required check fails on
+your PR, read its `+` list before believing it: if your module is not in it,
+compare against the base branch's own run of the same tree before spending a
+round on a fix.
+
+---
+
 ## Shipped migration and ADR numbers are allocation records, not merge labels
 
 **TASK-24613, 2026-08-30.** The Agent Lessons worktree and a newer `dev`
@@ -11056,3 +11081,25 @@ the primary, which is the assertion a palette generator needs.
 
 **What to do.** Multiply `hsl.h` by 360 before any degree-based maths, and test
 generated palettes by hue distance for several primaries, not by eyeballing one.
+
+## Theme `variables` dict entries are NOT overrides — tcss definitions shadow them (task-31264, 2026-09-04)
+
+**What happened.** PR #2374 "fixed" light themes inheriting dark-tuned tokens
+by adding `ds-status-error-readable`/`ds-text-placeholder` entries to each
+theme's `Theme.variables` dict, verified with contrast arithmetic on the dict
+values. The fix was inert at runtime: a `$name: value` definition in any tcss
+source shadows app-supplied variables for that source (proven with a minimal
+`Stylesheet(variables=...)` probe — the file's value tokens are appended after
+the app's and last-token-wins), and `_variables.tcss` defines every `ds-*`
+token. The frozen `$ds-focus-bg: #51677e` literal was painting slate focus
+states on every light theme regardless of what the theme dict said.
+
+**What to do.** A theme's `variables` dict only reaches CSS for tokens NO
+loaded stylesheet defines; for `ds-*` tokens it is documentation, not an
+override. To make a design token theme-aware, define it in tcss as a
+*reference* to one of Textual's generated polarity-aware variables
+(`$text-error`, `$text-muted`, `$block-cursor-blurred-background`, …), never a
+hex literal. And never verify a color fix by arithmetic on configuration
+values — check the resolved paint (rule-match probe or live capture); the
+dict-value contrast test in PR #2374 passed while the app painted the
+opposite.
