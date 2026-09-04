@@ -5,11 +5,14 @@ import re
 import ipaddress
 import time
 from typing import Union, Optional
-from pathlib import Path
+from packaging.version import InvalidVersion, Version
 from ..Metrics.metrics_logger import log_counter, log_histogram
 
 
 PROVIDER_API_KEY_MAX_LENGTH = 4096
+PYPI_PACKAGE_NAME_PATTERN = re.compile(
+    r"^([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._-]*[A-Za-z0-9])$"
+)
 
 
 def validate_email(email: str) -> bool:
@@ -132,6 +135,50 @@ def validate_url(url: str) -> bool:
     log_histogram("input_validation_url_length", len(url))
     
     return result
+
+
+def validate_pypi_package_name(package_name: str) -> bool:
+    """Validate a PyPI project name.
+
+    Args:
+        package_name: Candidate project name.
+
+    Returns:
+        True when the value matches PyPI's permitted project-name characters
+        and boundary rules.
+    """
+    return bool(package_name and PYPI_PACKAGE_NAME_PATTERN.fullmatch(package_name))
+
+
+def validate_python_package_version(version: str) -> bool:
+    """Validate a Python package version using PEP 440 parsing.
+
+    Args:
+        version: Candidate package version.
+
+    Returns:
+        True when the value is non-empty and accepted by
+        ``packaging.version.Version``.
+    """
+    if not version:
+        return False
+    try:
+        Version(version)
+    except InvalidVersion:
+        return False
+    return True
+
+
+def validate_github_actions_output_name(name: str) -> bool:
+    """Validate a GitHub Actions output name for file-command writes.
+
+    Args:
+        name: Candidate output name.
+
+    Returns:
+        True when the value cannot inject another output assignment or line.
+    """
+    return bool(name and not any(char in name for char in "=\r\n"))
 
 
 def validate_filename(filename: str) -> bool:

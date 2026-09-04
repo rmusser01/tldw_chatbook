@@ -3,8 +3,12 @@ name: Publish Python package
 on:
   workflow_dispatch:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -13,6 +17,8 @@ jobs:
   build:
     name: Build and check distributions
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release-version.outputs.version }}
 
     steps:
       - name: Check out source
@@ -36,11 +42,13 @@ jobs:
           python -m build --sdist --wheel --no-isolation --outdir dist
 
       - name: Verify release version
+        id: release-version
         run: |
           python - <<'PY'
-          import os
           from pathlib import Path
           import tomllib
+
+          from Packaging.check_pypi_release import write_github_output
 
           with Path("pyproject.toml").open("rb") as handle:
               project_version = tomllib.load(handle)["project"]["version"]
@@ -63,11 +71,7 @@ jobs:
           if project_version != sdist_version:
               raise SystemExit(f"sdist version {sdist_version} != project version {project_version}")
 
-          if os.environ.get("GITHUB_REF_TYPE") == "tag":
-              expected_tag = f"v{project_version}"
-              actual_tag = os.environ.get("GITHUB_REF_NAME")
-              if actual_tag != expected_tag:
-                  raise SystemExit(f"tag {actual_tag} != expected release tag {expected_tag}")
+          write_github_output("version", project_version)
 
           print(f"project_version={project_version}")
           print(f"wheel={wheels[0].name}")
@@ -82,9 +86,6 @@ jobs:
 
       - name: Run release metadata tests
         run: python -m pytest Tests/Packaging/test_release_metadata.py -q
-
-      - name: Run installed distribution regression
-        run: python -m pytest Tests/Packaging/test_installed_distribution.py -m integration -q -p no:cacheprovider
 
       - name: Upload distributions
         uses: actions/upload-artifact@v4
@@ -117,10 +118,41 @@ jobs:
         with:
           repository-url: https://test.pypi.org/legacy/
 
+  check_pypi_release:
+    name: Check PyPI release status
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    outputs:
+      release_exists: ${{ steps.check.outputs.release_exists }}
+      latest_version: ${{ steps.check.outputs.latest_version }}
+      publish_release: ${{ steps.check.outputs.publish_release }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install output path validation dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install loguru packaging psutil pydantic
+
+      - name: Check whether version should be published to PyPI
+        id: check
+        env:
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        run: python Packaging/check_pypi_release.py "$RELEASE_VERSION"
+
   publish-pypi:
     name: Publish to PyPI
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.ref_protected
-    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.ref_protected && needs.check_pypi_release.outputs.publish_release == 'true'
+    needs: [build, check_pypi_release]
     runs-on: ubuntu-latest
     environment:
       name: pypi

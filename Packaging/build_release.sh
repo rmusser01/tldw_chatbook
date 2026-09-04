@@ -1,56 +1,37 @@
-#!/bin/bash
-# Build script for tldw_chatbook PyPI release
+#!/usr/bin/env bash
+# Release build wrapper for tldw_chatbook PyPI artifacts.
 
-set -e  # Exit on error
+set -euo pipefail
 
-echo "🚀 Building tldw_chatbook for PyPI release..."
+PYTHON="${PYTHON:-python}"
 
-# Check if we're in the right directory
 if [ ! -f "pyproject.toml" ]; then
-    echo "❌ Error: pyproject.toml not found. Run this script from the project root."
+    echo "Error: pyproject.toml not found. Run this script from the project root." >&2
     exit 1
 fi
 
-# Check for required tools
-for tool in python pip build twine; do
-    if ! command -v $tool &> /dev/null; then
-        echo "❌ Error: $tool is not installed."
-        echo "Install with: pip install build twine"
-        exit 1
-    fi
-done
+if ! "$PYTHON" -c "import build, setuptools, twine, wheel" >/dev/null 2>&1; then
+    echo "Error: release build modules are not installed." >&2
+    echo "Install release tools with: $PYTHON -m pip install 'setuptools>=77.0' build twine wheel" >&2
+    exit 1
+fi
 
-# Get version from pyproject.toml
-VERSION=$(python -c "
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib
-with open('pyproject.toml', 'rb') as f:
-    data = tomllib.load(f)
-    print(data['project']['version'])
-")
-echo "📦 Building version: $VERSION"
+VERSION=$("$PYTHON" - <<'PY'
+from pathlib import Path
+import tomllib
 
-# Clean previous builds
-echo "🧹 Cleaning previous builds..."
-rm -rf dist/ build/ *.egg-info
+with Path("pyproject.toml").open("rb") as stream:
+    print(tomllib.load(stream)["project"]["version"])
+PY
+)
 
-# Build the distribution
-echo "🔨 Building source distribution and wheel..."
-python -m build
+echo "Building tldw_chatbook ${VERSION} for PyPI release..."
+PYTHON="$PYTHON" Packaging/build_dist.sh
 
-# Check the distributions
-echo "✅ Checking distributions..."
-twine check dist/*
-
-echo "📁 Built files:"
-ls -la dist/
-
-echo ""
-echo "✨ Build complete! Next steps:"
-echo "1. Test the package: pip install dist/tldw_chatbook-${VERSION}-py3-none-any.whl"
-echo "2. Upload to TestPyPI: twine upload --repository testpypi dist/*"
-echo "3. Upload to PyPI: twine upload dist/*"
-echo ""
-echo "📚 See PYPI_RELEASE.md for detailed instructions."
+echo
+echo "Next steps:"
+echo "1. Smoke-test the built wheel in a disposable environment."
+echo "2. Use the publish-pypi GitHub Actions workflow for TestPyPI."
+echo "3. Merge the approved release commit to protected main for production PyPI."
+echo
+echo "See Packaging/PYPI_RELEASE.md for detailed instructions."

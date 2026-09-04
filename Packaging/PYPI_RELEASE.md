@@ -1,156 +1,136 @@
 # PyPI Release Guide for tldw_chatbook
 
-This guide outlines the process for building and releasing tldw_chatbook to PyPI.
+Use GitHub Actions trusted publishing for normal releases. Do not upload with a
+long-lived PyPI token unless the trusted-publishing path is unavailable.
 
-## Prerequisites
+## Package Identity
 
-1. Ensure you have the necessary tools installed:
+- Source distribution name: `tldw_chatbook`
+- Normalized PyPI name: `tldw-chatbook`
+- Install command: `pip install tldw_chatbook`
+- Console scripts: `tldw-cli`, `tldw-serve`
+- Version source of truth: `pyproject.toml`
+- Package runtime version: `tldw_chatbook/__init__.py`
+- Native packaging version helper: `Packaging/common/version.py`, derived from
+  `pyproject.toml`
+
+## One-Time PyPI Setup
+
+Create trusted publishers on TestPyPI and PyPI before the first workflow upload.
+
+For TestPyPI:
+
+- Owner: `rmusser01`
+- Repository: `tldw_chatbook`
+- Workflow: `publish-pypi.yml`
+- Environment: `testpypi`
+
+For PyPI:
+
+- Owner: `rmusser01`
+- Repository: `tldw_chatbook`
+- Workflow: `publish-pypi.yml`
+- Environment: `pypi`
+
+If the project does not exist yet, create a pending trusted publisher for the
+same owner, repository, workflow, and environment.
+
+Protect the `dev` and `main` branches and the `testpypi` and `pypi` GitHub
+environments before allowing publishing. The TestPyPI job only runs for manual
+dispatch from protected `dev`; the PyPI job only runs for protected `main`
+branch pushes, and it skips the upload when the built version already exists on
+PyPI or is older than the latest published version. Publish jobs only download
+built artifacts and request the PyPI OIDC token.
+
+## Local Release Gates
+
+1. Update `pyproject.toml`, `tldw_chatbook/__init__.py`, and `CHANGELOG.md`.
+2. Install release tools in the active environment:
+
    ```bash
-   pip install build twine
+   python -m pip install "setuptools>=77.0" build twine wheel
    ```
 
-2. Create PyPI account at https://pypi.org/account/register/
+3. Build fresh artifacts:
 
-3. Create API token at https://pypi.org/manage/account/token/
-   - Save the token securely
-   - You'll use it as your password when uploading
-
-4. (Optional) Create TestPyPI account at https://test.pypi.org/account/register/
-   - Recommended for testing releases before publishing to production PyPI
-
-## Pre-Release Checklist
-
-- [ ] Update version in `pyproject.toml`
-- [ ] Update version in `tldw_chatbook/__init__.py`
-- [ ] Update `CHANGELOG.md` with release notes
-- [ ] Run all tests: `pytest`
-- [ ] Review and update documentation if needed
-- [ ] Commit all changes
-- [ ] Create git tag: `git tag v0.1.0`
-
-## Building the Distribution
-
-1. Clean previous builds:
    ```bash
-   rm -rf dist/ build/ *.egg-info
+   Packaging/build_dist.sh
    ```
 
-2. Build source distribution and wheel:
+4. Run the focused metadata gate:
+
    ```bash
-   python -m build
+   python -m pytest Tests/Packaging/test_release_metadata.py -q
    ```
 
-   This creates:
-   - `dist/tldw_chatbook-0.1.0.tar.gz` (source distribution)
-   - `dist/tldw_chatbook-0.1.0-py3-none-any.whl` (wheel)
+5. Smoke-test the wheel in a disposable environment:
 
-3. Verify the distributions:
-   ```bash
-   twine check dist/*
-   ```
-
-## Testing the Package
-
-1. Create a test virtual environment:
    ```bash
    python -m venv test_env
-   source test_env/bin/activate  # On Windows: test_env\Scripts\activate
-   ```
-
-2. Install from built wheel:
-   ```bash
-   pip install dist/tldw_chatbook-0.1.0-py3-none-any.whl
-   ```
-
-3. Test the installation:
-   ```bash
-   tldw-chatbook --version
-   ```
-
-4. Test with optional dependencies:
-   ```bash
-   pip install dist/tldw_chatbook-0.1.0-py3-none-any.whl[embeddings_rag,websearch]
-   ```
-
-5. Deactivate and clean up:
-   ```bash
+   source test_env/bin/activate
+   pip install dist/tldw_chatbook-*.whl
+   tldw-cli --help
+   tldw-serve --help
    deactivate
-   rm -rf test_env
    ```
 
-## Uploading to TestPyPI (Recommended First)
+Run the full suite only when the release manager explicitly wants a full sweep.
 
-1. Upload to TestPyPI:
+## Publish to TestPyPI
+
+1. Open the `Publish Python package` workflow in GitHub Actions.
+2. Run it manually from the protected `dev` branch.
+3. The workflow builds, checks, uploads artifacts, and publishes to TestPyPI
+   through the `testpypi` environment.
+4. Test installation from TestPyPI:
+
    ```bash
-   twine upload --repository testpypi dist/*
+   python -m venv testpypi_env
+   source testpypi_env/bin/activate
+   pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ "tldw_chatbook==<version>"
+   tldw-cli --help
+   tldw-serve --help
+   deactivate
    ```
 
-2. Test installation from TestPyPI:
+## Publish to PyPI
+
+1. Confirm the same commit passed the local gates and TestPyPI smoke test.
+2. Merge the approved release commit to the protected `main` branch. Do not
+   publish by pushing a tag; tag pushes are intentionally ignored by the PyPI
+   workflow.
+3. The `Publish Python package` workflow builds and checks the artifacts from
+   `main`, verifies whether the version is publishable on PyPI, and publishes
+   through the protected `pypi` environment only when the version is absent and
+   newer than the latest published version.
+4. After PyPI is verified, create and push the annotated source tag at the
+   `main` release commit for provenance:
+
    ```bash
-   pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ tldw_chatbook
+   git tag -a v<version> -m "Release v<version>"
+   git push origin v<version>
    ```
 
-   Note: The `--extra-index-url` is needed because TestPyPI doesn't have all dependencies.
+5. Verify:
 
-## Uploading to PyPI
-
-1. Upload to PyPI:
    ```bash
-   twine upload dist/*
+   python -m venv pypi_env
+   source pypi_env/bin/activate
+   pip install "tldw_chatbook==<version>"
+   tldw-cli --help
+   tldw-serve --help
+   deactivate
    ```
 
-   When prompted:
-   - Username: `__token__`
-   - Password: Your PyPI API token (including the `pypi-` prefix)
+## Emergency Manual Upload
 
-2. Verify the package at: https://pypi.org/project/tldw_chatbook/
+Use this only if trusted publishing is unavailable and the same `dist/` artifacts
+passed the local gates:
 
-3. Test installation:
-   ```bash
-   pip install tldw_chatbook
-   ```
+```bash
+python -m twine upload --repository testpypi dist/*
+python -m twine upload dist/*
+```
 
-## Post-Release
-
-1. Push the git tag:
-   ```bash
-   git push origin v0.1.0
-   ```
-
-2. Create GitHub release:
-   - Go to https://github.com/rmusser01/tldw_chatbook/releases
-   - Click "Create a new release"
-   - Select the tag
-   - Copy release notes from CHANGELOG.md
-   - Attach the built distributions from `dist/`
-
-3. Update version for next development:
-   - Increment version in `pyproject.toml` (e.g., to 0.2.0.dev0)
-   - Update `tldw_chatbook/__init__.py`
-   - Add new "Unreleased" section to CHANGELOG.md
-   - Commit with message: "Bump version for development"
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Authentication failed**: Ensure you're using `__token__` as username and your full API token as password
-
-2. **Package name already taken**: The name might be too similar to existing packages. Consider a unique name.
-
-3. **Missing files in distribution**: Check MANIFEST.in and ensure all necessary files are included
-
-4. **Import errors after installation**: Verify all dependencies are listed in pyproject.toml
-
-### Useful Commands
-
-- View package contents: `tar -tzf dist/tldw_chatbook-0.1.0.tar.gz`
-- View wheel contents: `unzip -l dist/tldw_chatbook-0.1.0-py3-none-any.whl`
-- Check package metadata: `twine check dist/*`
-
-## Security Notes
-
-- Never commit PyPI tokens to version control
-- Use environment variables or keyring for token storage
-- Consider using GitHub Actions for automated releases
-- Review all included files before uploading
+Manual uploads require an account or project-scoped PyPI token. Never commit
+tokens, `.pypirc`, or upload logs containing credentials.
