@@ -4,9 +4,11 @@ title: >-
   Command palette test
   test_palette_library_skills_command_opens_hidden_starter_route fails on clean
   dev
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-04 13:47'
+updated_date: '2026-09-04 20:30'
 labels:
   - tests
   - tech-debt

@@ -1,9 +1,11 @@
 ---
 id: TASK-31282
 title: Make theme ds-token dict entries real overrides (or stop implying they are)
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-09-04 19:03'
+updated_date: '2026-09-04 20:30'
 labels:
   - themes
   - tech-debt
