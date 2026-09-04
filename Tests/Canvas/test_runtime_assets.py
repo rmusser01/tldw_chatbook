@@ -4,16 +4,20 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tarfile
+from threading import Thread
 from types import ModuleType
 from typing import Any
+from urllib.request import Request
 
 import pytest
 
@@ -22,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[2]
 STATIC = ROOT / "tldw_chatbook" / "Canvas" / "static"
 MANIFEST = STATIC / "runtime-manifest.json"
 VENDOR_SCRIPT = ROOT / "scripts" / "vendor_canvas_runtime.py"
+ARCHIVE_CACHE_ENV = "TLDW_CANVAS_RUNTIME_ARCHIVE_DIR"
 
 EXPECTED_PACKAGES = {
     "quickjs-emscripten-core": {
@@ -294,7 +299,129 @@ def test_verified_extraction_rejects_wrong_digest_version_license_and_dependency
             )
 
 
-def test_reproducible_command_can_verify_committed_assets_without_network(
+@pytest.mark.loopback_network
+def test_download_rejects_redirect_before_target_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vendor = _load_vendor_module()
+    requests = {"redirect": 0, "target": 0}
+
+    class RedirectHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
+            if self.path == "/redirect":
+                requests["redirect"] += 1
+                self.send_response(302)
+                self.send_header(
+                    "Location", f"http://127.0.0.1:{self.server.server_port}/target"
+                )
+                self.end_headers()
+                return
+            requests["target"] += 1
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"redirect target must remain unreachable")
+
+        def log_message(self, _format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), RedirectHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    redirect_url = f"http://127.0.0.1:{server.server_port}/redirect"
+    real_request = Request
+    monkeypatch.setattr(
+        vendor,
+        "Request",
+        lambda _url, **kwargs: real_request(redirect_url, **kwargs),
+    )
+    pinned = vendor.RUNTIME_PACKAGES[0]
+    try:
+        with pytest.raises(vendor.VendorError):
+            vendor._download(pinned, tmp_path)
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+    assert requests == {"redirect": 1, "target": 0}
+
+
+def test_oversized_archive_is_read_only_to_the_enforced_cap(
+    tmp_path: Path,
+) -> None:
+    vendor = _load_vendor_module()
+    payload = b"x" * (vendor.MAX_ARCHIVE_BYTES + 1)
+    read_sizes: list[int] = []
+
+    class ReadSpy(io.BytesIO):
+        def read(self, size: int = -1) -> bytes:
+            read_sizes.append(size)
+            return super().read(size)
+
+    class ObservedArchive:
+        def read_bytes(self) -> bytes:
+            read_sizes.append(-1)
+            return payload
+
+        def open(self, _mode: str) -> ReadSpy:
+            return ReadSpy(payload)
+
+    with pytest.raises(vendor.VendorError, match="byte limit"):
+        vendor.extract_verified_package(
+            archive_path=ObservedArchive(),
+            expected_integrity=_sri_sha512(payload),
+            expected_name="fixture-package",
+            expected_version="1.0.0",
+            expected_license="MIT",
+            allowed_members=frozenset(),
+            destination=tmp_path / "output",
+        )
+
+    assert read_sizes == [vendor.MAX_ARCHIVE_BYTES + 1]
+
+
+def test_extraction_uses_the_exact_authenticated_archive_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vendor = _load_vendor_module()
+    authentic_license = b"authenticated MIT license"
+    authentic = _tar_bytes(
+        [
+            ("package/package.json", _package_json(), "file"),
+            ("package/LICENSE", authentic_license, "file"),
+        ]
+    )
+    replacement = _tar_bytes(
+        [
+            ("package/package.json", _package_json(), "file"),
+            ("package/LICENSE", b"replaced after authentication", "file"),
+        ]
+    )
+    archive = tmp_path / "fixture.tgz"
+    archive.write_bytes(authentic)
+    real_verify_sri = vendor._verify_sri
+
+    def replace_path_after_verification(data: bytes, expected: str) -> None:
+        real_verify_sri(data, expected)
+        archive.write_bytes(replacement)
+
+    monkeypatch.setattr(vendor, "_verify_sri", replace_path_after_verification)
+    destination = tmp_path / "output"
+
+    vendor.extract_verified_package(
+        archive_path=archive,
+        expected_integrity=_sri_sha512(authentic),
+        expected_name="fixture-package",
+        expected_version="1.0.0",
+        expected_license="MIT",
+        allowed_members=frozenset({"package/package.json", "package/LICENSE"}),
+        destination=destination,
+    )
+
+    assert (destination / "LICENSE").read_bytes() == authentic_license
+
+
+def test_verify_command_checks_committed_assets_without_network(
     tmp_path: Path,
 ) -> None:
     completed = subprocess.run(
@@ -310,3 +437,100 @@ def test_reproducible_command_can_verify_committed_assets_without_network(
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.strip() == "Canvas runtime assets verified"
+
+
+@pytest.mark.integration
+def test_pinned_archive_regeneration_is_reproducible_and_instantiable(
+    tmp_path: Path,
+) -> None:
+    archive_cache = os.environ.get(ARCHIVE_CACHE_ENV)
+    if not archive_cache:
+        pytest.skip(f"set {ARCHIVE_CACHE_ENV} to the verified pinned archive cache")
+    archive_dir = Path(archive_cache).resolve()
+    if not archive_dir.is_dir():
+        pytest.fail(f"{ARCHIVE_CACHE_ENV} is not a directory: {archive_dir}")
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required to exercise the generated browser module")
+
+    output_a = tmp_path / "generated-a"
+    output_b = tmp_path / "generated-b"
+    for output in (output_a, output_b):
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(VENDOR_SCRIPT),
+                "--archive-dir",
+                str(archive_dir),
+                "--output-dir",
+                str(output),
+                "--node",
+                node,
+            ],
+            cwd=ROOT,
+            env={"PATH": str(Path(node).parent), "PYTHONPATH": str(ROOT)},
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr[-4000:]
+        assert (
+            completed.stdout.strip() == "Canvas runtime assets generated and verified"
+        )
+
+    generated_names = {
+        "quickjs-runtime.js",
+        "THIRD_PARTY_LICENSES.txt",
+        "runtime-manifest.json",
+    }
+    assert {path.name for path in output_a.iterdir()} == generated_names
+    assert {path.name for path in output_b.iterdir()} == generated_names
+    for name in generated_names:
+        bytes_a = (output_a / name).read_bytes()
+        assert (output_b / name).read_bytes() == bytes_a
+        assert (STATIC / name).read_bytes() == bytes_a
+
+    runtime_module = tmp_path / "quickjs-runtime.mjs"
+    runtime_module.write_bytes((output_a / "quickjs-runtime.js").read_bytes())
+    probe = tmp_path / "instantiate.mjs"
+    probe.write_text(
+        """\
+import { newQuickJSWASMModule } from "./quickjs-runtime.mjs";
+const QuickJS = await newQuickJSWASMModule();
+const runtime = QuickJS.newRuntime();
+for (const control of [
+  "setMemoryLimit",
+  "setMaxStackSize",
+  "setInterruptHandler",
+  "executePendingJobs",
+  "hasPendingJob",
+]) {
+  if (typeof runtime[control] !== "function") throw new Error(`missing ${control}`);
+}
+runtime.setMemoryLimit(4 * 1024 * 1024);
+runtime.setMaxStackSize(256 * 1024);
+runtime.setInterruptHandler(() => false);
+runtime.hasPendingJob();
+runtime.executePendingJobs(1);
+runtime.dispose();
+console.log("generated runtime instantiated with required controls");
+""",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        [node, str(probe)],
+        cwd=tmp_path,
+        env={"PATH": str(Path(node).parent)},
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr[-4000:]
+    assert completed.stdout.strip() == (
+        "generated runtime instantiated with required controls"
+    )

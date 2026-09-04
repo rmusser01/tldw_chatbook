@@ -8,6 +8,7 @@ import base64
 from dataclasses import dataclass
 import hashlib
 import hmac
+import io
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -17,7 +18,7 @@ import sys
 import tarfile
 import tempfile
 from typing import Mapping
-from urllib.request import Request, urlopen
+from urllib.request import build_opener, HTTPRedirectHandler, Request
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +34,13 @@ MAX_EXTRACTED_BYTES = 32 * 1024 * 1024
 
 class VendorError(RuntimeError):
     """Raised when a pinned input or generated output violates the vendor contract."""
+
+
+class _RejectRedirects(HTTPRedirectHandler):
+    """Prevent registry downloads from following any redirect response."""
+
+    def redirect_request(self, *_args: object, **_kwargs: object) -> None:
+        return None
 
 
 @dataclass(frozen=True)
@@ -239,7 +247,8 @@ def extract_verified_package(
     """
 
     try:
-        payload = archive_path.read_bytes()
+        with archive_path.open("rb") as archive_file:
+            payload = archive_file.read(MAX_ARCHIVE_BYTES + 1)
     except OSError as exc:
         raise VendorError("registry tarball could not be read") from exc
     if len(payload) > MAX_ARCHIVE_BYTES:
@@ -248,7 +257,7 @@ def extract_verified_package(
 
     extracted: dict[str, bytes] = {}
     try:
-        with tarfile.open(archive_path, mode="r:gz") as archive:
+        with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
             members = archive.getmembers()
             names = [member.name for member in members]
             if len(names) != len(set(names)):
@@ -312,7 +321,7 @@ def _download(spec: PackageSpec, destination: Path) -> Path:
         spec.source_url, headers={"User-Agent": "tldw-chatbook-canvas-vendor/1"}
     )
     try:
-        with urlopen(request, timeout=30) as response:
+        with build_opener(_RejectRedirects()).open(request, timeout=30) as response:
             if response.geturl() != spec.source_url:
                 raise VendorError("registry source redirected away from the pinned URL")
             payload = response.read(MAX_ARCHIVE_BYTES + 1)
