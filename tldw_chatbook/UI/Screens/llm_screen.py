@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, cast
 from loguru import logger
 from textual import on, work
 from textual.app import ComposeResult
+from textual.await_complete import AwaitComplete
 from textual.css.query import NoMatches
 from textual.widget import Widget
 from textual.widgets import Button, Static
@@ -147,6 +148,25 @@ if TYPE_CHECKING:
 
 class _AudioCppConsentDeclined(Exception):
     """Internal terminal value for a reviewed install the user declined."""
+
+
+class _VllmProfileDeleteConfirmationDialog(ConfirmationDialog):
+    """Settle one profile-deletion presentation through exactly one outcome."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._terminal_settled = False
+
+    def dismiss(self, result: bool | None = None) -> AwaitComplete:
+        """Pop this deletion dialog at most once for all terminal inputs."""
+
+        if self._terminal_settled:
+            return AwaitComplete.nothing()
+        self._terminal_settled = True
+        for button in self.query(Button):
+            button.disabled = True
+        self.result = result
+        return super().dismiss(result)
 
 
 def _insufficient_space_recovery(report: object) -> str | None:
@@ -2737,7 +2757,7 @@ class LLMScreen(LabScreen):
         ):
             return
         self.app.push_screen(
-            ConfirmationDialog(
+            _VllmProfileDeleteConfirmationDialog(
                 title="Delete vLLM profile?",
                 message=("Delete selected vLLM profile? This cannot be undone."),
                 confirm_label="Delete profile",

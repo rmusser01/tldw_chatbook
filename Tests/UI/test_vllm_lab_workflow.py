@@ -354,6 +354,95 @@ async def test_confirmed_profile_delete_executes_selected_claim_once_and_recreat
         assert restored.profiles[0].name == "Default vLLM"
 
 
+@pytest.mark.parametrize(
+    ("terminal_actions", "confirmed"),
+    [
+        (("confirm", "confirm"), True),
+        (("confirm", "cancel"), True),
+        (("cancel", "confirm"), False),
+    ],
+)
+async def test_profile_delete_queued_terminal_actions_settle_once(
+    terminal_actions, confirmed, monkeypatch, tmp_path: Path
+):
+    """Removing the one-shot terminal guard must pop or settle more than once."""
+
+    repo = VllmProfileRepository(tmp_path / "vllm_launch_profiles.json")
+    profile = profile_from_draft(
+        "Only profile",
+        VllmLaunchDraft(
+            mode=VllmMode.LOCAL,
+            python_environment="python",
+            model_source=VllmModelSource.HUGGING_FACE,
+            model_value="org/model",
+        ),
+    )
+    saved = repo.save(profile, expected_revision=0)
+    delete_calls = []
+    real_delete = repo.delete
+
+    def observed_delete(profile_id, *, expected_revision):
+        delete_calls.append((profile_id, expected_revision))
+        return real_delete(profile_id, expected_revision=expected_revision)
+
+    monkeypatch.setattr(repo, "delete", observed_delete)
+    app = _build_test_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen, _, _ = await _mount_vllm_screen(app, pilot)
+        screen._vllm_profile_repository = repo
+        screen._accept_vllm_profiles(saved.document)
+        await _wait_for_profile_mutation_idle(screen, pilot)
+        claim = screen._vllm_profiles
+        before = repo.path.read_bytes()
+        underlying_stack = tuple(app.screen_stack)
+
+        await pilot.click("#vllm-profile-delete-button")
+        dialog = await _wait_for_profile_confirmation(app, pilot)
+        callback_calls = []
+        real_confirm = screen._confirm_vllm_profile_delete
+
+        def observed_confirm(result, profile_id, revision):
+            callback_calls.append((result, profile_id, revision))
+            real_confirm(result, profile_id, revision)
+
+        monkeypatch.setattr(screen, "_confirm_vllm_profile_delete", observed_confirm)
+        for action in terminal_actions:
+            dialog.query_one(f"#{action}-button", Button).press()
+
+        for _ in range(100):
+            await pilot.pause()
+            mutation_settled = (
+                not confirmed or screen._vllm_profiles.revision > claim.revision
+            )
+            if app.screen is screen and callback_calls and mutation_settled:
+                break
+        else:
+            raise AssertionError(
+                "queued terminal actions did not settle: "
+                f"screen={type(app.screen).__name__}, "
+                f"stack={[type(item).__name__ for item in app.screen_stack]}, "
+                f"callbacks={callback_calls}, deletes={delete_calls}, "
+                f"revision={screen._vllm_profiles.revision}"
+            )
+
+        assert app.screen is screen
+        assert tuple(app.screen_stack) == underlying_stack
+        assert app.screen is not dialog
+        assert callback_calls == [
+            (confirmed, profile.profile_id, claim.revision)
+        ]
+        if confirmed:
+            assert delete_calls == [(profile.profile_id, claim.revision)]
+            restored = repo.load()
+            assert restored == screen._vllm_profiles
+            assert len(restored.profiles) == 1
+            assert restored.profiles[0].name == "Default vLLM"
+        else:
+            assert delete_calls == []
+            assert repo.path.read_bytes() == before
+            assert repo.load() == claim
+
+
 async def test_profile_delete_confirmation_rejects_stale_selection_claim(
     monkeypatch, tmp_path: Path
 ):
