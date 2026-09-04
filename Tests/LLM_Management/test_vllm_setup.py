@@ -217,6 +217,42 @@ def test_local_command_uses_public_cli_and_one_served_alias(tmp_path):
     assert "vllm.entrypoints" not in " ".join(command)
 
 
+def test_vllm_command_snapshot_is_unchanged(tmp_path):
+    cli_path = tmp_path / "venv/bin/vllm"
+    draft = local_draft(
+        python_environment=str(tmp_path / "venv/bin/python"),
+        dtype="bfloat16",
+        tensor_parallel_size=2,
+        maximum_model_length=4096,
+        gpu_memory_utilization=0.9,
+        trust_remote_code=True,
+        raw_arguments="--enable-prefix-caching",
+    )
+    result = passing_preflight(draft, cli_path=cli_path)
+
+    assert build_vllm_command(draft, result) == (
+        str(cli_path),
+        "serve",
+        "org/model",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000",
+        "--served-model-name",
+        "chatbook-vllm",
+        "--dtype",
+        "bfloat16",
+        "--tensor-parallel-size",
+        "2",
+        "--max-model-len",
+        "4096",
+        "--gpu-memory-utilization",
+        "0.9",
+        "--trust-remote-code",
+        "--enable-prefix-caching",
+    )
+
+
 @pytest.mark.parametrize(
     "raw,flag",
     [

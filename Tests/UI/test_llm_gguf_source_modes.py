@@ -461,7 +461,9 @@ async def test_configure_managed_gguf_opens_runtime_and_preselects_exact_ref(
         assert window.active_view == "llamafile"
         assert selection.mode is GGUFSourceMode.MANAGED
         assert selection.managed_ref == REF_B
-        assert window.query_one("#llamafile-gguf-source-mode", Select).value == "managed"
+        assert (
+            window.query_one("#llamafile-gguf-source-mode", Select).value == "managed"
+        )
         assert window.query_one("#llamafile-gguf-managed-select", Select).value == REF_B
         assert current_server_claim(app, "llamafile") is None
     finally:
@@ -497,7 +499,9 @@ async def test_configure_managed_gguf_waits_for_first_runtime_mount(
         )
 
         assert window.active_view == "llamafile"
-        assert window.query_one("#llamafile-gguf-source-mode", Select).value == "managed"
+        assert (
+            window.query_one("#llamafile-gguf-source-mode", Select).value == "managed"
+        )
         assert window.query_one("#llamafile-gguf-managed-select", Select).value == REF_B
         assert current_server_claim(app, "llamafile") is None
     finally:
@@ -528,9 +532,7 @@ async def test_configure_managed_gguf_waits_for_fresh_exact_inventory(
             pilot,
             lambda: (
                 window._managed_gguf_inventory_generation > generation
-                and window.query_one(
-                    "#llamacpp-gguf-managed-select", Select
-                ).value
+                and window.query_one("#llamacpp-gguf-managed-select", Select).value
                 == REF_B
             ),
             message="fresh exact managed GGUF was not selected",
@@ -1242,10 +1244,10 @@ async def test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable(
         window.active_view = "vllm"
         await _settle_pilot_until(
             pilot,
-            lambda: len(window.query("#vllm-model-path")) == 1,
+            lambda: len(window.query("#vllm-hf-model")) == 1,
             message="vLLM pane did not populate on first selection",
         )
-        vllm = window.query_one("#vllm-model-path", Input)
+        vllm = window.query_one("#vllm-hf-model", Input)
         window.active_view = "mlx-lm"
         await _settle_pilot_until(
             pilot,
