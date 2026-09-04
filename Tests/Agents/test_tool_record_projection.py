@@ -1,5 +1,6 @@
 """Behavioral coverage for generic sensitive tool-record projections."""
 
+import json
 from dataclasses import FrozenInstanceError
 
 import pytest
@@ -72,6 +73,29 @@ def test_catalog_default_projection_preserves_existing_provider_values(source, a
     assert projected.ok is True
 
 
+@pytest.mark.parametrize(
+    ("value", "encoded"),
+    [
+        (float("nan"), "NaN"),
+        (float("inf"), "Infinity"),
+        (float("-inf"), "-Infinity"),
+    ],
+)
+@pytest.mark.parametrize("audience", ["display", "log", "cycle", "continuation"])
+def test_catalog_default_projection_retains_legacy_nonfinite_json(value, encoded, audience):
+    """The compatibility fallback must not acquire opt-in strict JSON rules."""
+    registry = ToolCatalogRegistry()
+    registry.register_provider(_PlainProvider("builtin"))
+
+    projected = registry.project_tool_record(
+        audience,
+        ToolCall("canvas_like", {"value": value}, call_id="call-1"),
+        ToolResult(ok=True, content="ok"),
+    )
+
+    assert json.dumps(dict(projected.arguments), sort_keys=True) == f'{{"value": {encoded}}}'
+
+
 @pytest.mark.parametrize("audience", ["display", "log", "cycle", "continuation"])
 def test_catalog_dispatches_each_audience_to_the_owning_provider(audience):
     """A wrong owner lookup would bypass a sensitive provider's redaction."""
@@ -110,3 +134,44 @@ def test_failed_projection_is_content_free_and_immutable(audience):
     }
     with pytest.raises(FrozenInstanceError):
         projected.content = "leak"
+
+
+@pytest.mark.parametrize("malformed", ["nonfinite", "metadata"])
+@pytest.mark.parametrize("audience", ["display", "log", "cycle", "continuation"])
+def test_invalid_opt_in_projection_fails_closed_without_payload_or_exception_leak(
+    malformed, audience
+):
+    """Strict validation applies only to projectors that opted into the hook."""
+
+    class InvalidProvider(_PlainProvider):
+        def project_tool_record(self, _audience, _call, _result):
+            if malformed == "nonfinite":
+                return ToolRecordProjection(
+                    arguments={"payload": RAW_ARGUMENT, "value": float("nan")},
+                    content=RAW_RESULT,
+                    error=RAW_RESULT,
+                    ok=True,
+                )
+            return ToolRecordProjection(  # type: ignore[arg-type]
+                arguments={"payload": RAW_ARGUMENT},
+                content=object(),
+                error=RAW_RESULT,
+                ok=True,
+            )
+
+    registry = ToolCatalogRegistry()
+    registry.register_provider(InvalidProvider("canvas"))
+    projected = registry.project_tool_record(
+        audience,
+        ToolCall("canvas_like", {"html": RAW_ARGUMENT}, call_id="call-1"),
+        ToolResult(ok=False, error=RAW_RESULT),
+    )
+
+    assert dict(projected.arguments) == {
+        "tool_name": "canvas_like",
+        "call_id": "call-1",
+        "success": False,
+        "error_category": "ValueError" if malformed == "nonfinite" else "TypeError",
+    }
+    assert RAW_ARGUMENT not in str(projected)
+    assert RAW_RESULT not in str(projected)

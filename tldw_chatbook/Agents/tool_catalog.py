@@ -1708,6 +1708,18 @@ class ToolCatalogRegistry:
             return None
         return record.tool_id, record.provider
 
+    def has_tool_record_projection(self, name: str) -> bool:
+        """Return whether this tool's cached owner opted into projection.
+
+        This registry-owned distinction controls compatibility behavior at
+        runtime.  It is deliberately not a flag returned by an untrusted
+        projector, which could otherwise request the permissive fallback.
+        """
+        record = self._owner_record_for_name(name)
+        return record is not None and isinstance(
+            record.provider, ToolRecordProjectionProvider
+        )
+
     def project_tool_record(
         self,
         audience: ToolProjectionAudience,

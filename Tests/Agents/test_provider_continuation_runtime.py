@@ -34,7 +34,6 @@ from tldw_chatbook.Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
 )
 
-
 CALCULATOR = ToolSchema(
     id="builtin:calculator",
     name="calculator",
@@ -234,6 +233,7 @@ def test_continuation_checkpoint_uses_the_continuation_projection() -> None:
         error="safe-error",
         ok=result.ok if result is not None else None,
     )
+    deps.has_tool_record_projection = lambda _call: True
 
     outcome = run_agent_loop(CONFIG, [], [CALCULATOR], deps)
 

@@ -617,6 +617,10 @@ class LoopDeps:
             lambda _audience, call, result=None: default_tool_record_projection(call, result)
         )
     )
+    # The catalog owns this signal: a tool provider cannot mark its own
+    # projection as compatibility-safe and bypass the strict boundary below.
+    # Appended to preserve legacy positional LoopDeps construction.
+    has_tool_record_projection: Callable[[ToolCall], bool] = lambda _call: False
 
 
 
@@ -1097,12 +1101,29 @@ def run_agent_loop(
     context_trace_reserved = False
     current_call_correlation = ""
 
+    def projection_opt_in(call: ToolCall) -> bool | None:
+        """Return the catalog-authoritative projection mode, or None on error."""
+        try:
+            return bool(deps.has_tool_record_projection(call))
+        except Exception:  # noqa: BLE001 -- an unknown mode must fail closed
+            return None
+
     def project_record(
         audience: ToolProjectionAudience,
         call: ToolCall,
         result: ToolResult | None = None,
     ) -> ToolRecordProjection:
         """Project one non-model tool consumer without ever formatting raw data."""
+        opted_in = projection_opt_in(call)
+        if opted_in is None:
+            return failed_tool_record_projection(
+                call, result, "ProjectionDetectionError"
+            )
+        # Existing providers preserve their former serializer behavior,
+        # including Python JSON's NaN/Infinity spellings.  Strict JSON is an
+        # opt-in provider contract only.
+        if not opted_in:
+            return default_tool_record_projection(call, result)
         try:
             projected = deps.project_tool_record(audience, call, result)
             if not isinstance(projected, ToolRecordProjection):
@@ -1124,7 +1145,7 @@ def run_agent_loop(
     def projection_arguments_json(projection: ToolRecordProjection) -> str:
         """Serialize the projection, never the original call arguments."""
         try:
-            return json.dumps(dict(projection.arguments), sort_keys=True, allow_nan=False)
+            return json.dumps(dict(projection.arguments), sort_keys=True)
         except Exception:  # noqa: BLE001 -- projection metadata must remain bounded
             return "{}"
 
@@ -2026,19 +2047,23 @@ def run_agent_loop(
             # providers, but fail closed for any provider that supplied a
             # distinct log projection.
             model_log_content = turn.text
-            if any(
-                dict(project_record("log", call).arguments) != call.args
-                for call in calls
-            ):
-                model_log_content = "; ".join(
+            model_step_summary = turn.text[:200]
+            # Fence/native tool calls are represented in model text as well as
+            # call.args.  The catalog-owned opt-in signal protects both the
+            # durable model log and the persisted/displayed STEP_MODEL row,
+            # even when a projector happens to return matching arguments.
+            if calls and any(projection_opt_in(call) is not False for call in calls):
+                safe_tool_summary = "; ".join(
                     f"Tool call recorded: {call.name}" for call in calls
                 )
+                model_log_content = safe_tool_summary
+                model_step_summary = safe_tool_summary
             add(
                 STEP_MODEL,
                 summary=(
                     "Ephemeral tool continuation is non-resumable."
                     if ephemeral_continuation
-                    else turn.text[:200]
+                    else model_step_summary
                 ),
                 parent_step_index=model_response_step.index,
             )

@@ -7229,6 +7229,9 @@ class AgentService:
             ),
             on_record=on_record,
             project_tool_record=self.registry.project_tool_record,
+            has_tool_record_projection=lambda call: self.registry.has_tool_record_projection(
+                call.name
+            ),
             continuation_context=ContinuationEventContext(
                 owner_message_id=continuation_owner_message_id,
                 run_id=run_id,
