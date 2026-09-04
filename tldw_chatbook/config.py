@@ -3241,6 +3241,7 @@ rail_layout_scope = "global"  # Share Console rail disclosure across workspaces;
 assistant_library_access_default = false  # New Console sessions block assistant Library access
 paste_collapse_threshold = 50  # Collapse pasted/inserted chunks only when longer than this many characters
 local_tools_enabled = true      # workspace, web, and Watchlists agent tools; every call still uses MCP Ask/Allow/Off permissions
+# ask_user_timeout_seconds = 0  # ask_user question card auto-continue: 0 (default) waits for an answer indefinitely; e.g. 120 continues the run without an answer after 120s. Environment override: TLDW_CONSOLE_ASK_USER_TIMEOUT_SECONDS
 raw_cli_permitted = false       # Persisted unlock only; every app launch still starts unarmed
 # Root-source byte limit; allowed range is 1-1048576 (1 MiB).
 project_instructions_startup_max_bytes = 32768
@@ -5031,7 +5032,6 @@ require_auth = false  # Require authentication (not implemented yet)
 rate_limit = 100  # Max requests per minute per client
 max_concurrent_requests = 10  # Max concurrent requests
 # approval_timeout_seconds = 0  # Console approval-card auto-deny ceiling: 0 (default) waits indefinitely; e.g. 120 auto-denies undecided calls after 120s
-# ask_user_timeout_seconds = 0  # Console ask_user auto-continue: 0 (default) waits for an answer indefinitely; e.g. 120 continues the run without an answer after 120s
 
 # expose_local_tools = false   # expose workspace, web, and Watchlists agent tools (fs_*/git_*/web_*/watchlists_*) to external MCP clients; each tool remains permission-gated
 

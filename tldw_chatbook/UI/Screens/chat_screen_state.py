@@ -72,7 +72,11 @@ class TaskResumeState:
         return bool(self.pending_skill_script)
 
     def has_pending_question(self) -> bool:
-        """Return whether an ask_user question card should be shown."""
+        """Return whether an ask_user question card should be shown.
+
+        Returns:
+            ``True`` when a live question payload is set.
+        """
         return bool(self.pending_question)
 
     def to_dict(self) -> dict[str, Any]:

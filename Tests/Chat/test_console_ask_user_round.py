@@ -245,3 +245,91 @@ def test_wiring_registers_the_callback_only_with_a_view(make_controller):
     controller.set_pending_question = None
     assert controller._ask_user_wiring(session.id) == {}
     assert controller._ask_user_wiring(None) == {}
+
+
+# --- Qodo #2379 round 1 ------------------------------------------------------
+
+
+def test_timeout_precedence_env_beats_config_and_empty_or_bad_env_is_ignored(
+    make_controller, monkeypatch
+):
+    import tldw_chatbook.Chat.console_chat_controller as module
+
+    monkeypatch.setattr(
+        module,
+        "get_cli_setting",
+        lambda section, key, default=None: 7
+        if (section, key) == ("console", "ask_user_timeout_seconds")
+        else default,
+    )
+    controller = make_controller()
+    monkeypatch.setenv("TLDW_CONSOLE_ASK_USER_TIMEOUT_SECONDS", "42")
+    assert controller._resolve_ask_user_timeout_seconds() == 42.0
+    monkeypatch.setenv("TLDW_CONSOLE_ASK_USER_TIMEOUT_SECONDS", "   ")
+    assert controller._resolve_ask_user_timeout_seconds() == 7.0
+    monkeypatch.setenv("TLDW_CONSOLE_ASK_USER_TIMEOUT_SECONDS", "soon")
+    assert controller._resolve_ask_user_timeout_seconds() == 7.0
+    monkeypatch.setenv("TLDW_CONSOLE_ASK_USER_TIMEOUT_SECONDS", "-5")
+    assert controller._resolve_ask_user_timeout_seconds() == 0.0
+    controller.ask_user_timeout_seconds = lambda: 1.5
+    assert controller._resolve_ask_user_timeout_seconds() == 1.5, "the seam still wins for tests"
+
+
+def test_concurrent_asks_for_one_session_arm_exactly_one_round(make_controller):
+    """Check-and-register is one critical section: two sibling workers
+    asking at the same instant cannot both arm."""
+    controller = make_controller()
+    session = controller.new_session(title="s")
+    barrier = threading.Barrier(2)
+    results = {}
+
+    def worker(name):
+        with use_run_id(f"run-{name}"):
+            barrier.wait()
+            results[name] = controller.request_user_questions(_questions(), session_id=session.id)
+
+    threads = [threading.Thread(target=worker, args=(n,)) for n in ("a", "b")]
+    for t in threads:
+        t.start()
+    _wait_until(lambda: len(results) == 1 and len(controller.pending_question_ids()) == 1)
+    (busy_name,) = results
+    assert results[busy_name]["reason"] == "busy"
+    controller.resolve_pending_question([], request_id=controller.pending_question_ids()[0])
+    for t in threads:
+        t.join(timeout=5)
+    assert len(results) == 2
+    assert sorted(r["answered"] for r in results.values()) == [False, True]
+
+
+def test_bounce_map_is_bounded_and_cleared_on_revoke(make_controller):
+    controller = make_controller()
+    session = controller.new_session(title="s")
+    thread, _box = _start(controller, _questions(), session_id=session.id, run_id="run-live")
+    _wait_until(lambda: bool(controller.pending_question_ids()))
+    for n in range(80):
+        with use_run_id(f"run-{n}"):
+            assert controller.request_user_questions(_questions(), session_id=session.id)["reason"] == "busy"
+    assert len(controller._question_bounces) <= 64
+    assert "run-79" in controller._question_bounces and "run-0" not in controller._question_bounces
+    controller.revoke_approval_rounds_for_run("run-79")
+    assert "run-79" not in controller._question_bounces
+    controller.resolve_pending_question([], request_id=controller.pending_question_ids()[0])
+    thread.join(timeout=5)
+
+
+def test_malformed_answers_are_dropped_and_the_round_stays_armed(make_controller):
+    controller = make_controller()
+    thread, box = _start(controller, _questions())
+    _wait_until(lambda: bool(controller.pending_question_ids()))
+    request_id = controller.pending_question_ids()[0]
+    controller.resolve_pending_question(
+        [{"question": "q", "selected": "not-a-list", "other_text": None, "unanswered": False}],
+        request_id=request_id,
+    )
+    assert controller.pending_question_ids() == [request_id], "fail closed"
+    controller.resolve_pending_question(
+        [{"question": "q", "selected": [], "other_text": "fine", "unanswered": False}],
+        request_id=request_id,
+    )
+    thread.join(timeout=5)
+    assert box["result"]["answers"][0]["other_text"] == "fine"

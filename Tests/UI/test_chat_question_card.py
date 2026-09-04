@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -284,3 +285,41 @@ def test_the_hook_slot_is_declared_for_the_new_setter():
 
     slot = next(s for s in CONSOLE_VIEW_HOOK_SLOTS if s.name == "set_pending_question")
     assert slot.target == "controller" and slot.viewless_default is None and slot.why
+
+
+# --- Qodo #2379 round 1 ------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_other_text_is_flattened_and_bounded_at_the_card():
+    app = _Harness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        card = await _mount(app, pilot, _payload(1))
+        card.query_one(Input).value = "  line\none\x07 " + "x" * 600
+        await pilot.pause()
+        (answer,) = card.collect_answers()
+        assert answer["other_text"].startswith("line one x")
+        assert len(answer["other_text"]) == 500
+        assert "\n" not in answer["other_text"] and "\x07" not in answer["other_text"]
+
+
+@pytest.mark.asyncio
+async def test_deadline_counts_down_from_the_absolute_deadline_and_stops_when_cleared():
+    app = _Harness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        payload = _payload(1, timeout=120)
+        payload["deadline_monotonic"] = time.monotonic() + 3.0
+        card = await _mount(app, pilot, payload)
+        label = card.query_one("#question-deadline", Static)
+        first = str(label.render())
+        assert first.startswith("Auto-continues in 0:0"), first
+        assert card._deadline_timer is not None
+        await pilot.pause(1.3)
+        second = str(label.render())
+        assert second != first and second.startswith("Auto-continues in 0:0"), (first, second)
+        assert card.query_one(RadioSet).pressed_index == -1, "ticks never rebuild sections"
+        app.query_one(ChatTaskCards).sync_state(TaskResumeState())
+        await pilot.pause()
+        assert card._deadline_timer is None

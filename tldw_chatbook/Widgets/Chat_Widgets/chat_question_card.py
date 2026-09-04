@@ -14,6 +14,7 @@ misapplied to a newer round.
 
 from __future__ import annotations
 
+import time
 from typing import Any, ClassVar
 
 from textual import events
@@ -21,6 +22,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
+from textual.timer import Timer
 from textual.widgets import Button, Input, RadioButton, RadioSet, SelectionList, Static
 from textual.widgets.selection_list import Selection
 
@@ -112,9 +114,14 @@ class ChatQuestionCard(Container):
         self._request_id: str | None = None
         self._rendered_request_id: str | None = None
         self._questions: list[dict[str, Any]] = []
+        self._deadline_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
-        """Yield the title, deadline line, scrolling sections, and Submit."""
+        """Yield the title, deadline line, scrolling sections, and Submit.
+
+        Returns:
+            The composed child widgets.
+        """
         yield Static("", id="question-title", markup=False)
         yield Static("", id="question-deadline", markup=False)
         yield VerticalScroll(id="question-sections")
@@ -141,6 +148,7 @@ class ChatQuestionCard(Container):
                 "request_id", ...}`` from the controller, or None.
         """
         if not payload:
+            self._stop_deadline_timer()
             self.display = False
             self._payload = None
             self._request_id = None
@@ -165,6 +173,8 @@ class ChatQuestionCard(Container):
             question; a question with neither a selection nor Other text is
             ``unanswered`` (A5: partial submission is allowed).
         """
+        from tldw_chatbook.Agents.ask_user_questions import clean_other_text
+
         answers: list[dict[str, Any]] = []
         sections = list(self.query(".question-section"))
         for index, question in enumerate(self._questions):
@@ -184,7 +194,7 @@ class ChatQuestionCard(Container):
                     radio = section.query_one(RadioSet)
                     if 0 <= radio.pressed_index < len(options):
                         selected = [str(options[radio.pressed_index]["label"])]
-                other = section.query_one(Input).value.strip() or None
+                other = clean_other_text(section.query_one(Input).value)
             answers.append(
                 {
                     "question": str(question.get("question", "")),
@@ -244,6 +254,7 @@ class ChatQuestionCard(Container):
             focused.toggle(index)
 
     def _submit(self) -> None:
+        self._stop_deadline_timer()
         answers = self.collect_answers()
         request_id = self._request_id
         self.display = False
@@ -260,7 +271,7 @@ class ChatQuestionCard(Container):
         who = "A sub-agent" if payload.get("asked_by") == "sub-agent" else "The agent"
         count = len(self._questions)
         title.update(f"{who} has {count} question{'s' if count != 1 else ''} for you:")
-        deadline.update(format_question_deadline(payload.get("timeout_seconds")))
+        self._sync_deadline(deadline)
         if self._rendered_request_id == self._request_id:
             return
         self._rendered_request_id = self._request_id
@@ -270,6 +281,50 @@ class ChatQuestionCard(Container):
             self._build_section(key, index, question)
             for index, question in enumerate(self._questions)
         )
+
+    def _remaining_seconds(self) -> float | None:
+        """Seconds left on the round's absolute deadline, or None when unarmed."""
+        payload = self._payload or {}
+        deadline = payload.get("deadline_monotonic")
+        if not deadline:
+            return None
+        return max(0.0, float(deadline) - time.monotonic())
+
+    def _sync_deadline(self, label: Static) -> None:
+        """Render the countdown and keep it ticking while a deadline is armed.
+
+        The controller enforces ``deadline_monotonic``; the card only shows
+        it. With a deadline the label counts down once a second from the
+        remaining time (never the arm-time ``timeout_seconds`` a late mount
+        would overstate); without one it shows the static copy for a
+        payload that carries only ``timeout_seconds``, or nothing.
+
+        Args:
+            label: The ``#question-deadline`` Static.
+        """
+        remaining = self._remaining_seconds()
+        if remaining is None:
+            self._stop_deadline_timer()
+            label.update(format_question_deadline((self._payload or {}).get("timeout_seconds")))
+            return
+        label.update(format_question_deadline(remaining) or "Auto-continues now")
+        if remaining <= 0:
+            self._stop_deadline_timer()
+        elif self._deadline_timer is None:
+            self._deadline_timer = self.set_interval(1.0, self._tick_deadline)
+
+    def _tick_deadline(self) -> None:
+        try:
+            label = self.query_one("#question-deadline", Static)
+        except NoMatches:
+            self._stop_deadline_timer()
+            return
+        self._sync_deadline(label)
+
+    def _stop_deadline_timer(self) -> None:
+        if self._deadline_timer is not None:
+            self._deadline_timer.stop()
+            self._deadline_timer = None
 
     @staticmethod
     def _option_prompt(option: dict[str, Any]) -> str:

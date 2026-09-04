@@ -699,6 +699,11 @@ _DEFAULT_WORKTREE_MERGE_CONFIRM_TIMEOUT_SECONDS = 0.0
 #: PRD A7: `[console] ask_user_timeout_seconds`. 0 = no deadline (ADR-067);
 #: a positive value auto-continues the run with `answered: false`.
 _DEFAULT_ASK_USER_TIMEOUT_SECONDS = 0.0
+#: Env override for `[console] ask_user_timeout_seconds` (env -> config -> default).
+ASK_USER_TIMEOUT_ENV_VAR = "TLDW_CONSOLE_ASK_USER_TIMEOUT_SECONDS"
+#: A9 bounce counters are keyed by run id; a run that only ever bounced has no
+#: end-of-run hook here, so the map is bounded by evicting the oldest run.
+_MAX_TRACKED_QUESTION_BOUNCE_RUNS = 64
 _DISPATCH_IDENTIFIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}\Z", re.ASCII)
 #: TASK-1050: synthetic round id `set_run_pending_approval`'s deprecated
 #: boolean shim registers under, internally, so its add/discard composes
@@ -13869,7 +13874,12 @@ class ConsoleChatController:
     # -- Worktree-merge confirm bridge (TASK-28238 phase 2 Task 6) -----------
 
     def _resolve_ask_user_timeout_seconds(self) -> float:
-        """PRD A7: the question deadline -- injected seam, else config, else 0.
+        """PRD A7: the question deadline -- seam, else env, else config, else 0.
+
+        The injected seam exists for tests; production precedence is
+        ``TLDW_CONSOLE_ASK_USER_TIMEOUT_SECONDS`` -> ``[console]
+        ask_user_timeout_seconds`` -> ``0``. An empty or unparseable env
+        value is ignored.
 
         Returns:
             Seconds before an unanswered question auto-continues; ``0.0``
@@ -13880,6 +13890,12 @@ class ConsoleChatController:
                 return max(0.0, float(self.ask_user_timeout_seconds()))
             except Exception:  # noqa: BLE001 -- fail open to the documented default
                 pass
+        raw_env = os.environ.get(ASK_USER_TIMEOUT_ENV_VAR, "").strip()
+        if raw_env:
+            try:
+                return max(0.0, float(raw_env))
+            except ValueError:
+                pass  # an unparseable override is ignored, not fatal
         try:
             return max(
                 0.0,
@@ -13939,6 +13955,20 @@ class ConsoleChatController:
             session_id if session_id is not None else (self.store.active_session_id or "")
         )
         owning_run_id = current_run_id()
+        event = threading.Event()
+        decision: dict[str, Any] = {}
+        request_id = str(uuid4())
+        round_state: dict[str, Any] = {
+            "event": event,
+            "decision": decision,
+            "session_id": owning_session_id,
+            "run_id": owning_run_id,
+            "revoked": False,
+        }
+        # The live check and the registration share ONE critical section
+        # (Qodo #2379): two sibling workers asking at once must not both
+        # see "no live round" and both arm -- exactly one arms, the other
+        # gets `busy`.
         with self._pending_question_lock:
             live = any(
                 state.get("session_id") == owning_session_id
@@ -13947,27 +13977,18 @@ class ConsoleChatController:
             if live:
                 bounces = self._question_bounces.get(owning_run_id, 0) + 1
                 self._question_bounces[owning_run_id] = bounces
+                while len(self._question_bounces) > _MAX_TRACKED_QUESTION_BOUNCE_RUNS:
+                    self._question_bounces.pop(next(iter(self._question_bounces)))
             else:
                 bounces = 0
                 self._question_bounces.pop(owning_run_id, None)
+                self._pending_question_rounds[request_id] = round_state
         if live:
             if bounces >= MAX_CONSECUTIVE_BUSY:
                 raise AskUserBusyRefusal(ASK_USER_REFUSAL_COPY)
             return busy_result()
-        event = threading.Event()
-        decision: dict[str, Any] = {}
-        request_id = str(uuid4())
         round_cancel_event = self._bind_round_cancel_signal(session_id)
         visit_cancel_event = self._bind_visit_cancel_signal()
-        round_state: dict[str, Any] = {
-            "event": event,
-            "decision": decision,
-            "session_id": owning_session_id,
-            "run_id": owning_run_id,
-            "revoked": False,
-        }
-        with self._pending_question_lock:
-            self._pending_question_rounds[request_id] = round_state
         timeout_seconds = self._resolve_ask_user_timeout_seconds()
         deadline = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
         actor = current_run_actor()
@@ -14043,19 +14064,30 @@ class ConsoleChatController:
 
         Strict ``request_id`` match, exactly like
         ``resolve_pending_skill_script``: a resolve with no id, or an id
-        from any round but the armed one, is silently dropped.
+        from any round but the armed one, is silently dropped. The answers
+        are validated (``ask_user_questions.validate_answers``) before the
+        worker sees them; a malformed list is dropped the same way.
 
         Args:
             answers: One PRD A6 answer dict per question, in order.
             request_id: The armed round's id as echoed back by the card.
         """
+        from tldw_chatbook.Agents.ask_user_questions import (
+            AskUserValidationError,
+            validate_answers,
+        )
+
         if request_id is None:
             return
+        try:
+            clean_answers = validate_answers(answers)
+        except AskUserValidationError:
+            return  # fail closed: a malformed resolve is dropped, never partially applied
         with self._pending_question_lock:
             round_state = self._pending_question_rounds.get(request_id)
         if round_state is None:
             return
-        round_state["decision"]["answers"] = [dict(answer) for answer in answers]
+        round_state["decision"]["answers"] = clean_answers
         round_state["event"].set()
 
     def pending_question_ids(self) -> list[str]:
@@ -14105,6 +14137,7 @@ class ConsoleChatController:
         """
         revoked: list[tuple[str, str | None]] = []
         with self._pending_question_lock:
+            self._question_bounces.pop(run_id, None)
             for request_id, state in list(self._pending_question_rounds.items()):
                 if state.get("run_id") != run_id:
                     continue

@@ -145,7 +145,7 @@ def test_handler_rejects_bad_calls_with_an_actionable_error_and_never_calls_back
         state=ASK, root=tmp_path, ask_user=lambda q: calls.append(q) or {}
     )
     result = provider.invoke("local:ask_user", _raw(options=[{"label": "one"}]))
-    assert result.ok is False and "2 to 4" in (result.error or "")
+    assert result.ok is False and "at least 2 items" in (result.error or "")
     assert calls == []
 
 
