@@ -2491,7 +2491,7 @@
     }
 
     LibraryNoteImportCanvas .note-import-error {
-        color: #ff8fa3;
+        color: $text-error;
         text-style: bold;
     }
 
