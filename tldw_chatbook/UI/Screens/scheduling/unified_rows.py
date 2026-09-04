@@ -29,6 +29,7 @@ existing call site, test import, and docstring cross-reference unchanged.
 
 from __future__ import annotations
 
+import calendar
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -36,6 +37,7 @@ from typing import Any, Literal
 
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import DORMANT_TRANSFER_STATES
 from tldw_chatbook.Scheduling.models import ReminderTask, ScheduleKind
+from tldw_chatbook.Scheduling.schedule_compute import _parse_time_of_day
 
 RowKind = Literal["reminder", "definition"]
 RowBucket = Literal["active", "paused", "completed"]
@@ -302,9 +304,27 @@ def _definition_at_label(schedule: dict[str, Any]) -> str:
     `_humanize_cron` for a cron-kind schedule rather than re-deriving
     cron-cadence prose.
 
+    ``daily``/``weekly`` render their own ``time_of_day`` (Qodo follow-up
+    to finding 8): those two used to fall through to ``"-"`` here, which
+    only became a contradiction once the `At` row was made genuinely
+    editable for them -- editing the time and repainting a dash is the
+    dishonest-repaint class ruling 2 exists to forbid. Deliberately NOT
+    routed through `_humanize_cron` by synthesizing a cron: that
+    function's ``_WEEKDAYS`` is Sunday-first (croniter's day-of-week),
+    while a definition ``schedule["weekday"]`` is Monday-first
+    (`schedule_compute._compute_weekly`, Python's own ``weekday()``), so
+    the round trip would confidently name the wrong day. The wording
+    still MATCHES `_humanize_cron`'s ("Daily at HH:MM TZ" / "Weekly on
+    <Day> at HH:MM TZ") so the same cadence reads identically whichever
+    kind expressed it.
+
+    ``interval`` keeps its ``"-"``: it has no single time to show, and
+    its `At` row is read-only, so no edit can repaint into it.
+
     Args:
-        schedule: A definition's ``schedule`` dict (``kind`` is
-            ``"cron"``/``"one_time"``).
+        schedule: A definition's ``schedule`` dict -- ``kind`` is one of
+            `schedule_compute.py`'s five (``one_time``/``interval``/
+            ``daily``/``weekly``/``cron``).
 
     Returns:
         A human-readable schedule summary, or ``"-"`` for an
@@ -323,6 +343,23 @@ def _definition_at_label(schedule: dict[str, Any]) -> str:
         if dt is None:
             return f"One-time at {run_at}" if run_at else "One-time"
         return f"One-time at {dt.strftime('%Y-%m-%d %H:%M')} {_format_timezone(dt)}"
+    if kind in ("daily", "weekly"):
+        # The SAME parser the scheduler itself applies to this field, so
+        # a value this label renders is exactly a value that will fire --
+        # and unparseable text says "-" rather than being echoed as if it
+        # were a schedule.
+        parsed = _parse_time_of_day(schedule.get("time_of_day"))
+        if parsed is None:
+            return "-"
+        at = f"{parsed.strftime('%H:%M')} {schedule.get('timezone') or 'UTC'}"
+        weekday = schedule.get("weekday")
+        if kind == "weekly":
+            if isinstance(weekday, bool) or not isinstance(weekday, int):
+                return f"Weekly at {at}"
+            if not 0 <= weekday <= 6:
+                return f"Weekly at {at}"
+            return f"Weekly on {calendar.day_name[weekday]} at {at}"
+        return f"Daily at {at}"
     return "-"
 
 

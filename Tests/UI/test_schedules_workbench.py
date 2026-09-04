@@ -1894,7 +1894,7 @@ async def test_at_edit_on_a_daily_automation_edits_time_of_day_not_run_at(tmp_pa
                 "kind": "weekly",
                 "time_of_day": "09:00",
                 "weekday": 2,
-                "timezone": "America/New_York",
+                "timezone": "UTC",
             },
             input={"question": "What shipped?"},
             config={},
@@ -1939,8 +1939,40 @@ async def test_at_edit_on_a_daily_automation_edits_time_of_day_not_run_at(tmp_pa
             assert stored["time_of_day"] == "07:30"  # normalized, zero-padded
             assert stored["kind"] == "weekly"  # NEVER converted
             assert stored["weekday"] == 2  # sibling fields preserved
-            assert stored["timezone"] == "America/New_York"
+            assert stored["timezone"] == "UTC"
             assert "run_at" not in stored
+
+            # Ruling 2: the row must repaint to the AUTHORITATIVE value.
+            # `_definition_at_label` used to answer "-" for every kind but
+            # cron/one_time, so this row went on reading "-" after a
+            # successful edit -- the dishonest-repaint class this program
+            # polices, on the row task 4 had just made editable.
+            at_static = detail.query_one(
+                "#scheduling-automation-detail-at", Static
+            )
+            assert (
+                at_static.render_line(0).text.strip()
+                == "Weekly on Wednesday at 07:30 UTC"
+            )
+
+            # SECOND surface: `_definition_at_label` also feeds the Queue
+            # tab's unified-row subtitle (`build_unified_rows`'s
+            # `schedule_summary` -> `_row_subtitle`). Painted, so the
+            # shared-helper change is verified where it actually lands
+            # rather than assumed.
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-queue-tab"
+            )
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            queue_table = workbench.query_one("#scheduling-task-table", DataTable)
+            painted = " ".join(
+                str(cell)
+                for index in range(queue_table.row_count)
+                for cell in queue_table.get_row_at(index)
+            )
+            assert "Weekly on Wednesday at 07:30 UTC" in painted
     finally:
         db.close()
 
