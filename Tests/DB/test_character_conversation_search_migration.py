@@ -7,7 +7,9 @@ OWNED_OBJECTS = {
     "character_conversation_search_documents",
     "character_conversation_fts",
     "character_conversation_search_generations",
+    "character_conversation_search_dirty",
     "character_conversation_search_revision",
+    "character_conversation_search_state",
 }
 
 
@@ -67,7 +69,7 @@ def test_v66_migrates_genuine_v65_once_without_starting_backfill(
         connection = upgraded.get_connection()
         assert upgraded._get_db_version(connection) == 66
         assert {row[0] for row in connection.execute(
-            "SELECT name FROM sqlite_master WHERE name IN (?, ?, ?, ?)"
+            "SELECT name FROM sqlite_master WHERE name IN (?, ?, ?, ?, ?, ?)"
             , tuple(sorted(OWNED_OBJECTS))
         )} == OWNED_OBJECTS
         assert connection.execute(
@@ -127,6 +129,13 @@ def test_v66_fresh_schema_matches_migrated_tables_columns_indexes_and_triggers(
             "source_revision",
             "generation_id",
         }
+        generation_columns = {
+            row[1]
+            for row in fresh.get_connection().execute(
+                "PRAGMA table_info(character_conversation_search_generations)"
+            )
+        }
+        assert {"lease_expires_at", "updated_at"} <= generation_columns
     finally:
         fresh.close_connection()
         migrated.close_connection()

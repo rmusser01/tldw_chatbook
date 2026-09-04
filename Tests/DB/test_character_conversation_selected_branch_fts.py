@@ -1,4 +1,5 @@
 from pathlib import Path
+from time import perf_counter
 
 import pytest
 
@@ -255,3 +256,85 @@ def test_projector_excludes_conversation_with_deleted_character_card(
     assert db.soft_delete_character_card(1, expected_version=int(card["version"]))
 
     assert SelectedBranchEligibilityProjector(db).project(conversation_id) is None
+
+
+def test_projector_validates_large_branched_snapshot_in_linear_time(
+    tmp_path: Path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "large-branch.sqlite", client_id="projector")
+    conversation_id = _conversation(db)
+    chain_size = 2_500
+    timestamp = "2026-09-03T10:00:00Z"
+    chain_rows = []
+    parent_id = None
+    for index in range(chain_size):
+        message_id = f"path-{index:04d}"
+        chain_rows.append(
+            (
+                message_id,
+                conversation_id,
+                parent_id,
+                "user" if index % 2 == 0 else "assistant",
+                f"selected {index}",
+                timestamp,
+                timestamp,
+                "projector",
+            )
+        )
+        parent_id = message_id
+    branch_rows = [
+        (
+            f"branch-{index:04d}",
+            conversation_id,
+            "path-0000",
+            "assistant",
+            f"branch {index}",
+            timestamp,
+            timestamp,
+            "projector",
+        )
+        for index in range(chain_size)
+    ]
+    with db.transaction() as connection:
+        connection.executemany(
+            "INSERT INTO messages(id, conversation_id, parent_message_id, role, "
+            "sender, content, timestamp, last_modified, client_id) "
+            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    message_id,
+                    chat_id,
+                    parent,
+                    role,
+                    role,
+                    content,
+                    created,
+                    modified,
+                    client_id,
+                )
+                for (
+                    message_id,
+                    chat_id,
+                    parent,
+                    role,
+                    content,
+                    created,
+                    modified,
+                    client_id,
+                ) in (*chain_rows, *branch_rows)
+            ],
+        )
+        connection.execute(
+            "UPDATE conversations SET active_leaf_message_id = ? WHERE id = ?",
+            (parent_id, conversation_id),
+        )
+
+    started = perf_counter()
+    document = SelectedBranchEligibilityProjector(db).project(conversation_id)
+    elapsed = perf_counter() - started
+
+    assert document is not None
+    assert document.body.startswith("selected 0\n\nselected 1")
+    assert document.body.endswith("selected 2499")
+    assert "branch 0" not in document.body
+    assert elapsed < 0.5

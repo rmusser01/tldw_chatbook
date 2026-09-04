@@ -7,7 +7,6 @@ import json
 import sqlite3
 import time
 import uuid
-from collections import defaultdict
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -41,7 +40,9 @@ CREATE TABLE character_conversation_search_generations(
   processed_conversations INTEGER NOT NULL DEFAULT 0 CHECK(processed_conversations >= 0),
   error_code TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  completed_at TEXT
+  completed_at TEXT,
+  lease_expires_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX character_conversation_search_generations_authority_status
   ON character_conversation_search_generations(data_authority_id, status);
@@ -61,6 +62,24 @@ BEFORE DELETE ON character_conversation_search_revision
 BEGIN
   SELECT RAISE(ABORT, 'character conversation search revision is required');
 END;
+
+CREATE TABLE character_conversation_search_state(
+  singleton_id INTEGER PRIMARY KEY CHECK(singleton_id = 1),
+  data_authority_id TEXT,
+  active_policy_version INTEGER,
+  activated INTEGER NOT NULL DEFAULT 0 CHECK(activated IN (0, 1)),
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO character_conversation_search_state(singleton_id) VALUES(1);
+
+CREATE TABLE character_conversation_search_dirty(
+  conversation_id TEXT PRIMARY KEY NOT NULL,
+  data_authority_id TEXT NOT NULL,
+  source_revision INTEGER NOT NULL CHECK(source_revision >= 0),
+  enqueued_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX character_conversation_search_dirty_authority_revision
+  ON character_conversation_search_dirty(data_authority_id, source_revision);
 
 CREATE TABLE character_conversation_search_documents(
   document_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,48 +134,140 @@ AFTER INSERT ON messages BEGIN
   UPDATE character_conversation_search_revision
      SET data_revision = data_revision + 1, updated_at = CURRENT_TIMESTAMP
    WHERE singleton_id = 1;
+  INSERT INTO character_conversation_search_dirty(
+    conversation_id, data_authority_id, source_revision
+  )
+  SELECT new.conversation_id, state.data_authority_id, revision.data_revision
+    FROM character_conversation_search_state AS state,
+         character_conversation_search_revision AS revision
+   WHERE state.singleton_id = 1 AND state.activated = 1
+  ON CONFLICT(conversation_id) DO UPDATE SET
+    data_authority_id = excluded.data_authority_id,
+    source_revision = excluded.source_revision,
+    enqueued_at = CURRENT_TIMESTAMP;
 END;
 CREATE TRIGGER character_conversation_search_messages_au
 AFTER UPDATE ON messages BEGIN
   UPDATE character_conversation_search_revision
      SET data_revision = data_revision + 1, updated_at = CURRENT_TIMESTAMP
    WHERE singleton_id = 1;
+  INSERT INTO character_conversation_search_dirty(
+    conversation_id, data_authority_id, source_revision
+  )
+  SELECT new.conversation_id, state.data_authority_id, revision.data_revision
+    FROM character_conversation_search_state AS state,
+         character_conversation_search_revision AS revision
+   WHERE state.singleton_id = 1 AND state.activated = 1
+  ON CONFLICT(conversation_id) DO UPDATE SET
+    data_authority_id = excluded.data_authority_id,
+    source_revision = excluded.source_revision,
+    enqueued_at = CURRENT_TIMESTAMP;
 END;
 CREATE TRIGGER character_conversation_search_messages_ad
 AFTER DELETE ON messages BEGIN
   UPDATE character_conversation_search_revision
      SET data_revision = data_revision + 1, updated_at = CURRENT_TIMESTAMP
    WHERE singleton_id = 1;
+  INSERT INTO character_conversation_search_dirty(
+    conversation_id, data_authority_id, source_revision
+  )
+  SELECT old.conversation_id, state.data_authority_id, revision.data_revision
+    FROM character_conversation_search_state AS state,
+         character_conversation_search_revision AS revision
+   WHERE state.singleton_id = 1 AND state.activated = 1
+  ON CONFLICT(conversation_id) DO UPDATE SET
+    data_authority_id = excluded.data_authority_id,
+    source_revision = excluded.source_revision,
+    enqueued_at = CURRENT_TIMESTAMP;
 END;
 CREATE TRIGGER character_conversation_search_conversations_ai
 AFTER INSERT ON conversations BEGIN
   UPDATE character_conversation_search_revision
      SET data_revision = data_revision + 1, updated_at = CURRENT_TIMESTAMP
    WHERE singleton_id = 1;
+  INSERT INTO character_conversation_search_dirty(
+    conversation_id, data_authority_id, source_revision
+  )
+  SELECT new.id, state.data_authority_id, revision.data_revision
+    FROM character_conversation_search_state AS state,
+         character_conversation_search_revision AS revision
+   WHERE state.singleton_id = 1 AND state.activated = 1
+  ON CONFLICT(conversation_id) DO UPDATE SET
+    data_authority_id = excluded.data_authority_id,
+    source_revision = excluded.source_revision,
+    enqueued_at = CURRENT_TIMESTAMP;
 END;
 CREATE TRIGGER character_conversation_search_conversations_au
 AFTER UPDATE ON conversations BEGIN
   UPDATE character_conversation_search_revision
      SET data_revision = data_revision + 1, updated_at = CURRENT_TIMESTAMP
    WHERE singleton_id = 1;
+  INSERT INTO character_conversation_search_dirty(
+    conversation_id, data_authority_id, source_revision
+  )
+  SELECT new.id, state.data_authority_id, revision.data_revision
+    FROM character_conversation_search_state AS state,
+         character_conversation_search_revision AS revision
+   WHERE state.singleton_id = 1 AND state.activated = 1
+  ON CONFLICT(conversation_id) DO UPDATE SET
+    data_authority_id = excluded.data_authority_id,
+    source_revision = excluded.source_revision,
+    enqueued_at = CURRENT_TIMESTAMP;
 END;
 CREATE TRIGGER character_conversation_search_conversations_ad
 AFTER DELETE ON conversations BEGIN
   UPDATE character_conversation_search_revision
      SET data_revision = data_revision + 1, updated_at = CURRENT_TIMESTAMP
    WHERE singleton_id = 1;
+  INSERT INTO character_conversation_search_dirty(
+    conversation_id, data_authority_id, source_revision
+  )
+  SELECT old.id, state.data_authority_id, revision.data_revision
+    FROM character_conversation_search_state AS state,
+         character_conversation_search_revision AS revision
+   WHERE state.singleton_id = 1 AND state.activated = 1
+  ON CONFLICT(conversation_id) DO UPDATE SET
+    data_authority_id = excluded.data_authority_id,
+    source_revision = excluded.source_revision,
+    enqueued_at = CURRENT_TIMESTAMP;
 END;
 CREATE TRIGGER character_conversation_search_characters_au
 AFTER UPDATE ON character_cards BEGIN
   UPDATE character_conversation_search_revision
      SET data_revision = data_revision + 1, updated_at = CURRENT_TIMESTAMP
    WHERE singleton_id = 1;
+  INSERT INTO character_conversation_search_dirty(
+    conversation_id, data_authority_id, source_revision
+  )
+  SELECT c.id, state.data_authority_id, revision.data_revision
+    FROM conversations AS c,
+         character_conversation_search_state AS state,
+         character_conversation_search_revision AS revision
+   WHERE c.character_id = new.id
+     AND state.singleton_id = 1 AND state.activated = 1
+  ON CONFLICT(conversation_id) DO UPDATE SET
+    data_authority_id = excluded.data_authority_id,
+    source_revision = excluded.source_revision,
+    enqueued_at = CURRENT_TIMESTAMP;
 END;
 CREATE TRIGGER character_conversation_search_characters_ad
 AFTER DELETE ON character_cards BEGIN
   UPDATE character_conversation_search_revision
      SET data_revision = data_revision + 1, updated_at = CURRENT_TIMESTAMP
    WHERE singleton_id = 1;
+  INSERT INTO character_conversation_search_dirty(
+    conversation_id, data_authority_id, source_revision
+  )
+  SELECT c.id, state.data_authority_id, revision.data_revision
+    FROM conversations AS c,
+         character_conversation_search_state AS state,
+         character_conversation_search_revision AS revision
+   WHERE c.character_id = old.id
+     AND state.singleton_id = 1 AND state.activated = 1
+  ON CONFLICT(conversation_id) DO UPDATE SET
+    data_authority_id = excluded.data_authority_id,
+    source_revision = excluded.source_revision,
+    enqueued_at = CURRENT_TIMESTAMP;
 END;
 """
 
@@ -166,130 +277,142 @@ class SelectedBranchEligibilityProjector:
 
     def __init__(self, database: CharactersRAGDB) -> None:
         self._database = database
+        self._authority = database.get_local_authority_id()
 
-    def project(self, conversation_id: str) -> EligibleConversationDocument | None:
+    def project(
+        self,
+        conversation_id: str,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> EligibleConversationDocument | None:
         """Return selected visible user/assistant text, failing closed on bad graphs."""
 
-        authority = self._database.get_local_authority_id()
-        with self._database.transaction() as connection:
-            conversation = connection.execute(
-                """
-                SELECT conversations.id, conversations.title,
-                       conversations.character_id,
-                       conversations.assistant_kind,
-                       conversations.assistant_authority_id,
-                       conversations.runtime_backend,
-                       conversations.active_leaf_message_id,
-                       conversations.version
-                  FROM conversations
-                  JOIN character_cards AS card
-                    ON card.id = conversations.character_id
-                   AND card.deleted = 0
-                 WHERE conversations.id = ? AND conversations.deleted = 0
-                """,
-                (conversation_id,),
-            ).fetchone()
-            if (
-                conversation is None
-                or conversation["runtime_backend"] != "local"
-                or conversation["assistant_kind"] != "character"
-                or conversation["assistant_authority_id"] != authority
-                or not isinstance(conversation["character_id"], int)
-                or conversation["character_id"] < 1
-            ):
+        if connection is not None:
+            return self._project(connection, conversation_id)
+        with self._database.transaction() as snapshot:
+            return self._project(snapshot, conversation_id)
+
+    def _project(
+        self, connection: sqlite3.Connection, conversation_id: str
+    ) -> EligibleConversationDocument | None:
+        authority = self._authority
+        conversation = connection.execute(
+            """
+            SELECT conversations.id, conversations.title,
+                   conversations.character_id,
+                   conversations.assistant_kind,
+                   conversations.assistant_authority_id,
+                   conversations.runtime_backend,
+                   conversations.active_leaf_message_id,
+                   conversations.version
+              FROM conversations
+              JOIN character_cards AS card
+                ON card.id = conversations.character_id
+               AND card.deleted = 0
+             WHERE conversations.id = ? AND conversations.deleted = 0
+            """,
+            (conversation_id,),
+        ).fetchone()
+        if (
+            conversation is None
+            or conversation["runtime_backend"] != "local"
+            or conversation["assistant_kind"] != "character"
+            or conversation["assistant_authority_id"] != authority
+            or not isinstance(conversation["character_id"], int)
+            or conversation["character_id"] < 1
+        ):
+            return None
+
+        rows = connection.execute(
+            """
+            SELECT id, parent_message_id, role, content, deleted,
+                   variant_of, is_selected_variant, timestamp, rowid
+              FROM messages
+             WHERE conversation_id = ?
+             ORDER BY timestamp, rowid
+            """,
+            (conversation_id,),
+        ).fetchall()
+        live = {str(row["id"]): row for row in rows if not row["deleted"]}
+        if not live:
+            return None
+
+        active_leaf = conversation["active_leaf_message_id"]
+        if active_leaf is None:
+            parent_ids = {
+                str(row["parent_message_id"])
+                for row in live.values()
+                if row["parent_message_id"] is not None
+                and str(row["parent_message_id"]) in live
+            }
+            leaves = [message_id for message_id in live if message_id not in parent_ids]
+            if len(leaves) != 1:
                 return None
+            active_leaf = leaves[0]
+        if not isinstance(active_leaf, str) or active_leaf not in live:
+            return None
 
-            rows = connection.execute(
-                """
-                SELECT id, parent_message_id, role, content, deleted,
-                       variant_of, is_selected_variant, timestamp, rowid
-                  FROM messages
-                 WHERE conversation_id = ?
-                 ORDER BY timestamp, rowid
-                """,
-                (conversation_id,),
-            ).fetchall()
-            live = {str(row["id"]): row for row in rows if not row["deleted"]}
-            if not live:
+        ordered: list[sqlite3.Row] = []
+        seen: set[str] = set()
+        current_id: str | None = active_leaf
+        while current_id is not None:
+            if current_id in seen:
                 return None
-
-            active_leaf = conversation["active_leaf_message_id"]
-            if active_leaf is None:
-                parent_ids = {
-                    str(row["parent_message_id"])
-                    for row in live.values()
-                    if row["parent_message_id"] is not None
-                    and str(row["parent_message_id"]) in live
-                }
-                leaves = [message_id for message_id in live if message_id not in parent_ids]
-                if len(leaves) != 1:
-                    return None
-                active_leaf = leaves[0]
-            if not isinstance(active_leaf, str) or active_leaf not in live:
+            seen.add(current_id)
+            row = live.get(current_id)
+            if row is None:
                 return None
+            ordered.append(row)
+            parent = row["parent_message_id"]
+            current_id = None if parent is None else str(parent)
+        ordered.reverse()
 
-            ordered: list[sqlite3.Row] = []
-            seen: set[str] = set()
-            current_id: str | None = active_leaf
-            while current_id is not None:
-                if current_id in seen:
-                    return None
-                seen.add(current_id)
-                row = live.get(current_id)
-                if row is None:
-                    return None
-                ordered.append(row)
-                parent = row["parent_message_id"]
-                current_id = None if parent is None else str(parent)
-            ordered.reverse()
-
-            for row in ordered:
-                variant_of = row["variant_of"]
-                root_id = str(variant_of) if variant_of is not None else str(row["id"])
-                group = [
-                    candidate
-                    for candidate in live.values()
-                    if candidate["id"] == root_id
-                    or candidate["variant_of"] == root_id
-                ]
-                if len(group) == 1 and variant_of is None:
-                    continue
-                selected = [
-                    candidate
-                    for candidate in group
-                    if bool(candidate["is_selected_variant"])
-                ]
-                if len(selected) != 1 or selected[0]["id"] != row["id"]:
-                    return None
-
-            eligible = [
-                (str(row["id"]), str(row["content"]))
-                for row in ordered
-                if row["role"] in ("user", "assistant")
+        variant_groups: dict[str, list[sqlite3.Row]] = {}
+        for candidate in live.values():
+            variant_root = str(candidate["variant_of"] or candidate["id"])
+            variant_groups.setdefault(variant_root, []).append(candidate)
+        for row in ordered:
+            variant_of = row["variant_of"]
+            root_id = str(variant_of) if variant_of is not None else str(row["id"])
+            group = variant_groups[root_id]
+            if len(group) == 1 and variant_of is None:
+                continue
+            selected = [
+                candidate
+                for candidate in group
+                if bool(candidate["is_selected_variant"])
             ]
-            if not eligible:
+            if len(selected) != 1 or selected[0]["id"] != row["id"]:
                 return None
-            title = str(conversation["title"] or "Untitled conversation")
-            digest_input = json.dumps(
-                {"policy": 1, "title": title, "messages": eligible},
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-            revision = self._read_revision(connection)
-            target = LocalCharacterConversationTarget(
-                character=ResolvedLocalCharacterKey(
-                    authority, int(conversation["character_id"])
-                ),
-                conversation_id=str(conversation["id"]),
-            )
-            return EligibleConversationDocument(
-                target=target,
-                title=title,
-                body="\n\n".join(content for _message_id, content in eligible),
-                source_revision=revision,
-                eligibility_digest=hashlib.sha256(digest_input).hexdigest(),
-            )
+
+        eligible = [
+            (str(row["id"]), str(row["content"]))
+            for row in ordered
+            if row["role"] in ("user", "assistant")
+        ]
+        if not eligible:
+            return None
+        title = str(conversation["title"] or "Untitled conversation")
+        digest_input = json.dumps(
+            {"policy": 1, "title": title, "messages": eligible},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        revision = self._read_revision(connection)
+        target = LocalCharacterConversationTarget(
+            character=ResolvedLocalCharacterKey(
+                authority, int(conversation["character_id"])
+            ),
+            conversation_id=str(conversation["id"]),
+        )
+        return EligibleConversationDocument(
+            target=target,
+            title=title,
+            body="\n\n".join(content for _message_id, content in eligible),
+            source_revision=revision,
+            eligibility_digest=hashlib.sha256(digest_input).hexdigest(),
+        )
 
     @staticmethod
     def _read_revision(connection: sqlite3.Connection) -> int:
@@ -335,63 +458,51 @@ class CharacterConversationSearchRepository:
         group_limit = self._bounded_limit(group_limit, maximum=4)
         row_limit = self._bounded_limit(row_limit, maximum=5)
         with self._database.transaction() as connection:
-            rows = self._local_character_rows(connection)
-
-        resolved: dict[ResolvedLocalCharacterKey, list[CharacterConversationRow]] = (
-            defaultdict(list)
-        )
-        unavailable: list[CharacterConversationRow] = []
-        labels: dict[ResolvedLocalCharacterKey, str] = {}
-        for source in rows:
-            row = self._presentation_row(source)
-            if row.target is None:
-                unavailable.append(row)
-                continue
-            key = row.target.character
-            labels[key] = row.character_label
-            resolved[key].append(row)
-
-        groups: list[CharacterConversationGroup] = []
-        for key, character_rows in resolved.items():
-            character_rows.sort(
-                key=lambda item: (item.last_modified, item.target.conversation_id),  # type: ignore[union-attr]
-                reverse=True,
+            current_card = self._resolved_current_card(connection)
+            unavailable_total = self._unavailable_total(connection)
+            reserve_unavailable = unavailable_total > 0 and (
+                current_card is None or group_limit > 1
             )
-            groups.append(
-                CharacterConversationGroup(
-                    key=key,
-                    character_label=labels[key],
-                    rows=tuple(character_rows[:row_limit]),
-                    total=len(character_rows),
-                    is_current=key == self._current_character,
+            resolved_slots = group_limit - int(current_card is not None) - int(
+                reserve_unavailable
+            )
+            summaries = self._recent_resolved_summaries(
+                connection,
+                exclude_character_id=(
+                    None if current_card is None else self._current_character.character_id
+                ),
+                limit=resolved_slots,
+            )
+
+            groups: list[CharacterConversationGroup] = []
+            if current_card is not None:
+                groups.append(
+                    self._resolved_group(
+                        connection,
+                        character_id=self._current_character.character_id,
+                        character_label=str(current_card["name"]),
+                        row_limit=row_limit,
+                        is_current=True,
+                    )
                 )
-            )
-
-        groups.sort(
-            key=lambda group: (
-                group.rows[0].last_modified,
-                group.character_label,
-            ),
-            reverse=True,
-        )
-        groups.sort(key=lambda group: not group.is_current)
-        if unavailable:
-            unavailable.sort(
-                key=lambda item: (item.last_modified, item.unresolved.conversation_id),  # type: ignore[union-attr]
-                reverse=True,
-            )
-            groups.append(
-                CharacterConversationGroup(
-                    key=UnresolvedConversationKey(
-                        self._authority, "unavailable-character-conversations"
-                    ),
-                    character_label="Chats with unavailable characters",
-                    rows=tuple(unavailable[:row_limit]),
-                    total=len(unavailable),
+            groups.extend(
+                self._resolved_group(
+                    connection,
+                    character_id=int(summary["character_id"]),
+                    character_label=str(summary["card_name"]),
+                    row_limit=row_limit,
                     is_current=False,
+                    total=int(summary["total"]),
                 )
+                for summary in summaries
             )
-        return tuple(groups[:group_limit])
+            if reserve_unavailable:
+                groups.append(
+                    self._unavailable_group(
+                        connection, total=unavailable_total, row_limit=row_limit
+                    )
+                )
+        return tuple(groups)
 
     def page_for_character(
         self,
@@ -469,13 +580,28 @@ class CharacterConversationSearchRepository:
     def keyword_search(
         self, query: str, *, offset: int = 0, limit: int = 50
     ) -> CharacterConversationPage:
-        """Search the ready local generation and revalidate every candidate."""
+        """Search one read snapshot and fence it against a final source revision."""
 
         limit = self._bounded_limit(limit, maximum=50)
         if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
             raise ValueError("offset must be a non-negative integer")
         if not isinstance(query, str) or not query.strip():
-            return CharacterConversationPage((), 0, None, self._revision())
+            revision = self._revision()
+            return CharacterConversationPage(
+                (), 0, None, revision, self.keyword_index_status()
+            )
+        for _attempt in range(2):
+            page = self._keyword_search_snapshot(query, offset=offset, limit=limit)
+            if self._revision() == page.data_revision:
+                return page
+        revision = self._revision()
+        return CharacterConversationPage(
+            (), 0, None, revision, CharacterKeywordIndexStatus.ABSENT
+        )
+
+    def _keyword_search_snapshot(
+        self, query: str, *, offset: int, limit: int
+    ) -> CharacterConversationPage:
         match_query = '"' + query.strip().replace('"', '""') + '"'
         with self._database.transaction() as connection:
             revision = self._revision(connection)
@@ -490,7 +616,8 @@ class CharacterConversationSearchRepository:
                 (self._authority, self._POLICY_VERSION, revision),
             ).fetchone()
             if generation is None:
-                return CharacterConversationPage((), 0, None, revision)
+                status = self._keyword_status_for_revision(connection, revision)
+                return CharacterConversationPage((), 0, None, revision, status)
             search_params = (
                 match_query,
                 self._authority,
@@ -518,50 +645,92 @@ class CharacterConversationSearchRepository:
                     search_params,
                 ).fetchone()[0]
             )
-            candidates = connection.execute(
-                """
-                SELECT d.conversation_id, d.title, d.body,
-                       d.eligibility_digest, d.source_revision,
-                       CAST(c.last_modified AS TEXT) AS last_modified,
-                       c.character_id, c.assistant_id,
-                       c.assistant_authority_id, c.runtime_backend,
-                       c.assistant_kind, card.name AS card_name,
-                       card.deleted AS card_deleted,
-                       bm25(character_conversation_fts) AS search_rank
-                  FROM character_conversation_fts
-                  JOIN character_conversation_search_documents AS d
-                    ON d.document_id = character_conversation_fts.rowid
-                  JOIN conversations AS c ON c.id = d.conversation_id
-                  JOIN character_cards AS card ON card.id = c.character_id
-                 WHERE character_conversation_fts MATCH ?
-                   AND d.data_authority_id = ? AND d.generation_id = ?
-                   AND d.source_revision = ?
-                   AND c.deleted = 0 AND card.deleted = 0
-                   AND c.runtime_backend = 'local'
-                   AND c.assistant_kind = 'character'
-                   AND c.assistant_authority_id = d.data_authority_id
-                   AND c.character_id = d.character_id
-                 ORDER BY search_rank, c.last_modified DESC, c.id DESC
-                 LIMIT ? OFFSET ?
-                """,
-                (*search_params, limit, offset),
-            ).fetchall()
-
-        validated: list[CharacterConversationRow] = []
-        for candidate in candidates:
-            current = self._projector.project(str(candidate["conversation_id"]))
-            if (
-                current is None
-                or current.source_revision != revision
-                or current.eligibility_digest != candidate["eligibility_digest"]
-            ):
-                continue
-            validated.append(
-                self._presentation_row(
-                    candidate, selected_excerpt=str(candidate["body"])[:240]
+            validated: list[CharacterConversationRow] = []
+            rejected = 0
+            scanned = 0
+            candidate_offset = offset
+            batch_limit = limit
+            while scanned < 50 and candidate_offset < total:
+                candidates = self._keyword_candidates(
+                    connection,
+                    search_params=search_params,
+                    limit=min(batch_limit, 50 - scanned),
+                    offset=candidate_offset,
                 )
+                if not candidates:
+                    break
+                candidate_offset += len(candidates)
+                scanned += len(candidates)
+                batch_rejected = 0
+                for candidate in candidates:
+                    current = self._projector.project(
+                        str(candidate["conversation_id"]), connection=connection
+                    )
+                    if (
+                        current is None
+                        or current.source_revision != revision
+                        or current.eligibility_digest
+                        != candidate["eligibility_digest"]
+                    ):
+                        batch_rejected += 1
+                        continue
+                    validated.append(
+                        self._presentation_row(
+                            candidate, selected_excerpt=str(candidate["body"])[:240]
+                        )
+                    )
+                rejected += batch_rejected
+                if rejected == 0 or candidate_offset >= total:
+                    break
+                batch_limit = max(1, min(limit, total - candidate_offset))
+            if rejected and (offset != 0 or candidate_offset < total):
+                return CharacterConversationPage(
+                    (), 0, None, revision, CharacterKeywordIndexStatus.FAILED
+                )
+            return CharacterConversationPage(
+                tuple(validated[:limit]),
+                total - rejected,
+                None,
+                revision,
+                CharacterKeywordIndexStatus.READY,
             )
-        return CharacterConversationPage(tuple(validated), total, None, revision)
+
+    @staticmethod
+    def _keyword_candidates(
+        connection: sqlite3.Connection,
+        *,
+        search_params: tuple[str, str, str, int],
+        limit: int,
+        offset: int,
+    ) -> list[sqlite3.Row]:
+        return connection.execute(
+            """
+            SELECT d.conversation_id, d.title, d.body,
+                   d.eligibility_digest, d.source_revision,
+                   CAST(c.last_modified AS TEXT) AS last_modified,
+                   c.character_id, c.assistant_id,
+                   c.assistant_authority_id, c.runtime_backend,
+                   c.assistant_kind, card.name AS card_name,
+                   card.deleted AS card_deleted,
+                   bm25(character_conversation_fts) AS search_rank
+              FROM character_conversation_fts
+              JOIN character_conversation_search_documents AS d
+                ON d.document_id = character_conversation_fts.rowid
+              JOIN conversations AS c ON c.id = d.conversation_id
+              JOIN character_cards AS card ON card.id = c.character_id
+             WHERE character_conversation_fts MATCH ?
+               AND d.data_authority_id = ? AND d.generation_id = ?
+               AND d.source_revision = ?
+               AND c.deleted = 0 AND card.deleted = 0
+               AND c.runtime_backend = 'local'
+               AND c.assistant_kind = 'character'
+               AND c.assistant_authority_id = d.data_authority_id
+               AND c.character_id = d.character_id
+             ORDER BY search_rank, c.last_modified DESC, c.id DESC
+             LIMIT ? OFFSET ?
+            """,
+            (*search_params, limit, offset),
+        ).fetchall()
 
     def repair_candidates(
         self, key: UnresolvedConversationKey
@@ -654,28 +823,67 @@ class CharacterConversationSearchRepository:
         return CharacterRepairResult.APPLIED
 
     def ensure_keyword_index(self) -> CharacterKeywordIndexStatus:
-        """Synchronously build one complete generation only when explicitly called."""
+        """Activate and build or reconcile the local Keyword generation."""
 
         with self._database.transaction(immediate=True) as connection:
             revision = self._revision(connection)
+            connection.execute(
+                "UPDATE character_conversation_search_state "
+                "SET data_authority_id = ?, active_policy_version = ?, "
+                "activated = 1, updated_at = CURRENT_TIMESTAMP "
+                "WHERE singleton_id = 1",
+                (self._authority, self._POLICY_VERSION),
+            )
             current = connection.execute(
                 """
-                SELECT status FROM character_conversation_search_generations
+                SELECT generation_id, status,
+                       lease_expires_at > CURRENT_TIMESTAMP AS lease_valid
+                  FROM character_conversation_search_generations
                  WHERE data_authority_id = ? AND policy_version = ?
                    AND source_revision = ?
                  ORDER BY rowid DESC LIMIT 1
                 """,
                 (self._authority, self._POLICY_VERSION, revision),
             ).fetchone()
-            if current is not None and current["status"] != "failed":
-                return CharacterKeywordIndexStatus(str(current["status"]))
+            if current is not None and current["status"] == "ready":
+                return CharacterKeywordIndexStatus.READY
+            if (
+                current is not None
+                and current["status"] == "building"
+                and bool(current["lease_valid"])
+            ):
+                return CharacterKeywordIndexStatus.BUILDING
+            if current is not None:
+                connection.execute(
+                    "DELETE FROM character_conversation_search_generations "
+                    "WHERE generation_id = ?",
+                    (current["generation_id"],),
+                )
+            ready = connection.execute(
+                "SELECT generation_id FROM character_conversation_search_generations "
+                "WHERE data_authority_id = ? AND policy_version = ? "
+                "AND status = 'ready' LIMIT 1",
+                (self._authority, self._POLICY_VERSION),
+            ).fetchone()
+            if ready is not None:
+                reconcile_generation = str(ready["generation_id"])
+            else:
+                reconcile_generation = None
+        if reconcile_generation is not None:
+            maintained = self._apply_dirty_generation(reconcile_generation)
+            if maintained is not None:
+                return maintained
+            return self._reconcile_generation(reconcile_generation)
+
+        with self._database.transaction(immediate=True) as connection:
+            revision = self._revision(connection)
             generation_id = str(uuid.uuid4())
             connection.execute(
                 """
                 INSERT INTO character_conversation_search_generations(
                     generation_id, data_authority_id, status,
-                    policy_version, source_revision
-                ) VALUES(?, ?, 'building', ?, ?)
+                    policy_version, source_revision, lease_expires_at
+                ) VALUES(?, ?, 'building', ?, ?, DATETIME('now', '+5 minutes'))
                 """,
                 (
                     generation_id,
@@ -686,47 +894,57 @@ class CharacterConversationSearchRepository:
             )
 
         try:
-            with self._database.transaction() as connection:
-                ids = [
-                    str(row[0])
-                    for row in connection.execute(
-                        """
-                        SELECT c.id
-                          FROM conversations AS c
-                          JOIN character_cards AS card ON card.id = c.character_id
-                         WHERE c.deleted = 0 AND card.deleted = 0
-                           AND c.runtime_backend = 'local'
-                           AND c.assistant_kind = 'character'
-                           AND c.assistant_authority_id = ?
-                         ORDER BY c.id
-                        """,
-                        (self._authority,),
-                    ).fetchall()
-                ]
             processed = 0
             batch_processed = 0
             documents: list[EligibleConversationDocument] = []
             reported_at = time.monotonic()
-            for conversation_id in ids:
-                document = self._projector.project(conversation_id)
-                if document is not None:
-                    documents.append(document)
-                processed += 1
-                batch_processed += 1
-                now = time.monotonic()
-                report_progress = (
-                    batch_processed >= self._BACKFILL_BATCH_SIZE
-                    or now - reported_at >= 1.0
-                )
-                if report_progress:
-                    self._replace_documents(
-                        generation_id, tuple(documents), processed=processed
+            last_id = ""
+            while True:
+                with self._database.transaction() as connection:
+                    ids = [
+                        str(row[0])
+                        for row in connection.execute(
+                            """
+                            SELECT c.id
+                              FROM conversations AS c
+                              JOIN character_cards AS card
+                                ON card.id = c.character_id
+                             WHERE c.deleted = 0 AND card.deleted = 0
+                               AND c.runtime_backend = 'local'
+                               AND c.assistant_kind = 'character'
+                               AND c.assistant_authority_id = ?
+                               AND c.id > ?
+                             ORDER BY c.id
+                             LIMIT 128
+                            """,
+                            (self._authority, last_id),
+                        ).fetchall()
+                    ]
+                if not ids:
+                    break
+                last_id = ids[-1]
+                for conversation_id in ids:
+                    document = self._projector.project(conversation_id)
+                    if document is not None:
+                        documents.append(document)
+                    processed += 1
+                    batch_processed += 1
+                    now = time.monotonic()
+                    report_progress = (
+                        batch_processed >= self._BACKFILL_BATCH_SIZE
+                        or now - reported_at >= 1.0
                     )
-                    documents.clear()
-                    batch_processed = 0
-                    if self._progress_callback is not None:
-                        self._progress_callback(processed)
-                    reported_at = now
+                    if report_progress:
+                        self._replace_documents(
+                            generation_id, tuple(documents), processed=processed
+                        )
+                        documents.clear()
+                        batch_processed = 0
+                        if self._progress_callback is not None:
+                            self._progress_callback(processed)
+                        reported_at = now
+                if len(ids) < self._BACKFILL_BATCH_SIZE:
+                    break
             if batch_processed:
                 self._replace_documents(
                     generation_id, tuple(documents), processed=processed
@@ -735,46 +953,247 @@ class CharacterConversationSearchRepository:
                 if self._revision(connection) != revision:
                     connection.execute(
                         "UPDATE character_conversation_search_generations "
-                        "SET status = 'failed', error_code = 'source_changed' "
+                        "SET status = 'failed', error_code = 'source_changed', "
+                        "updated_at = CURRENT_TIMESTAMP "
+                        "WHERE generation_id = ?",
+                        (generation_id,),
+                    )
+                    connection.execute(
+                        "DELETE FROM character_conversation_search_documents "
                         "WHERE generation_id = ?",
                         (generation_id,),
                     )
                     return CharacterKeywordIndexStatus.FAILED
                 connection.execute(
-                    "UPDATE character_conversation_search_generations "
-                    "SET status = 'failed', error_code = 'superseded' "
-                    "WHERE data_authority_id = ? AND status = 'ready'",
-                    (self._authority,),
+                    "DELETE FROM character_conversation_search_generations "
+                    "WHERE data_authority_id = ? AND generation_id != ?",
+                    (self._authority, generation_id),
                 )
                 connection.execute(
                     "UPDATE character_conversation_search_generations "
                     "SET status = 'ready', processed_conversations = ?, "
-                    "completed_at = CURRENT_TIMESTAMP WHERE generation_id = ?",
+                    "completed_at = CURRENT_TIMESTAMP, lease_expires_at = NULL, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE generation_id = ?",
                     (processed, generation_id),
+                )
+                connection.execute(
+                    "DELETE FROM character_conversation_search_dirty "
+                    "WHERE data_authority_id = ?",
+                    (self._authority,),
                 )
             return CharacterKeywordIndexStatus.READY
         except Exception:  # noqa: BLE001 - persist a typed failed generation for callers
             with self._database.transaction(immediate=True) as connection:
                 connection.execute(
                     "UPDATE character_conversation_search_generations "
-                    "SET status = 'failed', error_code = 'build_failed' "
+                    "SET status = 'failed', error_code = 'build_failed', "
+                    "lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE generation_id = ?",
+                    (generation_id,),
+                )
+                connection.execute(
+                    "DELETE FROM character_conversation_search_documents "
                     "WHERE generation_id = ?",
                     (generation_id,),
                 )
             return CharacterKeywordIndexStatus.FAILED
 
     def keyword_index_status(self) -> CharacterKeywordIndexStatus:
-        """Return the current authority's newest generation status."""
+        """Return status for the current authority, policy, and source revision."""
 
         with self._database.transaction() as connection:
-            row = connection.execute(
-                "SELECT status FROM character_conversation_search_generations "
-                "WHERE data_authority_id = ? ORDER BY rowid DESC LIMIT 1",
-                (self._authority,),
+            revision = self._revision(connection)
+            return self._keyword_status_for_revision(connection, revision)
+
+    def _keyword_status_for_revision(
+        self, connection: sqlite3.Connection, revision: int
+    ) -> CharacterKeywordIndexStatus:
+        row = connection.execute(
+            "SELECT status, lease_expires_at > CURRENT_TIMESTAMP AS lease_valid "
+            "FROM character_conversation_search_generations "
+            "WHERE data_authority_id = ? AND policy_version = ? "
+            "AND source_revision = ? ORDER BY rowid DESC LIMIT 1",
+            (self._authority, self._POLICY_VERSION, revision),
+        ).fetchone()
+        if row is not None:
+            if row["status"] == "building" and not bool(row["lease_valid"]):
+                return CharacterKeywordIndexStatus.FAILED
+            return CharacterKeywordIndexStatus(str(row["status"]))
+        failed = connection.execute(
+            "SELECT 1 FROM character_conversation_search_generations "
+            "WHERE data_authority_id = ? AND policy_version = ? "
+            "AND status = 'failed' ORDER BY rowid DESC LIMIT 1",
+            (self._authority, self._POLICY_VERSION),
+        ).fetchone()
+        if failed is not None:
+            return CharacterKeywordIndexStatus.FAILED
+        return CharacterKeywordIndexStatus.ABSENT
+
+    def reconcile_keyword_index(self) -> CharacterKeywordIndexStatus:
+        """Rebuild the activated ready generation from authoritative SQLite."""
+
+        with self._database.transaction() as connection:
+            state = connection.execute(
+                "SELECT activated FROM character_conversation_search_state "
+                "WHERE singleton_id = 1"
             ).fetchone()
-        if row is None:
+            ready = connection.execute(
+                "SELECT generation_id FROM character_conversation_search_generations "
+                "WHERE data_authority_id = ? AND policy_version = ? "
+                "AND status = 'ready' LIMIT 1",
+                (self._authority, self._POLICY_VERSION),
+            ).fetchone()
+        if state is None or not state["activated"] or ready is None:
             return CharacterKeywordIndexStatus.ABSENT
-        return CharacterKeywordIndexStatus(str(row["status"]))
+        return self._reconcile_generation(str(ready["generation_id"]))
+
+    def _apply_dirty_generation(
+        self, generation_id: str
+    ) -> CharacterKeywordIndexStatus | None:
+        """Atomically replace/remove only ledger entries; return None if missed."""
+
+        try:
+            with self._database.transaction(immediate=True) as connection:
+                revision = self._revision(connection)
+                dirty_exists = connection.execute(
+                    "SELECT 1 FROM character_conversation_search_dirty "
+                    "WHERE data_authority_id = ? LIMIT 1",
+                    (self._authority,),
+                ).fetchone()
+                if dirty_exists is None:
+                    return None
+                processed = 0
+                last_id = ""
+                while True:
+                    ids = [
+                        str(row[0])
+                        for row in connection.execute(
+                            "SELECT conversation_id "
+                            "FROM character_conversation_search_dirty "
+                            "WHERE data_authority_id = ? AND conversation_id > ? "
+                            "ORDER BY conversation_id LIMIT 128",
+                            (self._authority, last_id),
+                        ).fetchall()
+                    ]
+                    if not ids:
+                        break
+                    last_id = ids[-1]
+                    for conversation_id in ids:
+                        document = self._projector.project(
+                            conversation_id, connection=connection
+                        )
+                        if document is None:
+                            connection.execute(
+                                "DELETE FROM character_conversation_search_documents "
+                                "WHERE data_authority_id = ? AND generation_id = ? "
+                                "AND conversation_id = ?",
+                                (self._authority, generation_id, conversation_id),
+                            )
+                        else:
+                            self._upsert_document(connection, generation_id, document)
+                        processed += 1
+                    if len(ids) < self._BACKFILL_BATCH_SIZE:
+                        break
+                connection.execute(
+                    "UPDATE character_conversation_search_documents "
+                    "SET source_revision = ? WHERE data_authority_id = ? "
+                    "AND generation_id = ?",
+                    (revision, self._authority, generation_id),
+                )
+                connection.execute(
+                    "UPDATE character_conversation_search_generations "
+                    "SET source_revision = ?, processed_conversations = "
+                    "processed_conversations + ?, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE generation_id = ? AND status = 'ready'",
+                    (revision, processed, generation_id),
+                )
+                connection.execute(
+                    "DELETE FROM character_conversation_search_dirty "
+                    "WHERE data_authority_id = ?",
+                    (self._authority,),
+                )
+                connection.execute(
+                    "DELETE FROM character_conversation_search_generations "
+                    "WHERE data_authority_id = ? AND generation_id != ?",
+                    (self._authority, generation_id),
+                )
+            return CharacterKeywordIndexStatus.READY
+        except Exception:  # noqa: BLE001 - maintenance is a typed boundary
+            return CharacterKeywordIndexStatus.FAILED
+
+    def _reconcile_generation(
+        self, generation_id: str
+    ) -> CharacterKeywordIndexStatus:
+        try:
+            with self._database.transaction(immediate=True) as connection:
+                revision = self._revision(connection)
+                processed = 0
+                last_id = ""
+                while True:
+                    ids = [
+                        str(row[0])
+                        for row in connection.execute(
+                            """
+                            SELECT conversation_id FROM (
+                                SELECT id AS conversation_id FROM conversations
+                                 WHERE runtime_backend = 'local'
+                                   AND assistant_kind = 'character'
+                                UNION
+                                SELECT conversation_id
+                                  FROM character_conversation_search_documents
+                                 WHERE data_authority_id = ? AND generation_id = ?
+                            )
+                             WHERE conversation_id > ?
+                             ORDER BY conversation_id
+                             LIMIT 128
+                            """,
+                            (self._authority, generation_id, last_id),
+                        ).fetchall()
+                    ]
+                    if not ids:
+                        break
+                    last_id = ids[-1]
+                    for conversation_id in ids:
+                        document = self._projector.project(
+                            conversation_id, connection=connection
+                        )
+                        if document is None:
+                            connection.execute(
+                                "DELETE FROM character_conversation_search_documents "
+                                "WHERE data_authority_id = ? AND generation_id = ? "
+                                "AND conversation_id = ?",
+                                (self._authority, generation_id, conversation_id),
+                            )
+                        else:
+                            self._upsert_document(connection, generation_id, document)
+                        processed += 1
+                    if len(ids) < self._BACKFILL_BATCH_SIZE:
+                        break
+                connection.execute(
+                    "UPDATE character_conversation_search_documents "
+                    "SET source_revision = ? WHERE data_authority_id = ? "
+                    "AND generation_id = ?",
+                    (revision, self._authority, generation_id),
+                )
+                connection.execute(
+                    "UPDATE character_conversation_search_generations "
+                    "SET source_revision = ?, processed_conversations = ?, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE generation_id = ?",
+                    (revision, processed, generation_id),
+                )
+                connection.execute(
+                    "DELETE FROM character_conversation_search_dirty "
+                    "WHERE data_authority_id = ?",
+                    (self._authority,),
+                )
+                connection.execute(
+                    "DELETE FROM character_conversation_search_generations "
+                    "WHERE data_authority_id = ? AND generation_id != ?",
+                    (self._authority, generation_id),
+                )
+            return CharacterKeywordIndexStatus.READY
+        except Exception:  # noqa: BLE001 - reconciliation is a typed boundary
+            return CharacterKeywordIndexStatus.FAILED
 
     def _replace_documents(
         self,
@@ -785,48 +1204,174 @@ class CharacterConversationSearchRepository:
     ) -> None:
         with self._database.transaction(immediate=True) as connection:
             for document in documents:
-                character = connection.execute(
-                    "SELECT name FROM character_cards WHERE id = ? AND deleted = 0",
-                    (document.target.character.character_id,),
-                ).fetchone()
-                if character is None:
-                    continue
-                connection.execute(
-                    """
-                    INSERT INTO character_conversation_search_documents(
-                        data_authority_id, conversation_id, character_id,
-                        character_label, title, body, eligibility_digest, source_revision,
-                        generation_id
-                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(data_authority_id, generation_id, conversation_id)
-                    DO UPDATE SET character_id = excluded.character_id,
-                                  character_label = excluded.character_label,
-                                  title = excluded.title,
-                                  body = excluded.body,
-                                  eligibility_digest = excluded.eligibility_digest,
-                                  source_revision = excluded.source_revision
-                    """,
-                    (
-                        document.target.character.data_authority_id,
-                        document.target.conversation_id,
-                        document.target.character.character_id,
-                        str(character["name"]),
-                        document.title,
-                        document.body,
-                        document.eligibility_digest,
-                        document.source_revision,
-                        generation_id,
-                    ),
-                )
+                self._upsert_document(connection, generation_id, document)
             connection.execute(
                 "UPDATE character_conversation_search_generations "
-                "SET processed_conversations = ? WHERE generation_id = ? "
+                "SET processed_conversations = ?, "
+                "lease_expires_at = DATETIME('now', '+5 minutes'), "
+                "updated_at = CURRENT_TIMESTAMP WHERE generation_id = ? "
                 "AND status = 'building'",
                 (processed, generation_id),
             )
 
-    def _local_character_rows(self, connection: sqlite3.Connection) -> list[Any]:
+    @staticmethod
+    def _upsert_document(
+        connection: sqlite3.Connection,
+        generation_id: str,
+        document: EligibleConversationDocument,
+    ) -> None:
+        character = connection.execute(
+            "SELECT name FROM character_cards WHERE id = ? AND deleted = 0",
+            (document.target.character.character_id,),
+        ).fetchone()
+        if character is None:
+            return
+        connection.execute(
+            """
+            INSERT INTO character_conversation_search_documents(
+                data_authority_id, conversation_id, character_id,
+                character_label, title, body, eligibility_digest, source_revision,
+                generation_id
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(data_authority_id, generation_id, conversation_id)
+            DO UPDATE SET character_id = excluded.character_id,
+                          character_label = excluded.character_label,
+                          title = excluded.title,
+                          body = excluded.body,
+                          eligibility_digest = excluded.eligibility_digest,
+                          source_revision = excluded.source_revision
+            """,
+            (
+                document.target.character.data_authority_id,
+                document.target.conversation_id,
+                document.target.character.character_id,
+                str(character["name"]),
+                document.title,
+                document.body,
+                document.eligibility_digest,
+                document.source_revision,
+                generation_id,
+            ),
+        )
+
+    def _resolved_current_card(
+        self, connection: sqlite3.Connection
+    ) -> sqlite3.Row | None:
+        if self._current_character is None:
+            return None
         return connection.execute(
+            "SELECT id, name FROM character_cards WHERE id = ? AND deleted = 0",
+            (self._current_character.character_id,),
+        ).fetchone()
+
+    def _unavailable_total(self, connection: sqlite3.Connection) -> int:
+        return int(
+            connection.execute(
+                """
+                SELECT COUNT(*)
+                  FROM conversations AS c
+                  LEFT JOIN character_cards AS card ON card.id = c.character_id
+                 WHERE c.deleted = 0 AND c.runtime_backend = 'local'
+                   AND c.assistant_kind = 'character'
+                   AND (c.assistant_authority_id IS NOT ?
+                        OR typeof(c.character_id) != 'integer'
+                        OR c.character_id < 1
+                        OR card.id IS NULL OR card.deleted != 0)
+                """,
+                (self._authority,),
+            ).fetchone()[0]
+        )
+
+    def _recent_resolved_summaries(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        exclude_character_id: int | None,
+        limit: int,
+    ) -> list[sqlite3.Row]:
+        if limit <= 0:
+            return []
+        return connection.execute(
+            """
+            SELECT c.character_id, card.name AS card_name,
+                   COUNT(*) AS total,
+                   MAX(CAST(c.last_modified AS TEXT)) AS latest
+              FROM conversations AS c
+              JOIN character_cards AS card
+                ON card.id = c.character_id AND card.deleted = 0
+             WHERE c.deleted = 0 AND c.runtime_backend = 'local'
+               AND c.assistant_kind = 'character'
+               AND c.assistant_authority_id = ?
+               AND (? IS NULL OR c.character_id != ?)
+             GROUP BY c.character_id, card.name
+             ORDER BY latest DESC, c.character_id DESC
+             LIMIT ?
+            """,
+            (
+                self._authority,
+                exclude_character_id,
+                exclude_character_id,
+                limit,
+            ),
+        ).fetchall()
+
+    def _resolved_group(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        character_id: int,
+        character_label: str,
+        row_limit: int,
+        is_current: bool,
+        total: int | None = None,
+    ) -> CharacterConversationGroup:
+        if total is None:
+            total = int(
+                connection.execute(
+                    """
+                    SELECT COUNT(*) FROM conversations AS c
+                     WHERE c.deleted = 0 AND c.runtime_backend = 'local'
+                       AND c.assistant_kind = 'character'
+                       AND c.assistant_authority_id = ? AND c.character_id = ?
+                    """,
+                    (self._authority, character_id),
+                ).fetchone()[0]
+            )
+        sources = connection.execute(
+            """
+            SELECT c.id, c.title,
+                   CAST(c.last_modified AS TEXT) AS last_modified,
+                   c.character_id, c.assistant_id, c.assistant_authority_id,
+                   c.runtime_backend, c.assistant_kind,
+                   card.name AS card_name, card.deleted AS card_deleted
+              FROM conversations AS c
+              JOIN character_cards AS card
+                ON card.id = c.character_id AND card.deleted = 0
+             WHERE c.deleted = 0 AND c.runtime_backend = 'local'
+               AND c.assistant_kind = 'character'
+               AND c.assistant_authority_id = ? AND c.character_id = ?
+             ORDER BY c.last_modified DESC, c.id DESC
+             LIMIT ?
+            """,
+            (self._authority, character_id, row_limit),
+        ).fetchall()
+        key = ResolvedLocalCharacterKey(self._authority, character_id)
+        return CharacterConversationGroup(
+            key=key,
+            character_label=character_label,
+            rows=tuple(self._presentation_row(source) for source in sources),
+            total=total,
+            is_current=is_current,
+        )
+
+    def _unavailable_group(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        total: int,
+        row_limit: int,
+    ) -> CharacterConversationGroup:
+        sources = connection.execute(
             """
             SELECT c.id, c.title,
                    CAST(c.last_modified AS TEXT) AS last_modified,
@@ -838,9 +1383,24 @@ class CharacterConversationSearchRepository:
               LEFT JOIN character_cards AS card ON card.id = c.character_id
              WHERE c.deleted = 0 AND c.runtime_backend = 'local'
                AND c.assistant_kind = 'character'
+               AND (c.assistant_authority_id IS NOT ?
+                    OR typeof(c.character_id) != 'integer'
+                    OR c.character_id < 1
+                    OR card.id IS NULL OR card.deleted != 0)
              ORDER BY c.last_modified DESC, c.id DESC
-            """
+             LIMIT ?
+            """,
+            (self._authority, row_limit),
         ).fetchall()
+        return CharacterConversationGroup(
+            key=UnresolvedConversationKey(
+                self._authority, "unavailable-character-conversations"
+            ),
+            character_label="Chats with unavailable characters",
+            rows=tuple(self._presentation_row(source) for source in sources),
+            total=total,
+            is_current=False,
+        )
 
     def _presentation_row(
         self, source: Any, *, selected_excerpt: str = ""

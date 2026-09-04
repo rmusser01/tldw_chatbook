@@ -1,10 +1,10 @@
 ---
 id: TASK-31242
 title: Build character conversation projection and Keyword index
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-04 02:05'
-updated_date: '2026-09-04 03:55'
+updated_date: '2026-09-04 04:25'
 labels:
   - database
   - search
@@ -62,5 +62,5 @@ Final schema version: 66 (v65→v66; origin/dev remains v65 at implementation st
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented the authority-scoped immutable application facade, selected-branch eligibility projector, separate external-content Keyword FTS generations, bounded browse/search paging, deterministic legacy authority backfill, and compare-and-set repair. Added guarded ChaChaNotes v65→v66 migration with fresh/migrated schema parity and dormant startup behavior. Targeted pytest is green (27 passed); all new files and changed ChaChaNotes hunks pass Ruff, the isolated E/F gate passes, and git diff --check passes. The prescribed all-rules Ruff command remains red solely on 588 pre-existing diagnostics across legacy ChaChaNotes_DB.py, so the task intentionally remains In Progress under the repository DoD. ADR required: no; implements ADR-116. No UI files changed and no generalized new lesson was required.
+Fix Round 1 resolves all four independent-review findings. Recent projection now independently resolves a zero-chat current card, force-includes old current groups, reserves an unavailable slot, and uses section-first SQL with bounded row materialization and exact SQLite totals. Initial Keyword IDs stream in stable LIMIT 128 batches and variant validation is linear. Activated Keyword maintenance now durably queues source mutations, applies idempotent dirty-only replacement/removal, reconciles missed events, recovers expired builds, deletes superseded derived plaintext, and reports revision/policy-aware typed query status via the additive CharacterConversationPage.keyword_status field. Search selection and projector revalidation share one read snapshot, use bounded refill, and receive a final revision fence with one bounded retry. Targeted pytest: 41 passed; scoped Ruff new files/changed surface and E4/E7/E9/F: passed; git diff --check: passed. Ruling: the reviewer-approved scoped Ruff gate is valid; the 588 all-rules ChaChaNotes_DB.py diagnostics are pre-existing and outside Task 2 changed hunks. Schema remains v66 with fresh/upgrade parity. ADR required: no; ADR-116 remains the governing decision. No UI files changed and no generalized lesson was required.
 <!-- SECTION:NOTES:END -->

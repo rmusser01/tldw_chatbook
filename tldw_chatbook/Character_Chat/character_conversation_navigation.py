@@ -247,6 +247,7 @@ class CharacterConversationPage:
     total: int
     next_cursor: CharacterConversationCursor | None
     data_revision: int
+    keyword_status: CharacterKeywordIndexStatus | None = None
 
 
 class CharacterKeywordIndexStatus(StrEnum):
@@ -347,3 +348,8 @@ class CharacterConversationNavigationService:
         """Return the current Keyword generation status."""
 
         return self._repository.keyword_index_status()
+
+    def reconcile_keyword_index(self) -> CharacterKeywordIndexStatus:
+        """Idempotently reconcile the activated Keyword generation."""
+
+        return self._repository.reconcile_keyword_index()

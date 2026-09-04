@@ -137,6 +137,158 @@ def test_recent_groups_force_current_then_sort_other_groups_by_latest_chat(
     assert all(len(group.rows) == 1 and group.total == 1 for group in groups)
 
 
+def test_recent_groups_force_include_valid_zero_chat_current_character(
+    tmp_path: Path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "zero-current.sqlite", client_id="recent")
+    current_id = _card(db, "Current without chats")
+    other_id = _card(db, "Recent other")
+    _chat(
+        db,
+        conversation_id="recent-other",
+        character_id=other_id,
+        title="Other",
+        content="other",
+        modified="2026-09-03T10:00:00Z",
+    )
+
+    groups = CharacterConversationNavigationService(
+        db,
+        current_character=ResolvedLocalCharacterKey(
+            db.get_local_authority_id(), current_id
+        ),
+    ).recent_groups(group_limit=2)
+
+    assert [group.character_label for group in groups] == [
+        "Current without chats",
+        "Recent other",
+    ]
+    assert groups[0].is_current
+    assert groups[0].rows == ()
+    assert groups[0].total == 0
+
+
+def test_recent_groups_force_old_current_group_into_bound(tmp_path: Path) -> None:
+    db = CharactersRAGDB(tmp_path / "old-current-bound.sqlite", client_id="recent")
+    current_id = _card(db, "Old current")
+    _chat(
+        db,
+        conversation_id="old-current",
+        character_id=current_id,
+        title="Old current",
+        content="old",
+        modified="2026-09-01T10:00:00Z",
+    )
+    for index in range(4):
+        character_id = _card(db, f"Recent {index}")
+        _chat(
+            db,
+            conversation_id=f"recent-{index}",
+            character_id=character_id,
+            title=f"Recent {index}",
+            content="recent",
+            modified=f"2026-09-03T10:00:0{index}Z",
+        )
+
+    groups = CharacterConversationNavigationService(
+        db,
+        current_character=ResolvedLocalCharacterKey(
+            db.get_local_authority_id(), current_id
+        ),
+    ).recent_groups(group_limit=3, row_limit=1)
+
+    assert [group.character_label for group in groups] == [
+        "Old current",
+        "Recent 3",
+        "Recent 2",
+    ]
+
+
+def test_recent_groups_reserve_slot_for_nonempty_unavailable_group(
+    tmp_path: Path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "unavailable-bound.sqlite", client_id="recent")
+    for index in range(4):
+        character_id = _card(db, f"Resolved {index}")
+        _chat(
+            db,
+            conversation_id=f"resolved-{index}",
+            character_id=character_id,
+            title=f"Resolved {index}",
+            content="resolved",
+            modified=f"2026-09-03T10:00:0{index}Z",
+        )
+    _chat(
+        db,
+        conversation_id="unavailable",
+        character_id=1,
+        title="Unavailable",
+        content="unavailable",
+        modified="2026-09-03T09:00:00Z",
+    )
+    with db.transaction() as connection:
+        connection.execute(
+            "UPDATE conversations SET assistant_authority_id = NULL, "
+            "assistant_id = 'unknown' WHERE id = 'unavailable'"
+        )
+
+    groups = CharacterConversationNavigationService(db).recent_groups(group_limit=4)
+
+    assert [group.character_label for group in groups] == [
+        "Resolved 3",
+        "Resolved 2",
+        "Resolved 1",
+        "Chats with unavailable characters",
+    ]
+    assert groups[-1].total == 1
+    assert groups[-1].rows[0].title == "Unavailable"
+
+
+def test_recent_groups_materialize_only_sql_bounded_sections(tmp_path: Path) -> None:
+    db = CharactersRAGDB(tmp_path / "recent-sql-bound.sqlite", client_id="recent")
+    for character_index in range(5):
+        character_id = _card(db, f"Character {character_index}")
+        for chat_index in range(3):
+            _chat(
+                db,
+                conversation_id=f"chat-{character_index}-{chat_index}",
+                character_id=character_id,
+                title=f"Chat {character_index}-{chat_index}",
+                content="bounded",
+                modified=(
+                    f"2026-09-03T1{character_index}:00:0{chat_index}Z"
+                ),
+            )
+    statements: list[str] = []
+    db.get_connection().set_trace_callback(statements.append)
+
+    groups = CharacterConversationNavigationService(db).recent_groups(
+        group_limit=2, row_limit=2
+    )
+
+    db.get_connection().set_trace_callback(None)
+    assert len(groups) == 2
+    assert all(group.total == 3 and len(group.rows) == 2 for group in groups)
+    materializing_queries = [
+        statement
+        for statement in statements
+        if "FROM conversations AS c" in statement
+        and "COUNT(" not in statement
+    ]
+    assert materializing_queries
+    assert all("LIMIT" in statement for statement in materializing_queries)
+    section_queries = [
+        statement
+        for statement in statements
+        if "GROUP BY c.character_id" in statement
+    ]
+    assert len(section_queries) == 1 and "LIMIT 2" in section_queries[0]
+    plan = db.get_connection().execute(
+        f"EXPLAIN QUERY PLAN {section_queries[0]}"
+    ).fetchall()
+    assert plan
+
+
 def test_character_page_keyset_has_no_skip_or_repeat(tmp_path: Path) -> None:
     db = CharactersRAGDB(tmp_path / "paging.sqlite", client_id="paging")
     character_id = _card(db, "Paged")
@@ -200,6 +352,8 @@ def test_keyword_search_is_local_only_and_revalidates_data_revision(
     assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
     local = service.keyword_search("LOCAL_KEYWORD_CANARY")
     server = service.keyword_search("SERVER_KEYWORD_CANARY")
+    assert local.keyword_status is CharacterKeywordIndexStatus.READY
+    assert server.keyword_status is CharacterKeywordIndexStatus.READY
     assert [row.title for row in local.rows] == ["Local"]
     assert server.rows == ()
 
@@ -207,6 +361,344 @@ def test_keyword_search_is_local_only_and_revalidates_data_revision(
     stale = service.keyword_search("LOCAL_KEYWORD_CANARY")
     assert stale.rows == ()
     assert stale.data_revision == local.data_revision + 1
+    assert stale.keyword_status is CharacterKeywordIndexStatus.ABSENT
+
+
+def test_keyword_incrementally_reconciles_source_mutations(tmp_path: Path) -> None:
+    db = CharactersRAGDB(tmp_path / "incremental.sqlite", client_id="incremental")
+    original_card = _card(db, "Original character")
+    replacement_card = _card(db, "Replacement character")
+    _chat(
+        db,
+        conversation_id="maintained",
+        character_id=original_card,
+        title="Maintained",
+        content="ORIGINAL_TERM",
+        modified="2026-09-03T10:00:00Z",
+    )
+    service = CharacterConversationNavigationService(db)
+    assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+
+    assert db.add_message(
+        {
+            "id": "appended",
+            "conversation_id": "maintained",
+            "parent_message_id": "message-maintained",
+            "sender": "assistant",
+            "role": "assistant",
+            "content": "APPENDED_TERM",
+        }
+    ) == "appended"
+    db.set_conversation_active_leaf("maintained", "appended")
+    assert service.keyword_index_status() is CharacterKeywordIndexStatus.ABSENT
+    assert service.keyword_search("APPENDED_TERM").keyword_status is (
+        CharacterKeywordIndexStatus.ABSENT
+    )
+    assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+    assert service.keyword_search("APPENDED_TERM").total == 1
+
+    assert db.update_message(
+        "appended",
+        {"content": "EDITED_TERM"},
+        expected_version=1,
+        preserve_descendants=True,
+    )
+    assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+    assert service.keyword_search("APPENDED_TERM").total == 0
+    assert service.keyword_search("EDITED_TERM").total == 1
+
+    assert db.add_message(
+        {
+            "id": "alternate",
+            "conversation_id": "maintained",
+            "parent_message_id": "message-maintained",
+            "sender": "assistant",
+            "role": "assistant",
+            "content": "BRANCH_TERM",
+        }
+    ) == "alternate"
+    with db.transaction() as connection:
+        connection.execute(
+            "UPDATE messages SET variant_of = 'appended', "
+            "is_selected_variant = CASE id WHEN 'alternate' THEN 1 ELSE 0 END "
+            "WHERE id IN ('appended', 'alternate')"
+        )
+    db.set_conversation_active_leaf("maintained", "alternate")
+    assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+    assert service.keyword_search("EDITED_TERM").total == 0
+    assert service.keyword_search("BRANCH_TERM").total == 1
+
+    with db.transaction() as connection:
+        connection.execute(
+            "UPDATE conversations SET character_id = ?, assistant_id = ? "
+            "WHERE id = 'maintained'",
+            (replacement_card, str(replacement_card)),
+        )
+    assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+    assert service.keyword_search("Replacement character").total == 1
+    assert service.keyword_search("Original character").total == 0
+
+    assert db.soft_delete_message("alternate", expected_version=1)
+    assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+    assert service.keyword_search("BRANCH_TERM").total == 0
+    plaintext = db.get_connection().execute(
+        "SELECT COUNT(*) FROM character_conversation_search_documents "
+        "WHERE body LIKE '%BRANCH_TERM%'"
+    ).fetchone()[0]
+    assert plaintext == 0
+
+
+def test_keyword_dirty_ledger_and_missed_event_reconciliation(tmp_path: Path) -> None:
+    db = CharactersRAGDB(tmp_path / "reconcile.sqlite", client_id="reconcile")
+    character_id = _card(db, "Reconcile")
+    _chat(
+        db,
+        conversation_id="reconcile-chat",
+        character_id=character_id,
+        title="Reconcile",
+        content="BEFORE_RECONCILE",
+        modified="2026-09-03T10:00:00Z",
+    )
+    service = CharacterConversationNavigationService(db)
+    assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+    assert db.update_message(
+        "message-reconcile-chat",
+        {"content": "AFTER_RECONCILE"},
+        expected_version=1,
+        preserve_descendants=True,
+    )
+    with db.transaction() as connection:
+        assert connection.execute(
+            "SELECT conversation_id FROM character_conversation_search_dirty"
+        ).fetchone()[0] == "reconcile-chat"
+        connection.execute("DELETE FROM character_conversation_search_dirty")
+
+    assert service.reconcile_keyword_index() is CharacterKeywordIndexStatus.READY
+    assert service.keyword_search("BEFORE_RECONCILE").total == 0
+    assert service.keyword_search("AFTER_RECONCILE").total == 1
+
+
+def test_keyword_ensure_replaces_only_dirty_conversations(
+    tmp_path: Path, monkeypatch
+) -> None:
+    db = CharactersRAGDB(tmp_path / "incremental-batch.sqlite", client_id="dirty")
+    character_id = _card(db, "Dirty batch")
+    for index in range(3):
+        _chat(
+            db,
+            conversation_id=f"dirty-{index}",
+            character_id=character_id,
+            title=f"Dirty {index}",
+            content="BEFORE_DIRTY",
+            modified=f"2026-09-03T10:00:0{index}Z",
+        )
+    service = CharacterConversationNavigationService(db)
+    assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+    assert db.update_message(
+        "message-dirty-1",
+        {"content": "AFTER_DIRTY"},
+        expected_version=1,
+        preserve_descendants=True,
+    )
+    projected: list[str] = []
+    original_project = service._repository._projector.project
+
+    def record_project(conversation_id: str, *, connection=None):
+        projected.append(conversation_id)
+        return original_project(conversation_id, connection=connection)
+
+    monkeypatch.setattr(service._repository._projector, "project", record_project)
+
+    assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+    assert projected == ["dirty-1"]
+    assert service.keyword_search("AFTER_DIRTY").total == 1
+
+
+def test_keyword_recovers_abandoned_build_and_cleans_superseded_rows(
+    tmp_path: Path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "abandoned.sqlite", client_id="abandoned")
+    character_id = _card(db, "Abandoned")
+    _chat(
+        db,
+        conversation_id="abandoned-chat",
+        character_id=character_id,
+        title="Abandoned",
+        content="RECOVERED_TERM",
+        modified="2026-09-03T10:00:00Z",
+    )
+    revision = db.get_character_conversation_search_revision()
+    authority = db.get_local_authority_id()
+    with db.transaction() as connection:
+        connection.execute(
+            "INSERT INTO character_conversation_search_generations("
+            "generation_id, data_authority_id, status, policy_version, "
+            "source_revision, lease_expires_at) "
+            "VALUES('abandoned', ?, 'building', 1, ?, '2000-01-01 00:00:00')",
+            (authority, revision),
+        )
+    abandoned_service = CharacterConversationNavigationService(db)
+    assert abandoned_service.keyword_index_status() is (
+        CharacterKeywordIndexStatus.FAILED
+    )
+    assert abandoned_service.keyword_search("RECOVERED_TERM").keyword_status is (
+        CharacterKeywordIndexStatus.FAILED
+    )
+    db.close_connection()
+    restarted = CharactersRAGDB(
+        tmp_path / "abandoned.sqlite", client_id="after-restart"
+    )
+
+    service = CharacterConversationNavigationService(restarted)
+    assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+    assert service.keyword_search("RECOVERED_TERM").total == 1
+    generations = restarted.get_connection().execute(
+        "SELECT status, COUNT(*) FROM character_conversation_search_generations "
+        "GROUP BY status"
+    ).fetchall()
+    assert [(row["status"], row[1]) for row in generations] == [("ready", 1)]
+
+
+def test_keyword_query_reports_active_build_instead_of_empty_success(
+    tmp_path: Path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "building.sqlite", client_id="building")
+    revision = db.get_character_conversation_search_revision()
+    authority = db.get_local_authority_id()
+    with db.transaction() as connection:
+        connection.execute(
+            "INSERT INTO character_conversation_search_generations("
+            "generation_id, data_authority_id, status, policy_version, "
+            "source_revision, lease_expires_at) "
+            "VALUES('active', ?, 'building', 1, ?, DATETIME('now', '+5 minutes'))",
+            (authority, revision),
+        )
+    service = CharacterConversationNavigationService(db)
+
+    assert service.keyword_index_status() is CharacterKeywordIndexStatus.BUILDING
+    page = service.keyword_search("anything")
+    assert page.rows == () and page.total == 0
+    assert page.keyword_status is CharacterKeywordIndexStatus.BUILDING
+
+
+def test_keyword_search_fences_writer_during_snapshot_projection(
+    tmp_path: Path, monkeypatch
+) -> None:
+    path = tmp_path / "projection-barrier.sqlite"
+    reader = CharactersRAGDB(path, client_id="reader")
+    character_id = _card(reader, "Barrier")
+    _chat(
+        reader,
+        conversation_id="barrier-chat",
+        character_id=character_id,
+        title="Barrier",
+        content="STALE_BARRIER_TERM",
+        modified="2026-09-03T10:00:00Z",
+    )
+    service = CharacterConversationNavigationService(reader)
+    assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+    writer = CharactersRAGDB(path, client_id="writer")
+    original_project = service._repository._projector.project
+    mutated = False
+
+    def project_with_barrier(conversation_id: str, *, connection=None):
+        nonlocal mutated
+        if not mutated:
+            mutated = True
+            assert writer.update_message(
+                "message-barrier-chat",
+                {"content": "FRESH_BARRIER_TERM"},
+                expected_version=1,
+                preserve_descendants=True,
+            )
+        return original_project(conversation_id, connection=connection)
+
+    monkeypatch.setattr(
+        service._repository._projector, "project", project_with_barrier
+    )
+    try:
+        result = service.keyword_search("STALE_BARRIER_TERM")
+    finally:
+        writer.close_connection()
+
+    assert result.rows == ()
+    assert result.total == 0
+    assert result.keyword_status is CharacterKeywordIndexStatus.ABSENT
+
+
+def test_keyword_search_fences_writer_after_snapshot_before_return(
+    tmp_path: Path, monkeypatch
+) -> None:
+    path = tmp_path / "final-fence.sqlite"
+    reader = CharactersRAGDB(path, client_id="reader")
+    character_id = _card(reader, "Final fence")
+    _chat(
+        reader,
+        conversation_id="fence-chat",
+        character_id=character_id,
+        title="Fence",
+        content="STALE_FINAL_TERM",
+        modified="2026-09-03T10:00:00Z",
+    )
+    service = CharacterConversationNavigationService(reader)
+    assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+    writer = CharactersRAGDB(path, client_id="writer")
+    original_snapshot = service._repository._keyword_search_snapshot
+    mutated = False
+
+    def snapshot_then_mutate(query: str, *, offset: int, limit: int):
+        nonlocal mutated
+        result = original_snapshot(query, offset=offset, limit=limit)
+        if not mutated:
+            mutated = True
+            assert writer.update_message(
+                "message-fence-chat",
+                {"content": "FRESH_FINAL_TERM"},
+                expected_version=1,
+                preserve_descendants=True,
+            )
+        return result
+
+    monkeypatch.setattr(
+        service._repository, "_keyword_search_snapshot", snapshot_then_mutate
+    )
+    try:
+        result = service.keyword_search("STALE_FINAL_TERM")
+    finally:
+        writer.close_connection()
+
+    assert result.rows == ()
+    assert result.total == 0
+    assert result.keyword_status is CharacterKeywordIndexStatus.ABSENT
+
+
+def test_keyword_search_refills_after_snapshot_revalidation_rejects_candidate(
+    tmp_path: Path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "refill.sqlite", client_id="refill")
+    character_id = _card(db, "Refill")
+    for index in range(3):
+        _chat(
+            db,
+            conversation_id=f"refill-{index}",
+            character_id=character_id,
+            title=f"Refill {index}",
+            content="REFILL_TERM",
+            modified=f"2026-09-03T10:00:0{index}Z",
+        )
+    service = CharacterConversationNavigationService(db)
+    assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+    with db.transaction() as connection:
+        connection.execute(
+            "UPDATE character_conversation_search_documents "
+            "SET eligibility_digest = 'corrupt' WHERE conversation_id = 'refill-2'"
+        )
+
+    result = service.keyword_search("REFILL_TERM", limit=2)
+
+    assert [row.title for row in result.rows] == ["Refill 1", "Refill 0"]
+    assert result.total == 2
+    assert result.keyword_status is CharacterKeywordIndexStatus.READY
 
 
 def test_keyword_search_indexes_character_display_identity(tmp_path: Path) -> None:
@@ -426,6 +918,34 @@ def test_keyword_backfill_reports_each_128_conversation_batch(tmp_path: Path) ->
     assert observed == [(128, CharacterKeywordIndexStatus.BUILDING, 128)]
 
 
+def test_keyword_backfill_streams_multiple_bounded_id_batches(tmp_path: Path) -> None:
+    db = CharactersRAGDB(tmp_path / "streaming.sqlite", client_id="streaming")
+    character_id = _card(db, "Streaming")
+    for index in range(257):
+        _chat(
+            db,
+            conversation_id=f"stream-{index:03d}",
+            character_id=character_id,
+            title=f"Stream {index}",
+            content=f"content {index}",
+            modified="2026-09-03T10:00:00Z",
+        )
+    statements: list[str] = []
+    db.get_connection().set_trace_callback(statements.append)
+
+    status = CharacterConversationNavigationService(db).ensure_keyword_index()
+
+    db.get_connection().set_trace_callback(None)
+    id_queries = [
+        statement
+        for statement in statements
+        if "SELECT c.id" in statement and "assistant_authority_id" in statement
+    ]
+    assert status is CharacterKeywordIndexStatus.READY
+    assert len(id_queries) == 3
+    assert all("LIMIT 128" in statement for statement in id_queries)
+
+
 def test_keyword_backfill_rejects_source_revision_change(tmp_path: Path) -> None:
     db = CharactersRAGDB(tmp_path / "revision-fence.sqlite", client_id="revision")
     character_id = _card(db, "Revision fence")
@@ -447,7 +967,9 @@ def test_keyword_backfill_rejects_source_revision_change(tmp_path: Path) -> None
 
     assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.FAILED
     assert service.keyword_index_status() is CharacterKeywordIndexStatus.FAILED
-    assert service.keyword_search("content").rows == ()
+    failed = service.keyword_search("content")
+    assert failed.rows == ()
+    assert failed.keyword_status is CharacterKeywordIndexStatus.FAILED
 
 
 def test_explicit_keyword_retry_rebuilds_failed_current_generation(
