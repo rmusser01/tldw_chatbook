@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from urllib.parse import urlsplit
@@ -16,6 +17,7 @@ from tldw_chatbook.Canvas.gateway import (
     BridgeConfirmationResponse,
     CanvasGateway,
     CanvasGatewayEvent,
+    CanvasGatewayLaunch,
     CanvasGatewayScope,
     CanvasSourceResponse,
 )
@@ -54,9 +56,15 @@ class _Authority:
         )
 
     async def confirm_bridge(
-        self, scope: CanvasGatewayScope, request: BridgeConfirmationRequest
+        self,
+        scope: CanvasGatewayScope,
+        request: BridgeConfirmationRequest,
+        *,
+        settlement: object | None = None,
     ) -> BridgeConfirmationResponse:
         self.calls.append(("bridge", scope))
+        if settlement is not None:
+            assert settlement.try_settle(lambda: None)  # type: ignore[attr-defined]
         return BridgeConfirmationResponse(
             request_id=request.request.request_id, status="confirmed"
         )
@@ -71,6 +79,10 @@ def _scope(**changes: str) -> CanvasGatewayScope:
     }
     values.update(changes)
     return CanvasGatewayScope(**values)
+
+
+def _launch_url(launch: CanvasGatewayLaunch, relative: str) -> str:
+    return f"{launch.clean_url}{relative.lstrip('/')}"
 
 
 def test_gateway_event_metadata_is_closed_and_source_free() -> None:
@@ -121,6 +133,63 @@ async def test_gateway_starts_lazily_once_on_numeric_loopback_and_shuts_down() -
     assert gateway.capabilities.closed is True
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_type", [RuntimeError, asyncio.CancelledError])
+async def test_gateway_cleanup_retains_runner_until_a_retry_settles(
+    failure_type: type[BaseException],
+) -> None:
+    class FlakyRunner:
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        async def cleanup(self) -> None:
+            self.attempts += 1
+            if self.attempts == 1:
+                raise failure_type()
+
+    gateway = CanvasGateway(authority=_Authority([]))
+    runner = FlakyRunner()
+    gateway._runner = runner
+    gateway._origin = "http://127.0.0.1:1"
+
+    with pytest.raises(failure_type):
+        await gateway.aclose()
+    assert gateway._runner is runner
+    assert gateway._origin == "http://127.0.0.1:1"
+
+    await gateway.aclose()
+    assert runner.attempts == 2
+    assert gateway._runner is None
+    assert gateway.origin is None
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_gateway_start_retries_unsettled_cleanup_before_rebinding() -> None:
+    class FlakyRunner:
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        async def cleanup(self) -> None:
+            self.attempts += 1
+            if self.attempts == 1:
+                raise RuntimeError("private-cleanup-detail")
+
+    gateway = CanvasGateway(authority=_Authority([]))
+    runner = FlakyRunner()
+    gateway._runner = runner
+
+    with pytest.raises(RuntimeError, match="could not start") as exc_info:
+        await gateway.start()
+    assert "private-cleanup-detail" not in str(exc_info.value)
+    assert gateway._runner is runner
+
+    origin = await gateway.start()
+    assert origin.startswith("http://127.0.0.1:")
+    assert runner.attempts == 2
+    await gateway.aclose()
+
+
 @pytest.mark.parametrize(
     "host", ["localhost", "0.0.0.0", "192.168.1.2", "example.test"]
 )
@@ -164,9 +233,84 @@ async def test_startup_and_browser_open_failures_are_recoverable_without_state_r
     assert opened == [launch.browser_url]
     assert "?" not in launch.browser_url
     assert "#boot=" in launch.browser_url
-    assert launch.clean_url == f"{gateway.origin}/canvas/"
+    assert launch.clean_url.startswith(f"{gateway.origin}/canvas/gateway-")
+    assert "#" not in launch.clean_url
     assert gateway.start_count == 1
     await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_two_shells_in_one_browser_keep_distinct_cookie_authority() -> None:
+    authority = _Authority([])
+    gateway = CanvasGateway(authority=authority)
+    first = await gateway.open_shell(_scope())
+    second = await gateway.open_shell(_scope(browser_session_id="browser-b"))
+    assert first.clean_url != second.clean_url
+    assert gateway.origin is not None
+    origin = gateway.origin
+    async with aiohttp.ClientSession(
+        cookie_jar=aiohttp.CookieJar(unsafe=True)
+    ) as session:
+        first_bootstrap = first.browser_url.split("#boot=", 1)[1]
+        crossed = await _post_json(
+            session,
+            _launch_url(second, "api/boot"),
+            {"bootstrap": first_bootstrap},
+            origin=origin,
+        )
+        assert crossed.status == 401
+        first_boot = await _post_json(
+            session,
+            _launch_url(first, "api/boot"),
+            {"bootstrap": first_bootstrap},
+            origin=origin,
+        )
+        assert first_boot.status == 200
+        second_boot = await _post_json(
+            session,
+            _launch_url(second, "api/boot"),
+            {"bootstrap": second.browser_url.split("#boot=", 1)[1]},
+            origin=origin,
+        )
+        assert second_boot.status == 200
+
+        assert (await session.get(_launch_url(first, "api/events"))).status == 200
+        assert (await session.get(_launch_url(second, "api/events"))).status == 200
+    assert gateway.browser_session_count == 2
+    await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_two_loopback_gateways_do_not_overwrite_browser_cookies() -> None:
+    first_gateway = CanvasGateway(authority=_Authority([]))
+    second_gateway = CanvasGateway(authority=_Authority([]))
+    first = await first_gateway.open_shell(_scope())
+    second = await second_gateway.open_shell(
+        _scope(browser_session_id="browser-b", canvas_id="canvas-b")
+    )
+    assert first_gateway.origin is not None
+    assert second_gateway.origin is not None
+    async with aiohttp.ClientSession(
+        cookie_jar=aiohttp.CookieJar(unsafe=True)
+    ) as session:
+        for gateway, launch in (
+            (first_gateway, first),
+            (second_gateway, second),
+        ):
+            response = await _post_json(
+                session,
+                _launch_url(launch, "api/boot"),
+                {"bootstrap": launch.browser_url.split("#boot=", 1)[1]},
+                origin=gateway.origin,
+            )
+            assert response.status == 200
+
+        assert (await session.get(_launch_url(first, "api/events"))).status == 200
+        assert (await session.get(_launch_url(second, "api/events"))).status == 200
+    await first_gateway.aclose()
+    await second_gateway.aclose()
 
 
 @pytest.mark.loopback_network
@@ -194,7 +338,7 @@ async def test_boot_frame_plan_assets_events_source_and_bridge_are_exactly_scope
         bootstrap = launch.browser_url.split("#boot=", 1)[1]
         boot = await _post_json(
             session,
-            f"{origin}/canvas/api/boot",
+            _launch_url(launch, "api/boot"),
             {"bootstrap": bootstrap},
             origin=origin,
         )
@@ -214,7 +358,7 @@ async def test_boot_frame_plan_assets_events_source_and_bridge_are_exactly_scope
 
         frame = await _post_json(
             session,
-            f"{origin}/canvas/api/frame",
+            _launch_url(launch, "api/frame"),
             {},
             origin=origin,
             csrf=csrf,
@@ -245,7 +389,17 @@ async def test_boot_frame_plan_assets_events_source_and_bridge_are_exactly_scope
         )
         assert replay.status == 401
 
-        plan = await session.get(f"{origin}/canvas/api/plan")
+        forced_plan = await session.get(
+            _launch_url(launch, "api/plan"),
+            headers={"Sec-Fetch-Dest": "image", "Sec-Fetch-Site": "same-site"},
+        )
+        assert forced_plan.status == 403
+
+        # A refused cross-context request does not consume the plan capability.
+        plan = await session.get(
+            _launch_url(launch, "api/plan"),
+            headers={"Sec-Fetch-Dest": "empty", "Sec-Fetch-Site": "same-origin"},
+        )
         assert plan.status == 200
         plan_body = await plan.json()
         assert plan_body["runtime_profile"] == "canvas-v1"
@@ -255,33 +409,33 @@ async def test_boot_frame_plan_assets_events_source_and_bridge_are_exactly_scope
             == "Exact plan"
         )
 
-        asset = await session.get(f"{origin}/canvas/static/canvas_renderer.js")
+        asset = await session.get(_launch_url(launch, "static/canvas_renderer.js"))
         assert asset.status == 200
         assert asset.content_type == "text/javascript"
         assert asset.headers["Access-Control-Allow-Origin"] == "*"
         assert asset.headers["Cross-Origin-Resource-Policy"] == "cross-origin"
         assert 'crossorigin="anonymous"' in await renderer.text()
-        missing = await session.get(f"{origin}/canvas/static/not-packaged.js")
+        missing = await session.get(_launch_url(launch, "static/not-packaged.js"))
         assert missing.status == 404
 
         exact_method = await session.head(launch.clean_url)
         assert exact_method.status == 405
         assert exact_method.headers["Cache-Control"] == "no-store"
 
-        events = await session.get(f"{origin}/canvas/api/events")
+        events = await session.get(_launch_url(launch, "api/events"))
         assert events.status == 200
         assert (await events.json())["events"][0]["revision_id"] == "revision-a"
 
         source_grant = await _post_json(
             session,
-            f"{origin}/canvas/api/actions",
+            _launch_url(launch, "api/actions"),
             {"action": "source_read"},
             origin=origin,
             csrf=csrf,
         )
         source_token = (await source_grant.json())["capability"]
         source = await session.get(
-            f"{origin}/canvas/api/source",
+            _launch_url(launch, "api/source"),
             headers={"Authorization": f"CanvasCapability {source_token}"},
         )
         assert source.status == 200
@@ -289,14 +443,14 @@ async def test_boot_frame_plan_assets_events_source_and_bridge_are_exactly_scope
         assert await source.text() == "<!doctype html><title>Exact source</title>"
         assert (
             await session.get(
-                f"{origin}/canvas/api/source",
+                _launch_url(launch, "api/source"),
                 headers={"Authorization": f"CanvasCapability {source_token}"},
             )
         ).status == 401
 
         bridge_grant = await _post_json(
             session,
-            f"{origin}/canvas/api/actions",
+            _launch_url(launch, "api/actions"),
             {"action": "bridge_confirm"},
             origin=origin,
             csrf=csrf,
@@ -304,7 +458,7 @@ async def test_boot_frame_plan_assets_events_source_and_bridge_are_exactly_scope
         bridge_token = (await bridge_grant.json())["capability"]
         bridge = await _post_json(
             session,
-            f"{origin}/canvas/api/bridge",
+            _launch_url(launch, "api/bridge"),
             {
                 "approved": True,
                 "request": {
@@ -323,14 +477,14 @@ async def test_boot_frame_plan_assets_events_source_and_bridge_are_exactly_scope
 
         closed = await _post_json(
             session,
-            f"{origin}/canvas/api/close",
+            _launch_url(launch, "api/close"),
             {},
             origin=origin,
             csrf=csrf,
         )
         assert closed.status == 200
         assert gateway.browser_session_count == 0
-        assert (await session.get(f"{origin}/canvas/api/events")).status == 401
+        assert (await session.get(_launch_url(launch, "api/events"))).status == 401
 
     assert authority.calls == [
         ("plan", _scope()),
@@ -339,7 +493,7 @@ async def test_boot_frame_plan_assets_events_source_and_bridge_are_exactly_scope
         ("bridge", _scope()),
     ]
     assert not any(
-        path.resource.canonical == "/canvas/api/conversations"
+        path.resource.canonical.endswith("/api/conversations")
         for path in gateway.routes
     )
     await gateway.aclose()
@@ -371,14 +525,76 @@ async def test_events_fail_closed_when_authority_returns_a_sibling_canvas() -> N
         bootstrap = launch.browser_url.split("#boot=", 1)[1]
         boot = await _post_json(
             session,
-            f"{origin}/canvas/api/boot",
+            _launch_url(launch, "api/boot"),
             {"bootstrap": bootstrap},
             origin=origin,
         )
         assert boot.status == 200
-        events = await session.get(f"{origin}/canvas/api/events")
+        events = await session.get(_launch_url(launch, "api/events"))
         assert events.status == 503
         assert "canvas-sibling" not in await events.text()
+    await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_boot_refuses_new_browser_session_at_capacity() -> None:
+    gateway = CanvasGateway(authority=_Authority([]), max_browser_sessions=1)
+    first = await gateway.open_shell(_scope())
+    second = await gateway.open_shell(_scope(browser_session_id="browser-b"))
+    assert gateway.origin is not None
+    origin = gateway.origin
+    async with aiohttp.ClientSession(
+        cookie_jar=aiohttp.CookieJar(unsafe=True)
+    ) as session:
+        for launch, expected_status in ((first, 200), (second, 503)):
+            bootstrap = launch.browser_url.split("#boot=", 1)[1]
+            response = await _post_json(
+                session,
+                _launch_url(launch, "api/boot"),
+                {"bootstrap": bootstrap},
+                origin=origin,
+            )
+            assert response.status == expected_status
+    assert gateway.browser_session_count == 1
+    await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_boot_purges_expired_browser_session_before_capacity_check() -> None:
+    now = 100.0
+    gateway = CanvasGateway(
+        authority=_Authority([]),
+        max_browser_sessions=1,
+        clock=lambda: now,
+    )
+    first = await gateway.open_shell(_scope())
+    assert gateway.origin is not None
+    origin = gateway.origin
+    async with aiohttp.ClientSession(
+        cookie_jar=aiohttp.CookieJar(unsafe=True)
+    ) as session:
+        first_bootstrap = first.browser_url.split("#boot=", 1)[1]
+        first_boot = await _post_json(
+            session,
+            _launch_url(first, "api/boot"),
+            {"bootstrap": first_bootstrap},
+            origin=origin,
+        )
+        assert first_boot.status == 200
+
+        now += 30 * 60
+        second = await gateway.open_shell(_scope(browser_session_id="browser-b"))
+        second_bootstrap = second.browser_url.split("#boot=", 1)[1]
+        second_boot = await _post_json(
+            session,
+            _launch_url(second, "api/boot"),
+            {"bootstrap": second_bootstrap},
+            origin=origin,
+        )
+        assert second_boot.status == 200
+    assert gateway.browser_session_count == 1
     await gateway.aclose()
 
 
@@ -394,7 +610,12 @@ async def test_gateway_rejects_query_credentials_proxy_headers_origin_csrf_type_
     async with aiohttp.ClientSession(
         cookie_jar=aiohttp.CookieJar(unsafe=True)
     ) as session:
-        for query in ("bootstrap=secret", "capability=secret", "token=secret"):
+        for query in (
+            "boot=secret",
+            "bootstrap=secret",
+            "capability=secret",
+            "token=secret",
+        ):
             response = await session.get(f"{launch.clean_url}?{query}")
             assert response.status == 400
             assert query.split("=", 1)[1] not in await response.text()
@@ -409,19 +630,19 @@ async def test_gateway_rejects_query_credentials_proxy_headers_origin_csrf_type_
         bootstrap = launch.browser_url.split("#boot=", 1)[1]
         wrong_origin = await _post_json(
             session,
-            f"{origin}/canvas/api/boot",
+            _launch_url(launch, "api/boot"),
             {"bootstrap": bootstrap},
             origin="http://127.0.0.1:1",
         )
         assert wrong_origin.status == 403
         wrong_type = await session.post(
-            f"{origin}/canvas/api/boot",
+            _launch_url(launch, "api/boot"),
             data="{}",
             headers={"Origin": origin, "Content-Type": "text/plain"},
         )
         assert wrong_type.status == 415
         oversized = await session.post(
-            f"{origin}/canvas/api/boot",
+            _launch_url(launch, "api/boot"),
             data="x" * 257,
             headers={"Origin": origin, "Content-Type": "application/json"},
         )
@@ -429,14 +650,14 @@ async def test_gateway_rejects_query_credentials_proxy_headers_origin_csrf_type_
 
         boot = await _post_json(
             session,
-            f"{origin}/canvas/api/boot",
+            _launch_url(launch, "api/boot"),
             {"bootstrap": bootstrap},
             origin=origin,
         )
         assert boot.status == 200
         no_csrf = await _post_json(
             session,
-            f"{origin}/canvas/api/frame",
+            _launch_url(launch, "api/frame"),
             {},
             origin=origin,
         )
@@ -465,7 +686,7 @@ async def test_selection_change_revokes_old_loads_and_shutdown_revokes_sessions(
         bootstrap = launch.browser_url.split("#boot=", 1)[1]
         stale_boot = await _post_json(
             session,
-            f"{origin}/canvas/api/boot",
+            _launch_url(launch, "api/boot"),
             {"bootstrap": bootstrap},
             origin=origin,
         )
@@ -473,14 +694,14 @@ async def test_selection_change_revokes_old_loads_and_shutdown_revokes_sessions(
         bootstrap = replacement.browser_url.split("#boot=", 1)[1]
         boot = await _post_json(
             session,
-            f"{origin}/canvas/api/boot",
+            _launch_url(replacement, "api/boot"),
             {"bootstrap": bootstrap},
             origin=origin,
         )
         body = await boot.json()
         frame = await _post_json(
             session,
-            f"{origin}/canvas/api/frame",
+            _launch_url(replacement, "api/frame"),
             {},
             origin=origin,
             csrf=body["csrf"],
@@ -501,6 +722,131 @@ async def test_selection_change_revokes_old_loads_and_shutdown_revokes_sessions(
 
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "transition", ["reload", "close", "branch", "same-revision-selection"]
+)
+async def test_bridge_settlement_prevents_host_effect_after_scope_race(
+    transition: str,
+) -> None:
+    class RacingAuthority(_Authority):
+        def __init__(self) -> None:
+            super().__init__([])
+            self.entered = asyncio.Event()
+            self.release = asyncio.Event()
+            self.effects: list[str] = []
+
+        async def confirm_bridge(
+            self,
+            scope: CanvasGatewayScope,
+            request: BridgeConfirmationRequest,
+            *,
+            settlement: object | None = None,
+        ) -> BridgeConfirmationResponse:
+            self.entered.set()
+            await self.release.wait()
+            if settlement is None:
+                self.effects.append(request.request.request_id)
+                settled = True
+            else:
+                settled = settlement.try_settle(  # type: ignore[attr-defined]
+                    lambda: self.effects.append(request.request.request_id)
+                )
+            return BridgeConfirmationResponse(
+                request_id=request.request.request_id,
+                status="confirmed" if settled else "refused",
+            )
+
+    authority = RacingAuthority()
+    gateway = CanvasGateway(authority=authority)
+    launch = await gateway.open_shell(_scope())
+    assert gateway.origin is not None
+    origin = gateway.origin
+    async with aiohttp.ClientSession(
+        cookie_jar=aiohttp.CookieJar(unsafe=True)
+    ) as session:
+        boot = await _post_json(
+            session,
+            _launch_url(launch, "api/boot"),
+            {"bootstrap": launch.browser_url.split("#boot=", 1)[1]},
+            origin=origin,
+        )
+        boot_body = await boot.json()
+        csrf = boot_body["csrf"]
+        assert (
+            await _post_json(
+                session,
+                _launch_url(launch, "api/frame"),
+                {},
+                origin=origin,
+                csrf=csrf,
+            )
+        ).status == 200
+        grant = await _post_json(
+            session,
+            _launch_url(launch, "api/actions"),
+            {"action": "bridge_confirm"},
+            origin=origin,
+            csrf=csrf,
+        )
+        bridge_token = (await grant.json())["capability"]
+        bridge_task = asyncio.create_task(
+            _post_json(
+                session,
+                _launch_url(launch, "api/bridge"),
+                {
+                    "approved": True,
+                    "request": {
+                        "version": "canvas-v1",
+                        "request_id": "request-race",
+                        "kind": "submit",
+                        "value": "bounded",
+                    },
+                },
+                origin=origin,
+                csrf=csrf,
+                capability=bridge_token,
+            )
+        )
+        await asyncio.wait_for(authority.entered.wait(), timeout=2)
+
+        if transition == "reload":
+            changed = await _post_json(
+                session,
+                _launch_url(launch, "api/frame"),
+                {},
+                origin=origin,
+                csrf=csrf,
+            )
+            assert changed.status == 200
+        elif transition == "close":
+            changed = await _post_json(
+                session,
+                _launch_url(launch, "api/close"),
+                {},
+                origin=origin,
+                csrf=csrf,
+            )
+            assert changed.status == 200
+        elif transition == "branch":
+            gateway.change_selection(
+                browser_session_id="browser-a",
+                scope=_scope(revision_id="revision-b"),
+            )
+        else:
+            gateway.change_selection(
+                browser_session_id="browser-a",
+                scope=_scope(),
+            )
+
+        authority.release.set()
+        bridge = await bridge_task
+        assert bridge.status == 409
+        assert authority.effects == []
+    await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
 async def test_console_runtime_owns_one_lazy_gateway_and_disposes_it() -> None:
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 
@@ -511,7 +857,34 @@ async def test_console_runtime_owns_one_lazy_gateway_and_disposes_it() -> None:
     second = runtime.ensure_canvas_gateway(authority=authority)
     assert first is second
     assert first.started is False
+    with pytest.raises(ValueError, match="different authority"):
+        runtime.ensure_canvas_gateway(authority=_Authority([]))
 
     await first.start()
     await runtime.dispose()
     assert first.started is False
+
+
+@pytest.mark.asyncio
+async def test_console_runtime_stops_canvas_admission_before_authority_teardown() -> (
+    None
+):
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    order: list[str] = []
+
+    class CanvasGatewayDouble:
+        async def aclose(self) -> None:
+            order.append("canvas-gateway")
+
+    class ControllerDouble:
+        async def shutdown(self) -> None:
+            order.append("controller")
+
+    runtime = ConsoleRuntime(object())
+    runtime._canvas_gateway = CanvasGatewayDouble()
+    runtime._chat_controller = ControllerDouble()
+
+    await runtime.dispose()
+
+    assert order[:2] == ["canvas-gateway", "controller"]

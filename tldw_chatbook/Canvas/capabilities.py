@@ -51,6 +51,8 @@ class CanvasCapabilityScope:
     canvas_id: str
     revision_id: str
     action: CanvasCapabilityAction
+    gateway_namespace: str = "gateway-default"
+    shell_incarnation_id: str = "shell-default"
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -59,6 +61,8 @@ class CanvasCapabilityScope:
             "conversation_session_id",
             "canvas_id",
             "revision_id",
+            "gateway_namespace",
+            "shell_incarnation_id",
         ):
             validate_opaque_identifier(
                 getattr(self, field_name), field_name=field_name.replace("_", " ")
@@ -172,6 +176,8 @@ class CanvasCapabilityStore:
         *,
         expected_scope: CanvasCapabilityScope | None = None,
         expected_action: CanvasCapabilityAction | None = None,
+        expected_gateway_namespace: str | None = None,
+        expected_shell_incarnation_id: str | None = None,
     ) -> CanvasCapabilityScope:
         """Consume one matching bearer exactly once."""
 
@@ -188,6 +194,16 @@ class CanvasCapabilityStore:
             if expected_scope is not None and record.scope != expected_scope:
                 raise CanvasCapabilityError("Canvas capability scope mismatch")
             if expected_action is not None and record.scope.action != expected_action:
+                raise CanvasCapabilityError("Canvas capability scope mismatch")
+            if (
+                expected_gateway_namespace is not None
+                and record.scope.gateway_namespace != expected_gateway_namespace
+            ):
+                raise CanvasCapabilityError("Canvas capability scope mismatch")
+            if (
+                expected_shell_incarnation_id is not None
+                and record.scope.shell_incarnation_id != expected_shell_incarnation_id
+            ):
                 raise CanvasCapabilityError("Canvas capability scope mismatch")
             self._records.pop(digest, None)
             return record.scope

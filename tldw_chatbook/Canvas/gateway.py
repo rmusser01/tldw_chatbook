@@ -18,6 +18,7 @@ import secrets
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from threading import RLock
 from types import MappingProxyType
 from typing import Any, Literal, Protocol, TypeAlias
 from urllib.parse import quote
@@ -53,8 +54,9 @@ _BOOT_TTL_SECONDS = 30.0
 _FRAME_TTL_SECONDS = 20.0
 _ACTION_TTL_SECONDS = 30.0
 _BROWSER_SESSION_TTL_SECONDS = 30 * 60.0
+_MAX_BROWSER_SESSIONS = 64
 _SENSITIVE_QUERY_KEYS = frozenset(
-    {"bootstrap", "capability", "token", "access_token", "secret"}
+    {"boot", "bootstrap", "capability", "token", "access_token", "secret"}
 )
 _OTHER_PROXY_HEADERS = frozenset({"x-real-ip", "x-original-host"})
 _EVENT_METADATA_FIELDS = frozenset(
@@ -229,7 +231,11 @@ class CanvasGatewayAuthority(Protocol):
     ) -> tuple[CanvasGatewayEvent, ...] | Awaitable[tuple[CanvasGatewayEvent, ...]]: ...
 
     def confirm_bridge(
-        self, scope: CanvasGatewayScope, request: BridgeConfirmationRequest
+        self,
+        scope: CanvasGatewayScope,
+        request: BridgeConfirmationRequest,
+        *,
+        settlement: CanvasBridgeSettlementLease,
     ) -> BridgeConfirmationResponse | Awaitable[BridgeConfirmationResponse]: ...
 
 
@@ -256,7 +262,87 @@ class _BrowserSession:
     csrf_digest: bytes
     scope: CanvasGatewayScope
     expires_at: float
+    shell_incarnation_id: str
+    selection_epoch: int = 0
     current_load_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _ShellBinding:
+    browser_session_id: str
+    expires_at: float
+
+
+class CanvasBridgeSettlementLease:
+    """Single-use, exact-load lease for one synchronous host bridge effect."""
+
+    __slots__ = (
+        "_effect_allowed",
+        "_gateway",
+        "_load_id",
+        "_selection_epoch",
+        "_session",
+        "_settled",
+        "_stale",
+        "_used",
+    )
+
+    def __init__(
+        self,
+        *,
+        gateway: CanvasGateway,
+        session: _BrowserSession,
+        load_id: str,
+        selection_epoch: int,
+        effect_allowed: bool,
+    ) -> None:
+        self._gateway = gateway
+        self._session = session
+        self._load_id = load_id
+        self._selection_epoch = selection_epoch
+        self._effect_allowed = effect_allowed
+        self._used = False
+        self._settled = False
+        self._stale = False
+
+    @property
+    def settled(self) -> bool:
+        return self._settled
+
+    @property
+    def stale(self) -> bool:
+        return self._stale
+
+    def try_settle(self, effect: Callable[[], object]) -> bool:
+        """Run one synchronous effect only while the captured load is current."""
+
+        if not callable(effect):
+            raise TypeError("Canvas bridge settlement effect must be callable")
+        with self._gateway._state_lock:
+            if self._used:
+                return False
+            self._used = True
+            if not self._effect_allowed or not self._gateway._bridge_lease_is_current(
+                self._session,
+                load_id=self._load_id,
+                selection_epoch=self._selection_epoch,
+            ):
+                self._stale = True
+                return False
+            result = effect()
+            if inspect.isawaitable(result):
+                close = getattr(result, "close", None)
+                if callable(close):
+                    close()
+                raise TypeError("Canvas bridge settlement effect must be synchronous")
+            self._settled = True
+            return True
+
+    def __repr__(self) -> str:
+        return (
+            "CanvasBridgeSettlementLease(used="
+            f"{self._used}, settled={self._settled}, stale={self._stale})"
+        )
 
 
 class CanvasGateway:
@@ -269,6 +355,7 @@ class CanvasGateway:
         host: str = "127.0.0.1",
         port: int = 0,
         max_request_bytes: int | None = None,
+        max_browser_sessions: int = _MAX_BROWSER_SESSIONS,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         try:
@@ -282,6 +369,7 @@ class CanvasGateway:
         if port != 0:
             raise ValueError("Canvas gateway requires an OS-assigned port")
         self._authority = authority
+        self._gateway_namespace = f"gateway-{uuid4().hex}"
         self._host = address.compressed
         self._port = port
         self._clock = clock
@@ -292,15 +380,25 @@ class CanvasGateway:
         )
         if self._max_request_bytes < 64:
             raise ValueError("max_request_bytes is too small")
+        if (
+            not isinstance(max_browser_sessions, int)
+            or isinstance(max_browser_sessions, bool)
+            or max_browser_sessions < 1
+            or max_browser_sessions > _MAX_BROWSER_SESSIONS
+        ):
+            raise ValueError("max_browser_sessions is outside the safe range")
+        self._max_browser_sessions = max_browser_sessions
         self.capabilities = CanvasCapabilityStore(clock=clock)
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
         self._origin: str | None = None
         self._start_lock = asyncio.Lock()
+        self._state_lock = RLock()
         self._closed = False
         self._start_count = 0
         self._sessions: dict[bytes, _BrowserSession] = {}
         self._session_ids: dict[str, bytes] = {}
+        self._shell_bindings: dict[str, _ShellBinding] = {}
         self._assets: CanvasRuntimeAssets | None = None
         self._app = web.Application(
             middlewares=[
@@ -348,10 +446,22 @@ class CanvasGateway:
                 return self._origin
             if self._closed:
                 raise RuntimeError("Canvas gateway is closed")
+            if self._runner is not None:
+                try:
+                    await self._cleanup_runner()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001 - platform cleanup failures vary
+                    raise RuntimeError("Canvas gateway could not start") from None
             try:
                 await self._bind()
             except Exception:  # noqa: BLE001 - aiohttp bind failures are platform-specific
-                await self._cleanup_runner()
+                try:
+                    await self._cleanup_runner()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001, S110 - retain runner for retry
+                    pass
                 raise RuntimeError("Canvas gateway could not start") from None
             self._start_count += 1
             assert self._origin is not None
@@ -386,12 +496,23 @@ class CanvasGateway:
         # it for a new launch invalidates any pending bootstrap or live shell
         # before the replacement token is minted.
         self._revoke_session_id(scope.browser_session_id)
+        shell_incarnation_id = f"shell-{uuid4().hex}"
+        self._shell_bindings[shell_incarnation_id] = _ShellBinding(
+            browser_session_id=scope.browser_session_id,
+            expires_at=self._clock() + _BOOT_TTL_SECONDS,
+        )
         load_id = f"boot-{uuid4()}"
         grant = self.capabilities.issue(
-            _capability_scope(scope, load_id=load_id, action="shell_boot"),
+            _capability_scope(
+                scope,
+                load_id=load_id,
+                action="shell_boot",
+                gateway_namespace=self._gateway_namespace,
+                shell_incarnation_id=shell_incarnation_id,
+            ),
             ttl_seconds=_BOOT_TTL_SECONDS,
         )
-        clean_url = f"{origin}/canvas/"
+        clean_url = f"{origin}{self._route_prefix(shell_incarnation_id)}/"
         browser_url = f"{clean_url}#boot={quote(grant.token, safe='')}"
         opened: bool | None = None
         error_code: str | None = None
@@ -418,54 +539,63 @@ class CanvasGateway:
 
         if scope.browser_session_id != browser_session_id:
             raise ValueError("Canvas browser session mismatch")
-        digest = self._session_ids.get(browser_session_id)
-        session = self._sessions.get(digest) if digest is not None else None
-        if session is None:
-            raise ValueError("Canvas browser session is unavailable")
-        previous = session.scope
-        self.capabilities.revoke_selection(
-            browser_session_id=previous.browser_session_id,
-            conversation_session_id=previous.conversation_session_id,
-            canvas_id=previous.canvas_id,
-            revision_id=previous.revision_id,
-        )
-        session.scope = scope
-        session.current_load_id = None
+        with self._state_lock:
+            digest = self._session_ids.get(browser_session_id)
+            session = self._sessions.get(digest) if digest is not None else None
+            if session is None:
+                raise ValueError("Canvas browser session is unavailable")
+            previous = session.scope
+            self.capabilities.revoke_selection(
+                browser_session_id=previous.browser_session_id,
+                conversation_session_id=previous.conversation_session_id,
+                canvas_id=previous.canvas_id,
+                revision_id=previous.revision_id,
+            )
+            session.scope = scope
+            session.selection_epoch += 1
+            session.current_load_id = None
 
     async def aclose(self) -> None:
         """Revoke all browser authority and cleanly stop the listener."""
 
         async with self._start_lock:
-            self._closed = True
-            self.capabilities.close()
-            self._sessions.clear()
-            self._session_ids.clear()
+            with self._state_lock:
+                self._closed = True
+                self.capabilities.close()
+                self._sessions.clear()
+                self._session_ids.clear()
+                self._shell_bindings.clear()
             await self._cleanup_runner()
 
     async def _cleanup_runner(self) -> None:
         runner = self._runner
-        self._site = None
-        self._runner = None
-        self._origin = None
-        if runner is not None:
-            await runner.cleanup()
+        if runner is None:
+            self._site = None
+            self._origin = None
+            return
+        await runner.cleanup()
+        if self._runner is runner:
+            self._site = None
+            self._runner = None
+            self._origin = None
 
     def _install_routes(self) -> None:
-        self._app.router.add_get("/canvas/", self._shell, allow_head=False)
-        self._app.router.add_post("/canvas/api/boot", self._boot)
-        self._app.router.add_post("/canvas/api/frame", self._frame)
-        self._app.router.add_get("/canvas/render", self._renderer, allow_head=False)
-        self._app.router.add_get("/canvas/api/plan", self._plan, allow_head=False)
-        self._app.router.add_get("/canvas/api/events", self._events, allow_head=False)
-        self._app.router.add_post("/canvas/api/actions", self._action_capability)
-        self._app.router.add_get("/canvas/api/source", self._source, allow_head=False)
+        root = f"/canvas/{self._gateway_namespace}/{{shell_incarnation_id}}"
+        self._app.router.add_get(f"{root}/", self._shell, allow_head=False)
+        self._app.router.add_post(f"{root}/api/boot", self._boot)
+        self._app.router.add_post(f"{root}/api/frame", self._frame)
+        self._app.router.add_get(f"{root}/render", self._renderer, allow_head=False)
+        self._app.router.add_get(f"{root}/api/plan", self._plan, allow_head=False)
+        self._app.router.add_get(f"{root}/api/events", self._events, allow_head=False)
+        self._app.router.add_post(f"{root}/api/actions", self._action_capability)
+        self._app.router.add_get(f"{root}/api/source", self._source, allow_head=False)
         self._app.router.add_get(
-            "/canvas/api/source-download", self._source_download, allow_head=False
+            f"{root}/api/source-download", self._source_download, allow_head=False
         )
-        self._app.router.add_post("/canvas/api/bridge", self._bridge)
-        self._app.router.add_post("/canvas/api/close", self._close_session)
+        self._app.router.add_post(f"{root}/api/bridge", self._bridge)
+        self._app.router.add_post(f"{root}/api/close", self._close_session)
         self._app.router.add_get(
-            "/canvas/static/{name}", self._static_asset, allow_head=False
+            f"{root}/static/{{name}}", self._static_asset, allow_head=False
         )
 
     @web.middleware
@@ -485,20 +615,20 @@ class CanvasGateway:
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = (
-            "SAMEORIGIN" if request.path == "/canvas/render" else "DENY"
+            "SAMEORIGIN" if request.path.endswith("/render") else "DENY"
         )
         response.headers["Permissions-Policy"] = (
             "camera=(), microphone=(), geolocation=(), payment=(), usb=(), "
             "serial=(), bluetooth=(), clipboard-read=(), clipboard-write=()"
         )
         response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
-        if request.path.startswith("/canvas/static/"):
+        if "/static/" in request.path:
             # The renderer has an intentionally opaque sandbox origin. These
             # verified static bytes contain no session or Canvas data.
             response.headers["Access-Control-Allow-Origin"] = "*"
             response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
         response.headers["Content-Security-Policy"] = (
-            _RENDERER_CSP if request.path == "/canvas/render" else _SHELL_CSP
+            _RENDERER_CSP if request.path.endswith("/render") else _SHELL_CSP
         )
         return response
 
@@ -539,15 +669,27 @@ class CanvasGateway:
         return await handler(request)
 
     async def _shell(self, _request: web.Request) -> web.Response:
+        if self._request_shell_incarnation(_request) is None:
+            return _error_response("shell_unavailable", 404)
         return web.Response(body=_SHELL_HTML, content_type="text/html", charset="utf-8")
 
     async def _boot(self, request: web.Request) -> web.Response:
+        self._discard_expired_sessions()
+        shell_incarnation_id = self._request_shell_incarnation(request)
+        if shell_incarnation_id is None:
+            return _error_response("boot_unavailable", 401)
+        binding = self._shell_bindings[shell_incarnation_id]
         value = await self._read_json(request)
         if not isinstance(value, Mapping) or set(value) != {"bootstrap"}:
             return _error_response("invalid_boot_exchange", 400)
         token = value["bootstrap"]
         try:
-            scope = self.capabilities.consume(token, expected_action="shell_boot")
+            scope = self.capabilities.consume(
+                token,
+                expected_action="shell_boot",
+                expected_gateway_namespace=self._gateway_namespace,
+                expected_shell_incarnation_id=shell_incarnation_id,
+            )
         except CanvasCapabilityError:
             return _error_response("boot_unavailable", 401)
         gateway_scope = CanvasGatewayScope(
@@ -556,7 +698,15 @@ class CanvasGateway:
             canvas_id=scope.canvas_id,
             revision_id=scope.revision_id,
         )
-        self._revoke_session_id(gateway_scope.browser_session_id)
+        if binding.browser_session_id != gateway_scope.browser_session_id:
+            return _error_response("boot_unavailable", 401)
+        replacing = gateway_scope.browser_session_id in self._session_ids
+        if not replacing and len(self._sessions) >= self._max_browser_sessions:
+            return _error_response("browser_session_capacity", 503)
+        self._revoke_session_id(
+            gateway_scope.browser_session_id,
+            except_shell_incarnation_id=shell_incarnation_id,
+        )
         session_token = secrets.token_urlsafe(32)
         csrf = secrets.token_urlsafe(24)
         digest = _secret_digest(session_token)
@@ -565,9 +715,14 @@ class CanvasGateway:
             csrf_digest=_secret_digest(csrf),
             scope=gateway_scope,
             expires_at=self._clock() + _BROWSER_SESSION_TTL_SECONDS,
+            shell_incarnation_id=shell_incarnation_id,
         )
         self._sessions[digest] = session
         self._session_ids[gateway_scope.browser_session_id] = digest
+        self._shell_bindings[shell_incarnation_id] = _ShellBinding(
+            browser_session_id=gateway_scope.browser_session_id,
+            expires_at=session.expires_at,
+        )
         response = web.json_response(
             {
                 "browser_session_id": gateway_scope.browser_session_id,
@@ -583,7 +738,7 @@ class CanvasGateway:
             session_token,
             httponly=True,
             samesite="Strict",
-            path="/canvas/",
+            path=f"{self._route_prefix(shell_incarnation_id)}/",
             max_age=int(_BROWSER_SESSION_TTL_SECONDS),
         )
         return response
@@ -595,29 +750,40 @@ class CanvasGateway:
         value = await self._read_json(request)
         if value != {}:
             return _error_response("invalid_frame_request", 400)
-        if session.current_load_id is not None:
-            self.capabilities.revoke_load(
-                session.scope.browser_session_id, session.current_load_id
+        with self._state_lock:
+            if not self._session_is_current(session, session.scope):
+                return _error_response("session_refused", 403)
+            if session.current_load_id is not None:
+                self.capabilities.revoke_load(
+                    session.scope.browser_session_id, session.current_load_id
+                )
+            load_id = f"load-{uuid4()}"
+            session.current_load_id = load_id
+            renderer = self.capabilities.issue(
+                self._session_capability_scope(
+                    session, load_id=load_id, action="renderer_load"
+                ),
+                ttl_seconds=_FRAME_TTL_SECONDS,
             )
-        load_id = f"load-{uuid4()}"
-        session.current_load_id = load_id
-        renderer = self.capabilities.issue(
-            _capability_scope(session.scope, load_id=load_id, action="renderer_load"),
-            ttl_seconds=_FRAME_TTL_SECONDS,
-        )
-        plan = self.capabilities.issue(
-            _capability_scope(session.scope, load_id=load_id, action="render_plan"),
-            ttl_seconds=_FRAME_TTL_SECONDS,
-        )
+            plan = self.capabilities.issue(
+                self._session_capability_scope(
+                    session, load_id=load_id, action="render_plan"
+                ),
+                ttl_seconds=_FRAME_TTL_SECONDS,
+            )
         response = web.json_response(
-            {"load_id": load_id, "renderer_url": "/canvas/render"}
+            {
+                "load_id": load_id,
+                "renderer_url": f"{self._route_prefix(session.shell_incarnation_id)}/render",
+            }
         )
+        route_prefix = self._route_prefix(session.shell_incarnation_id)
         response.set_cookie(
             _FRAME_COOKIE,
             renderer.token,
             httponly=True,
             samesite="Strict",
-            path="/canvas/render",
+            path=f"{route_prefix}/render",
             max_age=int(_FRAME_TTL_SECONDS),
         )
         response.set_cookie(
@@ -625,7 +791,7 @@ class CanvasGateway:
             plan.token,
             httponly=True,
             samesite="Strict",
-            path="/canvas/api/plan",
+            path=f"{route_prefix}/api/plan",
             max_age=int(_FRAME_TTL_SECONDS),
         )
         return response
@@ -640,8 +806,8 @@ class CanvasGateway:
         token = request.cookies.get(_FRAME_COOKIE)
         if session is None or token is None or session.current_load_id is None:
             return _error_response("renderer_unavailable", 401)
-        expected = _capability_scope(
-            session.scope,
+        expected = self._session_capability_scope(
+            session,
             load_id=session.current_load_id,
             action="renderer_load",
         )
@@ -658,21 +824,26 @@ class CanvasGateway:
         body = (
             '<!doctype html><html><head><meta charset="utf-8">'
             '<meta name="referrer" content="no-referrer">'
-            '<script type="module" src="/canvas/static/canvas_renderer.js" '
+            f'<script type="module" src="{self._route_prefix(session.shell_incarnation_id)}/static/canvas_renderer.js" '
             f'integrity="sha384-{integrity}" crossorigin="anonymous"></script>'
             '</head><body><div id="canvas-root"></div></body></html>'
         ).encode()
         return web.Response(body=body, content_type="text/html", charset="utf-8")
 
     async def _plan(self, request: web.Request) -> web.Response:
+        if (
+            request.headers.get("Sec-Fetch-Dest") != "empty"
+            or request.headers.get("Sec-Fetch-Site") != "same-origin"
+        ):
+            return _error_response("plan_context_refused", 403)
         session = self._require_session(request)
         token = request.cookies.get(_PLAN_COOKIE)
         if session is None or token is None or session.current_load_id is None:
             return _error_response("plan_unavailable", 401)
         scope = session.scope
         load_id = session.current_load_id
-        expected = _capability_scope(
-            scope,
+        expected = self._session_capability_scope(
+            session,
             load_id=load_id,
             action="render_plan",
         )
@@ -735,7 +906,7 @@ class CanvasGateway:
             return _error_response("action_refused", 400)
         load_id = session.current_load_id or f"action-{uuid4()}"
         grant = self.capabilities.issue(
-            _capability_scope(session.scope, load_id=load_id, action=action),
+            self._session_capability_scope(session, load_id=load_id, action=action),
             ttl_seconds=_ACTION_TTL_SECONDS,
         )
         return web.json_response(
@@ -775,7 +946,9 @@ class CanvasGateway:
             if _gateway_scope(granted) != scope:
                 return _error_response("source_unavailable", 401)
         else:
-            expected = _capability_scope(scope, load_id=load_id, action=action)
+            expected = self._session_capability_scope(
+                session, load_id=load_id, action=action
+            )
             try:
                 self.capabilities.consume(token, expected_scope=expected)
             except CanvasCapabilityError:
@@ -810,16 +983,37 @@ class CanvasGateway:
         load_id = session.current_load_id
         if load_id is None:
             return _error_response("bridge_refused", 409)
-        expected = _capability_scope(scope, load_id=load_id, action="bridge_confirm")
+        expected = self._session_capability_scope(
+            session, load_id=load_id, action="bridge_confirm"
+        )
         try:
             self.capabilities.consume(token, expected_scope=expected)
         except CanvasCapabilityError:
             return _error_response("bridge_refused", 401)
-        result = await _maybe_await(self._authority.confirm_bridge(scope, confirmation))
+        settlement = CanvasBridgeSettlementLease(
+            gateway=self,
+            session=session,
+            load_id=load_id,
+            selection_epoch=session.selection_epoch,
+            effect_allowed=confirmation.approved,
+        )
+        result = await _maybe_await(
+            self._authority.confirm_bridge(
+                scope,
+                confirmation,
+                settlement=settlement,
+            )
+        )
+        if not isinstance(result, BridgeConfirmationResponse):
+            return _error_response("bridge_refused", 503)
+        if settlement.stale or (
+            result.status == "confirmed" and not settlement.settled
+        ):
+            return _error_response("bridge_settlement_stale", 409)
         if (
             not self._session_is_current(session, scope)
-            or not isinstance(result, BridgeConfirmationResponse)
             or result.request_id != confirmation.request.request_id
+            or (settlement.settled and result.status != "confirmed")
         ):
             return _error_response("bridge_refused", 503)
         return web.json_response(
@@ -835,10 +1029,15 @@ class CanvasGateway:
             return _error_response("invalid_close_request", 400)
         self._revoke_session_id(session.scope.browser_session_id)
         response = web.json_response({"status": "closed"})
-        response.del_cookie(_SESSION_COOKIE, path="/canvas/")
+        response.del_cookie(
+            _SESSION_COOKIE,
+            path=f"{self._route_prefix(session.shell_incarnation_id)}/",
+        )
         return response
 
     async def _static_asset(self, request: web.Request) -> web.Response:
+        if self._request_shell_incarnation(request) is None:
+            return _error_response("asset_not_found", 404)
         name = request.match_info["name"]
         assets = self._runtime_assets()
         inventory = {
@@ -867,12 +1066,21 @@ class CanvasGateway:
         self, request: web.Request, *, csrf: bool = False
     ) -> _BrowserSession | None:
         self._discard_expired_sessions()
+        shell_incarnation_id = self._request_shell_incarnation(request)
+        if shell_incarnation_id is None:
+            return None
         token = request.cookies.get(_SESSION_COOKIE)
         if token is None:
             return None
         digest = _secret_digest(token)
         session = self._sessions.get(digest)
-        if session is None or not hmac.compare_digest(session.digest, digest):
+        if (
+            session is None
+            or session.shell_incarnation_id != shell_incarnation_id
+            or self._shell_bindings[shell_incarnation_id].browser_session_id
+            != session.scope.browser_session_id
+            or not hmac.compare_digest(session.digest, digest)
+        ):
             return None
         if csrf:
             csrf_values = request.headers.getall("X-Canvas-CSRF", [])
@@ -890,25 +1098,94 @@ class CanvasGateway:
         ]
         for browser_session_id in expired:
             self._revoke_session_id(browser_session_id)
+        now = self._clock()
+        expired_shells = [
+            shell_incarnation_id
+            for shell_incarnation_id, binding in self._shell_bindings.items()
+            if now >= binding.expires_at
+            and binding.browser_session_id not in self._session_ids
+        ]
+        for shell_incarnation_id in expired_shells:
+            self._shell_bindings.pop(shell_incarnation_id, None)
 
     def _session_is_current(
         self, session: _BrowserSession, scope: CanvasGatewayScope
     ) -> bool:
         """Check that an awaited authority response still targets a live scope."""
 
+        with self._state_lock:
+            return (
+                not self._closed
+                and session.scope == scope
+                and self._sessions.get(session.digest) is session
+                and self._session_ids.get(scope.browser_session_id) == session.digest
+                and self._clock() < session.expires_at
+            )
+
+    def _bridge_lease_is_current(
+        self,
+        session: _BrowserSession,
+        *,
+        load_id: str,
+        selection_epoch: int,
+    ) -> bool:
         return (
-            not self._closed
-            and session.scope == scope
-            and self._sessions.get(session.digest) is session
-            and self._session_ids.get(scope.browser_session_id) == session.digest
-            and self._clock() < session.expires_at
+            self._session_is_current(session, session.scope)
+            and session.current_load_id == load_id
+            and session.selection_epoch == selection_epoch
         )
 
-    def _revoke_session_id(self, browser_session_id: str) -> None:
-        digest = self._session_ids.pop(browser_session_id, None)
-        if digest is not None:
-            self._sessions.pop(digest, None)
-        self.capabilities.revoke_browser_session(browser_session_id)
+    def _revoke_session_id(
+        self,
+        browser_session_id: str,
+        *,
+        except_shell_incarnation_id: str | None = None,
+    ) -> None:
+        with self._state_lock:
+            digest = self._session_ids.pop(browser_session_id, None)
+            if digest is not None:
+                self._sessions.pop(digest, None)
+            shells = [
+                shell_incarnation_id
+                for shell_incarnation_id, binding in self._shell_bindings.items()
+                if binding.browser_session_id == browser_session_id
+                and shell_incarnation_id != except_shell_incarnation_id
+            ]
+            for shell_incarnation_id in shells:
+                self._shell_bindings.pop(shell_incarnation_id, None)
+            self.capabilities.revoke_browser_session(browser_session_id)
+
+    def _request_shell_incarnation(self, request: web.Request) -> str | None:
+        shell_incarnation_id = request.match_info.get("shell_incarnation_id")
+        try:
+            validate_opaque_identifier(
+                shell_incarnation_id, field_name="shell incarnation ID"
+            )
+        except (CanvasLimitError, TypeError):
+            return None
+        return (
+            shell_incarnation_id
+            if shell_incarnation_id in self._shell_bindings
+            else None
+        )
+
+    def _route_prefix(self, shell_incarnation_id: str) -> str:
+        return f"/canvas/{self._gateway_namespace}/{shell_incarnation_id}"
+
+    def _session_capability_scope(
+        self,
+        session: _BrowserSession,
+        *,
+        load_id: str,
+        action: CanvasCapabilityAction,
+    ) -> CanvasCapabilityScope:
+        return _capability_scope(
+            session.scope,
+            load_id=load_id,
+            action=action,
+            gateway_namespace=self._gateway_namespace,
+            shell_incarnation_id=session.shell_incarnation_id,
+        )
 
     def _runtime_assets(self) -> CanvasRuntimeAssets:
         if self._assets is None:
@@ -921,6 +1198,8 @@ def _capability_scope(
     *,
     load_id: str,
     action: CanvasCapabilityAction,
+    gateway_namespace: str,
+    shell_incarnation_id: str,
 ) -> CanvasCapabilityScope:
     return CanvasCapabilityScope(
         browser_session_id=scope.browser_session_id,
@@ -929,6 +1208,8 @@ def _capability_scope(
         canvas_id=scope.canvas_id,
         revision_id=scope.revision_id,
         action=action,
+        gateway_namespace=gateway_namespace,
+        shell_incarnation_id=shell_incarnation_id,
     )
 
 
@@ -1013,6 +1294,7 @@ def _error_response(code: str, status: int) -> web.Response:
 __all__ = [
     "BridgeConfirmationRequest",
     "BridgeConfirmationResponse",
+    "CanvasBridgeSettlementLease",
     "CanvasGateway",
     "CanvasGatewayAuthority",
     "CanvasGatewayEvent",

@@ -727,6 +727,7 @@ class ConsoleRuntime:
         self._chat_controller: Any | None = None
         self._canvas_controller: Any | None = None
         self._canvas_gateway: Any | None = None
+        self._canvas_gateway_authority: Any | None = None
         self._legacy_trace_maintenance_task: asyncio.Task[None] | None = None
         # One app-wide mutation lane for exact persisted-conversation opens.
         # Individual ChatScreen workspaces are disposable views over this
@@ -871,11 +872,16 @@ class ConsoleRuntime:
     def ensure_canvas_gateway(self, *, authority: Any) -> Any:
         """Return this app runtime's native Canvas gateway, creating it lazily."""
 
-        if self._canvas_gateway is not None or self._disposed:
+        if self._canvas_gateway is not None:
+            if self._canvas_gateway_authority is not authority:
+                raise ValueError("Canvas gateway is bound to a different authority")
             return self._canvas_gateway
+        if self._disposed:
+            return None
         from tldw_chatbook.Canvas.gateway import CanvasGateway
 
         self._canvas_gateway = CanvasGateway(authority=authority)
+        self._canvas_gateway_authority = authority
         return self._canvas_gateway
 
     # -- construction ------------------------------------------------------
@@ -1711,6 +1717,18 @@ class ConsoleRuntime:
         self._activity_hydration_task = None
         if hydration_task is not None and not hydration_task.done():
             hydration_task.cancel()
+        # Revoke browser admission before tearing down any controller/store
+        # authority that gateway callbacks could otherwise reach.
+        close_canvas_gateway = getattr(canvas_gateway, "aclose", None)
+        if callable(close_canvas_gateway):
+            try:
+                result = close_canvas_gateway()
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:  # noqa: BLE001 - app exit must keep progressing
+                logger.opt(exception=True).warning(
+                    "Console runtime: Canvas gateway close failed at dispose."
+                )
         if controller is not None:
             try:
                 await controller.shutdown()
@@ -1766,16 +1784,6 @@ class ConsoleRuntime:
             except Exception:  # noqa: BLE001 - same
                 logger.opt(exception=True).warning(
                     "Console runtime: provider gateway close failed at dispose."
-                )
-        close_canvas_gateway = getattr(canvas_gateway, "aclose", None)
-        if callable(close_canvas_gateway):
-            try:
-                result = close_canvas_gateway()
-                if inspect.isawaitable(result):
-                    await result
-            except Exception:  # noqa: BLE001 - app exit must keep progressing
-                logger.opt(exception=True).warning(
-                    "Console runtime: Canvas gateway close failed at dispose."
                 )
         try:
             totals = self.trace_compatibility_snapshot()
