@@ -2,7 +2,18 @@ import base64
 import json
 import time
 from dataclasses import asdict, dataclass, replace
-from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
+from types import MappingProxyType
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    cast,
+)
 
 from loguru import logger as _logger
 
@@ -939,6 +950,7 @@ class ChatPersistenceService:
                     project_context_json,
                 )
             if contributions:
+                exact_native_message_ids = MappingProxyType(dict(native_message_ids))
                 with _scoped_console_transaction_writer(
                     cursor,
                     conversation_id,
@@ -951,7 +963,7 @@ class ChatPersistenceService:
                             contribution.write_exact(
                                 writer=writer,
                                 conversation_id=conversation_id,
-                                native_message_ids=native_message_ids,
+                                native_message_ids=exact_native_message_ids,
                             )
                         else:
                             contribution.write(

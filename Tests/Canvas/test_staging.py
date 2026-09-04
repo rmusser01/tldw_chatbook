@@ -360,6 +360,37 @@ def test_promotion_lease_blocks_exact_session_mutation_until_abort() -> None:
     assert updated.revision.sequence == 2
 
 
+def test_exact_retire_clears_only_the_contribution_owner_and_lease() -> None:
+    """A postcommit fallback keyed only by session id can erase a replacement."""
+
+    store = CanvasStagingStore()
+    _create(store)
+    old_contribution = store.promotion_contribution("session-a")
+    assert old_contribution is not None
+    store.discard_session("session-a")
+
+    replacement_owner = store.activate_session("session-a")
+    replacement = store.create_canvas(
+        owner=replacement_owner,
+        run_id="run-replacement",
+        tool_call_id="call-replacement",
+        title="Replacement",
+        source=_html("replacement"),
+        origin_message_id="assistant-replacement",
+    )
+    replacement_contribution = store.promotion_contribution("session-a")
+    assert replacement_contribution is not None
+
+    assert store.retire_contribution("session-a", old_contribution) is False
+    assert store.staged_revision_count("session-a") == 1
+    assert store.read_revision(
+        session_id="session-a",
+        revision_id=replacement.revision.revision_id,
+    ).source == _html("replacement")
+    assert store.retire_contribution("session-a", replacement_contribution) is True
+    assert store.staged_revision_count("session-a") == 0
+
+
 def test_retired_owner_cannot_resurrect_or_mutate_reused_session_id() -> None:
     """A bare session id cannot distinguish a late callback from a new owner."""
 

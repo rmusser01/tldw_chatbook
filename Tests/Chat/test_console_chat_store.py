@@ -8882,6 +8882,160 @@ def test_canvas_promotion_lease_rejects_concurrent_update_without_stranding_grap
         db.close_connection()
 
 
+def test_canvas_promotion_reservation_refuses_close_and_same_id_recreate(
+    tmp_path,
+) -> None:
+    """Close/recreate during SQLite work must not replace the promotion owner."""
+
+    db = CharactersRAGDB(tmp_path / "canvas-promotion-close-race.sqlite", "close-race")
+    entered = Event()
+    release = Event()
+
+    class PausingPersistence:
+        def __init__(self) -> None:
+            self.delegate = ChatPersistenceService(db)
+
+        def promote_console_conversation_bundle(self, **kwargs):
+            entered.set()
+            assert release.wait(timeout=5)
+            return self.delegate.promote_console_conversation_bundle(**kwargs)
+
+    staging = CanvasStagingStore()
+    store = ConsoleChatStore(
+        persistence=PausingPersistence(),
+        canvas_promotion_participant=staging,
+    )
+    session = store.create_session(session_id="same-id", ephemeral=True)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Canvas created.",
+    )
+    staging.create_canvas(
+        owner=staging.session_owner(session.id),
+        run_id="run-create",
+        tool_call_id="call-create",
+        title="Planner",
+        source="<!doctype html><html><body>planner</body></html>",
+        origin_message_id=assistant.id,
+    )
+    outcome: dict[str, object] = {}
+
+    def promote() -> None:
+        try:
+            outcome["conversation_id"] = store.promote_ephemeral_session(session.id)
+        except Exception as exc:
+            outcome["error"] = exc
+
+    thread = Thread(target=promote)
+    thread.start()
+    try:
+        assert entered.wait(timeout=5)
+        with pytest.raises(RuntimeError, match="promotion.*in progress"):
+            store.close_session(session.id)
+        with pytest.raises(RuntimeError, match="promotion.*in progress"):
+            store.create_session(session_id=session.id, ephemeral=True)
+    finally:
+        release.set()
+        thread.join(timeout=5)
+
+    try:
+        assert not thread.is_alive()
+        assert "error" not in outcome
+        assert store._sessions[session.id] is session
+        assert session.ephemeral is False
+        assert staging.staged_revision_count(session.id) == 0
+        assert store.promote_ephemeral_session(session.id) is None
+        assert (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM conversations")
+            .fetchone()[0]
+            == 1
+        )
+    finally:
+        db.close_connection()
+
+
+def test_canvas_promotion_reservation_refuses_restore_and_runtime_teardown(
+    tmp_path,
+) -> None:
+    """Restore or teardown during SQLite work must not replace the live owner."""
+
+    db = CharactersRAGDB(
+        tmp_path / "canvas-promotion-restore-race.sqlite", "restore-race"
+    )
+    entered = Event()
+    release = Event()
+
+    class PausingPersistence:
+        def __init__(self) -> None:
+            self.delegate = ChatPersistenceService(db)
+
+        def promote_console_conversation_bundle(self, **kwargs):
+            entered.set()
+            assert release.wait(timeout=5)
+            return self.delegate.promote_console_conversation_bundle(**kwargs)
+
+    staging = CanvasStagingStore()
+    store = ConsoleChatStore(
+        persistence=PausingPersistence(),
+        canvas_promotion_participant=staging,
+    )
+    session = store.create_session(session_id="same-id", ephemeral=True)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Canvas created.",
+    )
+    staging.create_canvas(
+        owner=staging.session_owner(session.id),
+        run_id="run-create",
+        tool_call_id="call-create",
+        title="Planner",
+        source="<!doctype html><html><body>planner</body></html>",
+        origin_message_id=assistant.id,
+    )
+    replacement = replace(session)
+    outcome: dict[str, object] = {}
+
+    def promote() -> None:
+        try:
+            outcome["conversation_id"] = store.promote_ephemeral_session(session.id)
+        except Exception as exc:
+            outcome["error"] = exc
+
+    thread = Thread(target=promote)
+    thread.start()
+    try:
+        assert entered.wait(timeout=5)
+        with pytest.raises(RuntimeError, match="promotion.*in progress"):
+            store.restore_state(
+                sessions=[replacement],
+                messages_by_session={replacement.id: ()},
+            )
+        with pytest.raises(RuntimeError, match="promotion.*in progress"):
+            store.end_app_runtime()
+    finally:
+        release.set()
+        thread.join(timeout=5)
+
+    try:
+        assert not thread.is_alive()
+        assert "error" not in outcome
+        assert store._sessions[session.id] is session
+        assert session.ephemeral is False
+        assert replacement.ephemeral is True
+        assert staging.staged_revision_count(session.id) == 0
+        assert (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM conversations")
+            .fetchone()[0]
+            == 1
+        )
+    finally:
+        db.close_connection()
+
+
 @pytest.mark.parametrize("confirm_behavior", ["false", "exception"])
 def test_postcommit_canvas_confirm_failure_leaves_chat_durable_and_stage_retired(
     tmp_path, confirm_behavior
@@ -8889,10 +9043,21 @@ def test_postcommit_canvas_confirm_failure_leaves_chat_durable_and_stage_retired
     """SQLite cannot roll back after return, so publication must survive confirm."""
 
     class ConfirmFailureStaging(CanvasStagingStore):
+        def __init__(self):
+            super().__init__()
+            self.retire_calls = 0
+
         def confirm_contribution(self, session_id, contribution):
             if confirm_behavior == "exception":
                 raise RuntimeError("private confirm detail")
             return False
+
+        def retire_contribution(self, session_id, contribution):
+            self.retire_calls += 1
+            return super().retire_contribution(session_id, contribution)
+
+        def discard_session(self, session_id):
+            raise AssertionError("postcommit cleanup must be exact")
 
     db = CharactersRAGDB(
         tmp_path / f"canvas-confirm-{confirm_behavior}.sqlite",
@@ -8926,9 +9091,47 @@ def test_postcommit_canvas_confirm_failure_leaves_chat_durable_and_stage_retired
         assert session.ephemeral is False
         assert session.persisted_conversation_id == conversation_id
         assert staging.staged_revision_count(session.id) == 0
+        assert staging.retire_calls == 1
         assert db.get_conversation_by_id(conversation_id) is not None
     finally:
         db.close_connection()
+
+
+def test_canvas_abort_cleanup_cannot_mask_primary_persistence_failure() -> None:
+    """Participant cleanup failure must not replace the database exception."""
+
+    class FailingPersistence(FakePersistence):
+        def promote_console_conversation_bundle(self, **kwargs):
+            raise ValueError("primary persistence failure")
+
+    class AbortFailureStaging(CanvasStagingStore):
+        def abort_contribution(self, session_id, contribution):
+            raise RuntimeError("private abort failure")
+
+    staging = AbortFailureStaging()
+    store = ConsoleChatStore(
+        persistence=FailingPersistence(),
+        canvas_promotion_participant=staging,
+    )
+    session = store.create_session(ephemeral=True)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Canvas created.",
+    )
+    staging.create_canvas(
+        owner=staging.session_owner(session.id),
+        run_id="run-create",
+        tool_call_id="call-create",
+        title="Planner",
+        source="<!doctype html><html><body>planner</body></html>",
+        origin_message_id=assistant.id,
+    )
+
+    with pytest.raises(ValueError, match="primary persistence failure"):
+        store.promote_ephemeral_session(session.id)
+
+    assert session.ephemeral is True
 
 
 def test_canvas_owner_fences_late_callbacks_across_close_restore_and_shutdown() -> None:

@@ -271,6 +271,54 @@ def _fork_session_transition(method: Callable[..., Any]) -> Callable[..., Any]:
     return transitioned
 
 
+def _ephemeral_promotion_session_lifecycle(
+    method: Callable[..., Any],
+) -> Callable[..., Any]:
+    """Exclude exact-session lifecycle changes from temporary promotion."""
+
+    @wraps(method)
+    def transitioned(
+        self: "ConsoleChatStore", session_id: str, *args: Any, **kwargs: Any
+    ) -> Any:
+        with self._ephemeral_promotion_lock:
+            if session_id in self._ephemeral_promotion_reservations:
+                raise RuntimeError("Canvas promotion is already in progress.")
+            return method(self, session_id, *args, **kwargs)
+
+    return transitioned
+
+
+def _ephemeral_promotion_creation_lifecycle(
+    method: Callable[..., Any],
+) -> Callable[..., Any]:
+    """Exclude explicit same-ID creation from temporary promotion."""
+
+    @wraps(method)
+    def transitioned(self: "ConsoleChatStore", *args: Any, **kwargs: Any) -> Any:
+        session_id = kwargs.get("session_id")
+        with self._ephemeral_promotion_lock:
+            if session_id in self._ephemeral_promotion_reservations:
+                raise RuntimeError("Canvas promotion is already in progress.")
+            return method(self, *args, **kwargs)
+
+    return transitioned
+
+
+def _ephemeral_promotion_global_lifecycle(
+    method: Callable[..., Any],
+) -> Callable[..., Any]:
+    """Exclude whole-store replacement or shutdown from promotion."""
+
+    @wraps(method)
+    def transitioned(self: "ConsoleChatStore", *args: Any, **kwargs: Any) -> Any:
+        with self._ephemeral_promotion_lock:
+            if self._ephemeral_promotion_reservations:
+                raise RuntimeError("Canvas promotion is already in progress.")
+            return method(self, *args, **kwargs)
+
+    return transitioned
+
+
 def _fork_continuation_event_transition(
     method: Callable[..., Any],
 ) -> Callable[..., Any]:
@@ -1137,6 +1185,11 @@ class ConsoleCanvasPromotionParticipant(Protocol):
     ) -> bool:
         """Release a failed contribution without discarding staged history."""
 
+    def retire_contribution(
+        self, session_id: str, contribution: CanvasPromotionContribution
+    ) -> bool:
+        """Retire only the exact committed contribution owner and lease."""
+
     def discard_session(self, session_id: str) -> None:
         """Destroy one session's temporary Canvas state."""
 
@@ -1526,6 +1579,16 @@ def is_untouched_default_session(
     )
 
 
+@dataclass(slots=True, eq=False)
+class _ConsoleEphemeralPromotionReservation:
+    """Exact live Console incarnation fenced across one promotion."""
+
+    session_id: str
+    session: ConsoleChatSession = field(repr=False)
+    committed: bool = False
+    canvas_settled: bool = False
+
+
 class ConsoleChatStore:
     """Manage native Console sessions and messages before UI integration."""
 
@@ -1654,6 +1717,10 @@ class ConsoleChatStore:
         self._active_session_epoch = 0
         self._speech_preference_epoch_sequence = 0
         self._sessions: dict[str, ConsoleChatSession] = {}
+        self._ephemeral_promotion_lock = threading.RLock()
+        self._ephemeral_promotion_reservations: dict[
+            str, _ConsoleEphemeralPromotionReservation
+        ] = {}
         self._capture_policy_revision = 0
         self._capture_policy_lock = threading.RLock()
         self._capture_policy_mutation: object | None = None
@@ -1974,6 +2041,7 @@ class ConsoleChatStore:
             canonical_settings_baseline=canonical_settings_baseline,
         )
 
+    @_ephemeral_promotion_creation_lifecycle
     def create_session(
         self,
         *,
@@ -4179,6 +4247,7 @@ class ConsoleChatStore:
         )
 
     @_fork_session_transition
+    @_ephemeral_promotion_session_lifecycle
     def close_session(self, session_id: str) -> ConsoleChatSession | None:
         """Close a native Console session and activate a neighboring session.
 
@@ -9629,6 +9698,7 @@ class ConsoleChatStore:
             "may not survive restart."
         )
 
+    @_ephemeral_promotion_global_lifecycle
     def restore_state(
         self,
         *,
@@ -9840,6 +9910,7 @@ class ConsoleChatStore:
         elif self._sessions:
             self._activate_session(next(iter(self._sessions)))
 
+    @_ephemeral_promotion_global_lifecycle
     def end_app_runtime(self) -> None:
         """Drop every volatile recovery projection at explicit app teardown."""
 
@@ -16462,6 +16533,65 @@ class ConsoleChatStore:
         error = getattr(result, "error", None)
         session.context_policy_error = error if isinstance(error, str) else None
 
+    def _reserve_ephemeral_promotion(
+        self, session: ConsoleChatSession
+    ) -> _ConsoleEphemeralPromotionReservation:
+        """Fence one exact live session incarnation through postcommit cleanup."""
+
+        with self._ephemeral_promotion_lock:
+            if self._sessions.get(session.id) is not session:
+                raise RuntimeError("Temporary chat identity changed before promotion.")
+            if session.id in self._ephemeral_promotion_reservations:
+                raise RuntimeError("Canvas promotion is already in progress.")
+            reservation = _ConsoleEphemeralPromotionReservation(
+                session_id=session.id,
+                session=session,
+            )
+            self._ephemeral_promotion_reservations[session.id] = reservation
+            return reservation
+
+    def _release_ephemeral_promotion(
+        self, reservation: _ConsoleEphemeralPromotionReservation
+    ) -> None:
+        """Release only the exact promotion reservation installed by this call."""
+
+        with self._ephemeral_promotion_lock:
+            if (
+                self._ephemeral_promotion_reservations.get(reservation.session_id)
+                is reservation
+            ):
+                self._ephemeral_promotion_reservations.pop(
+                    reservation.session_id,
+                    None,
+                )
+
+    def _settle_canvas_promotion_contribution(
+        self,
+        reservation: _ConsoleEphemeralPromotionReservation,
+        contribution: CanvasPromotionContribution | None,
+    ) -> None:
+        """Abort or retire one exact Canvas lease without masking its caller."""
+
+        participant = self.canvas_promotion_participant
+        if contribution is None or participant is None or reservation.canvas_settled:
+            return
+        try:
+            if reservation.committed:
+                settled = participant.retire_contribution(
+                    reservation.session_id,
+                    contribution,
+                )
+            else:
+                settled = participant.abort_contribution(
+                    reservation.session_id,
+                    contribution,
+                )
+        except Exception:
+            logger.warning("Canvas promotion cleanup failed.")
+            return
+        if settled:
+            reservation.canvas_settled = True
+
     @_fork_session_transition
     def promote_ephemeral_session(
         self,
@@ -16513,51 +16643,52 @@ class ConsoleChatStore:
         )
         if not callable(atomic_promote):
             raise RuntimeError("Persistence adapter cannot perform atomic promotion.")
-        activity_contribution = self._library_activity_buffer.promotion_contribution(
-            session_id
-        )
-        canvas_contribution = (
-            self.canvas_promotion_participant.promotion_contribution(session_id)
-            if self.canvas_promotion_participant is not None
-            else None
-        )
-        combined_contributions: tuple[ConsolePromotionTransactionContribution, ...] = (
-            tuple(contributions)
-        )
-        if canvas_contribution is not None:
-            combined_contributions = (
-                *combined_contributions,
-                canvas_contribution,
-            )
-        if activity_contribution is not None:
-            combined_contributions = (
-                *combined_contributions,
-                activity_contribution,
-            )
+        reservation = self._reserve_ephemeral_promotion(session)
+        canvas_contribution: CanvasPromotionContribution | None = None
         try:
+            activity_contribution = (
+                self._library_activity_buffer.promotion_contribution(session_id)
+            )
+            canvas_contribution = (
+                self.canvas_promotion_participant.promotion_contribution(session_id)
+                if self.canvas_promotion_participant is not None
+                else None
+            )
+            combined_contributions: tuple[
+                ConsolePromotionTransactionContribution, ...
+            ] = tuple(contributions)
+            if canvas_contribution is not None:
+                combined_contributions = (
+                    *combined_contributions,
+                    canvas_contribution,
+                )
+            if activity_contribution is not None:
+                combined_contributions = (
+                    *combined_contributions,
+                    activity_contribution,
+                )
             return self._promote_ephemeral_session_atomically(
                 session,
+                reservation=reservation,
                 contributions=combined_contributions,
                 activity_contribution=activity_contribution,
                 canvas_contribution=canvas_contribution,
                 excluded_transient_message_id=excluded_transient_message_id,
             )
         finally:
-            if (
-                canvas_contribution is not None
-                and self.canvas_promotion_participant is not None
-            ):
-                if session.ephemeral:
-                    self.canvas_promotion_participant.abort_contribution(
-                        session_id, canvas_contribution
-                    )
-                else:
-                    self.canvas_promotion_participant.discard_session(session_id)
+            try:
+                self._settle_canvas_promotion_contribution(
+                    reservation,
+                    canvas_contribution,
+                )
+            finally:
+                self._release_ephemeral_promotion(reservation)
 
     def _promote_ephemeral_session_atomically(
         self,
         session: ConsoleChatSession,
         *,
+        reservation: _ConsoleEphemeralPromotionReservation,
         contributions: Sequence[ConsolePromotionTransactionContribution],
         activity_contribution: LibraryActivityContribution | None = None,
         canvas_contribution: CanvasPromotionContribution | None = None,
@@ -16777,40 +16908,54 @@ class ConsoleChatStore:
         )
 
         # The transaction has returned and SQLite can no longer roll it back.
-        # Publish the minimal durable fence before any postcommit callback.
-        session.ephemeral = False
-        self.publish_committed_identity(session_id, identity)
-        if staged_generation_snapshot is not None:
-            session.generation_durable_snapshot = staged_generation_snapshot
-        session.library_policy_holder.snapshot = committed_policy
-        session.library_policy_holder.explicitly_staged = False
-        session.library_policy_holder.save_pending = False
-        for message in messages:
-            message.persisted_message_id = staged_message_ids[message.id]
-            native_parent = self._native_parent_by_message.get(message.id)
-            message.parent_message_id = (
-                staged_message_ids[native_parent] if native_parent is not None else None
-            )
+        # The exact reservation remains installed until every postcommit effect
+        # and Canvas cleanup finishes. Protect binding verification and the
+        # durable live projection as one check-and-publish window.
+        with self._ephemeral_promotion_lock:
+            reservation.committed = True
+            if (
+                self._ephemeral_promotion_reservations.get(session_id)
+                is not reservation
+                or reservation.session is not session
+                or self._sessions.get(session_id) is not session
+            ):
+                raise RuntimeError("Temporary chat identity changed during promotion.")
+            session.ephemeral = False
+            self.publish_committed_identity(session_id, identity)
+            if staged_generation_snapshot is not None:
+                session.generation_durable_snapshot = staged_generation_snapshot
+            session.library_policy_holder.snapshot = committed_policy
+            session.library_policy_holder.explicitly_staged = False
+            session.library_policy_holder.save_pending = False
+            for message in messages:
+                message.persisted_message_id = staged_message_ids[message.id]
+                native_parent = self._native_parent_by_message.get(message.id)
+                message.parent_message_id = (
+                    staged_message_ids[native_parent]
+                    if native_parent is not None
+                    else None
+                )
 
-        if (
-            canvas_contribution is not None
-            and self.canvas_promotion_participant is not None
-        ):
-            canvas_confirmed = False
-            try:
+            if (
+                canvas_contribution is not None
+                and self.canvas_promotion_participant is not None
+            ):
                 try:
-                    canvas_confirmed = (
+                    reservation.canvas_settled = (
                         self.canvas_promotion_participant.confirm_contribution(
-                            session_id, canvas_contribution
+                            session_id,
+                            canvas_contribution,
                         )
                     )
                 except Exception:
                     logger.warning(
                         "Canvas staging confirmation failed after committed promotion."
                     )
-            finally:
-                if not canvas_confirmed:
-                    self.canvas_promotion_participant.discard_session(session_id)
+                if not reservation.canvas_settled:
+                    self._settle_canvas_promotion_contribution(
+                        reservation,
+                        canvas_contribution,
+                    )
 
         if activity_contribution is not None:
             self._library_activity_buffer.confirm_contribution(

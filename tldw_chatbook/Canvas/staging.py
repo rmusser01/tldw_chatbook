@@ -9,6 +9,7 @@ from threading import RLock
 from uuid import UUID, uuid4
 
 from tldw_chatbook.Chat.console_transaction_contribution import (
+    ConsoleExactNativeIdTransactionContribution,
     ConsoleTransactionWriter,
 )
 
@@ -83,7 +84,7 @@ class _PromotionRevision:
 
 
 @dataclass(frozen=True, slots=True)
-class CanvasPromotionContribution:
+class CanvasPromotionContribution(ConsoleExactNativeIdTransactionContribution):
     """Frozen source-bearing graph used only inside one promotion attempt."""
 
     session_id: str
@@ -481,6 +482,23 @@ class CanvasStagingStore:
                 or self._promotion_leases.get(session_id) is not contribution._lease
             ):
                 return False
+            self._promotion_leases.pop(session_id, None)
+            return True
+
+    def retire_contribution(
+        self, session_id: str, contribution: CanvasPromotionContribution
+    ) -> bool:
+        """Retire only the exact committed owner and promotion lease."""
+
+        with self._lock:
+            if (
+                contribution.session_id != session_id
+                or self._active_owners.get(session_id) is not contribution._owner
+                or self._promotion_leases.get(session_id) is not contribution._lease
+            ):
+                return False
+            self._sessions.pop(session_id, None)
+            self._active_owners.pop(session_id, None)
             self._promotion_leases.pop(session_id, None)
             return True
 

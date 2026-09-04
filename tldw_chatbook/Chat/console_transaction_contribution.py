@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
-from typing import Protocol, cast, runtime_checkable
+from typing import Protocol, cast
 
 _SIMPLE_IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
 _INSERT_VALUES_PATTERN = re.compile(
@@ -49,10 +50,12 @@ class ConsoleTransactionContribution(Protocol):
         """Write through the caller-owned capability without committing."""
 
 
-@runtime_checkable
-class ConsoleExactNativeIdTransactionContribution(Protocol):
+class ConsoleExactNativeIdTransactionContribution(ABC):
     """Write a sidecar using only exact native-to-durable message identities."""
 
+    __slots__ = ()
+
+    @abstractmethod
     def write_exact(
         self,
         *,
