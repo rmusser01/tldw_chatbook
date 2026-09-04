@@ -13,16 +13,14 @@ import pytest
 from textual.css.query import NoMatches
 from textual.widgets import Button, Static, Tooltip
 
+from Tests.UI.app_factory import _build_test_app
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
-from tldw_chatbook.Chat.console_settings_defaults import (
-    ConsoleDefaultDurabilityState,
-    ConsoleDefaultMutationIntent,
-    ConsoleDefaultRecoveryAction,
-    ConsoleDefaultRecoveryRequest,
-    ConsoleDefaultSavePhase,
-    ConsoleEndpointPatch,
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
 )
+from tldw_chatbook.app import TldwCli
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -40,6 +38,14 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsSubmission,
     ConsoleSettingsTransfer,
 )
+from tldw_chatbook.Chat.console_settings_defaults import (
+    ConsoleDefaultDurabilityState,
+    ConsoleDefaultMutationIntent,
+    ConsoleDefaultRecoveryAction,
+    ConsoleDefaultRecoveryRequest,
+    ConsoleDefaultSavePhase,
+    ConsoleEndpointPatch,
+)
 from tldw_chatbook.UI.Console_Modules.left_rail import (
     CONTEXT_SECTION_DESCRIPTORS,
     ConsoleLeftRail,
@@ -48,13 +54,6 @@ from tldw_chatbook.UI.Console_Modules.right_rail import ConsoleInspectorRail
 from tldw_chatbook.Widgets.Console.console_bounded_section import ConsoleBoundedSection
 from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
 from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
-from tldw_chatbook.app import TldwCli
-
-from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
-from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
-    ConsoleHarness,
-)
-from Tests.UI.app_factory import _build_test_app
 
 _PANES = (
     "#console-left-rail",
@@ -361,9 +360,9 @@ async def test_full_settings_actions_remain_mouse_reachable_at_narrow_width(
         actions = list(modal.query("#console-settings-actions Button"))
         assert [str(button.label) for button in actions] == [
             "Cancel",
-            "Save as model default",
-            "Make default for new chats",
-            "Apply to this chat",
+            "Save as provider defaults",
+            "Default for new chats",
+            "Use in this conversation",
         ]
         assert panel.region.x >= 0
         assert panel.region.right <= width
@@ -378,7 +377,7 @@ async def test_full_settings_actions_remain_mouse_reachable_at_narrow_width(
         )
         _assert_non_overlapping_regions(actions)
 
-        actions[0].focus()
+        actions[1].focus()
         await pilot.pause()
         focus_order: list[str] = []
         for _ in actions:
@@ -389,10 +388,10 @@ async def test_full_settings_actions_remain_mouse_reachable_at_narrow_width(
             await pilot.press("tab")
             await pilot.pause()
         assert focus_order == [
-            "console-settings-cancel",
             "console-settings-save-default",
             "console-settings-make-default",
             "console-settings-save",
+            "console-settings-cancel",
         ]
         apply_button = actions[-1]
         top_hit = modal.get_widget_at(
@@ -1099,7 +1098,9 @@ async def test_model_summary_sync_invalidates_mounted_context_allocation(
             pilot,
             lambda: _context_allocation_idle(rail),
         )
-        readiness = {"label": "Ready"}
+        readiness = {
+            "value": ConsoleSettingsReadiness("Ready", "", True),
+        }
         monkeypatch.setattr(
             console,
             "_build_console_settings_summary_state",
@@ -1109,7 +1110,8 @@ async def test_model_summary_sync_invalidates_mounted_context_allocation(
                 context_row="Context: 0",
                 sampling_row="T 0.7 · max_tokens 100",
                 identity_row="Identity: character",
-                readiness_label=readiness["label"],
+                readiness_label=readiness["value"].label,
+                readiness=readiness["value"],
             ),
         )
         console._sync_console_settings_summary()
@@ -1135,7 +1137,11 @@ async def test_model_summary_sync_invalidates_mounted_context_allocation(
             original_reconcile()
 
         monkeypatch.setattr(rail, "_run_allocation_reconcile", reconcile_spy)
-        readiness["label"] = "Provider recovery required"
+        readiness["value"] = ConsoleSettingsReadiness(
+            "Provider recovery required",
+            "Provider configuration needs attention.",
+            False,
+        )
         console._sync_console_settings_summary()
         await _wait_for_context_condition(
             pilot,

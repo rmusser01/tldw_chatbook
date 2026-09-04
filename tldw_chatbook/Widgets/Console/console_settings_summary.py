@@ -15,11 +15,10 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSettingsReadiness,
     ConsoleSettingsSummaryState,
 )
-from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from tldw_chatbook.Widgets.Console.console_bounded_section import (
     ConsoleBoundedSection,
 )
-
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 CONSOLE_SETTINGS_BUTTON_HORIZONTAL_PADDING = 2
 CONSOLE_SETTINGS_BUTTON_MIN_WIDTH = 9
@@ -57,19 +56,51 @@ _BLOCKER_COPY = {
     "readiness_unknown": "review provider settings",
 }
 _RECOVERY_COPY = {
-    "select_provider": ("Choose provider", "console", "Choose a provider for this Console session"),
-    "select_supported_provider": ("Choose provider", "console", "Choose a supported provider for this Console session"),
-    "review_provider_settings": ("Review settings", "console", "Review this Console session's settings"),
-    "configure_endpoint": ("Configure endpoint", "console", "Configure the provider endpoint before sending"),
+    "select_provider": (
+        "Choose provider",
+        "console",
+        "Choose a provider for this Console session",
+    ),
+    "select_supported_provider": (
+        "Choose provider",
+        "console",
+        "Choose a supported provider for this Console session",
+    ),
+    "review_provider_settings": (
+        "Review settings",
+        "console",
+        "Review this Console session's settings",
+    ),
+    "configure_endpoint": (
+        "Configure endpoint",
+        "console",
+        "Configure the provider endpoint before sending",
+    ),
     "save_endpoint": (
         "Configure endpoint",
         "console",
         "Save the provider endpoint in Conversation settings",
     ),
-    "configure_credential": ("Configure API key", "settings", "Configure the provider API and API key in Settings"),
-    "select_model": ("Choose model", "console", "Choose a model for this Console session"),
-    "retry_connection": ("Retry connection", "console", "Retry the provider connection"),
-    "wait_for_active_run": ("Run active", "hidden", "Wait for the current run to finish"),
+    "configure_credential": (
+        "Configure API key",
+        "settings",
+        "Configure the provider API and API key in Settings",
+    ),
+    "select_model": (
+        "Choose model",
+        "console",
+        "Choose a model for this Console session",
+    ),
+    "retry_connection": (
+        "Retry connection",
+        "console",
+        "Retry the provider connection",
+    ),
+    "wait_for_active_run": (
+        "Run active",
+        "hidden",
+        "Wait for the current run to finish",
+    ),
 }
 _ENDPOINT_COPY = {
     "not_tested": "Not tested",
@@ -106,7 +137,14 @@ _GENERATION_FAILURE_COPY = {
 def build_console_readiness_presentation(
     readiness: ConsoleSettingsReadiness,
 ) -> ConsoleReadinessPresentation:
-    """Map validated readiness codes to safe UI-owned copy."""
+    """Map validated readiness codes to safe UI-owned copy.
+
+    Args:
+        readiness: Validated readiness facets for the current Console draft.
+
+    Returns:
+        Fixed-copy presentation values safe to render in the settings summary.
+    """
     provider = readiness.provider_display_name or "Provider"
     if readiness.operability == "ready_to_send":
         primary = "Ready to send"
@@ -255,8 +293,7 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
     def _apply_button_sizing(self, button: Button) -> None:
         button_width = min(
             max(
-                len(self._action_label())
-                + CONSOLE_SETTINGS_BUTTON_HORIZONTAL_PADDING,
+                len(self._action_label()) + CONSOLE_SETTINGS_BUTTON_HORIZONTAL_PADDING,
                 CONSOLE_SETTINGS_BUTTON_MIN_WIDTH,
             ),
             CONSOLE_SETTINGS_BUTTON_MAX_WIDTH,
@@ -369,7 +406,9 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
 
     def _action_tooltip(self) -> str:
         presentation = self._presentation()
-        return presentation.action_tooltip if presentation else self.state.action_tooltip
+        return (
+            presentation.action_tooltip if presentation else self.state.action_tooltip
+        )
 
     def compose(self) -> ComposeResult:
         header = Horizontal(

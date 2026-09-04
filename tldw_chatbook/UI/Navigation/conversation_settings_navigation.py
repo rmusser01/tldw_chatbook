@@ -5,14 +5,15 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-import re
 from typing import Literal
 
-from ...Chat.provider_readiness import provider_config_key
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from ...Utils.input_validation import (
+    validate_navigation_context_text,
+    validate_navigation_provider_key,
+)
 
-_PROVIDER_RE = re.compile(r"[a-z0-9][a-z0-9_]{0,127}\Z")
-_SAFE_TEXT_RE = re.compile(r"[^\x00-\x1f\x7f\x80-\x9f]+\Z")
 _FOCUS_CONTROL_IDS = frozenset(
     {
         "console-settings-provider",
@@ -45,27 +46,74 @@ _FOCUS_CONTROL_IDS = frozenset(
 )
 
 
-def _text(value: object, *, name: str, limit: int) -> str:
-    if type(value) is not str or not value or value != value.strip() or len(value) > limit:
-        raise ValueError(f"{name} is invalid")
-    if _SAFE_TEXT_RE.fullmatch(value) is None:
-        raise ValueError(f"{name} is invalid")
-    return value
-
-
-def _revision(value: object, *, name: str = "revision", positive: bool = True) -> int:
-    if type(value) is not int or value < (1 if positive else 0):
-        qualifier = "positive" if positive else "non-negative"
-        raise ValueError(f"{name} must be a {qualifier} integer")
-    return value
-
-
 class ConversationSettingsReturnOutcome(StrEnum):
     """Fixed result labels used by the Console return status copy."""
 
     CREDENTIAL_SAVED = "credential_saved"
     PROVIDER_SETTINGS_SAVED = "provider_settings_saved"
     WITHOUT_SAVING = "without_saving"
+
+
+class _StrictNavigationContext(BaseModel):
+    """Pydantic boundary shared by all external navigation payloads."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+
+class _ConversationSettingsReturnIntentContext(_StrictNavigationContext):
+    session_id: str = Field(min_length=1, max_length=256)
+    settings_revision: int = Field(ge=0)
+    active_view: Literal["model", "context"]
+    focus_control_id: str | None
+
+    @field_validator("session_id")
+    @classmethod
+    def _validate_session_id(cls, value: str) -> str:
+        return validate_navigation_context_text(
+            value,
+            name="session_id",
+            max_length=256,
+        )
+
+    @field_validator("focus_control_id")
+    @classmethod
+    def _validate_focus_control_id(cls, value: str | None) -> str | None:
+        if value is not None and value not in _FOCUS_CONTROL_IDS:
+            raise ValueError("focus_control_id is invalid")
+        return value
+
+
+class _ProviderSettingsNavigationContext(_StrictNavigationContext):
+    category: Literal["providers-models"]
+    provider: str = Field(min_length=1, max_length=128)
+    model: str | None = Field(default=None, max_length=512)
+    field: Literal["api_key"]
+    return_revision: int = Field(ge=1)
+
+    @field_validator("provider")
+    @classmethod
+    def _normalize_provider(cls, value: str) -> str:
+        return validate_navigation_provider_key(value)
+
+    @field_validator("model")
+    @classmethod
+    def _validate_model(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return validate_navigation_context_text(
+            value,
+            name="model",
+            max_length=512,
+        )
+
+
+class _ConsoleSettingsReturnContext(_ConversationSettingsReturnIntentContext):
+    return_revision: int = Field(ge=1)
+    outcome: Literal[
+        "credential_saved",
+        "provider_settings_saved",
+        "without_saving",
+    ]
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,12 +126,16 @@ class ConversationSettingsReturnIntent:
     focus_control_id: str | None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "session_id", _text(self.session_id, name="session_id", limit=256))
-        object.__setattr__(self, "settings_revision", _revision(self.settings_revision, name="settings_revision", positive=False))
-        if self.active_view not in ("model", "context"):
-            raise ValueError("active_view is invalid")
-        if self.focus_control_id is not None and self.focus_control_id not in _FOCUS_CONTROL_IDS:
-            raise ValueError("focus_control_id is invalid")
+        try:
+            validated = _ConversationSettingsReturnIntentContext.model_validate(
+                self.to_context()
+            )
+        except ValidationError as exc:
+            raise ValueError("Conversation settings return intent is invalid") from exc
+        object.__setattr__(self, "session_id", validated.session_id)
+        object.__setattr__(self, "settings_revision", validated.settings_revision)
+        object.__setattr__(self, "active_view", validated.active_view)
+        object.__setattr__(self, "focus_control_id", validated.focus_control_id)
 
     def to_context(self) -> dict[str, object]:
         return {
@@ -94,12 +146,15 @@ class ConversationSettingsReturnIntent:
         }
 
     @classmethod
-    def from_context(cls, context: Mapping[str, object]) -> ConversationSettingsReturnIntent | None:
-        if not isinstance(context, Mapping) or set(context) != set(cls("s", 1, "model", None).to_context()):
+    def from_context(
+        cls, context: Mapping[str, object]
+    ) -> ConversationSettingsReturnIntent | None:
+        if not isinstance(context, Mapping):
             return None
         try:
-            return cls(**context)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
+            validated = _ConversationSettingsReturnIntentContext.model_validate(context)
+            return cls(**validated.model_dump())
+        except (TypeError, ValueError, ValidationError):
             return None
 
 
@@ -114,17 +169,17 @@ class ProviderSettingsNavigationTarget:
     return_revision: int
 
     def __post_init__(self) -> None:
-        if self.category != "providers-models":
-            raise ValueError("category is invalid")
-        provider = provider_config_key(self.provider) if type(self.provider) is str else ""
-        if not provider or _PROVIDER_RE.fullmatch(provider) is None:
-            raise ValueError("provider is invalid")
-        object.__setattr__(self, "provider", provider)
-        if self.model is not None:
-            _text(self.model, name="model", limit=512)
-        if self.field != "api_key":
-            raise ValueError("field is invalid")
-        _revision(self.return_revision, name="return_revision")
+        try:
+            validated = _ProviderSettingsNavigationContext.model_validate(
+                self.to_context()
+            )
+        except ValidationError as exc:
+            raise ValueError("Provider settings navigation target is invalid") from exc
+        object.__setattr__(self, "category", validated.category)
+        object.__setattr__(self, "provider", validated.provider)
+        object.__setattr__(self, "model", validated.model)
+        object.__setattr__(self, "field", validated.field)
+        object.__setattr__(self, "return_revision", validated.return_revision)
 
     def to_context(self) -> dict[str, object]:
         return {
@@ -136,13 +191,15 @@ class ProviderSettingsNavigationTarget:
         }
 
     @classmethod
-    def from_context(cls, context: Mapping[str, object]) -> ProviderSettingsNavigationTarget | None:
-        keys = {"category", "provider", "model", "field", "return_revision"}
-        if not isinstance(context, Mapping) or set(context) != keys:
+    def from_context(
+        cls, context: Mapping[str, object]
+    ) -> ProviderSettingsNavigationTarget | None:
+        if not isinstance(context, Mapping):
             return None
         try:
-            return cls(**context)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
+            validated = _ProviderSettingsNavigationContext.model_validate(context)
+            return cls(**validated.model_dump())
+        except (TypeError, ValueError, ValidationError):
             return None
 
 
@@ -158,16 +215,21 @@ class ConsoleSettingsReturnTarget:
     outcome: ConversationSettingsReturnOutcome
 
     def __post_init__(self) -> None:
-        intent = ConversationSettingsReturnIntent(
-            self.session_id, self.settings_revision, self.active_view, self.focus_control_id
+        context = self.to_context()
+        try:
+            validated = _ConsoleSettingsReturnContext.model_validate(context)
+        except ValidationError as exc:
+            raise ValueError("Console settings return target is invalid") from exc
+        object.__setattr__(self, "session_id", validated.session_id)
+        object.__setattr__(self, "settings_revision", validated.settings_revision)
+        object.__setattr__(self, "active_view", validated.active_view)
+        object.__setattr__(self, "focus_control_id", validated.focus_control_id)
+        object.__setattr__(self, "return_revision", validated.return_revision)
+        object.__setattr__(
+            self,
+            "outcome",
+            ConversationSettingsReturnOutcome(validated.outcome),
         )
-        object.__setattr__(self, "session_id", intent.session_id)
-        if not isinstance(self.outcome, ConversationSettingsReturnOutcome):
-            try:
-                object.__setattr__(self, "outcome", ConversationSettingsReturnOutcome(self.outcome))
-            except (TypeError, ValueError):
-                raise ValueError("outcome is invalid") from None
-        _revision(self.return_revision, name="return_revision")
 
     def to_context(self) -> dict[str, object]:
         return {
@@ -176,15 +238,21 @@ class ConsoleSettingsReturnTarget:
             "active_view": self.active_view,
             "focus_control_id": self.focus_control_id,
             "return_revision": self.return_revision,
-            "outcome": self.outcome.value,
+            "outcome": (
+                self.outcome.value
+                if isinstance(self.outcome, ConversationSettingsReturnOutcome)
+                else self.outcome
+            ),
         }
 
     @classmethod
-    def from_context(cls, context: Mapping[str, object]) -> ConsoleSettingsReturnTarget | None:
-        keys = {"session_id", "settings_revision", "active_view", "focus_control_id", "return_revision", "outcome"}
-        if not isinstance(context, Mapping) or set(context) != keys:
+    def from_context(
+        cls, context: Mapping[str, object]
+    ) -> ConsoleSettingsReturnTarget | None:
+        if not isinstance(context, Mapping):
             return None
         try:
-            return cls(**context)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
+            validated = _ConsoleSettingsReturnContext.model_validate(context)
+            return cls(**validated.model_dump())
+        except (TypeError, ValueError, ValidationError):
             return None

@@ -18,7 +18,6 @@ from tldw_chatbook.model_capabilities import (
     zai_model_supports_reasoning_effort,
 )
 
-
 DIRECT_CONSOLE_PROVIDER_KEYS = frozenset({"llama_cpp", "local_llamacpp"})
 
 ConsoleGenerationControl = Literal[
@@ -149,6 +148,14 @@ def console_generation_control_support(
     family consume the control. An unrecognised model stays ``unknown`` rather
     than inheriting a negative result from a capability predicate whose false
     value also covers names outside that predicate's domain.
+
+    Args:
+        provider: Provider selected by the Console draft.
+        model: Optional selected model identifier.
+        control: Generation control whose support should be projected.
+
+    Returns:
+        ``supported``, ``unsupported``, or ``unknown`` for the exact draft.
     """
     identity = resolve_console_provider_identity(provider)
     execution_key = identity.execution_key

@@ -221,7 +221,17 @@ class SettingsEndpointProbeOutcome:
 def provider_probe_result_from_settings_outcome(
     outcome: SettingsEndpointProbeOutcome,
 ) -> ProviderProbeResult:
-    """Project the shared transport outcome into bounded provider evidence."""
+    """Project the shared transport outcome into bounded provider evidence.
+
+    Args:
+        outcome: Validated result from the shared Settings endpoint probe.
+
+    Returns:
+        Bounded provider evidence for the Console readiness model.
+
+    Raises:
+        ValueError: If ``outcome`` is not a Settings endpoint probe outcome.
+    """
 
     if type(outcome) is not SettingsEndpointProbeOutcome:
         raise ValueError("Provider probe outcome is invalid.")

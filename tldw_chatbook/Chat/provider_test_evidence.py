@@ -136,17 +136,36 @@ _FAILURE_CATEGORIES = frozenset(
 # one action that addresses it -- "The model listing request had a connection
 # error" named a subsystem and no next step.
 _FAILURE_DETAILS = {
-    "timeout": "The request timed out - the server did not answer in time. Check it is running and not overloaded.",
-    "connection_refused": "The connection was refused - nothing is listening at that address. Start the server, or check the endpoint and port.",
+    "timeout": (
+        "The request timed out - the server did not answer in time. "
+        "Check it is running and not overloaded."
+    ),
+    "connection_refused": (
+        "The connection was refused - nothing is listening at that address. "
+        "Start the server, or check the endpoint and port."
+    ),
     # Qodo review (PR #2256): "Go Back" was wrong -- this verdict renders on
     # the Provider step, which already contains the key input, and Back goes to
     # Welcome. Source-agnostic too: the credential may be stored or from the
     # environment, where "re-enter it" is not the remedy either.
-    "unauthorized": "Unauthorized - the server rejected this API key. Check the Authentication section on this step.",
-    "forbidden": "Forbidden - this API key is not allowed to list models. Check its permissions.",
-    "http_status": "The server returned an HTTP status error. Check the endpoint, then try again.",
-    "invalid_payload": "The server returned an invalid response - not an OpenAI-compatible model list. Check the endpoint.",
-    "connection_error": "Connection error - could not reach the server. Check the endpoint, and that the server is running.",
+    "unauthorized": (
+        "Unauthorized - the server rejected this API key. "
+        "Check the Authentication section on this step."
+    ),
+    "forbidden": (
+        "Forbidden - this API key is not allowed to list models. Check its permissions."
+    ),
+    "http_status": (
+        "The server returned an HTTP status error. Check the endpoint, then try again."
+    ),
+    "invalid_payload": (
+        "The server returned an invalid response - not an OpenAI-compatible "
+        "model list. Check the endpoint."
+    ),
+    "connection_error": (
+        "Connection error - could not reach the server. Check the endpoint, "
+        "and that the server is running."
+    ),
 }
 _CONFIGURATION_ISSUE_DETAILS = {
     "provider_missing": "Select a provider.",
@@ -178,7 +197,15 @@ def console_generation_test_availability(
     *,
     handler_keys: Collection[str] | None = None,
 ) -> ConsoleGenerationTestAvailability:
-    """Project generation-test support from Console's real dispatch catalog."""
+    """Project generation-test support from Console's real dispatch catalog.
+
+    Args:
+        provider: Provider selected by the Console draft.
+        handler_keys: Optional dispatch catalog keys used for the projection.
+
+    Returns:
+        Whether the selected provider supports a bounded generation test.
+    """
 
     from .console_provider_support import resolve_console_provider_identity
 
@@ -230,8 +257,7 @@ class ProviderReadinessSnapshot:
         )
         object.__setattr__(self, "credential", normalized_credential)
         if self.category is not None and (
-            type(self.category) is not str
-            or self.category not in _FAILURE_CATEGORIES
+            type(self.category) is not str or self.category not in _FAILURE_CATEGORIES
         ):
             raise ValueError("Endpoint failure category is invalid.")
         if self.configuration_issue is not None and (
@@ -303,7 +329,9 @@ def provider_readiness_verdict(
             ),
         )
     if snapshot.endpoint == "testing":
-        return ProviderReadinessVerdict("testing", "Testing the model listing endpoint.")
+        return ProviderReadinessVerdict(
+            "testing", "Testing the model listing endpoint."
+        )
     if snapshot.endpoint == "unreachable":
         return ProviderReadinessVerdict(
             "connection_failed",
@@ -332,7 +360,8 @@ def provider_readiness_verdict(
     # worked and what to do about the other half.
     return ProviderReadinessVerdict(
         "model_unconfirmed",
-        "Reached the server, but your chosen model was not in its list. Pick one on the next step.",
+        "Reached the server, but your chosen model was not in its list. "
+        "Pick one on the next step.",
     )
 
 
@@ -442,8 +471,7 @@ class ProviderTestEvidence:
             raise ValueError("Provider evidence endpoint facet is invalid.")
         _validate_model_ids(self.model_ids)
         if self.category is not None and (
-            type(self.category) is not str
-            or self.category not in _FAILURE_CATEGORIES
+            type(self.category) is not str or self.category not in _FAILURE_CATEGORIES
         ):
             raise ValueError("Provider evidence category is invalid.")
         if (
@@ -464,7 +492,9 @@ class ProviderTestEvidence:
 
         if self.endpoint == "reachable":
             if self.category is not None:
-                raise ValueError("Reachable evidence cannot include a failure category.")
+                raise ValueError(
+                    "Reachable evidence cannot include a failure category."
+                )
         elif self.endpoint == "unreachable":
             if self.model_ids:
                 raise ValueError("Unreachable evidence cannot include model IDs.")
@@ -539,14 +569,17 @@ class ProviderTestEvidenceStore:
         self._current_generation_token_epoch: int | None = None
         self._current_generation_identity: ProviderDraftIdentity | None = None
         self._generation_settling: tuple[ProviderDraftIdentity, int] | None = None
-        self._generation_cancel_restore: tuple[
-            ProviderDraftIdentity,
-            Literal["succeeded", "failed"],
-            GenerationFailureCategory | None,
-        ] | None = None
-        self._save_lease: tuple[
-            _ProviderEvidenceSaveLease, ProviderDraftIdentity, int
-        ] | None = None
+        self._generation_cancel_restore: (
+            tuple[
+                ProviderDraftIdentity,
+                Literal["succeeded", "failed"],
+                GenerationFailureCategory | None,
+            ]
+            | None
+        ) = None
+        self._save_lease: (
+            tuple[_ProviderEvidenceSaveLease, ProviderDraftIdentity, int] | None
+        ) = None
         self._evidence: ProviderTestEvidence | None = None
 
     def begin(self, identity: ProviderDraftIdentity) -> object:
@@ -631,7 +664,17 @@ class ProviderTestEvidenceStore:
             return True
 
     def begin_generation(self, identity: ProviderDraftIdentity) -> object:
-        """Start an exact-identity generation probe and return its token."""
+        """Start an exact-identity generation probe and return its token.
+
+        Args:
+            identity: Exact provider draft identity that owns the probe.
+
+        Returns:
+            Opaque token required to settle or cancel this probe.
+
+        Raises:
+            ValueError: If the identity is invalid or older than current evidence.
+        """
 
         if type(identity) is not ProviderDraftIdentity:
             raise ValueError("Provider draft identity is invalid.")
@@ -893,8 +936,7 @@ class ProviderTestEvidenceStore:
                 and evidence.endpoint != "testing"
                 and evidence.generation != "testing"
                 and _same_saved_semantics(tested_identity, saved_identity)
-                and saved_identity.draft_generation
-                >= tested_identity.draft_generation
+                and saved_identity.draft_generation >= tested_identity.draft_generation
             )
             if fully_applied and not conflict:
                 self._latest_generation = max(
@@ -968,9 +1010,7 @@ class ProviderTestEvidenceStore:
             identities.add(self._current_generation_identity)
         return identities
 
-    def _clear_endpoint_evidence(
-        self, identity: ProviderDraftIdentity | None
-    ) -> None:
+    def _clear_endpoint_evidence(self, identity: ProviderDraftIdentity | None) -> None:
         evidence = self._evidence
         if evidence is None or identity is None or evidence.identity != identity:
             return

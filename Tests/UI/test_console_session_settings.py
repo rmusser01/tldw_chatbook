@@ -18,7 +18,7 @@ from textual import events
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, ScrollableContainer
+from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.geometry import Region
 from textual.widgets import (
     Button,
@@ -59,6 +59,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     validate_console_session_settings,
 )
 from tldw_chatbook.Chat.console_settings_apply import (
+    ConsoleSettingsAction,
     ConsoleSettingsCommittedSubmission,
 )
 from tldw_chatbook.Widgets.Console.console_context_controls import (
@@ -71,8 +72,6 @@ from tldw_chatbook.Chat.provider_test_evidence import (
 )
 from tldw_chatbook.config import (
     API_MODELS_BY_PROVIDER,
-    AtomicConfigSnapshot,
-    ConfigMutationResult,
     DEFAULT_CONFIG_FROM_TOML,
     RuntimeConfigSnapshot,
     save_setting_to_cli_config,
@@ -110,7 +109,6 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
     ConsoleModelDiscoveryIdentity,
     ConsoleSettingsDraftSnapshot,
     ConsoleSettingsModal,
-    ConsoleSettingsPersistAndApplyStatus,
     ConsoleSettingsResult,
     ConsoleUnverifiedModelDecision,
     _settings_screen_region,
@@ -1181,6 +1179,33 @@ async def test_cancelled_source_reopen_retains_suspended_snapshot_and_token(
     assert screen._suspended_conversation_settings_token == 11
 
 
+def _install_open_settings_dependencies(screen: ChatScreen) -> None:
+    """Install the current ChatScreen settings seams on a constructor-free double."""
+
+    async def effective_thinking_history_policy_for_session(_session_id):
+        return "auto"
+
+    screen._ensure_console_chat_controller = lambda: SimpleNamespace(
+        run_state_for=lambda _session_id: SimpleNamespace(is_send_allowed=True),
+        effective_thinking_history_policy_for_session=(
+            effective_thinking_history_policy_for_session
+        ),
+        reset_active_context_memory=lambda _session_id: None,
+        undo_context_memory_reset=lambda: None,
+        reset_all_context_memories=lambda _session_id: None,
+        compact_context_now=lambda _session_id: None,
+        rebase_console_settings_draft=lambda draft, **_kwargs: draft,
+    )
+    screen._console_settings_context_estimate_for_session = (
+        lambda *_args, **_kwargs: ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
+    )
+    screen._console_context_control_state_for_session = (
+        lambda *_args, **_kwargs: None
+    )
+    if not hasattr(screen, "app_instance"):
+        screen.app_instance = SimpleNamespace()
+
+
 @pytest.mark.asyncio
 async def test_covered_cancelled_source_reopen_transfers_exact_draft_to_modal(
     monkeypatch,
@@ -1220,21 +1245,29 @@ async def test_covered_cancelled_source_reopen_transfers_exact_draft_to_modal(
 
     fake_app = SimpleNamespace(screen_stack=stack, push_screen=push_screen)
     monkeypatch.setattr(ChatScreen, "app", property(lambda _self: fake_app))
+    screen.app_instance = SimpleNamespace()
     screen._session = SimpleNamespace(
         _ensure_active_console_session_settings=lambda: snapshot.settings
     )
     screen._ensure_console_chat_store = lambda: store
+    async def effective_thinking_history_policy_for_session(_session_id):
+        return "auto"
+
     screen._ensure_console_chat_controller = lambda: SimpleNamespace(
-        run_state=SimpleNamespace(is_send_allowed=True),
+        run_state_for=lambda _session_id: SimpleNamespace(is_send_allowed=True),
+        effective_thinking_history_policy_for_session=(
+            effective_thinking_history_policy_for_session
+        ),
         reset_active_context_memory=lambda _session_id: None,
         undo_context_memory_reset=lambda: None,
         reset_all_context_memories=lambda _session_id: None,
         compact_context_now=lambda _session_id: None,
+        rebase_console_settings_draft=lambda *args, **kwargs: args[0],
     )
-    screen._active_console_settings_context_estimate = lambda: (
+    screen._console_settings_context_estimate_for_session = lambda *args, **kwargs: (
         ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
-    screen._active_console_context_control_state = lambda **_kwargs: None
+    screen._console_context_control_state_for_session = lambda *args, **kwargs: None
     screen._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
     screen._global_chat_display_name = lambda: "Ada"
     screen._console_run_active = lambda: False
@@ -1245,6 +1278,9 @@ async def test_covered_cancelled_source_reopen_transfers_exact_draft_to_modal(
     screen._providers_models_for_console_settings = provider_models
     screen._suspended_conversation_settings = snapshot
     screen._suspended_conversation_settings_token = 13
+    assert store.active_session_id == session.id
+    assert store.session_settings_revision(session.id) == 0
+    assert screen._owns_console_screen_stack()
 
     reopen_task = asyncio.create_task(
         ChatScreen._reopen_suspended_console_settings(
@@ -1254,7 +1290,9 @@ async def test_covered_cancelled_source_reopen_transfers_exact_draft_to_modal(
             settings_revision=0,
         )
     )
-    await mount_wait_started.wait()
+    await asyncio.sleep(0)
+    assert not reopen_task.done(), repr(reopen_task.exception())
+    await asyncio.wait_for(mount_wait_started.wait(), timeout=1)
     stack.append(newer_overlay)
     reopen_task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -1306,6 +1344,7 @@ async def test_source_reopen_revalidates_exact_owner_after_model_resolution(
         ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
     screen._active_console_context_control_state = lambda **_kwargs: None
+    _install_open_settings_dependencies(screen)
     screen._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
     screen._global_chat_display_name = lambda: "Ada"
     resolution_started = asyncio.Event()
@@ -1404,6 +1443,7 @@ async def test_open_console_settings_real_callback_stages_typed_credential_route
         10, 4096, "10 / 4k"
     )
     screen._active_console_context_control_state = lambda **_kwargs: None
+    _install_open_settings_dependencies(screen)
     screen._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
     screen._global_chat_display_name = lambda: "Ada"
     screen._console_run_active = lambda: False
@@ -1457,6 +1497,7 @@ async def test_open_console_settings_returns_false_when_mount_awaitable_fails(
         ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
     screen._active_console_context_control_state = lambda **_kwargs: None
+    _install_open_settings_dependencies(screen)
     screen._provider_readiness_app_config = lambda: {
         "api_settings": {"openai": {}}
     }
@@ -1528,6 +1569,7 @@ async def test_open_console_settings_unwinds_exact_modal_after_mutating_failed_m
         ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
     screen._active_console_context_control_state = lambda **_kwargs: None
+    _install_open_settings_dependencies(screen)
     screen._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
     screen._global_chat_display_name = lambda: "Ada"
     screen._console_run_active = lambda: False
@@ -1576,6 +1618,7 @@ async def test_open_console_settings_propagates_mount_cancellation(monkeypatch) 
         ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
     screen._active_console_context_control_state = lambda **_kwargs: None
+    _install_open_settings_dependencies(screen)
     screen._provider_readiness_app_config = lambda: {
         "api_settings": {"openai": {}}
     }
@@ -1648,6 +1691,7 @@ async def test_suspended_open_uses_active_raw_provider_for_initial_discovery(
         ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
     screen._active_console_context_control_state = lambda **_kwargs: None
+    _install_open_settings_dependencies(screen)
     screen._provider_readiness_app_config = lambda: {
         "api_settings": {"openai": {}, "vllm": {}}
     }
@@ -2623,7 +2667,14 @@ def _mounted_first_chat_projection(console: ChatScreen) -> dict[str, object]:
             console._console_control_provider,
             console._console_control_model,
         ),
-        "summary": _summary_text(console),
+        # Rail visibility is responsive presentation state and may settle after
+        # a pending preference write. The rollback contract owns the summary's
+        # projected content, not whether the responsive rail is currently open.
+        "summary": " ".join(
+            getattr(widget.renderable, "plain", str(widget.renderable))
+            for widget in console.query_one("#console-settings-summary").query(Static)
+            if hasattr(widget, "renderable") and str(widget.renderable)
+        ),
         "control_state": deepcopy(control_bar.state),
         "provider_label": str(
             console.query_one("#console-provider-label", Static).renderable
@@ -4441,12 +4492,12 @@ def test_console_settings_summary_button_sizing_uses_named_constants() -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_settings_header_is_external_and_one_row_body_uses_one_line() -> (
+async def test_console_settings_header_is_external_and_unknown_context_is_named() -> (
     None
 ):
     state = ConsoleSettingsSummaryState(
-        provider_row="",
-        model_row="Model: only visible row",
+        provider_row="Provider: one row",
+        model_row="",
         context_row="",
         sampling_row="",
         identity_row="",
@@ -4465,8 +4516,8 @@ async def test_console_settings_header_is_external_and_one_row_body_uses_one_lin
         assert header.parent is summary
         assert body.parent is summary
         assert list(summary.children) == [header, body]
-        assert body.desired_content_lines == 1
-        assert body.viewport.content_region.height == 1
+        assert body.desired_content_lines == 2
+        assert body.viewport.content_region.height == 2
         assert body.hint.display is False
 
 
@@ -6379,44 +6430,6 @@ async def test_console_settings_modal_blank_temperature_stays_open_and_renders_e
 
 
 @pytest.mark.asyncio
-async def test_checked_endpoint_edit_enables_make_default_from_blank_config() -> None:
-    app = ModalHarness()
-    app.app_config["api_settings"]["openai"]["api_base_url"] = ""
-    blocked = ConsoleSettingsReadiness(
-        "Not ready",
-        "Provider blocked: configure an endpoint.",
-        False,
-    )
-    settings = ConsoleSessionSettings(provider="openai", model="gpt-4o")
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            ConsoleSettingsModal(
-                settings=settings,
-                app_config=app.app_config,
-                providers_models={"openai": ["gpt-4o"]},
-                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
-                can_save=True,
-                default_readiness_resolver=lambda _provider, _model: blocked,
-            )
-        )
-        await pilot.pause()
-        make_default = app.screen.query_one("#console-settings-make-default", Button)
-        assert make_default.disabled is True
-
-        app.screen.query_one(
-            "#console-settings-base-url", Input
-        ).value = "https://new.example.test/v1"
-        await pilot.pause()
-        checkbox = app.screen.query_one("#console-settings-save-endpoint")
-        assert checkbox.disabled is False
-        checkbox.value = True
-        await pilot.pause()
-
-        assert make_default.disabled is False
-
-
-@pytest.mark.asyncio
 async def test_console_settings_modal_blank_top_p_stays_open_and_renders_error() -> (
     None
 ):
@@ -7920,7 +7933,8 @@ async def test_console_left_rail_body_scrolls_below_fixed_header_without_setting
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_save_updates_active_summary_only() -> None:
+async def test_console_settings_modal_save_updates_active_summary_only(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "model-a"
@@ -7978,7 +7992,10 @@ async def test_console_settings_modal_save_updates_active_summary_only() -> None
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_result_stays_bound_to_opening_session() -> None:
+async def test_console_settings_modal_result_stays_bound_to_opening_session(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "model-a"
@@ -9242,7 +9259,8 @@ def test_system_prompt_command_clears_character_template_through_store(
 
 
 @pytest.mark.asyncio
-async def test_console_settings_are_isolated_between_native_tabs() -> None:
+async def test_console_settings_are_isolated_between_native_tabs(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "model-a"
@@ -10605,47 +10623,6 @@ async def test_model_picker_keyboard_escape_restores_then_dismisses_modal() -> N
         assert app.saved_result is None
 
 
-@pytest.mark.parametrize(
-    "focus_selector",
-    [
-        "#console-settings-provider-picker-input",
-        "#console-settings-cancel",
-    ],
-)
-@pytest.mark.asyncio
-async def test_default_save_freeze_rehomes_and_restores_keyboard_focus(
-    focus_selector: str,
-) -> None:
-    """Persistence freeze keeps focus visible, then restores its valid target."""
-    app = ModalHarness()
-    modal = _basic_modal(
-        ConsoleSessionSettings(provider="llama_cpp", model="model-a"), app
-    )
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(modal)
-        await pilot.pause()
-        original = modal.query_one(focus_selector)
-        original.focus()
-        await pilot.pause()
-        assert app.focused is original
-
-        modal._set_default_save_in_flight(True)
-        await pilot.pause()
-
-        reason = modal.query_one(
-            "#console-settings-primary-disabled-reason", Static
-        )
-        assert reason.display
-        assert app.focused is reason
-        assert modal._is_effectively_focusable(reason)
-
-        modal._set_default_save_in_flight(False)
-        await pilot.pause()
-
-        assert app.focused is original
-        assert modal._is_effectively_focusable(original)
-
 
 @pytest.mark.asyncio
 async def test_console_settings_ctrl_enter_activates_enabled_primary_or_focuses_reason() -> None:
@@ -11035,7 +11012,7 @@ async def test_console_settings_modal_scope_line_names_session_and_default_scope
         assert "future provider conversations" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
         assert (
             str(app.screen.query_one("#console-settings-save-default", Button).label)
-            == "Save as model default"
+            == "Save as provider defaults"
         )
         response_control = app.screen.query_one("#console-settings-max-tokens", Input)
         response_label = response_control.parent.query_one(
@@ -12431,6 +12408,7 @@ async def test_console_settings_modal_tab_order_skips_collapsed_disclosure_child
             "console-settings-view-model",
             "console-settings-view-context",
             "console-settings-save-default",
+            "console-settings-make-default",
             "console-settings-save",
             "console-settings-cancel",
         ):
@@ -12439,6 +12417,7 @@ async def test_console_settings_modal_tab_order_skips_collapsed_disclosure_child
 
         for control_id in (
             "console-settings-save",
+            "console-settings-make-default",
             "console-settings-save-default",
             "console-settings-view-context",
             "console-settings-view-model",
@@ -12613,12 +12592,7 @@ async def test_console_settings_modal_invalid_restored_choice_stays_inline_until
         await pilot.click("#console-settings-save-default")
         assert app.screen is modal
         assert app.saved_settings is None
-        assert (
-            modal.query_one("#console-settings-save-default", Button).has_class(
-                "-active"
-            )
-            is False
-        )
+        assert "Saved value is unavailable" in str(validation.renderable)
 
         await pilot.click("#console-settings-save")
         assert app.screen is modal
@@ -12627,7 +12601,7 @@ async def test_console_settings_modal_invalid_restored_choice_stays_inline_until
         choice.value = "low"
         await pilot.pause()
         assert str(validation.renderable) == ""
-        await pilot.click("#console-settings-save")
+        modal.query_one("#console-settings-save", Button).press()
         await pilot.pause()
 
     assert app.saved_settings is not None
@@ -13533,20 +13507,15 @@ async def test_console_settings_modal_unsaved_endpoint_requires_provider_setup_w
         model="qwen-new",
         base_url="http://127.0.0.1:22434",
     )
-    async def persist_and_apply(
-        _request: object,
-    ) -> ConsoleSettingsPersistAndApplyStatus:
-        return ConsoleSettingsPersistAndApplyStatus.NOT_SAVED
-
     modal = _basic_modal(
         settings,
         app,
         providers_models={"ollama": ["qwen-old", "qwen-new"]},
-        persist_and_apply=persist_and_apply,
     )
+    committed: list[ConsoleSettingsCommittedSubmission | None] = []
 
     async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(modal)
+        await app.push_screen(modal, callback=committed.append)
         await pilot.pause()
 
         session_action = modal.query_one("#console-settings-save", Button)
@@ -13566,818 +13535,17 @@ async def test_console_settings_modal_unsaved_endpoint_requires_provider_setup_w
             modal.query_one("#console-settings-default-scope", Static).renderable
         ) == "Updates this provider for future conversations."
 
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("outcome", "expected_error"),
-    (
-        (
-            ConsoleSettingsPersistAndApplyStatus.NOT_SAVED,
-            "Could not save the endpoint. Nothing was applied to this conversation.",
-        ),
-        (
-            ConsoleSettingsPersistAndApplyStatus.SAVED_NOT_APPLIED,
-            "Endpoint saved, but it was not applied to this conversation. "
-            "Review the retained draft before trying again.",
-        ),
-        (
-            ConsoleSettingsPersistAndApplyStatus.SAVED_APPLY_UNCERTAIN,
-            "Endpoint saved, but this conversation may have been partially updated. "
-            "Refresh and review the draft before continuing.",
-        ),
-    ),
-)
-async def test_console_settings_modal_unsaved_endpoint_offers_typed_persist_and_apply(
-    monkeypatch,
-    outcome: ConsoleSettingsPersistAndApplyStatus,
-    expected_error: str,
-) -> None:
-    """A required endpoint save has one truthful provider-wide completion action."""
-    app = ModalHarness()
-    app.app_config = {
-        "api_settings": {
-            "ollama": {
-                "api_url": "http://127.0.0.1:11434",
-                "model": "qwen-old",
-            }
-        },
-        "chat_defaults": {"provider": "ollama", "model": "qwen-old"},
-    }
-    requests: list[object] = []
-    monkeypatch.setattr(
-        settings_modal_module,
-        "save_settings_to_cli_config",
-        lambda *_args, **_kwargs: pytest.fail(
-            "endpoint persistence escaped the Console-owned callback"
-        ),
-    )
-
-    async def persist_and_apply(
-        request: object,
-    ) -> ConsoleSettingsPersistAndApplyStatus:
-        requests.append(request)
-        return outcome
-
-    modal = _basic_modal(
-        ConsoleSessionSettings(
-            provider="ollama",
-            model="qwen-new",
-            base_url="http://127.0.0.1:22434/private-secret",
-        ),
-        app,
-        providers_models={"ollama": ["qwen-new"]},
-        expected_settings_revision=7,
-        persist_and_apply=persist_and_apply,
-    )
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(modal)
+        default_action.press()
         await pilot.pause()
 
-        session_action = modal.query_one("#console-settings-save", Button)
-        persist_action = modal.query_one("#console-settings-save-default", Button)
-        assert session_action.disabled is True
-        assert str(persist_action.label) == "Save endpoint & use model"
-        assert persist_action.tooltip == (
-            "Save this endpoint and model for future conversations, then use "
-            "them in this conversation."
-        )
-        assert persist_action.variant == "primary"
-        assert _visible_enabled_primary_buttons(modal) == [persist_action]
-        assert str(
-            modal.query_one("#console-settings-default-scope", Static).renderable
-        ) == "Updates this provider for future conversations."
-
-        persist_action.focus()
-        persist_action.press()
-        await pilot.pause()
-
-        assert len(requests) == 1
-        request = requests[0]
-        assert request.provider == "ollama"
-        assert request.model == "qwen-new"
-        assert request.expected_settings_revision == 7
-        assert [item.name for item in fields(request)] == [
-            "settings",
-            "provider",
-            "model",
-            "endpoint",
-            "expected_settings_revision",
-        ]
-        assert not hasattr(request, "credential")
-        assert not hasattr(request, "api_key")
-        assert request.settings.settings.base_url == (
-            "http://127.0.0.1:22434/private-secret"
-        )
-        assert "private-secret" not in repr(request)
-        assert app.screen is modal
-        assert modal.query_one("#console-settings-base-url", Input).value == (
-            "http://127.0.0.1:22434/private-secret"
-        )
-        assert str(
-            modal.query_one("#console-settings-error", Static).renderable
-        ) == expected_error
-        if outcome is ConsoleSettingsPersistAndApplyStatus.NOT_SAVED:
-            assert app.focused is persist_action
-        else:
-            reload_action = modal.query_one(
-                "#console-settings-reload-current", Button
-            )
-            assert reload_action.display is True
-            assert reload_action.disabled is False
-            assert persist_action.disabled is True
-            assert app.focused is reload_action
-
-
-@pytest.mark.asyncio
-async def test_console_settings_endpoint_progress_and_success_are_at_most_once() -> None:
-    """Endpoint save copy is exact and queued success activation cannot re-enter."""
-    app = ModalHarness()
-    app.app_config = {
-        "api_settings": {
-            "ollama": {"api_url": "http://127.0.0.1:11434", "model": "old"}
-        }
-    }
-    entered = asyncio.Event()
-    release = asyncio.Event()
-    calls = 0
-
-    async def persist_and_apply(_request):
-        nonlocal calls
-        calls += 1
-        entered.set()
-        await release.wait()
-        return ConsoleSettingsPersistAndApplyStatus.APPLIED
-
-    modal = _basic_modal(
-        ConsoleSessionSettings(
-            provider="ollama",
-            model="new",
-            base_url="http://127.0.0.1:22434",
-        ),
-        app,
-        providers_models={"ollama": ["new"]},
-        persist_and_apply=persist_and_apply,
-    )
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(modal)
-        await pilot.pause()
-        action = modal.query_one("#console-settings-save-default", Button)
-        action.press()
-        await asyncio.wait_for(entered.wait(), timeout=1)
-        action.press()
-        assert str(
-            modal.query_one(
-                "#console-settings-primary-disabled-reason", Static
-            ).renderable
-        ) == "Saving endpoint… Keep this window open."
-
-        release.set()
-        await pilot.pause()
-        action.press()
-        await pilot.pause()
-
-        assert calls == 1
-        assert app.screen is not modal
-
-
-@pytest.mark.asyncio
-async def test_console_settings_endpoint_persist_activation_is_single_flight() -> None:
-    """Repeated activation cannot dispatch two writes for the same modal draft."""
-    app = ModalHarness()
-    app.app_config = {
-        "api_settings": {
-            "ollama": {
-                "api_url": "http://127.0.0.1:11434",
-                "model": "qwen-old",
-            }
-        }
-    }
-    entered = asyncio.Event()
-    release = asyncio.Event()
-    calls = 0
-
-    async def persist_and_apply(
-        _request: object,
-    ) -> ConsoleSettingsPersistAndApplyStatus:
-        nonlocal calls
-        calls += 1
-        entered.set()
-        await release.wait()
-        return ConsoleSettingsPersistAndApplyStatus.NOT_SAVED
-
-    modal = _basic_modal(
-        ConsoleSessionSettings(
-            provider="ollama",
-            model="qwen-new",
-            base_url="http://127.0.0.1:22434",
-        ),
-        app,
-        providers_models={"ollama": ["qwen-new"]},
-        persist_and_apply=persist_and_apply,
-    )
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(modal)
-        await pilot.pause()
-        action = modal.query_one("#console-settings-save-default", Button)
-        action.press()
-        await asyncio.wait_for(entered.wait(), timeout=1)
-        action.press()
-        modal.action_dismiss()
-
-        assert calls == 1
-        assert app.screen is modal
-        assert modal.query_one("#console-settings-base-url", Input).disabled
-
-        release.set()
-        for _ in range(20):
-            await pilot.pause(0.05)
-            if not modal.query_one("#console-settings-base-url", Input).disabled:
-                break
-
-        assert calls == 1
-        assert app.screen is modal
-        assert modal.query_one("#console-settings-base-url", Input).disabled is False
-
-
-@pytest.mark.parametrize(
-    ("provider", "section", "section_values", "env"),
-    (
-        (
-            "custom-openai-api",
-            "custom",
-            {"credential_source": "stored", "api_key": "stored-secret"},
-            {},
-        ),
-        (
-            "custom_openai_api_2",
-            "custom_2",
-            {
-                "credential_source": "environment",
-                "api_key_env_var": "CUSTOM_TWO_KEY",
-            },
-            {"CUSTOM_TWO_KEY": "environment-secret"},
-        ),
-    ),
-)
-def test_console_endpoint_save_preserves_canonical_owner_credential(
-    monkeypatch,
-    provider,
-    section,
-    section_values,
-    env,
-) -> None:
-    """Request aliases must resolve the existing credential-owning section."""
-    for name, value in env.items():
-        monkeypatch.setenv(name, value)
-    snapshot = AtomicConfigSnapshot(
-        31,
-        {
-            "api_settings": {
-                section: {
-                    "api_url": "https://old.example.test/v1/chat/completions",
-                    "model": "old-model",
-                    **section_values,
-                }
-            }
-        },
-    )
-    captured = []
-    monkeypatch.setattr(
-        chat_screen_module, "get_atomic_config_snapshot", lambda: snapshot
-    )
-    monkeypatch.setattr(
-        chat_screen_module,
-        "persist_provider_setup",
-        lambda mutation: captured.append(mutation)
-        or ConfigMutationResult(False, False, "before_replace"),
-    )
-    request = settings_modal_module.ConsoleSettingsPersistAndApply(
-        settings=ConsoleSettingsResult(
-            ConsoleSessionSettings(
-                provider=provider,
-                model="new-model",
-                base_url="https://new.example.test/v1/chat/completions",
-            ),
-            None,
-        ),
-        provider=provider,
-        model="new-model",
-        endpoint="https://new.example.test/v1/chat/completions",
-        expected_settings_revision=4,
-    )
-
-    ChatScreen._persist_console_provider_setup(request)
-
-    mutation = captured[0]
-    saved = mutation.section_values[f"api_settings.{section}"]
-    assert saved["credential_source"] == section_values["credential_source"]
-    if section_values["credential_source"] == "stored":
-        assert saved["api_key"] == "stored-secret"
-        assert "api_key" not in mutation.delete_keys.get(
-            f"api_settings.{section}", ()
-        )
-    else:
-        assert saved["api_key_env_var"] == "CUSTOM_TWO_KEY"
-        assert "api_key_env_var" not in mutation.delete_keys.get(
-            f"api_settings.{section}", ()
-        )
-
-
-@pytest.mark.parametrize(
-    ("provider", "model", "endpoint"),
-    (
-        ("openai", "nested-model", "https://nested.example.test/v1"),
-        ("custom-openai-api", "outer-model", "https://nested.example.test/v1"),
-        ("custom-openai-api", "nested-model", "https://other.example.test/v1"),
-    ),
-)
-def test_console_persist_request_rejects_outer_nested_mismatch(
-    provider,
-    model,
-    endpoint,
-) -> None:
-    """The outer routing identity cannot disagree with its nested draft."""
-    nested = ConsoleSessionSettings(
-        provider="custom_openai_api",
-        model="nested-model",
-        base_url="https://nested.example.test/v1/",
-    )
-
-    with pytest.raises(ValueError, match="does not match"):
-        settings_modal_module.ConsoleSettingsPersistAndApply(
-            settings=ConsoleSettingsResult(nested, None),
-            provider=provider,
-            model=model,
-            endpoint=endpoint,
-            expected_settings_revision=1,
-        )
-
-
-@pytest.mark.asyncio
-async def test_console_settings_partial_replace_is_reported_as_saved_not_applied() -> None:
-    """A replaced config file is never described as an unsaved endpoint."""
-    original = ConsoleSessionSettings(provider="ollama", model="old")
-    requested = replace(
-        original,
-        model="new",
-        base_url="http://127.0.0.1:22434",
-    )
-    store = ConsoleChatStore()
-    session = store.create_session(settings=original)
-    screen = ChatScreen.__new__(ChatScreen)
-    screen._ensure_console_chat_store = lambda: store
-    screen._persist_console_provider_setup = lambda _request: (
-        ConfigMutationResult(True, False, "cache_reload"),
-        None,
-    )
-    request = settings_modal_module.ConsoleSettingsPersistAndApply(
-        settings=ConsoleSettingsResult(requested, None),
-        provider="ollama",
-        model="new",
-        endpoint="http://127.0.0.1:22434",
-        expected_settings_revision=store.session_settings_revision(session.id),
-    )
-
-    outcome = await ChatScreen._persist_and_apply_console_settings(
-        screen,
-        request,
-        origin_session_id=session.id,
-        origin_system_prompt=None,
-        origin_pinned_prefill=None,
-    )
-
-    assert outcome is ConsoleSettingsPersistAndApplyStatus.SAVED_NOT_APPLIED
-    assert store.session_settings(session.id) == original
-
-
-@pytest.mark.asyncio
-async def test_console_settings_reload_failure_after_write_is_saved_not_applied(
-    monkeypatch,
-) -> None:
-    """A reload exception after a complete write preserves truthful settlement."""
-    original = ConsoleSessionSettings(provider="ollama", model="old")
-    requested = replace(
-        original,
-        model="new",
-        base_url="http://127.0.0.1:22434",
-    )
-    store = ConsoleChatStore()
-    session = store.create_session(settings=original)
-    screen = ChatScreen.__new__(ChatScreen)
-    screen._ensure_console_chat_store = lambda: store
-    monkeypatch.setattr(
-        chat_screen_module,
-        "get_atomic_config_snapshot",
-        lambda: AtomicConfigSnapshot(
-            3,
-            {"api_settings": {"ollama": {"credential_source": "none"}}},
-        ),
-    )
-    monkeypatch.setattr(
-        chat_screen_module,
-        "persist_provider_setup",
-        lambda _mutation: ConfigMutationResult(True, True, None),
-    )
-    monkeypatch.setattr(
-        chat_screen_module,
-        "load_settings",
-        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("reload failed")),
-    )
-    request = settings_modal_module.ConsoleSettingsPersistAndApply(
-        settings=ConsoleSettingsResult(requested, None),
-        provider="ollama",
-        model="new",
-        endpoint="http://127.0.0.1:22434",
-        expected_settings_revision=store.session_settings_revision(session.id),
-    )
-
-    outcome = await ChatScreen._persist_and_apply_console_settings(
-        screen,
-        request,
-        origin_session_id=session.id,
-        origin_system_prompt=None,
-        origin_pinned_prefill=None,
-    )
-
-    assert outcome is ConsoleSettingsPersistAndApplyStatus.SAVED_NOT_APPLIED
-    assert store.session_settings(session.id) == original
-
-
-@pytest.mark.asyncio
-async def test_console_settings_readiness_fault_after_write_is_saved_not_applied(
-    monkeypatch,
-) -> None:
-    """Post-write readiness parsing cannot be mislabeled as an unsaved endpoint."""
-    original = ConsoleSessionSettings(provider="ollama", model="old")
-    requested = replace(
-        original, model="new", base_url="http://127.0.0.1:22434"
-    )
-    store = ConsoleChatStore()
-    session = store.create_session(settings=original)
-    screen = ChatScreen.__new__(ChatScreen)
-    screen._ensure_console_chat_store = lambda: store
-    screen._persist_console_provider_setup = lambda _request: (
-        ConfigMutationResult(True, True, None),
-        {"api_settings": {"ollama": {"api_url": requested.base_url}}},
-    )
-    monkeypatch.setattr(
-        chat_screen_module,
-        "build_console_settings_readiness",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad config")),
-    )
-    request = settings_modal_module.ConsoleSettingsPersistAndApply(
-        settings=ConsoleSettingsResult(requested, None),
-        provider="ollama",
-        model="new",
-        endpoint=requested.base_url,
-        expected_settings_revision=store.session_settings_revision(session.id),
-    )
-
-    outcome = await ChatScreen._persist_and_apply_console_settings(
-        screen,
-        request,
-        origin_session_id=session.id,
-        origin_system_prompt=None,
-        origin_pinned_prefill=None,
-    )
-
-    assert outcome is ConsoleSettingsPersistAndApplyStatus.SAVED_NOT_APPLIED
-    assert store.session_settings(session.id) == original
-
-
-@pytest.mark.asyncio
-async def test_console_settings_apply_fault_after_write_reports_uncertain_apply() -> None:
-    """A session mutation fault after replacement is never described as no-op."""
-    original = ConsoleSessionSettings(provider="ollama", model="old")
-    requested = replace(
-        original, model="new", base_url="http://127.0.0.1:22434"
-    )
-    store = ConsoleChatStore()
-    session = store.create_session(settings=original)
-    screen = ChatScreen.__new__(ChatScreen)
-    screen._ensure_console_chat_store = lambda: store
-    screen._persist_console_provider_setup = lambda _request: (
-        ConfigMutationResult(True, True, None),
-        {"api_settings": {"ollama": {"api_url": requested.base_url}}},
-    )
-
-    def mutate_then_fail(result, **_kwargs):
-        store.replace_session_settings(session.id, result.settings)
-        raise RuntimeError("surface sync failed")
-
-    screen._apply_console_settings_result = mutate_then_fail
-    request = settings_modal_module.ConsoleSettingsPersistAndApply(
-        settings=ConsoleSettingsResult(requested, None),
-        provider="ollama",
-        model="new",
-        endpoint=requested.base_url,
-        expected_settings_revision=store.session_settings_revision(session.id),
-    )
-
-    outcome = await ChatScreen._persist_and_apply_console_settings(
-        screen,
-        request,
-        origin_session_id=session.id,
-        origin_system_prompt=None,
-        origin_pinned_prefill=None,
-    )
-
-    assert outcome.value == "saved_apply_uncertain"
-    assert store.session_settings(session.id).model == "new"
-
-
-@pytest.mark.asyncio
-async def test_console_settings_persist_and_apply_waits_for_write_before_session_mutation(
-    monkeypatch,
-) -> None:
-    """The exact session remains unchanged until the provider write fully applies."""
-    original = ConsoleSessionSettings(
-        provider="ollama",
-        model="qwen-old",
-        base_url="http://127.0.0.1:11434",
-    )
-    requested_settings = ConsoleSessionSettings(
-        provider="ollama",
-        model="qwen-new",
-        base_url="http://127.0.0.1:22434",
-    )
-    store = ConsoleChatStore()
-    session = store.create_session(settings=original)
-    screen = ChatScreen.__new__(ChatScreen)
-    screen._ensure_console_chat_store = lambda: store
-    screen.app_instance = SimpleNamespace(notify=lambda *_args, **_kwargs: None)
-    screen._global_chat_display_name = lambda: "User"
-    screen._sync_console_identity_surfaces = lambda: None
-    screen.run_worker = lambda coroutine, **_kwargs: coroutine.close()
-    fresh_config = {
-        "api_settings": {
-            "ollama": {
-                "api_url": "http://127.0.0.1:22434",
-                "model": "qwen-new",
-                "credential_source": "none",
-            }
-        },
-        "chat_defaults": {"provider": "ollama", "model": "qwen-new"},
-    }
-    screen._provider_readiness_app_config = lambda: fresh_config
-    entered = threading.Event()
-    release = threading.Event()
-
-    snapshot = AtomicConfigSnapshot(
-        11,
-        {
-            "api_settings": {
-                "ollama": {
-                    "api_url": "http://127.0.0.1:11434",
-                    "model": "qwen-old",
-                    "credential_source": "none",
-                }
-            },
-            "chat_defaults": {"provider": "ollama", "model": "qwen-old"},
-        },
-    )
-    monkeypatch.setattr(
-        chat_screen_module, "get_atomic_config_snapshot", lambda: snapshot
-    )
-
-    def persist(_mutation):
-        entered.set()
-        release.wait(timeout=2)
-        return ConfigMutationResult(True, True, None)
-
-    monkeypatch.setattr(chat_screen_module, "persist_provider_setup", persist)
-    monkeypatch.setattr(
-        chat_screen_module,
-        "load_settings",
-        lambda *, force_reload=False: fresh_config,
-    )
-    request_type = settings_modal_module.ConsoleSettingsPersistAndApply
-    request = request_type(
-        settings=ConsoleSettingsResult(requested_settings, None),
-        provider="ollama",
-        model="qwen-new",
-        endpoint="http://127.0.0.1:22434",
-        expected_settings_revision=store.session_settings_revision(session.id),
-    )
-
-    task = asyncio.create_task(
-        ChatScreen._persist_and_apply_console_settings(
-            screen,
-            request,
-            origin_session_id=session.id,
-            origin_system_prompt=None,
-            origin_pinned_prefill=None,
-        )
-    )
-    try:
-        assert await asyncio.to_thread(entered.wait, 1)
-        assert store.session_settings(session.id) == original
-        release.set()
-        assert await task is ConsoleSettingsPersistAndApplyStatus.APPLIED
-    finally:
-        release.set()
-
-    assert store.session_settings(session.id).model == "qwen-new"
-    assert store.session_settings(session.id).base_url == "http://127.0.0.1:22434"
-
-
-@pytest.mark.asyncio
-async def test_console_settings_persist_and_apply_rejects_session_revision_conflict(
-    monkeypatch,
-) -> None:
-    """A session edit racing the writer prevents the saved draft from being applied."""
-    original = ConsoleSessionSettings(provider="ollama", model="qwen-old")
-    requested_settings = ConsoleSessionSettings(
-        provider="ollama",
-        model="qwen-new",
-        base_url="http://127.0.0.1:22434",
-    )
-    store = ConsoleChatStore()
-    session = store.create_session(settings=original)
-    expected_revision = store.session_settings_revision(session.id)
-    screen = ChatScreen.__new__(ChatScreen)
-    screen._ensure_console_chat_store = lambda: store
-    fresh_config = {
-        "api_settings": {
-            "ollama": {
-                "api_url": "http://127.0.0.1:22434",
-                "model": "qwen-new",
-                "credential_source": "none",
-            }
-        },
-        "chat_defaults": {"provider": "ollama", "model": "qwen-new"},
-    }
-    snapshot = AtomicConfigSnapshot(
-        12,
-        {
-            "api_settings": {
-                "ollama": {"api_url": "http://127.0.0.1:11434"}
-            }
-        },
-    )
-    entered = threading.Event()
-    release = threading.Event()
-    monkeypatch.setattr(
-        chat_screen_module, "get_atomic_config_snapshot", lambda: snapshot
-    )
-
-    def persist(_mutation):
-        entered.set()
-        release.wait(timeout=2)
-        return ConfigMutationResult(True, True, None)
-
-    monkeypatch.setattr(chat_screen_module, "persist_provider_setup", persist)
-    monkeypatch.setattr(
-        chat_screen_module,
-        "load_settings",
-        lambda *, force_reload=False: fresh_config,
-    )
-    async def persist_and_apply(request):
-        return await ChatScreen._persist_and_apply_console_settings(
-            screen,
-            request,
-            origin_session_id=session.id,
-            origin_system_prompt=None,
-            origin_pinned_prefill=None,
-        )
-
-    app = ModalHarness()
-    app.app_config = {
-        "api_settings": {
-            "ollama": {
-                "api_url": "http://127.0.0.1:11434",
-                "model": "qwen-old",
-                "credential_source": "none",
-            }
-        }
-    }
-    modal = _basic_modal(
-        requested_settings,
-        app,
-        providers_models={"ollama": ["qwen-new"]},
-        expected_settings_revision=expected_revision,
-        persist_and_apply=persist_and_apply,
-    )
-    try:
-        async with app.run_test(size=(120, 40)) as pilot:
-            recovered = []
-            await app.push_screen(modal, callback=recovered.append)
-            await pilot.pause()
-            modal.query_one("#console-settings-save-default", Button).press()
-            assert await asyncio.to_thread(entered.wait, 1)
-            store.replace_session_settings(
-                session.id,
-                replace(original, temperature=0.2),
-            )
-            release.set()
-            for _ in range(20):
-                await pilot.pause(0.05)
-                if str(
-                    modal.query_one("#console-settings-error", Static).renderable
-                ):
-                    break
-
-            assert app.screen is modal
-            assert str(
-                modal.query_one("#console-settings-error", Static).renderable
-            ) == (
-                "Endpoint saved, but it was not applied to this conversation. "
-                "Review the retained draft before trying again."
-            )
-            assert modal.query_one(
-                "#console-settings-model-picker", ModelSearchPicker
-            ).value == "qwen-new"
-            assert modal.query_one("#console-settings-base-url", Input).value == (
-                "http://127.0.0.1:22434"
-            )
-            assert store.session_settings(session.id).model == "qwen-old"
-            assert store.session_settings(session.id).temperature == 0.2
-            stale_action = modal.query_one(
-                "#console-settings-save-default", Button
-            )
-            assert stale_action.disabled is True
-            assert str(
-                modal.query_one(
-                    "#console-settings-primary-disabled-reason", Static
-                ).renderable
-            ) == ""
-            stale_action.press()
-            await pilot.pause()
-            assert store.session_settings(session.id).model == "qwen-old"
-            assert store.session_settings(session.id).temperature == 0.2
-
-            reload_action = modal.query_one(
-                "#console-settings-reload-current", Button
-            )
-            assert str(reload_action.label) == "Refresh and review draft"
-            assert reload_action.tooltip == (
-                "Reopen this draft against the latest conversation state so you "
-                "can review it before applying."
-            )
-            reload_action.press()
-            await pilot.pause()
-            assert len(recovered) == 1
-            assert type(recovered[0]).__name__ == "ConsoleSettingsReloadRequest"
-            assert not hasattr(recovered[0], "credential")
-            assert not hasattr(recovered[0], "endpoint")
-            assert recovered[0].draft.raw_values[
-                "console-settings-base-url"
-            ] == "http://127.0.0.1:22434"
-            assert recovered[0].draft.provider_model_drafts["ollama"] == "qwen-new"
-            assert "127.0.0.1:22434" not in repr(recovered[0])
-    finally:
-        release.set()
-
-
-@pytest.mark.asyncio
-async def test_console_settings_persist_and_apply_rejects_deleted_origin() -> None:
-    """A conversation deleted after the write cannot receive the retained draft."""
-    original = ConsoleSessionSettings(provider="ollama", model="qwen-old")
-    requested = ConsoleSessionSettings(
-        provider="ollama",
-        model="qwen-new",
-        base_url="http://127.0.0.1:22434",
-    )
-    store = ConsoleChatStore()
-    session = store.create_session(settings=original)
-    screen = ChatScreen.__new__(ChatScreen)
-    screen._ensure_console_chat_store = lambda: store
-    fresh_config = {
-        "api_settings": {
-            "ollama": {
-                "api_url": "http://127.0.0.1:22434",
-                "model": "qwen-new",
-                "credential_source": "none",
-            }
-        }
-    }
-
-    def persist_then_delete(_request):
-        store.close_session(session.id)
-        return ConfigMutationResult(True, True, None), fresh_config
-
-    screen._persist_console_provider_setup = persist_then_delete
-    request = settings_modal_module.ConsoleSettingsPersistAndApply(
-        settings=ConsoleSettingsResult(requested, None),
-        provider="ollama",
-        model="qwen-new",
-        endpoint="http://127.0.0.1:22434",
-        expected_settings_revision=store.session_settings_revision(session.id),
-    )
-
-    outcome = await ChatScreen._persist_and_apply_console_settings(
-        screen,
-        request,
-        origin_session_id=session.id,
-        origin_system_prompt=None,
-        origin_pinned_prefill=None,
-    )
-
-    assert outcome is ConsoleSettingsPersistAndApplyStatus.SAVED_NOT_APPLIED
-    with pytest.raises(KeyError):
-        store.session_settings(session.id)
+        assert len(committed) == 1
+        result = committed[0]
+        assert isinstance(result, ConsoleSettingsCommittedSubmission)
+        assert result.submission.action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT
+        endpoint = result.submission.draft.endpoint_draft
+        assert endpoint is not None
+        assert endpoint.value == "http://127.0.0.1:22434"
+        assert endpoint.checked is True
 
 
 @pytest.mark.asyncio
@@ -14443,128 +13611,6 @@ async def test_console_settings_modal_exposes_selected_view_in_tab_copy_and_tool
         assert model_view.tooltip == "Show Model and generation"
         assert context_view.tooltip == "Selected view: Context and memory"
 
-
-@pytest.mark.asyncio
-async def test_console_settings_default_save_is_single_flight_and_blocks_dismissal(
-    monkeypatch,
-) -> None:
-    """A slow defaults write freezes mutations and cannot be duplicated or dismissed."""
-    from tldw_chatbook.Widgets.Console import console_settings_modal as modal_module
-
-    entered = threading.Event()
-    release = threading.Event()
-    calls = 0
-
-    def blocking_save(_sections) -> bool:
-        nonlocal calls
-        calls += 1
-        entered.set()
-        release.wait(timeout=3)
-        return True
-
-    monkeypatch.setattr(modal_module, "save_settings_to_cli_config", blocking_save)
-    app = ModalHarness()
-    modal = _basic_modal(
-        ConsoleSessionSettings(
-            provider="llama_cpp", model="model-a", temperature=0.6
-        ),
-        app,
-    )
-    try:
-        async with app.run_test(size=(120, 40)) as pilot:
-            await app.push_screen(modal, callback=app.capture_saved_settings)
-            await pilot.pause()
-            modal.query_one("#console-settings-save-default", Button).press()
-            assert await asyncio.to_thread(entered.wait, 1)
-
-            assert modal.query_one("#console-settings-cancel", Button).disabled
-            assert modal.query_one("#console-settings-save", Button).disabled
-            assert modal.query_one("#console-settings-save-default", Button).disabled
-            assert modal.query_one("#console-settings-temperature", Input).disabled
-            assert str(
-                modal.query_one(
-                    "#console-settings-primary-disabled-reason", Static
-                ).renderable
-            ) == "Saving defaults… Keep this window open."
-            assert modal.query_one(
-                "#console-settings-primary-disabled-reason", Static
-            ).display
-
-            modal.action_dismiss()
-            modal.query_one("#console-settings-save-default", Button).press()
-            assert app.screen is modal
-            assert app.saved_result is None
-            assert calls == 1
-
-            release.set()
-            for _ in range(20):
-                await pilot.pause(0.05)
-                if app.saved_result is not None:
-                    break
-            assert app.saved_result is not None
-            assert calls == 1
-    finally:
-        release.set()
-
-
-@pytest.mark.asyncio
-async def test_console_settings_default_save_failure_restores_controls(
-    monkeypatch,
-) -> None:
-    """A failed defaults write restores prior controls and actionable failure copy."""
-    from tldw_chatbook.Widgets.Console import console_settings_modal as modal_module
-    from tldw_chatbook.Widgets.Console.console_settings_modal import (
-        CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY,
-    )
-
-    entered = threading.Event()
-    release = threading.Event()
-
-    def failing_save(_sections) -> bool:
-        entered.set()
-        release.wait(timeout=3)
-        return False
-
-    monkeypatch.setattr(modal_module, "save_settings_to_cli_config", failing_save)
-    app = ModalHarness()
-    modal = _basic_modal(
-        ConsoleSessionSettings(
-            provider="llama_cpp", model="model-a", temperature=0.6
-        ),
-        app,
-    )
-    try:
-        async with app.run_test(size=(120, 40)) as pilot:
-            await app.push_screen(modal, callback=app.capture_saved_settings)
-            await pilot.pause()
-            modal.query_one("#console-settings-save-default", Button).press()
-            assert await asyncio.to_thread(entered.wait, 1)
-            assert modal.query_one("#console-settings-temperature", Input).disabled
-
-            release.set()
-            for _ in range(20):
-                await pilot.pause(0.05)
-                if not modal.query_one("#console-settings-cancel", Button).disabled:
-                    break
-
-            assert app.screen is modal
-            assert modal.query_one("#console-settings-cancel", Button).disabled is False
-            assert modal.query_one("#console-settings-save", Button).disabled is False
-            assert modal.query_one("#console-settings-save-default", Button).disabled is False
-            assert modal.query_one("#console-settings-temperature", Input).disabled is False
-            assert str(
-                modal.query_one("#console-settings-error", Static).renderable
-            ) == "Could not save defaults. Nothing changed; your draft is still open."
-            assert CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY == str(
-                modal.query_one("#console-settings-error", Static).renderable
-            )
-            assert str(
-                modal.query_one(
-                    "#console-settings-primary-disabled-reason", Static
-                ).renderable
-            ) == ""
-    finally:
-        release.set()
 
 
 def test_summary_builder_reports_only_genuine_provider_endpoint_inheritance() -> None:
@@ -14679,7 +13725,7 @@ async def test_console_settings_task4_geometry_keeps_connection_and_footer_usabl
         frame = modal.query_one("#console-settings-modal")
         body = modal.query_one("#console-settings-body", ScrollableContainer)
         connection = modal.query_one("#console-settings-connection")
-        actions = modal.query_one("#console-settings-actions", Horizontal)
+        actions = modal.query_one("#console-settings-actions", Vertical)
         cancel = modal.query_one("#console-settings-cancel", Button)
         defaults = modal.query_one("#console-settings-save-default", Button)
         use = modal.query_one("#console-settings-save", Button)
@@ -14692,7 +13738,12 @@ async def test_console_settings_task4_geometry_keeps_connection_and_footer_usabl
         assert actions.region.right <= frame.content_region.right
         assert str(cancel.label) == "Cancel"
         assert str(defaults.label) == "Save as provider defaults"
-        assert str(use.label) == "Use for this conversation"
+        expected_use_label = (
+            "Use in this conversation"
+            if modal.has_class("-conversation-settings-compact")
+            else "Use for this conversation"
+        )
+        assert str(use.label) == expected_use_label
         assert defaults.region.width >= len(str(defaults.label))
         assert use.region.width >= len(str(use.label))
 

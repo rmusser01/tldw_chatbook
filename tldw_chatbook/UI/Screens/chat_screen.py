@@ -382,10 +382,8 @@ from ...Chat.local_server_discovery import (
 )
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.provider_readiness import (
-    configured_provider_credential_source,
     get_provider_readiness,
     provider_config_key,
-    resolve_provider_credential,
 )
 from ...Chat.provider_test_evidence import (
     ConsoleGenerationTestRequest,
@@ -397,18 +395,6 @@ from .settings_endpoint_probe import (
     SettingsEndpointProbePurpose,
     probe_settings_endpoint,
     provider_probe_result_from_settings_outcome,
-)
-from ...Chat.provider_setup_persistence import (
-    ProviderSetupDraft,
-    ProviderSetupWriteGuard,
-    ProviderSetupWriteIdentity,
-    bind_provider_setup_precondition,
-    bind_provider_setup_write_expectation,
-    build_provider_setup_mutation,
-    capture_provider_setup_precondition,
-    canonical_provider_key,
-    persist_provider_setup,
-    provider_setup_draft_identity,
 )
 from ...Chat.console_ephemeral import ACTION_SAVE_CHAT, blocked_reason
 from ...Chat.console_live_work import (
@@ -471,8 +457,6 @@ from ...config import (
     coerce_bool_setting,
     coerce_int_setting,
     delete_settings_from_cli_config,
-    get_api_key,
-    get_atomic_config_snapshot,
     get_cli_providers_and_models,
     get_cli_setting,
     load_settings,
@@ -562,9 +546,6 @@ from ...Widgets.Console.console_speech_controls import (
 from ...Widgets.Console.console_settings_modal import (
     ConsoleSettingsCredentialRequest,
     ConsoleSettingsDraftSnapshot,
-    ConsoleSettingsPersistAndApply,
-    ConsoleSettingsPersistAndApplyStatus,
-    ConsoleSettingsReloadRequest,
     ConsoleSettingsResult,
 )
 from ...Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
@@ -3107,39 +3088,6 @@ class ChatScreen(BaseAppScreen):
                     session_id=session_id,
                 )
                 return
-            if isinstance(result, ConsoleSettingsReloadRequest):
-                async def reopen_origin_draft() -> None:
-                    def origin_is_current() -> bool:
-                        if store.active_session_id != session_id:
-                            return False
-                        try:
-                            store.session_settings_revision(session_id)
-                        except KeyError:
-                            return False
-                        return True
-
-                    if not origin_is_current():
-                        self.app_instance.notify(
-                            "Conversation changed; the retained settings draft was not reopened.",
-                            severity="warning",
-                        )
-                        return
-                    reopened = await self._open_console_settings(
-                        focus_model=True,
-                        suspended_draft=result.draft,
-                        _pre_push_guard=origin_is_current,
-                    )
-                    if not reopened and not origin_is_current():
-                        self.app_instance.notify(
-                            "Conversation changed; the retained settings draft was not reopened.",
-                            severity="warning",
-                        )
-
-                self.run_worker(
-                    reopen_origin_draft(),
-                    exclusive=False,
-                )
-                return
             self._dispatch_console_settings_submission(result)
 
         transfer_outcome: bool | None = None
@@ -4037,159 +3985,6 @@ class ChatScreen(BaseAppScreen):
         if endpoint_warning:
             self.app_instance.notify(endpoint_warning, severity="warning")
 
-    @staticmethod
-    def _persist_console_provider_setup(
-        request: ConsoleSettingsPersistAndApply,
-    ) -> tuple[object, Mapping[str, object] | None]:
-        """Build, bind, and persist one endpoint setup on a worker thread."""
-        snapshot = get_atomic_config_snapshot()
-        api_settings = snapshot.values.get("api_settings", {})
-        provider_settings: Mapping[str, object] = {}
-        if isinstance(api_settings, Mapping):
-            for configured_provider, values in api_settings.items():
-                try:
-                    configured_owner = canonical_provider_key(configured_provider)
-                except ValueError:
-                    continue
-                if configured_owner == request.provider and isinstance(values, Mapping):
-                    provider_settings = values
-                    break
-        credential_value, credential_location, credential_env_var = (
-            resolve_provider_credential(
-                request.provider,
-                provider_settings,
-                environ=os.environ,
-            )
-        )
-        configured_credential_source = configured_provider_credential_source(
-            provider_settings
-        )
-        if configured_credential_source == "stored" or (
-            credential_location and credential_location.startswith("config:")
-        ):
-            credential_source = "stored"
-        elif configured_credential_source == "environment" or (
-            credential_location and credential_location.startswith("env:")
-        ) or credential_env_var:
-            credential_source = "environment"
-        else:
-            credential_source = "none"
-        draft = ProviderSetupDraft(
-            provider=request.provider,
-            model=request.model,
-            endpoint=request.endpoint,
-            credential_source=credential_source,
-            credential_revision=snapshot.generation,
-            draft_generation=request.expected_settings_revision,
-            credential_value=(
-                credential_value if credential_source == "stored" else None
-            ),
-            credential_env_var=(
-                credential_env_var if credential_source == "environment" else None
-            ),
-        )
-        draft_identity = provider_setup_draft_identity(draft, snapshot.values)
-        if draft_identity is None:
-            raise ValueError("Provider endpoint identity is invalid.")
-        mutation = build_provider_setup_mutation(draft, snapshot.values)
-        write_identity = ProviderSetupWriteIdentity(
-            provider_key=draft_identity.provider_key,
-            connection_identity=draft_identity.connection_identity,
-            credential_source=draft_identity.credential_source,
-            credential_revision=draft_identity.credential_revision,
-            model_id=request.model,
-            model_provenance="manual",
-        )
-        precondition = capture_provider_setup_precondition(
-            snapshot,
-            provider=request.provider,
-        )
-        expected_state = bind_provider_setup_precondition(
-            precondition,
-            identity=write_identity,
-        )
-        guard = ProviderSetupWriteGuard()
-        expectation = guard.arm(write_identity)
-        bind_provider_setup_write_expectation(
-            mutation,
-            guard=guard,
-            expectation=expectation,
-            expected_state=expected_state,
-        )
-        persisted = persist_provider_setup(mutation)
-        if not persisted.fully_applied:
-            return persisted, None
-        try:
-            refreshed = load_settings(force_reload=True)
-        except Exception:
-            logger.error("Unable to reload Console provider config after persistence")
-            return persisted, None
-        return persisted, refreshed if isinstance(refreshed, Mapping) else None
-
-    async def _persist_and_apply_console_settings(
-        self,
-        request: ConsoleSettingsPersistAndApply,
-        *,
-        origin_session_id: str,
-        origin_system_prompt: str | None,
-        origin_pinned_prefill: str | None,
-    ) -> ConsoleSettingsPersistAndApplyStatus:
-        """Persist a required endpoint before mutating the exact origin session."""
-        if type(request) is not ConsoleSettingsPersistAndApply:
-            return ConsoleSettingsPersistAndApplyStatus.NOT_SAVED
-        store = self._ensure_console_chat_store()
-        try:
-            if (
-                store.session_settings_revision(origin_session_id)
-                != request.expected_settings_revision
-            ):
-                return ConsoleSettingsPersistAndApplyStatus.NOT_SAVED
-        except KeyError:
-            return ConsoleSettingsPersistAndApplyStatus.NOT_SAVED
-        try:
-            persisted, refreshed = await asyncio.to_thread(
-                self._persist_console_provider_setup,
-                request,
-            )
-        except Exception:
-            logger.error("Unable to persist Console provider endpoint")
-            return ConsoleSettingsPersistAndApplyStatus.NOT_SAVED
-        if not getattr(persisted, "fully_applied", False) or refreshed is None:
-            return (
-                ConsoleSettingsPersistAndApplyStatus.SAVED_NOT_APPLIED
-                if getattr(persisted, "file_replaced", False)
-                else ConsoleSettingsPersistAndApplyStatus.NOT_SAVED
-            )
-        try:
-            if (
-                store.session_settings_revision(origin_session_id)
-                != request.expected_settings_revision
-            ):
-                return ConsoleSettingsPersistAndApplyStatus.SAVED_NOT_APPLIED
-        except KeyError:
-            return ConsoleSettingsPersistAndApplyStatus.SAVED_NOT_APPLIED
-        try:
-            readiness = build_console_settings_readiness(
-                request.settings.settings,
-                app_config=refreshed,
-                active_run=False,
-            )
-        except Exception:
-            logger.error("Unable to verify Console provider readiness after persistence")
-            return ConsoleSettingsPersistAndApplyStatus.SAVED_NOT_APPLIED
-        if readiness.operability != "ready_to_send":
-            return ConsoleSettingsPersistAndApplyStatus.SAVED_NOT_APPLIED
-        try:
-            self._apply_console_settings_result(
-                request.settings,
-                origin_session_id=origin_session_id,
-                origin_system_prompt=origin_system_prompt,
-                origin_pinned_prefill=origin_pinned_prefill,
-            )
-        except Exception:
-            logger.error("Unable to finish applying persisted Console settings")
-            return ConsoleSettingsPersistAndApplyStatus.SAVED_APPLY_UNCERTAIN
-        return ConsoleSettingsPersistAndApplyStatus.APPLIED
 
     async def _refresh_console_roleplay_projections(
         self,

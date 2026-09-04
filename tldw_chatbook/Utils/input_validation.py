@@ -2,26 +2,27 @@
 Input validation utilities for secure user input handling.
 """
 
-import re
 import ipaddress
 import math
-from itertools import islice
+import re
 import time
 import unicodedata
+from itertools import islice
 from typing import Any, Literal, Optional, TypeVar, Union
 from urllib.parse import urlparse
 
+import regex
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    ValidationError as PydanticValidationError,
     field_validator,
 )
-import regex
+from pydantic import (
+    ValidationError as PydanticValidationError,
+)
 
 from ..Metrics.metrics_logger import log_counter, log_histogram
-
 
 PROVIDER_API_KEY_MAX_LENGTH = 4096
 CONSOLE_DRAFT_MAX_LENGTH = 100_000
@@ -871,6 +872,72 @@ def validate_text_input(
     )
 
     return True
+
+
+def validate_navigation_context_text(
+    value: object,
+    *,
+    name: str,
+    max_length: int,
+) -> str:
+    """Validate one bounded, single-line navigation-context string.
+
+    Args:
+        value: External navigation value to validate.
+        name: Safe field label used in validation errors.
+        max_length: Maximum accepted number of characters.
+
+    Returns:
+        The exact validated string without coercion or whitespace changes.
+
+    Raises:
+        ValueError: If the value is blank, unsafe, padded, or out of bounds.
+    """
+
+    if (
+        type(value) is not str
+        or not value
+        or value != value.strip()
+        or not value.isprintable()
+        or not validate_text_input(
+            value,
+            max_length=max_length,
+            allow_html=False,
+        )
+    ):
+        raise ValueError(f"{name} is invalid")
+    return value
+
+
+def validate_navigation_provider_key(value: object) -> str:
+    """Normalize and validate one provider key from navigation context.
+
+    Args:
+        value: External provider label or key.
+
+    Returns:
+        The normalized provider configuration key.
+
+    Raises:
+        ValueError: If the provider cannot be represented by the key contract.
+    """
+
+    from tldw_chatbook.Chat.provider_readiness import provider_config_key
+
+    raw_provider = validate_navigation_context_text(
+        value,
+        name="provider",
+        max_length=128,
+    )
+    provider = provider_config_key(raw_provider)
+    allowed = "abcdefghijklmnopqrstuvwxyz0123456789_"
+    if (
+        not provider
+        or not provider[0].isalnum()
+        or any(character not in allowed for character in provider)
+    ):
+        raise ValueError("provider is invalid")
+    return provider
 
 
 def provider_api_key_validation_error(
