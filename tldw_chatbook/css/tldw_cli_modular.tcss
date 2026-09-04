@@ -6088,17 +6088,20 @@ StatCard:hover {
     margin: 1 0 0 0;
 }
 
-.settings-preview-grid {
+/* TASK-31259: the preview is a Console-shaped stub whose rows are painted from
+   the palette being edited (see SettingsThemeEditor._refresh_preview), so it
+   follows every keystroke instead of the applied app theme. */
+.settings-theme-preview {
     width: 100%;
     height: auto;
-    min-height: 8;
     margin: 1 0;
+    border: solid $ds-grid-line;
 }
 
-.preview-column {
-    width: 1fr;
-    height: auto;
-    padding: 0 1;
+.settings-theme-preview-row {
+    width: 100%;
+    height: 1;
+    min-height: 1;
 }
 
 /* TASK-31254: a 1-row Static with `border: solid` paints only its top border
@@ -6150,23 +6153,6 @@ StatCard:hover {
     color: $success;
 }
 
-.preview-button {
-    width: 100%;
-    height: 1;
-    min-height: 1;
-    margin: 0 0 1 0;
-}
-
-.preview-surface-demo,
-.preview-panel-demo,
-.preview-boost-demo {
-    width: 100%;
-    height: 1;
-    min-height: 1;
-    margin: 0 0 1 0;
-    border: solid $ds-grid-line;
-    content-align: center middle;
-}
 
 /* ===== Settings splash screen viewer ===== */
 .settings-splash-gallery {

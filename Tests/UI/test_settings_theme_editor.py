@@ -825,3 +825,23 @@ async def test_settings_theme_editor_export_confirms_before_overwriting(tmp_path
         await pilot.click("#cancel-button")
         await pilot.pause()
         assert existing.read_text(encoding="utf-8") == "old"
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_preview_repaints_from_edits_without_apply(tmp_path):
+    """TASK-31259: the preview must follow the palette being edited, not the
+    app theme (which only changes on Apply)."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.color_inputs["primary"].value = "#123456"
+        editor.color_inputs["error"].value = "#654321"
+        await pilot.pause()
+        user_row = editor.query_one("#settings-theme-preview-user")
+        assert user_row.styles.background.hex.upper() == "#123456"
+        error_row = editor.query_one("#settings-theme-preview-error")
+        assert error_row.styles.color.hex.upper() == "#654321"
+        # Nothing was applied to the running app.
+        assert not str(app.theme).startswith("custom_")
