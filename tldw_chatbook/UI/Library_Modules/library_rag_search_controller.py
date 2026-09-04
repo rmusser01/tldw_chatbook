@@ -324,8 +324,10 @@ excluded correctly.
 This subsystem's OWN state (every ``_library_rag_<field>``/``_library_
 search_history`` name the moved bodies reference) is exposed through
 generated properties reading ``self._rag_search_state_accessor().<field>``
--- the same two-prefix generator shape ``LibraryScreen`` carries (task 2)
-and the conversations controller's own ``_library_conversation*``/
+-- the same two-prefix generator shape task 2 installed on
+``LibraryScreen`` (deleted at cleanup, task 4, once this controller's own
+copy below made the screen's copy dead) and the conversations
+controller's own ``_library_conversation*``/
 ``_library_conversations_*`` split mirrors exactly (recipe §11's
 ``CONVERSATIONS_PLURAL_STATE_FIELDS`` drift lesson, applied here from the
 start): ``SEARCH_PREFIXED_STATE_FIELDS`` is imported from ``library_rag_

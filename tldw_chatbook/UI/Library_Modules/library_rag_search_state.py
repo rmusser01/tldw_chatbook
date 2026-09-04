@@ -8,11 +8,18 @@ out of ``LibraryScreen.__init__`` in ``tldw_chatbook/UI/Screens/library_screen.p
 original ``_library_rag_<field>``/``_library_search_<field>`` attribute name
 alive as a generated getter/setter ``@property`` shim pointing at
 ``self._rag_search_state.<field>`` (a sentinel-wrapped block right after the
-``LibraryScreen`` class body). A future controller PR (wave-3 task 3) will
-delete that screen-side shim block once the subsystem's methods have all
-moved to a controller and the screen's own remaining references have been
-retargeted; that controller will carry its OWN generated shim block in its
-place, exactly the export/collections precedent.
+``LibraryScreen`` class body). The search+RAG cleanup PR (task 4) deleted
+that screen-side shim block entirely once the subsystem's methods had all
+moved to ``LibraryRagSearchController`` (task 3) and the screen's own
+remaining references were retargeted to call through that controller
+instead. The controller that took over the subsystem's methods carries its
+OWN generated shim block in its place -- reading/writing through an
+injected ``rag_search_state_accessor`` rather than a direct
+``self._rag_search_state`` attribute, since the controller does not hold
+the state object itself. See the controller module's own shim-block
+comment for why that block is permanent (not a cleanup-PR deletion target,
+unlike the one this class's own state PR originally shared) -- exactly the
+export/collections precedent.
 
 Why ONE combined state object, not two (search-only + rag-only): wave-2
 task 8's entanglement census (57.1% of the 14 search-cluster candidates

@@ -1,0 +1,610 @@
+# Review package: 2a90fa74c..f5e675354
+
+## Commits
+f5e675354 test(architecture): Library_Modules controller size ratchet (task-31203 AC#4)
+e7309d57e chore(library): open the wave-3 SDD ledger
+
+## Files changed
+ .../progress.md                                    |  39 +++
+ .../test_library_modules_size_ratchet.py           | 267 +++++++++++++++++++++
+ backlog/docs/library-decomposition-recipe.md       | 205 ++++++++++++++++
+ ...composition-wave-3-combined-searchRAG-series.md |  29 +--
+ 4 files changed, 517 insertions(+), 23 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/2026-09-03-library-decomposition-wave3-search-rag/progress.md b/.superpowers/sdd/2026-09-03-library-decomposition-wave3-search-rag/progress.md
+new file mode 100644
+index 000000000..e786deb2f
+--- /dev/null
++++ b/.superpowers/sdd/2026-09-03-library-decomposition-wave3-search-rag/progress.md
+@@ -0,0 +1,39 @@
++# SDD ledger — plan: Docs/superpowers/plans/2026-09-03-library-decomposition-wave3-search-rag.md
++
++Spec: Docs/superpowers/specs/2026-09-01-library-screen-decomposition-design.md (on dev; binding). Recipe: backlog/docs/library-decomposition-recipe.md (mechanics; carries all foundation+wave-2 lessons).
++Branch: refactor/library-decomp-wave3-search-rag (cut from origin/dev @ 155ea1564 — the commit that merged wave 2; entire prior stack is mainline).
++Worktree: .worktrees/library-decomp-foundation (reused; own venv verified in prior waves — re-verify at first test run).
++Wave-2 census (task-31203 basis): search 14 methods / RAG ~39; entanglement 57.1%; tracked at .superpowers/sdd/2026-09-02-library-decomposition-wave2-cold-trio/task-8-report.md.
++
++## Pre-flight conflict scan
++
++| Pair / task | Check | Finding |
++|---|---|---|
++| T1 vs T2-4 | Governance guard lands before new controllers are born | Consistent — ordering is the point; governance must handle move-inflation (baselining at move landings) or the T2-4 moves trip it |
++| T2-4 internal | Single vs split controller decided by ownership analysis, not assumed | Escape to BLOCKED defined in plan |
++| @work methods | RAG worker paths cannot move (export-series lesson) | Plan pre-flags enumeration; screen-resident + named callables |
++| Plan vs rubric | Same plan-mandated duplication (shims/delegators) as prior waves | Carried in reviewer constraints |
++| Backlog ids | 31204/31205 filed on wave-2; dev max now ≥31205 | T1 and any filings sweep true max first |
++
++Standing rulings inherited (all in force): stacked-branch discipline (though this wave is directly off dev); worktree-venv; sequential paired-baseline sweeps; per-move pin lowering; monkeypatch/module-globals routing; census-before-prune; rev-parse-only hashes; verbatim comments by copy-paste; RED commit = screen untouched + pins red at parent; never-park-silently in every dispatch; dev-race convergence loop for the eventual PR.
++
++## Task log
++
++Task 1: implementer DONE (controller-file size governance, task-31203 AC#4) — chose
++option (a) exact per-file `_BUDGETS` rows, new guard
++`Tests/Architecture/test_library_modules_size_ratchet.py`, discovered by glob
++(`UI/Library_Modules/*_controller.py`) so an unlisted controller fails loudly instead
++of landing ungoverned (property `test_screen_size_ratchet.py`'s hand-kept dict lacks);
++12 controllers pinned at exact measured line counts (699-2,023 lines, 11,130 total);
++method count deliberately NOT tracked (justified: no reliable dominant-class-per-file
++convention, e.g. `LibrarySkillImportCoordinator` in a `_controller.py` file, and
++summing all classes would punish the canon's own helper-class pattern). Mutation-
++tested all 4 directions (growth trip, anti-slack trip, unlisted-existing-file,
++unlisted-new-file) plus the tolerance boundary (50 passes/51 fails); each reverted
++cleanly, confirmed via empty `git diff`. Battery: new guard 25/25 passed; guard +
++screen ratchet 28 passed/2 failed (both pre-existing chat_screen reds); Library
++recompose census 6/6 passed; preflight clean (5/5 checks); full `Tests/Architecture`
++527 passed/15 failed/1 skipped, all 15 confirmed pre-existing via `git stash`
++re-run against the unmodified base. Recipe updated with new §17 (decision, reasoning,
++re-pin-at-move flow, measured rows). task-31203 AC#4 checked; task stays To Do
++(AC#1-3 out of scope). Full report: task-1-report.md.
+diff --git a/Tests/Architecture/test_library_modules_size_ratchet.py b/Tests/Architecture/test_library_modules_size_ratchet.py
+new file mode 100644
+index 000000000..14e3086ea
+--- /dev/null
++++ b/Tests/Architecture/test_library_modules_size_ratchet.py
+@@ -0,0 +1,267 @@
++"""A size ratchet for `Library_Modules` controller files — self-defending.
++
++**Why this test exists.** task-31203 AC#4 (Library decomposition wave 3,
++the combined search+RAG series) requires governance for the controller
++files landing under `tldw_chatbook/UI/Library_Modules/` as each
++subsystem's extraction series completes — the same problem
++`test_screen_size_ratchet.py` solved for `chat_screen.py`/
++`library_screen.py`, but for the destination files a decomposition wave
++writes INTO rather than the source it extracts FROM. As of this writing
++five controllers exist (conversations reader/browse, export, collections
++capture/main) at 300–2,000+ lines each, with wave 3 (search+RAG) and six
++more subsystems still to land — nothing has governed their size until now,
++even though the wave-2 final review flagged exactly this gap
++(`library_collections_controller.py` at 1,689 lines, `library_
++conversations_controller.py` at 1,738, called out by name).
++
++**The design tension this test resolves.** The byte-for-byte canon
++(`backlog/docs/library-decomposition-recipe.md` §1) moves method bodies
++verbatim into their subsystem's controller — every sanctioned move commit
++therefore INFLATES the receiving controller by design (`library_
++collections_controller.py` grew by 64 method bodies in one PR; `library_
++conversations_controller.py` by 40). A ratchet that only ever allows a
++number to go DOWN, read literally, would make every wave's own
++controller-PR fail its own governance the instant it lands — the exact
++opposite of what `test_screen_size_ratchet.py` exists to catch (silent
++creep between waves, not the wave's own sanctioned work). Governance here
++must distinguish two things that both show up as "the file got bigger": a
++sanctioned move (the number goes up because a cluster of real methods just
++arrived, verified by the same PR that adds a wiring test for them) versus
++ordinary feature-code creep landing in a controller between moves, because
++— like `library_screen.py` before Task 1 of the Library decomposition plan
++existed — the controller was the path of least resistance.
++
++**The two automated checks, and what they do NOT do.** Exactly like
++`test_screen_size_ratchet.py`, no test here can read intent, so this file
++cannot mechanically tell "a sanctioned move" apart from "creep." What it
++CAN do is what the screen ratchet already does in practice — see that
++file's own wave-2 final-review precedent, where `_BUDGETS` rows were
++RAISED twice, each time with a dated comment explaining why: a ceiling
++that can only move in a diff a reviewer sees, with a reason attached, is a
++fence a silent regression cannot climb even though a reviewed, justified
++move can. The enforcement is therefore:
++
++1. `test_controller_does_not_grow_past_its_budget` — a file may never
++   exceed its pinned ceiling without that pin being edited in the same
++   diff.
++2. `test_budget_is_not_left_slack_after_a_move` — the pin may not sit far
++   above the real measurement either, so a wave that raises the ceiling
++   generously "to be safe" and then never lands, or overshoots its own
++   landing, is caught too.
++
++**Re-pin flow at a sanctioned move**: re-measure after the move lands
++(`len(path.read_text(encoding="utf-8").splitlines())`, the same expression
++`_measure` below uses) and set the row to the exact new value, in the SAME
++commit — identical to the screen ratchet's own §6 rule
++(`backlog/docs/library-decomposition-recipe.md` §6), same file, same
++commit, never deferred to a follow-up.
++
++**Why line count only, with no method-count column** (unlike the screen
++ratchet, which tracks both). The screen ratchet's method count exists to
++catch a class made shorter by *compressing* bodies rather than by
++extracting responsibility — line count alone could not tell those apart on
++`ChatScreen`/`LibraryScreen`, which are each exactly one class filling
++their whole file, always named after the screen. Controller files under
++`Library_Modules/` do not have that one-class shape: alongside the primary
++controller/coordinator class, the byte-for-byte canon's
++constructor-dependency-binding pattern (recipe §1) deliberately produces
++small immutable helper classes in the SAME file — Protocol ports, request
++"fences," result "receipts," and outcome snapshots (see
++`CaptureRequestFence`/`CaptureArchiveReceipt` in `library_collections_
++capture_controller.py`, or the `*Port` protocols in `library_notes_sync_
++controller.py`). There is also no reliable filename convention for picking
++"the" dominant class the way the screen ratchet does (`ChatScreen` in
++`chat_screen.py`): `library_skill_import_controller.py`'s primary class is
++`LibrarySkillImportCoordinator`, not `...Controller` — a naive
++filename-derived class-name lookup would silently miss it entirely. Given
++that, either (a) a per-file class-name override table would be needed
++(reintroducing exactly the kind of hand-maintained list this test's
++glob-based discovery was chosen to avoid), or (b) summing methods across
++every class in the file would count the very helper-class proliferation
++the canon encourages as if it were controller-responsibility growth,
++punishing a pattern the recipe recommends. File line count has neither
++problem, and it is the exact axis the wave's own design tension (moves
++inflate lines) is stated in. A future row for a controller file that
++happens to be genuinely one dominant class with no helper types could add
++a method-count column for that row specifically without disturbing this
++reasoning for the rest — none currently qualify.
++
++**The self-defending property the screen ratchet does not have.**
++`_BUDGETS` in `test_screen_size_ratchet.py` is a hand-maintained dict with
++nothing that notices when a NEW screen file should have a row and does
++not — that gap is exactly how `library_screen.py` went ungoverned for a
++month while it tripled in size. This file instead globs
++`tldw_chatbook/UI/Library_Modules/*_controller.py` at collection time and
++asserts every match has a `_BUDGETS` row:
++`test_every_controller_file_has_a_budget_row` fails, by name, the moment a
++new wave-3+ controller module lands without one, with guidance on the row
++to add. New controllers are therefore born governed: nothing needs to
++remember to edit this test file when wave 3's search/RAG controller(s)
++are created — only to add their row once the failure names them.
++
++**What to do when this test fails.**
++- Growth past the ceiling with no move in flight: this is the creep this
++  test exists to catch. Reconsider whether the new code belongs in this
++  controller at all — do NOT raise the number just to make the test pass.
++- A sanctioned move just landed: re-measure and set the row to the exact
++  new value, in the SAME commit, with a one-line dated comment (mirror the
++  screen ratchet's comment trail immediately above its own `_BUDGETS`).
++- An unlisted controller file: add its row at its current exact
++  measurement — do not pick a round number "for headroom."
++"""
++
++from __future__ import annotations
++
++from functools import lru_cache
++from pathlib import Path
++
++import pytest
++
++_REPO_ROOT = Path(__file__).resolve().parents[2]
++_LIBRARY_MODULES_DIR = _REPO_ROOT / "tldw_chatbook/UI/Library_Modules"
++_CONTROLLER_GLOB = "*_controller.py"
++
++#: path -> max lines. LOWER when a cleanup PR shrinks a controller; RAISE
++#: (with a dated comment naming the landing PR) when a sanctioned move PR
++#: adds a cluster of methods. Never raise to silence ordinary creep.
++#:
++#: First recorded 2026-09-03 by task-31203 AC#4 (Library decomposition
++#: wave 3, Task 1 — controller-file size governance), at each file's exact
++#: measured line count as of the wave-2 close (conversations, export, and
++#: collections series all landed; wave 3's own search+RAG controller(s)
++#: not yet created, so not yet rows here — they are born governed by the
++#: glob in `test_every_controller_file_has_a_budget_row` the moment they
++#: exist, and get their own row at that point).
++_BUDGETS: dict[str, int] = {
++    "tldw_chatbook/UI/Library_Modules/library_collections_capture_controller.py": 699,
++    "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1689,
++    "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 943,
++    "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": 1738,
++    "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1307,
++    "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py": 371,
++    "tldw_chatbook/UI/Library_Modules/library_media_trash_browse_controller.py": 319,
++    "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 587,
++    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2023,
++    "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
++    "tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py": 760,
++    "tldw_chatbook/UI/Library_Modules/library_skills_browse_controller.py": 413,
++}
++
++#: Loose on purpose (see `test_screen_size_ratchet.py`'s own 200-line
++#: tolerance for the same reasoning at a larger scale): ordinary in-file
++#: edits — a strengthened comment, a docstring fix — must not fail this
++#: check. It exists only to catch a budget left stale-high after a
++#: controller shrinks (a cleanup PR that forgot to lower its row), not to
++#: pin every file to its exact byte count at all times.
++_SLACK_TOLERANCE_LINES = 50
++
++
++@lru_cache(maxsize=None)
++def _measure(rel_path: str) -> int:
++    """Line count of a `Library_Modules` controller module.
++
++    Cached: the ceiling and anti-slack tests both run over the same
++    parametrization, so an uncached version reads every budgeted file
++    twice per session for no extra coverage. The cache is per-process, so
++    mutation-testing this ratchet (edit the file, re-run pytest as a fresh
++    process) still works — just not by editing a file from inside a
++    running test, the same caveat `test_screen_size_ratchet.py._measure`
++    documents.
++
++    Args:
++        rel_path: Repo-relative path to the module.
++
++    Returns:
++        int: line count via `str.splitlines()`.
++
++    Raises:
++        AssertionError: If the module is missing — the budget entry is
++            stale and must be updated deliberately, not silently skipped.
++    """
++    path = _REPO_ROOT / rel_path
++    assert path.exists(), f"{rel_path} not found; the budget entry is stale."
++    return len(path.read_text(encoding="utf-8").splitlines())
++
++
++def _discovered_controller_paths() -> list[str]:
++    """Every `*_controller.py` under `Library_Modules/`, repo-relative posix paths."""
++    return sorted(
++        p.relative_to(_REPO_ROOT).as_posix()
++        for p in _LIBRARY_MODULES_DIR.glob(_CONTROLLER_GLOB)
++    )
++
++
++@pytest.mark.unit
++def test_every_controller_file_has_a_budget_row() -> None:
++    """The self-defending property: an unlisted controller fails loudly.
++
++    Unlike `test_screen_size_ratchet.py`'s hand-maintained `_BUDGETS` (no
++    check that every screen file has a row), this test globs the
++    directory at collection time, so a NEW `*_controller.py` — wave 3's
++    search/RAG controller(s), or any of the six subsystems after it —
++    fails here by name instead of landing ungoverned.
++    """
++    discovered = _discovered_controller_paths()
++    missing = [rel_path for rel_path in discovered if rel_path not in _BUDGETS]
++    assert not missing, (
++        "New Library_Modules controller file(s) with no _BUDGETS row: "
++        f"{missing}.\n\n"
++        "Add a row to _BUDGETS in "
++        "Tests/Architecture/test_library_modules_size_ratchet.py, pinned "
++        "at the file's current exact line count "
++        "(len(path.read_text(encoding='utf-8').splitlines())) -- do not "
++        "pick a round number 'for headroom.' See this module's docstring "
++        "for the full governance rationale."
++    )
++
++
++@pytest.mark.unit
++@pytest.mark.parametrize("rel_path", sorted(_BUDGETS))
++def test_controller_does_not_grow_past_its_budget(rel_path: str) -> None:
++    """The ceiling itself: a budgeted controller may not exceed its pin.
++
++    Args:
++        rel_path: Repo-relative path of the budgeted module, supplied by
++            the parametrization over `_BUDGETS`.
++
++    Raises:
++        AssertionError: If the module grew past its line budget without
++            the budget being re-pinned in the same diff.
++    """
++    max_lines = _BUDGETS[rel_path]
++    lines = _measure(rel_path)
++
++    guidance = (
++        f"\n\n{rel_path} is under a size ratchet "
++        f"(Tests/Architecture/test_library_modules_size_ratchet.py).\n"
++        f"If this growth is a sanctioned move landing (recipe "
++        f"backlog/docs/library-decomposition-recipe.md §1), re-measure "
++        f"and raise this row's pin in the SAME commit with a dated "
++        f"comment. Otherwise this is the creep this test exists to "
++        f"catch -- do not raise the budget just to silence it."
++    )
++
++    assert lines <= max_lines, (
++        f"{rel_path} grew to {lines} lines (budget {max_lines}, "
++        f"+{lines - max_lines}).{guidance}"
++    )
++
++
++@pytest.mark.unit
++@pytest.mark.parametrize("rel_path", sorted(_BUDGETS))
++def test_budget_is_not_left_slack_after_a_move(rel_path: str) -> None:
++    """The recorded budget should track reality, not drift above it.
++
++    A ratchet with slack silently permits regrowth up to the stale number,
++    so a move that forgets to lower/tighten its budget after landing (or a
++    ceiling raised more generously than the move that justified it) quietly
++    buys the next feature headroom it was never meant to have.
++    """
++    max_lines = _BUDGETS[rel_path]
++    lines = _measure(rel_path)
++
++    assert max_lines - lines <= _SLACK_TOLERANCE_LINES, (
++        f"{rel_path} is {max_lines - lines} lines under its budget "
++        f"({lines} vs {max_lines}). Set it to {lines} so the real "
++        f"measurement is what's pinned."
++    )
+diff --git a/backlog/docs/library-decomposition-recipe.md b/backlog/docs/library-decomposition-recipe.md
+index 5290b348e..2609c800b 100644
+--- a/backlog/docs/library-decomposition-recipe.md
++++ b/backlog/docs/library-decomposition-recipe.md
+@@ -1740,10 +1740,215 @@ already documents, not a new regression from this wave's moves.
+    count that's re-measured on every run; no equivalent re-measurement
+    exists for cluster membership itself. First noted as a deferred minor
+    during Task 3 (export, "cluster constants not self-defending against a
+    23rd export method — canon-consistent"); the wave-2 final review
+    extended the observation to collections and named it Important enough
+    to record durably rather than leave buried in a git-ignored ledger.
+    Deferred, not fixed, by design — closing it needs an active guard (an
+    AST re-census compared against the frozen tuple, failing when the two
+    diverge) that no task in wave 2 was scoped to build; a candidate for
+    wave 3 or a dedicated follow-up task.
++
++## 17. Controller-file size governance (task-31203 AC#4)
++
++The wave-2 final review named a real gap: the screens this program
++decomposes FROM (`chat_screen.py`, `library_screen.py`) are governed by
++`Tests/Architecture/test_screen_size_ratchet.py`, but the controller files
++it decomposes INTO — `UI/Library_Modules/*_controller.py` — had no size
++governance at all. By wave-2 close two of them (`library_collections_
++controller.py` at 1,689 lines, `library_conversations_controller.py` at
++1,738) were already screen-scale, and wave 3 (this plan) plus six more
++subsystems after it will add more. Wave-3 Task 1 closes this gap. The
++guard lives in `Tests/Architecture/test_library_modules_size_ratchet.py`
++(a new sibling file, not a change to the screen ratchet — the two
++enforce genuinely different shapes; see below).
++
++### The decision: option (a), exact per-file `_BUDGETS` rows, discovered by glob
++
++Three options were on the table (wave-3 plan, Task 1):
++
++- **(a) `_BUDGETS`-style exact rows per controller**, re-pinned at each
++  sanctioned landing, mirroring the screen ratchet's own flow.
++- **(b) A single aggregate `Library_Modules` budget** (one number for the
++  whole directory's controller-file total).
++- **(c) A looser per-file ceiling with slack tolerance** (no exact pin,
++  just "don't exceed N", with N chosen generously).
++
++**Chosen: (a), with one addition beyond the screen ratchet's own
++design — glob-based discovery of ungoverned files, not just a hand-kept
++dict.** Reasoning:
++
++- **(b) rejected**: an aggregate budget cannot localize which controller
++  grew, so a review sees "the total went up" with no signal about
++  whether that is subsystem X's sanctioned move or subsystem Y's creep —
++  exactly the ambiguity per-file governance exists to remove. It also
++  means every subsystem's PR touches the same shared number, which
++  multiplies merge-conflict surface across ~10 eventual controllers
++  landing on overlapping timelines (this wave's own Global Constraints
++  already budget for "dev races" on the screen's single row; an
++  aggregate would multiply that contention across every concurrent
++  controller PR, not just the screen's).
++- **(c) rejected**: a generous fixed tolerance either has to be loose
++  enough to survive a large sanctioned move (in which case it does
++  nothing to catch creep between moves, the actual failure mode this
++  task exists to close) or tight enough to catch creep (in which case it
++  fails on every sanctioned move exactly like a naive "only ever go
++  down" ratchet would, per the wave-3 plan's own stated design tension).
++  There is no single tolerance value that serves both purposes across
++  controllers ranging from ~280 to ~2,000+ lines.
++- **(a) chosen**: an exact per-file pin, re-measured and re-set in the
++  same commit as every sanctioned move — identical in spirit to how
++  `_BUDGETS["tldw_chatbook/UI/Screens/library_screen.py"]` has already
++  been re-pinned five times across the conversations/export/collections
++  exemplar series (§11, §12, §15) — localizes every review to exactly
++  the one file that changed, costs one dict entry per new controller (a
++  maintenance cost linear in subsystem count, not compounding), and
++  reuses a mechanism the program has already exercised repeatedly rather
++  than inventing a second one.
++
++**The one deliberate improvement over the screen ratchet's own model**:
++the screen ratchet's `_BUDGETS` is a hand-maintained dict with nothing
++that notices a new screen file needing a row — which is exactly how
++`library_screen.py` went ungoverned for the month it tripled in size
++before this program's own foundation task added its row. The new test
++instead globs `UI/Library_Modules/*_controller.py` at collection time
++(`test_every_controller_file_has_a_budget_row`) and fails, by name, the
++instant a file matching that pattern has no `_BUDGETS` row. Wave 3's own
++search+RAG controller(s) — not yet created as of this task — are
++therefore **born governed**: nothing needs to remember to edit the guard
++test when they land; the glob finds them and the failure message names
++exactly which row to add, at what expression to measure it with.
++
++### Resolving the byte-for-byte-canon tension: same two-check model as the screen ratchet, not a stricter one
++
++The wave-3 plan states the tension precisely: a sanctioned move commit
++inflates its destination controller BY DESIGN (the byte-for-byte canon,
++§1, moves method bodies verbatim), so a ratchet that only permits a
++number to go down would fail every subsystem's own controller-PR the
++moment it lands. Re-reading how the screen ratchet is actually operated
++in practice (not just its docstring's "may only ever go DOWN" framing)
++resolves this: §16 records the screen's own `_BUDGETS` row being RAISED
++twice during the wave-2 final-review fix wave, each time with a dated
++justification comment explaining the increase. The screen ratchet's real
++enforcement is therefore two checks, not one hard one-way rule:
++
++1. A **ceiling** the file may not silently exceed (`test_controller_
++   does_not_grow_past_its_budget` here; `test_screen_does_not_grow_
++   past_its_budget` there) — this is what stops silent creep.
++2. An **anti-slack** bound (`test_budget_is_not_left_slack_after_a_
++   move` here; `test_budget_is_not_left_slack_after_a_wave` there) —
++   this is what stops a ceiling raised "for headroom" from just sitting
++   there unused, and forces the pin to track reality.
++
++Neither check can tell "sanctioned move" from "creep" by itself — no
++test can read intent — but together they make BOTH cases visible in
++code review: a sanctioned move's PR diff shows the `_BUDGETS` row moving
++up next to the method bodies that justify it (reviewable, exactly the
++recipe's own re-pin-in-the-same-commit rule, §6); creep shows up as a
++ceiling breach with no corresponding row edit in the diff, or a row
++edited with no move to justify it. This is the same model the screen
++ratchet already uses successfully — Task 1 did not need a stricter or
++different mechanism, only to apply the existing one to a new file set.
++
++### Re-pin-at-move flow (identical to §6, restated for controllers)
++
++1. Land the sanctioned move (state PR, controller PR, or cleanup PR per
++   §1's series).
++2. Re-measure the affected controller file(s):
++   `len(path.read_text(encoding="utf-8").splitlines())` — the exact
++   expression `test_library_modules_size_ratchet.py`'s own `_measure`
++   uses.
++3. Set the `_BUDGETS` row to that exact number, in the SAME commit,
++   with a one-line dated comment (mirroring the screen ratchet's comment
++   trail immediately above its own `_BUDGETS`) — never deferred to a
++   follow-up, per §6's rebase-then-measure rule, which applies here
++   unchanged.
++
++### Why line count only — no method-count column, unlike the screen ratchet
++
++The screen ratchet tracks both line count and method count because a
++single class (`ChatScreen`/`LibraryScreen`) filling its whole file can be
++made shorter by *compressing* bodies without actually reducing
++responsibility — line count alone cannot catch that on a one-class file.
++Controller files under `Library_Modules/` are not shaped that way: the
++byte-for-byte canon's constructor-dependency-binding pattern (§1)
++deliberately produces small immutable helper classes alongside the
++primary controller/coordinator in the SAME file — Protocol ports,
++request "fences," result "receipts," outcome snapshots (e.g.
++`CaptureRequestFence`/`CaptureArchiveReceipt` in `library_collections_
++capture_controller.py`; the `*Port` protocols in `library_notes_sync_
++controller.py`). There is also no reliable filename→class-name
++convention the way the screen ratchet has: `library_skill_import_
++controller.py`'s primary class is `LibrarySkillImportCoordinator`, not
++`...Controller`. Picking "the" dominant class per file would therefore
++need either a hand-maintained override table (reintroducing the
++non-self-defending problem this design otherwise avoids) or summing
++methods across every class in the file (which would count the
++helper-class proliferation the canon itself encourages as if it were
++controller-responsibility growth — punishing a pattern the recipe
++recommends). File line count has neither problem and is the exact axis
++the wave's own design tension is stated in, so it is the only metric
++this guard tracks. A future controller file that happens to be a single
++dominant class with no helper types could add a method-count column for
++that row specifically without disturbing this reasoning for the rest —
++none of the twelve rows pinned at this task's landing qualify.
++
++### Measured rows at landing (task-31203 AC#4, 2026-09-03)
++
++All twelve current `*_controller.py` files under `UI/Library_Modules/`,
++pinned at their exact measured line count (zero slack against the
++50-line anti-slack tolerance):
++
++| Controller file | Lines |
++|---|---|
++| `library_collections_capture_controller.py` | 699 |
++| `library_collections_controller.py` | 1,689 |
++| `library_conversation_reader_controller.py` | 943 |
++| `library_conversations_controller.py` | 1,738 |
++| `library_export_controller.py` | 1,307 |
++| `library_media_browse_controller.py` | 371 |
++| `library_media_trash_browse_controller.py` | 319 |
++| `library_note_import_controller.py` | 587 |
++| `library_notes_sync_controller.py` | 2,023 |
++| `library_prompt_browse_controller.py` | 281 |
++| `library_skill_import_controller.py` | 760 |
++| `library_skills_browse_controller.py` | 413 |
++
++Scope note: this glob covers `*_controller.py` only, per the wave-3
++plan's own framing of the gap (the wave-2 review named controller files
++by example). `Library_Modules/`'s state files (`library_*_state.py`) and
++other support modules (`canvas_sync.py`, `screen_helpers.py`, etc.) are
++out of scope for this task — a candidate for a follow-up if the same
++ungoverned-growth pattern shows up there, but not asserted here since
++AC#4 scoped the review's own concern to controllers by name.
++
++### Mutation evidence (both directions, plus the self-defending property)
++
++All four fired correctly, verified interactively before the real
++`_BUDGETS` values were committed (see task-1-report.md in this wave's
++SDD ledger for full command output):
++
++1. **Unlisted existing file** (a row deleted from `_BUDGETS` for a file
++   that still exists on disk): `test_every_controller_file_has_a_budget_
++   row` failed, naming exactly that one path; the file's own ceiling/
++   slack parametrizations disappeared with it (25 → 22 passed, 1
++   failed) since pytest parametrizes over `sorted(_BUDGETS)`.
++2. **Genuinely new file** (a throwaway `_mutation_test_scratch_
++   controller.py` dropped into `Library_Modules/`, matching the glob):
++   same test failed, naming the new file; all 24 real rows' tests still
++   passed unaffected. This is the property the screen ratchet's own
++   hand-kept dict does not have.
++3. **Growth trip**: one row's budget lowered 13 lines below its real
++   measurement → `test_controller_does_not_grow_past_its_budget` failed
++   for that row only, reporting "+13" and the guidance block; all other
++   rows unaffected.
++4. **Anti-slack trip**: one row's budget raised 51 lines above its real
++   measurement (one over the 50-line tolerance) → `test_budget_is_not_
++   left_slack_after_a_move` failed for that row only, reporting the
++   exact slack and the fix ("Set it to 281"); at exactly 50 lines over
++   (the tolerance boundary) the same check passes, confirmed separately.
++
++Every mutation was reverted immediately after capturing its failure
++output; the file's final committed state is a clean, zero-diff
++round-trip back to the real measured values — `test_library_modules_
++size_ratchet.py` itself was never left in a mutated state between
++commits.
+diff --git a/backlog/tasks/task-31203 - Library-decomposition-wave-3-combined-searchRAG-series.md b/backlog/tasks/task-31203 - Library-decomposition-wave-3-combined-searchRAG-series.md
+index d0b3495b5..b0e9feca6 100644
+--- a/backlog/tasks/task-31203 - Library-decomposition-wave-3-combined-searchRAG-series.md	
++++ b/backlog/tasks/task-31203 - Library-decomposition-wave-3-combined-searchRAG-series.md	
+@@ -1,47 +1,30 @@
+ ---
+ id: TASK-31203
+ title: 'Library decomposition wave 3: combined search+RAG series'
+ status: To Do
+ assignee: []
+ created_date: '2026-09-03 05:55'
+-updated_date: '2026-09-03 07:30'
++updated_date: '2026-09-03 20:49'
+ labels: []
+ dependencies: []
+ ---
+ 
+ ## Description
+ 
+ <!-- SECTION:DESCRIPTION:BEGIN -->
+ Wave-2 Task 8's entanglement gate fired: 8/14 search methods (57.1%) call or are called by RAG methods; search submit is structurally the RAG entry point (_start_library_rag_query). Per the wave-2 plan's contingency, search and RAG extract as ONE combined series. Census in the wave-2 SDD task-8 report, copied to the recipe per-subsystem table.
+ <!-- SECTION:DESCRIPTION:END -->
+ 
+ ## Acceptance Criteria
+ <!-- AC:BEGIN -->
+ - [ ] #1 Combined cluster enumerated with the recipe ownership script (search 14 + rag ~39 at 2026-09-02 snapshot)
+ - [ ] #2 Series follows the recipe (state, RED-commit wiring, controller(s), cleanup) with both guards green throughout
+ - [ ] #3 Recipe per-subsystem table updated with actual numbers
+-- [ ] #4 Wave-2 final review's size-governance note considered: Library_Modules controller files (e.g. library_collections_controller.py, 1,689 lines; library_conversations_controller.py, 1,738 lines) have no size-ratchet governance today, unlike the screens they were extracted from -- wave 3 records a decision (add _BUDGETS-style rows for Library_Modules controllers, an equivalent mechanism, or an explicit defer-with-reason) rather than leaving the question unaddressed
++- [x] #4 Wave-2 final review's size-governance note considered: Library_Modules controller files (e.g. library_collections_controller.py, 1,689 lines; library_conversations_controller.py, 1,738 lines) have no size-ratchet governance today, unlike the screens they were extracted from -- wave 3 records a decision (add _BUDGETS-style rows for Library_Modules controllers, an equivalent mechanism, or an explicit defer-with-reason) rather than leaving the question unaddressed
+ <!-- AC:END -->
+ 
+-## Renumbering provenance
++## Implementation Notes
+ 
+-Filed as `TASK-27021` on the wave-2 branch (2026-09-03 05:55, last
+-edited 07:30). Merging `origin/dev` (2026-09-03) surfaced a collision
+-with dev's own `TASK-27021` ("Console references wire expansion into
+-the send-path composer completion"), an unrelated, already-filed task
+--- per the 2026-08-21 owner rule (TASK-19601) and the precedent
+-recorded in `backlog/docs/lessons-backlog-hygiene.md`, the OLDER
+-arrival keeps the id and this, the younger claimant, renumbers.
+-
+-Renumbered `TASK-27021` -> `TASK-31203`, derived from the same fresh
+-sweep as `TASK-27020` -> `TASK-31202` above (true max at merge time:
+-31201, then 31202 for that task, so 31203 here). Every reference to
+-`task-27021`/`TASK-27021` in the wave-2 SDD ledger
+-(`.superpowers/sdd/2026-09-02-library-decomposition-wave2-cold-trio/progress.md`,
+-`task-10-report.md`, `final-fix-wave-report.md`) and in
+-`backlog/docs/library-decomposition-recipe.md` was updated to
+-`task-31203`/`TASK-31203` in the same merge commit. The archival
+-`review-*.diff` snapshots in that SDD directory are frozen `git diff`
+-captures of specific historical commit ranges and were deliberately
+-left unedited, for the same reason recorded on `TASK-31202`'s
+-provenance note.
++<!-- SECTION:NOTES:BEGIN -->
++AC#4 only (Task 1 of the wave-3 plan): decided option (a), exact per-file _BUDGETS rows in a new sibling guard, Tests/Architecture/test_library_modules_size_ratchet.py, discovered by glob (UI/Library_Modules/*_controller.py) so a new controller is born governed instead of needing a hand-edit. 12 current controller files pinned at their exact measured line counts (699-2023 lines). Mutation-tested both directions plus the self-defending unlisted-file property (all 4 fire correctly, reverted cleanly). Full decision, reasoning, re-pin flow, and measured rows recorded in backlog/docs/library-decomposition-recipe.md new section 17. This ticks AC#4 only -- AC#1-3 (the search+RAG extraction series itself) remain To Do; task stays not-Done.
++<!-- SECTION:NOTES:END -->

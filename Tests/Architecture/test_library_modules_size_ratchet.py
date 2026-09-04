@@ -165,7 +165,14 @@ _BUDGETS: dict[str, int] = {
     # module docstring's own already-corrected paragraph. Comment-only
     # growth; no method body, mover count, or byte-for-byte canon content
     # changed. 1890 -> 1895.
-    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 1895,
+    # 2026-09-03, wave-3 task 5 (wave close, stale-doc sweep): this
+    # module's own docstring claimed `LibraryScreen` "carries (task 2)"
+    # the two-prefix shim in present tense -- stale since task 4 deleted
+    # that shim. Corrected to past tense ("task 2 installed ... deleted
+    # at cleanup, task 4"), matching `library_export_controller.py`'s own
+    # correct precedent. Comment-only growth (+2 lines); no method body
+    # touched. 1895 -> 1897.
+    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 1897,
     "tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py": 760,
     "tldw_chatbook/UI/Library_Modules/library_skills_browse_controller.py": 413,
 }

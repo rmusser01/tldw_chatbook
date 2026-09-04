@@ -1,0 +1,367 @@
+# Review package: f8974b9cb..801c5375e
+
+## Commits
+801c5375e test(library): retarget the rag-scope path census to the moved call site
+544664510 docs(library): correct task-3 record — caller claims, count consistency (fix round 1)
+
+## Files changed
+ .../test_library_modules_size_ratchet.py           |  6 ++-
+ .../Architecture/test_library_search_rag_wiring.py |  4 +-
+ Tests/Architecture/test_screen_size_ratchet.py     | 30 ++++++------
+ Tests/Library/test_library_rag_scope.py            | 47 ++++++++++++------
+ backlog/docs/library-decomposition-recipe.md       | 17 +++++++
+ .../library_rag_search_controller.py               | 57 +++++++++++++++++-----
+ 6 files changed, 118 insertions(+), 43 deletions(-)
+
+## Diff
+diff --git a/Tests/Architecture/test_library_modules_size_ratchet.py b/Tests/Architecture/test_library_modules_size_ratchet.py
+index 085b76149..7a79314af 100644
+--- a/Tests/Architecture/test_library_modules_size_ratchet.py
++++ b/Tests/Architecture/test_library_modules_size_ratchet.py
+@@ -143,21 +143,25 @@ _BUDGETS: dict[str, int] = {
+     "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 587,
+     "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2023,
+     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
+     # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
+     # 2/3): born-governed by the glob above -- new file, pinned at its
+     # exact measured line count on landing (42 moved methods + the
+     # constructor/property scaffolding the byte-for-byte canon requires;
+     # a 43rd candidate, `_load_library_search_history`, was excluded
+     # mid-task -- module-globals coupling on a bare `get_cli_setting`
+     # reference broke a real test fixture -- and stays on the screen).
+-    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 1857,
++    # 2026-09-03, wave-3 task 3 fix round 1: two false-caller-count claims
++    # in this module's own docstring were corrected in place (no methods
++    # touched, no bodies re-shaped -- byte-for-byte canon on the 42 moved
++    # bodies is unaffected). 1857 -> 1890.
++    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 1890,
+     "tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py": 760,
+     "tldw_chatbook/UI/Library_Modules/library_skills_browse_controller.py": 413,
+ }
+ 
+ #: Loose on purpose (see `test_screen_size_ratchet.py`'s own 200-line
+ #: tolerance for the same reasoning at a larger scale): ordinary in-file
+ #: edits — a strengthened comment, a docstring fix — must not fail this
+ #: check. It exists only to catch a budget left stale-high after a
+ #: controller shrinks (a cleanup PR that forgot to lower its row), not to
+ #: pin every file to its exact byte count at all times.
+diff --git a/Tests/Architecture/test_library_search_rag_wiring.py b/Tests/Architecture/test_library_search_rag_wiring.py
+index a6cf387d2..0e09742ff 100644
+--- a/Tests/Architecture/test_library_search_rag_wiring.py
++++ b/Tests/Architecture/test_library_search_rag_wiring.py
+@@ -124,40 +124,40 @@ _RAG_SEARCH_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
+ #: `self._rag_search_controller`.
+ _RAG_SEARCH_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
+     {
+         "_library_rag_scope_summary",
+     }
+ )
+ 
+ 
+ @pytest.mark.unit
+ def test_rag_search_controller_owns_its_cluster() -> None:
+-    """Every one of the 43 moved names is a callable on the controller.
++    """Every one of the 42 moved names is a callable on the controller.
+ 
+     Covers the whole cluster, not a hand-picked sample -- mirrors
+     `test_collections_controller_owns_its_cluster`.
+     """
+     from tldw_chatbook.UI.Library_Modules.library_rag_search_controller import (
+         LibraryRagSearchController,
+     )
+ 
+     missing = [
+         name
+         for name in _RAG_SEARCH_CLUSTER_METHOD_NAMES
+         if not callable(getattr(LibraryRagSearchController, name, None))
+     ]
+     assert not missing, f"LibraryRagSearchController is missing: {missing!r}"
+ 
+ 
+ @pytest.mark.unit
+ def test_screen_delegates_rag_search_handlers() -> None:
+-    """Every one of the 43 moved names is a one-line screen delegator that
++    """Every one of the 42 moved names is a one-line screen delegator that
+     forwards to the SAME-NAMED controller method (or, for the 1
+     staticmethod, to the module-level controller CLASS).
+ 
+     Mirrors `test_screen_delegates_collections_handlers`: a same-name
+     forwarding check, not a loose "the controller is referenced somewhere"
+     substring check.
+     """
+     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+ 
+     not_delegators = []
+diff --git a/Tests/Architecture/test_screen_size_ratchet.py b/Tests/Architecture/test_screen_size_ratchet.py
+index 52b49d914..d8d93630c 100644
+--- a/Tests/Architecture/test_screen_size_ratchet.py
++++ b/Tests/Architecture/test_screen_size_ratchet.py
+@@ -247,55 +247,57 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
+     # landed on dev while this PR was in flight (dev's own pin going into
+     # this merge was 45522/1331). Measured on the merged tree: 42420/1267
+     # -> 43977/1316.
+     #
+     # 2026-09-03, wave-3 task 2 (combined search+RAG state PR, series 1/3):
+     # the 20-field `__init__` block (19 `_library_rag_*` + 1
+     # `_library_search_history`) collapsed into one `LibraryRagSearchState`
+     # constructor call plus a generated shim loop; methods unchanged (pure
+     # field move, zero FunctionDefs touched). 43977/1316 -> 43923/1316.
+     # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
+-    # 2/3): 43 of the 50 combined search+RAG candidates (60 raw "search"/
++    # 2/3): 42 of the 50 combined search+RAG candidates (60 raw "search"/
+     # "rag" matches minus 3 Prompts-owned + 7 Media-owned) moved verbatim
+     # into `LibraryRagSearchController`
+     # (`UI/Library_Modules/library_rag_search_controller.py`), each
+-    # replaced by a one-line screen delegator (42 `self._rag_search_
+-    # controller.<name>(...)` forwards + 1 `LibraryRagSearchController.
++    # replaced by a one-line screen delegator (41 `self._rag_search_
++    # controller.<name>(...)` instance-forwards + 1 `LibraryRagSearchController.
+     # <name>(...)` class-forward for the cluster's single staticmethod,
+     # `_library_rag_scope_summary`) -- a pure move, so the method count is
+-    # unchanged (43 `FunctionDef`s out, 43 one-line delegators in). 7 of
++    # unchanged (42 `FunctionDef`s out, 42 one-line delegators in). 8 of
+     # the 50 candidates stay screen-resident, unmoved and byte-for-byte
+     # untouched: 3 carry `@work` and would fail Textual's `isinstance(self,
+     # DOMNode)` check on a plain controller (`_execute_library_rag_
+     # answer`/`_execute_library_rag_search`/`_save_library_search_
+-    # history`), and 4 more are the "instance-attribute monkeypatch"
++    # history`); 4 more are the "instance-attribute monkeypatch"
+     # test-bypass shape (recipe §11 lesson 2) -- `_library_rag_panel_
+     # state`, `_refresh_search_rag_panel_state_widgets`, `_patch_sibling_
+     # library_search_input`, `_mirror_library_rag_scope_recovery` -- found
+     # by a repo-wide monkeypatch census across all three test roots (2 of
+     # the 4 already flagged by task 2's own forward note; the other 2 are
+     # new findings from this task's own wider census) -- see
+     # `library_rag_search_controller.py`'s module docstring for the full
+-    # per-name reasoning. 42, not 43: `_load_library_search_history` was
++    # per-name reasoning; and 1 more, `_load_library_search_history`, was
+     # excluded mid-task after the verification battery found a real
+     # regression -- its bare `get_cli_setting` reference resolves against
+     # the DEFINING module's globals, and moving it silently broke every
+     # `monkeypatch.setattr(library_screen_module, "get_cli_setting", ...)`
+     # test (a `test_library_shell.py` fixture several tests depend on).
+-    # It stays a real, full-bodied screen method (byte-for-byte identical
+-    # to before this task), constructed at its original `__init__`
+-    # position with no controller involvement. Net diff: +96 insertions
+-    # (the import line, the new `LibraryRagSearchController` constructor
+-    # call in `__init__` right after `self._collections_controller`, plus
+-    # the 42 one-line delegator bodies) / -1010 deletions (the 42 moved
+-    # bodies' original lines, net of restoring `_load_library_search_
+-    # history`'s full body once it was excluded). 43923/1316 -> 43009/1316.
++    # (3 + 4 + 1 = 8 excluded; 50 - 8 = 42 moved -- every count in this
++    # entry agrees.) It stays a real, full-bodied screen method
++    # (byte-for-byte identical to before this task), constructed at its
++    # original `__init__` position with no controller involvement. Net
++    # diff: +96 insertions (the import line, the new
++    # `LibraryRagSearchController` constructor call in `__init__` right
++    # after `self._collections_controller`, plus the 42 one-line delegator
++    # bodies) / -1010 deletions (the 42 moved bodies' original lines, net
++    # of restoring `_load_library_search_history`'s full body once it was
++    # excluded). 43923/1316 -> 43009/1316.
+     "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43009, 1316),
+ }
+ 
+ # Task 22507.4 started from this reviewed measurement. The repository-wide
+ # ratchet predates concurrent Console growth, so this explicit comparison
+ # proves this task does not add to that debt while the stale ceiling is fixed
+ # independently.
+ _TASK_22507_4_CHAT_SCREEN_BASE = (20099, 633)
+ 
+ 
+diff --git a/Tests/Library/test_library_rag_scope.py b/Tests/Library/test_library_rag_scope.py
+index d87e1ed2b..8ddc95bb6 100644
+--- a/Tests/Library/test_library_rag_scope.py
++++ b/Tests/Library/test_library_rag_scope.py
+@@ -585,35 +585,54 @@ async def test_unscoped_call_without_scope_kwarg_is_byte_identical_to_explicit_n
+     )
+     service = LibraryLocalRagSearchService(app)
+ 
+     implicit = await service.search("q", ("notes",), "search", top_k=5)
+     explicit = await service.search("q", ("notes",), "search", top_k=5, scope=None)
+ 
+     assert implicit == explicit
+ 
+ 
+ def test_library_screen_call_sites_never_pass_scope_kwarg():
+-    """D2 guard: grep-assert (AST-based) that the Library screen's own
+-    Search canvas never passes `scope=` when building a
+-    `LibraryRagSearchRequest` -- it must stay unscoped by omission, the
+-    dataclass default doing all the work."""
+-    source_path = (
+-        Path(tldw_chatbook.__file__).parent / "UI" / "Screens" / "library_screen.py"
+-    )
+-    tree = ast.parse(source_path.read_text())
+-    request_calls = [
+-        node
+-        for node in ast.walk(tree)
+-        if isinstance(node, ast.Call)
+-        and isinstance(node.func, ast.Name)
+-        and node.func.id == "LibraryRagSearchRequest"
++    """D2 guard: grep-assert (AST-based) that the Library Search canvas's
++    `LibraryRagSearchRequest(...)` construction never passes `scope=` -- it
++    must stay unscoped by omission, the dataclass default doing all the
++    work.
++
++    Censused over BOTH `library_screen.py` and
++    `library_rag_search_controller.py`, not `library_screen.py` alone: the
++    invariant this guards ("no call site anywhere passes scope=") is about
++    the construction site, not about which file currently holds it. Wave-3
++    task 3 (search+RAG controller PR) moved the sole call site from
++    `library_screen.py` to `library_rag_search_controller.py`
++    (`_start_library_rag_query`); a single-file census would have gone
++    silently green with zero call sites checked the moment the last one
++    moved, rather than failing loudly as it did here. Censusing both files
++    means a future move back onto the screen, or a second call site added
++    on either file, stays covered without another retarget.
++    """
++    source_paths = [
++        Path(tldw_chatbook.__file__).parent / "UI" / "Screens" / "library_screen.py",
++        Path(tldw_chatbook.__file__).parent
++        / "UI"
++        / "Library_Modules"
++        / "library_rag_search_controller.py",
+     ]
++    request_calls = []
++    for source_path in source_paths:
++        tree = ast.parse(source_path.read_text())
++        request_calls.extend(
++            node
++            for node in ast.walk(tree)
++            if isinstance(node, ast.Call)
++            and isinstance(node.func, ast.Name)
++            and node.func.id == "LibraryRagSearchRequest"
++        )
+     assert request_calls, "expected at least one LibraryRagSearchRequest(...) call site"
+     for call in request_calls:
+         keyword_names = {kw.arg for kw in call.keywords}
+         assert "scope" not in keyword_names
+ 
+ 
+ @pytest.mark.asyncio
+ async def test_empty_scope_raises_value_error():
+     """state=='empty' must never reach the service -- callers must
+     short-circuit first (mirrors task-5's EMPTY short-circuit contract)."""
+diff --git a/backlog/docs/library-decomposition-recipe.md b/backlog/docs/library-decomposition-recipe.md
+index 2609c800b..219d93b8b 100644
+--- a/backlog/docs/library-decomposition-recipe.md
++++ b/backlog/docs/library-decomposition-recipe.md
+@@ -172,20 +172,37 @@ patches have been retargeted.
+ the full incident write-ups): unbound fake-`self` calls, an instance-
+ attribute monkeypatch on a real object, and — the one that isn't a test at
+ all — a shared helper resolving a subsystem's attribute name at RUNTIME
+ via `getattr(screen, f"...")`/a dict-of-name-strings. None of these are
+ "monkeypatching a name" in the literal sense this section's `grep`
+ recommends, so that grep alone will not find them. §11's per-shape fix
+ recipe (leave the method real, retarget the fixture to match, or route the
+ dynamic lookup through `operator.attrgetter`) is the accommodation for
+ each.**
+ 
++**One more shape, and its exception to "defer to cleanup": a hardcoded-
++file-path census, not a monkeypatch bypass, ships red.** A test that
++AST-walks a specific source file by path (e.g. `library_screen.py`) for a
++call/name it expects to still live there is not a monkeypatch-routing
++hazard in the sense above — it does not silently pass while checking
++nothing, it goes loudly RED the moment the move lands, because the census
++over the old file now finds zero matches. That distinction matters for
++timing: every other bypass shape in this section is deliberately left for
++the subsystem's cleanup PR to retarget, because until then the test still
++*passes* (just without exercising what it thinks it does). A path-census
++guard has no such grace period — it is red at the very commit boundary
++that moves the code, so the no-red-ships precedence wins: retarget the
++census in the SAME PR-stage that moved the code (to the new file, or to
++whichever set of files best expresses the invariant), not deferred to
++cleanup. Cleanup still handles the rest of that subsystem's routing work
++as usual.
++
+ ## 4. The transform whitelist
+ 
+ An extraction PR may contain **only**:
+ 
+ - Verbatim block moves (method/function bodies byte-for-byte, per §1's
+   canon).
+ - Import-path changes.
+ - Constructor/property bindings — the two binding kinds in §1, plus
+   generated controller-local `@property` accessors for the subsystem's own
+   state fields (same generator shape as the state-PR shim generator, §1
+diff --git a/tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py b/tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py
+index b4dd5e196..ceb5dd04c 100644
+--- a/tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py
++++ b/tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py
+@@ -188,32 +188,65 @@ instruction to re-verify rather than lean on the field-level finding.
+      ``Mock(wraps=...)`` in ``Tests/UI/test_library_shell.py:29076``,
+      asserting ``call_count == 0`` on a repeat steady-state snapshot (the
+      change-gate's own no-op path). Its ONLY caller is
+      ``_sync_library_rag_scope_toggle_and_run_gate_widgets`` (a mover),
+      via ``self.run_worker(self._mirror_library_rag_scope_recovery(), ...)``
+      -- if both moved to this controller, that call would resolve against
+      the CONTROLLER's own method, bypassing the SCREEN-instance spy and
+      making the ``call_count == 0`` assertion trivially (and silently)
+      true regardless of whether the real logic still behaves correctly.
+ 
+-   Two additional monkeypatch sites the same repo-wide census found are
+-   confirmed SAFE and need no exclusion, because their only caller stays
+-   screen-resident (not a moved cluster member) and therefore always
+-   invokes them with ``self`` = the real, patched screen instance
+-   regardless of where the underlying implementation lives:
+-   ``_focused_library_rag_result_card_index`` (patched in
+-   ``Tests/UI/test_screen_navigation.py:2430``, but its only caller,
+-   ``LibraryScreen.check_action``, is not a cluster member) and
+-   ``_sync_library_rag_scope_toggle_and_run_gate_widgets`` itself (``Mock``
+-   -wrapped in ``test_library_shell.py:28843``, but its only external
+-   caller, ``_apply_local_source_snapshot``, is one of recipe §3's four
+-   permanently screen-routed names) -- MOVE normally.
++   Two additional monkeypatch sites the same repo-wide census found need a
++   closer look than "only caller stays screen-resident, so it's safe" --
++   fix-round correction (the caller counts below were wrong in the first
++   pass of this docstring):
++
++   - ``_focused_library_rag_result_card_index`` (patched in
++     ``Tests/UI/test_screen_navigation.py:2430``) has FOUR callers, not
++     one: ``LibraryScreen.check_action`` (screen-resident, never a cluster
++     member) plus THREE controller-internal movers, all on THIS class --
++     ``action_library_rag_result_card_select`` (~1123),
++     ``action_library_rag_result_card_open`` (~1135), and
++     ``action_library_rag_use_in_console`` (~1155). The one test that
++     patches this name (``screen._focused_library_rag_result_card_index =
++     lambda: ...``, a bare instance-attribute assignment) only ever calls
++     ``screen.check_action(...)`` -- it never invokes any of the three
++     ``action_library_rag_result_card_*``/``action_library_rag_use_in_
++     console`` methods, so it happens to be safe today. But the bypass
++     hazard is real and live, the SAME shape as the ``_sync_library_
++     canvas`` paragraph above: because the three action methods moved to
++     THIS controller, they call ``self._focused_library_rag_result_card_
++     index()`` with ``self`` = the CONTROLLER instance. A future test that
++     patches ``screen._focused_library_rag_result_card_index`` and then
++     presses Enter/``o``/``u`` (rather than calling ``check_action``
++     directly) would silently miss the patch on those three paths while
++     ``check_action`` alone still observed it. MOVES normally today (no
++     current test is broken by it), but this paragraph exists so that gap
++     can be diagnosed quickly if it is ever tripped, rather than
++     rediscovered from scratch.
++   - ``_sync_library_rag_scope_toggle_and_run_gate_widgets`` itself
++     (``Mock``-wrapped as a screen-instance attribute in
++     ``test_library_shell.py:28843``) has exactly ONE external caller:
++     ``_reconcile_library_entry_state`` (``library_screen.py:~12509``), a
++     screen-resident method that was never a cluster candidate and never
++     moved. It is NOT one of recipe §3's four permanently screen-routed
++     names (``_list_local_source_snapshot``/``_refresh_local_source_
++     snapshot``/``_apply_local_source_snapshot``/``_refresh_library_note_
++     detail``, an unrelated list guarding unrelated shell infrastructure);
++     it is simply screen-resident on its own, independent merits, with no
++     protection borrowed from that list. Because that caller invokes
++     ``self._sync_library_rag_scope_toggle_and_run_gate_widgets()`` with
++     ``self`` = the real, patched screen instance, the instance-level
++     ``Mock`` shadows the class-level delegator (instance attributes shadow
++     class attributes in Python's attribute lookup) regardless of where
++     the underlying implementation lives -- MOVES normally.
++
+    ``_apply_library_rag_search_outcome`` is also patched (instance- and
+    class-level, ``test_library_shell.py:7407``/``:7556``) but every site
+    uses a REAL, fully-constructed ``LibraryScreen`` (never an unbound fake),
+    so an unbound class-level call (``real_apply(screen, request, outcome)``)
+    still resolves correctly through this method's own screen-side
+    delegator -- MOVES normally; its own internal calls to the two excluded
+    builder methods above are now safe by construction (bound as named
+    dependencies, §-canon below).
+ 
+ **42 of the 50 candidates move onto this controller.**

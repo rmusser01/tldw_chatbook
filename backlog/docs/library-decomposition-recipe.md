@@ -487,6 +487,26 @@ rediscover the same red from scratch.
   branch-unique names passed cleanly on the same combined re-run
   (ordinary xdist noise, not investigated further per §7's own
   precedent for a name that passes on re-run).
+- Wave-3 Task 5 (wave close)'s own full sequential xdist paired-baseline
+  sweep (branch 357 failed/3924 passed vs. baseline `a150fc766`, `git
+  stash -u`, 349 failed/3932 passed; 347 shared, 10 branch-unique, 2
+  baseline-unique) found 4 more, confirmed on a SECOND `git stash -u` to
+  the same pristine `a150fc766` tree, combined single-process (2 of the
+  10 branch-unique names already matched Task 4's own two entries just
+  above, not re-derived): `Tests/UI/test_library_notes_reader.py::
+  test_wide_editor_deep_link_keeps_reader_navigation_and_local_back` and
+  `Tests/UI/test_screen_navigation.py::{test_generic_library_entry_lands_
+  hub_on_first_visit, test_generic_reentry_returns_to_library_landing,
+  test_library_screen_round_trip_returns_to_landing_with_rag_draft}` --
+  a Notes reader test and three generic screen-navigation tests, none
+  touching Search/RAG logic; this task's own diff is docstring/comment-
+  only. The last of these, `..._with_rag_draft`, is the SAME name Task
+  4's own sweep flagged as BASELINE-unique (§18's sweep evidence) --
+  flipping which side it fails on between two different runs is itself
+  strong independent evidence of pure run-to-run flakiness, not a
+  regression tied to either tree. The other 4 of the 10 branch-unique
+  names passed cleanly on the same combined re-run (ordinary xdist
+  noise). **Zero real regressions.**
 
 ## 8. Subsystem order (spec, "Order of work")
 
@@ -2052,7 +2072,10 @@ fix round 1).
 fix round 1, two false-caller-count corrections in the module docstring)
 `→ 1895` (this cleanup task, the ruled moved-body-docstring correction
 below -- comment-only growth both times, zero method bodies touched
-either time).
+either time) `→ 1897` (Task 5, wave close: a stale present-tense claim in
+the same module's docstring -- "`LibraryScreen` carries [the shim]" --
+corrected to past tense, +2 lines, same-commit re-pin; §18 lesson 8
+below).
 
 ### Delegator census -- 30 KEEP, 12 PRUNED (~29%)
 
@@ -2253,4 +2276,80 @@ task-4-report.md`).
    an unrelated Console controller). Cost here was small (two files read
    and correctly excluded), but a less careful census could have
    "retargeted" an unrelated module's own field by string-matching alone.
+4. **A "this method reads all N fields" claim needs a per-field grep
+   against the actual body, not an impression of what the method is
+   "basically doing."** Task 2's own state-shape section originally
+   claimed `_library_rag_panel_state` reads "all 20 fields in one call"
+   via a nonexistent "continuation" -- the method is a single `return
+   LibraryRagPanelState.from_values(...)` statement with no continuation
+   at all. Review's fix round re-derived the claim from a mechanical
+   per-field grep of the method's actual body: it reads exactly 14 of 20
+   directly, with the other 6 traced to their real, different consumers
+   (two staleness guards, a render-skip cache, two lock primitives, one
+   change-gate cache) instead of being asserted read there too. The
+   one-object DECISION did not change -- all 20 fields still consume
+   inside one lock-serialized call graph -- only its supporting evidence
+   did. Generalizes wave-2's own "a 'verbatim' claim needs the same
+   evidence discipline as a test-passing claim" lesson (§16 lesson 1) to
+   fan-out claims about what a single method reads: state the count from
+   a grep, not an impression, and trace every field NOT in that count to
+   where it is actually used.
+5. **A moved-body docstring's false claim can only be corrected in the
+   CLEANUP PR, never the move PR itself.** Task 3's own review found
+   `_sync_library_rag_scope_toggle_and_run_gate_widgets`'s moved-body
+   docstring carrying a false caller claim, byte-for-byte ORIGINAL text
+   already present on the screen before the move -- fixing it inside the
+   controller PR would have violated the byte-for-byte canon (§1) on a
+   body that PR is not allowed to edit. Ruled (progress.md) to defer the
+   correction to the cleanup PR, mirroring an identical wave-2 precedent
+   for the same shape; landed in Task 4 (see "The ruled moved-docstring
+   correction" above). The byte-for-byte canon's "moved bodies are never
+   edited" applies to a body's docstring exactly as it applies to its
+   code -- a review finding a stale docstring claim inside a moved body is
+   not licence to fix it on the spot; it is a cleanup-PR-scoped finding,
+   ruled and tracked until the PR type that IS allowed to touch it lands.
+6. **The no-red-ships precedent (§3) held under a second, independent
+   live test.** Task 3's own path-census test
+   (`test_library_screen_call_sites_never_pass_scope_kwarg`) went red the
+   instant the controller PR moved its target call site off the screen --
+   a hardcoded-file-path census, not a monkeypatch-routing bypass, so §3's
+   exception applies: it cannot wait for the cleanup PR the way an
+   ordinary test-bypass shape can, because it is red at the very commit
+   boundary that moves the code. Retargeted in the SAME fix round that
+   landed the controller PR (assertions preserved, only the census path
+   changed), not deferred to cleanup -- confirming §3's rule holds for a
+   second, independently-discovered instance of the same shape (its first
+   instance is documented in §3 itself).
+7. **A brand-new controller file born mid-wave was caught, pinned, and
+   re-pinned entirely by the self-defending glob mechanism (§17), with
+   zero manual row-adding needed.** `library_rag_search_controller.py` did
+   not exist before Task 3; the moment it did,
+   `test_every_controller_file_has_a_budget_row`'s glob
+   (`UI/Library_Modules/*_controller.py`) found it unlisted and failed
+   loudly, exactly as §17 designed -- forcing a `_BUDGETS` row at its
+   exact measured line count (1857) in the SAME commit that created the
+   file. It then grew twice more (Task 3's own fix round, Task 4's ruled
+   docstring fix), each growth re-pinned in the SAME commit as the change
+   that caused it (1857 -> 1890 -> 1895), per §17's re-pin-at-move flow
+   (identical to the screen ratchet's §6 rule). This is the governance
+   mechanism's first live exercise since task-31203 AC#4 landed it, and it
+   worked exactly as designed on the first subsystem to need it.
+8. **A battery run captured BEFORE a later edit does not verify that
+   edit -- re-measure fresh after every edit, not just after the first
+   one in a session.** Task 5 (wave close) ran the full ratchet battery
+   green, THEN fixed a stale docstring claim in `library_rag_search_
+   controller.py` (lesson 5's mechanism, applied to a wave-1 file this
+   time) as a separate, later step -- the rewrite needed 2 more lines to
+   read naturally, growing the file from 1895 to 1897 without re-running
+   the ratchet afterward. The drift sat unnoticed until a later,
+   unrelated fresh-measurement pass (`_measure()` called directly, not
+   through pytest) caught it; `test_controller_does_not_grow_past_its_
+   budget` confirmed red on re-run. Re-pinned 1895 -> 1897 same-commit,
+   battery re-confirmed green. The general lesson: "the battery was
+   green" is a claim about the tree AT THE TIME it ran, not a durable
+   property of the tree -- any edit after the last green run, however
+   small or comment-only it looks, needs its own fresh verification,
+   exactly the discipline lessons 4-5 above ask of evidence claims in
+   general, now caught turning inward on this task's own work rather
+   than a prior task's.
 
