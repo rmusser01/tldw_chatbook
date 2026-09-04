@@ -202,24 +202,48 @@ import json
 import sys
 
 
+FLAG_TIME_MODULES: list = []
+
+
+def _install_flag_time_snapshot(app_class) -> None:
+    # Copy sys.modules AT THE INSTANT `_ui_ready` flips, synchronously
+    # inside the assignment, not on the census's next poll tick. The app
+    # sets the flag and keeps running its mount path, which arms 0.1s
+    # timers (collections-capture wiring, audio service, workspace
+    # provisioning) that are deferred past `_ui_ready` on purpose; when the
+    # loop is starved after the flag on a slow runner the 5ms poll woke
+    # AFTER those timers and counted their imports (task-31281: PR #2373
+    # measured 973, 973, 977 on the same tree -- the 977 run carried five
+    # Library.collections_capture_* modules that dev's own run did not).
+    # A data descriptor on the class intercepts the instance assignment, so
+    # the count is exactly what ADR-097 pins: resident at `_ui_ready`.
+    def _get(self):
+        return self.__dict__.get("_ui_ready_flag", False)
+
+    def _set(self, value):
+        self.__dict__["_ui_ready_flag"] = value
+        if value and not FLAG_TIME_MODULES:
+            FLAG_TIME_MODULES.extend(sys.modules)
+
+    app_class._ui_ready = property(_get, _set)
+
+
 async def main() -> None:
     import tldw_chatbook.app
 
+    _install_flag_time_snapshot(tldw_chatbook.app.TldwCli)
     app = tldw_chatbook.app.TldwCli()
     async with app.run_test(size=(120, 40)):
         while not getattr(app, "_ui_ready", False):
             await asyncio.sleep(0.005)
-        # Snapshot BEFORE iterating: background threads (tick syncs, catalog
-        # refresh) keep importing after _ui_ready, and iterating the live
-        # dict raised "dictionary changed size during iteration" -- an
-        # intermittent guardrails failure on PR #2255 and a sibling branch,
-        # 2026-08-31. A point-in-time copy is also the honest census: every
-        # module in it existed at the same instant.
-        modules_now = list(sys.modules)
+        # The copy taken by the setter is also the honest census: every
+        # module in it existed at the same instant, and iterating the live
+        # dict raised "dictionary changed size during iteration" (PR #2255,
+        # 2026-08-31).
         mods = sorted(
             m
-            for m in modules_now
-            if m.startswith("tldw_chatbook") and sys.modules[m] is not None
+            for m in FLAG_TIME_MODULES
+            if m.startswith("tldw_chatbook") and sys.modules.get(m) is not None
         )
         for m in mods:
             print("MOD:" + m, flush=True)

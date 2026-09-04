@@ -158,6 +158,31 @@ instead of landing exactly at the local cap.
 
 ---
 
+## A census taken on the next tick is not a census taken at the flag
+
+**PR #2373 / task-31281, 2026-09-04.** The UI-ready module census failed on
+three consecutive CI runs of what was, after the second, the same tree: 973,
+973, then 977 modules against the 972 cap. The first two carried exactly the
+one new module the PR added (fixed by lazy-mounting the widget, ADR-097
+response 1). The third did not contain that module at all -- it carried five
+`Library.collections_capture_*` modules that neither sibling run nor `dev`'s
+own run of the merged tree had. The app sets `_ui_ready` and then keeps
+running its mount path, which arms 0.1s timers that are deferred past
+readiness *by design*; the census polled the flag every 5ms and copied
+`sys.modules` when it woke, and on a starved runner those timers won. `dev`
+sits exactly at the cap, so the "+/-1 wobble headroom" the constant's own
+comment promises does not exist, and a one-run race flips the check red.
+
+**What to do.** When a guard's contract is "resident at instant X", sample at
+instant X -- here, a class-level property whose setter copies `sys.modules`
+synchronously inside the `self._ui_ready = True` assignment -- never on the
+next scheduler turn after observing X. And when a non-required check fails on
+your PR, read its `+` list before believing it: if your module is not in it,
+compare against the base branch's own run of the same tree before spending a
+round on a fix.
+
+---
+
 ## Shipped migration and ADR numbers are allocation records, not merge labels
 
 **TASK-24613, 2026-08-30.** The Agent Lessons worktree and a newer `dev`
