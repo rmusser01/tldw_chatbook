@@ -222,6 +222,15 @@ class TestThemeProvider:
             assert len(theme_specific_hits) >= 1
 
     @pytest.mark.asyncio
+    async def test_search_bare_theme_name_shows_switch_command(self, theme_provider):
+        """A registered theme is discoverable by typing just its name (PR #2374)."""
+        hits = []
+        async for hit in theme_provider.search("camono"):
+            hits.append(hit)
+
+        assert any("Switch to Camono" in str(h.text) for h in hits)
+
+    @pytest.mark.asyncio
     async def test_search_filters_themes_correctly(self, theme_provider):
         """Test that theme search filters work correctly."""
         test_keywords = ["dark", "light", "gruvbox", "solarized", "dracula"]

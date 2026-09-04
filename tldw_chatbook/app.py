@@ -1128,9 +1128,18 @@ class ThemeProvider(Provider):
                 help="Open theme selection menu",
             )
 
-        # Only show individual themes if user is specifically searching for theme-related terms
-        if any(
-            term in query.lower()
+        # Get available theme names from registered themes
+        available_themes = ["textual-dark", "textual-light"]  # Built-in themes
+        # Add custom themes from ALL_THEMES
+        for theme in ALL_THEMES:
+            theme_name = theme.name if hasattr(theme, "name") else str(theme)
+            available_themes.append(theme_name)
+
+        # Only show individual themes if user is specifically searching for
+        # theme-related terms or (part of) a registered theme's name
+        query_lower = query.lower().strip()
+        keyword_match = any(
+            term in query_lower
             for term in [
                 "switch",
                 "theme",
@@ -1141,14 +1150,12 @@ class ThemeProvider(Provider):
                 "gruvbox",
                 "dracula",
             ]
-        ):
-            # Get available theme names from registered themes
-            available_themes = ["textual-dark", "textual-light"]  # Built-in themes
-            # Add custom themes from ALL_THEMES
-            for theme in ALL_THEMES:
-                theme_name = theme.name if hasattr(theme, "name") else str(theme)
-                available_themes.append(theme_name)
-
+        )
+        name_match = bool(query_lower) and any(
+            query_lower in name or query_lower in name.replace("_", " ").replace("-", " ")
+            for name in available_themes
+        )
+        if keyword_match or name_match:
             for theme_name in available_themes:
                 command_text = f"Theme: Switch to {theme_name.replace('_', ' ').replace('-', ' ').title()}"
                 score = matcher.match(command_text)
