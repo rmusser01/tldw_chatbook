@@ -8,7 +8,7 @@ import os
 import re
 import stat
 import unicodedata
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -446,13 +446,20 @@ def _revalidate_profile(profile: VllmLaunchProfileV1) -> VllmLaunchProfileV1:
 
 
 def _verify_open_regular_file(path: Path, descriptor: int) -> None:
+    """Verify one private user-owned leaf or fail on unsupported platforms."""
+
     opened = os.fstat(descriptor)
     if not stat.S_ISREG(opened.st_mode):
         raise OSError("profile storage leaf is not a regular file")
     if stat.S_IMODE(opened.st_mode) & 0o077:
         raise OSError("profile storage leaf permissions are not private")
     get_effective_uid = getattr(os, "geteuid", None)
-    if get_effective_uid is not None and opened.st_uid != get_effective_uid():
+    if get_effective_uid is None:
+        raise OSError("profile storage ownership cannot be verified")
+    effective_uid = get_effective_uid()
+    if type(effective_uid) is not int or effective_uid < 0:
+        raise OSError("profile storage ownership cannot be verified")
+    if opened.st_uid != effective_uid:
         raise OSError("profile storage leaf has a different owner")
     named = path.lstat()
     if stat.S_ISLNK(named.st_mode) or (
@@ -543,8 +550,14 @@ class VllmProfileRepository:
             raise VllmProfileCorrupt("vLLM profile document is unavailable") from error
 
     @contextmanager
-    def _exclusive_transaction(self) -> Iterator[None]:
-        """Serialize read/CAS/replace across threads and separate app processes."""
+    def _exclusive_transaction(self) -> Iterator[Callable[[], None]]:
+        """Serialize read/CAS/replace across threads and separate app processes.
+
+        The app's private user-data directory is the trusted parent boundary. If
+        another principal can rename entries in that directory, no userspace leaf
+        check can eliminate the final rename window; the shared atomic replace
+        still replaces rather than follows a last-instant destination symlink.
+        """
 
         _reject_symlink_leaf(self.path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -565,7 +578,16 @@ class VllmProfileRepository:
         try:
             portalocker.lock(stream, portalocker.LockFlags.EXCLUSIVE)
             locked = True
-            yield
+
+            def verify_held_lock() -> None:
+                try:
+                    _verify_open_regular_file(lock_path, stream.fileno())
+                except OSError as error:
+                    raise VllmProfileCorrupt(
+                        "vLLM profile storage is unavailable"
+                    ) from error
+
+            yield verify_held_lock
         finally:
             if locked:
                 portalocker.unlock(stream)
@@ -585,6 +607,7 @@ class VllmProfileRepository:
         profiles: tuple[VllmLaunchProfileV1, ...],
         selected_profile_id: str,
         profile: VllmLaunchProfileV1,
+        verify_held_lock: Callable[[], None],
     ) -> VllmProfileMutation:
         validated_profiles = tuple(
             _revalidate_profile(candidate) for candidate in profiles
@@ -604,6 +627,7 @@ class VllmProfileRepository:
         # Round-trip through the strict decoder before the shared writer is called.
         _decode_document(payload)
         _reject_symlink_leaf(self.path)
+        verify_held_lock()
         atomic_write_json(self.path, payload, mode=0o600, indent=2)
         return VllmProfileMutation(validated_profile, document)
 
@@ -615,7 +639,8 @@ class VllmProfileRepository:
         if type(profile) is not VllmLaunchProfileV1:
             raise VllmProfileValidationError("profile must be an exact V1 profile")
         expected = self._expected_revision(expected_revision)
-        with _REPOSITORY_LOCK, self._exclusive_transaction():
+        with _REPOSITORY_LOCK, self._exclusive_transaction() as verify_held_lock:
+            verify_held_lock()
             current, existed = self._load_locked_with_presence()
             if current.revision != expected:
                 raise VllmProfileConflict("profile revision changed")
@@ -634,13 +659,20 @@ class VllmProfileRepository:
                 if len(current.profiles) >= MAX_VLLM_PROFILES:
                     raise VllmProfileValidationError("profile store is capped at 32")
                 profiles = current.profiles + (profile,)
-            return self._commit(current, profiles, profile.profile_id, profile)
+            return self._commit(
+                current,
+                profiles,
+                profile.profile_id,
+                profile,
+                verify_held_lock,
+            )
 
     def select(self, profile_id: str, *, expected_revision: int) -> VllmProfileMutation:
         """Persist selection without changing launch or process state."""
 
         expected = self._expected_revision(expected_revision)
-        with _REPOSITORY_LOCK, self._exclusive_transaction():
+        with _REPOSITORY_LOCK, self._exclusive_transaction() as verify_held_lock:
+            verify_held_lock()
             current = self._load_locked()
             if current.revision != expected:
                 raise VllmProfileConflict("profile revision changed")
@@ -654,7 +686,13 @@ class VllmProfileRepository:
             )
             if profile is None:
                 raise VllmProfileValidationError("profile is unavailable")
-            return self._commit(current, current.profiles, profile.profile_id, profile)
+            return self._commit(
+                current,
+                current.profiles,
+                profile.profile_id,
+                profile,
+                verify_held_lock,
+            )
 
     def rename(
         self, profile_id: str, name: str, *, expected_revision: int
@@ -662,7 +700,8 @@ class VllmProfileRepository:
         """Rename one profile under the canonical uniqueness boundary."""
 
         expected = self._expected_revision(expected_revision)
-        with _REPOSITORY_LOCK, self._exclusive_transaction():
+        with _REPOSITORY_LOCK, self._exclusive_transaction() as verify_held_lock:
+            verify_held_lock()
             current = self._load_locked()
             if current.revision != expected:
                 raise VllmProfileConflict("profile revision changed")
@@ -672,7 +711,11 @@ class VllmProfileRepository:
                     renamed = replace(candidate, name=name)
                     mutable[index] = renamed
                     return self._commit(
-                        current, tuple(mutable), current.selected_profile_id, renamed
+                        current,
+                        tuple(mutable),
+                        current.selected_profile_id,
+                        renamed,
+                        verify_held_lock,
                     )
             raise VllmProfileValidationError("profile is unavailable")
 
@@ -682,7 +725,8 @@ class VllmProfileRepository:
         """Duplicate one profile using the first deterministic free copy suffix."""
 
         expected = self._expected_revision(expected_revision)
-        with _REPOSITORY_LOCK, self._exclusive_transaction():
+        with _REPOSITORY_LOCK, self._exclusive_transaction() as verify_held_lock:
+            verify_held_lock()
             current = self._load_locked()
             if current.revision != expected:
                 raise VllmProfileConflict("profile revision changed")
@@ -716,13 +760,15 @@ class VllmProfileRepository:
                 current.profiles + (duplicate,),
                 duplicate.profile_id,
                 duplicate,
+                verify_held_lock,
             )
 
     def delete(self, profile_id: str, *, expected_revision: int) -> VllmProfileMutation:
         """Delete one profile, recreating Default vLLM when it was the last."""
 
         expected = self._expected_revision(expected_revision)
-        with _REPOSITORY_LOCK, self._exclusive_transaction():
+        with _REPOSITORY_LOCK, self._exclusive_transaction() as verify_held_lock:
+            verify_held_lock()
             current = self._load_locked()
             if current.revision != expected:
                 raise VllmProfileConflict("profile revision changed")
@@ -744,4 +790,10 @@ class VllmProfileRepository:
                     for candidate in profiles
                     if candidate.profile_id == current.selected_profile_id
                 )
-            return self._commit(current, profiles, selected.profile_id, selected)
+            return self._commit(
+                current,
+                profiles,
+                selected.profile_id,
+                selected,
+                verify_held_lock,
+            )

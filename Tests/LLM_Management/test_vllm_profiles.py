@@ -12,6 +12,7 @@ from uuid import uuid4
 import portalocker
 import pytest
 
+from tldw_chatbook.UI.LLM_Management import vllm_profiles as profile_storage
 from tldw_chatbook.UI.LLM_Management.vllm_profiles import (
     DEFAULT_PROFILE_NAME,
     MAX_VLLM_PROFILES,
@@ -559,6 +560,117 @@ def test_document_with_broad_permissions_fails_closed_without_chmod(tmp_path: Pa
 
     assert path.read_bytes() == original
     assert path.stat().st_mode & 0o777 == 0o640
+
+
+def test_unavailable_ownership_api_fails_closed_without_mutating_document(
+    monkeypatch,
+    tmp_path: Path,
+):
+    path = tmp_path / "profiles.json"
+    repo = VllmProfileRepository(path)
+    repo.save(profile_named("Owned"), expected_revision=0)
+    original = path.read_bytes()
+    original_mode = path.stat().st_mode & 0o777
+    monkeypatch.delattr(profile_storage.os, "geteuid")
+
+    with pytest.raises(VllmProfileCorrupt):
+        repo.load()
+
+    assert path.read_bytes() == original
+    assert path.stat().st_mode & 0o777 == original_mode
+
+
+def test_lock_path_replacement_after_acquisition_fails_before_cas_write(
+    monkeypatch,
+    tmp_path: Path,
+):
+    path = tmp_path / "profiles.json"
+    repo = VllmProfileRepository(path)
+    saved = repo.save(profile_named("Existing"), expected_revision=0)
+    original_document = path.read_bytes()
+    lock_path = path.with_name(f"{path.name}.lock")
+    held_target = tmp_path / "held-lock-target"
+    replacement_source = tmp_path / "replacement-lock-source"
+    held_bytes = b"HELD_LOCK_TARGET"
+    replacement_bytes = b"REPLACEMENT_LOCK_TARGET"
+    lock_path.write_bytes(held_bytes)
+    lock_path.chmod(0o600)
+    replacement_source.write_bytes(replacement_bytes)
+    replacement_source.chmod(0o600)
+    real_lock = portalocker.lock
+
+    def replace_named_lock_after_acquisition(stream, flags):
+        result = real_lock(stream, flags)
+        lock_path.rename(held_target)
+        replacement_source.rename(lock_path)
+        return result
+
+    monkeypatch.setattr(portalocker, "lock", replace_named_lock_after_acquisition)
+
+    with pytest.raises(VllmProfileCorrupt):
+        repo.save(
+            replace(saved.profile, port=8001),
+            expected_revision=saved.document.revision,
+        )
+
+    assert path.read_bytes() == original_document
+    assert held_target.read_bytes() == held_bytes
+    assert held_target.stat().st_mode & 0o777 == 0o600
+    assert lock_path.read_bytes() == replacement_bytes
+    assert lock_path.stat().st_mode & 0o777 == 0o600
+    with held_target.open("a+b") as held_stream:
+        real_lock(
+            held_stream,
+            portalocker.LockFlags.EXCLUSIVE | portalocker.LockFlags.NON_BLOCKING,
+        )
+        portalocker.unlock(held_stream)
+
+
+def test_lock_path_replacement_after_cas_validation_fails_before_atomic_write(
+    monkeypatch,
+    tmp_path: Path,
+):
+    path = tmp_path / "profiles.json"
+    repo = VllmProfileRepository(path)
+    saved = repo.save(profile_named("Existing"), expected_revision=0)
+    original_document = path.read_bytes()
+    lock_path = path.with_name(f"{path.name}.lock")
+    held_target = tmp_path / "held-lock-target"
+    replacement_source = tmp_path / "replacement-lock-source"
+    held_bytes = b"HELD_LOCK_TARGET"
+    replacement_bytes = b"REPLACEMENT_LOCK_TARGET"
+    lock_path.write_bytes(held_bytes)
+    lock_path.chmod(0o600)
+    replacement_source.write_bytes(replacement_bytes)
+    replacement_source.chmod(0o600)
+    real_reject_symlink = profile_storage._reject_symlink_leaf
+    document_checks = 0
+
+    def replace_lock_at_final_document_check(checked_path: Path) -> None:
+        nonlocal document_checks
+        real_reject_symlink(checked_path)
+        if checked_path != path:
+            return
+        document_checks += 1
+        if document_checks == 2:
+            lock_path.rename(held_target)
+            replacement_source.rename(lock_path)
+
+    monkeypatch.setattr(
+        profile_storage,
+        "_reject_symlink_leaf",
+        replace_lock_at_final_document_check,
+    )
+
+    with pytest.raises(VllmProfileCorrupt):
+        repo.save(
+            replace(saved.profile, port=8001),
+            expected_revision=saved.document.revision,
+        )
+
+    assert path.read_bytes() == original_document
+    assert held_target.read_bytes() == held_bytes
+    assert lock_path.read_bytes() == replacement_bytes
 
 
 def test_future_version_is_preserved_byte_for_byte(tmp_path: Path):

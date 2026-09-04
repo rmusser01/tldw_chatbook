@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 22:34'
-updated_date: '2026-09-04 04:42'
+updated_date: '2026-09-04 04:57'
 labels:
   - vllm
   - lab
@@ -44,9 +44,13 @@ Fix Round 1:
 7. Harden document and adjacent lock handling against symlinks using descriptor-based no-follow checks, and add a deterministic two-process same-revision race test.
 8. Amend accepted ADR-115 to the approved Task 4 exact V1 schema and rerun all scoped verification gates.
 
+Fix Round 2:
+9. Add deterministic regressions for unavailable ownership verification and lock-path replacement after acquisition, proving bytes and lock targets remain untouched.
+10. Fail closed when platform ownership cannot be verified and revalidate the held lock descriptor/path identity immediately before protected document access and atomic replacement.
+
 ADR required: yes
 ADR path: backlog/decisions/115-vllm-lab-console-readiness-and-profiles.md
-Reason: ADR-115 already governs durable launch-profile ownership, optimistic concurrency, privacy, and restart sequencing; this fix amends its detailed V1 schema to match the accepted implementation plan rather than creating a duplicate decision.
+Reason: ADR-115 governs the existing device-local profile/CAS security boundary; this round tightens implementation safety without changing that accepted architecture.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -55,4 +59,6 @@ Reason: ADR-115 already governs durable launch-profile ownership, optimistic con
 Implemented ADR-115’s device-local vLLM profile and restart boundaries. Added exact strict V1 JSON profiles at get_user_data_dir()/vllm_launch_profiles.json with a 32-profile cap, canonical Unicode/casefold name uniqueness, deterministic duplicate suffixes, restrictive atomic writes, and cross-process portalocker CAS; future/corrupt documents and write failures remain byte-preserving and fail closed. Added selected-profile restoration through thread-worker I/O, launch-only raw-argument isolation, exact claim-bound immutable Current server snapshots, safe Next restart dirty labels, and two-generation restart sequencing that proves the old process dead and claim released before a new reservation. Termination failure retains the old snapshot and creates no second process. No DB/schema migration.
 
 Fix Round 1 tightened the same ADR-115 boundary: model values now receive source-specific non-secret validation during construction, decode, and immediately before write; nonexistent safe absolute local paths remain repairable while repository-ID, option, traversal, control, and credential-URL violations fail generically. Profile document and adjacent lock leaves now use no-follow descriptor opens, regular/current-owner/private-mode and inode-identity checks, with no chmod of existing pathnames. A simultaneous two-process revision-0 barrier proves one successful CAS and one conflict. ADR-115 remains Accepted and is amended to the approved exact V1 key names, 120-code-point names, document selected_profile_id/revision, and intentional omission of updated_at. Focused profile/setup/connection/UI tests, the complete vLLM workflow, full Ruff on new files, scoped Ruff on all touched Python files, focused mypy, formatting of new files, py_compile, and diff checks pass. ADR: backlog/decisions/115-vllm-lab-console-readiness-and-profiles.md. Evidence: .superpowers/sdd/2026-09-03-vllm-lab-console-complete-redesign/task-4-report.md.
+
+Fix Round 2 makes file ownership validation mandatory: platforms without a valid effective-UID API now fail closed before profile bytes are read or written. Each mutation revalidates the exact held lock descriptor against the named private regular lock immediately before document load/revision validation and again immediately before the shared atomic writer. Deterministic inode-swap tests cover both boundaries, preserve the document and both lock targets, and prove the moved held inode is unlocked/closed after failure. This relies on ADR-115’s existing private, user-owned data-directory boundary; if an untrusted principal can rename within that parent, userspace leaf checks cannot eliminate the last instruction-level rename window, while atomic replace still does not follow a destination symlink. No ADR, schema, database, UI, or process-lifecycle change. Exact RED/GREEN and static evidence is appended to .superpowers/sdd/2026-09-03-vllm-lab-console-complete-redesign/task-4-report.md.
 <!-- SECTION:NOTES:END -->
