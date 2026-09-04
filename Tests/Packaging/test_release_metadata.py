@@ -551,6 +551,7 @@ def test_production_pypi_publish_checks_version_before_upload() -> None:
     assert 'run: python Packaging/check_pypi_release.py "$RELEASE_VERSION"' in check_job
     assert "Install output path validation dependencies" in check_job
     assert "python -m pip install loguru packaging psutil pydantic" in check_job
+    assert "PYTHONPATH: ${{ github.workspace }}" in check_job
     assert "needs: [build, check_pypi_release]" in publish_job
     assert "needs.check_pypi_release.outputs.publish_release == 'true'" in publish_job
 

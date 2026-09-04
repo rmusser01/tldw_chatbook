@@ -146,6 +146,7 @@ jobs:
       - name: Check whether version should be published to PyPI
         id: check
         env:
+          PYTHONPATH: ${{ github.workspace }}
           RELEASE_VERSION: ${{ needs.build.outputs.version }}
         run: python Packaging/check_pypi_release.py "$RELEASE_VERSION"
 
