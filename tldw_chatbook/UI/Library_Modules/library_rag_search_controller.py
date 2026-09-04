@@ -62,7 +62,7 @@ methods (Task 2's field census, this task's method call-graph) rather than
 carried forward on the strength of either alone, per the task brief's own
 instruction to re-verify rather than lean on the field-level finding.
 
-**Exclusions -- 7 of the 50, not moved:**
+**Exclusions -- 8 of the 50, not moved:**
 
 1. **3 ``@work``-decorated methods** (export series' "framework-decorator
    self-type assertion" hazard -- Textual's ``@work`` closure asserts
@@ -74,7 +74,66 @@ instruction to re-verify rather than lean on the field-level finding.
    ``_save_library_search_history`` (``@work(thread=True)``). Confirmed by
    reading every one of the 50 candidates' decorator lists -- no other
    candidate carries ``@work`` or any other self-type-asserting decorator.
-2. **4 test-bypass exclusions -- the "instance-attribute monkeypatch"
+2. **1 module-globals-coupling exclusion (recipe §3's SECOND documented
+   bypass shape, distinct from instance-attribute monkeypatching) --
+   found the hard way, by running the battery, not by the census below**:
+   ``_load_library_search_history`` reads the bare name ``get_cli_setting``
+   (a plain module-level import, not ``self.get_cli_setting``). Python
+   resolves a free name against the DEFINING module's ``__globals__``,
+   fixed at definition time -- moving this body to
+   ``library_rag_search_controller.py`` (which carries its own independent
+   ``from ...config import get_cli_setting``) would silently repoint every
+   ``monkeypatch.setattr(library_screen_module, "get_cli_setting", ...)``
+   test away from this method's own call, while leaving OTHER
+   ``get_cli_setting`` call sites still on ``LibraryScreen`` (ingest
+   options, rail-state) unaffected by the same patch -- exactly the
+   "module-globals coupling" shape recipe §3 describes for
+   ``_read_library_ingest_options_from_config``. Confirmed as a REAL
+   regression, not a theoretical one: the full ``-k "(search or rag) and
+   library"`` sweep (§ battery) failed
+   ``test_library_shell_search_history_loads_from_cli_config_fallback``
+   (``screen._library_search_history == ()`` instead of the expected
+   fallback tuple) the one time this method was moved during this task's
+   own execution -- a blanket per-test isolation fixture
+   (``test_library_shell.py:1015``, "tests that want to exercise the
+   CLI-config fallback itself re-patch ``library_screen_module.
+   get_cli_setting`` after this fixture runs") depends on EVERY
+   ``get_cli_setting`` call this subsystem makes resolving through
+   ``library_screen_module``'s own globals, including this one. Fixed by
+   reverting: ``_load_library_search_history`` stays a REAL, full-bodied
+   ``LibraryScreen`` method, byte-for-byte as it always was -- not moved,
+   not a delegator. Its only two callers are ``LibraryScreen.__init__``
+   (the ``LibraryRagSearchState(history=...)`` computed default, task 2)
+   and ``_record_library_search_history`` reads it only through the
+   controller-owned STATE field it populates, never calls it directly. No
+   named dependency binding was needed for this exclusion (no mover calls
+   it).
+
+   **A second, currently-latent instance of the SAME shape was found and
+   deliberately NOT excluded for it**: ``cycle_library_rag_mode``/
+   ``toggle_library_rag_scope_source`` forward ``self`` into the shared
+   ``_sync_library_canvas(screen, kind, ...)`` dispatcher as a bare name
+   (see binding-kind 1 above) -- also monkeypatched at the
+   ``library_screen_module`` level in
+   ``Tests/UI/test_library_entry_compose_once.py`` (4 sites, all
+   ``Mock(wraps=...)``-style spies). Read each of the 4 patched tests'
+   own bodies: none presses the RAG mode-toggle or scope-toggle buttons or
+   asserts on a ``"search"``-kind sync call -- every one exercises
+   ``landing``/``conversations``/``media`` kinds through screen-resident
+   callers (``_apply_local_source_snapshot``, ``_reconcile_library_entry_
+   state``), which still resolve ``_sync_library_canvas`` through
+   ``library_screen_module``'s own globals correctly (those callers never
+   moved). This is the IDENTICAL shape the conversations controller
+   ALREADY shipped in wave-2 (its own ``_sync_library_conversation_
+   canvas`` forwards ``self`` the same way) with no additional
+   accommodation, and the same reasoning applies here: the risk is real in
+   principle but unexercised by any current test, confirmed by the full
+   3-root sweep (§ battery) finding zero failures attributable to it.
+   Recorded here rather than silently accepted -- a future test that DOES
+   press the RAG mode toggle while patching ``library_screen_module.
+   _sync_library_canvas`` would hit this same bypass, and would need this
+   paragraph's context to diagnose quickly.
+3. **4 test-bypass exclusions -- the "instance-attribute monkeypatch"
    shape (conversations exemplar precedent, recipe §11 lesson 2), found by
    a repo-wide census (not just the 2 names Task 2's own characterization
    pass had already flagged) of every ``monkeypatch.setattr(screen,
@@ -157,7 +216,7 @@ instruction to re-verify rather than lean on the field-level finding.
    builder methods above are now safe by construction (bound as named
    dependencies, §-canon below).
 
-**43 of the 50 candidates move onto this controller.**
+**42 of the 50 candidates move onto this controller.**
 
 **Byte-for-byte canon** (moved bodies never edited -- every name they
 reference that is not this controller's own state is rebound under the SAME
@@ -215,6 +274,20 @@ name, per the two binding kinds; see ``ConsoleDictationController.__init__``,
    ``screen.<name>`` on every invocation, at CALL time, not a value
    captured once at construction.
 
+**Construction order -- the usual position.** `LibraryScreen.__init__`
+builds `self._rag_search_controller` right after `self._collections_
+controller`, matching every other controller in this file. An EARLIER
+draft of this task tried building it before `self._rag_search_state`
+instead, on the mistaken premise that `_load_library_search_history`
+(called eagerly, one line below the state's own construction, to compute
+`LibraryRagSearchState`'s computed `history=` default) needed the
+controller to already exist. It does not: that exclusion (module-globals
+coupling, above) means `_load_library_search_history` stays a REAL screen
+method, never a delegator, so `LibraryScreen.__init__`'s eager call
+resolves directly against `self` with no controller involved at all --
+the standard construction position was always safe once that method was
+excluded correctly.
+
 This subsystem's OWN state (every ``_library_rag_<field>``/``_library_
 search_history`` name the moved bodies reference) is exposed through
 generated properties reading ``self._rag_search_state_accessor().<field>``
@@ -238,7 +311,6 @@ from textual.containers import Vertical
 from textual.css.query import NoMatches, QueryError
 from textual.widgets import Button, Collapsible, Input, Static
 
-from ...config import get_cli_setting
 from ...Library.library_rag_answer_service import (
     LibraryRagAnswer,
     library_rag_answer_provider_gate,
@@ -248,8 +320,6 @@ from ...Library.library_rag_state import (
     LIBRARY_RAG_QUERY_MAX_LENGTH,
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
     LIBRARY_RAG_USE_IN_CONSOLE_LOCKED_NOTICE,
-    LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS,
-    LIBRARY_SEARCH_HISTORY_LIMIT,
     LibraryRagPanelState,
     library_rag_scope_summary,
     update_search_history,
@@ -607,74 +677,6 @@ class LibraryRagSearchController:
         return self._refresh_search_rag_panel_state_widgets_fn
 
     # -- moved bodies (byte-for-byte; see module docstring) ---------------
-
-    def _load_library_search_history(self) -> tuple[str, ...]:
-        """Read persisted Library Search/RAG query history, defensively.
-
-        Two sources are consulted, in order:
-
-        1. `self.app_instance.app_config["library"]["search"]["history"]` --
-           the in-memory config dict. This is the primary source: it is what
-           pilots seed directly, and it reflects any history recorded during
-           the current session (`_record_library_search_history` mutates it
-           in place, alongside persisting to disk).
-        2. `get_cli_setting("library.search")` -- a live re-read of
-           `config.toml` via `load_cli_config_and_ensure_existence()`. This
-           fallback exists because `app.app_config` comes from
-           `load_settings()`, whose merged output does NOT reliably surface
-           the `[library.search]` TOML table (it can come back empty even
-           when `config.toml` has history on disk) -- so a freshly started
-           app would otherwise always see empty history despite having
-           persisted some in a prior session. `get_cli_setting` reads the
-           CLI config file directly and does carry the value.
-
-        Only source (1) is used when it already yields a list, so pilots
-        that seed `app_config` directly stay authoritative and never touch
-        disk. Missing keys or a malformed shape from either source quietly
-        fall back to no history; entries are coerced to trimmed strings and
-        capped to the same shape `update_search_history` produces (<= 10
-        entries, <= 200 chars each).
-
-        `config.toml` is user-editable, so each entry is also run through
-        `_safe_text` (control-character stripping, dangerous-pattern
-        removal, length validation) before it ever becomes a history
-        `Button` label -- belt-and-suspenders alongside the markup escape
-        `library_rag_history_children` applies at render time.
-        """
-        app_config = getattr(self.app_instance, "app_config", None)
-        raw = None
-        if isinstance(app_config, dict):
-            library_config = app_config.get("library")
-            if isinstance(library_config, dict):
-                search_config = library_config.get("search")
-                if isinstance(search_config, dict):
-                    raw = search_config.get("history")
-        if not isinstance(raw, list):
-            try:
-                # Dotted 1-arg form: get_cli_setting("library.search") splits
-                # on the first '.' into section="library", key="search" and
-                # returns config["library"]["search"] (the search sub-dict,
-                # not the history list) -- deliberately NOT the 3-arg
-                # ("library.search", "history", default) form, which treats
-                # "library.search" as a single literal top-level section key
-                # and never matches the nested TOML table.
-                search_config = get_cli_setting("library.search")
-            except Exception:
-                search_config = None
-            if isinstance(search_config, dict):
-                raw = search_config.get("history")
-        if not isinstance(raw, list):
-            return ()
-        entries = tuple(
-            sanitized
-            for entry in raw
-            if (
-                sanitized := self._safe_text(
-                    entry, max_length=LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS
-                )
-            )
-        )
-        return entries[:LIBRARY_SEARCH_HISTORY_LIMIT]
 
     def _record_library_search_history(self, query: str) -> None:
         """Update in-memory and persisted Library Search/RAG query history."""

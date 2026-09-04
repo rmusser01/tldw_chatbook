@@ -143,6 +143,14 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 587,
     "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2023,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
+    # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
+    # 2/3): born-governed by the glob above -- new file, pinned at its
+    # exact measured line count on landing (42 moved methods + the
+    # constructor/property scaffolding the byte-for-byte canon requires;
+    # a 43rd candidate, `_load_library_search_history`, was excluded
+    # mid-task -- module-globals coupling on a bare `get_cli_setting`
+    # reference broke a real test fixture -- and stays on the screen).
+    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 1857,
     "tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py": 760,
     "tldw_chatbook/UI/Library_Modules/library_skills_browse_controller.py": 413,
 }

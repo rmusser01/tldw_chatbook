@@ -13,7 +13,7 @@ Task 2's ``test_state_object_fields_match_the_shim_surface`` (every
 controller move (the screen's own shim block is a Task-4 cleanup deletion,
 not a Task-3 concern, per the conversations/export/collections precedent).
 Task 3 adds the full-cluster ownership/same-name-delegator-forwarding checks
-(``_RAG_SEARCH_CLUSTER_METHOD_NAMES``, 43 names) and the controller-side
+(``_RAG_SEARCH_CLUSTER_METHOD_NAMES``, 42 names) and the controller-side
 state-field-coverage check, mirroring ``test_library_collections_wiring.py``
 exactly.
 """
@@ -67,7 +67,8 @@ def test_search_prefixed_state_fields_are_real_state_fields() -> None:
 #: `LibraryScreen` method whose name contains "search" or "rag" (60 raw
 #: matches, matching Task 2's own census), minus 3 Prompts-owned + 7
 #: Media-owned (50 combined-cluster candidates), minus 3 `@work`-decorated
-#: framework-decorator-hazard methods and 4 test-bypass (instance-attribute
+#: framework-decorator-hazard methods, 1 module-globals-coupling exclusion
+#: (`_load_library_search_history`), and 4 test-bypass (instance-attribute
 #: monkeypatch) exclusions -- NOT a prefix/substring shortcut. See
 #: `library_rag_search_controller.py`'s module docstring for the full
 #: per-name reasoning behind every exclusion.
@@ -80,7 +81,6 @@ _RAG_SEARCH_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "_library_rag_answer_chat_kwargs",
     "_library_rag_scope_summary",
     "_library_rail_search_placeholder",
-    "_load_library_search_history",
     "_open_library_rag_result_by_index",
     "_persist_library_search_history",
     "_record_library_search_history",

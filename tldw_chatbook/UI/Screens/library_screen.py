@@ -589,6 +589,7 @@ from ..Library_Modules.library_notes_work_session import (
     NotesWorkSessionPhase,
     reduce_notes_work_session,
 )
+from ..Library_Modules.library_rag_search_controller import LibraryRagSearchController
 from ..Library_Modules.library_rag_search_state import (
     SEARCH_PREFIXED_STATE_FIELDS,
     LibraryRagSearchState,
@@ -2153,7 +2154,12 @@ class LibraryScreen(BaseAppScreen):
         # (`self._load_library_search_history()`) so it is passed as a
         # constructor argument here rather than folded into the
         # dataclass's own default, preserving the original __init__
-        # evaluation order.
+        # evaluation order. `_load_library_search_history` stays a REAL,
+        # full-bodied screen method (wave-3 task 3 test-bypass exclusion --
+        # see `library_rag_search_controller.py`'s module docstring), so
+        # this eager call is safe at this early `__init__` position exactly
+        # as it always was -- unlike a delegator, it needs no controller to
+        # already exist.
         self._rag_search_state = LibraryRagSearchState(
             history=self._load_library_search_history()
         )
@@ -2342,6 +2348,53 @@ class LibraryScreen(BaseAppScreen):
                 lambda value: setattr(
                     self, "_library_collections_capture_controller", value
                 )
+            ),
+        )
+        self._rag_search_controller = LibraryRagSearchController(
+            self,
+            rag_search_state_accessor=lambda: self._rag_search_state,
+            active_library_rail=lambda: self._active_library_rail(),
+            console_setup_would_block=lambda: self._console_setup_would_block(),
+            open_library_item_by_id=(
+                lambda *a, **k: self._open_library_item_by_id(*a, **k)
+            ),
+            safe_text=lambda *a, **k: self._safe_text(*a, **k),
+            select_library_rail_row=(
+                lambda row_id: self._select_library_rail_row(row_id)
+            ),
+            trailing_index=lambda button_id: self._trailing_index(button_id),
+            library_selected_row_id_accessor=lambda: self._library_selected_row_id,
+            library_canvas_projection_depth_accessor=(
+                lambda: self._library_canvas_projection_depth
+            ),
+            library_canvas_resync_pending_accessor=(
+                lambda: self._library_canvas_resync_pending
+            ),
+            set_library_canvas_resync_pending=(
+                lambda value: setattr(self, "_library_canvas_resync_pending", value)
+            ),
+            execute_library_rag_answer=(
+                lambda request, **kwargs: self._execute_library_rag_answer(
+                    request, **kwargs
+                )
+            ),
+            execute_library_rag_search=(
+                lambda request: self._execute_library_rag_search(request)
+            ),
+            save_library_search_history=(
+                lambda history_list: self._save_library_search_history(history_list)
+            ),
+            library_rag_panel_state=lambda: self._library_rag_panel_state(),
+            mirror_library_rag_scope_recovery=(
+                lambda: self._mirror_library_rag_scope_recovery()
+            ),
+            patch_sibling_library_search_input=(
+                lambda selector, value: self._patch_sibling_library_search_input(
+                    selector, value
+                )
+            ),
+            refresh_search_rag_panel_state_widgets=(
+                lambda **k: self._refresh_search_rag_panel_state_widgets(**k)
             ),
         )
         (
@@ -22468,31 +22521,10 @@ class LibraryScreen(BaseAppScreen):
         return entries[:LIBRARY_SEARCH_HISTORY_LIMIT]
 
     def _record_library_search_history(self, query: str) -> None:
-        """Update in-memory and persisted Library Search/RAG query history."""
-        self._library_search_history = update_search_history(
-            self._library_search_history, query
-        )
-        self._persist_library_search_history(list(self._library_search_history))
+        return self._rag_search_controller._record_library_search_history(query)
 
     def _persist_library_search_history(self, history_list: list[str]) -> None:
-        """Write `history_list` into the in-memory config and to disk.
-
-        Shared by `_record_library_search_history` (append a new query) and
-        `clear_library_search_history` (D1: empty the list) so both funnel
-        through one persistence path.
-        """
-        app_config = getattr(self.app_instance, "app_config", None)
-        if isinstance(app_config, dict):
-            library_config = app_config.get("library")
-            if not isinstance(library_config, dict):
-                library_config = {}
-                app_config["library"] = library_config
-            search_config = library_config.get("search")
-            if not isinstance(search_config, dict):
-                search_config = {}
-                library_config["search"] = search_config
-            search_config["history"] = history_list
-        self._save_library_search_history(history_list)
+        return self._rag_search_controller._persist_library_search_history(history_list)
 
     @work(thread=True)
     def _save_library_search_history(self, history: list[str]) -> None:
@@ -41437,24 +41469,7 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Input.Changed, "#library-search-input")
     def handle_library_search_changed(self, event: Input.Changed) -> None:
-        """Track rail-search text as the user types it (task-2016).
-
-        Without this the screen's ``_library_rag_query`` echo only moved on
-        SUBMIT, so every rail rebuild -- and the persisted shell state --
-        re-seeded the box from the last submitted query: text the user typed
-        (or deleted) without submitting resurrected on the next recompose or
-        visit. The mount-echo ``Input.Changed`` Textual fires for the
-        ``value=`` kwarg re-announces the same value, so storing it is
-        idempotent.
-        """
-        event.stop()
-        self._library_rag_query = event.value
-        # task-4023 AC#6 (RC-08): mirror into the Search canvas's query box
-        # when it is mounted, so the two visible inputs can never disagree
-        # (the state is one; the widgets used to drift until a recompose).
-        self._patch_sibling_library_search_input(
-            "#library-rag-query-input", event.value
-        )
+        return self._rag_search_controller.handle_library_search_changed(event)
 
     def _patch_sibling_library_search_input(self, selector: str, value: str) -> None:
         """Keep the OTHER mounted search input showing the same query text.
@@ -41474,62 +41489,13 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Input.Submitted, "#library-search-input")
     async def handle_library_search_submitted(self, event: Input.Submitted) -> None:
-        """Submit the rail-top query to the Search canvas (fast `search` mode).
-
-        The rail search box is the single query truth for Library
-        Search/RAG: submitting it seeds ``_library_rag_query``, selects the
-        promoted Search canvas, and (for a non-blank query) runs it through
-        the same exclusive-worker gate as the in-panel query box
-        (``_start_library_rag_query``). A blank submit still lands on the
-        Search canvas -- so a bare Enter always goes somewhere sensible --
-        but never invokes the search service.
-
-        Args:
-            event: Input submit event emitted by the rail's search box.
-        """
-        event.stop()
-        query = self._safe_text(event.value, max_length=LIBRARY_RAG_QUERY_MAX_LENGTH)
-        self._library_rag_query = query
-        self._library_rag_mode = "search"
-        await self._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
-        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH:
-            # A dirty note editor sitting in an unresolved save conflict
-            # aborts the row switch (`_select_library_rail_row` returns
-            # early without moving `_library_selected_row_id`) -- the rail
-            # submit must not run a query against a canvas the user never
-            # actually reached, and must not record a history entry for it.
-            return
-        if query.strip():
-            await self._start_library_rag_query()
-        self.call_after_refresh(self._focus_library_search_input)
+        return await self._rag_search_controller.handle_library_search_submitted(event)
 
     def _focus_library_search_input(self) -> None:
-        """Re-focus the search box after a submit-triggered recompose.
-
-        ``handle_library_search_submitted`` rebuilds the whole screen, which
-        remounts a brand-new ``#library-search-input``; without this, focus
-        silently falls back to the screen after every search.
-        """
-        rail = self._active_library_rail()
-        if rail is None:
-            return
-        try:
-            rail.query_one("#library-search-input", Input).focus()
-        except (NoMatches, QueryError):
-            pass
+        return self._rag_search_controller._focus_library_search_input()
 
     def _library_rail_search_placeholder(self) -> str:
-        """Placeholder for the rail search box.
-
-        The rail box always feeds the Search canvas now (see
-        ``handle_library_search_submitted``), never a source-specific
-        filter, so the placeholder is unconditional regardless of which
-        rail row is active.
-
-        Returns:
-            The rail search placeholder text.
-        """
-        return "Search Library…"
+        return self._rag_search_controller._library_rail_search_placeholder()
 
     @on(Input.Submitted, "#library-conversations-filter")
     def handle_library_conversations_filter_submitted(self, event: Input.Submitted) -> None:
@@ -41693,209 +41659,48 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Input.Changed, "#library-rag-query-input")
     async def update_library_rag_query(self, event: Input.Changed) -> None:
-        """Refresh the run gate/status region without rebuilding results/history.
-
-        B5 (task-284): unsubmitted query text affects the run gate
-        (enabled/disabled, quiet-line/recovery messaging) and the scope
-        summary/recovery widgets and inspector -- all cheap, bounded
-        refreshes -- but never the Evidence results list or Recent-searches
-        history (search runs on Submitted). This used to call the full
-        panel refresh unconditionally, which tears down and remounts
-        ~100+ widgets (every result row + every history row) on every
-        keystroke even though neither depends on the query text.
-
-        Resets only the in-flight/service-reported status
-        (`_reset_library_rag_in_flight_status`), not the landed results --
-        unlike a full reset, this can't desync the (deliberately untouched)
-        results widget from what `_library_rag_results` says it holds, so
-        clicking an already-visible evidence row keeps working while the
-        user types a new, not-yet-submitted query. Without resetting the
-        status at all, a query typed while a prior search is still
-        in-flight (or just failed) would leave the run gate stuck showing
-        "Searching..."/disabled forever, since that stale request's own
-        outcome gets discarded by `_apply_library_rag_search_outcome`'s
-        query mismatch guard once it lands. `_start_library_rag_query`
-        (Submit/Run) does its own full reset immediately before it
-        replaces the results/history widgets.
-
-        Args:
-            event: The Input.Changed event carrying the query field's
-                current text.
-        """
-        event.stop()
-        if event.value == self._library_rag_query:
-            return
-        self._library_rag_query = event.value
-        # task-4023 AC#6 (RC-08): one query truth at the WIDGET level too.
-        # The STATE was already single-source, but the rail box only
-        # re-seeds on recompose, so typing here left the mounted rail
-        # widget visibly holding the older string (proven live: canvas
-        # "terminals render" beside rail "terminals"). Patch the sibling
-        # in place; its own Changed handler no-ops (value == state).
-        self._patch_sibling_library_search_input("#library-search-input", event.value)
-        self._reset_library_rag_in_flight_status()
-        await self._refresh_search_rag_panel_state_widgets(
-            include_results_and_history=False
-        )
+        return await self._rag_search_controller.update_library_rag_query(event)
 
     @on(Input.Submitted, "#library-rag-query-input")
     async def submit_library_rag_query(self, event: Input.Submitted) -> None:
-        """Run Library Search/RAG from the query field for keyboard-only users."""
-        event.stop()
-        await self._start_library_rag_query()
+        return await self._rag_search_controller.submit_library_rag_query(event)
 
     def _reset_library_rag_retrieval_state(self) -> None:
-        self._library_rag_results = ()
-        self._library_rag_retrieval_status = ""
-        self._library_rag_recovery_state = None
-        self._library_rag_selected_result_id = ""
-        self._library_rag_diagnostics = {}
-        self._library_rag_searched_query = ""
-        self._reset_library_rag_answer_state()
+        return self._rag_search_controller._reset_library_rag_retrieval_state()
 
     def _reset_library_rag_answer_state(self) -> None:
-        """Drop the answer and its staleness guards (PR-3 Task 4).
-
-        Called wherever the results an answer was grounded in stop being the
-        results on screen -- the mode toggle (via
-        `_reset_library_rag_retrieval_state`) and the start of a new search.
-        Clearing the two guard fields is what makes an in-flight answer's
-        eventual arrival a no-op: `_apply_library_rag_answer` compares the
-        request it was generated for against them, so an answer for a query
-        (or mode) the panel has moved on from can never overwrite a newer
-        one. The in-flight flag goes with them, so no reset path can leave a
-        dangling "answering" status behind.
-        """
-        self._library_rag_answer = None
-        self._library_rag_answer_query = ""
-        self._library_rag_answer_mode = ""
-        self._library_rag_answer_in_flight = False
-        self._library_rag_answer_in_flight_provider = ""
+        return self._rag_search_controller._reset_library_rag_answer_state()
 
     def _reset_library_rag_in_flight_status(self) -> None:
-        """Un-stick the run gate without touching landed results (B5/task-284).
-
-        Narrower than `_reset_library_rag_retrieval_state`: clears only the
-        service-reported `retrieval_status`/`recovery_state` (the fields
-        that can otherwise pin the run gate at "Searching..."/disabled or a
-        stale failure/recovery message), leaving `_library_rag_results` and
-        `_library_rag_selected_result_id` exactly as they are. Used by the
-        query-edit path, which deliberately never touches the results/
-        history widgets -- resetting those fields there without also
-        rebuilding the widget would desync the two.
-
-        The in-flight ANSWER flag (PR-3 Task 4) is cleared for the same
-        reason its retrieval counterpart is: it too disables the Run button
-        ("Answering…"), and a provider call has no bounded duration, so a
-        user who starts typing a new query must not be locked out of running
-        it until some model finishes. The landed `_library_rag_answer` itself
-        is deliberately left alone -- it belongs to the results still on
-        screen, exactly like them. The generation still running underneath
-        keeps its guard fields, so its answer still applies when it lands
-        (it answers the query those visible results were retrieved for).
-        """
-        self._library_rag_retrieval_status = ""
-        self._library_rag_recovery_state = None
-        self._library_rag_answer_in_flight = False
-        self._library_rag_answer_in_flight_provider = ""
+        return self._rag_search_controller._reset_library_rag_in_flight_status()
 
     @on(Button.Pressed, "#library-rag-run-query")
     async def run_library_rag_query(self, event: Button.Pressed) -> None:
-        event.stop()
-        await self._start_library_rag_query()
+        return await self._rag_search_controller.run_library_rag_query(event)
 
     @on(Button.Pressed, "#library-rag-open-import-export")
     async def open_import_export_from_library_rag(self, event: Button.Pressed) -> None:
-        event.stop()
-        # Drive the shell selection so the recomposed canvas resolves to the
-        # Ingest canvas. The Import/Export row/mode this used to target is
-        # retired -- the Ingest ▸ Import media canvas row is its only
-        # surviving successor.
-        await self._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
+        return await self._rag_search_controller.open_import_export_from_library_rag(event)
 
     @on(Button.Pressed, "#library-rag-mode-toggle")
     def cycle_library_rag_mode(self, event: Button.Pressed) -> None:
-        """Cycle Library Search/RAG mode between keyword search and RAG answer."""
-        event.stop()
-        self._library_rag_mode = (
-            "rag" if self._library_rag_mode == "search" else "search"
-        )
-        self._reset_library_rag_retrieval_state()
-        _sync_library_canvas(self, "search")
+        return self._rag_search_controller.cycle_library_rag_mode(event)
 
     @on(Button.Pressed, ".library-rag-scope-toggle")
     def toggle_library_rag_scope_source(self, event: Button.Pressed) -> None:
-        """Toggle one source type in/out of the Search/RAG retrieval scope (B2).
-
-        Unlike the mode toggle, this does NOT reset in-flight retrieval or
-        search history. It used to leave already-landed RESULTS visible too
-        ("scope only affects the NEXT run") -- D4/task-5 fixed that:
-        `LibraryRagPanelState.from_values` now filters already-landed rows
-        against the current scope on every build, so a source toggled off
-        hides its rows (and clears a selection pointing at one) in this
-        exact recompose, not just the next run. Still a transition (like
-        the mode toggle), so the canvas recomposes to pick up the new
-        toggle labels, run-gate state, the now-filtered evidence list, and
-        (if the scope is now empty) the A1 quiet line.
-        """
-        event.stop()
-        button_id = event.button.id or ""
-        source_type = button_id.removeprefix("library-rag-scope-toggle-")
-        if source_type not in LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES:
-            return
-        if source_type in self._library_rag_scope_deselected:
-            self._library_rag_scope_deselected.discard(source_type)
-        else:
-            self._library_rag_scope_deselected.add(source_type)
-        _sync_library_canvas(self, "search")
+        return self._rag_search_controller.toggle_library_rag_scope_source(event)
 
     @on(Collapsible.Toggled, "#library-rag-history")
     def sync_library_rag_history_collapsed(self, event: Collapsible.Toggled) -> None:
-        """Track manual expand/collapse so recomposes preserve the user's choice.
-
-        `Collapsible._watch_collapsed` posts this message whenever the
-        `collapsed` reactive changes through the normal watcher path -- in
-        practice the user clicking the title. The results-arrival
-        force-collapse in `_refresh_library_rag_history_widget` deliberately
-        BYPASSES the watcher (`set_reactive` + `_update_collapsed`, task-4023
-        AC#6 / RC-08: the watcher's animated `scroll_visible` sailed past the
-        Evidence region), so it never reaches this handler; that path keeps
-        the field honest itself -- `_apply_library_rag_search_outcome` sets
-        `_library_rag_history_collapsed` at the transition.
-        """
-        event.stop()
-        self._library_rag_history_collapsed = event.collapsible.collapsed
+        return self._rag_search_controller.sync_library_rag_history_collapsed(event)
 
     @on(Button.Pressed, "#library-rag-history-clear")
     async def clear_library_search_history(self, event: Button.Pressed) -> None:
-        """Clear all Library Search/RAG query history, in memory and on disk (D1)."""
-        event.stop()
-        self._library_search_history = ()
-        self._persist_library_search_history([])
-        await self._refresh_library_rag_history_widget(self._library_rag_panel_state())
+        return await self._rag_search_controller.clear_library_search_history(event)
 
     @on(Button.Pressed, ".library-rag-history-row")
     async def rerun_library_search_from_history(self, event: Button.Pressed) -> None:
-        """Re-run a prior Library Search/RAG query selected from history."""
-        event.stop()
-        index = self._trailing_index(event.button.id)
-        if index is None or index >= len(self._library_search_history):
-            return
-        query = self._library_search_history[index]
-        self._library_rag_query = query
-        # Repopulate the visible query input too -- otherwise it keeps
-        # whatever text (or blank) it held before the history row was
-        # clicked, even though the run underneath used the history entry.
-        # Set this before starting the run: `update_library_rag_query`'s
-        # `Input.Changed` handler is a no-op once its value already equals
-        # `_library_rag_query` (true here), so it can't clobber the new
-        # run's "searching" status either way, but setting it first keeps
-        # the widget and state in lockstep from the start of the run.
-        try:
-            self.query_one("#library-rag-query-input", Input).value = query
-        except (NoMatches, QueryError):
-            pass
-        await self._start_library_rag_query()
+        return await self._rag_search_controller.rerun_library_search_from_history(event)
 
     @staticmethod
     def _trailing_index(button_id: str | None) -> int | None:
@@ -41909,55 +41714,7 @@ class LibraryScreen(BaseAppScreen):
         return index if index >= 0 else None
 
     async def _start_library_rag_query(self) -> None:
-        panel_state = self._library_rag_panel_state()
-        run_action = panel_state.query_state.run_action
-        if not run_action.enabled:
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify(run_action.disabled_reason, severity="warning")
-            return
-
-        request = LibraryRagSearchRequest(
-            query=panel_state.query_state.query,
-            source_types=panel_state.scope.selected_source_types,
-            mode=panel_state.query_state.mode,
-            top_k=panel_state.query_state.top_k,
-            include_citations=panel_state.query_state.include_citations,
-        )
-        self._record_library_search_history(request.query)
-        self._library_rag_results = ()
-        self._library_rag_recovery_state = None
-        self._library_rag_selected_result_id = ""
-        self._library_rag_retrieval_status = "searching"
-        self._library_rag_diagnostics = {}
-        self._library_rag_searched_query = ""
-        # PR-3 Task 4: a new search invalidates the previous answer AND any
-        # generation still running for it -- clearing the guard fields is
-        # what makes that older answer's arrival a discarded no-op rather
-        # than a stale overwrite (`_apply_library_rag_answer`).
-        self._reset_library_rag_answer_state()
-        # The rail-top search box can invoke this mid-recompose -- it selects
-        # the Search canvas via ``_select_library_rail_row`` and then runs the
-        # query immediately after, before the scheduled recompose has mounted
-        # ``#library-search-rag-panel``. The widget refresh is only attempted
-        # when the panel is actually mounted; when it isn't, skipping is
-        # non-fatal because the subsequent recompose renders the same state
-        # (the status fields set above already carry it). This is an
-        # explicit presence check, not a broad NoMatches/QueryError catch --
-        # a prior version wrapped the whole refresh (results rows included)
-        # in a blanket ``except (NoMatches, QueryError): pass``, which also
-        # silently swallowed unrelated mid-rebuild query failures instead of
-        # only tolerating the "panel not mounted yet" case it was meant for.
-        if self.query("#library-search-rag-panel"):
-            await self._refresh_search_rag_panel_state_widgets()
-            # task-4023 AC#6 (RC-08): results used to land ~30 rows below
-            # the fold behind the configuration region -- pressing Run left
-            # the visible half of the canvas pixel-identical. Reveal the
-            # Evidence region the moment a run starts (it already shows the
-            # in-flight "Searching…" line), so the action visibly did
-            # something at the point of action.
-            self.call_after_refresh(self._reveal_library_rag_results)
-        self._execute_library_rag_search(request)
+        return await self._rag_search_controller._start_library_rag_query()
 
     @on(Button.Pressed, "#library-collections-page-previous")
     async def previous_library_collection_captures(
@@ -42126,105 +41883,28 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, ".library-rag-result-action")
     async def select_library_rag_result(self, event: Button.Pressed) -> None:
-        """Select an evidence row for inspector review and Console handoff."""
-        event.stop()
-        result_index = self._trailing_index(event.button.id)
-        await self._select_library_rag_result_by_index(result_index)
+        return await self._rag_search_controller.select_library_rag_result(event)
 
     async def _select_library_rag_result_by_index(
         self, result_index: int | None
     ) -> None:
-        """Shared select-evidence implementation (Task 12).
-
-        Used by the "Select evidence" button handler above AND by the
-        focused-card Enter key path (`action_library_rag_result_card_select`)
-        so both routes run the exact same selection logic -- no duplicated
-        implementation between the mouse and keyboard paths.
-
-        Resolves `result_index` against the CURRENT panel state's
-        (scope-filtered, D4/task-5) `results`, not the screen's raw
-        `_library_rag_results` -- the rendered cards' indices come from
-        `library_rag_results_body_children`'s `enumerate(state.results)`,
-        which is that same filtered tuple. Indexing the raw list instead
-        would misalign as soon as any earlier row is scope-hidden: e.g.
-        clicking the second VISIBLE card after an earlier source is
-        toggled off would select whatever sits at raw position 1, not the
-        row actually shown at that card.
-        """
-        rows = self._library_rag_panel_state().results
-        if result_index is None or result_index >= len(rows):
-            return
-        self._library_rag_selected_result_id = rows[result_index].result_id
-        await self._refresh_search_rag_panel_state_widgets()
+        return await self._rag_search_controller._select_library_rag_result_by_index(result_index)
 
     @on(Button.Pressed, ".library-rag-result-open")
     async def open_library_rag_result(self, event: Button.Pressed) -> None:
-        """Open a Search/RAG evidence result straight to its Library detail surface."""
-        event.stop()
-        index = self._trailing_index(event.button.id)
-        await self._open_library_rag_result_by_index(index)
+        return await self._rag_search_controller.open_library_rag_result(event)
 
     async def _open_library_rag_result_by_index(self, index: int | None) -> None:
-        """Shared open-evidence implementation (Task 12).
-
-        Used by the "Open" button handler above AND by the focused-card `o`
-        key path (`action_library_rag_result_card_open`) so both routes run
-        the exact same open logic -- no duplicated implementation between
-        the mouse and keyboard paths.
-
-        Resolves `index` against the CURRENT panel state's (scope-filtered,
-        D4/task-5) `results` -- see `_select_library_rag_result_by_index`'s
-        docstring for why the raw `_library_rag_results` list is the wrong
-        source once scope filtering can remove earlier rows.
-        """
-        rows = self._library_rag_panel_state().results
-        if index is None or not (0 <= index < len(rows)):
-            return
-        row = rows[index]
-        await self._open_library_item_by_id(row.open_source_type, row.source_id)
+        return await self._rag_search_controller._open_library_rag_result_by_index(index)
 
     def _focused_library_rag_result_card_index(self) -> int | None:
-        """Return the evidence index of the focused `.library-rag-result-card`.
-
-        Task 12/RAG-36: Enter/`o`/the `u` fast path all gate on the
-        CURRENTLY FOCUSED widget being one of the per-result cards (not
-        just any Button.Pressed/global key) -- this is the single place
-        that resolves "which card" via the same `_trailing_index` helper
-        the button handlers already use on their own ids. Returns `None`
-        when nothing is focused or the focused widget isn't a result card
-        (e.g. the query Input, a Button, or nothing at all), which every
-        caller treats as a no-op.
-        """
-        focused = self.focused
-        if focused is None or not focused.id:
-            return None
-        if not focused.id.startswith("library-rag-result-card-"):
-            return None
-        return self._trailing_index(focused.id)
+        return self._rag_search_controller._focused_library_rag_result_card_index()
 
     async def action_library_rag_result_card_select(self) -> None:
-        """Enter on a focused evidence card: select it (Task 12/RAG-36).
-
-        Mirrors clicking the row's own "Select evidence" button -- routes
-        through the identical `_select_library_rag_result_by_index` no
-        matter which input method triggered it.
-        """
-        index = self._focused_library_rag_result_card_index()
-        if index is None:
-            return
-        await self._select_library_rag_result_by_index(index)
+        return await self._rag_search_controller.action_library_rag_result_card_select()
 
     async def action_library_rag_result_card_open(self) -> None:
-        """`o` on a focused evidence card: open it (Task 12/RAG-36).
-
-        Mirrors clicking the row's own "Open" button -- routes through the
-        identical `_open_library_rag_result_by_index` no matter which input
-        method triggered it.
-        """
-        index = self._focused_library_rag_result_card_index()
-        if index is None:
-            return
-        await self._open_library_rag_result_by_index(index)
+        return await self._rag_search_controller.action_library_rag_result_card_open()
 
     async def _open_library_item_by_id(
         self,
@@ -42571,34 +42251,13 @@ class LibraryScreen(BaseAppScreen):
         self,
         event: Button.Pressed,
     ) -> None:
-        """Stage selected evidence from the center results lane."""
-        self._use_library_rag_result_in_console(event)
+        return self._rag_search_controller.use_selected_library_rag_result_in_console(event)
 
     async def action_library_rag_use_in_console(self) -> None:
-        """Keyboard shortcut for staging selected Search/RAG evidence in Console.
-
-        Task 12/RAG-36 focused-card fast path: when a `.library-rag-result-
-        card` currently holds keyboard focus, `u` selects THAT evidence
-        (same as Enter would) and then stages it, in one keystroke --
-        instead of requiring the user to Tab to the card, press Enter to
-        select, then press `u` to stage. This does not change `u`'s
-        meaning when no card is focused (still stages whatever evidence
-        was already selected, unchanged from before this task); it only
-        adds a shortcut for the case where the user is looking straight at
-        the evidence they want staged but hasn't explicitly selected it
-        yet -- the same "act on what's focused" idiom Enter/`o` use.
-        """
-        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH:
-            return
-        index = self._focused_library_rag_result_card_index()
-        if index is not None:
-            await self._select_library_rag_result_by_index(index)
-        self._stage_library_rag_result_in_console()
+        return await self._rag_search_controller.action_library_rag_use_in_console()
 
     def _use_library_rag_result_in_console(self, event: Button.Pressed) -> None:
-        """Shared implementation for inspector and results-lane handoff controls."""
-        event.stop()
-        self._stage_library_rag_result_in_console()
+        return self._rag_search_controller._use_library_rag_result_in_console(event)
 
     def _console_setup_would_block(self) -> bool:
         """Best-effort predict whether Console is currently locked behind setup.
@@ -42659,51 +42318,7 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def _stage_library_rag_result_in_console(self) -> None:
-        """Stage the selected Search/RAG evidence result in Console."""
-        panel_state = self._library_rag_panel_state()
-        console_action = panel_state.use_in_console_action
-        if not console_action.enabled or panel_state.selected_result is None:
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify(console_action.disabled_reason, severity="warning")
-            return
-
-        opener = getattr(self.app_instance, "open_console_for_live_work", None)
-        if not callable(opener):
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify(
-                    "Use in Console is unavailable for Library Search/RAG.",
-                    severity="warning",
-                )
-            return
-
-        # Task-2852 (b): Console's blocking first-run setup card visually
-        # covers the whole workbench, so if we said nothing here the user's
-        # selection would silently vanish into a locked "Get started"
-        # screen. The handoff still proceeds -- the evidence really is
-        # staged, and a matching receipt appears on the locked Console
-        # surface (AC #2, `console_setup_staged_receipt`) -- this is just
-        # the immediate, pre-navigation half of that receipt.
-        if self._console_setup_would_block():
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify(
-                    LIBRARY_RAG_USE_IN_CONSOLE_LOCKED_NOTICE,
-                    severity="information",
-                )
-
-        opener(
-            source="Library Search/RAG",
-            title=panel_state.selected_result.title,
-            payload=build_library_rag_console_live_work_payload(
-                panel_state.selected_result,
-                query=panel_state.query_state.query,
-            ),
-            status="staged",
-            recovery="Review citations before sending.",
-            action_label="Review evidence in Console",
-        )
+        return self._rag_search_controller._stage_library_rag_result_in_console()
 
     @work(exclusive=True, group="library_rag_search")
     async def _execute_library_rag_search(
@@ -42752,169 +42367,20 @@ class LibraryScreen(BaseAppScreen):
         request: LibraryRagSearchRequest,
         outcome: LibraryRagSearchOutcome,
     ) -> None:
-        """Resolve a completed Library Search/RAG worker's outcome into state.
-
-        The state fields (results/status/recovery) always apply once the
-        stale-query and stale-mode guards pass -- even if the user has since
-        left the Search canvas (a different rail row, e.g. Media) -- so a
-        dangling "searching" status can never survive: an outcome that lands
-        while the user is elsewhere still resolves it, and re-entering the
-        Search canvas composes from settled state instead of a stale
-        in-flight line. Only the live widget refresh is skipped when the
-        panel isn't mounted; there is nothing on screen to update.
-        """
-        if not self.is_mounted:
-            return
-        current_query = self._library_rag_panel_state().query_state.query
-        if request.query != current_query:
-            # Stale: a newer query has since replaced this one.
-            return
-        if request.mode != self._library_rag_mode:
-            # Stale: the mode toggled mid-flight; this result belongs to
-            # the mode the user has since left.
-            return
-        self._library_rag_results = outcome.results
-        self._library_rag_retrieval_status = outcome.status
-        self._library_rag_recovery_state = outcome.recovery_state
-        self._library_rag_diagnostics = outcome.diagnostics
-        # task-15 finding I3: `request.query` is what this outcome was
-        # actually retrieved for -- already verified equal to the panel's
-        # query at the top of this method (the stale-query guard above), so
-        # it is safe to record as "the searched query" here.
-        self._library_rag_searched_query = request.query
-        self._library_rag_selected_result_id = ""
-        # D1: the results-arrival transition is the ONLY place allowed to
-        # force the `Recent searches` collapsible open/closed -- collapse it
-        # once evidence lands (results take visual priority), expand it
-        # when a search settles with nothing to show. Every other refresh
-        # path leaves the user's manual expand/collapse alone.
-        self._library_rag_history_collapsed = bool(self._library_rag_results)
-        # Phase two. Deliberately before the mounted-panel check below: the
-        # answer must be generated whether or not the user is looking at the
-        # Search canvas right now (same reason the state fields above always
-        # apply), and setting the in-flight flag here means the single
-        # refresh below already paints "Answering…" instead of needing a
-        # second one.
-        self._start_library_rag_answer(request, outcome)
-        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH or not self.query(
-            "#library-search-rag-panel"
-        ):
-            return
-        await self._refresh_search_rag_panel_state_widgets(force_history_collapse=True)
-        # task-4023 AC#6 (RC-08): the landed evidence must be visible at
-        # the point of action, not below the fold.
-        self.call_after_refresh(self._reveal_library_rag_results)
+        return await self._rag_search_controller._apply_library_rag_search_outcome(request, outcome)
 
     def _reveal_library_rag_results(self) -> None:
-        """Scroll the Search/RAG panel so the Evidence region is on screen.
-
-        Mirrors the prompt-history idiom (``scroll_to_widget(..., top=True)``)
-        on the panel's own ``VerticalScroll``. Called after a run starts and
-        after its results land; a missing panel (user navigated away
-        mid-flight) is a silent no-op.
-        """
-        try:
-            panel = self.query_one("#library-search-rag-panel", LibrarySearchRagPanel)
-            heading = self.query_one("#library-rag-results-heading", Static)
-        except (NoMatches, QueryError):
-            return
-        panel.scroll_to_widget(heading, animate=False, top=True)
+        return self._rag_search_controller._reveal_library_rag_results()
 
     def _start_library_rag_answer(
         self,
         request: LibraryRagSearchRequest,
         outcome: LibraryRagSearchOutcome,
     ) -> None:
-        """Kick off phase two -- generate an answer from what retrieval found.
-
-        Only rag mode ever answers: keyword Search is a retrieval mode and
-        never reaches a provider. Only a settled `ready`/`empty` retrieval
-        does either -- a `blocked`/`failed` outcome already renders its own
-        recovery copy, and an answer built on a retrieval that did not run
-        would be a guess wearing an answer's clothes.
-
-        The zero-row (`empty`) case still generates: `generate_library_rag_
-        answer` answers it honestly ("Nothing in your library supports an
-        answer to that.") WITHOUT calling a provider, and keeping one path
-        here means that rule lives in exactly one place instead of being
-        re-derived by the screen. What it does NOT do is raise the
-        "answering" in-flight status: no provider call is made, so there is
-        no in-flight window worth showing -- and showing one would swap the
-        quiet no-match line for the idle "No evidence yet" line for a frame,
-        which is precisely the state that line exists to replace.
-
-        Args:
-            request: The retrieval request this outcome answers.
-            outcome: The settled retrieval outcome.
-        """
-        # A new retrieval invalidates whatever answer was on screen, whatever
-        # happens next in this method.
-        self._reset_library_rag_answer_state()
-        if request.mode != "rag":
-            return
-        if outcome.status not in LIBRARY_RAG_ANSWERABLE_RETRIEVAL_STATUSES:
-            return
-        chat_kwargs = self._library_rag_answer_chat_kwargs()
-        if chat_kwargs is None:
-            return
-        # The run gate (`_library_rag_panel_state`'s `provider_name=`) and
-        # this call both go through `library_rag_answer_provider_gate()`
-        # (PR-T2 Task 7 -- endpoint name AND resolvable credentials, the
-        # same question Console's readiness check asks); a `None` provider
-        # below means the gate would already have blocked `rag` mode. One
-        # gate call resolves both halves, where this used to resolve the
-        # endpoint twice (finding I1).
-        answer_gate = library_rag_answer_provider_gate()
-        provider, model = answer_gate.provider, answer_gate.model
-        if provider is None:
-            # The run gate blocks rag mode without a ready provider, so
-            # this is unreachable through the UI; if it ever is reached,
-            # saying nothing is honest -- that gate's copy already explains
-            # why.
-            logger.debug("Library RAG answer skipped: no provider configured.")
-            return
-        # Built from state that has just been applied, so the note describes
-        # THESE results (`library_rag_coverage_note` derives it from the
-        # outcome's diagnostics + rows). Read before the in-flight flag is
-        # raised so the status overlay can't affect it.
-        coverage_note = self._library_rag_panel_state().coverage_note
-        self._library_rag_answer_query = request.query
-        self._library_rag_answer_mode = request.mode
-        self._library_rag_answer_in_flight = bool(outcome.results)
-        # PR-3 Task 3: named for the in-flight "Asking <provider>..." line
-        # -- set unconditionally alongside the flag above (never gated on
-        # `outcome.results` itself) since the panel-state builder is what
-        # decides whether to forward it, keyed off that same flag.
-        self._library_rag_answer_in_flight_provider = provider
-        self._execute_library_rag_answer(
-            request,
-            results=outcome.results,
-            coverage_note=coverage_note,
-            provider=provider,
-            model=model,
-            chat_kwargs=chat_kwargs,
-        )
+        return self._rag_search_controller._start_library_rag_answer(request, outcome)
 
     def _library_rag_answer_chat_kwargs(self) -> dict[str, Any] | None:
-        """The `chat=` seam override for `generate_library_rag_answer`.
-
-        Three cases, and the distinction between the last two is the whole
-        point: an app with no `library_rag_answer_chat` attribute at all
-        (the shipping `TldwCli`) gets `{}` -- i.e. the service's own default,
-        `chat_api_call` -- so production needs no wiring to answer. An app
-        that DOES carry the attribute owns the decision: a callable is used
-        as the chat seam, and a non-callable (`None`) disables generation
-        entirely, which is how `Tests/UI/app_factory.py` keeps every pilot
-        that never opted into a fake off the network.
-
-        Returns:
-            Keyword arguments to forward to `generate_library_rag_answer`,
-            or `None` when generation is disabled for this app.
-        """
-        if not hasattr(self.app_instance, "library_rag_answer_chat"):
-            return {}
-        chat_seam = self.app_instance.library_rag_answer_chat
-        return {"chat": chat_seam} if callable(chat_seam) else None
+        return self._rag_search_controller._library_rag_answer_chat_kwargs()
 
     @work(exclusive=True, group="library_rag_answer")
     async def _execute_library_rag_answer(
@@ -42962,179 +42428,10 @@ class LibraryScreen(BaseAppScreen):
         request: LibraryRagSearchRequest,
         answer: LibraryRagAnswer,
     ) -> None:
-        """Resolve a completed answer worker's outcome into state.
-
-        The two guards mirror `_apply_library_rag_search_outcome`'s: an
-        answer generated for a query the panel has moved past, or for a mode
-        the user has since left, is discarded rather than applied. They
-        compare against `_library_rag_answer_query`/`_library_rag_answer_mode`
-        -- the fields recording what the CURRENT generation is for -- because
-        every invalidating transition clears them (`_reset_library_rag_
-        answer_state`), and unlike the live query box those fields do not
-        move when the user merely types (an answer belongs to the results
-        still on screen, and typing deliberately leaves those alone: B5).
-
-        Discarding never leaves a dangling "answering" status: the same
-        transitions that clear the guard fields clear the in-flight flag with
-        them, so whatever superseded this answer already settled the panel.
-        """
-        if not self.is_mounted:
-            return
-        if request.query != self._library_rag_answer_query:
-            # Stale: a newer search (or a reset) owns the panel now.
-            return
-        if request.mode != self._library_rag_answer_mode:
-            # Stale: the mode toggled mid-flight; this answer belongs to the
-            # mode the user has since left.
-            return
-        self._library_rag_answer = answer
-        self._library_rag_answer_in_flight = False
-        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH or not self.query(
-            "#library-search-rag-panel"
-        ):
-            return
-        # Results and history are untouched by an answer landing -- only the
-        # answer region, the run gate and the query status line change.
-        await self._refresh_search_rag_panel_state_widgets(
-            include_results_and_history=False
-        )
+        return await self._rag_search_controller._apply_library_rag_answer(request, answer)
 
     def _sync_library_rag_scope_toggle_and_run_gate_widgets(self) -> None:
-        """Refresh the scope-toggle counts and the Run gate in place, with
-        NO `await` (RAG-27 fix-review).
-
-        Called synchronously from `_apply_local_source_snapshot`'s
-        in-place branch, which fires off the UI thread on every ingest
-        done-count growth -- a moment with no coordination against the
-        panel's four other refresh callers (`update_library_rag_query`,
-        `_start_library_rag_query`, `select_library_rag_result`,
-        `_apply_library_rag_search_outcome`), all of which `await
-        self._refresh_search_rag_panel_state_widgets(...)` directly with
-        no shared lock or exclusive worker group. That coroutine's real
-        yield points (`await widget.remove()` / `await ...mount(...)` for
-        the query-status callout and, when `include_results_and_history`
-        is left True, results/history) make two concurrent invocations
-        unsafe: an ingest snapshot landing mid-keystroke could interleave
-        two remove/mount sequences on the same containers (double-remove
-        or duplicate-id). Restricting the snapshot path to plain
-        attribute writes -- `Button.label`/`.disabled`/`.tooltip`,
-        `Static.update()` -- has no yield points at all, so it can never
-        interleave with anything and needs no coordination.
-
-        The query region's reserved quiet line IS synced here (F1), by the
-        same yield-free `Static.update()` class of write as the scope
-        summary below -- no remove/mount, so RAG-27's constraint holds.
-        The original trade-off deferred that row along with the callout,
-        on the reasoning that it carried only the run gate's *reason*
-        text. That reasoning expired with PR-T2 Task 4: the same row now
-        also carries the money disclosure (`library_rag_paid_mode_notice`,
-        naming the provider Run would bill), and deferring it produced a
-        silent paid state. A Library revisit past
-        `LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS` composes with all-zero counts
-        -> no scope -> a blocked-but-QUIET gate (no callout, empty row);
-        the snapshot then lands real counts and this method flips Run to
-        enabled, leaving a runnable paid button above an empty row that
-        never said a provider would be billed. Deriving the row's copy
-        from `library_rag_query_quiet_text(panel_state)` -- the same
-        builder `compose()` and the full refresh use, off the same state
-        the run gate above is read from -- keeps the disclosure and the
-        button they sit next to from ever disagreeing.
-
-        Trade-off (narrowed): the blocked-callout/recovery block below the
-        quiet line is still NOT refreshed here -- it is the part that
-        requires remove/mount, and `#library-rag-query-controls`'
-        `has-recovery` class with it. So a snapshot that lifts the
-        quiet no-scope blocker only to land on a LOUD one (rag mode with
-        no provider configured: "Select a provider/model...") still shows
-        no callout until the next full refresh. That residue cannot spend
-        money -- every blocker it covers leaves Run disabled, and the
-        quiet line, derived from the same state, shows no paid notice
-        while one is in force. Accepted narrowly for this snapshot-driven
-        path only; every other caller above still runs the full
-        `_refresh_search_rag_panel_state_widgets` and is unaffected.
-
-        (task-2075 D5) The *scope* region's own recovery block --
-        `#library-rag-source-scope`'s `has-recovery` class plus its
-        `library_rag_scope_recovery_children` -- gets different treatment:
-        it IS kept honest here, but change-gated rather than refreshed on
-        every call. A cold boot lands on this canvas before the first
-        compose (`_library_selected_row_id` is already
-        `LIBRARY_ROW_BROWSE_SEARCH`), so `compose()` renders the recovery
-        banner from the zero-count defaults every fresh screen starts
-        with; the very next snapshot -- real counts, taken by this
-        in-place branch precisely because the row is already Search --
-        previously never told that banner counts had arrived, leaving a
-        stale "No Library sources yet" beside populated, enabled toggles.
-        Comparing `library_rag_scope_shows_recovery(...)` against
-        `self._library_rag_scope_recovery_visible` (cached, `None` until
-        the first call) means steady-state snapshots -- the overwhelming
-        common case, and RAG-27's whole point -- see no change and take
-        the same no-op, no-yield path as everything else in this method;
-        only an actual flip schedules `_mirror_library_rag_scope_recovery`
-        as a worker (see that method for why a worker rather than an
-        inline remove/mount here).
-        """
-        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH or not self.query(
-            "#library-search-rag-panel"
-        ):
-            return
-        panel_state = self._library_rag_panel_state()
-
-        try:
-            run_button = self.query_one("#library-rag-run-query", Button)
-        except (NoMatches, QueryError):
-            return
-        run_action = panel_state.query_state.run_action
-        run_button.label = run_action.label
-        run_button.disabled = not run_action.enabled
-        run_button.tooltip = run_action.tooltip
-
-        # (F1) Written in the SAME pass as the button above, off the SAME
-        # `panel_state`, because this row carries rag mode's paid-mode
-        # notice: enabling Run without refreshing it is exactly how a
-        # revisit-past-the-snapshot-TTL produced a runnable paid button
-        # with no disclosure on screen. Plain `Static.update()` -- no
-        # yield point, so RAG-27's constraint (see the docstring) holds.
-        try:
-            self.query_one("#library-rag-query-quiet-line", Static).update(
-                library_rag_query_quiet_text(panel_state)
-            )
-        except (NoMatches, QueryError):
-            pass
-
-        options_by_source_type = {
-            option.source_type: option for option in panel_state.scope.options
-        }
-        for toggle in self.query(".library-rag-scope-toggle"):
-            if not isinstance(toggle, Button) or toggle.id is None:
-                continue
-            source_type = toggle.id.removeprefix("library-rag-scope-toggle-")
-            option = options_by_source_type.get(source_type)
-            if option is None:
-                continue
-            toggle.label = scope_toggle_label(option)
-            toggle.disabled = not option.available
-
-        try:
-            self.query_one("#library-rag-scope-summary", Static).update(
-                self._library_rag_scope_summary(panel_state)
-            )
-        except (NoMatches, QueryError):
-            pass
-
-        shows_recovery = library_rag_scope_shows_recovery(panel_state.scope)
-        if shows_recovery != self._library_rag_scope_recovery_visible:
-            # Updated eagerly (before the worker even starts) so a burst of
-            # snapshots landing faster than the worker can run only ever
-            # schedules one mirror per actual flip -- a repeat call with the
-            # SAME new value during that window already matches the cache
-            # and takes the branch above instead.
-            self._library_rag_scope_recovery_visible = shows_recovery
-            self.run_worker(
-                self._mirror_library_rag_scope_recovery(),
-                exclusive=True,
-                group="library_rag_scope_recovery_mirror",
-            )
+        return self._rag_search_controller._sync_library_rag_scope_toggle_and_run_gate_widgets()
 
     async def _mirror_library_rag_scope_recovery(self) -> None:
         """Remove/mount the scope region's recovery block for a snapshot-
@@ -43205,22 +42502,7 @@ class LibraryScreen(BaseAppScreen):
         scope_container: Vertical,
         panel_state: LibraryRagPanelState,
     ) -> None:
-        """Remove/mount `#library-rag-source-scope`'s recovery children.
-
-        Shared by `_refresh_search_rag_panel_state_widgets` (the full
-        refresh every OTHER panel caller awaits directly) and
-        `_mirror_library_rag_scope_recovery` (the change-gated snapshot
-        path above) so the two can never render this block differently.
-        """
-        scope_container.set_class(
-            library_rag_scope_shows_recovery(panel_state.scope), "has-recovery"
-        )
-        scope_recovery_widgets = list(self.query("#library-rag-scope-recovery"))
-        import_buttons = list(self.query("#library-rag-open-import-export"))
-        for widget in (*scope_recovery_widgets, *import_buttons):
-            await widget.remove()
-        for child in library_rag_scope_recovery_children(panel_state):
-            await scope_container.mount(child)
+        return await self._rag_search_controller._apply_library_rag_scope_recovery_block(scope_container, panel_state)
 
     async def _refresh_search_rag_panel_state_widgets(
         self,
@@ -43331,93 +42613,13 @@ class LibraryScreen(BaseAppScreen):
         self,
         panel_state: LibraryRagPanelState,
     ) -> None:
-        """Sync the Run button and the query region's conditional status block.
-
-        The quiet line / callout+recovery block is torn down and rebuilt
-        from `library_rag_query_status_children` on every call -- it is at
-        most two `Static` widgets, so a full rebuild is cheap and (unlike
-        hand-written incremental mount/update/remove logic) can never drift
-        from what `compose()` renders on a fresh mount.
-        """
-        query_controls = self.query_one("#library-rag-query-controls", Vertical)
-        query_controls.set_class(
-            library_rag_query_shows_full_recovery(panel_state.query_state),
-            "has-recovery",
-        )
-
-        run_action = panel_state.query_state.run_action
-        run_button = self.query_one("#library-rag-run-query", Button)
-        run_button.label = run_action.label
-        run_button.disabled = not run_action.enabled
-        run_button.tooltip = run_action.tooltip
-
-        for widget_id in (
-            "library-rag-query-quiet-line",
-            "library-rag-query-blocked-callout",
-            "library-rag-query-recovery",
-        ):
-            for widget in list(self.query(f"#{widget_id}")):
-                await widget.remove()
-        anchor = "#library-rag-query-input"
-        for child in library_rag_query_status_children(panel_state):
-            await query_controls.mount(child, after=anchor)
-            anchor = f"#{child.id}"
+        return await self._rag_search_controller._refresh_library_rag_query_status_widgets(panel_state)
 
     async def _refresh_library_rag_answer_widgets(
         self,
         panel_state: LibraryRagPanelState,
     ) -> None:
-        """Rebuild the Answer region from `library_rag_answer_children` (Task 4).
-
-        Torn down and rebuilt whole on every call, from the SAME builder
-        `LibrarySearchRagPanel.compose()` uses -- the idiom
-        `_refresh_library_rag_query_status_widgets` already follows for the
-        query status block, and for the same reason: the region is a handful
-        of `Static`s, so a full rebuild is cheap and (unlike hand-written
-        incremental update logic) cannot drift from what a fresh mount
-        renders.
-
-        Mounted as a SIBLING, `before="#library-rag-results"`, matching
-        `compose()`'s order exactly. It must never end up inside
-        `#library-rag-results`: that container's own teardown loop
-        (`_refresh_library_rag_results_widgets`) removes every child not in
-        `LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS`, and would destroy the answer
-        on every results refresh.
-
-        Skipped entirely when nothing this region renders from has changed
-        (`_library_rag_answer_render_key`). This refresh runs on EVERY panel
-        refresh, including the per-keystroke one, and an answer only ever
-        changes when generation settles -- without the check, typing in rag
-        mode would tear down and remount the whole answer (up to
-        `LIBRARY_RAG_ANSWER_DISPLAY_MAX_LENGTH` characters of `Static`) on
-        each character, which is exactly the churn class task-284 removed
-        for the results/history lists. Identity (`is`) is used for the
-        answer: `LibraryRagAnswer` is frozen and replaced wholesale, so a
-        new object always means new content, and this avoids deep-comparing
-        an embedded evidence bundle.
-        """
-        panel_widgets = list(self.query("#library-search-rag-panel"))
-        if not panel_widgets:
-            return
-        panel = panel_widgets[0]
-        render_key = (
-            panel_state.query_state.mode,
-            panel_state.retrieval_status == "answering",
-            panel_state.answer,
-        )
-        previous_key = self._library_rag_answer_render_key
-        if (
-            previous_key is not None
-            and previous_key[0] == render_key[0]
-            and previous_key[1] == render_key[1]
-            and previous_key[2] is render_key[2]
-        ):
-            return
-        for widget in list(self.query("#library-rag-answer")):
-            await widget.remove()
-        for child in library_rag_answer_children(panel_state):
-            await panel.mount(child, before="#library-rag-results")
-        self._library_rag_answer_render_key = render_key
+        return await self._rag_search_controller._refresh_library_rag_answer_widgets(panel_state)
 
     async def _refresh_library_rag_history_widget(
         self,
@@ -43425,133 +42627,17 @@ class LibraryScreen(BaseAppScreen):
         *,
         force_collapsed: bool | None = None,
     ) -> None:
-        """Rebuild the `Recent searches` collapsible content from state.
-
-        Mutates the compose-time `Collapsible` in place (its `collapsed`
-        reactive, then its `Contents` children) rather than replacing the
-        whole widget -- two refreshes can be triggered back to back (the
-        synchronous "searching" status refresh, then the search worker's
-        own "outcome" refresh), and remove-then-mount of the same fixed ID
-        from overlapping calls raises `DuplicateIds`. The lock serializes
-        those calls so one full rebuild always finishes before the next
-        starts.
-
-        `force_collapsed` (D1) is `None` for every caller except the
-        results-arrival transition in `_apply_library_rag_search_outcome`:
-        `None` leaves the live widget's `collapsed` reactive exactly as the
-        user left it; a `bool` applies the collapse below WITHOUT the
-        watcher (task-4023 AC#6 / RC-08 -- see the inline comment). This is
-        safe for full recomposes too (scope toggles, the mode toggle) -- not
-        just in-place refreshes (query edits, evidence selection) -- because
-        both writers keep the state field mirrored: a USER'S title click
-        takes the watcher path and `sync_library_rag_history_collapsed`
-        copies it into `_library_rag_history_collapsed`, while the
-        force-collapse caller already set that same field at the transition,
-        so `compose()` always rebuilds the `Collapsible` from the last
-        choice instead of a stale field.
-        """
-        async with self._library_rag_history_refresh_lock:
-            history_widgets = list(self.query("#library-rag-history"))
-            if not history_widgets:
-                return
-            collapsible = history_widgets[0]
-            if not isinstance(collapsible, Collapsible):
-                return
-            if force_collapsed is not None and (
-                collapsible.collapsed != force_collapsed
-            ):
-                # task-4023 AC#6 (RC-08): assigning the reactive here used
-                # to run Textual's ``Collapsible._watch_collapsed``, which
-                # schedules an ANIMATED ``self.scroll_visible()`` -- at
-                # results arrival that animation scrolled the panel to the
-                # Recents strip at the BOTTOM, sailing past the Evidence
-                # region (and overriding `_reveal_library_rag_results`,
-                # found by spying ``panel.scroll_to``). Apply the visual
-                # collapse without the watcher: the state field was already
-                # set by the results-arrival transition, so skipping the
-                # Collapsed/Expanded message loses nothing (the handler
-                # only mirrors the value back into the same field). A
-                # USER'S own title click still takes the normal watcher
-                # path, scroll and all.
-                collapsible.set_reactive(Collapsible.collapsed, force_collapsed)
-                collapsible._update_collapsed(force_collapsed)
-                collapsible.refresh(layout=True)
-            try:
-                contents = collapsible.query_one(Collapsible.Contents)
-            except (NoMatches, QueryError):
-                # Defensive, mirroring the two guards above: an "exclusive"
-                # search worker can be cancelled mid-refresh by a newer one
-                # (e.g. re-running a history entry while a prior query is
-                # still settling), which can catch this specific
-                # `Collapsible` instance between un/remounting its own
-                # `Contents` child. The next refresh (there is always one --
-                # every query/scope/selection change triggers one) picks up
-                # the settled state; there is nothing to safely rebuild here.
-                return
-            for child in list(contents.children):
-                await child.remove()
-            for row in library_rag_history_children(panel_state):
-                await contents.mount(row)
+        return await self._rag_search_controller._refresh_library_rag_history_widget(panel_state, force_collapsed=force_collapsed)
 
     async def _refresh_library_rag_results_widgets(
         self,
         panel_state: LibraryRagPanelState,
     ) -> None:
-        """Rebuild the Evidence region body from `library_rag_results_body_children`.
-
-        Shared with `LibrarySearchRagPanel.compose()` (C1): both build rows,
-        the searching line, recovery copy, and the empty state from the
-        same function, closing the compose-vs-refresh duplication that
-        previously let the two paths drift apart. Each row is now ONE
-        `.library-rag-result-card` (Task 12/RAG-36) instead of several flat
-        sibling widgets, but that card is still just another direct child
-        of `results_container` -- the remove/remount loop below (skip
-        `LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS`, tear down everything else,
-        remount from `library_rag_results_body_children`) needed no change
-        to stay in lockstep with the new structure.
-
-        What DOES need explicit handling: this remove/remount cycle
-        destroys and recreates the card widget INSTANCES, including
-        whichever one currently holds keyboard focus (e.g. the user just
-        pressed Enter on a card, which calls this via
-        `_select_library_rag_result_by_index`). Textual does not carry
-        focus across a removed widget being replaced by a same-id
-        successor, so without the save/restore below, every keyboard
-        selection would silently drop focus back to nothing -- breaking
-        the "Enter selects, then keep going" keyboard flow this task exists
-        to add.
-        """
-        results_container = self.query_one("#library-rag-results", Vertical)
-        self.query_one("#library-rag-results-heading", Static).update(
-            results_heading_text(panel_state)
-        )
-        focused = self.focused
-        focused_card_id = (
-            focused.id
-            if focused is not None
-            and focused.id
-            and focused.id.startswith("library-rag-result-card-")
-            else None
-        )
-        for child in list(results_container.children):
-            if child.id in LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS:
-                continue
-            await child.remove()
-        for child in library_rag_results_body_children(panel_state):
-            await results_container.mount(child)
-        if focused_card_id is not None:
-            try:
-                self.query_one(f"#{focused_card_id}").focus()
-            except (NoMatches, QueryError):
-                # The just-focused card's result can legitimately be gone
-                # after the rebuild (e.g. a re-run landed a shorter result
-                # set) -- falling back to no focus is correct there, not a
-                # bug to paper over.
-                pass
+        return await self._rag_search_controller._refresh_library_rag_results_widgets(panel_state)
 
     @staticmethod
     def _library_rag_scope_summary(panel_state: LibraryRagPanelState) -> str:
-        return library_rag_scope_summary(panel_state.scope)
+        return LibraryRagSearchController._library_rag_scope_summary(panel_state)
 
     def _open_selected_conversation_handoff(self) -> None:
         return self._conversations_controller._open_selected_conversation_handoff()
