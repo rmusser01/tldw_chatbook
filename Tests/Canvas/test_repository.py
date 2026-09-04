@@ -291,7 +291,9 @@ def test_owner_origin_and_parent_checks_fail_without_mutation(db) -> None:
     assert len(repository.list_revision_metadata(first_conversation)) == 1
 
 
-def test_database_rejects_blob_revision_source_with_matching_digest_and_size(db) -> None:
+def test_database_rejects_blob_revision_source_with_matching_digest_and_size(
+    db,
+) -> None:
     """TEXT affinity must not accept a BLOB payload through otherwise-valid SQL."""
 
     conversation_id, message_id = _owner(db)
@@ -594,8 +596,12 @@ def test_write_rejects_managed_outer_deferred_transaction_before_mutation(db) ->
             ("managed outer committed", conversation_id),
         )
 
-    assert connection.execute("SELECT COUNT(*) FROM canvas_documents").fetchone()[0] == 0
-    assert connection.execute("SELECT COUNT(*) FROM canvas_revisions").fetchone()[0] == 0
+    assert (
+        connection.execute("SELECT COUNT(*) FROM canvas_documents").fetchone()[0] == 0
+    )
+    assert (
+        connection.execute("SELECT COUNT(*) FROM canvas_revisions").fetchone()[0] == 0
+    )
     assert observed_code == "transaction_ownership_required"
     assert (
         connection.execute(
@@ -633,8 +639,12 @@ def test_write_rejects_native_transaction_before_partial_commit(db) -> None:
         connection.rollback()
         raise
 
-    assert connection.execute("SELECT COUNT(*) FROM canvas_documents").fetchone()[0] == 0
-    assert connection.execute("SELECT COUNT(*) FROM canvas_revisions").fetchone()[0] == 0
+    assert (
+        connection.execute("SELECT COUNT(*) FROM canvas_documents").fetchone()[0] == 0
+    )
+    assert (
+        connection.execute("SELECT COUNT(*) FROM canvas_revisions").fetchone()[0] == 0
+    )
     assert observed_code == "transaction_ownership_required"
     assert (
         connection.execute(
@@ -911,7 +921,9 @@ def test_hard_purge_iteratively_deletes_a_deep_message_chain_child_first(db) -> 
         ).fetchone()[0]
         == 0
     )
-    assert connection.execute("SELECT COUNT(*) FROM canvas_documents").fetchone()[0] == 0
+    assert (
+        connection.execute("SELECT COUNT(*) FROM canvas_documents").fetchone()[0] == 0
+    )
 
 
 def test_hard_purge_rejects_a_message_cycle_without_partial_deletion(db) -> None:
@@ -959,7 +971,9 @@ def test_hard_purge_rejects_a_message_cycle_without_partial_deletion(db) -> None
         ).fetchone()[0]
         == 2
     )
-    assert connection.execute("SELECT COUNT(*) FROM canvas_documents").fetchone()[0] == 1
+    assert (
+        connection.execute("SELECT COUNT(*) FROM canvas_documents").fetchone()[0] == 1
+    )
 
 
 def test_valid_import_preserves_ids_branch_graph_source_and_reopen_hint(db) -> None:

@@ -174,14 +174,14 @@ The implementation may place tests beside an existing narrower suite when that b
 - Create: `Tests/Canvas/test_repository.py`
 - Modify: migration fixtures under the existing database test suite
 
-- [ ] Rebase on current `origin/dev`, read the actual schema head, and name the migration from that head to the next integer. Update `_CURRENT_SCHEMA_VERSION` only in the same change.
-- [ ] Add failing migration tests from the immediately previous schema fixture plus current-schema create/open tests. Do not claim migration coverage using an already-current database.
-- [ ] Add tables for Canvas identity/ownership and immutable revisions. Store revision parent, sequence, title, runtime profile, UTF-8 source, SHA-256, source byte count, origin message/turn, created time, deleted time, and local reopen hints. Add foreign keys and indexes for conversation lookup, canvas ancestry, origin message, and sequence.
-- [ ] Keep titles revisioned so rename history follows branches. Enforce same-conversation/same-Canvas parentage, immutable rows, unique `(canvas_id, sequence)`, digest agreement, and quotas in one immediate transaction.
-- [ ] Implement typed repository methods for list, read revision, append revision, soft delete/restore, purge with owning conversation, and import batches. All SQL values are parameterized.
-- [ ] Add concurrent-writer tests with two real SQLite connections and injected rollback failures.
-- [ ] Run the focused DB migration and `Tests/Canvas/test_repository.py` suites.
-- [ ] Commit: `feat(canvas): persist immutable revision graphs`
+- [x] Rebase on current `origin/dev`, read the actual schema head, and name the migration from that head to the next integer. Update `_CURRENT_SCHEMA_VERSION` only in the same change.
+- [x] Add failing migration tests from the immediately previous schema fixture plus current-schema create/open tests. Do not claim migration coverage using an already-current database.
+- [x] Add tables for Canvas identity/ownership and immutable revisions. Store revision parent, sequence, title, runtime profile, UTF-8 source, SHA-256, source byte count, origin message/turn, created time, deleted time, and local reopen hints. Add foreign keys and indexes for conversation lookup, canvas ancestry, origin message, and sequence.
+- [x] Keep titles revisioned so rename history follows branches. Enforce same-conversation/same-Canvas parentage, immutable rows, unique `(canvas_id, sequence)`, digest agreement, and quotas in one immediate transaction.
+- [x] Implement typed repository methods for list, read revision, append revision, soft delete/restore, purge with owning conversation, and import batches. All SQL values are parameterized.
+- [x] Add concurrent-writer tests with two real SQLite connections and injected rollback failures.
+- [x] Run the focused DB migration and `Tests/Canvas/test_repository.py` suites.
+- [x] Commit: `feat(canvas): persist immutable revision graphs`
 
 ### Task 2.2: Resolve revisions against the active chat branch
 
@@ -192,14 +192,14 @@ The implementation may place tests beside an existing narrower suite when that b
 - Create: `Tests/Canvas/test_service.py`
 - Modify: `Tests/Chat/test_console_chat_store.py`
 
-- [ ] Add failing graph tests covering two message branches, two Canvas branches, historical selection, title-only revisions, sibling exclusion, exact revision reopen, and deterministic ties.
-- [ ] Define `CanvasScope(session_id, conversation_id, active_message_ids, selected_canvas_id, selected_revision_id, run_id)` and require it for every service operation. The service must never derive authority from a client-supplied conversation ID alone.
-- [ ] Implement `list_canvases`, `read_canvas`, `create_canvas`, `update_canvas`, and `rename_canvas`. `update_canvas` accepts the complete replacement document and required `expected_parent_revision_id`.
-- [ ] Select the newest revision whose origin message is reachable on the active path. If a user explicitly selected a historical revision, the next mutation branches from exactly that revision.
-- [ ] Return a structured optimistic-conflict result containing only current revision ID, digest, title, sequence, and origin—not source—and make no write.
-- [ ] Enforce per-conversation limits initially at 10 Canvases, 100 revisions per Canvas, and 50 MiB of durable Canvas source; keep constants centralized for later measured tuning.
-- [ ] Run `pytest Tests/Canvas/test_service.py Tests/Canvas/test_repository.py Tests/Chat/test_console_chat_store.py -q`.
-- [ ] Commit: `feat(canvas): resolve revisions on conversation branches`
+- [x] Add failing graph tests covering two message branches, two Canvas branches, historical selection, title-only revisions, sibling exclusion, exact revision reopen, and deterministic ties.
+- [x] Define `CanvasScope(session_id, conversation_id, active_message_ids, selected_canvas_id, selected_revision_id, run_id)` and require it for every service operation. The service must never derive authority from a client-supplied conversation ID alone.
+- [x] Implement `list_canvases`, `read_canvas`, `create_canvas`, `update_canvas`, and `rename_canvas`. `update_canvas` accepts the complete replacement document and required `expected_parent_revision_id`.
+- [x] Select the newest revision whose origin message is reachable on the active path. If a user explicitly selected a historical revision, the next mutation branches from exactly that revision.
+- [x] Return a structured optimistic-conflict result containing only current revision ID, digest, title, sequence, and origin—not source—and make no write.
+- [x] Enforce per-conversation limits initially at 10 Canvases, 100 revisions per Canvas, and 50 MiB of durable Canvas source; keep constants centralized for later measured tuning.
+- [x] Run `pytest Tests/Canvas/test_service.py Tests/Canvas/test_repository.py Tests/Chat/test_console_chat_store.py -q`.
+- [x] Commit: `feat(canvas): resolve revisions on conversation branches`
 
 ### Task 2.3: Stage temporary history and join existing promotion
 
@@ -212,19 +212,19 @@ The implementation may place tests beside an existing narrower suite when that b
 - Modify: `Tests/Chat/test_console_chat_store.py`
 - Modify: `Tests/Chat/test_chat_persistence_service.py`
 
-- [ ] Add failing tests for temporary create/update/rename chains, 8 MiB staged cap, idempotent `(session_id, run_id, tool_call_id)`, shutdown destruction, successful promotion, failure after each database write, and retry after rollback.
-- [ ] Implement an in-memory `CanvasStagingStore` keyed by session/run/tool call. It owns staged source and compile plans; transcript/tool records retain metadata only.
-- [ ] Add an explicit optional Canvas promotion participant to `ConsoleChatStore` rather than reaching through private attributes. The participant receives the existing transaction connection, new conversation ID, and message-ID mapping.
-- [ ] Extend `promote_ephemeral_session` so conversation, message tree, Canvas identities, revisions, and origin links commit in its existing transaction. Restore both chat and Canvas state completely on failure.
-- [ ] Destroy temporary Canvas state when its ephemeral session is discarded or the process exits. Never create orphan disk files for temporary history.
-- [ ] Assert that conversation soft delete/restore follows existing ownership and hard purge removes Canvas rows; no Canvas mutation enters current sync queues.
-- [ ] Run the focused Canvas staging, Console store, and chat persistence suites.
-- [ ] Commit: `feat(canvas): promote temporary histories atomically`
+- [x] Add failing tests for temporary create/update/rename chains, 8 MiB staged cap, idempotent `(session_id, run_id, tool_call_id)`, shutdown destruction, successful promotion, failure after each database write, and retry after rollback.
+- [x] Implement an in-memory `CanvasStagingStore` keyed by session/run/tool call. It owns staged source and compile plans; transcript/tool records retain metadata only.
+- [x] Add an explicit optional Canvas promotion participant to `ConsoleChatStore` rather than reaching through private attributes. The participant receives the existing transaction connection, new conversation ID, and message-ID mapping.
+- [x] Extend `promote_ephemeral_session` so conversation, message tree, Canvas identities, revisions, and origin links commit in its existing transaction. Restore both chat and Canvas state completely on failure.
+- [x] Destroy temporary Canvas state when its ephemeral session is discarded or the process exits. Never create orphan disk files for temporary history.
+- [x] Assert that conversation soft delete/restore follows existing ownership and hard purge removes Canvas rows; no Canvas mutation enters current sync queues.
+- [x] Run the focused Canvas staging, Console store, and chat persistence suites.
+- [x] Commit: `feat(canvas): promote temporary histories atomically`
 
 ### Delivery 2 checkpoint
 
-- [ ] Update TASK-31227 and ADR-115 with the actual migration number, tables, constraints, quotas, and rollback evidence.
-- [ ] Review repository queries with `EXPLAIN QUERY PLAN` for active-path list/read and record the result in task notes.
+- [x] Update TASK-31227 and ADR-115 with the actual migration number, tables, constraints, quotas, and rollback evidence.
+- [x] Review repository queries with `EXPLAIN QUERY PLAN` for active-path list/read and record the result in task notes.
 
 ---
 

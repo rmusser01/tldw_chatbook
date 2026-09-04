@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-09-03
-Related Task: Implementation tasks will be created from the approved design during planning.
+Related Tasks: TASK-31226, TASK-31227, TASK-31003
 Related: TASK-31003, ADR-069, ADR-032
 
 ## Decision
@@ -279,6 +279,46 @@ explicit contract is designed and approved under TASK-31003. Adding network,
 filesystem, cookies, persistent page storage, external connectors, sharing,
 or collaboration requires a later security/ownership decision and must not be
 enabled by relaxing the V1 sandbox.
+
+### Durable revision implementation record
+
+TASK-31227 implements the durable portion of this decision in schema migration
+65 to 66. The migration adds `canvas_documents`, `canvas_revisions`, and the
+local-only `canvas_conversation_hints` table. Documents have immutable
+conversation ownership. Revisions have immutable identity and payload, a
+same-Canvas parent, a unique per-Canvas sequence, revisioned title/runtime
+profile, UTF-8 source bytes with validated byte count and SHA-256 digest, and
+an origin message/turn. Foreign keys, ownership triggers, payload-validation
+checks, and no-update/no-delete triggers make invalid lineage or mutation fail
+closed even when repository validation is bypassed. Soft deletion is recorded
+on the document, while an authorized owning-conversation hard purge traverses
+message and Canvas children before removing the conversation. Canvas writes do
+not create sync-log records.
+
+The initial durable limits are 10 Canvases per conversation, 100 revisions per
+Canvas, 50 MiB of source per conversation, 512 KiB per revision, 4 KiB per
+title, 256 bytes per origin turn, and 4,096 messages in an active path.
+Temporary sessions additionally have an 8 MiB in-memory staged-source ceiling.
+These are explicit failure limits; committed revisions are never silently
+pruned.
+
+Temporary histories are owned by a session-incarnation token rather than a
+reusable session ID. Promotion takes an exclusive lease, resolves an exact
+native-to-durable message-ID map, contributes all Canvas rows to the existing
+conversation transaction, and publishes or retires only that exact staged
+snapshot after commit. Rollback releases the lease without changing the staged
+graph, allowing a deterministic retry. Close, restore, same-ID recreation, and
+runtime teardown cannot race an active promotion; ending an unsaved session
+retires its owner and destroys its staged source.
+
+The active-path queries were reviewed with SQLite `EXPLAIN QUERY PLAN` on a
+fresh schema-66 database. Conversation and message scope checks use their
+primary-key indexes; Canvas listing uses
+`idx_canvas_documents_conversation` and
+`idx_canvas_revisions_canvas_sequence`; exact revision reads use the revision
+primary key and `uq_canvas_documents_id_conversation`. There are no table
+scans. SQLite uses a temporary B-tree only for the final bounded list ordering,
+whose input is capped at 100 revisions per Canvas.
 
 ## Context
 
