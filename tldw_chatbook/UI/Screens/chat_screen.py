@@ -20779,11 +20779,15 @@ class ChatScreen(BaseAppScreen):
     def _answer_pending_question_with_draft(self, draft: str) -> bool:
         """PRD A8: let a composer send answer the mounted question card.
 
-        Only a MOUNTED card on the viewed session intercepts; a parked or
-        background round never touches the composer. The typed text becomes
+        Only a MOUNTED card whose payload belongs to the viewed session
+        intercepts; a parked, background, or stale round never touches the
+        composer. The typed text is cleaned and bounded exactly like the
+        card's own Other box (``clean_other_text``) and becomes
         ``other_text`` for every question still unanswered on the card, the
-        card's existing selections ride along, and the round resolves
-        through the controller's strict request-id match. Staged context
+        card's existing selections ride along, the whole payload is
+        validated (``validate_answers``) BEFORE the card or composer is
+        cleared, and the round resolves through the controller's strict
+        request-id match. Staged context
         (a pending image attachment or a staged Library-evidence launch)
         refuses interception: carrying it into a tool result is meaningless
         and discarding it silently would destroy work the user staged.
@@ -20797,8 +20801,18 @@ class ChatScreen(BaseAppScreen):
             True when the draft answered the question and must NOT also be
             dispatched as a turn; False to send normally.
         """
+        # Local import by design: the module stays off the boot path.
+        from ...Agents.ask_user_questions import (
+            AskUserValidationError,
+            clean_other_text,
+            validate_answers,
+        )
+
         text = draft.strip()
-        if not text:
+        if not text or text.startswith("/"):
+            # A `/`-prefixed draft is command text even when the user has
+            # confirmed sending an unknown command as plain text (Qodo
+            # #2380): it dispatches normally and leaves the question up.
             return False
         controller = self._console_chat_controller
         if controller is None:
@@ -20809,20 +20823,34 @@ class ChatScreen(BaseAppScreen):
         request_id = getattr(card, "_request_id", None)
         if not request_id:
             return False
+        payload_session = (getattr(card, "_payload", None) or {}).get("session_id")
+        if payload_session and payload_session != (controller.store.active_session_id or ""):
+            # A stale card mounted for another session must never take the
+            # text typed into this one (Qodo #2380).
+            return False
         if self._console_pending_image_attachment() is not None:
             return False
         if self._retrieval._pending_launch() is not None:
+            return False
+        other_text = clean_other_text(text)
+        if other_text is None:
             return False
         answers = card.collect_answers()
         for answer in answers:
             if answer.get("unanswered") or (
                 not answer.get("selected") and answer.get("other_text") is None
             ):
-                answer["other_text"] = text
+                answer["other_text"] = other_text
                 answer["unanswered"] = False
+        try:
+            clean_answers = validate_answers(answers)
+        except AskUserValidationError:
+            # Validate BEFORE clearing anything: a payload the controller
+            # would drop must not cost the user their draft or the card.
+            return False
         card.set_questions(None)
         self._clear_console_composer_draft()
-        controller.resolve_pending_question(answers, request_id=request_id)
+        controller.resolve_pending_question(clean_answers, request_id=request_id)
         return True
 
     def _mount_console_task_panel(self):
