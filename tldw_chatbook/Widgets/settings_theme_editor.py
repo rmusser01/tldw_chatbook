@@ -75,6 +75,10 @@ class SettingsThemeEditor(Vertical):
         self.custom_themes_path.mkdir(parents=True, exist_ok=True)
         self.color_inputs: dict[str, Input] = {}
         self.color_swatches: dict[str, Static] = {}
+        # TASK-31258: the user theme file the palette was loaded from (or last
+        # saved to); re-saving it is an update, saving over another is an
+        # overwrite that asks first.
+        self._loaded_user_theme: str | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the theme editor widget.
@@ -265,6 +269,7 @@ class SettingsThemeEditor(Vertical):
     def load_theme(self, theme_name: str) -> None:
         """Load a theme for editing."""
         self.current_theme_name = theme_name
+        self._loaded_user_theme = None
 
         name_input = self.query_one("#settings-theme-name", Input)
         name_input.value = theme_name
@@ -314,6 +319,7 @@ class SettingsThemeEditor(Vertical):
                 self._update_color_inputs()
                 self._update_dark_mode_checkbox()
                 self.is_modified = False
+                self._loaded_user_theme = theme_name
 
             except Exception as e:
                 logger.error(f"Failed to load user theme {theme_name}: {e}")
@@ -489,6 +495,34 @@ class SettingsThemeEditor(Vertical):
         }
         theme_path = self.custom_themes_path / f"{theme_name}.toml"
 
+        # TASK-31258: writing over another saved theme is one keypress from
+        # destroying it; re-saving the theme loaded from that very file is an
+        # update and needs no dialog.
+        if theme_path.exists() and self._loaded_user_theme != theme_name:
+
+            async def _confirmed_overwrite() -> None:
+                self._write_theme_file(theme_name, theme_path, theme_data)
+
+            self.app.push_screen(
+                ConfirmationDialog(
+                    title="Overwrite theme",
+                    message=(
+                        f"A saved theme named '{theme_name}' already exists. "
+                        "Replace it with the current palette?"
+                    ),
+                    confirm_label="Overwrite",
+                    cancel_label="Keep existing",
+                    confirm_callback=_confirmed_overwrite,
+                )
+            )
+            return
+
+        self._write_theme_file(theme_name, theme_path, theme_data)
+
+    def _write_theme_file(
+        self, theme_name: str, theme_path: Path, theme_data: dict[str, Any]
+    ) -> None:
+        """Write the theme TOML, register it, and update the tree."""
         try:
             with open(theme_path, "w", encoding="utf-8") as f:
                 toml.dump(theme_data, f)
@@ -503,6 +537,7 @@ class SettingsThemeEditor(Vertical):
 
             self.app.notify(f"Theme '{theme_name}' saved", severity="success")
             self.is_modified = False
+            self._loaded_user_theme = theme_name
 
             tree = self.query_one("#settings-theme-tree", Tree)
             user_node = None
@@ -631,6 +666,7 @@ class SettingsThemeEditor(Vertical):
             "error": "#FF0000",
         }
         self.current_theme_name = "new_theme"
+        self._loaded_user_theme = None
         self.current_theme_data = dict(self.current_theme_data) or defaults
 
         name_input = self.query_one("#settings-theme-name", Input)
@@ -655,6 +691,7 @@ class SettingsThemeEditor(Vertical):
         name_input.focus()
 
         self.current_theme_name = new_name
+        self._loaded_user_theme = None
         self.is_modified = True
 
         self.app.notify(f"Cloned theme as '{new_name}'", severity="information")
@@ -756,6 +793,26 @@ class SettingsThemeEditor(Vertical):
             "colors": self.current_theme_data,
         }
 
+        if export_path.exists():
+            # TASK-31258: never silently replace an earlier export.
+            async def _confirmed_export() -> None:
+                self._write_export(export_path, theme_data)
+
+            self.app.push_screen(
+                ConfirmationDialog(
+                    title="Overwrite export",
+                    message=f"{export_path} already exists. Replace it?",
+                    confirm_label="Overwrite",
+                    cancel_label="Keep existing",
+                    confirm_callback=_confirmed_export,
+                )
+            )
+            return
+
+        self._write_export(export_path, theme_data)
+
+    def _write_export(self, export_path: Path, theme_data: dict[str, Any]) -> None:
+        """Write the export TOML and report the path."""
         try:
             export_path.parent.mkdir(parents=True, exist_ok=True)
             with open(export_path, "w", encoding="utf-8") as f:

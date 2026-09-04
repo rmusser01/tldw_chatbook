@@ -759,3 +759,69 @@ async def test_settings_theme_editor_new_copies_current_palette(tmp_path):
         assert editor.current_theme_name == "new_theme"
         assert editor.current_theme_data == before
         assert editor.is_dark_theme is False
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_save_confirms_before_overwriting_another_theme(tmp_path):
+    """TASK-31258: saving under a name that already exists on disk (and is not
+    the theme currently loaded from that file) asks first; cancel keeps the file."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    _write_user_theme(tmp_path, "ocean")
+    app = _isolated_editor_app_with_real_screens(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.on_new_theme()
+        await pilot.pause()
+        editor.query_one("#settings-theme-name", Input).value = "ocean"
+        await pilot.pause()
+        editor.on_save_theme()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmationDialog)
+        assert app.screen.confirm_label == "Overwrite"
+        await pilot.click("#cancel-button")
+        await pilot.pause()
+        assert 'primary = "#0099FF"' in (tmp_path / "ocean.toml").read_text()
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_saving_the_loaded_theme_does_not_confirm(tmp_path):
+    """TASK-31258: re-saving the theme you loaded from disk is an update, not an overwrite."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    _write_user_theme(tmp_path, "ocean")
+    app = _isolated_editor_app_with_real_screens(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.load_user_theme("ocean")
+        await pilot.pause()
+        editor.color_inputs["primary"].value = "#123456"
+        await pilot.pause()
+        editor.on_save_theme()
+        await pilot.pause()
+        assert not isinstance(app.screen, ConfirmationDialog)
+        assert "#123456" in (tmp_path / "ocean.toml").read_text()
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_export_confirms_before_overwriting(tmp_path, monkeypatch):
+    """TASK-31258: Export onto an existing file asks first."""
+    from pathlib import Path
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    existing = downloads / "textual-dark_theme.toml"
+    existing.write_text("old", encoding="utf-8")
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app_with_real_screens(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.on_export_theme()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmationDialog)
+        assert app.screen.confirm_label == "Overwrite"
+        await pilot.click("#cancel-button")
+        await pilot.pause()
+        assert existing.read_text(encoding="utf-8") == "old"
