@@ -45,6 +45,7 @@ _MANAGED_OR_SECRET_FLAGS = frozenset(
         "--trust-remote-code",
     }
 )
+_MANAGED_SHORT_FLAG_ALIASES = {"-tp": "--tensor-parallel-size"}
 _MAX_PROBE_OUTPUT_BYTES = 256
 _PROBE_TIMEOUT_SECONDS = 5.0
 _PROBE_REAP_TIMEOUT_SECONDS = 0.25
@@ -247,7 +248,8 @@ def validate_raw_arguments(raw_arguments: str) -> tuple[VllmIssue, ...]:
     except ValueError:
         return (VllmIssue("invalid_arguments", "raw_arguments"),)
     for argument in arguments:
-        flag = argument.split("=", 1)[0].replace("_", "-")
+        raw_flag = argument.split("=", 1)[0]
+        flag = _MANAGED_SHORT_FLAG_ALIASES.get(raw_flag, raw_flag.replace("_", "-"))
         if flag in _MANAGED_OR_SECRET_FLAGS:
             return (VllmIssue("arguments_conflict", "raw_arguments", flag),)
         if flag.startswith("--") and any(

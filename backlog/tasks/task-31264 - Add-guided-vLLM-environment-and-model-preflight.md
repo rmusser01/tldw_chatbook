@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 22:32'
-updated_date: '2026-09-04 10:21'
+updated_date: '2026-09-04 10:35'
 labels:
   - vllm
   - lab
@@ -52,6 +52,21 @@ Task 6 Fix Round 2:
 ADR required: no
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: This review round enforces ADR-117's existing launch-input and privacy boundary without changing ownership or architecture.
+
+Task 6 Fix Round 3:
+9. Confirm the reported short option against the official vLLM serve contract
+   and the local launch boundary, then add RED tests for spaced/equals `-tp`, a
+   forged successful preflight, and an allowed non-managed raw option.
+10. Add the smallest short-alias-to-managed-option mapping in the shared raw
+    validator; retain immediate command-builder revalidation and prove the
+    allowed control is not overblocked.
+11. Run focused setup RED/GREEN, the touched core suite, static/inventory/diff
+    gates, and append exact evidence before restoring Done.
+
+ADR required: no
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: This extends ADR-117's existing managed-argument boundary to one
+official spelling of an already-owned structured option.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -92,6 +107,22 @@ deselected`; GREEN was `30 passed, 29 deselected`, plus `3 passed, 79
 deselected` for the final builder canaries. Structured-validation RED was `21
 failed, 59 deselected`; GREEN was `28 passed, 52 deselected`. No new ADR:
 ADR-117 already owns the launch-input boundary.
+
+Task 6 Fix Round 3 verifies the reviewer claim against the
+[official vLLM `serve` reference](https://docs.vllm.ai/en/stable/cli/serve/),
+which documents `--tensor-parallel-size, -tp`; this
+checkout's shared environment has no installed `vllm` executable, so no local
+version-specific help contract was available. The shared raw validator now
+maps exact short option `-tp` (including `-tp=value`) to the already-protected
+canonical tensor-parallel option. The command builder's existing immediate
+revalidation therefore closes the same forged-preflight path without another
+policy list. RED was `3 failed, 1 passed, 82 deselected`: both short spellings
+and forged command construction escaped, while `--enable-prefix-caching`
+remained allowed. GREEN was `4 passed, 82 deselected`. Final setup was `86
+passed`; setup/profile/lifecycle was `173 passed`; focused Ruff, `py_compile`,
+diagnostic/profile inventories, and `git diff --check` passed. No new ADR or
+lesson: this is one official spelling of the structured option already owned
+by ADR-117.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

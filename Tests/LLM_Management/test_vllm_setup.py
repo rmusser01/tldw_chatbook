@@ -254,6 +254,27 @@ def test_raw_arguments_reject_canonical_equivalents_and_abbreviations(
     )
 
 
+@pytest.mark.parametrize("raw_arguments", ["-tp 2", "-tp=2"])
+def test_raw_arguments_reject_tensor_parallel_short_alias(
+    raw_arguments: str,
+) -> None:
+    assert validate_raw_arguments(raw_arguments) == (
+        VllmIssue(
+            "arguments_conflict",
+            "raw_arguments",
+            "--tensor-parallel-size",
+        ),
+    )
+
+
+def test_allowed_raw_option_reaches_command_without_overblocking(tmp_path: Path) -> None:
+    draft = local_draft(raw_arguments="--enable-prefix-caching")
+    preflight = passing_preflight(draft, cli_path=tmp_path / "vllm")
+
+    assert validate_raw_arguments(draft.raw_arguments) == ()
+    assert build_vllm_command(draft, preflight)[-1] == "--enable-prefix-caching"
+
+
 @pytest.mark.parametrize(
     ("raw_arguments", "private_value"),
     [
@@ -279,6 +300,18 @@ def test_command_builder_revalidates_raw_argument_boundary(
         build_vllm_command(bypass, forged)
 
     assert private_value not in str(forged)
+
+
+def test_command_builder_revalidates_tensor_parallel_short_alias(
+    tmp_path: Path,
+) -> None:
+    safe = local_draft()
+    successful = passing_preflight(safe, cli_path=tmp_path / "vllm")
+    bypass = local_draft(raw_arguments="-tp=8")
+    forged = replace(successful, fingerprint=semantic_fingerprint(bypass), issues=())
+
+    with pytest.raises(ValueError, match="raw arguments conflict"):
+        build_vllm_command(bypass, forged)
 
 
 @pytest.mark.parametrize("model", ["org/model", "meta-llama/Llama-3.1-8B-Instruct"])
