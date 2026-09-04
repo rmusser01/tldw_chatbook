@@ -28,6 +28,13 @@ from tldw_chatbook.Chat.console_session_settings import (
     reasoning_effort_hint_for_model,
     validate_console_session_settings,
 )
+from tldw_chatbook.Chat.provider_test_evidence import (
+    ProviderDraftIdentity,
+    ProviderTestEvidence,
+)
+from tldw_chatbook.Chat.provider_endpoint_contract import (
+    canonical_connection_identity,
+)
 from tldw_chatbook.Utils.token_counter import count_tokens_messages
 from tldw_chatbook.Widgets.Console.console_context_controls import (
     build_console_context_control_state,
@@ -598,6 +605,853 @@ def test_readiness_reports_missing_key_for_supported_openai_instead_of_wip() -> 
     assert "not wired" not in readiness.detail
 
 
+def _readiness_identity(
+    *,
+    provider: str = "ollama",
+    endpoint: str = "http://127.0.0.1:11434/api/chat",
+    credential_source: str = "none",
+    credential_revision: int = 0,
+    draft_generation: int = 1,
+) -> ProviderDraftIdentity:
+    connection_identity = canonical_connection_identity(provider, endpoint)
+    assert connection_identity is not None
+    return ProviderDraftIdentity(
+        provider_key=provider,
+        connection_identity=connection_identity,
+        credential_source=credential_source,
+        credential_revision=credential_revision,
+        draft_generation=draft_generation,
+    )
+
+
+def test_console_readiness_retains_three_positional_argument_compatibility():
+    readiness = session_settings.ConsoleSettingsReadiness(
+        "Ready",
+        "Existing display copy.",
+        True,
+    )
+
+    assert readiness.label == "Ready"
+    assert readiness.detail == "Existing display copy."
+    assert readiness.native_send_supported is True
+    assert readiness.operability == "ready_to_send"
+    assert readiness.blocker is None
+    assert readiness.recovery_action is None
+    assert readiness.configuration == "configured"
+    assert readiness.configuration_issue is None
+    assert readiness.credential == "not_required"
+    assert readiness.credential_source == "none"
+    assert readiness.endpoint == "not_tested"
+    assert readiness.endpoint_category is None
+    assert readiness.model == "unconfirmed"
+    assert readiness.generation == "not_tested"
+    assert readiness.generation_category is None
+
+
+def test_console_readiness_normalizes_legacy_blocked_construction_conservatively():
+    readiness = session_settings.ConsoleSettingsReadiness(
+        "Not ready",
+        "Existing blocked copy.",
+        False,
+    )
+
+    assert readiness.operability == "not_ready"
+    assert readiness.blocker == "readiness_unknown"
+    assert readiness.recovery_action == "review_provider_settings"
+    assert readiness.configuration == "incomplete"
+    assert readiness.configuration_issue == "invalid_settings"
+    assert readiness.credential == "missing"
+    assert readiness.model == "missing"
+
+
+def _valid_structured_readiness(**overrides):
+    values = {
+        "label": "Ready",
+        "detail": "An attempt is allowed.",
+        "native_send_supported": True,
+        "operability": "ready_to_send",
+        "blocker": None,
+        "recovery_action": None,
+        "configuration": "configured",
+        "configuration_issue": None,
+        "credential": "not_required",
+        "credential_source": "none",
+        "endpoint": "not_tested",
+        "endpoint_category": None,
+        "model": "unconfirmed",
+        "generation": "not_tested",
+        "generation_category": None,
+    }
+    values.update(overrides)
+    return session_settings.ConsoleSettingsReadiness(**values)
+
+
+def _blocked_structured_readiness(blocker, recovery_action, **overrides):
+    values = {
+        "label": "Not ready",
+        "detail": "A bounded recovery is required.",
+        "native_send_supported": False,
+        "operability": "not_ready",
+        "blocker": blocker,
+        "recovery_action": recovery_action,
+        "configuration": "configured",
+        "configuration_issue": None,
+        "credential": "not_required",
+        "credential_source": "none",
+        "endpoint": "not_tested",
+        "endpoint_category": None,
+        "model": "unconfirmed",
+        "generation": "not_tested",
+        "generation_category": None,
+    }
+    values.update(overrides)
+    return session_settings.ConsoleSettingsReadiness(**values)
+
+
+@pytest.mark.parametrize(
+    ("blocker", "recovery_action", "facets"),
+    [
+        (
+            "provider_missing",
+            "select_provider",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "provider_missing",
+                "model": "missing",
+            },
+        ),
+        (
+            "provider_unsupported",
+            "select_supported_provider",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "invalid_settings",
+                "credential": "missing",
+            },
+        ),
+        ("endpoint_invalid", "configure_endpoint", {}),
+        (
+            "provider_configuration_invalid",
+            "review_provider_settings",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "invalid_settings",
+                "credential": "missing",
+            },
+        ),
+        (
+            "endpoint_not_saved",
+            "save_endpoint",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "credential_missing",
+                "credential": "missing",
+            },
+        ),
+        (
+            "credential_missing",
+            "configure_credential",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "credential_missing",
+                "credential": "missing",
+            },
+        ),
+        ("model_missing", "select_model", {"model": "missing"}),
+        (
+            "credential_rejected",
+            "configure_credential",
+            {"endpoint": "unreachable", "endpoint_category": "unauthorized"},
+        ),
+        (
+            "endpoint_unreachable",
+            "retry_connection",
+            {"endpoint": "unreachable", "endpoint_category": "timeout"},
+        ),
+        ("active_run", "wait_for_active_run", {}),
+        (
+            "readiness_unknown",
+            "review_provider_settings",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "invalid_settings",
+                "credential": "missing",
+                "model": "missing",
+            },
+        ),
+    ],
+)
+def test_console_readiness_accepts_each_coherent_structured_blocker(
+    blocker,
+    recovery_action,
+    facets,
+):
+    readiness = _blocked_structured_readiness(
+        blocker,
+        recovery_action,
+        **facets,
+    )
+
+    assert readiness.blocker == blocker
+    assert readiness.recovery_action == recovery_action
+
+
+@pytest.mark.parametrize(
+    ("blocker", "expected_recovery", "facets"),
+    [
+        (
+            "provider_missing",
+            "select_provider",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "provider_missing",
+            },
+        ),
+        ("provider_unsupported", "select_supported_provider", {}),
+        ("endpoint_invalid", "configure_endpoint", {}),
+        (
+            "provider_configuration_invalid",
+            "review_provider_settings",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "invalid_settings",
+            },
+        ),
+        ("endpoint_not_saved", "save_endpoint", {}),
+        (
+            "credential_missing",
+            "configure_credential",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "credential_missing",
+                "credential": "missing",
+            },
+        ),
+        ("model_missing", "select_model", {"model": "missing"}),
+        (
+            "credential_rejected",
+            "configure_credential",
+            {"endpoint": "unreachable", "endpoint_category": "unauthorized"},
+        ),
+        (
+            "endpoint_unreachable",
+            "retry_connection",
+            {"endpoint": "unreachable", "endpoint_category": "timeout"},
+        ),
+        ("active_run", "wait_for_active_run", {}),
+        (
+            "readiness_unknown",
+            "review_provider_settings",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "invalid_settings",
+                "credential": "missing",
+                "model": "missing",
+            },
+        ),
+    ],
+)
+def test_console_readiness_rejects_wrong_recovery_for_each_blocker(
+    blocker,
+    expected_recovery,
+    facets,
+):
+    wrong_recovery = (
+        "select_provider" if expected_recovery != "select_provider" else "select_model"
+    )
+
+    with pytest.raises(ValueError):
+        _blocked_structured_readiness(blocker, wrong_recovery, **facets)
+
+
+@pytest.mark.parametrize(
+    ("blocker", "recovery_action", "facets"),
+    [
+        (
+            "active_run",
+            "wait_for_active_run",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "provider_missing",
+                "model": "missing",
+            },
+        ),
+        (
+            "active_run",
+            "wait_for_active_run",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "invalid_settings",
+                "credential": "missing",
+            },
+        ),
+        (
+            "active_run",
+            "wait_for_active_run",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "credential_missing",
+                "credential": "missing",
+            },
+        ),
+        ("active_run", "wait_for_active_run", {"model": "missing"}),
+        (
+            "active_run",
+            "wait_for_active_run",
+            {"endpoint": "unreachable", "endpoint_category": "timeout"},
+        ),
+        (
+            "model_missing",
+            "select_model",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "credential_missing",
+                "credential": "missing",
+                "model": "missing",
+            },
+        ),
+        (
+            "endpoint_unreachable",
+            "retry_connection",
+            {
+                "model": "missing",
+                "endpoint": "unreachable",
+                "endpoint_category": "timeout",
+            },
+        ),
+        (
+            "endpoint_not_saved",
+            "save_endpoint",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "invalid_settings",
+                "credential": "missing",
+            },
+        ),
+        (
+            "provider_configuration_invalid",
+            "review_provider_settings",
+            {
+                "configuration": "incomplete",
+                "configuration_issue": "provider_missing",
+                "model": "missing",
+            },
+        ),
+        (
+            "credential_rejected",
+            "configure_credential",
+            {
+                "model": "missing",
+                "endpoint": "unreachable",
+                "endpoint_category": "unauthorized",
+            },
+        ),
+    ],
+)
+def test_console_readiness_rejects_lower_priority_blocker(
+    blocker,
+    recovery_action,
+    facets,
+):
+    with pytest.raises(ValueError):
+        _blocked_structured_readiness(blocker, recovery_action, **facets)
+
+
+def test_credential_missing_blocker_requires_incomplete_configuration():
+    with pytest.raises(ValueError):
+        _blocked_structured_readiness(
+            "credential_missing",
+            "configure_credential",
+            configuration="configured",
+            configuration_issue=None,
+            credential="missing",
+        )
+
+
+@pytest.mark.parametrize(
+    ("category", "wrong_recovery"),
+    [
+        ("timeout", "review_provider_settings"),
+        ("connection_refused", "review_provider_settings"),
+        ("connection_error", "review_provider_settings"),
+        ("invalid_payload", "retry_connection"),
+        ("http_status", "retry_connection"),
+        (None, "retry_connection"),
+    ],
+)
+def test_endpoint_blocker_recovery_must_match_failure_category(
+    category,
+    wrong_recovery,
+):
+    with pytest.raises(ValueError):
+        _blocked_structured_readiness(
+            "endpoint_unreachable",
+            wrong_recovery,
+            endpoint="unreachable",
+            endpoint_category=category,
+        )
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"native_send_supported": "yes"},
+        {"operability": "available"},
+        {"operability": "not_ready", "native_send_supported": True},
+        {"blocker": "credential_missing"},
+        {
+            "operability": "not_ready",
+            "native_send_supported": False,
+            "blocker": None,
+            "recovery_action": None,
+        },
+        {
+            "operability": "not_ready",
+            "native_send_supported": False,
+            "blocker": "credential_missing",
+            "recovery_action": "retry_connection",
+        },
+        {"configuration": "ready"},
+        {"configuration": "configured", "configuration_issue": "invalid_settings"},
+        {"credential": "authenticated", "credential_source": "none"},
+        {"endpoint": "reachable", "endpoint_category": "timeout"},
+        {"model": "selected"},
+        {"generation": "failed", "generation_category": None},
+    ],
+    ids=[
+        "native-flag-type",
+        "operability-literal",
+        "operability-native-flag",
+        "ready-with-blocker",
+        "blocked-without-blocker",
+        "blocker-recovery-pair",
+        "configuration-literal",
+        "configuration-issue",
+        "credential-source",
+        "endpoint-category",
+        "model-literal",
+        "generation-category",
+    ],
+)
+def test_console_readiness_rejects_invalid_structured_states(overrides):
+    with pytest.raises(ValueError):
+        _valid_structured_readiness(**overrides)
+
+
+@pytest.mark.parametrize(
+    (
+        "settings",
+        "app_config",
+        "environ",
+        "evidence",
+        "identity",
+        "expected_blocker",
+        "expected_recovery",
+    ),
+    [
+        (
+            ConsoleSessionSettings(provider="", model=None, base_url="bad"),
+            {},
+            {},
+            None,
+            None,
+            "provider_missing",
+            "select_provider",
+        ),
+        (
+            ConsoleSessionSettings(
+                provider="future_provider", model="future", base_url="bad"
+            ),
+            {"api_settings": {"future_provider": {"api_url": "bad"}}},
+            {},
+            None,
+            None,
+            "provider_unsupported",
+            "select_supported_provider",
+        ),
+        (
+            ConsoleSessionSettings(provider="vllm", model="model", base_url="bad"),
+            {},
+            {},
+            None,
+            None,
+            "endpoint_invalid",
+            "configure_endpoint",
+        ),
+        (
+            ConsoleSessionSettings(
+                provider="qwencloud",
+                model="model",
+                base_url="https://new.example.test/v1",
+            ),
+            {
+                "api_settings": {
+                    "qwencloud": {
+                        "api_base_url": "https://saved.example.test/v1",
+                        "api_key_env_var": "ABSENT_QWEN_KEY",
+                    }
+                }
+            },
+            {},
+            None,
+            None,
+            "endpoint_not_saved",
+            "save_endpoint",
+        ),
+        (
+            ConsoleSessionSettings(provider="openai", model=None),
+            {"api_settings": {"openai": {"api_key_env_var": "ABSENT_KEY"}}},
+            {},
+            None,
+            None,
+            "credential_missing",
+            "configure_credential",
+        ),
+        (
+            ConsoleSessionSettings(
+                provider="ollama",
+                model=None,
+                base_url="http://127.0.0.1:11434",
+            ),
+            {
+                "api_settings": {
+                    "ollama": {"api_url": "http://127.0.0.1:11434"}
+                }
+            },
+            {},
+            ProviderTestEvidence(
+                _readiness_identity(), "unreachable", (), "connection_refused"
+            ),
+            _readiness_identity(),
+            "model_missing",
+            "select_model",
+        ),
+        (
+            ConsoleSessionSettings(
+                provider="ollama",
+                model="model",
+                base_url="http://127.0.0.1:11434",
+            ),
+            {
+                "api_settings": {
+                    "ollama": {"api_url": "http://127.0.0.1:11434"}
+                }
+            },
+            {},
+            ProviderTestEvidence(
+                _readiness_identity(), "unreachable", (), "connection_refused"
+            ),
+            _readiness_identity(),
+            "endpoint_unreachable",
+            "retry_connection",
+        ),
+        (
+            ConsoleSessionSettings(provider="qwencloud", model="model"),
+            {"api_settings": {"qwencloud": ["malformed"]}},
+            {},
+            None,
+            None,
+            "provider_configuration_invalid",
+            "review_provider_settings",
+        ),
+        (
+            ConsoleSessionSettings(
+                provider="ollama",
+                model="model",
+                base_url="http://127.0.0.1:11434",
+            ),
+            {
+                "api_settings": {
+                    "ollama": {"api_url": "http://127.0.0.1:11434"}
+                }
+            },
+            {},
+            None,
+            None,
+            None,
+            None,
+        ),
+    ],
+    ids=[
+        "provider-before-endpoint",
+        "support-before-endpoint",
+        "endpoint-syntax",
+        "persistence-before-credential",
+        "credential-before-model",
+        "model-before-reachability",
+        "known-endpoint-failure",
+        "invalid-provider-configuration",
+        "ready",
+    ],
+)
+def test_console_readiness_selects_one_highest_priority_blocker(
+    settings,
+    app_config,
+    environ,
+    evidence,
+    identity,
+    expected_blocker,
+    expected_recovery,
+):
+    readiness = build_console_settings_readiness(
+        settings,
+        app_config=app_config,
+        environ=environ,
+        evidence=evidence,
+        current_identity=identity,
+    )
+
+    assert readiness.blocker == expected_blocker
+    assert readiness.recovery_action == expected_recovery
+    assert readiness.operability == (
+        "ready_to_send" if expected_blocker is None else "not_ready"
+    )
+
+
+def test_console_readiness_projects_exact_generation_and_credential_evidence():
+    identity = _readiness_identity(
+        provider="openai",
+        endpoint="https://api.openai.com/v1/chat/completions",
+        credential_source="stored",
+        credential_revision=3,
+    )
+    evidence = ProviderTestEvidence(
+        identity,
+        "not_tested",
+        (),
+        credential="present_unverified",
+        generation="succeeded",
+    )
+
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="openai", model="gpt-test"),
+        app_config={"api_settings": {"openai": {"api_key": "fake-test-key"}}},
+        environ={},
+        evidence=evidence,
+        current_identity=identity,
+    )
+
+    assert readiness.operability == "ready_to_send"
+    assert readiness.credential == "authenticated"
+    assert readiness.credential_source == "stored"
+    assert readiness.endpoint == "not_tested"
+    assert readiness.model == "unconfirmed"
+    assert readiness.generation == "succeeded"
+    assert readiness.generation_category is None
+    assert readiness.provider_display_name == "OpenAI"
+
+
+def test_canonical_missing_credential_wins_over_exact_identity_evidence():
+    identity = _readiness_identity(
+        provider="openai",
+        endpoint="https://api.openai.com/v1/chat/completions",
+        credential_source="environment",
+        credential_revision=3,
+    )
+    evidence = ProviderTestEvidence(
+        identity,
+        "not_tested",
+        (),
+        credential="present_unverified",
+    )
+
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="openai", model="gpt-test"),
+        app_config={
+            "api_settings": {
+                "openai": {"api_key_env_var": "ABSENT_OPENAI_TEST_KEY"}
+            }
+        },
+        environ={},
+        evidence=evidence,
+        current_identity=identity,
+    )
+
+    assert readiness.credential == "missing"
+    assert readiness.credential_source == "none"
+    assert readiness.blocker == "credential_missing"
+    assert readiness.recovery_action == "configure_credential"
+
+
+def test_failed_generation_remains_evidence_and_does_not_block_an_attempt():
+    identity = _readiness_identity(
+        credential_source="none",
+        credential_revision=0,
+    )
+    evidence = ProviderTestEvidence(
+        identity,
+        "reachable",
+        ("model",),
+        generation="failed",
+        generation_category="provider_error",
+    )
+
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(
+            provider="ollama",
+            model="model",
+            base_url="http://127.0.0.1:11434",
+        ),
+        app_config={
+            "api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}
+        },
+        environ={},
+        evidence=evidence,
+        current_identity=identity,
+    )
+
+    assert readiness.operability == "ready_to_send"
+    assert readiness.blocker is None
+    assert readiness.endpoint == "reachable"
+    assert readiness.model == "confirmed"
+    assert readiness.generation == "failed"
+    assert readiness.generation_category == "provider_error"
+
+
+def test_stale_verification_is_typed_without_echoing_old_endpoint():
+    tested = _readiness_identity()
+    current = _readiness_identity(
+        endpoint="http://127.0.0.1:11434/v1/chat/completions",
+        draft_generation=2,
+    )
+    evidence = ProviderTestEvidence(
+        tested,
+        "reachable",
+        ("model",),
+        generation="succeeded",
+    )
+
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(
+            provider="ollama",
+            model="model",
+            base_url="http://127.0.0.1:11434",
+        ),
+        app_config={
+            "api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}
+        },
+        environ={},
+        evidence=evidence,
+        current_identity=current,
+    )
+
+    assert readiness.operability == "ready_to_send"
+    assert readiness.endpoint == "changed_since_test"
+    assert readiness.model == "unconfirmed"
+    assert readiness.generation == "changed_since_test"
+    assert "api/chat" not in readiness.provider_display_name
+
+
+def test_stale_endpoint_only_evidence_does_not_claim_a_generation_test_changed():
+    tested = _readiness_identity()
+    current = _readiness_identity(
+        endpoint="http://127.0.0.1:11434/v1/chat/completions",
+        draft_generation=2,
+    )
+    evidence = ProviderTestEvidence(tested, "reachable", ("model",))
+
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(
+            provider="ollama",
+            model="model",
+            base_url="http://127.0.0.1:11434",
+        ),
+        app_config={
+            "api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}
+        },
+        environ={},
+        evidence=evidence,
+        current_identity=current,
+    )
+
+    assert readiness.endpoint == "changed_since_test"
+    assert readiness.generation == "not_tested"
+
+
+@pytest.mark.parametrize(
+    ("category", "expected_blocker", "expected_recovery"),
+    [
+        ("timeout", "endpoint_unreachable", "retry_connection"),
+        ("connection_refused", "endpoint_unreachable", "retry_connection"),
+        ("connection_error", "endpoint_unreachable", "retry_connection"),
+        ("unauthorized", "credential_rejected", "configure_credential"),
+        ("forbidden", "credential_rejected", "configure_credential"),
+        ("invalid_payload", "endpoint_unreachable", "review_provider_settings"),
+        ("http_status", "endpoint_unreachable", "review_provider_settings"),
+    ],
+)
+def test_endpoint_failure_category_selects_actionable_recovery(
+    category,
+    expected_blocker,
+    expected_recovery,
+):
+    identity = _readiness_identity(
+        provider="openai",
+        endpoint="https://api.openai.com/v1/chat/completions",
+        credential_source="stored",
+        credential_revision=1,
+    )
+    evidence = ProviderTestEvidence(identity, "unreachable", (), category)
+
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="openai", model="gpt-test"),
+        app_config={"api_settings": {"openai": {"api_key": "fake-test-key"}}},
+        environ={},
+        evidence=evidence,
+        current_identity=identity,
+    )
+
+    assert readiness.blocker == expected_blocker
+    assert readiness.recovery_action == expected_recovery
+    assert readiness.endpoint_category == category
+
+
+def test_malformed_provider_configuration_precedes_endpoint_persistence():
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(
+            provider="qwencloud",
+            model="model",
+            base_url="https://new.example.test/v1",
+        ),
+        app_config={"api_settings": {"qwencloud": ["malformed"]}},
+        environ={},
+    )
+
+    assert readiness.blocker == "provider_configuration_invalid"
+    assert readiness.recovery_action == "review_provider_settings"
+
+
+def test_active_run_blocks_otherwise_ready_settings():
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(
+            provider="ollama",
+            model="model",
+            base_url="http://127.0.0.1:11434",
+        ),
+        app_config={
+            "api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}
+        },
+        environ={},
+        active_run=True,
+    )
+
+    assert readiness.operability == "not_ready"
+    assert readiness.blocker == "active_run"
+    assert readiness.recovery_action == "wait_for_active_run"
+
+
+def test_configuration_blocker_precedes_active_run():
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="", model=None),
+        app_config={},
+        environ={},
+        active_run=True,
+    )
+
+    assert readiness.blocker == "provider_missing"
+    assert readiness.recovery_action == "select_provider"
+
+
 def test_readiness_empty_provider_uses_select_provider_copy_without_empty_quotes() -> (
     None
 ):
@@ -763,7 +1617,7 @@ def test_readiness_blocks_unsaved_generic_endpoint_with_safe_details() -> None:
 
     assert readiness.label == "Endpoint not saved"
     assert readiness.native_send_supported is False
-    assert "save the endpoint in Settings" in readiness.detail
+    assert "save the endpoint in Conversation settings" in readiness.detail
     assert "Selected endpoint: http://127.0.0.1:9999/v1" in readiness.detail
     assert "Saved endpoint: http://127.0.0.1:11434" in readiness.detail
 
@@ -894,7 +1748,8 @@ def test_configured_url_provider_validates_invalid_base_url() -> None:
     )
     errors = validate_console_session_settings(settings, app_config=app_config)
 
-    assert readiness.label == "Invalid URL"
+    assert readiness.label == "Unknown"
+    assert readiness.blocker == "provider_unsupported"
     assert "Base URL must be a valid http(s) URL." in errors
 
 
@@ -1917,6 +2772,48 @@ async def test_settings_active_compaction_return_preserves_progress_and_focus() 
 
 
 @pytest.mark.asyncio
+async def test_settings_compaction_updates_completion_blocker_for_full_lifecycle() -> None:
+    """Completion is blocked as soon as compaction starts and restored when settled."""
+    app = _SettingsCloseHarness()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def compact_now() -> tuple[bool, str]:
+        entered.set()
+        await release.wait()
+        return True, "Compaction complete."
+
+    modal = _settings_close_modal(compact_now=compact_now)
+    try:
+        async with app.run_test(size=(120, 42)) as pilot:
+            await app.push_screen(modal, callback=app.capture)
+            session_action = modal.query_one("#console-settings-save", Button)
+            reason = modal.query_one(
+                "#console-settings-primary-disabled-reason", Static
+            )
+            assert session_action.disabled is False
+
+            modal.query_one("#console-context-compact-now", Button).press()
+            await asyncio.wait_for(entered.wait(), timeout=1)
+            await pilot.pause()
+
+            assert session_action.disabled is True
+            assert str(reason.renderable) == (
+                "Available when the current context operation finishes."
+            )
+
+            release.set()
+            for _ in range(20):
+                await pilot.pause(0.05)
+                if not session_action.disabled:
+                    break
+            assert session_action.disabled is False
+            assert str(reason.renderable) == ""
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
 async def test_settings_completed_compaction_retires_guard_and_stale_close_warning() -> (
     None
 ):
@@ -2143,6 +3040,8 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
             )
             store = SimpleNamespace(
                 active_session_id=session.id,
+                ensure_session=lambda: session,
+                session_settings_revision=lambda _session_id: 0,
                 switch_session=lambda _session_id: session,
             )
 
@@ -2176,6 +3075,9 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
                 ),
                 _ensure_console_chat_controller=lambda: controller,
                 _ensure_console_chat_store=lambda: store,
+                _console_run_active=lambda: False,
+                _test_console_connection=lambda _request: None,
+                _test_console_generation=lambda _session_id, _request: None,
                 _active_console_settings_context_estimate=lambda: estimate,
                 _active_console_context_control_state=lambda *, estimate, **_kwargs: (
                     build_console_context_control_state(

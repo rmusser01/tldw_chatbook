@@ -47,6 +47,14 @@ from ..Navigation.main_navigation import NavigateToScreen
 from ..Navigation.pending_handoff_store import (
     ConsoleProviderIntent,
     HandoffChannel,
+    HandoffClaim,
+    PendingHandoffStore,
+)
+from ..Navigation.conversation_settings_navigation import (
+    ConsoleSettingsReturnTarget,
+    ConversationSettingsReturnIntent,
+    ConversationSettingsReturnOutcome,
+    ProviderSettingsNavigationTarget,
 )
 from ..Navigation.screen_state_store import ConsolePromptTargetProjection
 from .chat_screen_state import TaskResumeState
@@ -315,6 +323,7 @@ from ...Chat.console_session_settings import (
     build_console_settings_summary_state,
     build_target_default_console_session_settings,
     unsaved_console_endpoint_warning,
+    validate_console_session_settings,
 )
 from ...Chat.console_chat_store import (
     MAX_PENDING_ATTACHMENTS,
@@ -326,8 +335,16 @@ from ...Chat.console_chat_store import (
     ConsoleSettingsPolicyFailureLabel,
 )
 from ...Chat.console_provider_gateway import (
+    AuxiliaryCompletionRequest,
     DEFAULT_LLAMACPP_BASE_URL,
     normalize_llamacpp_base_url,
+)
+from ...Chat.Chat_Deps import (
+    ChatAuthenticationError,
+    ChatBadRequestError,
+    ChatConfigurationError,
+    ChatProviderError,
+    ChatRateLimitError,
 )
 from ...Chat.console_provider_endpoints import (
     first_configured_endpoint,
@@ -364,8 +381,16 @@ from ...Chat.local_server_discovery import (
     discover_local_servers,
 )
 from ...Chat.chat_handoff_models import ChatHandoffPayload
-from ...Chat.provider_catalog import provider_display_name
-from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
+from ...Chat.provider_readiness import (
+    get_provider_readiness,
+    provider_config_key,
+)
+from ...Chat.provider_test_evidence import (
+    ConsoleGenerationTestRequest,
+    ProviderDraftIdentity,
+    ProviderGenerationProbeResult,
+    ProviderProbeResult,
+)
 from ...Chat.console_ephemeral import ACTION_SAVE_CHAT, blocked_reason
 from ...Chat.console_live_work import (
     ACP_READINESS_ROW_ID,
@@ -482,7 +507,6 @@ from ...Widgets.Console import (
     ConsoleRunInspector,
     ConsoleSendAuthoritySummary,
     ConsoleSessionSurface,
-    ConsoleSettingsModal,
     ConsoleSettingsSummary,
     ConsoleSetupModal,
     ConsoleStagedContextTray,
@@ -502,6 +526,9 @@ from ...Widgets.Console import (
 from ...Widgets.Console.console_transcript import (
     derive_console_memory_banner_presentation,
 )
+from ...Widgets.Console.console_settings_summary import (
+    build_console_readiness_presentation,
+)
 from ...Widgets.Console.console_control_bar import (
     ConsoleAutoSpeakRetryRequested,
     ConsoleAutoSpeakResumeRequested,
@@ -510,7 +537,6 @@ from ...Widgets.Console.console_speech_controls import (
     ConsoleAutoSpeakChanged,
     ConsoleHandsFreeToggleRequested,
 )
-from ...Widgets.Console.console_settings_modal import ConsoleSettingsResult
 from ...Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
 from ...Widgets.Console.console_terminal_messages import (
     ConsoleTerminalActionRequested,
@@ -636,6 +662,12 @@ NoteRequested = ConsoleSelectionNoteRequested
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsCredentialRequest,
+        ConsoleSettingsDraftSnapshot,
+        ConsoleSettingsModal,
+        ConsoleSettingsResult,
+    )
     from tldw_chatbook.Widgets.Console.console_workspace_action_menu import (
         WorkspaceActionChosen,
         WorkspaceActionMenuDismissed,
@@ -645,6 +677,15 @@ if TYPE_CHECKING:
     )
 
 logger = logger.bind(module="ChatScreen")
+
+
+def _conversation_settings_modal_module():
+    """Load the Conversation Settings modal only when its workflow starts."""
+    from ...Widgets.Console import console_settings_modal
+
+    return console_settings_modal
+
+
 _CONSOLE_DEFAULT_RESERVATION_ATTEMPTS = 8
 Changed = Input.Changed
 #: The Console's DEFAULT Library RAG source kinds, unchanged by RAG-44's
@@ -2852,27 +2893,120 @@ class ChatScreen(BaseAppScreen):
             self.app_instance.console_new_chat_default_generation += 1
         return True
 
+    @staticmethod
+    async def _test_console_connection(
+        identity: ProviderDraftIdentity,
+    ) -> ProviderProbeResult:
+        """Run the existing bounded model-catalog probe for one exact draft."""
+        from .settings_endpoint_probe import (
+            SettingsEndpointProbePurpose,
+            probe_settings_endpoint,
+            provider_probe_result_from_settings_outcome,
+        )
+
+        outcome = await probe_settings_endpoint(
+            identity.connection_identity[1],
+            provider=identity.provider_key,
+            purpose=SettingsEndpointProbePurpose.CHAT_CATALOG,
+        )
+        return provider_probe_result_from_settings_outcome(outcome)
+
+    async def _test_console_generation(
+        self,
+        session_id: str,
+        request: ConsoleGenerationTestRequest,
+    ) -> ProviderGenerationProbeResult:
+        """Run one isolated, bounded completion against a validated modal draft."""
+        if type(request) is not ConsoleGenerationTestRequest:
+            return ProviderGenerationProbeResult("failed", "bad_request")
+        try:
+            selection = self._build_console_provider_selection_for_settings(
+                session_id, request.settings
+            )
+            gateway = self._ensure_console_provider_gateway()
+            async with asyncio.timeout(20.0):
+                resolution = await gateway.resolve_for_send(selection)
+                if not resolution.ready:
+                    return ProviderGenerationProbeResult("failed", "bad_request")
+                test_resolution = replace(
+                    resolution,
+                    streaming=False,
+                    reasoning_effort=None,
+                    reasoning_summary=None,
+                    verbosity=None,
+                    thinking_effort=None,
+                    thinking_budget_tokens=None,
+                    request_timeout=15.0,
+                    request_retries=0,
+                    request_retry_delay=0.0,
+                )
+                auxiliary_request = AuxiliaryCompletionRequest(
+                    resolution=test_resolution,
+                    messages=(
+                        {"role": "user", "content": "Reply with one short token."},
+                    ),
+                    response_format=None,
+                    max_output_tokens=1,
+                )
+                await gateway.complete_auxiliary(auxiliary_request)
+        except asyncio.CancelledError:
+            raise
+        except (TimeoutError, asyncio.TimeoutError):
+            return ProviderGenerationProbeResult("failed", "timeout")
+        except ChatAuthenticationError:
+            return ProviderGenerationProbeResult("failed", "authentication")
+        except ChatRateLimitError:
+            return ProviderGenerationProbeResult("failed", "rate_limit")
+        except (ChatBadRequestError, ChatConfigurationError, ValueError, TypeError):
+            return ProviderGenerationProbeResult("failed", "bad_request")
+        except (ConnectionError, OSError):
+            return ProviderGenerationProbeResult("failed", "connection_error")
+        except ChatProviderError as exc:
+            category = {
+                400: "bad_request",
+                401: "authentication",
+                403: "authentication",
+                408: "timeout",
+                504: "timeout",
+                429: "rate_limit",
+                503: "connection_error",
+            }.get(exc.status_code, "provider_error")
+            return ProviderGenerationProbeResult("failed", category)
+        except Exception:
+            return ProviderGenerationProbeResult("failed", "provider_error")
+        return ProviderGenerationProbeResult("succeeded")
+
     async def _open_console_settings(
         self,
         *,
         focus_model: bool = False,
         focus_context: bool = False,
         transfer: ConsoleSettingsTransfer | None = None,
-    ) -> None:
+        suspended_draft: "ConsoleSettingsDraftSnapshot | None" = None,
+        _pre_push_guard: Callable[[], bool] | None = None,
+        _suspended_owner_token: int | None = None,
+        _on_transfer_committed: Callable[[], bool] | None = None,
+    ) -> bool:
         """Open Console session settings for the active native session."""
         controller = self._ensure_console_chat_controller()
         store = self._ensure_console_chat_store()
         if transfer is None:
             session_id = store.active_session_id
             if session_id is None:
-                return
+                return False
             origin = store.capture_console_settings_origin(session_id)
-            settings = store.session_settings(session_id)
+            settings = (
+                suspended_draft.settings
+                if suspended_draft is not None
+                else store.session_settings(session_id)
+            )
             if settings is None:
-                return
+                return False
             initial_draft = self._console_settings_initial_draft(
                 settings,
-                store.session_context_policy_overrides(session_id),
+                suspended_draft.context_policy_overrides
+                if suspended_draft is not None
+                else store.session_context_policy_overrides(session_id),
                 exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
             )
         else:
@@ -2883,7 +3017,19 @@ class ChatScreen(BaseAppScreen):
         try:
             display_name = store.session_user_display_name_override(session_id)
         except KeyError:
-            return
+            return False
+        active_provider = settings.provider
+        active_model = settings.model
+        if suspended_draft is not None:
+            raw_provider = suspended_draft.raw_values.get(
+                "console-settings-provider"
+            )
+            if type(raw_provider) is str:
+                active_provider = raw_provider
+            active_model = suspended_draft.provider_model_drafts.get(
+                active_provider,
+                settings.model if active_provider == settings.provider else None,
+            )
         effective_thinking_policy = (
             await controller.effective_thinking_history_policy_for_session(session_id)
         )
@@ -2898,10 +3044,13 @@ class ChatScreen(BaseAppScreen):
             thinking_history_effective_policy=effective_thinking_policy,
         )
         providers_models = await self._providers_models_for_console_settings(
-            settings.provider,
-            current_model=settings.model,
+            active_provider,
+            current_model=active_model,
         )
-        modal = ConsoleSettingsModal(
+        active_run = self._console_run_active()
+
+        modal_contract = _conversation_settings_modal_module()
+        modal = modal_contract.ConsoleSettingsModal(
             settings=settings,
             origin=origin,
             initial_draft=initial_draft,
@@ -2912,7 +3061,11 @@ class ChatScreen(BaseAppScreen):
             providers_models=providers_models,
             context_estimate=context_estimate,
             context_state=context_state,
-            can_save=controller.run_state_for(session_id).is_send_allowed,
+            can_save=(
+                controller.run_state_for(session_id).is_send_allowed
+                and not active_run
+            ),
+            active_run=active_run,
             focus_model=focus_model,
             focus_context=focus_context,
             reset_current_memory=lambda: controller.reset_active_context_memory(
@@ -2928,12 +3081,750 @@ class ChatScreen(BaseAppScreen):
             default_readiness_resolver=self._console_default_readiness,
             default_durability_state=self._console_default_durability_state(),
             default_recovery_handler=self._handle_console_default_recovery,
+            suspended_draft=suspended_draft,
+            connection_tester=self._test_console_connection,
+            generation_tester=lambda request: self._test_console_generation(
+                session_id, request
+            ),
         )
 
+        transfer_revoked = False
+
         def apply_origin_result(result) -> None:
+            if transfer_revoked:
+                return
+            if isinstance(result, modal_contract.ConsoleSettingsCredentialRequest):
+                self._stage_console_settings_credential_request(
+                    result,
+                    session_id=session_id,
+                )
+                return
             self._dispatch_console_settings_submission(result)
 
-        self.app.push_screen(modal, callback=apply_origin_result)
+        transfer_outcome: bool | None = None
+
+        def report_transfer_committed() -> bool:
+            """Commit exact modal ownership once without retaining its draft."""
+
+            nonlocal transfer_outcome, transfer_revoked
+            if transfer_outcome is not None:
+                return transfer_outcome
+            try:
+                transfer_outcome = (
+                    True
+                    if _on_transfer_committed is None
+                    else _on_transfer_committed() is True
+                )
+            except Exception:
+                logger.error("Unable to commit Conversation settings modal transfer")
+                transfer_outcome = False
+            if not transfer_outcome:
+                # The source snapshot remains authoritative. The covered-modal
+                # cancellation path cannot safely pop through a newer overlay,
+                # so revoke this tentative modal's result and draft ownership.
+                transfer_revoked = True
+                modal._suspended_draft = None
+                modal.disabled = True
+            return transfer_outcome
+
+        if _pre_push_guard is not None and not _pre_push_guard():
+            return False
+        try:
+            await self.app.push_screen(modal, callback=apply_origin_result)
+        except asyncio.CancelledError:
+            removed = await self._unwind_failed_console_settings_modal(modal)
+            if (
+                not removed
+                and self._console_settings_modal_is_on_stack(modal)
+                and suspended_draft is not None
+                and _suspended_owner_token is not None
+                and getattr(self, "_suspended_conversation_settings", None)
+                is suspended_draft
+                and getattr(self, "_suspended_conversation_settings_token", None)
+                == _suspended_owner_token
+            ):
+                committed = report_transfer_committed()
+                if committed and (
+                    getattr(self, "_suspended_conversation_settings", None)
+                    is suspended_draft
+                    and getattr(
+                        self,
+                        "_suspended_conversation_settings_token",
+                        None,
+                    )
+                    == _suspended_owner_token
+                ):
+                    self._suspended_conversation_settings = None
+                    self._suspended_conversation_settings_token = None
+            raise
+        except Exception:
+            removed = await self._unwind_failed_console_settings_modal(modal)
+            if not removed and self._console_settings_modal_is_on_stack(modal):
+                # A concurrently covered modal still owns the only live
+                # draft. Report ownership so a suspended snapshot is not
+                # retained as a second owner.
+                if report_transfer_committed():
+                    return True
+                return False
+            return False
+        if report_transfer_committed():
+            return True
+        await self._unwind_failed_console_settings_modal(modal)
+        return False
+
+    def _console_settings_modal_is_on_stack(
+        self,
+        modal: "ConsoleSettingsModal",
+    ) -> bool:
+        """Return whether the exact pushed modal remains anywhere on the stack."""
+        try:
+            return any(screen is modal for screen in self.app.screen_stack)
+        except Exception:
+            return False
+
+    async def _unwind_failed_console_settings_modal(
+        self,
+        modal: "ConsoleSettingsModal",
+    ) -> bool:
+        """Pop only the exact failed modal when it still owns the stack top."""
+        try:
+            stack = self.app.screen_stack
+            if not stack or stack[-1] is not modal:
+                return not any(screen is modal for screen in stack)
+            pop_result = self.app.pop_screen()
+        except Exception:
+            return not self._console_settings_modal_is_on_stack(modal)
+        try:
+            await pop_result
+        except asyncio.CancelledError:
+            # Preserve the original cancellation from the failed mount; the
+            # synchronous stack re-check below remains the ownership truth.
+            pass
+        except Exception:
+            # Textual removes the exact top synchronously before its returned
+            # AwaitComplete performs unmount work, so ownership may already
+            # be repaired even when that later work reports an error.
+            pass
+        return not self._console_settings_modal_is_on_stack(modal)
+
+    def _stage_console_settings_credential_request(
+        self,
+        request: "ConsoleSettingsCredentialRequest",
+        *,
+        session_id: str,
+    ) -> None:
+        """Suspend a draft and navigate to canonical API-key configuration.
+
+        The raw modal state stays solely in this screen's native snapshot.
+        The return handoff and Settings route contain only typed restoration
+        coordinates, never prompt, prefill, endpoint, or credential content.
+        """
+        store = self._ensure_console_chat_store()
+        try:
+            settings_revision = store.session_settings_revision(session_id)
+        except KeyError:
+            return
+        # Validate provider/model before touching the single-slot return
+        # channel. The final target only substitutes the positive opaque
+        # handoff revision, so it cannot broaden this validated route.
+        ProviderSettingsNavigationTarget(
+            category="providers-models",
+            provider=request.provider,
+            model=request.model,
+            field="api_key",
+            return_revision=1,
+        )
+        intent = ConversationSettingsReturnIntent(
+            session_id=session_id,
+            settings_revision=settings_revision,
+            active_view=request.snapshot.active_view,
+            focus_control_id=request.snapshot.focus_control_id,
+        )
+        handoff_revision = self.app_instance.pending_handoffs.stage(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+            intent,
+        )
+        target = ProviderSettingsNavigationTarget(
+            category="providers-models",
+            provider=request.provider,
+            model=request.model,
+            field="api_key",
+            return_revision=handoff_revision,
+        )
+        request_token = getattr(self, "_next_suspended_conversation_settings_token", 0) + 1
+        self._next_suspended_conversation_settings_token = request_token
+        self._suspended_conversation_settings = request.snapshot
+        self._suspended_conversation_settings_token = request_token
+
+        def settle_navigation(succeeded: bool) -> None:
+            """Repair the source only when the existing route did not leave it."""
+            if succeeded:
+                return
+            discarded = self.app_instance.pending_handoffs.discard_pending_exact(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                handoff_revision,
+                intent,
+            )
+            if not discarded:
+                return
+            if getattr(self, "_suspended_conversation_settings_token", None) != request_token:
+                return
+            if self._owns_console_screen_stack():
+                self.run_worker(
+                    self._reopen_suspended_console_settings(
+                        request_token,
+                        session_id=session_id,
+                        settings_revision=settings_revision,
+                    ),
+                    exclusive=False,
+                )
+
+        navigation = NavigateToScreen(
+            TAB_SETTINGS,
+            target.to_context(),
+            on_completion=settle_navigation,
+        )
+        if self.post_message(navigation) is False:
+            navigation.report_completion(False)
+
+    def _owns_console_screen_stack(self) -> bool:
+        """Return whether this exact Console instance owns the active stack top."""
+        try:
+            stack = self.app.screen_stack
+            return bool(stack) and stack[-1] is self
+        except Exception:
+            return False
+
+    async def _reopen_suspended_console_settings(
+        self,
+        request_token: int,
+        *,
+        session_id: str,
+        settings_revision: int,
+        _on_transfer_committed: Callable[[], bool] | None = None,
+    ) -> bool:
+        """Transfer the exact retained draft to a restored modal when safe."""
+        modal_contract = _conversation_settings_modal_module()
+        snapshot = getattr(self, "_suspended_conversation_settings", None)
+        store = self._ensure_console_chat_store()
+
+        def may_push() -> bool:
+            """Revalidate exact source, token, snapshot, and session ownership."""
+            if (
+                not isinstance(snapshot, modal_contract.ConsoleSettingsDraftSnapshot)
+                or getattr(self, "_suspended_conversation_settings", None)
+                is not snapshot
+                or getattr(self, "_suspended_conversation_settings_token", None)
+                != request_token
+                or store.active_session_id != session_id
+                or not self._owns_console_screen_stack()
+            ):
+                return False
+            try:
+                return store.session_settings_revision(session_id) == settings_revision
+            except KeyError:
+                return False
+
+        if not may_push():
+            return False
+        try:
+            reopened = await self._open_console_settings(
+                suspended_draft=snapshot,
+                _pre_push_guard=may_push,
+                _suspended_owner_token=request_token,
+                _on_transfer_committed=_on_transfer_committed,
+            )
+        except Exception:
+            return False
+        if (
+            reopened
+            and getattr(self, "_suspended_conversation_settings", None) is snapshot
+            and getattr(self, "_suspended_conversation_settings_token", None)
+            == request_token
+        ):
+            self._suspended_conversation_settings = None
+            self._suspended_conversation_settings_token = None
+        return reopened
+
+    def apply_navigation_context(self, context: Mapping[str, object]) -> None:
+        """Capture a saved-chat resume or claim a typed Settings return."""
+
+        resume_value = context.get(CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID)
+        if isinstance(resume_value, str):
+            conversation_id = resume_value.strip()
+            if (
+                conversation_id
+                and len(conversation_id) <= _RESUME_LOCAL_CONVERSATION_ID_MAX_LENGTH
+            ):
+                self._pending_resume_local_conversation_id = conversation_id
+            return
+
+        target = ConsoleSettingsReturnTarget.from_context(context)
+        if target is None:
+            logger.debug("Ignoring invalid Conversation settings return context")
+            return
+        if self._pending_conversation_settings_return_target == target:
+            return
+        self._pending_conversation_settings_return_target = target
+        if (
+            self.is_mounted
+            and not self._conversation_settings_return_restore_in_progress
+        ):
+            self.call_after_refresh(self._consume_pending_conversation_settings_return)
+
+    def _claim_conversation_settings_return(
+        self,
+        handoffs: PendingHandoffStore,
+        target: ConsoleSettingsReturnTarget,
+    ) -> bool:
+        """Claim only the exact retained retry coordinate."""
+
+        revision_status = handoffs.exact_revision_status(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+            target.return_revision,
+        )
+        if revision_status == "in_flight":
+            return False
+        if revision_status == "superseded":
+            if self._clear_conversation_settings_return_target(target):
+                self._notify_conversation_settings_return(
+                    "This return was superseded by a newer request. "
+                    "Open Conversation settings again."
+                )
+            return False
+        if revision_status == "settled":
+            self._discard_conversation_settings_return(
+                target,
+                "Conversation settings return is no longer available. "
+                "Open Conversation settings again."
+            )
+            return False
+        claim = handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+        if claim is None:
+            return False
+        if (
+            claim.revision != target.return_revision
+            or type(claim.value) is not ConversationSettingsReturnIntent
+        ):
+            handoffs.release(claim)
+            if self._clear_conversation_settings_return_target(target):
+                self._notify_conversation_settings_return(
+                    "This return was superseded by a newer request. "
+                    "Open Conversation settings again."
+                )
+            return False
+        intent = claim.value
+        if (
+            target.session_id != intent.session_id
+            or target.settings_revision != intent.settings_revision
+            or target.active_view != intent.active_view
+            or target.focus_control_id != intent.focus_control_id
+        ):
+            self._reject_conversation_settings_return(
+                handoffs,
+                claim,
+                target,
+                "Conversation settings return was stale. The draft was not restored.",
+            )
+            return False
+        rejection_copy = self._conversation_settings_return_rejection_copy(target)
+        if rejection_copy is not None:
+            self._reject_conversation_settings_return(
+                handoffs,
+                claim,
+                target,
+                rejection_copy,
+            )
+            return False
+        self._pending_conversation_settings_return_claim = claim
+        return True
+
+    def _conversation_settings_return_rejection_copy(
+        self,
+        target: ConsoleSettingsReturnTarget,
+    ) -> str | None:
+        """Return fixed terminal copy, or ``None`` when restoration is safe."""
+
+        store = self._ensure_console_chat_store()
+        try:
+            if store.session_is_ephemeral(target.session_id):
+                return (
+                    "The temporary conversation is no longer available. Its "
+                    "Conversation settings draft was not restored."
+                )
+            if (
+                store.session_settings_revision(target.session_id)
+                != target.settings_revision
+            ):
+                return (
+                    "Conversation settings changed while credentials were open. "
+                    "The earlier draft was not restored."
+                )
+        except KeyError:
+            return (
+                "The original conversation closed. Its Conversation settings draft "
+                "was not restored."
+            )
+        snapshot = getattr(self, "_suspended_conversation_settings", None)
+        token = getattr(self, "_suspended_conversation_settings_token", None)
+        if not (
+            isinstance(
+                snapshot,
+                _conversation_settings_modal_module().ConsoleSettingsDraftSnapshot,
+            )
+            and type(token) is int
+            and token > 0
+            and snapshot.active_view == target.active_view
+            and snapshot.focus_control_id == target.focus_control_id
+        ):
+            return "Conversation settings return was stale. The draft was not restored."
+        return None
+
+    def _notify_conversation_settings_return(self, message: str) -> None:
+        """Show only allowlisted return recovery text."""
+
+        try:
+            self.app.notify(message, severity="warning")
+        except Exception:
+            logger.debug("Unable to show Conversation settings recovery notice")
+
+    def _clear_conversation_settings_return_target(
+        self,
+        target: ConsoleSettingsReturnTarget,
+        *,
+        discard_snapshot: bool = False,
+    ) -> bool:
+        """Clear only the exact screen-local return captured by one consumer."""
+
+        if self._pending_conversation_settings_return_target is not target:
+            return False
+        self._pending_conversation_settings_return_target = None
+        if discard_snapshot:
+            self._suspended_conversation_settings = None
+            self._suspended_conversation_settings_token = None
+        return True
+
+    def _discard_conversation_settings_return(
+        self,
+        target: ConsoleSettingsReturnTarget,
+        message: str,
+    ) -> None:
+        """Clear obsolete private state after a terminal unclaimed route."""
+
+        if self._clear_conversation_settings_return_target(
+            target,
+            discard_snapshot=True,
+        ):
+            self._notify_conversation_settings_return(message)
+
+    def _reject_conversation_settings_return(
+        self,
+        handoffs: PendingHandoffStore,
+        claim: HandoffClaim[ConversationSettingsReturnIntent],
+        target: ConsoleSettingsReturnTarget,
+        message: str,
+    ) -> None:
+        """Settle one terminal rejection and discard its obsolete private draft."""
+
+        handoffs.acknowledge(claim)
+        if self._pending_conversation_settings_return_claim is claim:
+            self._pending_conversation_settings_return_claim = None
+        if self._clear_conversation_settings_return_target(
+            target,
+            discard_snapshot=True,
+        ):
+            self._notify_conversation_settings_return(message)
+
+    def _consume_pending_conversation_settings_return(self) -> None:
+        """Schedule the mounted restore once, retaining transient failures."""
+
+        if (
+            self._conversation_settings_return_restore_in_progress
+            or self._pending_conversation_settings_return_target is None
+            or not self.is_mounted
+            or not self._owns_console_screen_stack()
+        ):
+            return
+        self._conversation_settings_return_restore_in_progress = True
+        self.run_worker(
+            self._restore_claimed_conversation_settings_return(),
+            exclusive=False,
+            group="conversation-settings-return",
+        )
+
+    async def _restore_claimed_conversation_settings_return(self) -> None:
+        """Restore the exact suspended draft, then acknowledge its handoff."""
+
+        claim: HandoffClaim[ConversationSettingsReturnIntent] | None = None
+        target = self._pending_conversation_settings_return_target
+        handoffs = getattr(self.app_instance, "pending_handoffs", None)
+        prior_active_session_id: str | None = None
+        switched_session = False
+        selected_active_session_epoch: int | None = None
+        transfer_committed = False
+
+        def commit_transfer() -> bool:
+            """Commit exact handoff ownership once at the modal transfer edge."""
+
+            nonlocal claim, transfer_committed
+            if transfer_committed:
+                return True
+            transferred_claim = claim
+            if transferred_claim is None or not isinstance(
+                handoffs,
+                PendingHandoffStore,
+            ):
+                return False
+            try:
+                settled = handoffs.settle_transferred_claim(transferred_claim)
+            except Exception:
+                logger.error(
+                    "Conversation settings return atomic transfer settlement "
+                    "raised for revision {}",
+                    transferred_claim.revision,
+                )
+                return False
+            if not settled:
+                logger.error(
+                    "Conversation settings return atomic transfer settlement "
+                    "rejected revision {}",
+                    transferred_claim.revision,
+                )
+                return False
+            transfer_committed = True
+            if self._pending_conversation_settings_return_claim is transferred_claim:
+                self._pending_conversation_settings_return_claim = None
+            self._clear_conversation_settings_return_target(target)
+            claim = None
+            return True
+
+        async def restore_prior_session_if_still_owned() -> None:
+            """Undo only this worker's exact active-session transition."""
+
+            if (
+                transfer_committed
+                or not switched_session
+                or prior_active_session_id is None
+                or selected_active_session_epoch is None
+            ):
+                return
+            store = self._ensure_console_chat_store()
+            if (
+                store.active_session_id != target.session_id
+                or store.active_session_epoch() != selected_active_session_epoch
+            ):
+                return
+            store.switch_session(prior_active_session_id)
+            await self._sync_native_console_chat_ui()
+
+        try:
+            if target is None or not isinstance(handoffs, PendingHandoffStore):
+                return
+            if not self.is_mounted or not self._owns_console_screen_stack():
+                return
+            if not self._claim_conversation_settings_return(handoffs, target):
+                return
+            claim = self._pending_conversation_settings_return_claim
+            if claim is None:
+                return
+            if not handoffs.is_current_claim(claim):
+                handoffs.release(claim)
+                if self._clear_conversation_settings_return_target(target):
+                    self._notify_conversation_settings_return(
+                        "This return was superseded by a newer request. "
+                        "Open Conversation settings again."
+                    )
+                return
+            rejection_copy = self._conversation_settings_return_rejection_copy(target)
+            if rejection_copy is not None:
+                self._reject_conversation_settings_return(
+                    handoffs,
+                    claim,
+                    target,
+                    rejection_copy,
+                )
+                return
+            snapshot = self._suspended_conversation_settings
+            token = self._suspended_conversation_settings_token
+            if (
+                not isinstance(
+                    snapshot,
+                    _conversation_settings_modal_module().ConsoleSettingsDraftSnapshot,
+                )
+                or type(token) is not int
+            ):
+                self._reject_conversation_settings_return(
+                    handoffs,
+                    claim,
+                    target,
+                    "Conversation settings return was stale. The draft was not restored.",
+                )
+                return
+            store = self._ensure_console_chat_store()
+            prior_active_session_id = store.active_session_id
+            if store.active_session_id != target.session_id:
+                try:
+                    store.switch_session(target.session_id)
+                except KeyError:
+                    self._reject_conversation_settings_return(
+                        handoffs,
+                        claim,
+                        target,
+                        "The original conversation closed. Its Conversation settings "
+                        "draft was not restored.",
+                    )
+                    return
+                switched_session = True
+                selected_active_session_epoch = store.active_session_epoch()
+                await self._sync_native_console_chat_ui()
+            restored = await self._reopen_suspended_console_settings(
+                token,
+                session_id=target.session_id,
+                settings_revision=target.settings_revision,
+                _on_transfer_committed=commit_transfer,
+            )
+            if not restored:
+                handoffs.release(claim)
+                await restore_prior_session_if_still_owned()
+                return
+            # The restored modal now owns A's only private draft. Settle A at
+            # that transfer boundary; status copy below is optional UI work
+            # and cannot make an already-owned draft retryable again.
+            commit_transfer()
+            try:
+                await self._mount_conversation_settings_return_status(
+                    target,
+                    snapshot,
+                )
+            except Exception:
+                logger.debug(
+                    "Unable to mount Conversation settings return status",
+                    exc_info=True,
+                )
+        except asyncio.CancelledError:
+            if isinstance(handoffs, PendingHandoffStore) and claim is not None:
+                handoffs.release(claim)
+            try:
+                await restore_prior_session_if_still_owned()
+            except Exception:
+                logger.debug("Unable to restore the prior Console session")
+            raise
+        except Exception:
+            logger.debug(
+                "Conversation settings return restore failed transiently",
+                exc_info=True,
+            )
+            if isinstance(handoffs, PendingHandoffStore) and claim is not None:
+                handoffs.release(claim)
+            try:
+                await restore_prior_session_if_still_owned()
+            except Exception:
+                logger.debug("Unable to restore the prior Console session")
+        finally:
+            if isinstance(handoffs, PendingHandoffStore) and claim is not None:
+                handoffs.release(claim)
+            if self._pending_conversation_settings_return_claim is claim:
+                self._pending_conversation_settings_return_claim = None
+            self._conversation_settings_return_restore_in_progress = False
+            replacement = self._pending_conversation_settings_return_target
+            prior_return_is_terminal = replacement is target
+            if (
+                isinstance(handoffs, PendingHandoffStore)
+                and target is not None
+                and replacement is not target
+            ):
+                try:
+                    prior_return_is_terminal = handoffs.exact_revision_status(
+                        HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                        target.return_revision,
+                    ) in ("settled", "superseded")
+                except Exception:
+                    logger.debug(
+                        "Unable to confirm prior Conversation settings return settlement"
+                    )
+            replacement_is_pending = False
+            if (
+                prior_return_is_terminal
+                and isinstance(handoffs, PendingHandoffStore)
+                and replacement is not None
+            ):
+                try:
+                    replacement_is_pending = handoffs.exact_revision_status(
+                        HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                        replacement.return_revision,
+                    ) == "pending"
+                except Exception:
+                    logger.debug(
+                        "Unable to inspect replacement Conversation settings return"
+                    )
+            if (
+                replacement_is_pending
+                and replacement is not target
+                and self.is_mounted
+                and self._owns_console_screen_stack()
+            ):
+                self.call_after_refresh(
+                    self._consume_pending_conversation_settings_return
+                )
+
+    def _release_claimed_conversation_settings_return(self) -> None:
+        """Release this screen's exact claim before its mounted lifetime ends."""
+
+        claim = self._pending_conversation_settings_return_claim
+        handoffs = getattr(self.app_instance, "pending_handoffs", None)
+        if isinstance(handoffs, PendingHandoffStore) and claim is not None:
+            handoffs.release(claim)
+        if self._pending_conversation_settings_return_claim is claim:
+            self._pending_conversation_settings_return_claim = None
+
+    async def _mount_conversation_settings_return_status(
+        self,
+        target: ConsoleSettingsReturnTarget,
+        snapshot: "ConsoleSettingsDraftSnapshot",
+    ) -> None:
+        """Mount fixed return copy beside, not inside, canonical readiness."""
+
+        modal = self.app.screen_stack[-1]
+        if not isinstance(
+            modal,
+            _conversation_settings_modal_module().ConsoleSettingsModal,
+        ):
+            return
+        outcome_copy = {
+            ConversationSettingsReturnOutcome.CREDENTIAL_SAVED: (
+                "Credential saved — checking readiness"
+            ),
+            ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED: (
+                "Provider settings saved — checking readiness"
+            ),
+            ConversationSettingsReturnOutcome.WITHOUT_SAVING: (
+                "Returned without saving — readiness unchanged"
+            ),
+        }[target.outcome]
+        readiness = get_provider_readiness(
+            snapshot.settings.provider,
+            self._provider_readiness_app_config(),
+        )
+        recovery_copy = ""
+        if (
+            not readiness.ready
+            and readiness.env_var
+            and not os.environ.get(readiness.env_var)
+        ):
+            recovery_copy = (
+                f"Export {readiness.env_var}, then relaunch Chatbook before sending."
+            )
+        status = Static(
+            "\n".join(line for line in (outcome_copy, recovery_copy) if line),
+            id="console-settings-return-status",
+            classes="console-settings-modal-row",
+            markup=False,
+        )
+        readiness_widget = modal.query_one("#console-settings-readiness", Static)
+        await modal.query_one("#console-settings-modal").mount(
+            status,
+            before=readiness_widget,
+        )
 
     def _global_chat_display_name(self) -> str:
         """Return the live in-memory global chat label without touching disk."""
@@ -3014,16 +3905,23 @@ class ChatScreen(BaseAppScreen):
 
     def _apply_console_settings_result(
         self,
-        result: ConsoleSettingsResult | ConsoleSessionSettings | None,
+        result: "ConsoleSettingsResult | ConsoleSessionSettings | None",
         *,
         origin_session_id: str | None = None,
         origin_system_prompt: str | None = None,
+        origin_pinned_prefill: str | None = None,
     ) -> None:
         """Apply provider settings and the separately owned chat-name override."""
-        if not isinstance(result, (ConsoleSettingsResult, ConsoleSessionSettings)):
+        modal_contract = _conversation_settings_modal_module()
+        if not isinstance(
+            result,
+            (modal_contract.ConsoleSettingsResult, ConsoleSessionSettings),
+        ):
             return
         settings = (
-            result.settings if isinstance(result, ConsoleSettingsResult) else result
+            result.settings
+            if isinstance(result, modal_contract.ConsoleSettingsResult)
+            else result
         )
         store = self._ensure_console_chat_store()
         session_id = origin_session_id or store.active_session_id
@@ -3040,15 +3938,25 @@ class ChatScreen(BaseAppScreen):
                 current_settings.system_prompt if current_settings is not None else None
             )
         )
+        current_pinned_prefill = (
+            origin_pinned_prefill
+            if origin_session_id is not None
+            else (
+                current_settings.pinned_prefill
+                if current_settings is not None
+                else None
+            )
+        )
         store.replace_session_settings(
             session_id,
             replace(
                 settings,
                 source="user",
                 system_prompt=current_system_prompt,
+                pinned_prefill=current_pinned_prefill,
             ),
         )
-        if isinstance(result, ConsoleSettingsResult):
+        if isinstance(result, modal_contract.ConsoleSettingsResult):
             if result.context_policy_overrides is not None:
                 _session, policy_persisted = store.set_session_context_policy_overrides(
                     session_id,
@@ -3103,6 +4011,7 @@ class ChatScreen(BaseAppScreen):
         )
         if endpoint_warning:
             self.app_instance.notify(endpoint_warning, severity="warning")
+
 
     async def _refresh_console_roleplay_projections(
         self,
@@ -5697,23 +6606,13 @@ class ChatScreen(BaseAppScreen):
     _console_mount_visit_refreshed: bool = False
     _pending_resume_local_conversation_id: str | None = None
     _resume_navigation_startup_in_progress: bool = False
-
-    def apply_navigation_context(self, context: Mapping[str, object]) -> None:
-        """Capture one valid saved-conversation ID for post-mount resume.
-
-        Args:
-            context: Memory-only navigation values supplied for this screen visit.
-        """
-        value = context.get(CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID)
-        if not isinstance(value, str):
-            return
-        conversation_id = value.strip()
-        if (
-            not conversation_id
-            or len(conversation_id) > _RESUME_LOCAL_CONVERSATION_ID_MAX_LENGTH
-        ):
-            return
-        self._pending_resume_local_conversation_id = conversation_id
+    _pending_conversation_settings_return_claim: (
+        HandoffClaim[ConversationSettingsReturnIntent] | None
+    ) = None
+    _pending_conversation_settings_return_target: ConsoleSettingsReturnTarget | None = (
+        None
+    )
+    _conversation_settings_return_restore_in_progress: bool = False
 
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(app_instance, "chat", **kwargs)
@@ -5730,6 +6629,12 @@ class ChatScreen(BaseAppScreen):
         self._console_settings_coordinated_submission_ids: deque[str] = deque(maxlen=64)
         self._handoff_consumption_in_progress = False
         self._pending_console_launch_context: Optional[ConsoleLiveWorkLaunch] = None
+        self._suspended_conversation_settings: ConsoleSettingsDraftSnapshot | None = None
+        self._suspended_conversation_settings_token: int | None = None
+        self._next_suspended_conversation_settings_token = 0
+        self._pending_conversation_settings_return_claim = None
+        self._pending_conversation_settings_return_target = None
+        self._conversation_settings_return_restore_in_progress = False
         self._pending_console_launch_auto_open_inspector = False
         # PR-4/task-1: source count of the evidence the LAST send consumed,
         # kept only until the next thing happens (a new send, new staging, or
@@ -6768,7 +7673,7 @@ class ChatScreen(BaseAppScreen):
             r"max_tokens (\d+)", summary_state.sampling_row or ""
         )
         max_tokens_value = max_tokens_match.group(1) if max_tokens_match else "—"
-        readiness = (summary_state.readiness_label or "").strip()
+        readiness = summary_state.readiness
 
         try:
             self.query_one(
@@ -6794,8 +7699,10 @@ class ChatScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             pass
         else:
-            if readiness and readiness != "Ready":
-                recovery.update(readiness)
+            if readiness is not None and readiness.operability == "not_ready":
+                recovery.update(
+                    build_console_readiness_presentation(readiness).primary_label
+                )
                 recovery.styles.display = "block"
             else:
                 recovery.styles.display = "none"
@@ -6962,6 +7869,43 @@ class ChatScreen(BaseAppScreen):
         else:
             chat_defaults = self._config_section(app_config, "chat_defaults")
             legacy_model = chat_defaults.get("model")
+        return self._build_console_provider_selection_from_settings(
+            target_session_id,
+            selection_settings,
+            legacy_model=legacy_model,
+        )
+
+    def _build_console_provider_selection_for_settings(
+        self,
+        session_id: str,
+        settings: ConsoleSessionSettings,
+    ) -> ConsoleProviderSelection:
+        """Project a validated modal draft without writing session state."""
+        app_config = self._provider_readiness_app_config()
+        store = self._ensure_console_chat_store()
+        store.session_settings_revision(session_id)
+        validation_errors = validate_console_session_settings(
+            settings,
+            app_config=app_config,
+        )
+        if validation_errors:
+            raise ValueError("Console generation test settings are invalid.")
+        return self._build_console_provider_selection_from_settings(
+            session_id,
+            settings,
+            legacy_model=settings.model,
+        )
+
+    def _build_console_provider_selection_from_settings(
+        self,
+        target_session_id: str | None,
+        selection_settings: ConsoleSessionSettings,
+        *,
+        legacy_model: object,
+    ) -> ConsoleProviderSelection:
+        """Build a provider selection from one immutable settings snapshot."""
+        app_config = self._provider_readiness_app_config()
+        store = self._ensure_console_chat_store()
         provider = provider_config_key(selection_settings.provider) or "llama_cpp"
         explicit_model = (
             str(selection_settings.model).strip()
@@ -7102,20 +8046,8 @@ class ChatScreen(BaseAppScreen):
         readiness = build_console_settings_readiness(
             effective_settings,
             app_config=self._provider_readiness_app_config(),
+            active_run=self._console_run_active(),
         )
-        if not _has_selected_text(selected_model):
-            if not readiness.native_send_supported:
-                # Provider is the real first blocker (FR-05): surface its
-                # readiness instead of the model sentinel so the setup card
-                # steps and the recovery action resolve the same first
-                # incomplete step. The "Missing model" sentinel below now
-                # strictly means provider-ready + model-missing.
-                return effective_settings, readiness
-            return effective_settings, ConsoleSettingsReadiness(
-                label="Missing model",
-                detail="Select a model before sending.",
-                native_send_supported=False,
-            )
         model_warning = self._console_model_capability_warning(
             effective_settings.provider,
             selected_model,
@@ -11226,7 +12158,7 @@ class ChatScreen(BaseAppScreen):
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
     ) -> ConsoleInspectorState:
-        provider_display, model, settings = (
+        _provider_display, model, _settings = (
             self._active_console_provider_model_display()
         )
         _effective_settings, settings_readiness = (
@@ -11235,12 +12167,8 @@ class ChatScreen(BaseAppScreen):
         explicit_provider_ready = getattr(
             self.app_instance, "console_provider_ready", None
         )
-        provider_readiness = get_provider_readiness(
-            (settings.provider if settings is not None else None) or provider_display,
-            self._provider_readiness_app_config(),
-        )
         provider_runtime_ready = (
-            settings_readiness.native_send_supported
+            settings_readiness.operability == "ready_to_send"
             and explicit_provider_ready is not False
         )
         model_selected = _has_selected_text(model)
@@ -11252,9 +12180,9 @@ class ChatScreen(BaseAppScreen):
                 if provider_runtime_ready and not model_selected
                 else "Select a provider and model before sending."
                 if explicit_provider_ready is False
-                else provider_readiness.user_message
-                if provider_readiness.reason == "Missing API key"
-                else settings_readiness.detail
+                else build_console_readiness_presentation(
+                    settings_readiness
+                ).detail
             )
         can_save_chatbook = self._console_can_save_chatbook_flag(pending_launch)
         evidence_state = build_console_evidence_display_state(pending_launch)
@@ -11277,7 +12205,7 @@ class ChatScreen(BaseAppScreen):
                 if run_failed
                 else ""
             ),
-            provider_label=provider_display,
+            provider_label=settings_readiness.provider_display_name or "Provider",
             model_label=model,
             provider_ready=provider_ready,
             provider_recovery=provider_recovery,
@@ -11986,31 +12914,10 @@ class ChatScreen(BaseAppScreen):
 
     def _console_provider_blocker_copy(self) -> str:
         """Return concise Console recovery copy for provider/model setup gaps."""
-        provider, _model, settings = self._active_console_provider_model_display()
-        session_provider = str(getattr(settings, "provider", "") or "").strip()
-        if not session_provider and settings is None:
-            # Tolerate missing session settings: fall back to the display
-            # provider rather than reporting no provider at all.
-            session_provider = provider_config_key(provider)
-        if not session_provider:
-            return "Provider setup needed: choose a provider"
-
-        _effective_settings, settings_readiness = (
-            self._active_console_settings_readiness()
-        )
-        if settings_readiness.native_send_supported:
+        _settings, readiness = self._active_console_settings_readiness()
+        if readiness.operability == "ready_to_send":
             return ""
-        if settings_readiness.label == "Missing model":
-            # Provider is send-ready; the model is the only remaining gap.
-            return "Provider setup needed: choose a model"
-        provider_readiness = get_provider_readiness(
-            session_provider or provider,
-            self._provider_readiness_app_config(),
-        )
-        if provider_readiness.reason == "Missing API key":
-            display_name = provider_display_name(provider_config_key(provider))
-            return f"Provider setup needed: {display_name} missing API key"
-        return f"Provider setup needed: {settings_readiness.detail}"
+        return build_console_readiness_presentation(readiness).detail
 
     @staticmethod
     def _console_empty_recovery_action_copy(
@@ -12020,137 +12927,59 @@ class ChatScreen(BaseAppScreen):
         provider_action_tooltip: str = "",
     ) -> tuple[str, str]:
         """Return empty-state provider recovery button label and tooltip."""
-        blocker = blocker_copy.strip().lower()
         if provider_action_label:
             return provider_action_label, provider_action_tooltip.strip()
-        if "choose a provider" in blocker:
-            return "Choose provider", "Choose a provider for this Console session"
-        if "choose a model" in blocker:
-            return "Choose model", "Choose a model for this Console session"
-        if "api key" in blocker:
-            return (
-                CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
-                "Configure API and API key before sending",
-            )
-        if "endpoint" in blocker:
-            return (
-                "Configure endpoint",
-                "Configure the provider endpoint before sending",
-            )
-        if blocker:
+        if blocker_copy.strip():
             return "Review settings", "Review Console provider settings before sending"
         return "Choose model", "Choose the provider and model for this Console session."
 
     def _console_setup_blocked_reason(self) -> str:
         """Return setup-specific send blocker copy for the native composer."""
-        blocker = self._console_provider_blocker_copy().strip().lower()
-        if not blocker:
+        _settings, readiness = self._active_console_settings_readiness()
+        if readiness.operability == "ready_to_send":
             return ""
-        if blocker == "provider setup needed: choose a model":
+        if readiness.recovery_action == "wait_for_active_run":
+            # The prompt-queue presentation owns active-run admission: it
+            # blocks while a turn is preparing, then enables Queue once the
+            # provider has accepted it. Settings readiness still blocks
+            # mutations during the run, but must not override that composer
+            # lifecycle with a second, permanently-blocked gate.
+            return ""
+        if readiness.recovery_action == "select_model":
             return "Choose a model in Console Settings before sending."
-        if "missing api key" in blocker:
+        if readiness.recovery_action == "configure_credential":
             return "Add API key in Settings > Providers & Models before sending."
-        if "save the endpoint in settings" in blocker:
-            return "Save provider endpoint in Settings > Providers & Models before sending."
+        if readiness.recovery_action == "save_endpoint":
+            return "Save provider endpoint in Conversation settings before sending."
         return "Finish provider setup before sending."
 
     def _console_provider_recovery_field(self) -> str:
         """Return the Settings Providers & Models field targeted by recovery."""
-        provider, _model, settings = self._active_console_provider_model_display()
-        session_provider = str(getattr(settings, "provider", "") or "").strip()
-        if not session_provider and settings is None:
-            # Tolerate missing session settings: fall back to the display
-            # provider rather than reporting no provider at all.
-            session_provider = provider_config_key(provider)
-        if not session_provider:
-            return ""
-
-        _effective_settings, settings_readiness = (
-            self._active_console_settings_readiness()
-        )
-        if settings_readiness.native_send_supported:
-            return ""
-        if settings_readiness.label == "Missing model":
-            # Choosing a model is a Console Settings action, not a Providers
-            # & Models field fix.
-            return ""
-
-        provider_readiness = get_provider_readiness(
-            session_provider or provider,
-            self._provider_readiness_app_config(),
-        )
-        if provider_readiness.reason == "Missing API key":
+        _settings, readiness = self._active_console_settings_readiness()
+        if readiness.recovery_action == "configure_credential":
             return "api_key"
-        if settings_readiness.label in {"Endpoint not saved", "Invalid URL"}:
+        if readiness.recovery_action in {"configure_endpoint", "save_endpoint"}:
             return "endpoint"
         return ""
 
     def _console_provider_recovery_action(self) -> tuple[str, str, str]:
         """Return the label, target, and tooltip for Console provider recovery."""
-        provider, _model, settings = self._active_console_provider_model_display()
-        session_provider = str(getattr(settings, "provider", "") or "").strip()
-        if not session_provider and settings is None:
-            # Tolerate missing session settings: fall back to the display
-            # provider rather than reporting no provider at all.
-            session_provider = provider_config_key(provider)
-        if not session_provider:
-            return (
-                "Choose provider",
-                "console",
-                "Choose a provider for this Console session",
-            )
-
-        _effective_settings, settings_readiness = (
-            self._active_console_settings_readiness()
-        )
-        if settings_readiness.native_send_supported:
+        _settings, readiness = self._active_console_settings_readiness()
+        if readiness.operability == "ready_to_send":
             return ("Open Settings", "hidden", "Open provider settings")
-        if settings_readiness.label == "Missing model":
-            return (
-                "Choose model",
-                "console",
-                "Choose a model for this Console session",
-            )
-
-        provider_readiness = get_provider_readiness(
-            session_provider or provider,
-            self._provider_readiness_app_config(),
-        )
-        display_name = provider_display_name(provider_config_key(provider))
-        if provider_readiness.reason == "Missing API key":
-            return (
-                CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
-                "settings",
-                f"Configure {display_name} API and API key in Settings",
-            )
-        if settings_readiness.label in {"Endpoint not saved", "Invalid URL"}:
-            return (
-                "Configure endpoint",
-                "settings",
-                f"Save the {display_name} endpoint in Settings",
-            )
-        if settings_readiness.label == "Unknown":
-            return (
-                "Choose provider",
-                "console",
-                "Choose a supported provider for this Console session",
-            )
-        return ("Review settings", "console", "Review this Console session's settings")
+        presentation = build_console_readiness_presentation(readiness)
+        label = presentation.action_label
+        if readiness.recovery_action == "configure_credential":
+            label = CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
+        return label, presentation.action_target, presentation.action_tooltip
 
     def _build_console_setup_card_state(self) -> ConsoleSetupCardState:
         """Build the empty-transcript onboarding state from current readiness."""
-        settings, _display_readiness = self._active_console_settings_readiness()
-        # The card steps must reflect raw provider readiness (FR-05): the
-        # screen-level readiness collapses provider-ready + model-missing to a
-        # "Missing model" sentinel, which would wrongly re-activate step 1.
-        readiness = build_console_settings_readiness(
-            settings,
-            app_config=self._provider_readiness_app_config(),
-        )
+        settings, readiness = self._active_console_settings_readiness()
         has_model = _has_selected_text(getattr(settings, "model", None))
         return build_console_setup_card_state(
             readiness=readiness,
-            provider_label=str(getattr(settings, "provider", "") or "Provider"),
+            provider_label=readiness.provider_display_name or "Provider",
             has_model=has_model,
             first_send_completed=self._console_first_send_completed(),
             has_messages=self._message._active_console_transcript_has_messages(),
@@ -13625,6 +14454,7 @@ class ChatScreen(BaseAppScreen):
             # existing resume/user-triggered retry paths.
             self.set_timer(0.15, self._consume_pending_console_prompt_insert)
             self.set_timer(0.15, self.consume_pending_console_provider_intent)
+            self.set_timer(0.15, self._consume_pending_conversation_settings_return)
             # PR3a-2 Task 4: claim a background sub-agent completion's deep
             # link (staged while Console was not mounted) and switch to the
             # settled conversation's session. Same 0.15s settle hedge as the
@@ -13779,6 +14609,7 @@ class ChatScreen(BaseAppScreen):
 
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
+        self._release_claimed_conversation_settings_return()
         # task-15470: flush a pending debounced sidebar-state write FIRST,
         # ahead of every other teardown step below -- several of those can
         # raise, and a raised exception must not strand an unpersisted
@@ -13977,6 +14808,13 @@ class ChatScreen(BaseAppScreen):
 
         pending_launch = getattr(self, "_pending_console_launch_context", None)
         sent_notice = getattr(self, "_console_evidence_sent_notice", None)
+        suspended_settings = getattr(self, "_suspended_conversation_settings", None)
+        suspended_settings_token = getattr(
+            self, "_suspended_conversation_settings_token", None
+        )
+        settings_return_target = getattr(
+            self, "_pending_conversation_settings_return_target", None
+        )
 
         return {
             "version": NATIVE_CONSOLE_STATE_VERSION,
@@ -14008,6 +14846,38 @@ class ChatScreen(BaseAppScreen):
                 else None
             ),
             "console_evidence_sent_notice": sent_notice,
+            # This is the only process-memory snapshot that retains raw
+            # provider endpoint drafts, prompts, or prefills. Never derive a
+            # navigation context from it.
+            "suspended_conversation_settings": (
+                suspended_settings.to_mapping()
+                if suspended_settings is not None
+                and isinstance(
+                    suspended_settings,
+                    _conversation_settings_modal_module().ConsoleSettingsDraftSnapshot,
+                )
+                else None
+            ),
+            "suspended_conversation_settings_token": (
+                suspended_settings_token
+                if (
+                    suspended_settings is not None
+                    and isinstance(
+                        suspended_settings,
+                        _conversation_settings_modal_module().ConsoleSettingsDraftSnapshot,
+                    )
+                    and type(suspended_settings_token) is int
+                    and suspended_settings_token > 0
+                )
+                else None
+            ),
+            # Safe retry coordinates only. The matching private draft remains
+            # in the two fields above and the claim remains app-owned.
+            "pending_conversation_settings_return_target": (
+                settings_return_target.to_context()
+                if isinstance(settings_return_target, ConsoleSettingsReturnTarget)
+                else None
+            ),
         }
 
     def _restore_native_console_state(self, payload: Any) -> None:
@@ -14092,6 +14962,42 @@ class ChatScreen(BaseAppScreen):
             and not isinstance(raw_sent_notice, bool)
             else None
         )
+        # Legacy screen-state payloads omit this key. A malformed new payload
+        # fails closed rather than restoring loosely typed sensitive content.
+        raw_suspended_settings = payload.get("suspended_conversation_settings")
+        self._suspended_conversation_settings = (
+            _conversation_settings_modal_module().ConsoleSettingsDraftSnapshot.from_mapping(
+                raw_suspended_settings
+            )
+            if isinstance(raw_suspended_settings, Mapping)
+            else None
+        )
+        raw_suspended_settings_token = payload.get(
+            "suspended_conversation_settings_token"
+        )
+        self._suspended_conversation_settings_token = (
+            raw_suspended_settings_token
+            if (
+                self._suspended_conversation_settings is not None
+                and type(raw_suspended_settings_token) is int
+                and raw_suspended_settings_token > 0
+            )
+            else None
+        )
+        self._next_suspended_conversation_settings_token = max(
+            getattr(self, "_next_suspended_conversation_settings_token", 0),
+            self._suspended_conversation_settings_token or 0,
+        )
+        raw_settings_return_target = payload.get(
+            "pending_conversation_settings_return_target"
+        )
+        self._pending_conversation_settings_return_target = (
+            ConsoleSettingsReturnTarget.from_context(raw_settings_return_target)
+            if isinstance(raw_settings_return_target, Mapping)
+            else None
+        )
+        self._pending_conversation_settings_return_claim = None
+        self._conversation_settings_return_restore_in_progress = False
 
     def _rehydrate_console_message_image(self, message: ConsoleChatMessage) -> None:
         """Delegate to `ConsoleMessageController` (wave-3 task 1).
@@ -15659,8 +16565,28 @@ class ChatScreen(BaseAppScreen):
                     "Review source authority before sending."
                 )
         _readiness_settings, readiness = self._active_console_settings_readiness()
-        if not readiness.native_send_supported:
-            return f"Console send blocked: {readiness.detail}"
+        if (
+            readiness.operability == "not_ready"
+            and readiness.recovery_action != "wait_for_active_run"
+        ):
+            # Active-run admission belongs to the prompt queue. It refuses
+            # while the turn is preparing and admits Queue after acceptance;
+            # only actual provider setup gaps belong in this gate.
+            if readiness.recovery_action == "configure_credential":
+                provider = readiness.provider_display_name or "this provider"
+                return (
+                    f"Console send blocked: Add an API key for {provider} before "
+                    "sending."
+                )
+            if readiness.recovery_action == "select_model":
+                return "Console send blocked: Select a model before sending."
+            if readiness.recovery_action == "save_endpoint":
+                return "Console send blocked: Save the provider endpoint before sending."
+            if readiness.recovery_action == "configure_endpoint":
+                return "Console send blocked: Enter a valid provider endpoint before sending."
+            if readiness.recovery_action == "retry_connection":
+                return "Console send blocked: Retry the provider connection before sending."
+            return "Console send blocked: Finish provider setup before sending."
         attachment_reason = self._console_attachment_blocked_reason()
         if attachment_reason:
             return attachment_reason
@@ -19551,6 +20477,7 @@ class ChatScreen(BaseAppScreen):
         if not ordered_resume_active:
             self.set_timer(0.15, self._consume_pending_console_prompt_insert)
             self.set_timer(0.15, self.consume_pending_console_provider_intent)
+            self.set_timer(0.15, self._consume_pending_conversation_settings_return)
             # PR3a-2 Task 4: mirrors the on_mount claim -- a completion staged
             # while the user was on another screen is claimed on resume too.
             self.set_timer(

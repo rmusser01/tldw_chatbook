@@ -3569,6 +3569,7 @@ class ConsoleProviderGateway:
         thinking_budget_tokens: int | None = None,
         strict_response: bool = False,
         api_key: str | None = None,
+        request_timeout: float | None = None,
         provider: str = "llama_cpp",
         protocol: str = "chat_completions",
         thinking_stream_disposition: ReasoningDisposition = "ignored",
@@ -3598,6 +3599,7 @@ class ConsoleProviderGateway:
                 the top-level ``reasoning_budget_tokens`` field.
             strict_response: Raise when the provider response has no supported
                 assistant-content shape instead of treating it as empty.
+            request_timeout: Optional per-request HTTP timeout override.
             thinking_stream_disposition: Frozen adapter decision controlling
                 whether start-anchored thinking is split into typed events.
             before_adapter: Callback issuing adapter-entry authority when
@@ -3646,6 +3648,8 @@ class ConsoleProviderGateway:
             if sensitive_request
             else {"json": payload, "headers": headers}
         )
+        if request_timeout is not None:
+            request_kwargs["timeout"] = request_timeout
         if sensitive_request:
             response = await self._enter_provider_adapter(
                 admission,
@@ -3691,10 +3695,14 @@ class ConsoleProviderGateway:
         *,
         json_payload: Mapping[str, Any],
         headers: Mapping[str, str] | None = None,
+        timeout: float | None = None,
     ) -> httpx.Response:
         """POST through this client's transport without HTTPX's URL-bearing INFO log."""
 
-        request = client.build_request("POST", url, json=json_payload, headers=headers)
+        timeout_kwargs = {"timeout": timeout} if timeout is not None else {}
+        request = client.build_request(
+            "POST", url, json=json_payload, headers=headers, **timeout_kwargs
+        )
         transport = client._transport_for_url(request.url)
         response = await transport.handle_async_request(request)
         response.request = request
@@ -3761,6 +3769,7 @@ class ConsoleProviderGateway:
                         thinking_budget_tokens=resolution.thinking_budget_tokens,
                         strict_response=True,
                         api_key=resolution.api_key,
+                        request_timeout=resolution.request_timeout,
                         thinking_stream_disposition=(
                             resolution.thinking_stream_disposition
                         ),
@@ -3779,7 +3788,14 @@ class ConsoleProviderGateway:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            status_code = getattr(exc, "status_code", 502)
+            if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
+                status_code = 408
+            elif isinstance(exc, (ConnectionError, OSError, httpx.ConnectError)):
+                status_code = 503
+            elif isinstance(exc, httpx.HTTPStatusError):
+                status_code = exc.response.status_code
+            else:
+                status_code = getattr(exc, "status_code", 502)
             raise ChatProviderError(
                 safe_provider_error_copy(provider, exc),
                 provider=provider,
@@ -3921,6 +3937,9 @@ class ConsoleProviderGateway:
                 if request.response_format is not None
                 else None
             ),
+            "request_timeout": resolution.request_timeout,
+            "request_retries": resolution.request_retries,
+            "request_retry_delay": resolution.request_retry_delay,
         }
         if resolution.execution_key == "qwencloud":
             kwargs["api_mode"] = resolution.api_mode

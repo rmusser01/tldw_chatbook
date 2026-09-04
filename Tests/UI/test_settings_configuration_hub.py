@@ -1,11 +1,14 @@
 import asyncio
 import threading
+import hashlib
 import inspect
+import logging
 import re
 import time
 import builtins
 import tomllib
 from collections import UserDict
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -34,15 +37,35 @@ from Tests.UI.test_destination_shells import (
     _visible_text,
     _wait_for_selector,
 )
+from Tests.UI.test_console_session_settings import (
+    _assert_public_value_equal,
+    _assert_schema_key_absent,
+    _bare_console_state_screen,
+)
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
 import tldw_chatbook.config as config_module
 from tldw_chatbook.Chat import provider_setup_persistence as provider_persistence_module
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Constants import TAB_CHAT
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.Utils import input_validation as input_validation_module
 from tldw_chatbook.UI.Screens.provider_model_resolution import (
     resolve_effective_provider_model,
 )
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
+    ConsoleSettingsReturnTarget,
+    ConversationSettingsReturnIntent,
+    ConversationSettingsReturnOutcome,
+    ProviderSettingsNavigationTarget,
+)
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+    HandoffChannel,
+    PendingHandoffStore,
+)
 from tldw_chatbook.UI.Screens.settings_config_adapter import (
     SettingsConfigAdapter,
     failure_status_text,
@@ -52,6 +75,9 @@ from tldw_chatbook.UI.Screens.settings_config_models import (
     SettingsCategoryId,
     SettingsDraft,
     SettingsValidationResult,
+)
+from tldw_chatbook.Widgets.Console.console_settings_modal import (
+    ConsoleSettingsDraftSnapshot,
 )
 from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
     SettingsEndpointProbeOutcome,
@@ -291,6 +317,66 @@ async def test_console_capture_settings_ignores_retired_detail_for_disclosure(
         )
 
 
+def _assert_private_values_absent(
+    surface: object,
+    private_values: tuple[str, ...],
+    *,
+    surface_label: str,
+) -> None:
+    """Fail without echoing a private value or inspected surface."""
+    rendered = surface if isinstance(surface, str) else repr(surface)
+    if any(value in rendered for value in private_values):
+        pytest.fail(
+            f"private value leaked through {surface_label}",
+            pytrace=False,
+        )
+
+
+def _assert_private_value_matches_opaquely(
+    actual: object,
+    expected: str,
+    *,
+    surface_label: str,
+) -> None:
+    """Compare private text by one-way digest and keep failures value-free."""
+    if not isinstance(actual, str):
+        pytest.fail(
+            f"private value missing from {surface_label}",
+            pytrace=False,
+        )
+    actual_digest = hashlib.sha256(actual.encode("utf-8")).digest()
+    expected_digest = hashlib.sha256(expected.encode("utf-8")).digest()
+    if actual_digest != expected_digest:
+        pytest.fail(
+            f"private value mismatch in {surface_label}",
+            pytrace=False,
+        )
+
+
+def _assert_log_capture_is_live_and_private_free(
+    *,
+    saw_safe_marker: bool,
+    saw_private_value: bool,
+    surface_label: str,
+) -> None:
+    """Assert a logger capture without retaining or rendering its messages."""
+    if not saw_safe_marker:
+        pytest.fail(f"safe marker missing from {surface_label}", pytrace=False)
+    if saw_private_value:
+        pytest.fail(f"private value leaked through {surface_label}", pytrace=False)
+
+
+def _assert_public_text_present(
+    surface: str,
+    expected_text: str,
+    *,
+    surface_label: str,
+) -> None:
+    """Check a public marker without rendering the inspected surface on failure."""
+    if expected_text not in surface:
+        pytest.fail(f"public marker missing from {surface_label}", pytrace=False)
+
+
 def _capture_provider_settings_mutations(monkeypatch):
     calls = []
 
@@ -310,6 +396,16 @@ class StyledSettingsDestinationHarness(DestinationHarness):
     CSS_PATH = str(
         Path(__file__).parents[2] / "tldw_chatbook/css/tldw_cli_modular.tcss"
     )
+
+
+class ConversationReturnSettingsHarness(DestinationHarness):
+    def __init__(self, app_instance):
+        super().__init__(app_instance, "settings")
+        self.navigation_messages: list[NavigateToScreen] = []
+
+    def on_navigate_to_screen(self, message: NavigateToScreen) -> None:
+        self.navigation_messages.append(message)
+        message.stop()
 
 
 async def _settle_settings_mount_storm(pilot) -> None:
@@ -472,7 +568,7 @@ async def test_theme_category_opens_without_crashing():
     test_settings_theme_editor.py.
     """
     app = _build_test_app()
-    host = DestinationHarness(app, "settings")
+    host = ConversationReturnSettingsHarness(app)
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-theme")
         screen = _active_destination_screen(host)
@@ -3577,7 +3673,7 @@ async def test_settings_provider_test_toast_states_failure_reason(monkeypatch):
 
         assert toasts, "provider test produced no toast"
         message, kwargs = toasts[-1]
-        assert message.startswith("Provider test failed:")
+        assert message.startswith("Configuration check blocked:")
         assert "Missing API key" in message
         assert kwargs.get("severity") == "warning"
 
@@ -3614,7 +3710,10 @@ async def test_settings_provider_test_toast_states_success():
 
         assert toasts, "provider test produced no toast"
         message, kwargs = toasts[-1]
-        assert message == "Provider test passed: OpenAI is ready; model gpt-4o."
+        assert message == (
+            "Configuration check complete: OpenAI is configured; model gpt-4o. "
+            "Live generation has not been tested."
+        )
         assert kwargs.get("severity") == "information"
 
 
@@ -4352,11 +4451,13 @@ async def test_settings_provider_test_toast_folds_in_reachable_endpoint_probe(
         ]
         message, kwargs = toasts[-1]
         assert message == (
-            "Provider test passed: Ollama is ready; model llama3; "
-            "endpoint reachable (3 models)."
+            "Configuration check complete: Ollama is configured; model llama3. "
+            "Live generation has not been tested; model-listing evidence updated; "
+            "generation not tested."
         )
         assert kwargs.get("severity") == "information"
-        assert "endpoint reachable (3 models)" in screen._provider_test_result
+        assert "model listing reached" in screen._provider_test_result
+        assert "generation not tested" in screen._provider_test_result
 
 
 @pytest.mark.asyncio
@@ -4369,6 +4470,7 @@ async def test_settings_provider_test_toast_reports_unreachable_endpoint(monkeyp
         return SettingsEndpointProbeOutcome(
             reachable=False,
             summary="unreachable: connection refused",
+            category="connection_refused",
         )
 
     monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
@@ -4388,13 +4490,55 @@ async def test_settings_provider_test_toast_reports_unreachable_endpoint(monkeyp
 
         message, kwargs = toasts[-1]
         assert message == (
-            "Provider test passed: Ollama is ready; model llama3; "
-            "endpoint unreachable: connection refused."
+            "Configuration valid; model-listing check failed (connection refused); "
+            "generation not tested."
         )
         assert kwargs.get("severity") == "warning"
         assert (
-            "endpoint unreachable: connection refused" in screen._provider_test_result
+            "model listing failed (connection refused)" in screen._provider_test_result
         )
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_test_does_not_treat_missing_models_route_as_chat_failure(
+    monkeypatch,
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "Ollama", "model": "llama3"}
+    app.app_config["api_settings"] = {
+        "ollama": {"api_url": "http://127.0.0.1:11434"}
+    }
+
+    async def fake_probe(base_url, **kwargs):
+        return SettingsEndpointProbeOutcome(
+            state="model_listing_unavailable",
+            category="http_status",
+            summary="Model listing unavailable; chat endpoint not tested",
+        )
+
+    monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        toasts = []
+        host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+
+        screen.action_settings_test_category()
+
+        deadline = time.monotonic() + 4.0
+        while time.monotonic() < deadline and not toasts:
+            await pilot.pause(0.01)
+
+        message, kwargs = toasts[-1]
+        assert message == (
+            "Configuration valid; model listing unavailable; "
+            "chat endpoint and generation not tested."
+        )
+        assert kwargs.get("severity") == "warning"
+        assert "model listing unavailable" in screen._provider_test_result
+        assert "model listing failed" not in screen._provider_test_result
 
 
 @pytest.mark.asyncio
@@ -4423,7 +4567,10 @@ async def test_settings_provider_test_skips_probe_for_cloud_providers(monkeypatc
 
         assert probe_calls == []
         message, kwargs = toasts[-1]
-        assert message == "Provider test passed: OpenAI is ready; model gpt-4.1."
+        assert message == (
+            "Configuration check complete: OpenAI is configured; model gpt-4.1. "
+            "Live generation has not been tested."
+        )
         assert kwargs.get("severity") == "information"
 
 
@@ -4453,7 +4600,7 @@ async def test_settings_provider_test_failure_skips_endpoint_probe(monkeypatch):
 
         assert probe_calls == []
         message, kwargs = toasts[-1]
-        assert message.startswith("Provider test failed:")
+        assert message.startswith("Configuration check blocked:")
         assert kwargs.get("severity") == "warning"
 
 
@@ -7198,6 +7345,887 @@ async def test_settings_provider_navigation_context_focuses_api_key_field():
         assert api_key.has_focus
 
 
+def _stage_conversation_settings_return_intent(app, *, provider: str = "openai"):
+    app.pending_handoffs = PendingHandoffStore()
+    intent = ConversationSettingsReturnIntent(
+        session_id="console-session-return",
+        settings_revision=3,
+        active_view="model",
+        focus_control_id="console-settings-model-picker",
+    )
+    revision = app.pending_handoffs.stage(
+        HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+        intent,
+    )
+    target = ProviderSettingsNavigationTarget(
+        category="providers-models",
+        provider=provider,
+        model="gpt-5" if provider == "openai" else "claude-3-5-sonnet",
+        field="api_key",
+        return_revision=revision,
+    )
+    return intent, target
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_clean_deep_link_focuses_exact_provider_credential():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {
+        "openai": {},
+        "anthropic": {},
+    }
+    _intent, target = _stage_conversation_settings_return_intent(
+        app, provider="anthropic"
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        screen.apply_navigation_context(target.to_context())
+        await _wait_for_selector(screen, pilot, "#settings-provider-api-key")
+        for _ in range(20):
+            if screen.query_one("#settings-provider-api-key", Input).has_focus:
+                break
+            await pilot.pause(0.05)
+
+        assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
+        assert screen.query_one("#settings-provider-value", Select).value == "anthropic"
+        assert (
+            screen.query_one("#settings-model-value", Input).value
+            == "claude-3-5-sonnet"
+        )
+        assert screen.query_one("#settings-provider-api-key", Input).has_focus
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_preserves_explicit_unselected_model():
+    """A first-run ``model=None`` target must not inherit a configured default."""
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    app.pending_handoffs = PendingHandoffStore()
+    intent = ConversationSettingsReturnIntent(
+        session_id="console-session-first-run",
+        settings_revision=0,
+        active_view="model",
+        focus_control_id="console-settings-model-picker",
+    )
+    revision = app.pending_handoffs.stage(
+        HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+        intent,
+    )
+    target = ProviderSettingsNavigationTarget(
+        category="providers-models",
+        provider="openai",
+        model=None,
+        field="api_key",
+        return_revision=revision,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        screen.apply_navigation_context(target.to_context())
+        await _wait_for_settings_value(
+            screen,
+            pilot,
+            "#settings-model-value",
+            "",
+            Input,
+        )
+
+        assert screen.query_one("#settings-provider-value", Select).value == "openai"
+        assert screen.query_one("#settings-model-value", Input).value == ""
+        assert screen.query_one("#settings-provider-api-key", Input).has_focus
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_preserves_same_provider_draft_and_discloses_fields():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
+    _intent, target = _stage_conversation_settings_return_intent(app)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        draft = SettingsDraft(category=SettingsCategoryId.PROVIDERS_MODELS)
+        draft.set_value("endpoint", "", "https://draft.example/v1")
+        draft.set_value("api_key", "", "DUMMY-DRAFT-SECRET")
+        screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = draft
+
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] is draft
+        assert screen.query_one("#settings-provider-api-key", Input).has_focus
+        summary = screen.query_one(
+            "#settings-provider-existing-changes-summary", Static
+        )
+        summary_text = str(summary.renderable)
+        assert summary.display is True
+        assert "API key" in summary_text
+        assert "Endpoint" in summary_text
+        assert "DUMMY-DRAFT-SECRET" not in summary_text
+        assert "draft.example" not in summary_text
+
+
+@pytest.mark.asyncio
+async def test_provider_navigation_conflict_requires_review_discard_or_return():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {
+        "openai": {"api_key_env_var": "OPENAI_API_KEY"},
+        "anthropic": {"api_key_env_var": "ANTHROPIC_API_KEY"},
+    }
+    intent, target = _stage_conversation_settings_return_intent(
+        app, provider="anthropic"
+    )
+    host = ConversationReturnSettingsHarness(app)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        draft = SettingsDraft(category=SettingsCategoryId.PROVIDERS_MODELS)
+        draft.set_value("endpoint", "", "https://draft.example/v1")
+        screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = draft
+
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+
+        assert screen.query_one("#settings-provider-value", Select).value == "openai"
+        assert screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] is draft
+        conflict = screen.query_one("#settings-provider-navigation-conflict")
+        assert conflict.display is True
+        assert "Endpoint" in _visible_text(conflict)
+        assert screen.query_one("#settings-provider-conflict-review", Button).label == (
+            "Review existing changes"
+        )
+        assert str(
+            screen.query_one("#settings-provider-conflict-discard", Button).label
+        ) == "Discard changes and configure Anthropic"
+        assert screen.query_one("#settings-provider-conflict-return", Button).label == (
+            "Return to Conversation settings"
+        )
+
+        screen.query_one("#settings-provider-conflict-review", Button).press()
+        await pilot.pause()
+        assert screen.query_one("#settings-provider-endpoint-value", Input).has_focus
+        assert screen.query_one("#settings-provider-value", Select).value == "openai"
+
+        screen.query_one("#settings-provider-conflict-return", Button).press()
+        await pilot.pause()
+        assert len(host.navigation_messages) == 1
+        return_context = host.navigation_messages[0].screen_context
+        assert set(return_context) == {
+            "session_id",
+            "settings_revision",
+            "active_view",
+            "focus_control_id",
+            "return_revision",
+            "outcome",
+        }
+        assert "draft.example" not in repr(return_context)
+        returned = ConsoleSettingsReturnTarget.from_context(return_context)
+        assert returned is not None
+        assert returned.outcome is ConversationSettingsReturnOutcome.WITHOUT_SAVING
+        assert returned.return_revision == target.return_revision
+        assert returned.session_id == intent.session_id
+        assert screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] is draft
+
+
+@pytest.mark.asyncio
+async def test_provider_navigation_conflict_discard_explicitly_applies_staged_target():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {
+        "openai": {},
+        "anthropic": {"api_key_env_var": "ANTHROPIC_API_KEY"},
+    }
+    _intent, target = _stage_conversation_settings_return_intent(
+        app, provider="anthropic"
+    )
+    host = ConversationReturnSettingsHarness(app)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        draft = SettingsDraft(category=SettingsCategoryId.PROVIDERS_MODELS)
+        draft.set_value("endpoint", "", "https://draft.example/v1")
+        screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = draft
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+
+        screen.query_one("#settings-provider-conflict-discard", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert SettingsCategoryId.PROVIDERS_MODELS not in screen._settings_drafts
+        assert screen.query_one("#settings-provider-value", Select).value == "anthropic"
+        assert screen.query_one("#settings-provider-api-key", Input).has_focus
+        assert screen.query_one("#settings-provider-navigation-conflict").display is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "changed_selector",
+        "changed_value",
+        "expected_outcome",
+        "expected_continuation_copy",
+    ),
+    (
+        (
+            "#settings-provider-api-key",
+            "DUMMY-OPENAI-RETURN-KEY",
+            ConversationSettingsReturnOutcome.CREDENTIAL_SAVED,
+            "Credential saved. Return to Conversation settings to check readiness; "
+            "provider acceptance is not yet verified.",
+        ),
+        (
+            "#settings-provider-endpoint-value",
+            "https://api.openai.example/v1",
+            ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED,
+            "Provider settings saved. Return to Conversation settings to check "
+            "readiness; generation is not yet verified.",
+        ),
+    ),
+)
+async def test_conversation_settings_return_save_shows_typed_continuation(
+    monkeypatch,
+    changed_selector,
+    changed_value,
+    expected_outcome,
+    expected_continuation_copy,
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    intent, target = _stage_conversation_settings_return_intent(app)
+    mutations = _capture_provider_settings_mutations(monkeypatch)
+    host = ConversationReturnSettingsHarness(app)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        await pilot.pause()
+        screen.query_one(changed_selector, Input).value = changed_value
+        await pilot.pause()
+
+        screen.action_settings_save_category(allow_text_entry_focus=True)
+        await pilot.pause()
+
+        assert mutations
+        continuation = screen.query_one("#settings-provider-return-continuation")
+        assert continuation.display is True
+        assert expected_continuation_copy in _visible_text(screen)
+        assert screen.query_one("#settings-provider-return", Button).label == (
+            "Return to Conversation settings"
+        )
+        assert screen.query_one("#settings-provider-stay", Button).label == (
+            "Stay in Settings"
+        )
+
+        screen.query_one("#settings-provider-return", Button).press()
+        await pilot.pause()
+
+        return_context = host.navigation_messages[0].screen_context
+        assert set(return_context) == {
+            "session_id",
+            "settings_revision",
+            "active_view",
+            "focus_control_id",
+            "return_revision",
+            "outcome",
+        }
+        assert changed_value not in repr(return_context)
+        returned = ConsoleSettingsReturnTarget.from_context(return_context)
+        assert returned is not None
+        assert returned.outcome is expected_outcome
+        assert returned.session_id == intent.session_id
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_keeps_mounted_credential_out_of_transfer_surfaces(
+    monkeypatch,
+    caplog: pytest.LogCaptureFixture,
+):
+    """The Settings-owned masked key never enters return UI or coordination data."""
+    credential = "TASK30010-mounted-api-key-sentinel-7ce14b"
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    snapshot_marker = "TASK30010-linked-private-console-snapshot-31d5"
+    suspended_snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(
+            provider="openai",
+            model="gpt-5",
+            system_prompt=snapshot_marker,
+        ),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-model-picker": "gpt-5"},
+        provider_model_drafts={"openai": "gpt-5"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=2,
+        focus_control_id="console-settings-model-picker",
+        disclosure_state={
+            "advanced_generation": False,
+            "connection_details": False,
+        },
+    )
+    console_store = ConsoleChatStore()
+    console_store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="openai",
+            model="gpt-5",
+            system_prompt="Committed mounted-journey prompt",
+        )
+    )
+    console_screen = _bare_console_state_screen(console_store)
+    console_screen._suspended_conversation_settings = suspended_snapshot
+    console_screen._suspended_conversation_settings_token = 1
+    seeded_console_snapshot = console_screen._serialize_native_console_state()
+    if seeded_console_snapshot is None:
+        pytest.fail("Console serializer produced no snapshot", pytrace=False)
+    runtime_identity = app._current_runtime_identity()
+    app.screen_state_store.save(
+        TAB_CHAT,
+        seeded_console_snapshot,
+        runtime_identity,
+    )
+    intent, target = _stage_conversation_settings_return_intent(app)
+    mutations = _capture_provider_settings_mutations(monkeypatch)
+    host = ConversationReturnSettingsHarness(app)
+
+    from loguru import logger as loguru_logger
+
+    caplog.set_level(logging.DEBUG)
+    python_marker = "TASK30010-settings-python-capture-live"
+    loguru_marker = "TASK30010-settings-loguru-capture-live"
+    private_values = (credential,)
+    loguru_messages: list[str] = []
+    python_capture = (False, False)
+    loguru_capture = (False, False)
+    sink_id = loguru_logger.add(loguru_messages.append, level="DEBUG")
+    try:
+        async with host.run_test(size=(180, 50)) as pilot:
+            await _settle_settings_mount_storm(pilot)
+            screen = _active_destination_screen(host)
+            incoming_context = target.to_context()
+            screen.apply_navigation_context(incoming_context)
+            await _wait_for_selector(screen, pilot, "#settings-provider-api-key")
+
+            api_key = screen.query_one("#settings-provider-api-key", Input)
+            assert api_key.password is True
+            api_key.value = credential
+            screen.handle_provider_api_key_changed(Input.Changed(api_key, credential))
+            await pilot.pause()
+
+            _assert_private_values_absent(
+                str(api_key.render()),
+                private_values,
+                surface_label="masked API-key field render",
+            )
+            frame = host.export_screenshot()
+            _assert_public_text_present(
+                frame,
+                "Providers",
+                surface_label="mounted Settings compositor frame",
+            )
+            _assert_private_values_absent(
+                frame,
+                private_values,
+                surface_label="mounted Settings compositor frame",
+            )
+
+            claim = app.pending_handoffs.claim(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN
+            )
+            assert claim is not None
+            _assert_private_values_absent(
+                claim,
+                private_values,
+                surface_label="return handoff claim",
+            )
+            _assert_private_values_absent(
+                claim.value,
+                private_values,
+                surface_label="return handoff value",
+            )
+            _assert_private_values_absent(
+                claim.value.to_context(),
+                private_values,
+                surface_label="return handoff context",
+            )
+            assert app.pending_handoffs.release(claim) is True
+
+            screen.action_settings_save_category(allow_text_entry_focus=True)
+            await pilot.pause()
+            assert mutations
+            _assert_private_value_matches_opaquely(
+                mutations[-1][0]["api_settings.openai"]["api_key"],
+                credential,
+                surface_label="isolated Settings credential persistence",
+            )
+
+            continuation = screen.save_state()["provider_return_continuation"]
+            _assert_private_values_absent(
+                continuation,
+                private_values,
+                surface_label="Settings continuation state",
+            )
+            _assert_private_values_absent(
+                incoming_context,
+                private_values,
+                surface_label="incoming Settings navigation context",
+            )
+
+            screen.query_one("#settings-provider-return", Button).press()
+            await pilot.pause()
+            return_context = host.navigation_messages[0].screen_context
+            _assert_private_values_absent(
+                return_context,
+                private_values,
+                surface_label="outgoing Console return context",
+            )
+            returned = ConsoleSettingsReturnTarget.from_context(return_context)
+            assert returned is not None
+            assert returned.session_id == intent.session_id
+            logging.getLogger(__name__).debug(python_marker)
+            loguru_logger.debug(loguru_marker)
+    finally:
+        loguru_logger.remove(sink_id)
+        python_log_text = caplog.text
+        loguru_log_text = "".join(loguru_messages)
+        python_capture = (
+            python_marker in python_log_text,
+            credential in python_log_text,
+        )
+        loguru_capture = (
+            loguru_marker in loguru_log_text,
+            credential in loguru_log_text,
+        )
+        caplog.clear()
+        loguru_messages.clear()
+
+    _assert_log_capture_is_live_and_private_free(
+        saw_safe_marker=python_capture[0],
+        saw_private_value=python_capture[1],
+        surface_label="stdlib logging capture",
+    )
+    _assert_log_capture_is_live_and_private_free(
+        saw_safe_marker=loguru_capture[0],
+        saw_private_value=loguru_capture[1],
+        surface_label="loguru capture",
+    )
+    linked_console_snapshot = app.screen_state_store.restore(
+        TAB_CHAT,
+        runtime_identity,
+    )
+    if linked_console_snapshot is None:
+        pytest.fail("linked Console snapshot was not restored", pytrace=False)
+    _assert_private_values_absent(
+        linked_console_snapshot,
+        private_values,
+        surface_label="linked Console screen-state snapshot",
+    )
+    _assert_schema_key_absent(
+        linked_console_snapshot,
+        "api_key",
+        surface_label="linked Console screen-state snapshot",
+    )
+    restored_suspended_snapshot = ConsoleSettingsDraftSnapshot.from_mapping(
+        linked_console_snapshot.get("suspended_conversation_settings")
+    )
+    if restored_suspended_snapshot is None:
+        pytest.fail("linked Console suspended draft was not restored", pytrace=False)
+    _assert_private_value_matches_opaquely(
+        restored_suspended_snapshot.settings.system_prompt,
+        snapshot_marker,
+        surface_label="linked Console suspended-draft identity",
+    )
+
+    injected_snapshot = deepcopy(linked_console_snapshot)
+    injected_snapshot["suspended_conversation_settings"]["raw_values"][
+        "console-settings-temperature"
+    ] = credential
+    with pytest.raises(pytest.fail.Exception) as injected_failure:
+        _assert_private_values_absent(
+            injected_snapshot,
+            private_values,
+            surface_label="linked Console screen-state snapshot",
+        )
+    injected_failure_text = str(injected_failure.value)
+    _assert_private_values_absent(
+        injected_failure_text,
+        private_values,
+        surface_label="linked snapshot failure artifact",
+    )
+    _assert_public_value_equal(
+        injected_failure_text,
+        "private value leaked through linked Console screen-state snapshot",
+        surface_label="linked snapshot failure copy",
+    )
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_is_single_flight_and_retries_after_failed_navigation(
+    monkeypatch,
+):
+    """Queued duplicate Return events cannot release and repost the handoff."""
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    _intent, target = _stage_conversation_settings_return_intent(app)
+    _capture_provider_settings_mutations(monkeypatch)
+    host = ConversationReturnSettingsHarness(app)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        screen.query_one("#settings-provider-api-key", Input).value = (
+            "DUMMY-SINGLE-FLIGHT-KEY"
+        )
+        await pilot.pause()
+        screen.action_settings_save_category(allow_text_entry_focus=True)
+        await pilot.pause()
+
+        return_button = screen.query_one("#settings-provider-return", Button)
+        return_button.press()
+        for _ in range(20):
+            if host.navigation_messages:
+                break
+            await pilot.pause(0.01)
+        screen.handle_provider_return(Button.Pressed(return_button))
+        await pilot.pause()
+
+        assert len(host.navigation_messages) == 1
+        assert screen._provider_return_navigation_in_progress is True
+        assert return_button.disabled is True
+
+        host.navigation_messages[0].report_completion(False)
+
+        assert screen._provider_return_navigation_in_progress is False
+        assert return_button.disabled is False
+        assert screen.query_one("#settings-provider-return-continuation").display is True
+
+        return_button.press()
+        for _ in range(20):
+            if len(host.navigation_messages) == 2:
+                break
+            await pilot.pause(0.01)
+
+        assert len(host.navigation_messages) == 2
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_continuation_survives_fresh_settings_screen(
+    monkeypatch,
+):
+    """Ordinary Settings replacement retains only the typed safe continuation."""
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    _intent, target = _stage_conversation_settings_return_intent(app)
+    _capture_provider_settings_mutations(monkeypatch)
+    saved_state = None
+
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(100, 30)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        screen.query_one("#settings-provider-api-key", Input).value = (
+            "DUMMY-STATE-ONLY-SECRET"
+        )
+        await pilot.pause()
+        screen.action_settings_save_category(allow_text_entry_focus=True)
+        await pilot.pause()
+
+        saved_state = screen.save_state()
+        continuation = saved_state["provider_return_continuation"]
+        assert set(continuation) == {"target", "conflict", "outcome"}
+        assert continuation["target"] == target.to_context()
+        assert continuation["conflict"] is False
+        assert continuation["outcome"] == "credential_saved"
+        assert "DUMMY-STATE-ONLY-SECRET" not in repr(continuation)
+
+    assert saved_state is not None
+    restored_host = DestinationHarness(
+        app,
+        "settings",
+        restored_state=saved_state,
+    )
+    async with restored_host.run_test(size=(100, 30)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        restored = _active_destination_screen(restored_host)
+        continuation = restored.query_one("#settings-provider-return-continuation")
+        return_button = restored.query_one("#settings-provider-return", Button)
+
+        assert continuation.display is True
+        assert return_button.label == "Return to Conversation settings"
+        assert restored.query_one("#settings-provider-stay", Button).label == (
+            "Stay in Settings"
+        )
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_save_focuses_primary_return_above_compact_fold(
+    monkeypatch,
+):
+    """Successful save makes the exact return action immediately actionable."""
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    _intent, target = _stage_conversation_settings_return_intent(app)
+    _capture_provider_settings_mutations(monkeypatch)
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(80, 24)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        screen.query_one("#settings-provider-api-key", Input).value = (
+            "DUMMY-COMPACT-RETURN-KEY"
+        )
+        await pilot.pause()
+
+        screen.action_settings_save_category(allow_text_entry_focus=True)
+        for _ in range(40):
+            return_button = screen.query_one("#settings-provider-return", Button)
+            if return_button.has_focus:
+                break
+            await pilot.pause(0.05)
+
+        return_button = screen.query_one("#settings-provider-return", Button)
+        status = screen.query_one(
+            "#settings-provider-return-continuation-status", Static
+        )
+        assert return_button.variant == "primary"
+        assert return_button.has_focus
+        assert return_button in host.screen._compositor.visible_widgets
+        assert return_button.region.width > 0
+        assert return_button.region.height > 0
+        assert str(screen.query_one("#settings-provider-stay", Button).label) == (
+            "Stay in Settings"
+        )
+        assert "check readiness" in str(status.renderable).lower()
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_save_failure_retains_draft_and_handoff(
+    monkeypatch,
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    _intent, target = _stage_conversation_settings_return_intent(app)
+    monkeypatch.setattr(
+        settings_screen_module,
+        "persist_provider_settings_atomic",
+        lambda *_args, **_kwargs: ConfigMutationResult(False, False, "before_replace"),
+    )
+    host = ConversationReturnSettingsHarness(app)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        screen.query_one("#settings-provider-api-key", Input).value = (
+            "DUMMY-OPENAI-FAILED-RETURN-KEY"
+        )
+        await pilot.pause()
+
+        screen.action_settings_save_category(allow_text_entry_focus=True)
+        await pilot.pause()
+
+        assert screen.query_one("#settings-provider-return-continuation").display is False
+        assert SettingsCategoryId.PROVIDERS_MODELS in screen._settings_drafts
+        claim = app.pending_handoffs.claim(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN
+        )
+        assert claim is not None
+        assert claim.revision == target.return_revision
+        app.pending_handoffs.release(claim)
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_without_saving_is_single_flight_on_confirm():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    _intent, target = _stage_conversation_settings_return_intent(app)
+    host = ConversationReturnSettingsHarness(app)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        screen.query_one("#settings-provider-api-key", Input).value = (
+            "DUMMY-UNSAVED-RETURN-KEY"
+        )
+        await pilot.pause()
+        return_without_save = screen.query_one(
+            "#settings-provider-return-without-save", Button
+        )
+        return_without_save.press()
+        await pilot.pause()
+        assert isinstance(host.screen_stack[-1], ConfirmationDialog)
+        assert host.navigation_messages == []
+        screen.handle_provider_return_without_saving(
+            Button.Pressed(return_without_save)
+        )
+        screen.handle_provider_return_without_saving(
+            Button.Pressed(return_without_save)
+        )
+        await pilot.pause()
+        assert sum(
+            isinstance(candidate, ConfirmationDialog)
+            for candidate in host.screen_stack
+        ) == 1
+        assert screen._provider_return_confirmation_open is True
+        assert screen._provider_return_navigation_in_progress is False
+        assert all(
+            screen.query_one(selector, Button).disabled
+            for selector in (
+                "#settings-provider-return",
+                "#settings-provider-return-without-save",
+                "#settings-provider-conflict-return",
+            )
+        )
+        host.screen_stack[-1].query_one("#confirm-button", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert len(host.navigation_messages) == 1
+        assert screen._provider_return_confirmation_open is False
+        assert screen._provider_return_navigation_in_progress is True
+        returned = ConsoleSettingsReturnTarget.from_context(
+            host.navigation_messages[0].screen_context
+        )
+        assert returned is not None
+        assert returned.outcome is ConversationSettingsReturnOutcome.WITHOUT_SAVING
+        assert SettingsCategoryId.PROVIDERS_MODELS not in screen._settings_drafts
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_without_saving_cancel_allows_retry():
+    """Cancel clears the pre-dialog fence so one later return can proceed."""
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    _intent, target = _stage_conversation_settings_return_intent(app)
+    host = ConversationReturnSettingsHarness(app)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        screen.query_one("#settings-provider-api-key", Input).value = (
+            "DUMMY-CANCELLED-RETURN-KEY"
+        )
+        await pilot.pause()
+        return_without_save = screen.query_one(
+            "#settings-provider-return-without-save", Button
+        )
+
+        screen.handle_provider_return_without_saving(
+            Button.Pressed(return_without_save)
+        )
+        await pilot.pause()
+        assert isinstance(host.screen_stack[-1], ConfirmationDialog)
+        assert screen._provider_return_confirmation_open is True
+        assert screen._provider_return_navigation_in_progress is False
+        host.screen_stack[-1].query_one("#cancel-button", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert host.screen_stack[-1] is screen
+        assert screen._provider_return_confirmation_open is False
+        assert screen._provider_return_navigation_in_progress is False
+        assert return_without_save.disabled is False
+        assert host.navigation_messages == []
+
+        screen.handle_provider_return_without_saving(
+            Button.Pressed(return_without_save)
+        )
+        await pilot.pause()
+        assert isinstance(host.screen_stack[-1], ConfirmationDialog)
+        assert screen._provider_return_confirmation_open is True
+        assert screen._provider_return_navigation_in_progress is False
+        assert sum(
+            isinstance(candidate, ConfirmationDialog)
+            for candidate in host.screen_stack
+        ) == 1
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_stay_settles_exact_handoff(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    _intent, target = _stage_conversation_settings_return_intent(app)
+    _capture_provider_settings_mutations(monkeypatch)
+    host = ConversationReturnSettingsHarness(app)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        screen.query_one("#settings-provider-api-key", Input).value = (
+            "DUMMY-OPENAI-STAY-KEY"
+        )
+        await pilot.pause()
+        screen.action_settings_save_category(allow_text_entry_focus=True)
+        await pilot.pause()
+
+        screen.query_one("#settings-provider-stay", Button).press()
+        await pilot.pause()
+
+        assert host.navigation_messages == []
+        assert screen.query_one("#settings-provider-return-continuation").display is False
+        replacement = ConversationSettingsReturnIntent(
+            "replacement-session",
+            0,
+            "model",
+            None,
+        )
+        app.pending_handoffs.stage(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+            replacement,
+        )
+        claim = app.pending_handoffs.claim(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN
+        )
+        assert claim is not None
+        assert claim.value == replacement
+        app.pending_handoffs.release(claim)
+
+
 @pytest.mark.asyncio
 async def test_sync_rows_recompose_mid_navigation_still_focuses_target_field():
     """task-290: a sync-rows landing used to recompose the screen between a
@@ -7478,10 +8506,10 @@ async def test_settings_provider_test_redacts_secrets(monkeypatch):
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
-        await _wait_for_settings_text(screen, pilot, "Provider test")
+        await _wait_for_settings_text(screen, pilot, "Configuration check")
         text = _visible_text(screen)
 
-        assert "Provider test" in text
+        assert "Configuration check" in text
         assert "OPENAI_API_KEY=<redacted>" in text
         assert "sk-" not in text
 
@@ -8986,7 +10014,7 @@ async def test_settings_provider_test_blocks_unknown_provider():
         text = _visible_text(screen)
 
         assert "Unknown provider" in text
-        assert "status=blocked" in text
+        assert "configuration=blocked" in text
 
 
 @pytest.mark.asyncio
@@ -9287,11 +10315,12 @@ async def test_settings_provider_test_does_not_depend_on_console_sampling_defaul
         ).value = "not-a-number"
 
         await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
-        await _wait_for_settings_text(screen, pilot, "Provider test")
+        await _wait_for_settings_text(screen, pilot, "Configuration check")
         text = _visible_text(screen)
 
-        assert "Provider test" in text
-        assert "status=ready" in text
+        assert "Configuration check" in text
+        assert "configuration=complete" in text
+        assert "is ready" not in text
 
 
 def test_settings_provider_catalog_entries_do_not_import_chat_functions(monkeypatch):

@@ -1,10 +1,79 @@
+import pytest
+
 from tldw_chatbook.Chat.console_provider_support import (
     DIRECT_CONSOLE_PROVIDER_KEYS,
+    ConsoleControlSupport,
+    ConsoleGenerationControl,
     ConsoleProviderIdentity,
+    console_generation_control_support,
     resolve_console_provider_identity,
     supported_console_provider_catalog,
     supported_console_provider_readiness_keys,
 )
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "control", "expected"),
+    (
+        ("llama_cpp", "model-a", "reasoning_effort", "supported"),
+        ("llama_cpp", "model-a", "thinking_budget_tokens", "supported"),
+        ("llama_cpp", "model-a", "reasoning_summary", "unsupported"),
+        ("llama_cpp", "model-a", "verbosity", "unsupported"),
+        ("llama_cpp", "model-a", "thinking_effort", "unsupported"),
+        ("local_vllm", "model-a", "reasoning_effort", "supported"),
+        ("local_vllm", "model-a", "thinking_budget_tokens", "unsupported"),
+        ("openai", "gpt-5.6-terra", "thinking_effort", "unsupported"),
+        ("openai", "gpt-5.6-terra", "thinking_budget_tokens", "unsupported"),
+        ("moonshot", "kimi-k3", "reasoning_effort", "supported"),
+        ("zai", "glm-5.2", "reasoning_effort", "supported"),
+        ("anthropic", "claude-sonnet-5", "thinking_effort", "supported"),
+        (
+            "anthropic",
+            "claude-sonnet-5",
+            "thinking_budget_tokens",
+            "unsupported",
+        ),
+    ),
+)
+def test_generation_control_support_uses_existing_authoritative_facts(
+    provider: str,
+    model: str,
+    control: ConsoleGenerationControl,
+    expected: ConsoleControlSupport,
+) -> None:
+    assert console_generation_control_support(provider, model, control) == expected
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "control"),
+    (
+        ("openai", "future-custom-model", "reasoning_effort"),
+        ("openai", "future-custom-model", "reasoning_summary"),
+        ("openai", None, "verbosity"),
+        ("openai", "gpt-5.6-terra", "reasoning_effort"),
+        ("openai", "gpt-5.6-terra", "reasoning_summary"),
+        ("openai", "gpt-5.6-terra", "verbosity"),
+        ("custom", "private-model", "reasoning_effort"),
+        ("definitely-not-real", "private-model", "thinking_effort"),
+    ),
+)
+def test_generation_control_support_keeps_unproved_models_unknown(
+    provider: str,
+    model: str | None,
+    control: ConsoleGenerationControl,
+) -> None:
+    assert console_generation_control_support(provider, model, control) == "unknown"
+
+
+def test_generation_control_support_keeps_mlx_reasoning_pending_verification() -> None:
+    assert (
+        console_generation_control_support(
+            "local_mlx_lm",
+            "mlx-community/Qwen3-4B",
+            "reasoning_effort",
+        )
+        == "unknown"
+    )
 
 
 def test_aliases_resolve_to_readiness_and_execution_keys() -> None:

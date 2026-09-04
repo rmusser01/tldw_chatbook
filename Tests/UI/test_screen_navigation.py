@@ -805,6 +805,373 @@ async def test_navigation_confirms_with_outgoing_screen_and_honors_veto(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_navigation_completion_callback_settles_once_for_guard_veto_and_success(
+    monkeypatch,
+):
+    """The existing guard path reports one source-visible terminal result."""
+    app = _build_test_app()
+    app._initial_screen_pushed = True
+    outcomes: list[bool] = []
+    switched_screens = []
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    class FakeOutgoingScreen:
+        screen_name = "library"
+        allow = False
+
+        async def confirm_navigation(self):
+            return self.allow
+
+        def refresh(self, **_kwargs):
+            return self
+
+    outgoing = FakeOutgoingScreen()
+    app._screen_stacks["_default"][:] = [object(), outgoing]
+
+    def fake_switch_screen(screen):
+        switched_screens.append(screen)
+        app._screen_stacks["_default"][-1] = screen
+
+        async def mounted():
+            return None
+
+        return mounted()
+
+    monkeypatch.setattr(
+        app,
+        "_resolve_screen_navigation_target",
+        lambda _target: ("chat", "chat", FakeTargetScreen),
+    )
+    monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+    monkeypatch.setattr(app, "_clear_focus_if_leaving_console", lambda _route: None)
+
+    vetoed = NavigateToScreen("chat", on_completion=outcomes.append)
+    await app.handle_screen_navigation(vetoed)
+    vetoed.report_completion(True)
+    assert outcomes == [False]
+    assert switched_screens == []
+
+    outgoing.allow = True
+    succeeded = NavigateToScreen("chat", on_completion=outcomes.append)
+    await app.handle_screen_navigation(succeeded)
+    assert outcomes == [False, True]
+    assert len(switched_screens) == 1
+
+
+def test_navigation_completion_releases_callback_before_invocation() -> None:
+    """A completed route cannot retain or re-enter its source callback."""
+    callback_slots: list[object] = []
+    message = NavigateToScreen("chat")
+
+    def callback(succeeded: bool) -> None:
+        callback_slots.append(message._on_completion)
+        message.report_completion(not succeeded)
+
+    message._on_completion = callback
+    message.report_completion(True)
+
+    assert callback_slots == [None]
+    assert message._on_completion is None
+
+
+@pytest.mark.asyncio
+async def test_navigation_commit_settles_success_before_post_switch_failure(monkeypatch):
+    """Committed ownership reports success while preserving mount diagnostics."""
+    app = _build_test_app()
+    app._initial_screen_pushed = True
+    outcomes: list[bool] = []
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    class FakeOutgoingScreen:
+        screen_name = "library"
+
+        async def confirm_navigation(self):
+            return True
+
+    outgoing = FakeOutgoingScreen()
+    app._screen_stacks["_default"][:] = [object(), outgoing]
+
+    def synchronous_stack_transfer(screen):
+        app._screen_stacks["_default"][-1] = screen
+
+        async def mount_then_fail():
+            raise RuntimeError("mount completed after stack transfer")
+
+        return mount_then_fail()
+
+    monkeypatch.setattr(
+        app,
+        "_resolve_screen_navigation_target",
+        lambda _target: ("chat", "chat", FakeTargetScreen),
+    )
+    monkeypatch.setattr(app, "switch_screen", synchronous_stack_transfer)
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+
+    message = NavigateToScreen("chat", on_completion=outcomes.append)
+    with pytest.raises(RuntimeError, match="mount completed after stack transfer"):
+        await app.handle_screen_navigation(message)
+
+    assert outcomes == [True]
+    assert app._screen_stacks["_default"][-1].screen_name == "chat"
+
+
+@pytest.mark.asyncio
+async def test_navigation_sync_switch_error_after_stack_transfer_commits_and_propagates(
+    monkeypatch,
+) -> None:
+    """A synchronous switch failure cannot undo exact target ownership."""
+    app = _build_test_app()
+    app._initial_screen_pushed = True
+    outcomes: list[bool] = []
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    outgoing = SimpleNamespace(screen_name="library")
+    app._screen_stacks["_default"][:] = [object(), outgoing]
+
+    def synchronous_transfer_then_raise(screen):
+        app._screen_stacks["_default"][-1] = screen
+        raise RuntimeError("switch raised after exact stack transfer")
+
+    monkeypatch.setattr(
+        app,
+        "_resolve_screen_navigation_target",
+        lambda _target: ("chat", "chat", FakeTargetScreen),
+    )
+    monkeypatch.setattr(app, "switch_screen", synchronous_transfer_then_raise)
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+
+    message = NavigateToScreen("chat", on_completion=outcomes.append)
+    with pytest.raises(RuntimeError, match="switch raised after exact stack transfer"):
+        await app.handle_screen_navigation(message)
+
+    assert outcomes == [True]
+    assert app._screen_stacks["_default"][-1].screen_name == "chat"
+
+
+@pytest.mark.asyncio
+async def test_navigation_commit_reports_success_but_propagates_cancellation(monkeypatch):
+    """Cancellation keeps worker semantics after the target owns the stack."""
+    app = _build_test_app()
+    app._initial_screen_pushed = True
+    outcomes: list[bool] = []
+    mount_started = asyncio.Event()
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    outgoing = SimpleNamespace(screen_name="library")
+    app._screen_stacks["_default"][:] = [object(), outgoing]
+
+    def synchronous_stack_transfer(screen):
+        app._screen_stacks["_default"][-1] = screen
+
+        async def mounting_forever():
+            mount_started.set()
+            await asyncio.Future()
+
+        return mounting_forever()
+
+    monkeypatch.setattr(
+        app,
+        "_resolve_screen_navigation_target",
+        lambda _target: ("chat", "chat", FakeTargetScreen),
+    )
+    monkeypatch.setattr(app, "switch_screen", synchronous_stack_transfer)
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+
+    task = asyncio.create_task(
+        app.handle_screen_navigation(
+            NavigateToScreen("chat", on_completion=outcomes.append)
+        )
+    )
+    await mount_started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert outcomes == [True]
+    assert app._screen_stacks["_default"][-1].screen_name == "chat"
+
+
+@pytest.mark.asyncio
+async def test_navigation_commit_reports_success_but_propagates_release_failure(
+    monkeypatch,
+):
+    """Transition-release diagnostics survive a committed target handoff."""
+    app = _build_test_app()
+    app._initial_screen_pushed = True
+    outcomes: list[bool] = []
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    class FakeOutgoingScreen:
+        screen_name = "library"
+
+        def acquire_navigation_transition(self):
+            def release() -> None:
+                raise RuntimeError("transition release failed")
+
+            return release
+
+        def refresh(self, **_kwargs):
+            return self
+
+    outgoing = FakeOutgoingScreen()
+    app._screen_stacks["_default"][:] = [object(), outgoing]
+
+    def synchronous_stack_transfer(screen):
+        app._screen_stacks["_default"][-1] = screen
+
+        async def mounted():
+            return None
+
+        return mounted()
+
+    monkeypatch.setattr(
+        app,
+        "_resolve_screen_navigation_target",
+        lambda _target: ("chat", "chat", FakeTargetScreen),
+    )
+    monkeypatch.setattr(app, "switch_screen", synchronous_stack_transfer)
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+    monkeypatch.setattr(app, "_clear_focus_if_leaving_console", lambda _route: None)
+
+    with pytest.raises(RuntimeError, match="transition release failed"):
+        await app.handle_screen_navigation(
+            NavigateToScreen("chat", on_completion=outcomes.append)
+        )
+
+    assert outcomes == [True]
+    assert app._screen_stacks["_default"][-1].screen_name == "chat"
+
+
+@pytest.mark.asyncio
+async def test_navigation_lock_wait_cancellation_settles_source_failure() -> None:
+    """Cancellation before lock ownership still resolves the source callback once."""
+    app = _build_test_app()
+    outcomes: list[bool] = []
+    lock = app._screen_navigation_lock()
+    await lock.acquire()
+    try:
+        task = asyncio.create_task(
+            app.handle_screen_navigation(
+                NavigateToScreen("chat", on_completion=outcomes.append)
+            )
+        )
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        lock.release()
+
+    assert outcomes == [False]
+
+
+@pytest.mark.asyncio
+async def test_navigation_completion_reports_prestartup_and_unknown_failures(
+    monkeypatch,
+) -> None:
+    """Every pre-commit rejection leaves the source callback with one failure."""
+    app = _build_test_app()
+    outcomes: list[bool] = []
+
+    await app.handle_screen_navigation(
+        NavigateToScreen("chat", on_completion=outcomes.append)
+    )
+    app._initial_screen_pushed = True
+    outgoing = SimpleNamespace(screen_name="library")
+    app._screen_stacks["_default"][:] = [object(), outgoing]
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+    await app.handle_screen_navigation(
+        NavigateToScreen("not-a-real-route", on_completion=outcomes.append)
+    )
+
+    assert outcomes == [False, False]
+
+
+@pytest.mark.asyncio
+async def test_navigation_post_switch_bookkeeping_failure_reports_success_and_propagates(
+    monkeypatch,
+):
+    """Bookkeeping diagnostics propagate without rolling back target success."""
+    app = _build_test_app()
+    app._initial_screen_pushed = True
+    outcomes: list[bool] = []
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    class FakeOutgoingScreen:
+        screen_name = "library"
+
+        async def confirm_navigation(self):
+            return True
+
+        def refresh(self, **_kwargs):
+            return self
+
+    outgoing = FakeOutgoingScreen()
+    app._screen_stacks["_default"][:] = [object(), outgoing]
+
+    def synchronous_stack_transfer(screen):
+        app._screen_stacks["_default"][-1] = screen
+
+        async def mounted():
+            return None
+
+        return mounted()
+
+    monkeypatch.setattr(
+        app,
+        "_resolve_screen_navigation_target",
+        lambda _target: ("chat", "chat", FakeTargetScreen),
+    )
+    monkeypatch.setattr(app, "switch_screen", synchronous_stack_transfer)
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+    monkeypatch.setattr(
+        app,
+        "_clear_focus_if_leaving_console",
+        lambda _route: (_ for _ in ()).throw(RuntimeError("bookkeeping failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="bookkeeping failed"):
+        await app.handle_screen_navigation(
+            NavigateToScreen("chat", on_completion=outcomes.append)
+        )
+
+    assert outcomes == [True]
+    assert app._screen_stacks["_default"][-1].screen_name == "chat"
+
+
+@pytest.mark.asyncio
 async def test_navigation_confirm_exception_warns_and_aborts_switch(monkeypatch):
     """A broken outgoing confirm_navigation must fail closed, not silently
     let navigation proceed and tear down live work nobody was asked about.

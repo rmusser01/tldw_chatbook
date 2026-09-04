@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import StrEnum
 from threading import RLock
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Collection, Literal, Protocol
 from unicodedata import category as unicode_category
 
 from .provider_endpoint_contract import canonical_connection_identity
+
+if TYPE_CHECKING:
+    from .console_session_settings import ConsoleSessionSettings
 
 ConfigurationFacet = Literal["incomplete", "configured"]
 EndpointFacet = Literal[
@@ -20,6 +24,20 @@ EndpointFacet = Literal[
     "changed_since_test",
 ]
 ModelFacet = Literal["missing", "confirmed", "unconfirmed"]
+CredentialFacet = Literal[
+    "not_required", "missing", "present_unverified", "authenticated"
+]
+GenerationFacet = Literal[
+    "not_tested", "testing", "succeeded", "failed", "changed_since_test"
+]
+GenerationFailureCategory = Literal[
+    "authentication",
+    "rate_limit",
+    "bad_request",
+    "timeout",
+    "connection_error",
+    "provider_error",
+]
 CredentialSource = Literal["none", "stored", "environment", "draft"]
 ConfigurationIssueCode = Literal[
     "provider_missing",
@@ -64,6 +82,22 @@ _PROBE_ENDPOINT_FACETS = frozenset(
     {"reachable", "unreachable", "model_listing_unavailable"}
 )
 _MODEL_FACETS = frozenset({"missing", "confirmed", "unconfirmed"})
+_CREDENTIAL_FACETS = frozenset(
+    {"not_required", "missing", "present_unverified", "authenticated"}
+)
+_GENERATION_FACETS = frozenset(
+    {"not_tested", "testing", "succeeded", "failed", "changed_since_test"}
+)
+_GENERATION_FAILURE_CATEGORIES = frozenset(
+    {
+        "authentication",
+        "rate_limit",
+        "bad_request",
+        "timeout",
+        "connection_error",
+        "provider_error",
+    }
+)
 _CREDENTIAL_SOURCES = frozenset({"none", "stored", "environment", "draft"})
 _CONFIGURATION_ISSUES = frozenset(
     {
@@ -102,17 +136,36 @@ _FAILURE_CATEGORIES = frozenset(
 # one action that addresses it -- "The model listing request had a connection
 # error" named a subsystem and no next step.
 _FAILURE_DETAILS = {
-    "timeout": "The request timed out - the server did not answer in time. Check it is running and not overloaded.",
-    "connection_refused": "The connection was refused - nothing is listening at that address. Start the server, or check the endpoint and port.",
+    "timeout": (
+        "The request timed out - the server did not answer in time. "
+        "Check it is running and not overloaded."
+    ),
+    "connection_refused": (
+        "The connection was refused - nothing is listening at that address. "
+        "Start the server, or check the endpoint and port."
+    ),
     # Qodo review (PR #2256): "Go Back" was wrong -- this verdict renders on
     # the Provider step, which already contains the key input, and Back goes to
     # Welcome. Source-agnostic too: the credential may be stored or from the
     # environment, where "re-enter it" is not the remedy either.
-    "unauthorized": "Unauthorized - the server rejected this API key. Check the Authentication section on this step.",
-    "forbidden": "Forbidden - this API key is not allowed to list models. Check its permissions.",
-    "http_status": "The server returned an HTTP status error. Check the endpoint, then try again.",
-    "invalid_payload": "The server returned an invalid response - not an OpenAI-compatible model list. Check the endpoint.",
-    "connection_error": "Connection error - could not reach the server. Check the endpoint, and that the server is running.",
+    "unauthorized": (
+        "Unauthorized - the server rejected this API key. "
+        "Check the Authentication section on this step."
+    ),
+    "forbidden": (
+        "Forbidden - this API key is not allowed to list models. Check its permissions."
+    ),
+    "http_status": (
+        "The server returned an HTTP status error. Check the endpoint, then try again."
+    ),
+    "invalid_payload": (
+        "The server returned an invalid response - not an OpenAI-compatible "
+        "model list. Check the endpoint."
+    ),
+    "connection_error": (
+        "Connection error - could not reach the server. Check the endpoint, "
+        "and that the server is running."
+    ),
 }
 _CONFIGURATION_ISSUE_DETAILS = {
     "provider_missing": "Select a provider.",
@@ -127,17 +180,55 @@ _MAX_MODEL_ID_CHARS = 120
 _MAX_MODEL_IDS = 100
 _MAX_VERDICT_DETAIL_CHARS = 256
 _UNSAFE_MODEL_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
+_BOUNDED_GENERATION_TEST_EXECUTION_KEYS = frozenset(
+    {"llama_cpp", "local_llamacpp", "moonshot", "zai"}
+)
+
+
+class ConsoleGenerationTestAvailability(StrEnum):
+    """Whether Console can dispatch a bounded generation test."""
+
+    SUPPORTED = "supported"
+    UNSUPPORTED = "unsupported"
+
+
+def console_generation_test_availability(
+    provider: str,
+    *,
+    handler_keys: Collection[str] | None = None,
+) -> ConsoleGenerationTestAvailability:
+    """Project generation-test support from Console's real dispatch catalog.
+
+    Args:
+        provider: Provider selected by the Console draft.
+        handler_keys: Optional dispatch catalog keys used for the projection.
+
+    Returns:
+        Whether the selected provider supports a bounded generation test.
+    """
+
+    from .console_provider_support import resolve_console_provider_identity
+
+    identity = resolve_console_provider_identity(provider, handler_keys=handler_keys)
+    if (
+        identity.is_supported
+        and identity.execution_key in _BOUNDED_GENERATION_TEST_EXECUTION_KEYS
+    ):
+        return ConsoleGenerationTestAvailability.SUPPORTED
+    return ConsoleGenerationTestAvailability.UNSUPPORTED
 
 
 @dataclass(frozen=True, slots=True)
 class ProviderReadinessSnapshot:
-    """Independent configuration, endpoint-test, and model facets."""
+    """Independent configuration, credential, endpoint, model, and generation facets."""
 
     configuration: ConfigurationFacet
     endpoint: EndpointFacet
     model: ModelFacet
     category: EndpointFailureCategory | None = None
     configuration_issue: ConfigurationIssueCode | None = None
+    credential: CredentialFacet = "not_required"
+    generation: GenerationFacet = "not_tested"
 
     def __post_init__(self) -> None:
         if type(self.configuration) is not str or (
@@ -148,9 +239,25 @@ class ProviderReadinessSnapshot:
             raise ValueError("Endpoint facet is invalid.")
         if type(self.model) is not str or self.model not in _MODEL_FACETS:
             raise ValueError("Model facet is invalid.")
+        if (
+            type(self.credential) is not str
+            or self.credential not in _CREDENTIAL_FACETS
+        ):
+            raise ValueError("Credential facet is invalid.")
+        if (
+            type(self.generation) is not str
+            or self.generation not in _GENERATION_FACETS
+        ):
+            raise ValueError("Generation facet is invalid.")
+        normalized_credential = _normalize_generation_credential(
+            self.credential,
+            self.generation,
+            None,
+            credential_required=self.credential != "not_required",
+        )
+        object.__setattr__(self, "credential", normalized_credential)
         if self.category is not None and (
-            type(self.category) is not str
-            or self.category not in _FAILURE_CATEGORIES
+            type(self.category) is not str or self.category not in _FAILURE_CATEGORIES
         ):
             raise ValueError("Endpoint failure category is invalid.")
         if self.configuration_issue is not None and (
@@ -160,6 +267,8 @@ class ProviderReadinessSnapshot:
             raise ValueError("Configuration issue is invalid.")
         if self.configuration == "configured" and self.configuration_issue is not None:
             raise ValueError("Configured readiness cannot include an issue.")
+        if self.configuration == "incomplete" and self.credential == "authenticated":
+            raise ValueError("Incomplete readiness cannot authenticate credentials.")
         if self.endpoint == "unreachable":
             return
         if self.endpoint == "model_listing_unavailable" and self.category in {
@@ -220,7 +329,9 @@ def provider_readiness_verdict(
             ),
         )
     if snapshot.endpoint == "testing":
-        return ProviderReadinessVerdict("testing", "Testing the model listing endpoint.")
+        return ProviderReadinessVerdict(
+            "testing", "Testing the model listing endpoint."
+        )
     if snapshot.endpoint == "unreachable":
         return ProviderReadinessVerdict(
             "connection_failed",
@@ -249,7 +360,8 @@ def provider_readiness_verdict(
     # worked and what to do about the other half.
     return ProviderReadinessVerdict(
         "model_unconfirmed",
-        "Reached the server, but your chosen model was not in its list. Pick one on the next step.",
+        "Reached the server, but your chosen model was not in its list. "
+        "Pick one on the next step.",
     )
 
 
@@ -258,7 +370,7 @@ class ProviderDraftIdentity:
     """Secret-free semantic identity for one provider settings draft."""
 
     provider_key: str
-    connection_identity: tuple[str, str]
+    connection_identity: tuple[str, str] = field(repr=False)
     credential_source: CredentialSource
     credential_revision: int
     draft_generation: int
@@ -311,13 +423,43 @@ class ProviderProbeResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderGenerationProbeResult:
+    """Exact bounded generation result accepted by the evidence store."""
+
+    generation: Literal["succeeded", "failed"]
+    category: GenerationFailureCategory | None = None
+
+    def __post_init__(self) -> None:
+        _validate_generation_result(self.generation, self.category)
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleGenerationTestRequest:
+    """Validated modal draft and exact evidence identity for one paid test."""
+
+    settings: ConsoleSessionSettings = field(repr=False)
+    identity: ProviderDraftIdentity = field(repr=False)
+
+    def __post_init__(self) -> None:
+        from .console_session_settings import ConsoleSessionSettings
+
+        if type(self.settings) is not ConsoleSessionSettings:
+            raise TypeError("settings must be ConsoleSessionSettings")
+        if type(self.identity) is not ProviderDraftIdentity:
+            raise TypeError("identity must be ProviderDraftIdentity")
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderTestEvidence:
-    """Bounded probe evidence for one exact semantic draft identity."""
+    """Bounded independent evidence for one exact semantic draft identity."""
 
     identity: ProviderDraftIdentity
     endpoint: EndpointFacet
     model_ids: tuple[str, ...]
     category: EndpointFailureCategory | None = None
+    credential: CredentialFacet = "not_required"
+    generation: GenerationFacet = "not_tested"
+    generation_category: GenerationFailureCategory | None = None
 
     def __post_init__(self) -> None:
         if type(self.identity) is not ProviderDraftIdentity:
@@ -329,14 +471,30 @@ class ProviderTestEvidence:
             raise ValueError("Provider evidence endpoint facet is invalid.")
         _validate_model_ids(self.model_ids)
         if self.category is not None and (
-            type(self.category) is not str
-            or self.category not in _FAILURE_CATEGORIES
+            type(self.category) is not str or self.category not in _FAILURE_CATEGORIES
         ):
             raise ValueError("Provider evidence category is invalid.")
+        if (
+            type(self.credential) is not str
+            or self.credential not in _CREDENTIAL_FACETS
+        ):
+            raise ValueError("Provider evidence credential facet is invalid.")
+        if (
+            type(self.generation) is not str
+            or self.generation not in _GENERATION_FACETS
+        ):
+            raise ValueError("Provider evidence generation facet is invalid.")
+        if self.generation_category is not None and (
+            type(self.generation_category) is not str
+            or self.generation_category not in _GENERATION_FAILURE_CATEGORIES
+        ):
+            raise ValueError("Provider evidence generation category is invalid.")
 
         if self.endpoint == "reachable":
             if self.category is not None:
-                raise ValueError("Reachable evidence cannot include a failure category.")
+                raise ValueError(
+                    "Reachable evidence cannot include a failure category."
+                )
         elif self.endpoint == "unreachable":
             if self.model_ids:
                 raise ValueError("Unreachable evidence cannot include model IDs.")
@@ -345,6 +503,19 @@ class ProviderTestEvidence:
                 raise ValueError("Model-listing evidence is inconsistent.")
         elif self.model_ids or self.category is not None:
             raise ValueError("Untested evidence cannot include probe results.")
+
+        if self.generation == "failed":
+            if self.generation_category is None:
+                raise ValueError("Failed generation evidence requires a category.")
+        elif self.generation_category is not None:
+            raise ValueError("Generation category conflicts with its facet.")
+        normalized_credential = _normalize_generation_credential(
+            self.credential,
+            self.generation,
+            self.generation_category,
+            credential_required=self.identity.credential_source != "none",
+        )
+        object.__setattr__(self, "credential", normalized_credential)
 
 
 class _MutationResult(Protocol):
@@ -364,6 +535,15 @@ class _ProviderTestToken:
         return "<ProviderTestToken>"
 
 
+class _ProviderGenerationTestToken:
+    """Opaque, single-use capability for settling one generation probe."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<ProviderGenerationTestToken>"
+
+
 class _ProviderEvidenceSaveLease:
     """Opaque capability binding one save callback to a store revision."""
 
@@ -379,14 +559,27 @@ class ProviderTestEvidenceStore:
     def __init__(self) -> None:
         self._lock = RLock()
         self._operation_epoch = 0
+        self._generation_operation_epoch = 0
         self._latest_generation = -1
         self._current_token: _ProviderTestToken | None = None
         self._current_token_epoch: int | None = None
         self._current_identity: ProviderDraftIdentity | None = None
         self._settling: tuple[ProviderDraftIdentity, int] | None = None
-        self._save_lease: tuple[
-            _ProviderEvidenceSaveLease, ProviderDraftIdentity, int
-        ] | None = None
+        self._current_generation_token: _ProviderGenerationTestToken | None = None
+        self._current_generation_token_epoch: int | None = None
+        self._current_generation_identity: ProviderDraftIdentity | None = None
+        self._generation_settling: tuple[ProviderDraftIdentity, int] | None = None
+        self._generation_cancel_restore: (
+            tuple[
+                ProviderDraftIdentity,
+                Literal["succeeded", "failed"],
+                GenerationFailureCategory | None,
+            ]
+            | None
+        ) = None
+        self._save_lease: (
+            tuple[_ProviderEvidenceSaveLease, ProviderDraftIdentity, int] | None
+        ) = None
         self._evidence: ProviderTestEvidence | None = None
 
     def begin(self, identity: ProviderDraftIdentity) -> object:
@@ -398,12 +591,21 @@ class ProviderTestEvidenceStore:
             if identity.draft_generation < self._latest_generation:
                 raise ValueError("Draft generation is older than current evidence.")
             self._latest_generation = identity.draft_generation
+            if self._owned_identity() not in {None, identity}:
+                self._clear_all_test_state()
+                self._advance_generation_operation()
             self._advance_operation()
             token = _ProviderTestToken()
             self._current_token = token
             self._current_token_epoch = self._operation_epoch
             self._current_identity = identity
-            self._evidence = ProviderTestEvidence(identity, "testing", ())
+            self._evidence = _replace_endpoint_evidence(
+                self._evidence,
+                identity=identity,
+                endpoint="testing",
+                model_ids=(),
+                category=None,
+            )
             return token
 
     def settle(self, token: object, outcome: object) -> bool:
@@ -425,9 +627,9 @@ class ProviderTestEvidenceStore:
             self._current_token = None
             self._current_token_epoch = None
             self._current_identity = None
-            self._evidence = None
             self._save_lease = None
             if identity is None or claim_epoch is None:
+                self._clear_endpoint_evidence(identity)
                 self._advance_operation()
                 return False
             settlement_claim = (identity, claim_epoch)
@@ -447,12 +649,119 @@ class ProviderTestEvidenceStore:
                 self._operation_epoch != claim_epoch
                 or self._settling != settlement_claim
                 or self._current_token is not None
-                or self._evidence is not None
+                or self._owned_identity() != identity
             ):
                 return False
             self._settling = None
-            self._evidence = evidence
+            self._evidence = _replace_endpoint_evidence(
+                self._evidence,
+                identity=identity,
+                endpoint=evidence.endpoint,
+                model_ids=evidence.model_ids,
+                category=evidence.category,
+            )
             self._advance_operation()
+            return True
+
+    def begin_generation(self, identity: ProviderDraftIdentity) -> object:
+        """Start an exact-identity generation probe and return its token.
+
+        Args:
+            identity: Exact provider draft identity that owns the probe.
+
+        Returns:
+            Opaque token required to settle or cancel this probe.
+
+        Raises:
+            ValueError: If the identity is invalid or older than current evidence.
+        """
+
+        if type(identity) is not ProviderDraftIdentity:
+            raise ValueError("Provider draft identity is invalid.")
+        with self._lock:
+            if identity.draft_generation < self._latest_generation:
+                raise ValueError("Draft generation is older than current evidence.")
+            self._latest_generation = identity.draft_generation
+            if self._owned_identity() not in {None, identity}:
+                self._clear_all_test_state()
+                self._advance_operation()
+            if self._current_generation_token is None:
+                evidence = self._evidence
+                self._generation_cancel_restore = (
+                    (
+                        identity,
+                        evidence.generation,
+                        evidence.generation_category,
+                    )
+                    if evidence is not None
+                    and evidence.identity == identity
+                    and evidence.generation in {"succeeded", "failed"}
+                    else None
+                )
+            self._advance_generation_operation()
+            token = _ProviderGenerationTestToken()
+            self._current_generation_token = token
+            self._current_generation_token_epoch = self._generation_operation_epoch
+            self._current_generation_identity = identity
+            self._evidence = _replace_generation_evidence(
+                self._evidence,
+                identity=identity,
+                generation="testing",
+                category=None,
+            )
+            return token
+
+    def settle_generation(self, token: object, outcome: object) -> bool:
+        """Attach a bounded generation result only to its exact current draft."""
+
+        supported_outcome = type(outcome) is ProviderGenerationProbeResult
+        with self._lock:
+            if (
+                type(token) is not _ProviderGenerationTestToken
+                or token is not self._current_generation_token
+                or self._current_generation_token_epoch
+                != self._generation_operation_epoch
+            ):
+                return False
+            identity = self._current_generation_identity
+            claim_epoch = self._current_generation_token_epoch
+            self._current_generation_token = None
+            self._current_generation_token_epoch = None
+            self._current_generation_identity = None
+            self._save_lease = None
+            if identity is None or claim_epoch is None:
+                self._clear_generation_evidence(identity)
+                self._advance_generation_operation()
+                return False
+            settlement_claim = (identity, claim_epoch)
+            self._generation_settling = settlement_claim
+
+        if not supported_outcome:
+            self._reject_generation_settlement(settlement_claim)
+            return False
+        try:
+            generation, category = _generation_evidence_from_exact_outcome(outcome)
+        except ValueError:
+            self._reject_generation_settlement(settlement_claim)
+            return False
+
+        with self._lock:
+            if (
+                self._generation_operation_epoch != claim_epoch
+                or self._generation_settling != settlement_claim
+                or self._current_generation_token is not None
+                or self._owned_identity() != identity
+            ):
+                return False
+            self._generation_settling = None
+            self._evidence = _replace_generation_evidence(
+                self._evidence,
+                identity=identity,
+                generation=generation,
+                category=category,
+            )
+            self._generation_cancel_restore = None
+            self._advance_generation_operation()
             return True
 
     def evidence_for(
@@ -467,6 +776,36 @@ class ProviderTestEvidenceStore:
                 return None
             return self._evidence
 
+    def latest_evidence(self) -> ProviderTestEvidence | None:
+        """Return the latest bounded snapshot for changed-since-test projection."""
+
+        with self._lock:
+            return self._evidence
+
+    def mark_generation_changed(self, identity: ProviderDraftIdentity) -> bool:
+        """Mark settled generation evidence stale without touching endpoint work."""
+
+        if type(identity) is not ProviderDraftIdentity:
+            return False
+        with self._lock:
+            evidence = self._evidence
+            if (
+                evidence is None
+                or evidence.identity != identity
+                or evidence.generation not in {"succeeded", "failed"}
+            ):
+                return False
+            self._evidence = _replace_generation_evidence(
+                evidence,
+                identity=identity,
+                generation="changed_since_test",
+                category=None,
+            )
+            self._save_lease = None
+            self._generation_cancel_restore = None
+            self._advance_generation_operation()
+            return True
+
     def invalidate(self, identity: ProviderDraftIdentity | None = None) -> bool:
         """Remove exact or current evidence and cancel its active operation."""
 
@@ -480,6 +819,7 @@ class ProviderTestEvidenceStore:
                 return False
             self._clear_all_test_state()
             self._advance_operation()
+            self._advance_generation_operation()
             return True
 
     def cancel_probe(self, token: object) -> bool:
@@ -492,8 +832,42 @@ class ProviderTestEvidenceStore:
                 or self._current_token_epoch != self._operation_epoch
             ):
                 return False
-            self._clear_all_test_state()
+            identity = self._current_identity
+            self._current_token = None
+            self._current_token_epoch = None
+            self._current_identity = None
+            self._settling = None
+            self._clear_endpoint_evidence(identity)
             self._advance_operation()
+            return True
+
+    def cancel_generation_probe(self, token: object) -> bool:
+        """Cancel only the active generation test owned by ``token``."""
+
+        with self._lock:
+            if (
+                type(token) is not _ProviderGenerationTestToken
+                or token is not self._current_generation_token
+                or self._current_generation_token_epoch
+                != self._generation_operation_epoch
+            ):
+                return False
+            identity = self._current_generation_identity
+            self._current_generation_token = None
+            self._current_generation_token_epoch = None
+            self._current_generation_identity = None
+            self._generation_settling = None
+            self._clear_generation_evidence(identity)
+            restore = self._generation_cancel_restore
+            self._generation_cancel_restore = None
+            if restore is not None and restore[0] == identity:
+                self._evidence = _replace_generation_evidence(
+                    self._evidence,
+                    identity=restore[0],
+                    generation=restore[1],
+                    category=restore[2],
+                )
+            self._advance_generation_operation()
             return True
 
     def begin_save(self, identity: ProviderDraftIdentity) -> object | None:
@@ -560,9 +934,9 @@ class ProviderTestEvidenceStore:
                 and evidence is not None
                 and evidence.identity == tested_identity
                 and evidence.endpoint != "testing"
+                and evidence.generation != "testing"
                 and _same_saved_semantics(tested_identity, saved_identity)
-                and saved_identity.draft_generation
-                >= tested_identity.draft_generation
+                and saved_identity.draft_generation >= tested_identity.draft_generation
             )
             if fully_applied and not conflict:
                 self._latest_generation = max(
@@ -571,12 +945,16 @@ class ProviderTestEvidenceStore:
                 )
 
             self._clear_all_test_state()
+            self._advance_generation_operation()
             if can_preserve and evidence is not None:
                 self._evidence = ProviderTestEvidence(
                     saved_identity,
                     evidence.endpoint,
                     evidence.model_ids,
                     evidence.category,
+                    evidence.credential,
+                    evidence.generation,
+                    evidence.generation_category,
                 )
             self._advance_operation()
             return can_preserve
@@ -591,24 +969,77 @@ class ProviderTestEvidenceStore:
                 and self._operation_epoch == settlement_claim[1]
             ):
                 self._settling = None
+                self._clear_endpoint_evidence(settlement_claim[0])
                 self._advance_operation()
+
+    def _reject_generation_settlement(
+        self,
+        settlement_claim: tuple[ProviderDraftIdentity, int],
+    ) -> None:
+        with self._lock:
+            if (
+                self._generation_settling == settlement_claim
+                and self._generation_operation_epoch == settlement_claim[1]
+            ):
+                self._generation_settling = None
+                self._clear_generation_evidence(settlement_claim[0])
+                self._advance_generation_operation()
 
     def _owned_identity(self) -> ProviderDraftIdentity | None:
         if self._settling is not None:
             return self._settling[0]
+        if self._generation_settling is not None:
+            return self._generation_settling[0]
         if self._evidence is not None:
             return self._evidence.identity
+        if self._current_generation_identity is not None:
+            return self._current_generation_identity
         return self._current_identity
 
     def _owned_identities(self) -> set[ProviderDraftIdentity]:
         identities: set[ProviderDraftIdentity] = set()
         if self._settling is not None:
             identities.add(self._settling[0])
+        if self._generation_settling is not None:
+            identities.add(self._generation_settling[0])
         if self._evidence is not None:
             identities.add(self._evidence.identity)
         if self._current_identity is not None:
             identities.add(self._current_identity)
+        if self._current_generation_identity is not None:
+            identities.add(self._current_generation_identity)
         return identities
+
+    def _clear_endpoint_evidence(self, identity: ProviderDraftIdentity | None) -> None:
+        evidence = self._evidence
+        if evidence is None or identity is None or evidence.identity != identity:
+            return
+        if evidence.generation == "not_tested":
+            self._evidence = None
+            return
+        self._evidence = _replace_endpoint_evidence(
+            evidence,
+            identity=identity,
+            endpoint="not_tested",
+            model_ids=(),
+            category=None,
+        )
+
+    def _clear_generation_evidence(
+        self, identity: ProviderDraftIdentity | None
+    ) -> None:
+        evidence = self._evidence
+        if evidence is None or identity is None or evidence.identity != identity:
+            return
+        if evidence.endpoint == "not_tested":
+            self._evidence = None
+            return
+        self._evidence = _replace_generation_evidence(
+            evidence,
+            identity=identity,
+            generation="not_tested",
+            category=None,
+        )
 
     def _clear_all_test_state(self) -> None:
         self._evidence = None
@@ -616,10 +1047,20 @@ class ProviderTestEvidenceStore:
         self._current_token_epoch = None
         self._current_identity = None
         self._settling = None
+        self._current_generation_token = None
+        self._current_generation_token_epoch = None
+        self._current_generation_identity = None
+        self._generation_settling = None
+        self._generation_cancel_restore = None
 
     def _advance_operation(self) -> None:
         self._operation_epoch += 1
         self._settling = None
+        self._save_lease = None
+
+    def _advance_generation_operation(self) -> None:
+        self._generation_operation_epoch += 1
+        self._generation_settling = None
         self._save_lease = None
 
 
@@ -670,6 +1111,41 @@ def _validate_probe_result(
         raise ValueError("Model-listing probe result is inconsistent.")
 
 
+def _validate_generation_result(generation: object, category: object) -> None:
+    if type(generation) is not str or generation not in {"succeeded", "failed"}:
+        raise ValueError("Provider generation result facet is invalid.")
+    if category is not None and (
+        type(category) is not str or category not in _GENERATION_FAILURE_CATEGORIES
+    ):
+        raise ValueError("Provider generation result category is invalid.")
+    if generation == "failed" and category is None:
+        raise ValueError("Failed provider generation requires a category.")
+    if generation == "succeeded" and category is not None:
+        raise ValueError("Successful provider generation cannot include a category.")
+
+
+def _normalize_generation_credential(
+    credential: CredentialFacet,
+    generation: GenerationFacet,
+    category: GenerationFailureCategory | None,
+    *,
+    credential_required: bool,
+) -> CredentialFacet:
+    """Return credential evidence consistent with the observed generation."""
+
+    if generation == "succeeded" and credential == "missing":
+        raise ValueError("Successful generation cannot have a missing credential.")
+    if not credential_required:
+        return "not_required"
+    if generation == "succeeded":
+        return "authenticated"
+    if generation == "failed" and category == "authentication":
+        return "present_unverified"
+    if credential == "not_required":
+        return "present_unverified"
+    return credential
+
+
 def _evidence_from_exact_outcome(
     identity: ProviderDraftIdentity,
     outcome: object,
@@ -687,6 +1163,67 @@ def _evidence_from_exact_outcome(
         outcome.endpoint,
         outcome.model_ids,
         outcome.category,
+    )
+
+
+def _generation_evidence_from_exact_outcome(
+    outcome: object,
+) -> tuple[Literal["succeeded", "failed"], GenerationFailureCategory | None]:
+    if type(outcome) is not ProviderGenerationProbeResult:
+        raise ValueError("Provider generation result type is invalid.")
+    _validate_generation_result(outcome.generation, outcome.category)
+    return outcome.generation, outcome.category
+
+
+def _replace_endpoint_evidence(
+    evidence: ProviderTestEvidence | None,
+    *,
+    identity: ProviderDraftIdentity,
+    endpoint: EndpointFacet,
+    model_ids: tuple[str, ...],
+    category: EndpointFailureCategory | None,
+) -> ProviderTestEvidence:
+    if evidence is None or evidence.identity != identity:
+        return ProviderTestEvidence(identity, endpoint, model_ids, category)
+    return ProviderTestEvidence(
+        identity,
+        endpoint,
+        model_ids,
+        category,
+        evidence.credential,
+        evidence.generation,
+        evidence.generation_category,
+    )
+
+
+def _replace_generation_evidence(
+    evidence: ProviderTestEvidence | None,
+    *,
+    identity: ProviderDraftIdentity,
+    generation: GenerationFacet,
+    category: GenerationFailureCategory | None,
+) -> ProviderTestEvidence:
+    if evidence is None or evidence.identity != identity:
+        return ProviderTestEvidence(
+            identity,
+            "not_tested",
+            (),
+            credential=(
+                "not_required"
+                if identity.credential_source == "none"
+                else "present_unverified"
+            ),
+            generation=generation,
+            generation_category=category,
+        )
+    return ProviderTestEvidence(
+        identity,
+        evidence.endpoint,
+        evidence.model_ids,
+        evidence.category,
+        evidence.credential,
+        generation,
+        category,
     )
 
 

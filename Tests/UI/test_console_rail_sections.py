@@ -24,6 +24,7 @@ from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverri
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsReadiness,
+    ConsoleSettingsSummaryState,
 )
 from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsCommittedSubmission,
@@ -37,6 +38,10 @@ from tldw_chatbook.Chat.console_settings_apply import (
 )
 from tldw_chatbook.Widgets.Console.console_model_popover import (
     ConsoleModelPopover,
+)
+from tldw_chatbook.Widgets.Console.console_settings_summary import (
+    ConsoleSettingsSummary,
+    build_console_readiness_presentation,
 )
 from tldw_chatbook.Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
@@ -72,6 +77,211 @@ class _HeaderApp(ConsolidatedCSSApp):
             open=False,
             id="header-under-test",
         )
+
+
+def _typed_unreachable_readiness() -> ConsoleSettingsReadiness:
+    return ConsoleSettingsReadiness(
+        label="READY legacy poison",
+        detail="PRIVATE http://127.0.0.1:9876 exception",
+        native_send_supported=False,
+        operability="not_ready",
+        blocker="endpoint_unreachable",
+        recovery_action="retry_connection",
+        provider_display_name="Ollama",
+        configuration="configured",
+        credential="not_required",
+        endpoint="unreachable",
+        endpoint_category="timeout",
+        model="unconfirmed",
+        generation="failed",
+        generation_category="timeout",
+    )
+
+
+class _ReadinessSummaryApp(ConsolidatedCSSApp):
+    def compose(self):
+        yield ConsoleSettingsSummary(
+            ConsoleSettingsSummaryState(
+                provider_row="Provider: Ollama",
+                model_row="Model: llama3",
+                context_row="Context: unavailable",
+                sampling_row="Sampling: T 0.70, P 0.95",
+                identity_row="Assistant: General",
+                readiness_label="READY legacy poison",
+                readiness=_typed_unreachable_readiness(),
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_rail_summary_renders_typed_operability_and_verification_evidence():
+    app = _ReadinessSummaryApp()
+    async with app.run_test(size=(72, 22)) as pilot:
+        await pilot.pause()
+        text = "\n".join(
+            str(getattr(item.renderable, "plain", item.renderable))
+            for item in app.query(Static)
+        )
+        assert "Not ready — endpoint unreachable" in text
+        assert "Endpoint · Unreachable — timed out" in text
+        assert "Generation · Failed — timed out" in text
+        assert "Retry connection" in str(
+            app.query_one("#console-settings-open", Button).label
+        )
+        assert "PRIVATE" not in text
+
+
+@pytest.mark.asyncio
+async def test_console_rail_summary_uses_canonical_provider_and_honest_empty_copy():
+    """Raw provider keys and unavailable estimates must not leak into the rail."""
+    readiness = ConsoleSettingsReadiness(
+        label="Ready",
+        detail="Ready",
+        native_send_supported=True,
+        operability="ready_to_send",
+        provider_display_name="llama.cpp",
+        configuration="configured",
+        credential="not_required",
+        endpoint="not_tested",
+        model="unconfirmed",
+        generation="not_tested",
+    )
+    state = ConsoleSettingsSummaryState(
+        provider_row="Provider: llama_cpp",
+        model_row="Model: model-a",
+        context_row="Context: unavailable",
+        endpoint_row="Endpoint: provider default",
+        sampling_row="Sampling: T 0.70, P 0.95",
+        identity_row="Assistant: General",
+        readiness=readiness,
+    )
+    class _HonestCopyApp(ConsolidatedCSSApp):
+        def compose(self):
+            yield ConsoleSettingsSummary(state)
+
+    app = _HonestCopyApp()
+
+    async with app.run_test(size=(72, 22)):
+        provider = app.query_one("#console-settings-provider-row", Static)
+        context = app.query_one("#console-settings-context-row", Static)
+        endpoint = app.query_one("#console-settings-endpoint-row", Static)
+        assert str(provider.renderable) == "Provider: llama.cpp"
+        assert str(context.renderable) == "Context: Not estimated"
+        assert str(endpoint.renderable) == "Endpoint · Not tested"
+
+
+@pytest.mark.asyncio
+async def test_console_rail_summary_labels_genuine_provider_default_inheritance():
+    """An inherited endpoint must be named as a provider default, not raw copy."""
+    state = ConsoleSettingsSummaryState(
+        provider_row="Provider: OpenAI",
+        model_row="Model: gpt-5.6-terra",
+        context_row="Context: 10 / 4k",
+        endpoint_row="Endpoint: provider default",
+        sampling_row="Sampling: T 0.70, P 0.95",
+        identity_row="Assistant: General",
+    )
+
+    class _ProviderDefaultApp(ConsolidatedCSSApp):
+        def compose(self):
+            yield ConsoleSettingsSummary(state)
+
+    app = _ProviderDefaultApp()
+    async with app.run_test(size=(72, 22)) as pilot:
+        endpoint = app.query_one("#console-settings-endpoint-row", Static)
+        assert str(endpoint.renderable) == "Endpoint: Provider default"
+
+        app.query_one(ConsoleSettingsSummary).sync_state(
+            ConsoleSettingsSummaryState(
+                provider_row="Provider: Anthropic",
+                model_row="Model: claude-sonnet",
+                context_row="Context: 20 / 8k",
+                endpoint_row="Endpoint: provider default",
+                sampling_row="Sampling: T 0.50, P 0.90",
+                identity_row="Assistant: General",
+            )
+        )
+        await pilot.pause()
+        assert str(endpoint.renderable) == "Endpoint: Provider default"
+
+
+@pytest.mark.parametrize(
+    ("readiness", "expected_rows"),
+    (
+        (
+            ConsoleSettingsReadiness(
+                "ignored",
+                "ignored",
+                True,
+                operability="ready_to_send",
+                provider_display_name="OpenAI",
+                configuration="configured",
+                credential="authenticated",
+                credential_source="stored",
+                endpoint="reachable",
+                model="confirmed",
+                generation="succeeded",
+            ),
+            (
+                "Credential · Authenticated",
+                "Endpoint · Reachable",
+                "Model · Confirmed",
+                "Generation · Succeeded",
+            ),
+        ),
+        (
+            ConsoleSettingsReadiness(
+                "ignored",
+                "ignored",
+                True,
+                operability="ready_to_send",
+                provider_display_name="Ollama",
+                configuration="configured",
+                credential="not_required",
+                endpoint="model_listing_unavailable",
+                model="unconfirmed",
+                generation="not_tested",
+            ),
+            (
+                "Credential · Not required",
+                "Endpoint · Reachable — model listing unavailable",
+                "Model · Listing unavailable",
+                "Generation · Not tested",
+            ),
+        ),
+        (
+            ConsoleSettingsReadiness(
+                "ignored",
+                "ignored",
+                True,
+                operability="ready_to_send",
+                provider_display_name="Ollama",
+                configuration="configured",
+                credential="not_required",
+                endpoint="changed_since_test",
+                model="unconfirmed",
+                generation="changed_since_test",
+            ),
+            (
+                "Credential · Not required",
+                "Endpoint · Changed since test",
+                "Model · Changed since test",
+                "Generation · Changed since test",
+            ),
+        ),
+    ),
+)
+def test_console_verification_evidence_rows_are_independent_of_operability(
+    readiness,
+    expected_rows,
+) -> None:
+    presentation = build_console_readiness_presentation(readiness)
+    assert (
+        presentation.credential_row,
+        presentation.endpoint_row,
+        presentation.model_row,
+        presentation.generation_row,
+    ) == expected_rows
 
 
 @pytest.mark.asyncio
@@ -812,6 +1022,29 @@ async def test_popover_full_settings_returns_sentinel_and_escape_cancels():
         await pilot.press("escape")
         await pilot.pause()
         assert app2.result is None
+
+
+@pytest.mark.asyncio
+async def test_popover_model_picker_escape_restores_then_dismisses_popover():
+    """The shared picker must not trap a second Escape in the quick popover."""
+    app = _PopoverApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        picker = app.screen.query_one(
+            "#console-popover-model-search", ModelSearchPicker
+        )
+        picker.focus_input()
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, ConsoleModelPopover)
+        assert picker.value == "model-a"
+        assert app.result == "unset"
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, ConsoleModelPopover)
+        assert app.result is None
 
 
 @pytest.mark.asyncio

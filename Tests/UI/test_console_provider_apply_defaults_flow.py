@@ -918,8 +918,12 @@ async def test_default_actions_persist_exact_scope_and_publish_blank_chat_defaul
         )
         conversations_toggle.scroll_visible(animate=False, force=True)
         await pilot.pause()
+        if console._current_console_rail_state().conversations_open:
+            console._toggle_console_rail_section("conversations", next_open=False)
+            await pilot.pause()
         assert await pilot.click(conversations_toggle) is True
         await pilot.pause()
+        await console._sync_console_legacy_workspace_context_aliases()
         await _wait_for_selector(
             console,
             pilot,

@@ -7,30 +7,14 @@ from ipaddress import ip_address
 from urllib.parse import urlparse, urlunparse
 
 from tldw_chatbook.Chat.provider_endpoint_contract import (
+    URL_BASED_PROVIDER_KEYS,
     canonical_connection_identity,
     resolve_provider_endpoint,
 )
 
 UNSAVED_ENDPOINT_COPY = (
-    "Provider blocked: save the endpoint in Settings before using it from Console."
-)
-URL_BASED_PROVIDER_KEYS = frozenset(
-    {
-        "aphrodite",
-        "custom",
-        "custom_2",
-        "koboldcpp",
-        "llama_cpp",
-        "local_llamacpp",
-        "local_llamafile",
-        "local_ollama",
-        "local_vllm",
-        "ollama",
-        "oobabooga",
-        "qwencloud",
-        "tabbyapi",
-        "vllm",
-    }
+    "Provider blocked: save the endpoint in Conversation settings before using it "
+    "from Console."
 )
 _ENDPOINT_SETTING_KEYS = (
     "api_base_url",

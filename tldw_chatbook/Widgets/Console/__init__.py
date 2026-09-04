@@ -57,7 +57,6 @@ from .console_run_inspector import ConsoleRunInspector
 from .console_send_authority_summary import ConsoleSendAuthoritySummary
 from .console_save_as_modal import ConsoleSaveAsModal
 from .console_session_surface import ConsoleSessionSurface
-from .console_settings_modal import ConsoleSettingsModal
 from .console_setup_modal import ConsoleSetupModal
 from .console_settings_summary import ConsoleSettingsSummary
 from .console_staged_context import (
@@ -91,7 +90,11 @@ from .console_workspace_switcher_modal import (
 
 
 def __getattr__(name: str):
-    """Load Terminal-only widgets when their public export is first used."""
+    """Load deferred Console widgets when their public export is first used."""
+    if name == "ConsoleSettingsModal":
+        from . import console_settings_modal
+
+        return console_settings_modal.ConsoleSettingsModal
     if name in {
         "ConsoleTerminalSessionModal",
         "TerminalSessionFormResult",

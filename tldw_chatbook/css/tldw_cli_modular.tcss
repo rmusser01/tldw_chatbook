@@ -2441,6 +2441,28 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     text-style: bold underline;
 }
 
+ConsoleSettingsModal.-conversation-settings-compact #console-settings-connection-actions,
+ConsoleSettingsModal.-conversation-settings-compact #console-settings-actions {
+    layout: vertical;
+    height: auto;
+    align-horizontal: left;
+}
+
+ConsoleSettingsModal.-conversation-settings-compact #console-settings-connection-actions > .console-settings-modal-label {
+    display: none;
+}
+
+ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-connection-action {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+}
+
+ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-connection-action {
+    height: 1;
+    min-height: 1;
+}
+
 ConsolePromptPickerModal {
     align: center middle;
 }

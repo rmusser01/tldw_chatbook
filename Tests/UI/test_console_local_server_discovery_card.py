@@ -1,7 +1,7 @@
 """Setup-card local-server auto-detect affordance tests (task-188)."""
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -23,6 +23,9 @@ from tldw_chatbook.Widgets.Console.console_setup_modal import (
     CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION,
     ConsoleSetupModal,
 )
+from tldw_chatbook.Widgets.Console.console_settings_modal import (
+    ConsoleModelDiscoveryIdentity,
+)
 
 
 _BLOCKED_CARD_STATE = ConsoleSetupCardState(
@@ -40,6 +43,22 @@ _DETECTED_SERVER = DiscoveredLocalServer(
     base_url="http://127.0.0.1:8080",
     model_ids=("srv-model-a", "srv-model-b"),
 )
+
+
+def test_modal_discovery_identity_does_not_collapse_returned_provider_drafts() -> None:
+    """Returning to a provider uses a later generation, never its old probe identity."""
+    first_visit = ConsoleModelDiscoveryIdentity(
+        provider_key="llama_cpp",
+        connection_identity=("llama_cpp", "http://127.0.0.1:8080"),
+        draft_generation=2,
+    )
+    returned_visit = ConsoleModelDiscoveryIdentity(
+        provider_key="llama_cpp",
+        connection_identity=("llama_cpp", "http://127.0.0.1:8080"),
+        draft_generation=4,
+    )
+
+    assert returned_visit != first_visit
 
 
 class SetupModalHarness(ConsolidatedCSSApp):

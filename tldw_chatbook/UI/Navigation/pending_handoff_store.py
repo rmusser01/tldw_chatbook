@@ -22,6 +22,7 @@ from .audio_cpp_model_handoff import (
     AudioCppModelLibraryRequest,
     AudioCppModelLibraryResult,
 )
+from .conversation_settings_navigation import ConversationSettingsReturnIntent
 from ..Screens.study_scope_models import (
     STUDY_INITIAL_SECTIONS,
     STUDY_ORIGINS,
@@ -108,6 +109,7 @@ class HandoffChannel(StrEnum):
     ACP_SESSION_TARGET = "acp_session_target"
     AUDIO_CPP_MODEL_LIBRARY_REQUEST = "audio_cpp_model_library_request"
     AUDIO_CPP_MODEL_LIBRARY_RESULT = "audio_cpp_model_library_result"
+    CONVERSATION_SETTINGS_RETURN = "conversation_settings_return"
 
 
 class HandoffValueError(ValueError):
@@ -116,6 +118,9 @@ class HandoffValueError(ValueError):
 
 T = TypeVar("T")
 HandoffClaimStatus: TypeAlias = Literal["ready", "expired"]
+HandoffRevisionStatus: TypeAlias = Literal[
+    "pending", "in_flight", "settled", "superseded"
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,6 +263,29 @@ class PendingHandoffStore:
         with self._lock:
             return self._slot_for(channel).pending is not None
 
+    def exact_revision_status(
+        self,
+        channel: HandoffChannel,
+        revision: int,
+    ) -> HandoffRevisionStatus:
+        """Describe one revision's ownership without exposing its value."""
+
+        self._assert_owner_thread()
+        if type(revision) is not int or revision < 1:
+            raise ValueError("handoff revision must be a positive exact integer")
+        with self._lock:
+            slot = self._slot_for(channel)
+            if slot.pending is not None and slot.pending[0] == revision:
+                return "pending"
+            if (
+                slot.in_flight is not None
+                and slot.in_flight.claim.revision == revision
+            ):
+                return "in_flight"
+            if slot.revision > revision:
+                return "superseded"
+            return "settled"
+
     def is_current_claim(self, claim: HandoffClaim[Any]) -> bool:
         """Return whether a claim still owns the channel's latest revision."""
 
@@ -299,6 +327,54 @@ class PendingHandoffStore:
             slot.in_flight = None
             slot.reserved_revisions.discard(claim.revision)
             return True
+
+    def settle_transferred_claim(self, claim: HandoffClaim[Any]) -> bool:
+        """Atomically terminally settle one transferred Settings return.
+
+        The exact claim may still be in flight or may have been requeued by a
+        partial prior release. Already settled and superseded revisions are
+        terminal successes. A different pending or in-flight owner is never
+        mutated, and no handoff value is returned.
+
+        Args:
+            claim: The opaque Conversation settings return claim whose draft
+                has transferred to its destination modal.
+
+        Returns:
+            ``True`` when the exact revision is terminal, or ``False`` when a
+            different owner currently holds that revision.
+
+        Raises:
+            RuntimeError: If called outside the owning thread.
+            TypeError: If ``claim`` is not a :class:`HandoffClaim`.
+            ValueError: If ``claim`` belongs to another channel or has an
+                invalid revision.
+        """
+
+        self._assert_owner_thread()
+        slot = self._slot_for_claim(claim)
+        if claim.channel is not HandoffChannel.CONVERSATION_SETTINGS_RETURN:
+            raise ValueError(
+                "Conversation settings transfer settlement requires its return channel"
+            )
+        if type(claim.revision) is not int or claim.revision < 1:
+            raise ValueError("handoff revision must be a positive exact integer")
+        normalized = self._detached_value(claim.channel, claim.value)
+        with self._lock:
+            current = slot.in_flight
+            if current is not None:
+                if current.claim is claim:
+                    slot.in_flight = None
+                    slot.reserved_revisions.discard(claim.revision)
+                    return True
+                return slot.revision > claim.revision
+            if slot.pending is not None and slot.pending[0] == claim.revision:
+                if slot.pending != (claim.revision, normalized):
+                    return False
+                slot.pending = None
+                slot.reserved_revisions.discard(claim.revision)
+                return True
+            return slot.revision >= claim.revision
 
     def claim_reserves_new_console_session(
         self,
@@ -467,6 +543,15 @@ class PendingHandoffStore:
                 provider=value.provider,
                 model=value.model,
                 config_revision=value.config_revision,
+            )
+        if channel is HandoffChannel.CONVERSATION_SETTINGS_RETURN:
+            if not isinstance(value, ConversationSettingsReturnIntent):
+                raise TypeError("Conversation settings return handoff must be typed")
+            return ConversationSettingsReturnIntent(
+                session_id=value.session_id,
+                settings_revision=value.settings_revision,
+                active_view=value.active_view,
+                focus_control_id=value.focus_control_id,
             )
         if channel is HandoffChannel.STUDY_SCOPE:
             if not isinstance(value, StudyScopeContext):

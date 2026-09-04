@@ -17,6 +17,10 @@ from textual.widgets import Button, Input, OptionList, Select
 
 from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import SELECTOR_MERGE_CAP
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import MergedModelEntry
+from tldw_chatbook.UI.Screens.provider_model_resolution import (
+    ConsoleModelProvenance,
+    ResolvedProviderModelOption,
+)
 from tldw_chatbook.Widgets.model_search_picker import (
     MODEL_ID_MAX_LENGTH,
     ModelSearchPicker,
@@ -66,6 +70,23 @@ def _entries(provider, ids):
             persisted=False,
         )
         for m in ids
+    )
+
+
+def _provenance_option(
+    model_id: str,
+    provenance: ConsoleModelProvenance,
+    *,
+    verified: bool = False,
+) -> ResolvedProviderModelOption:
+    return ResolvedProviderModelOption(
+        label=model_id,
+        model_id=model_id,
+        source="test",
+        capability_status="known",
+        persisted=False,
+        provenance=provenance,
+        verified_for_connection=verified,
     )
 
 
@@ -206,6 +227,28 @@ async def test_enter_commits_single_keyboard_filtered_result():
         assert app.query_one(ModelSearchPicker).value == "anthropic/claude-x"
         assert search_input.value == "anthropic/claude-x"
         assert app.selected_models == ["anthropic/claude-x"]
+
+
+@pytest.mark.asyncio
+async def test_keyboard_result_commit_restores_visible_input_focus():
+    """Enter from a focused flat result cannot strand focus on the hidden list."""
+    app = PickerTestApp(
+        {"OpenRouter": []},
+        _entries("OpenRouter", ["anthropic/claude-x", "openai/gpt-y"]),
+    )
+    async with app.run_test() as pilot:
+        search = app.query_one("#model-search-picker-input", Input)
+        search.focus()
+        await pilot.pause()
+        search.value = "claude"
+        await pilot.pause()
+        await pilot.press("down", "enter")
+        await pilot.pause()
+
+        assert app.query_one(ModelSearchPicker).value == "anthropic/claude-x"
+        assert app.focused is search
+        assert search.display and not search.disabled
+        assert not _results(app).display
 
 
 @pytest.mark.asyncio
@@ -398,6 +441,54 @@ async def test_escape_clears_filter_without_losing_committed_model():
 
 
 @pytest.mark.asyncio
+async def test_keyboard_escape_from_results_restores_model_and_input_focus():
+    """Closing keyboard results must not strand focus on the hidden list."""
+    app = PickerTestApp(
+        {"OpenRouter": ["saved-model"]},
+        _entries("OpenRouter", ["anthropic/claude-x"]),
+        current_model="saved-model",
+    )
+    async with app.run_test() as pilot:
+        await _set_query(pilot, "claude")
+        app.query_one("#model-search-picker-input", Input).focus()
+        await pilot.pause()
+        app.query_one("#model-search-picker-input", Input).value = "claude"
+        await pilot.pause()
+        await pilot.press("down")
+        assert app.focused is _results(app)
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        search = app.query_one("#model-search-picker-input", Input)
+        assert app.focused is search
+        assert search.value == "saved-model"
+        assert not _results(app).display
+
+
+@pytest.mark.asyncio
+async def test_model_picker_accessible_metadata_names_search_and_actions():
+    """Search, options, and the custom escape hatch expose bounded descriptions."""
+    app = PickerTestApp(
+        {"OpenRouter": ["saved-model"]},
+        _entries("OpenRouter", ["anthropic/claude-x"]),
+        current_model="saved-model",
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        search = app.query_one("#model-search-picker-input", Input)
+        results = _results(app)
+        custom = app.query_one("#model-search-picker-custom", Button)
+
+        assert search.name == "model-search"
+        assert search.tooltip == "Choose or search the model for this provider."
+        assert results.name == "model-options"
+        assert results.tooltip == "Matching models; use arrow keys and Enter to select."
+        assert custom.name == "custom-model-id"
+        assert custom.tooltip == "Enter an exact model ID that is not in the list."
+
+
+@pytest.mark.asyncio
 async def test_blur_restores_committed_model_after_uncommitted_filter():
     app = PickerTestApp(
         {"OpenRouter": ["saved-model"]},
@@ -534,3 +625,141 @@ async def test_provider_switch_uses_target_catalog_and_drops_previous_model():
         assert picker.value is None
         assert _result_prompts(_results(app)) == ["gpt-5"]
         assert "anthropic/claude-x" not in picker._catalog_model_ids()
+
+
+@pytest.mark.asyncio
+async def test_provenance_groups_are_disabled_and_select_by_option_identity() -> None:
+    """Interleaved headings must never shift a model selection to another row."""
+    app = PickerTestApp({"OpenRouter": []}, ())
+    async with app.run_test() as pilot:
+        picker = app.query_one(ModelSearchPicker)
+        picker.set_provenance_options(
+            "OpenRouter",
+            (
+                _provenance_option(
+                    "saved/model", ConsoleModelProvenance.SAVED_FALLBACK
+                ),
+                _provenance_option(
+                    "served/model",
+                    ConsoleModelProvenance.SERVED_NOW,
+                    verified=True,
+                ),
+                _provenance_option(
+                    "catalog/model", ConsoleModelProvenance.CURRENT_CATALOG
+                ),
+                _provenance_option(
+                    "custom/model", ConsoleModelProvenance.CUSTOM_UNVERIFIED
+                ),
+            ),
+        )
+        picker.focus_input()
+        await pilot.pause()
+
+        results = _results(app)
+        assert _result_prompts(results) == [
+            "Served now",
+            "served/model",
+            "Current catalog",
+            "catalog/model",
+            "Saved fallback",
+            "saved/model",
+            "Custom / unverified",
+            "custom/model",
+        ]
+        assert [option.disabled for option in results.options] == [
+            True,
+            False,
+            True,
+            False,
+            True,
+            False,
+            True,
+            False,
+        ]
+        await pilot.press("down")
+        await pilot.pause()
+        assert results.highlighted == 1
+
+        results.focus()
+        await pilot.pause()
+        await _select_option(pilot, 5)
+        assert app.selected_models == ["saved/model"]
+        assert picker.value == "saved/model"
+        assert app.focused is app.query_one("#model-search-picker-input", Input)
+        assert not results.display
+
+
+@pytest.mark.asyncio
+async def test_unverified_served_now_option_is_grouped_as_unverified() -> None:
+    """A provenance label alone must not assert endpoint-specific evidence."""
+    app = PickerTestApp({"OpenRouter": []}, ())
+    async with app.run_test() as pilot:
+        picker = app.query_one(ModelSearchPicker)
+        picker.set_provenance_options(
+            "OpenRouter",
+            (
+                _provenance_option(
+                    "stale-probe/model",
+                    ConsoleModelProvenance.SERVED_NOW,
+                    verified=False,
+                ),
+            ),
+        )
+        picker.focus_input()
+        await pilot.pause()
+
+        assert _result_prompts(_results(app)) == [
+            "Custom / unverified",
+            "stale-probe/model",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_provenance_filter_only_renders_non_empty_groups() -> None:
+    """Filtering must not leave orphan headings for groups with no matches."""
+    app = PickerTestApp({"OpenRouter": []}, ())
+    async with app.run_test() as pilot:
+        picker = app.query_one(ModelSearchPicker)
+        picker.set_provenance_options(
+            "OpenRouter",
+            (
+                _provenance_option(
+                    "served/alpha", ConsoleModelProvenance.SERVED_NOW, verified=True
+                ),
+                _provenance_option(
+                    "catalog/beta", ConsoleModelProvenance.CURRENT_CATALOG
+                ),
+            ),
+        )
+        await _set_query(pilot, "beta")
+
+        assert _result_prompts(_results(app)) == [
+            "Current catalog",
+            "catalog/beta",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_provenance_model_ids_render_as_literal_text() -> None:
+    """Provider model IDs must not be interpreted as Rich markup."""
+    app = PickerTestApp({"OpenRouter": []}, ())
+    async with app.run_test() as pilot:
+        picker = app.query_one(ModelSearchPicker)
+        picker.set_provenance_options(
+            "OpenRouter",
+            (
+                _provenance_option(
+                    "vendor/[bold]literal[/bold]",
+                    ConsoleModelProvenance.CURRENT_CATALOG,
+                ),
+            ),
+        )
+        picker.focus_input()
+        await pilot.pause()
+
+        results = _results(app)
+        assert _result_prompts(results) == [
+            "Current catalog",
+            "vendor/[bold]literal[/bold]",
+        ]
+        assert results.get_option_at_index(1).id is not None

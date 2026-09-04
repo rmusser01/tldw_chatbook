@@ -24,6 +24,7 @@ from Tests.fixtures.required_doubles import exploding_double
 from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.background_signals import wait_for_background_signal, wait_for_signal
 from Tests.UI.console_controller_stubs import stub_image_controller
+from Tests.UI.app_factory import _build_test_app as _build_production_app
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -63,18 +64,34 @@ from tldw_chatbook.Chat.console_library_destination import (
     resolve_console_destination,
 )
 from tldw_chatbook.Chat.console_provider_gateway import (
+    AuxiliaryCompletionRequest,
     AuxiliaryCompletionResult,
     ConsoleProviderGateway,
     ConsoleProviderResolution,
+)
+from tldw_chatbook.Chat.provider_endpoint_contract import canonical_connection_identity
+from tldw_chatbook.Chat.provider_test_evidence import (
+    ConsoleGenerationTestRequest,
+    ProviderDraftIdentity,
 )
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
-from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    ConsoleSettingsReadiness,
+)
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
+    ConsoleSettingsReturnTarget,
+    ConversationSettingsReturnIntent,
+    ConversationSettingsReturnOutcome,
+)
 from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     HandoffChannel,
     PendingHandoffStore,
@@ -84,7 +101,14 @@ from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
     ChatScreen,
 )
+from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.Widgets.Console.console_settings_modal import (
+    ConsoleSettingsDraftSnapshot,
+    ConsoleSettingsModal,
+)
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
 import tldw_chatbook.UI.Console_Modules.message as message_module
 import tldw_chatbook.UI.Console_Modules.session as session_module
 from tldw_chatbook.UI.Console_Modules.character import ConsoleCharacterController
@@ -113,6 +137,71 @@ from Tests.console_provider_doubles import provider_resolution, with_destination
 
 DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
 _ASYNC_SETTLE_TIMEOUT = 10.0
+
+
+
+
+def _conversation_settings_return_snapshot(
+    *,
+    provider: str = "llama_cpp",
+    model: str = "local-model",
+    focus_control_id: str = "console-context-custom-budget",
+) -> ConsoleSettingsDraftSnapshot:
+    return ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(
+            provider=provider,
+            model=model,
+            base_url="http://127.0.0.1:9099" if provider == "llama_cpp" else "",
+            system_prompt="private return system prompt",
+            pinned_prefill="private return prefill",
+        ),
+        context_policy_overrides=ConsoleContextPolicyOverrides(
+            custom_budget_tokens=2048,
+        ),
+        raw_values={
+            "console-settings-provider": provider,
+            "console-settings-model-picker": model,
+            "console-settings-temperature": "0.7.2",
+            "console-context-custom-budget": "2048",
+        },
+        provider_model_drafts={provider: model},
+        provider_base_url_drafts=(
+            {provider: "http://127.0.0.1:9099"}
+            if provider == "llama_cpp"
+            else {}
+        ),
+        active_view="context",
+        scroll_anchor=11,
+        focus_control_id=focus_control_id,
+        disclosure_state={"advanced_generation": True, "connection_details": True},
+    )
+
+
+def _stage_console_settings_return(
+    app,
+    *,
+    session_id: str,
+    settings_revision: int,
+    snapshot: ConsoleSettingsDraftSnapshot,
+    outcome: ConversationSettingsReturnOutcome = (
+        ConversationSettingsReturnOutcome.CREDENTIAL_SAVED
+    ),
+) -> ConsoleSettingsReturnTarget:
+    intent = ConversationSettingsReturnIntent(
+        session_id=session_id,
+        settings_revision=settings_revision,
+        active_view=snapshot.active_view,
+        focus_control_id=snapshot.focus_control_id,
+    )
+    revision = app.pending_handoffs.stage(
+        HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+        intent,
+    )
+    return ConsoleSettingsReturnTarget(
+        **intent.to_context(),
+        return_revision=revision,
+        outcome=outcome,
+    )
 
 
 def test_checking_citations_is_an_active_console_run_status():
@@ -153,6 +242,7 @@ def _persist_console_provider_config(
     """Persist provider fixtures before mount, then refresh the app snapshot."""
     assert config_module.save_settings_to_cli_config(
         {
+            "first_run": {"setup_completed": True},
             "chat_defaults": {"provider": provider, "model": model},
             f"api_settings.{provider}": provider_settings,
         }
@@ -230,6 +320,2148 @@ def test_native_ready_console_config_survives_cache_invalidating_reload() -> Non
     assert reloaded["chat_defaults"]["model"] == "prepared-model"
     assert reloaded["api_settings"]["llama_cpp"]["api_url"] == "http://127.0.0.1:9099"
     assert reloaded["api_settings"]["llama_cpp"]["model"] == "prepared-model"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("outcome", "expected_copy"),
+    (
+        (
+            ConversationSettingsReturnOutcome.CREDENTIAL_SAVED,
+            "Credential saved — checking readiness",
+        ),
+        (
+            ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED,
+            "Provider settings saved — checking readiness",
+        ),
+        (
+            ConversationSettingsReturnOutcome.WITHOUT_SAVING,
+            "Returned without saving — readiness unchanged",
+        ),
+    ),
+)
+async def test_conversation_settings_return_claims_exact_revision_and_restores_mounted_draft(
+    outcome,
+    expected_copy,
+):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        snapshot = _conversation_settings_return_snapshot()
+        console._suspended_conversation_settings = snapshot
+        console._suspended_conversation_settings_token = 17
+        other_session = store.create_session(
+            title="Other active work",
+            settings=ConsoleSessionSettings(provider="llama_cpp", model="other-model"),
+        )
+        assert store.active_session_id == other_session.id
+        target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=snapshot,
+            outcome=outcome,
+        )
+
+        console.apply_navigation_context(target.to_context())
+        for _ in range(80):
+            if isinstance(host.screen_stack[-1], ConsoleSettingsModal):
+                break
+            await pilot.pause(0.05)
+        modal = host.screen_stack[-1]
+
+        assert isinstance(modal, ConsoleSettingsModal)
+        await _wait_for_selector(modal, pilot, "#console-settings-temperature")
+        assert store.active_session_id == session.id
+        assert modal.query_one("#console-settings-temperature", Input).value == "0.7.2"
+        assert modal.query_one("#console-context-custom-budget", Input).value == "2048"
+        for _ in range(20):
+            if modal.query_one("#console-context-custom-budget", Input).has_focus:
+                break
+            await pilot.pause(0.05)
+        assert modal.query_one("#console-context-custom-budget", Input).has_focus
+        return_copy = str(
+            modal.query_one("#console-settings-return-status", Static).renderable
+        )
+        assert expected_copy in return_copy
+        assert "private return system prompt" not in repr(target.to_context())
+        assert "private return prefill" not in repr(target.to_context())
+        assert console._suspended_conversation_settings is None
+
+        replacement = ConversationSettingsReturnIntent(
+            session.id,
+            store.session_settings_revision(session.id),
+            "model",
+            None,
+        )
+        app.pending_handoffs.stage(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+            replacement,
+        )
+        replacement_claim = app.pending_handoffs.claim(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN
+        )
+        assert replacement_claim is not None
+        app.pending_handoffs.release(replacement_claim)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("rejection", "expected_copy"),
+    (
+        (
+            "stale_revision",
+            "Conversation settings changed while credentials were open. "
+            "The earlier draft was not restored.",
+        ),
+        (
+            "deleted_session",
+            "The original conversation closed. Its Conversation settings draft "
+            "was not restored.",
+        ),
+        (
+            "temporary_session",
+            "The temporary conversation is no longer available. Its Conversation "
+            "settings draft was not restored.",
+        ),
+    ),
+)
+async def test_conversation_settings_return_terminal_rejection_consumes_once(
+    rejection,
+    expected_copy,
+    monkeypatch,
+):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    notices: list[str] = []
+    monkeypatch.setattr(
+        host,
+        "notify",
+        lambda message, **_kwargs: notices.append(str(message)),
+    )
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        snapshot = _conversation_settings_return_snapshot()
+        console._suspended_conversation_settings = snapshot
+        console._suspended_conversation_settings_token = 23
+        session_id = session.id
+        settings_revision = store.session_settings_revision(session.id)
+        if rejection == "stale_revision":
+            settings_revision += 1
+        elif rejection == "deleted_session":
+            session_id = "deleted-console-session"
+        else:
+            temporary = store.create_session(
+                title="Temporary",
+                settings=snapshot.settings,
+                ephemeral=True,
+            )
+            session_id = temporary.id
+            settings_revision = store.session_settings_revision(temporary.id)
+        target = _stage_console_settings_return(
+            app,
+            session_id=session_id,
+            settings_revision=settings_revision,
+            snapshot=snapshot,
+        )
+
+        console.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        await pilot.pause()
+
+        assert host.screen_stack[-1] is console
+        assert console._suspended_conversation_settings is None
+        assert expected_copy in notices
+        assert app.pending_handoffs.claim(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN
+        ) is None
+        console.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        assert host.screen_stack[-1] is console
+        assert (
+            "Conversation settings return is no longer available. "
+            "Open Conversation settings again."
+        ) in notices
+
+        replacement = ConversationSettingsReturnIntent(
+            session.id,
+            store.session_settings_revision(session.id),
+            "model",
+            None,
+        )
+        app.pending_handoffs.stage(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+            replacement,
+        )
+        replacement_claim = app.pending_handoffs.claim(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN
+        )
+        assert replacement_claim is not None
+        app.pending_handoffs.release(replacement_claim)
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_superseded_route_preserves_latest_handoff(
+    monkeypatch,
+):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    notices: list[str] = []
+    monkeypatch.setattr(
+        host,
+        "notify",
+        lambda message, **_kwargs: notices.append(str(message)),
+    )
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        snapshot = _conversation_settings_return_snapshot()
+        console._suspended_conversation_settings = snapshot
+        console._suspended_conversation_settings_token = 29
+        stale_target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=snapshot,
+        )
+        latest_intent = ConversationSettingsReturnIntent(
+            session.id,
+            store.session_settings_revision(session.id),
+            "model",
+            None,
+        )
+        latest_revision = app.pending_handoffs.stage(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+            latest_intent,
+        )
+        latest_claim = app.pending_handoffs.claim(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN
+        )
+        assert latest_claim is not None
+        assert latest_claim.revision == latest_revision
+        assert app.pending_handoffs.acknowledge(latest_claim)
+
+        console.apply_navigation_context(stale_target.to_context())
+        await pilot.pause()
+
+        assert host.screen_stack[-1] is console
+        assert (
+            "This return was superseded by a newer request. "
+            "Open Conversation settings again."
+        ) in notices
+        assert console._suspended_conversation_settings is snapshot
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_consumed_route_clears_stale_snapshot_with_copy(
+    monkeypatch,
+):
+    """A consumed/repeated route fails visibly and cannot retain draft ownership."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    notices: list[str] = []
+    monkeypatch.setattr(
+        host,
+        "notify",
+        lambda message, **_kwargs: notices.append(str(message)),
+    )
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        snapshot = _conversation_settings_return_snapshot()
+        console._suspended_conversation_settings = snapshot
+        console._suspended_conversation_settings_token = 30
+        target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=snapshot,
+        )
+        consumed = app.pending_handoffs.claim(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN
+        )
+        assert consumed is not None
+        assert app.pending_handoffs.acknowledge(consumed)
+
+        console.apply_navigation_context(target.to_context())
+        await pilot.pause()
+
+        assert host.screen_stack[-1] is console
+        assert console._suspended_conversation_settings is None
+        assert console._suspended_conversation_settings_token is None
+        assert (
+            "Conversation settings return is no longer available. "
+            "Open Conversation settings again."
+        ) in notices
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_waits_for_exact_in_flight_claim(
+    monkeypatch,
+):
+    """A fresh consumer must not mistake outgoing ownership for consumption."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    notices: list[str] = []
+    monkeypatch.setattr(
+        host,
+        "notify",
+        lambda message, **_kwargs: notices.append(str(message)),
+    )
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        snapshot = _conversation_settings_return_snapshot()
+        console._suspended_conversation_settings = snapshot
+        console._suspended_conversation_settings_token = 32
+        target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=snapshot,
+        )
+        outgoing_claim = app.pending_handoffs.claim(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN
+        )
+        assert outgoing_claim is not None
+
+        console.apply_navigation_context(target.to_context())
+        await pilot.pause()
+
+        assert console._suspended_conversation_settings is snapshot
+        assert console._pending_conversation_settings_return_target == target
+        assert notices == []
+
+        assert app.pending_handoffs.release(outgoing_claim)
+        console.on_screen_resume()
+        for _ in range(80):
+            if (
+                isinstance(host.screen_stack[-1], ConsoleSettingsModal)
+                and console._pending_conversation_settings_return_target is None
+            ):
+                break
+            await pilot.pause(0.05)
+
+        assert isinstance(host.screen_stack[-1], ConsoleSettingsModal)
+        assert console._pending_conversation_settings_return_target is None
+        assert app.pending_handoffs.claim(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN
+        ) is None
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_replacement_before_claim_consumes_replacement(
+    monkeypatch,
+):
+    """A queued consumer must not claim or erase the newer pending return."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        snapshot = _conversation_settings_return_snapshot()
+        console._suspended_conversation_settings = snapshot
+        console._suspended_conversation_settings_token = 33
+        first_target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=snapshot,
+        )
+        real_claim = console._claim_conversation_settings_return
+        replacement_target: ConsoleSettingsReturnTarget | None = None
+
+        def stage_replacement_before_claim(handoffs, captured_target):
+            nonlocal replacement_target
+            if captured_target.return_revision == first_target.return_revision:
+                replacement_target = _stage_console_settings_return(
+                    app,
+                    session_id=session.id,
+                    settings_revision=store.session_settings_revision(session.id),
+                    snapshot=snapshot,
+                    outcome=(
+                        ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED
+                    ),
+                )
+                console.apply_navigation_context(replacement_target.to_context())
+                monkeypatch.setattr(
+                    console,
+                    "_claim_conversation_settings_return",
+                    real_claim,
+                )
+            return real_claim(handoffs, captured_target)
+
+        monkeypatch.setattr(
+            console,
+            "_claim_conversation_settings_return",
+            stage_replacement_before_claim,
+        )
+        console.apply_navigation_context(first_target.to_context())
+
+        for _ in range(80):
+            if (
+                isinstance(host.screen_stack[-1], ConsoleSettingsModal)
+                and console._pending_conversation_settings_return_target is None
+            ):
+                break
+            await pilot.pause(0.05)
+
+        assert replacement_target is not None
+        assert isinstance(host.screen_stack[-1], ConsoleSettingsModal)
+        assert console._pending_conversation_settings_return_target is None
+        assert app.pending_handoffs.claim(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN
+        ) is None
+        return_copy = str(
+            host.screen_stack[-1]
+            .query_one("#console-settings-return-status", Static)
+            .renderable
+        )
+        assert "Provider settings saved — checking readiness" in return_copy
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_replacement_during_terminal_restore_is_consumed(
+    monkeypatch,
+):
+    """A terminal A settlement cannot clear B staged after A was claimed."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        snapshot = _conversation_settings_return_snapshot()
+        console._suspended_conversation_settings = snapshot
+        console._suspended_conversation_settings_token = 34
+        first_target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=snapshot,
+        )
+        real_rejection_copy = console._conversation_settings_return_rejection_copy
+        checks = 0
+        replacement_target: ConsoleSettingsReturnTarget | None = None
+
+        def reject_first_after_claim(target):
+            nonlocal checks, replacement_target
+            checks += 1
+            if (
+                target.return_revision == first_target.return_revision
+                and checks == 2
+            ):
+                current_settings = store.session_settings(session.id)
+                assert current_settings is not None
+                store.replace_session_settings(
+                    session.id,
+                    replace(current_settings, temperature=0.31),
+                )
+                replacement_target = _stage_console_settings_return(
+                    app,
+                    session_id=session.id,
+                    settings_revision=store.session_settings_revision(session.id),
+                    snapshot=snapshot,
+                    outcome=(
+                        ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED
+                    ),
+                )
+                console.apply_navigation_context(replacement_target.to_context())
+            return real_rejection_copy(target)
+
+        monkeypatch.setattr(
+            console,
+            "_conversation_settings_return_rejection_copy",
+            reject_first_after_claim,
+        )
+        console.apply_navigation_context(first_target.to_context())
+
+        for _ in range(80):
+            if (
+                isinstance(host.screen_stack[-1], ConsoleSettingsModal)
+                and console._pending_conversation_settings_return_target is None
+            ):
+                break
+            await pilot.pause(0.05)
+
+        assert replacement_target is not None
+        assert isinstance(host.screen_stack[-1], ConsoleSettingsModal)
+        assert console._pending_conversation_settings_return_target is None
+        assert app.pending_handoffs.claim(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN
+        ) is None
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_success_preserves_replacement_staged_during_restore(
+    monkeypatch,
+):
+    """Successful A restoration settles only A when B arrives before its ack."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        first_snapshot = _conversation_settings_return_snapshot()
+        console._suspended_conversation_settings = first_snapshot
+        console._suspended_conversation_settings_token = 35
+        first_target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=first_snapshot,
+        )
+        real_mount_status = console._mount_conversation_settings_return_status
+        replacement_target: ConsoleSettingsReturnTarget | None = None
+        replacement_snapshot: ConsoleSettingsDraftSnapshot | None = None
+
+        async def stage_replacement_before_ack(target, snapshot):
+            nonlocal replacement_target, replacement_snapshot
+            if target.return_revision == first_target.return_revision:
+                replacement_snapshot = _conversation_settings_return_snapshot(
+                    focus_control_id="console-settings-model-picker"
+                )
+                console._suspended_conversation_settings = replacement_snapshot
+                console._suspended_conversation_settings_token = 36
+                replacement_target = _stage_console_settings_return(
+                    app,
+                    session_id=session.id,
+                    settings_revision=store.session_settings_revision(session.id),
+                    snapshot=replacement_snapshot,
+                    outcome=(
+                        ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED
+                    ),
+                )
+                console.apply_navigation_context(replacement_target.to_context())
+            await real_mount_status(target, snapshot)
+
+        monkeypatch.setattr(
+            console,
+            "_mount_conversation_settings_return_status",
+            stage_replacement_before_ack,
+        )
+        console.apply_navigation_context(first_target.to_context())
+
+        for _ in range(80):
+            if (
+                replacement_target is not None
+                and not console._conversation_settings_return_restore_in_progress
+            ):
+                break
+            await pilot.pause(0.05)
+
+        assert isinstance(host.screen_stack[-1], ConsoleSettingsModal)
+        assert replacement_target is not None
+        assert replacement_snapshot is not None
+        assert console._pending_conversation_settings_return_target == replacement_target
+        assert console._suspended_conversation_settings is replacement_snapshot
+        assert (
+            app.pending_handoffs.exact_revision_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                replacement_target.return_revision,
+            )
+            == "pending"
+        )
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_settles_at_transfer_before_status_and_keeps_replacement(
+    monkeypatch,
+):
+    """A owns its modal before optional status work; B remains independently live."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        first_snapshot = _conversation_settings_return_snapshot()
+        console._suspended_conversation_settings = first_snapshot
+        console._suspended_conversation_settings_token = 135
+        first_target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=first_snapshot,
+        )
+        real_reopen = console._reopen_suspended_console_settings
+        real_mount_status = console._mount_conversation_settings_return_status
+        transferred_before_replacement = False
+        first_status_at_boundary: str | None = None
+        first_claim_at_boundary = None
+        transfer_commit_count = 0
+        replacement_snapshot: ConsoleSettingsDraftSnapshot | None = None
+        replacement_target: ConsoleSettingsReturnTarget | None = None
+
+        async def stage_replacement_after_transfer(
+            request_token,
+            *,
+            session_id,
+            settings_revision,
+            _on_transfer_committed=None,
+        ):
+            nonlocal transferred_before_replacement
+            nonlocal replacement_snapshot, replacement_target
+
+            def commit_with_replacement_staged() -> bool:
+                nonlocal transferred_before_replacement
+                nonlocal transfer_commit_count
+                nonlocal replacement_snapshot, replacement_target
+                transfer_commit_count += 1
+                transferred_before_replacement = isinstance(
+                    host.screen_stack[-1],
+                    ConsoleSettingsModal,
+                )
+                replacement_snapshot = _conversation_settings_return_snapshot(
+                    model="replacement-model",
+                    focus_control_id="console-settings-model-picker",
+                )
+                console._suspended_conversation_settings = replacement_snapshot
+                console._suspended_conversation_settings_token = 136
+                replacement_target = _stage_console_settings_return(
+                    app,
+                    session_id=session.id,
+                    settings_revision=store.session_settings_revision(session.id),
+                    snapshot=replacement_snapshot,
+                    outcome=(
+                        ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED
+                    ),
+                )
+                console.apply_navigation_context(replacement_target.to_context())
+                if _on_transfer_committed is not None:
+                    return _on_transfer_committed()
+                return True
+
+            return await real_reopen(
+                request_token,
+                session_id=session_id,
+                settings_revision=settings_revision,
+                _on_transfer_committed=(
+                    commit_with_replacement_staged
+                    if request_token == 135
+                    else _on_transfer_committed
+                ),
+            )
+
+        async def record_first_status_boundary(target, snapshot):
+            nonlocal first_status_at_boundary, first_claim_at_boundary
+            if target.return_revision == first_target.return_revision:
+                first_status_at_boundary = (
+                    app.pending_handoffs.exact_revision_status(
+                        HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                        first_target.return_revision,
+                    )
+                )
+                first_claim_at_boundary = (
+                    console._pending_conversation_settings_return_claim
+                )
+            await real_mount_status(target, snapshot)
+
+        monkeypatch.setattr(
+            console,
+            "_reopen_suspended_console_settings",
+            stage_replacement_after_transfer,
+        )
+        monkeypatch.setattr(
+            console,
+            "_mount_conversation_settings_return_status",
+            record_first_status_boundary,
+        )
+        console.apply_navigation_context(first_target.to_context())
+        for _ in range(80):
+            if (
+                replacement_target is not None
+                and not console._conversation_settings_return_restore_in_progress
+            ):
+                break
+            await pilot.pause(0.05)
+
+        first_modal = host.screen_stack[-1]
+        assert isinstance(first_modal, ConsoleSettingsModal)
+        assert transferred_before_replacement is True
+        assert transfer_commit_count == 1
+        # B is now the latest revision, so the public status classifies A as
+        # superseded even though A was already acknowledged exactly.
+        assert first_status_at_boundary == "superseded"
+        assert first_claim_at_boundary is None
+        assert replacement_target is not None
+        assert replacement_snapshot is not None
+        assert console._pending_conversation_settings_return_target == replacement_target
+        assert console._suspended_conversation_settings is replacement_snapshot
+        assert (
+            app.pending_handoffs.exact_revision_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                replacement_target.return_revision,
+            )
+            == "pending"
+        )
+
+        first_modal.dismiss(None)
+        replacement_modal = None
+        for _ in range(120):
+            if (
+                isinstance(host.screen_stack[-1], ConsoleSettingsModal)
+                and host.screen_stack[-1] is not first_modal
+                and console._pending_conversation_settings_return_target is None
+            ):
+                replacement_modal = host.screen_stack[-1]
+                break
+            await pilot.pause(0.05)
+
+        assert replacement_modal is not None
+        assert (
+            replacement_modal.query_one("#console-settings-model-picker").value
+            == "replacement-model"
+        )
+        assert console._suspended_conversation_settings is None
+        assert (
+            app.pending_handoffs.exact_revision_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                replacement_target.return_revision,
+            )
+            == "settled"
+        )
+
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_releases_transient_modal_mount_failure(
+    monkeypatch,
+):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        prior_session = store.create_session(
+            title="Keep active after transient failure",
+            settings=ConsoleSessionSettings(provider="llama_cpp", model="prior-model"),
+        )
+        assert store.active_session_id == prior_session.id
+        snapshot = _conversation_settings_return_snapshot()
+        console._suspended_conversation_settings = snapshot
+        console._suspended_conversation_settings_token = 31
+        target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=snapshot,
+        )
+
+        real_open = console._open_console_settings
+        attempts = 0
+
+        async def fail_once_then_open(**kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                return False
+            return await real_open(**kwargs)
+
+        monkeypatch.setattr(console, "_open_console_settings", fail_once_then_open)
+        console.apply_navigation_context(target.to_context())
+        for _ in range(80):
+            if attempts == 1 and not console._conversation_settings_return_restore_in_progress:
+                break
+            await pilot.pause(0.05)
+
+        assert attempts == 1
+        assert app.pending_handoffs.has_pending(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN
+        )
+        assert console._suspended_conversation_settings is snapshot
+        assert console._pending_conversation_settings_return_target == target
+        assert store.active_session_id == prior_session.id
+
+        console.on_screen_resume()
+        for _ in range(80):
+            if (
+                isinstance(host.screen_stack[-1], ConsoleSettingsModal)
+                and console._pending_conversation_settings_return_target is None
+            ):
+                break
+            await pilot.pause(0.05)
+
+        assert attempts == 2
+        assert isinstance(host.screen_stack[-1], ConsoleSettingsModal)
+        assert store.active_session_id == session.id
+        assert console._pending_conversation_settings_return_target is None
+        assert app.pending_handoffs.claim(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN
+        ) is None
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_pretransfer_cancellation_retains_retry(
+    monkeypatch,
+):
+    """Cancellation before modal ownership releases A and retains its exact retry."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    open_started = asyncio.Event()
+    open_cancelled = asyncio.Event()
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        snapshot = _conversation_settings_return_snapshot()
+        console._suspended_conversation_settings = snapshot
+        console._suspended_conversation_settings_token = 146
+        target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=snapshot,
+        )
+
+        async def block_before_modal_transfer(**_kwargs):
+            open_started.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                open_cancelled.set()
+                raise
+
+        monkeypatch.setattr(
+            console,
+            "_open_console_settings",
+            block_before_modal_transfer,
+        )
+        console.apply_navigation_context(target.to_context())
+        await wait_for_signal(
+            open_started,
+            what="pre-transfer Conversation settings restore",
+        )
+        console.workers.cancel_group(console, "conversation-settings-return")
+        await wait_for_signal(
+            open_cancelled,
+            what="pre-transfer Conversation settings cancellation",
+        )
+        for _ in range(80):
+            if not console._conversation_settings_return_restore_in_progress:
+                break
+            await pilot.pause(0.05)
+
+        assert (
+            app.pending_handoffs.exact_revision_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                target.return_revision,
+            )
+            == "pending"
+        )
+        assert console._pending_conversation_settings_return_claim is None
+        assert console._pending_conversation_settings_return_target == target
+        assert console._suspended_conversation_settings is snapshot
+        assert console._suspended_conversation_settings_token == 146
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_transient_cleanup_preserves_new_session_selection(
+    monkeypatch,
+):
+    """A stale restore worker cannot replace the user's later active session."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    restore_started = asyncio.Event()
+    allow_restore_exit = asyncio.Event()
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        origin = store.ensure_session()
+        prior = store.create_session(
+            title="Prior active work",
+            settings=ConsoleSessionSettings(provider="llama_cpp", model="prior"),
+        )
+        later = store.create_session(
+            title="Later user selection",
+            settings=ConsoleSessionSettings(provider="llama_cpp", model="later"),
+            activate=False,
+        )
+        assert store.active_session_id == prior.id
+        snapshot = _conversation_settings_return_snapshot()
+        console._suspended_conversation_settings = snapshot
+        console._suspended_conversation_settings_token = 38
+        target = _stage_console_settings_return(
+            app,
+            session_id=origin.id,
+            settings_revision=store.session_settings_revision(origin.id),
+            snapshot=snapshot,
+        )
+
+        async def block_then_fail(**_kwargs):
+            restore_started.set()
+            await allow_restore_exit.wait()
+            return False
+
+        monkeypatch.setattr(console, "_open_console_settings", block_then_fail)
+        console.apply_navigation_context(target.to_context())
+        await wait_for_signal(
+            restore_started,
+            what="Conversation settings restore session switch",
+        )
+        assert store.active_session_id == origin.id
+        store.switch_session(later.id)
+        later_epoch = store.active_session_epoch()
+        allow_restore_exit.set()
+        for _ in range(80):
+            if not console._conversation_settings_return_restore_in_progress:
+                break
+            await pilot.pause(0.05)
+
+        assert store.active_session_id == later.id
+        assert store.active_session_epoch() == later_epoch
+        assert console._pending_conversation_settings_return_target == target
+        assert (
+            app.pending_handoffs.exact_revision_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                target.return_revision,
+            )
+            == "pending"
+        )
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_missing_environment_credential_stays_blocked(
+    monkeypatch,
+):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        missing_name = "RETURN_OPENAI_API_KEY"
+        monkeypatch.delenv(missing_name, raising=False)
+        _persist_console_provider_config(
+            app,
+            provider="openai",
+            model="gpt-5",
+            provider_settings={
+                "credential_source": "environment",
+                "api_key_env_var": missing_name,
+            },
+        )
+        snapshot = _conversation_settings_return_snapshot(
+            provider="openai",
+            model="gpt-5",
+            focus_control_id="console-settings-model-picker",
+        )
+        store.replace_session_settings(session.id, snapshot.settings)
+        console._suspended_conversation_settings = snapshot
+        console._suspended_conversation_settings_token = 37
+        target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=snapshot,
+        )
+
+        console.apply_navigation_context(target.to_context())
+        for _ in range(80):
+            if isinstance(host.screen_stack[-1], ConsoleSettingsModal):
+                break
+            await pilot.pause(0.05)
+        modal = host.screen_stack[-1]
+
+        assert isinstance(modal, ConsoleSettingsModal)
+        await _wait_for_selector(modal, pilot, "#console-settings-return-status")
+        readiness_copy = str(
+            modal.query_one("#console-settings-readiness", Static).renderable
+        )
+        return_copy = str(
+            modal.query_one("#console-settings-return-status", Static).renderable
+        )
+        assert "OpenAI missing API key" in readiness_copy
+        assert f"Export {missing_name}, then relaunch Chatbook" in return_copy
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_unavailable_focus_falls_back_to_connection():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        snapshot = _conversation_settings_return_snapshot(
+            focus_control_id="console-context-confirm-reset-all"
+        )
+        console._suspended_conversation_settings = snapshot
+        console._suspended_conversation_settings_token = 41
+        target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=snapshot,
+        )
+
+        console.apply_navigation_context(target.to_context())
+        for _ in range(80):
+            if isinstance(host.screen_stack[-1], ConsoleSettingsModal):
+                focused = host.focused
+                if focused is not None and focused.id in {
+                    "console-settings-provider-picker-input",
+                    "model-search-picker-input",
+                }:
+                    break
+            await pilot.pause(0.05)
+
+        assert isinstance(host.screen_stack[-1], ConsoleSettingsModal)
+        assert host.focused is not None
+        assert host.focused.id in {
+            "console-settings-provider-picker-input",
+            "model-search-picker-input",
+        }
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_real_navigation_restores_fresh_console_modal(
+    monkeypatch,
+):
+    """Drive Configure → Settings → Return through the production app router."""
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        settings_screen_module,
+        "persist_provider_settings_atomic",
+        lambda *_args, **_kwargs: ConfigMutationResult(True, True, None),
+    )
+    app = _build_production_app(configured_default="chat")
+    app.chat_api_provider_value = "openai"
+    app.chat_api_model_value = "gpt-5"
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    app.providers_models = {"openai": ["gpt-5"]}
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        original_console = None
+        for _ in range(200):
+            content = app._navigation_outgoing_screen()
+            if isinstance(content, ChatScreen):
+                original_console = content
+                break
+            await pilot.pause(0.05)
+        assert original_console is not None
+        await _wait_for_selector(
+            original_console,
+            pilot,
+            "#console-native-composer",
+            timeout=10.0,
+        )
+        store = original_console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        )
+
+        assert await original_console._open_console_settings() is True
+        for _ in range(80):
+            if isinstance(app.screen, ConsoleSettingsModal):
+                break
+            await pilot.pause(0.05)
+        assert isinstance(app.screen, ConsoleSettingsModal)
+        original_modal = app.screen
+        original_modal.query_one("#console-settings-model-picker").focus_input()
+        await pilot.click("#console-settings-configure-credential")
+
+        fresh_settings = None
+        for _ in range(200):
+            if isinstance(app.screen, SettingsScreen):
+                fresh_settings = app.screen
+                break
+            await pilot.pause(0.05)
+        assert fresh_settings is not None
+        assert fresh_settings._provider_return_target is not None
+        await _wait_for_selector(
+            fresh_settings,
+            pilot,
+            "#settings-provider-api-key",
+            timeout=10.0,
+        )
+        fresh_settings.query_one("#settings-provider-api-key", Input).value = (
+            "DUMMY-PRODUCTION-ROUND-TRIP-KEY"
+        )
+        await pilot.pause()
+        fresh_settings.action_settings_save_category(allow_text_entry_focus=True)
+        for _ in range(80):
+            return_button = fresh_settings.query_one(
+                "#settings-provider-return", Button
+            )
+            if return_button.has_focus:
+                break
+            await pilot.pause(0.05)
+        fresh_settings.query_one("#settings-provider-return", Button).press()
+
+        returned_console = None
+        returned_modal = None
+        for _ in range(240):
+            consoles = [
+                screen for screen in app.screen_stack if isinstance(screen, ChatScreen)
+            ]
+            if (
+                consoles
+                and consoles[-1] is not original_console
+                and isinstance(app.screen_stack[-1], ConsoleSettingsModal)
+            ):
+                returned_console = consoles[-1]
+                returned_modal = app.screen_stack[-1]
+                break
+            await pilot.pause(0.05)
+
+        assert returned_console is not None
+        assert returned_modal is not None
+        assert returned_console is not original_console
+        assert app.current_tab == "chat"
+        await _wait_for_selector(
+            returned_modal,
+            pilot,
+            "#console-settings-return-status",
+            timeout=10.0,
+        )
+        return_copy = str(
+            returned_modal.query_one(
+                "#console-settings-return-status", Static
+            ).renderable
+        )
+        assert "Credential saved — checking readiness" in return_copy
+        assert returned_console._suspended_conversation_settings is None
+        assert fresh_settings._provider_return_target is None
+
+        await app.handle_screen_navigation(NavigateToScreen("settings"))
+        for _ in range(200):
+            if isinstance(app.screen, SettingsScreen):
+                break
+            await pilot.pause(0.05)
+        assert isinstance(app.screen, SettingsScreen)
+        assert app.screen.query_one(
+            "#settings-provider-return-continuation"
+        ).display is False
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_real_router_unmount_after_transfer_does_not_replay_stale_handoff(
+    monkeypatch,
+):
+    """Forced dismissal after modal transfer cannot turn A back into pending work."""
+
+    app = _build_production_app(configured_default="chat")
+    _configure_native_ready_console(app)
+    notices: list[str] = []
+    status_started = asyncio.Event()
+    status_cancelled = asyncio.Event()
+    allow_status = asyncio.Event()
+
+    async def block_return_status(self, target, snapshot):
+        status_started.set()
+        try:
+            await allow_status.wait()
+        except asyncio.CancelledError:
+            status_cancelled.set()
+            raise
+
+    monkeypatch.setattr(app, "notify", lambda message, **_kwargs: notices.append(str(message)))
+    monkeypatch.setattr(
+        ChatScreen,
+        "_mount_conversation_settings_return_status",
+        block_return_status,
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        original_console = None
+        for _ in range(200):
+            content = app._navigation_outgoing_screen()
+            if isinstance(content, ChatScreen):
+                original_console = content
+                break
+            await pilot.pause(0.05)
+        assert original_console is not None
+        await _wait_for_selector(
+            original_console,
+            pilot,
+            "#console-native-composer",
+            timeout=10.0,
+        )
+        store = original_console._ensure_console_chat_store()
+        session = store.ensure_session()
+        snapshot = _conversation_settings_return_snapshot()
+        original_console._suspended_conversation_settings = snapshot
+        original_console._suspended_conversation_settings_token = 144
+        target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=snapshot,
+        )
+
+        await app.handle_screen_navigation(NavigateToScreen("settings"))
+        assert isinstance(app._navigation_outgoing_screen(), SettingsScreen)
+        await app.handle_screen_navigation(
+            NavigateToScreen("chat", target.to_context())
+        )
+        await wait_for_signal(
+            status_started,
+            what="blocked post-transfer Conversation settings status",
+        )
+
+        returned_console = app._navigation_outgoing_screen()
+        returned_modal = app.screen
+        assert isinstance(returned_console, ChatScreen)
+        assert returned_console is not original_console
+        assert isinstance(returned_modal, ConsoleSettingsModal)
+        assert returned_console._suspended_conversation_settings is None
+        assert (
+            returned_modal.query_one("#console-settings-temperature", Input).value
+            == "0.7.2"
+        )
+        status_at_transfer = app.pending_handoffs.exact_revision_status(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+            target.return_revision,
+        )
+
+        # The production router dismisses the modal before replacing and
+        # unmounting its content Console. The accepted lifecycle does not
+        # persist the force-dismissed modal draft; it only keeps the already
+        # completed handoff from becoming retry work again.
+        await app.handle_screen_navigation(NavigateToScreen("home"))
+        await wait_for_signal(
+            status_cancelled,
+            what="post-transfer status worker cancellation",
+        )
+        status_after_unmount = app.pending_handoffs.exact_revision_status(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+            target.return_revision,
+        )
+        saved_console_state = app.screen_state_store.restore(
+            "chat",
+            app._current_runtime_identity(),
+        )
+        assert saved_console_state is not None
+
+        await app.handle_screen_navigation(NavigateToScreen("chat"))
+        fresh_console = app._navigation_outgoing_screen()
+        assert isinstance(fresh_console, ChatScreen)
+        assert fresh_console is not returned_console
+        for _ in range(80):
+            if not fresh_console._conversation_settings_return_restore_in_progress:
+                break
+            await pilot.pause(0.05)
+
+        assert status_at_transfer == "settled"
+        assert status_after_unmount == "settled"
+        saved_native_console_state = saved_console_state["native_console_state"]
+        assert saved_native_console_state["suspended_conversation_settings"] is None
+        assert (
+            saved_native_console_state["pending_conversation_settings_return_target"]
+            is None
+        )
+        assert fresh_console._suspended_conversation_settings is None
+        assert fresh_console._pending_conversation_settings_return_target is None
+        assert not isinstance(app.screen, ConsoleSettingsModal)
+        assert not any(
+            "Conversation settings return was stale" in notice for notice in notices
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure_mode",
+    ("false_once", "raise_once", "raise_persistently"),
+)
+async def test_conversation_settings_return_atomic_failure_retains_retry_without_modal_owner(
+    monkeypatch,
+    failure_mode,
+):
+    """A failed atomic transfer keeps one source owner and a claimable retry."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        snapshot = _conversation_settings_return_snapshot()
+        console._suspended_conversation_settings = snapshot
+        console._suspended_conversation_settings_token = 160
+        target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=snapshot,
+        )
+        real_settle = app.pending_handoffs.settle_transferred_claim
+        attempts = 0
+
+        def fail_atomic_settlement(claim):
+            nonlocal attempts
+            if claim.revision == target.return_revision:
+                attempts += 1
+                if failure_mode == "raise_persistently" or (
+                    failure_mode == "raise_once" and attempts == 1
+                ):
+                    raise RuntimeError("injected atomic settlement failure")
+                if failure_mode == "false_once" and attempts == 1:
+                    return False
+            return real_settle(claim)
+
+        monkeypatch.setattr(
+            app.pending_handoffs,
+            "settle_transferred_claim",
+            fail_atomic_settlement,
+        )
+        console.apply_navigation_context(target.to_context())
+        for _ in range(120):
+            if (
+                host.screen_stack[-1] is console
+                and not console._conversation_settings_return_restore_in_progress
+                and attempts >= 1
+            ):
+                break
+            await pilot.pause(0.05)
+
+        assert host.screen_stack[-1] is console
+        assert console._suspended_conversation_settings is snapshot
+        assert console._pending_conversation_settings_return_target == target
+        assert console._pending_conversation_settings_return_claim is None
+        assert not hasattr(
+            console,
+            "_pending_conversation_settings_transfer_cleanup_claim",
+        )
+        assert (
+            app.pending_handoffs.exact_revision_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                target.return_revision,
+            )
+            == "pending"
+        )
+
+        console._consume_pending_conversation_settings_return()
+        for _ in range(120):
+            if (
+                not console._conversation_settings_return_restore_in_progress
+                and attempts >= 2
+            ):
+                break
+            await pilot.pause(0.05)
+
+        if failure_mode == "raise_persistently":
+            assert host.screen_stack[-1] is console
+            assert console._suspended_conversation_settings is snapshot
+            assert console._pending_conversation_settings_return_target == target
+            assert (
+                app.pending_handoffs.exact_revision_status(
+                    HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                    target.return_revision,
+                )
+                == "pending"
+            )
+            return
+
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, ConsoleSettingsModal)
+        assert console._suspended_conversation_settings is None
+        assert console._pending_conversation_settings_return_target is None
+        assert (
+            app.pending_handoffs.exact_revision_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                target.return_revision,
+            )
+            == "settled"
+        )
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_status_fault_blocks_replacement_until_retry(
+    monkeypatch,
+):
+    """B remains pending until A's terminal state can be confirmed."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        first_snapshot = _conversation_settings_return_snapshot(model="first-model")
+        replacement_snapshot = _conversation_settings_return_snapshot(
+            model="replacement-model",
+            focus_control_id="console-settings-model-picker",
+        )
+        console._suspended_conversation_settings = first_snapshot
+        console._suspended_conversation_settings_token = 161
+        first_target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=first_snapshot,
+        )
+        real_status = app.pending_handoffs.exact_revision_status
+        first_status_checks = 0
+        reopened_tokens: list[int] = []
+        replacement_target: ConsoleSettingsReturnTarget | None = None
+
+        def fail_first_terminal_status_check(channel, revision):
+            nonlocal first_status_checks
+            if (
+                channel is HandoffChannel.CONVERSATION_SETTINGS_RETURN
+                and revision == first_target.return_revision
+            ):
+                first_status_checks += 1
+                if first_status_checks == 2:
+                    raise RuntimeError("injected exact-status failure")
+            return real_status(channel, revision)
+
+        async def transfer_without_mount(
+            request_token,
+            *,
+            session_id,
+            settings_revision,
+            _on_transfer_committed=None,
+        ):
+            nonlocal replacement_target
+            reopened_tokens.append(request_token)
+            if request_token == 161:
+                replacement_target = _stage_console_settings_return(
+                    app,
+                    session_id=session_id,
+                    settings_revision=settings_revision,
+                    snapshot=replacement_snapshot,
+                )
+                console._suspended_conversation_settings = replacement_snapshot
+                console._suspended_conversation_settings_token = 162
+                console.apply_navigation_context(replacement_target.to_context())
+            assert _on_transfer_committed is not None
+            assert _on_transfer_committed() is True
+            if request_token == 162:
+                console._suspended_conversation_settings = None
+                console._suspended_conversation_settings_token = None
+            return True
+
+        async def skip_return_status(*_args, **_kwargs):
+            return None
+
+        monkeypatch.setattr(
+            app.pending_handoffs,
+            "exact_revision_status",
+            fail_first_terminal_status_check,
+        )
+        monkeypatch.setattr(
+            console,
+            "_reopen_suspended_console_settings",
+            transfer_without_mount,
+        )
+        monkeypatch.setattr(
+            console,
+            "_mount_conversation_settings_return_status",
+            skip_return_status,
+        )
+
+        console.apply_navigation_context(first_target.to_context())
+        for _ in range(80):
+            if (
+                reopened_tokens
+                and not console._conversation_settings_return_restore_in_progress
+            ):
+                break
+            await pilot.pause(0.05)
+
+        assert reopened_tokens == [161]
+        assert replacement_target is not None
+        assert console._pending_conversation_settings_return_target == replacement_target
+        assert console._suspended_conversation_settings is replacement_snapshot
+        assert (
+            real_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                replacement_target.return_revision,
+            )
+            == "pending"
+        )
+
+        console._consume_pending_conversation_settings_return()
+        for _ in range(80):
+            if (
+                reopened_tokens == [161, 162]
+                and not console._conversation_settings_return_restore_in_progress
+            ):
+                break
+            await pilot.pause(0.05)
+
+        assert reopened_tokens == [161, 162]
+        assert console._pending_conversation_settings_return_target is None
+        assert console._suspended_conversation_settings is None
+        assert (
+            real_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                replacement_target.return_revision,
+            )
+            == "settled"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("settlement_failure", (False, True))
+async def test_conversation_settings_return_covered_mount_cancellation_settles_before_unmount(
+    monkeypatch,
+    settlement_failure,
+):
+    """A covered mounted modal commits A before cancellation can release it."""
+
+    app = _build_production_app(configured_default="chat")
+    _configure_native_ready_console(app)
+    notices: list[str] = []
+    modal_covered = asyncio.Event()
+    push_cancelled = asyncio.Event()
+
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **_kwargs: notices.append(str(message)),
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        console = None
+        for _ in range(200):
+            content = app._navigation_outgoing_screen()
+            if isinstance(content, ChatScreen):
+                console = content
+                break
+            await pilot.pause(0.05)
+        assert console is not None
+        await _wait_for_selector(
+            console,
+            pilot,
+            "#console-native-composer",
+            timeout=10.0,
+        )
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        prior_session = store.create_session(
+            title="Conversation C active before return",
+            settings=ConsoleSessionSettings(
+                provider="llama_cpp",
+                model="conversation-c-model",
+            ),
+        )
+        assert store.active_session_id == prior_session.id
+        snapshot = _conversation_settings_return_snapshot()
+        console._suspended_conversation_settings = snapshot
+        console._suspended_conversation_settings_token = 145
+        target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=snapshot,
+        )
+        if settlement_failure:
+            monkeypatch.setattr(
+                app.pending_handoffs,
+                "settle_transferred_claim",
+                lambda _claim: (_ for _ in ()).throw(
+                    RuntimeError("injected atomic settlement failure")
+                ),
+            )
+        real_push_screen = app.push_screen
+        newer_overlay = ConfirmationDialog(
+            title="Newer overlay",
+            message="Cover the restoring Conversation settings modal.",
+        )
+
+        def hold_covered_modal_push(screen, *args, **kwargs):
+            mount = real_push_screen(screen, *args, **kwargs)
+            if not isinstance(screen, ConsoleSettingsModal):
+                return mount
+
+            async def wait_while_covered():
+                await mount
+                await real_push_screen(newer_overlay)
+                modal_covered.set()
+                try:
+                    await asyncio.Future()
+                except asyncio.CancelledError:
+                    push_cancelled.set()
+                    raise
+
+            return wait_while_covered()
+
+        monkeypatch.setattr(app, "push_screen", hold_covered_modal_push)
+        console.apply_navigation_context(target.to_context())
+        await wait_for_signal(
+            modal_covered,
+            what="covered Conversation settings modal mount",
+        )
+
+        assert app.screen is newer_overlay
+        covered_modal = next(
+            screen
+            for screen in app.screen_stack[:-1]
+            if isinstance(screen, ConsoleSettingsModal)
+        )
+        console.workers.cancel_group(console, "conversation-settings-return")
+        await wait_for_signal(
+            push_cancelled,
+            what="covered Conversation settings push cancellation",
+        )
+        for _ in range(80):
+            if not console._conversation_settings_return_restore_in_progress:
+                break
+            await pilot.pause(0.05)
+
+        status_after_cancel = app.pending_handoffs.exact_revision_status(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+            target.return_revision,
+        )
+        if settlement_failure:
+            assert push_cancelled.is_set()
+            assert console._suspended_conversation_settings is snapshot
+            assert console._pending_conversation_settings_return_target == target
+            assert covered_modal._suspended_draft is None
+            assert covered_modal.disabled is True
+            assert status_after_cancel == "pending"
+            assert store.active_session_id == prior_session.id
+            return
+        assert store.active_session_id == session.id
+        assert console._suspended_conversation_settings is None
+        assert covered_modal.capture_suspended_draft().settings.model == (
+            snapshot.settings.model
+        )
+
+        await app.handle_screen_navigation(NavigateToScreen("home"))
+        assert console not in app.screen_stack
+        saved_console_state = app.screen_state_store.restore(
+            "chat",
+            app._current_runtime_identity(),
+        )
+        assert saved_console_state is not None
+        saved_native_console_state = saved_console_state["native_console_state"]
+
+        await app.handle_screen_navigation(NavigateToScreen("chat"))
+        fresh_console = app._navigation_outgoing_screen()
+        assert isinstance(fresh_console, ChatScreen)
+        for _ in range(80):
+            if not fresh_console._conversation_settings_return_restore_in_progress:
+                break
+            await pilot.pause(0.05)
+
+        assert status_after_cancel == "settled"
+        assert saved_native_console_state[
+            "pending_conversation_settings_return_target"
+        ] is None
+        assert fresh_console._pending_conversation_settings_return_target is None
+        assert not isinstance(app.screen, ConsoleSettingsModal)
+        assert not any(
+            "Conversation settings return was stale" in notice for notice in notices
+        )
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_posttransfer_cancellation_keeps_target_session(
+    monkeypatch,
+):
+    """A settled modal transfer keeps target A active when cancellation propagates."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    transfer_cancelled = asyncio.Event()
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        target_session = store.ensure_session()
+        prior_session = store.create_session(
+            title="Conversation C active before return",
+            settings=ConsoleSessionSettings(
+                provider="llama_cpp",
+                model="conversation-c-model",
+            ),
+        )
+        assert store.active_session_id == prior_session.id
+        snapshot = _conversation_settings_return_snapshot()
+        console._suspended_conversation_settings = snapshot
+        console._suspended_conversation_settings_token = 147
+        target = _stage_console_settings_return(
+            app,
+            session_id=target_session.id,
+            settings_revision=store.session_settings_revision(target_session.id),
+            snapshot=snapshot,
+        )
+
+        async def cancel_after_transfer(
+            _request_token,
+            *,
+            session_id,
+            settings_revision,
+            _on_transfer_committed=None,
+        ):
+            assert session_id == target_session.id
+            assert settings_revision == target.settings_revision
+            assert _on_transfer_committed is not None
+            assert _on_transfer_committed() is True
+            console._suspended_conversation_settings = None
+            console._suspended_conversation_settings_token = None
+            transfer_cancelled.set()
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(
+            console,
+            "_reopen_suspended_console_settings",
+            cancel_after_transfer,
+        )
+        console.apply_navigation_context(target.to_context())
+        await wait_for_signal(
+            transfer_cancelled,
+            what="post-transfer Conversation settings cancellation",
+        )
+        for _ in range(80):
+            if not console._conversation_settings_return_restore_in_progress:
+                break
+            await pilot.pause(0.05)
+
+        assert store.active_session_id == target_session.id
+        assert (
+            app.pending_handoffs.exact_revision_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                target.return_revision,
+            )
+            == "settled"
+        )
+        assert console._pending_conversation_settings_return_target is None
+        assert console._suspended_conversation_settings is None
+
+
+@pytest.mark.asyncio
+async def test_dirty_return_confirmation_survives_real_router_navigation_away_and_back(
+    monkeypatch,
+):
+    """A force-dismissed discard dialog must not orphan the pending return."""
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_production_app(configured_default="chat")
+    app.chat_api_provider_value = "openai"
+    app.chat_api_model_value = "gpt-5"
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    app.providers_models = {"openai": ["gpt-5"]}
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        original_console = None
+        for _ in range(200):
+            content = app._navigation_outgoing_screen()
+            if isinstance(content, ChatScreen):
+                original_console = content
+                break
+            await pilot.pause(0.05)
+        assert original_console is not None
+        await _wait_for_selector(
+            original_console,
+            pilot,
+            "#console-native-composer",
+            timeout=10.0,
+        )
+        store = original_console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        )
+
+        assert await original_console._open_console_settings() is True
+        for _ in range(80):
+            if isinstance(app.screen, ConsoleSettingsModal):
+                break
+            await pilot.pause(0.05)
+        assert isinstance(app.screen, ConsoleSettingsModal)
+        await pilot.click("#console-settings-configure-credential")
+
+        original_settings = None
+        for _ in range(200):
+            if isinstance(app.screen, SettingsScreen):
+                original_settings = app.screen
+                break
+            await pilot.pause(0.05)
+        assert original_settings is not None
+        await _wait_for_selector(
+            original_settings,
+            pilot,
+            "#settings-provider-api-key",
+            timeout=10.0,
+        )
+        dirty_key = "DUMMY-FORCED-DISMISS-RETURN-KEY"
+        original_settings.query_one("#settings-provider-api-key", Input).value = dirty_key
+        for _ in range(80):
+            return_without_save = original_settings.query_one(
+                "#settings-provider-return-without-save", Button
+            )
+            if return_without_save.display and not return_without_save.disabled:
+                break
+            await pilot.pause(0.05)
+        assert return_without_save.display is True
+        return_without_save.press()
+        for _ in range(80):
+            if isinstance(app.screen, ConfirmationDialog):
+                break
+            await pilot.pause(0.05)
+        assert isinstance(app.screen, ConfirmationDialog)
+        return_revision = original_settings._provider_return_target.return_revision
+
+        # This is the ordinary app navigation path. It snapshots the Settings
+        # content screen, then forcibly dismisses the pushed confirmation
+        # overlay with dismiss(None) before replacing Settings.
+        await app.handle_screen_navigation(NavigateToScreen("home"))
+        assert type(app.screen).__name__ == "HomeScreen"
+        assert original_settings not in app.screen_stack
+        settings_snapshot = app.screen_state_store.restore(
+            "settings", app._current_runtime_identity()
+        )
+        assert settings_snapshot is not None
+        continuation = settings_snapshot["provider_return_continuation"]
+        assert set(continuation) == {"target", "conflict", "outcome"}
+        assert continuation["target"]["return_revision"] == return_revision
+        assert continuation["conflict"] is False
+        assert continuation["outcome"] is None
+        assert dirty_key not in repr(continuation)
+        assert (
+            app.pending_handoffs.exact_revision_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                return_revision,
+            )
+            == "pending"
+        )
+
+        await app.handle_screen_navigation(NavigateToScreen("settings"))
+        fresh_settings = app.screen
+        assert isinstance(fresh_settings, SettingsScreen)
+        assert fresh_settings is not original_settings
+        await _wait_for_selector(
+            fresh_settings,
+            pilot,
+            "#settings-provider-api-key",
+            timeout=10.0,
+        )
+        restored_input = fresh_settings.query_one("#settings-provider-api-key", Input)
+        restored_return = fresh_settings.query_one(
+            "#settings-provider-return-without-save", Button
+        )
+        assert restored_input.value == dirty_key
+        assert fresh_settings._provider_return_target is not None
+        assert fresh_settings._provider_return_target.return_revision == return_revision
+        assert restored_return.display is True
+        assert restored_return.disabled is False
+
+        # The restored controls are actionable, not merely visible: retrying
+        # the same pending handoff completes the return through the real router.
+        restored_return.press()
+        for _ in range(80):
+            if isinstance(app.screen, ConfirmationDialog):
+                break
+            await pilot.pause(0.05)
+        assert isinstance(app.screen, ConfirmationDialog)
+        app.screen.query_one("#confirm-button", Button).press()
+        returned_modal = None
+        for _ in range(240):
+            if isinstance(app.screen, ConsoleSettingsModal):
+                returned_modal = app.screen
+                break
+            await pilot.pause(0.05)
+        assert returned_modal is not None
+        await _wait_for_selector(
+            returned_modal,
+            pilot,
+            "#console-settings-return-status",
+            timeout=10.0,
+        )
+        assert "Returned without saving" in str(
+            returned_modal.query_one(
+                "#console-settings-return-status", Static
+            ).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_router_failure_before_mount_keeps_handoff_pending(
+    monkeypatch,
+):
+    """Applying context to an unmounted target must not acquire its handoff."""
+
+    app = _build_production_app(configured_default="chat")
+    _configure_native_ready_console(app)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        original_console = None
+        for _ in range(200):
+            content = app._navigation_outgoing_screen()
+            if isinstance(content, ChatScreen):
+                original_console = content
+                break
+            await pilot.pause(0.05)
+        assert original_console is not None
+        await _wait_for_selector(
+            original_console,
+            pilot,
+            "#console-native-composer",
+            timeout=10.0,
+        )
+        store = original_console._ensure_console_chat_store()
+        session = store.ensure_session()
+        snapshot = _conversation_settings_return_snapshot()
+        original_console._suspended_conversation_settings = snapshot
+        original_console._suspended_conversation_settings_token = 41
+        target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=snapshot,
+        )
+
+        await app.handle_screen_navigation(NavigateToScreen("settings"))
+        assert isinstance(app._navigation_outgoing_screen(), SettingsScreen)
+        monkeypatch.setattr(
+            app,
+            "_dismiss_navigation_overlays",
+            AsyncMock(return_value=False),
+        )
+
+        outcomes: list[bool] = []
+        await app.handle_screen_navigation(
+            NavigateToScreen(
+                "chat",
+                target.to_context(),
+                on_completion=outcomes.append,
+            )
+        )
+
+        assert outcomes == [False]
+        assert isinstance(app._navigation_outgoing_screen(), SettingsScreen)
+        assert (
+            app.pending_handoffs.exact_revision_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                target.return_revision,
+            )
+            == "pending"
+        )
+        claim = app.pending_handoffs.claim(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN
+        )
+        assert claim is not None
+        assert claim.revision == target.return_revision
+        assert app.pending_handoffs.release(claim)
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_rapid_unmount_before_consumer_keeps_handoff_pending(
+    monkeypatch,
+):
+    """A newly mounted Console can leave before its deferred consumer runs."""
+
+    app = _build_production_app(configured_default="chat")
+    _configure_native_ready_console(app)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        original_console = None
+        for _ in range(200):
+            content = app._navigation_outgoing_screen()
+            if isinstance(content, ChatScreen):
+                original_console = content
+                break
+            await pilot.pause(0.05)
+        assert original_console is not None
+        await _wait_for_selector(
+            original_console,
+            pilot,
+            "#console-native-composer",
+            timeout=10.0,
+        )
+        store = original_console._ensure_console_chat_store()
+        session = store.ensure_session()
+        snapshot = _conversation_settings_return_snapshot()
+        original_console._suspended_conversation_settings = snapshot
+        original_console._suspended_conversation_settings_token = 42
+        target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=snapshot,
+        )
+
+        await app.handle_screen_navigation(NavigateToScreen("settings"))
+        monkeypatch.setattr(
+            ChatScreen,
+            "_consume_pending_conversation_settings_return",
+            lambda self: None,
+        )
+        await app.handle_screen_navigation(
+            NavigateToScreen("chat", target.to_context())
+        )
+        returned_console = app._navigation_outgoing_screen()
+        assert isinstance(returned_console, ChatScreen)
+
+        await app.handle_screen_navigation(NavigateToScreen("settings"))
+
+        assert returned_console not in app.screen_stack
+        assert (
+            app.pending_handoffs.exact_revision_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                target.return_revision,
+            )
+            == "pending"
+        )
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_unmount_releases_acquired_exact_claim(
+    monkeypatch,
+):
+    """Unmount is a settlement boundary even when restore suppresses cancellation."""
+
+    app = _build_production_app(configured_default="chat")
+    _configure_native_ready_console(app)
+    restore_started = asyncio.Event()
+    restore_cancelled = asyncio.Event()
+    allow_restore_exit = asyncio.Event()
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        console = None
+        for _ in range(200):
+            content = app._navigation_outgoing_screen()
+            if isinstance(content, ChatScreen):
+                console = content
+                break
+            await pilot.pause(0.05)
+        assert console is not None
+        await _wait_for_selector(console, pilot, "#console-native-composer", timeout=10.0)
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        snapshot = _conversation_settings_return_snapshot()
+        console._suspended_conversation_settings = snapshot
+        console._suspended_conversation_settings_token = 43
+        target = _stage_console_settings_return(
+            app,
+            session_id=session.id,
+            settings_revision=store.session_settings_revision(session.id),
+            snapshot=snapshot,
+        )
+
+        async def hold_restore(**_kwargs):
+            restore_started.set()
+            while not allow_restore_exit.is_set():
+                try:
+                    await allow_restore_exit.wait()
+                except asyncio.CancelledError:
+                    restore_cancelled.set()
+            return False
+
+        monkeypatch.setattr(console, "_open_console_settings", hold_restore)
+        console.apply_navigation_context(target.to_context())
+        console._consume_pending_conversation_settings_return()
+        await wait_for_signal(restore_started, what="Conversation settings restore claim")
+        assert (
+            app.pending_handoffs.exact_revision_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                target.return_revision,
+            )
+            == "in_flight"
+        )
+        replacement_revision = app.pending_handoffs.stage(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+            ConversationSettingsReturnIntent(
+                session.id,
+                store.session_settings_revision(session.id),
+                "model",
+                None,
+            ),
+        )
+
+        await app.handle_screen_navigation(NavigateToScreen("settings"))
+        await wait_for_signal(
+            restore_cancelled,
+            what="Conversation settings restore worker cancellation",
+        )
+
+        try:
+            assert console not in app.screen_stack
+            assert (
+                app.pending_handoffs.exact_revision_status(
+                    HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                    target.return_revision,
+                )
+                == "superseded"
+            )
+            replacement_claim = app.pending_handoffs.claim(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN
+            )
+            assert replacement_claim is not None
+            assert replacement_claim.revision == replacement_revision
+            assert app.pending_handoffs.release(replacement_claim)
+        finally:
+            allow_restore_exit.set()
 
 
 def test_console_store_uses_app_citation_repository_for_matching_database():
@@ -3059,6 +5291,241 @@ def test_console_session_settings_base_url_wins_over_llamacpp_fallback(monkeypat
     assert selection.explicit_model == "settings-model"
 
 
+def test_console_generation_test_selection_uses_validated_draft_without_session_mutation():
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    original = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
+    store.replace_session_settings(session.id, original)
+    draft = ConsoleSessionSettings(
+        provider="ollama",
+        model="qwen-test",
+        base_url="http://127.0.0.1:11434",
+        temperature=0.25,
+        streaming=True,
+    )
+
+    selection = screen._build_console_provider_selection_for_settings(
+        session.id, draft
+    )
+
+    assert selection.provider == "ollama"
+    assert selection.explicit_model == "qwen-test"
+    assert selection.base_url == "http://127.0.0.1:11434"
+    assert selection.temperature == 0.25
+    assert selection.streaming is True
+    assert store.session_settings(session.id) == original
+
+
+@pytest.mark.asyncio
+async def test_console_one_token_generation_test_has_fixed_isolated_policy(monkeypatch):
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="",
+        model="gpt-4.1",
+        ready=True,
+        readiness_key="openai",
+        execution_key="openai",
+        api_key="secret",
+        request_timeout=99.0,
+        request_retries=9,
+        request_retry_delay=8.0,
+        streaming=True,
+    )
+
+    class FakeGateway:
+        def __init__(self):
+            self.selections = []
+            self.requests = []
+
+        async def resolve_for_send(self, selection):
+            self.selections.append(selection)
+            return replace(
+                resolution,
+                reasoning_effort=selection.settings.reasoning_effort,
+                reasoning_summary=selection.settings.reasoning_summary,
+                verbosity=selection.settings.verbosity,
+                thinking_effort=selection.settings.thinking_effort,
+                thinking_budget_tokens=selection.settings.thinking_budget_tokens,
+            )
+
+        async def complete_auxiliary(self, request):
+            self.requests.append(request)
+            return AuxiliaryCompletionResult("openai", "gpt-4.1", "yes", None)
+
+    deadlines = []
+
+    class Deadline:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(
+        chat_screen_module.asyncio,
+        "timeout",
+        lambda seconds: deadlines.append(seconds) or Deadline(),
+    )
+    gateway = FakeGateway()
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    original_messages = store.messages_for_session(session.id)
+    screen._ensure_console_provider_gateway = lambda: gateway
+    draft = ConsoleSessionSettings(
+        provider="anthropic",
+        model="claude-test",
+        reasoning_effort="high",
+        reasoning_summary="detailed",
+        verbosity="high",
+        thinking_effort="high",
+        thinking_budget_tokens=4096,
+    )
+    identity = ProviderDraftIdentity(
+        provider_key="openai",
+        connection_identity=canonical_connection_identity(
+            "openai", "https://api.openai.com/v1"
+        ),
+        credential_source="stored",
+        credential_revision=1,
+        draft_generation=2,
+    )
+    screen._build_console_provider_selection_for_settings = (
+        lambda session_id, settings: SimpleNamespace(session_id=session_id, settings=settings)
+    )
+
+    result = await screen._test_console_generation(
+        session.id, ConsoleGenerationTestRequest(draft, identity)
+    )
+
+    assert result.generation == "succeeded"
+    assert deadlines == [20.0]
+    assert len(gateway.requests) == 1
+    request = gateway.requests[0]
+    assert isinstance(request, AuxiliaryCompletionRequest)
+    assert tuple(dict(message) for message in request.messages) == (
+        {"role": "user", "content": "Reply with one short token."},
+    )
+    assert request.response_format is None
+    assert request.max_output_tokens == 1
+    assert request.resolution.request_timeout == 15.0
+    assert request.resolution.request_retries == 0
+    assert request.resolution.request_retry_delay == 0.0
+    assert request.resolution.streaming is False
+    assert request.resolution.reasoning_effort is None
+    assert request.resolution.reasoning_summary is None
+    assert request.resolution.verbosity is None
+    assert request.resolution.thinking_effort is None
+    assert request.resolution.thinking_budget_tokens is None
+    assert "yes" not in repr(result)
+    assert store.messages_for_session(session.id) == original_messages
+
+
+@pytest.mark.asyncio
+async def test_console_generation_test_failure_is_bounded_and_sanitized() -> None:
+    secret = "sk-private-value https://secret.internal/path"
+
+    class FailingGateway:
+        async def resolve_for_send(self, _selection):
+            return ConsoleProviderResolution(
+                provider="openai",
+                base_url="",
+                model="gpt-4.1",
+                ready=True,
+                readiness_key="openai",
+                execution_key="openai",
+            )
+
+        async def complete_auxiliary(self, _request):
+            raise RuntimeError(secret)
+
+    screen = ChatScreen.__new__(ChatScreen)
+    screen._ensure_console_provider_gateway = lambda: FailingGateway()
+    screen._build_console_provider_selection_for_settings = lambda *_args: object()
+    draft = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
+    identity = ProviderDraftIdentity(
+        provider_key="openai",
+        connection_identity=canonical_connection_identity(
+            "openai", "https://api.openai.com/v1"
+        ),
+        credential_source="stored",
+        credential_revision=1,
+        draft_generation=2,
+    )
+
+    result = await screen._test_console_generation(
+        "session-1", ConsoleGenerationTestRequest(draft, identity)
+    )
+
+    assert result.generation == "failed"
+    assert result.category == "provider_error"
+    assert secret not in repr(result)
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected_category"),
+    [
+        (400, "bad_request"),
+        (401, "authentication"),
+        (403, "authentication"),
+        (408, "timeout"),
+        (429, "rate_limit"),
+        (502, "provider_error"),
+        (503, "connection_error"),
+        (504, "timeout"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_console_generation_test_preserves_bounded_transport_category(
+    status_code: int,
+    expected_category: str,
+) -> None:
+    secret = "sk-private transport cause"
+
+    class FailingGateway:
+        async def resolve_for_send(self, _selection):
+            return ConsoleProviderResolution(
+                provider="llama_cpp",
+                base_url="http://127.0.0.1:9099/v1",
+                model="model-a",
+                ready=True,
+                readiness_key="llama_cpp",
+                execution_key="llama_cpp",
+            )
+
+        async def complete_auxiliary(self, _request):
+            raise chat_screen_module.ChatProviderError(
+                secret,
+                status_code=status_code,
+                details=RuntimeError(secret),
+            )
+
+    screen = ChatScreen.__new__(ChatScreen)
+    screen._ensure_console_provider_gateway = lambda: FailingGateway()
+    screen._build_console_provider_selection_for_settings = lambda *_args: object()
+    draft = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    identity = ProviderDraftIdentity(
+        provider_key="llama_cpp",
+        connection_identity=canonical_connection_identity(
+            "llama_cpp", "http://127.0.0.1:9099/v1"
+        ),
+        credential_source="none",
+        credential_revision=1,
+        draft_generation=2,
+    )
+
+    result = await screen._test_console_generation(
+        "session-1", ConsoleGenerationTestRequest(draft, identity)
+    )
+
+    assert result.generation == "failed"
+    assert result.category == expected_category
+    assert secret not in repr(result)
+
+
 @pytest.mark.asyncio
 async def test_console_stop_interrupts_stream_and_keeps_partial_message_visible():
     gateway = WaitingGateway()
@@ -3181,6 +5648,7 @@ async def test_console_composer_stop_is_subdued_when_idle():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         _select_llamacpp_console(console)
+        assert console._console_setup_blocked_reason() == ""
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         send_button = composer.query_one("#console-send-message", Button)
@@ -3236,6 +5704,7 @@ async def test_console_duplicate_send_during_stream_does_not_break_stop_control(
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         _select_llamacpp_console(console)
+        assert console._console_setup_blocked_reason() == ""
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
@@ -3245,6 +5714,12 @@ async def test_console_duplicate_send_during_stream_does_not_break_stop_control(
 
         composer.load_draft("second send")
         send_button = console.query_one("#console-send-message", Button)
+        for _ in range(40):
+            if send_button.label.plain == "Queue":
+                break
+            await pilot.pause(0.05)
+        else:
+            raise AssertionError("accepted live turn did not expose Queue")
         # TASK-2154.6: genuinely disabled while the run blocks sends; the
         # direct handler dispatch below (not `press()`, which no-ops on a
         # disabled control) is exactly how the Enter hotkey still reaches it.
@@ -8927,7 +11402,7 @@ async def test_console_workspace_conversation_resume_uses_real_local_services(tm
         inspector_text = _visible_text(console.query_one("#console-right-rail"))
         assert "Provider:" not in left_rail_text
         assert "Model:" not in left_rail_text
-        assert "Session Settings" in inspector_text
+        assert "Conversation settings" in inspector_text
         assert "Provider:" in inspector_text
         assert "Where: Real Workspace › Real saved chat" in inspector_text
         conversation_source = console.query_one(
@@ -9620,6 +12095,11 @@ def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
     """
     screen = ChatScreen.__new__(ChatScreen)
     screen._console_runtime_ref = ConsoleRuntime(None)
+    screen._retrieval = SimpleNamespace(_capture_console_staged_rag=Mock())
+    screen._skill = SimpleNamespace(
+        _set_console_pending_skill_install=Mock(),
+        _set_console_pending_skill_script=Mock(),
+    )
     screen._console_chat_store = store
     # A bare, uninitialized `ConsoleSessionController` -- `__init__` was
     # never run, so every OTHER dependency is unset by default. Only the
@@ -10543,6 +13023,64 @@ async def test_pending_image_on_vision_model_does_not_block(monkeypatch):
         store.set_pending_attachment(session.id, _staged_image_attachment())
 
         assert console._console_attachment_blocked_reason() == ""
+
+
+def test_console_readiness_copy_uses_typed_blocker_and_recovery_across_surfaces(
+    monkeypatch,
+) -> None:
+    readiness = ConsoleSettingsReadiness(
+        label="READY legacy poison",
+        detail="PRIVATE https://secret.invalid/key exception",
+        native_send_supported=False,
+        operability="not_ready",
+        blocker="credential_missing",
+        recovery_action="configure_credential",
+        provider_display_name="OpenAI",
+        configuration="incomplete",
+        configuration_issue="credential_missing",
+        credential="missing",
+        credential_source="none",
+        endpoint="not_tested",
+        model="unconfirmed",
+        generation="not_tested",
+    )
+    screen = ChatScreen(_build_test_app())
+    settings = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
+    monkeypatch.setattr(
+        screen,
+        "_active_console_settings_readiness",
+        lambda: (settings, readiness),
+    )
+    monkeypatch.setattr(
+        screen,
+        "_active_console_provider_model_display",
+        lambda: ("OpenAI", "gpt-4.1", settings),
+    )
+
+    assert screen._console_provider_blocker_copy() == (
+        "Provider setup needed: OpenAI missing API key"
+    )
+    assert screen._console_provider_recovery_action() == (
+        CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
+        "settings",
+        "Configure OpenAI API and API key in Settings",
+    )
+    assert screen._console_provider_recovery_field() == "api_key"
+    assert screen._console_setup_blocked_reason() == (
+        "Add API key in Settings > Providers & Models before sending."
+    )
+    assert screen._console_send_blocked_reason() == (
+        "Console send blocked: Add an API key for OpenAI before sending."
+    )
+    surface_copy = "\n".join(
+        (
+            screen._console_provider_blocker_copy(),
+            screen._console_setup_blocked_reason(),
+            screen._console_send_blocked_reason(),
+        )
+    )
+    assert "READY legacy poison" not in surface_copy
+    assert "PRIVATE" not in surface_copy
 
 
 @pytest.mark.asyncio
@@ -12005,8 +14543,9 @@ async def test_console_retry_accepted_fires_success_toast():
 
 @pytest.mark.asyncio
 async def test_console_settings_save_fires_success_toast():
-    """Saving the Console settings modal confirms at success severity (FB-07)."""
+    """Using the Console settings draft confirms at success severity (FB-07)."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     notifications = _capture_notify_severities(app)
     host = ConsoleHarness(app)
 
@@ -12029,14 +14568,18 @@ async def test_console_settings_save_fires_success_toast():
                 modal = host.screen_stack[-1]
                 break
         assert modal is not None, "ConsoleSettingsModal never opened"
-        # task-14920: decomposition wave 2 (4de93c10d) moved this seam onto
-        # `ConsoleSessionController` without a ChatScreen delegator; this
-        # test was written afterwards and had never run green.
-        settings = console._session._ensure_active_console_session_settings()
-        modal.dismiss(settings)
-        await pilot.pause(0.5)
+        await _wait_for_selector(
+            modal,
+            pilot,
+            "#console-settings-model-select",
+        )
+        modal.query_one("#console-settings-save", Button).press()
+        for _ in range(40):
+            if host.screen_stack[-1] is console:
+                break
+            await pilot.pause(0.05)
 
-    assert ("Console settings saved.", "success") in notifications
+    assert ("This chat updated", "success") in notifications
 
 
 @pytest.mark.asyncio

@@ -1333,6 +1333,8 @@ class ConsoleChatSession:
     )
     #: Monotonic identity projection fence for labels and trusted templates.
     identity_revision: int = 0
+    #: Process-local revision of settings owned by the Console settings modal.
+    settings_revision: int = 0
     project_instruction_state: ProjectInstructionControlState = field(
         default_factory=ProjectInstructionControlState.legacy_disabled
     )
@@ -7580,6 +7582,10 @@ class ConsoleChatStore:
         """Return in-memory settings for a native Console session."""
         return self._session_or_raise(session_id).settings
 
+    def session_settings_revision(self, session_id: str) -> int:
+        """Return the process-local revision of modal-owned session settings."""
+        return self._session_or_raise(session_id).settings_revision
+
     def session_context_policy_overrides(
         self, session_id: str
     ) -> ConsoleContextPolicyOverrides:
@@ -7764,8 +7770,14 @@ class ConsoleChatStore:
         if not isinstance(overrides, ConsoleContextPolicyOverrides):
             raise TypeError("overrides must be ConsoleContextPolicyOverrides")
         session = self._session_or_raise(session_id)
+        changed = (
+            session.context_policy_overrides != overrides
+            or session.context_policy_error is not None
+        )
         expected_revision = session.context_policy_durable_revision
         self._replace_session_context_policy_live(session, overrides)
+        if changed:
+            self._bump_settings_revision(session_id)
         if session.persisted_conversation_id is None or self.persistence is None:
             return session, True
         writer = getattr(self.persistence, "update_conversation_context_policy", None)
@@ -8599,6 +8611,8 @@ class ConsoleChatStore:
                         "Failed to persist Console settings snapshot; "
                         "in-memory session keeps the applied settings."
                     )
+        if changed:
+            self._bump_settings_revision(session_id)
         return session
 
     def session_draft(self, session_id: str) -> str:
@@ -11232,6 +11246,7 @@ class ConsoleChatStore:
         if session.user_display_name_override == normalized:
             return session, True
         session.user_display_name_override = normalized
+        self._bump_settings_revision(session_id)
         self._bump_identity_revision(session_id)
         context_persisted = self._persist_roleplay_context(session)
         persisted = self._materialize_roleplay_projections(
@@ -16520,10 +16535,12 @@ class ConsoleChatStore:
             if isinstance(system_prompt, str) and system_prompt.strip()
             else None
         )
-        if session.settings.system_prompt != normalized:
+        settings_changed = session.settings.system_prompt != normalized
+        if settings_changed:
             session.has_user_work = True
         session.settings = replace(session.settings, system_prompt=normalized)
         cleared_character_template = session.character_system_template is not None
+        settings_changed = settings_changed or cleared_character_template
         if cleared_character_template:
             # A manual system-prompt edit revokes the trusted source rather
             # than allowing a later name refresh to overwrite user content.
@@ -16531,6 +16548,8 @@ class ConsoleChatStore:
             self._bump_identity_revision(session_id)
         else:
             self._bump_payload_revision(session_id)
+        if settings_changed:
+            self._bump_settings_revision(session_id)
         persisted = True
         if (
             session.persisted_conversation_id is not None
@@ -16598,9 +16617,12 @@ class ConsoleChatStore:
             )
             return session, False
         normalized = prefill if isinstance(prefill, str) and prefill.strip() else None
+        settings_changed = session.settings.pinned_prefill != normalized
         if session.settings.pinned_prefill != normalized:
             session.has_user_work = True
         session.settings = replace(session.settings, pinned_prefill=normalized)
+        if settings_changed:
+            self._bump_settings_revision(session_id)
         self._bump_payload_revision(session_id)
         persisted = True
         if (
@@ -18657,6 +18679,9 @@ class ConsoleChatStore:
             self._payload_revisions.get(session_id, 0) + 1
         )
         self._record_owned_counter_increment(session_id, "payload")
+
+    def _bump_settings_revision(self, session_id: str) -> None:
+        self._session_or_raise(session_id).settings_revision += 1
 
     def get_payload_revision(self, session_or_conversation_id: str) -> int:
         """Return the payload-revision counter for a session or conversation.

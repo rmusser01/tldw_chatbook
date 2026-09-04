@@ -49,7 +49,7 @@ from .console_context_controls import (
     build_console_context_control_state,
     format_context_tokens,
 )
-from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
+from tldw_chatbook.Widgets.model_search_picker import ModelPickerInput, ModelSearchPicker
 
 CONSOLE_POPOVER_OPEN_FULL_SETTINGS = "open-full-settings"
 
@@ -926,6 +926,14 @@ class ConsoleModelPopover(
             event.model_id,
             preserve_custom_model_input=event.custom,
         )
+
+    @on(ModelPickerInput.EscapePressed)
+    async def _model_picker_escape_unhandled(
+        self, event: ModelPickerInput.EscapePressed
+    ) -> None:
+        """Safely dismiss after the picker declines an unhandled Escape."""
+        event.stop()
+        await self.request_safe_cancel(source="model-picker")
 
     @on(Button.Pressed, "#console-popover-streaming")
     def _toggle_streaming(self, event: Button.Pressed) -> None:

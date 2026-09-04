@@ -32,6 +32,7 @@ from tldw_chatbook.Chat.local_server_discovery import (
     read_bounded_model_response,
 )
 from tldw_chatbook.Chat.provider_endpoint_contract import resolve_provider_endpoint
+from tldw_chatbook.Chat.provider_test_evidence import ProviderProbeResult
 from tldw_chatbook.TTS.openai_compatible_config import (
     normalize_openai_compatible_endpoint,
 )
@@ -215,6 +216,36 @@ class SettingsEndpointProbeOutcome:
     def model_count(self) -> int | None:
         """Compatibility count for old callers that did not retain model IDs."""
         return self._legacy_model_count
+
+
+def provider_probe_result_from_settings_outcome(
+    outcome: SettingsEndpointProbeOutcome,
+) -> ProviderProbeResult:
+    """Project the shared transport outcome into bounded provider evidence.
+
+    Args:
+        outcome: Validated result from the shared Settings endpoint probe.
+
+    Returns:
+        Bounded provider evidence for the Console readiness model.
+
+    Raises:
+        ValueError: If ``outcome`` is not a Settings endpoint probe outcome.
+    """
+
+    if type(outcome) is not SettingsEndpointProbeOutcome:
+        raise ValueError("Provider probe outcome is invalid.")
+    endpoint = {
+        SpeechTTSConnectionState.REACHABLE: "reachable",
+        SpeechTTSConnectionState.UNREACHABLE: "unreachable",
+        SpeechTTSConnectionState.NOT_TESTED: "not_tested",
+        SpeechTTSConnectionState.UNSUPPORTED: "model_listing_unavailable",
+    }.get(outcome.state, outcome.state)
+    return ProviderProbeResult(
+        endpoint=str(endpoint),
+        model_ids=outcome.model_ids,
+        category=outcome.category,
+    )
 
 
 def _reachable_outcome(body: bytes) -> SettingsEndpointProbeOutcome:

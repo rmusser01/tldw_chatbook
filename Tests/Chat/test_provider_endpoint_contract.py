@@ -724,3 +724,39 @@ def test_public_resolution_type_is_frozen_slotted_and_form_type_is_complete() ->
     assert hasattr(contract.ProviderEndpointResolution, "__slots__")
     with pytest.raises(FrozenInstanceError):
         result.provider_key = "changed"
+
+
+@pytest.mark.parametrize(
+    "provider",
+    ("custom", "llama_cpp", "ollama", "vllm", "tabbyapi"),
+)
+def test_connection_probe_availability_accepts_valid_url_provider_models_routes(
+    provider: str,
+) -> None:
+    """Removing URL-provider eligibility must hide a useful bounded probe."""
+    assert contract.connection_probe_availability(
+        provider,
+        "http://127.0.0.1:9099/v1",
+    ) is contract.ConnectionProbeAvailability.MODELS_ROUTE
+
+
+@pytest.mark.parametrize("provider", ("openai", "anthropic", "google"))
+def test_connection_probe_availability_rejects_cloud_providers_without_a_declared_probe(
+    provider: str,
+) -> None:
+    """A derived URL alone must not invent a live-check contract for cloud APIs."""
+    assert contract.connection_probe_availability(
+        provider,
+        "https://api.example.test/v1",
+    ) is contract.ConnectionProbeAvailability.UNAVAILABLE
+
+
+@pytest.mark.parametrize("endpoint", (None, "", "not a url", "ftp://localhost/v1"))
+def test_connection_probe_availability_rejects_missing_or_invalid_routes(
+    endpoint: str | None,
+) -> None:
+    """Invalid drafts must not expose an action that cannot issue a safe request."""
+    assert contract.connection_probe_availability(
+        "custom",
+        endpoint,
+    ) is contract.ConnectionProbeAvailability.UNAVAILABLE

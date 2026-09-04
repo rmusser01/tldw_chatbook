@@ -25,6 +25,9 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     HandoffValueError,
     PendingHandoffStore,
 )
+from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
+    ConversationSettingsReturnIntent,
+)
 from tldw_chatbook.UI.Screens.study_scope_models import (
     STUDY_INITIAL_SECTIONS,
     StudyScopeContext,
@@ -97,6 +100,247 @@ def test_stage_replaces_unclaimed_value_with_channel_local_revision() -> None:
     assert store.stage(HandoffChannel.CHAT, _chat_payload("second")) == 2
 
     assert _claim_title(store, HandoffChannel.CHAT) == "second"
+
+
+def test_conversation_settings_return_handoff_replaces_and_detaches() -> None:
+    store = PendingHandoffStore()
+    first = ConversationSettingsReturnIntent("session-1", 4, "model", "console-settings-model-picker")
+    second = ConversationSettingsReturnIntent("session-2", 5, "context", None)
+    assert store.stage(HandoffChannel.CONVERSATION_SETTINGS_RETURN, first) == 1
+    assert store.stage(HandoffChannel.CONVERSATION_SETTINGS_RETURN, second) == 2
+    claim = store.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+    assert claim is not None
+    assert claim.revision == 2
+    assert claim.value == second
+    assert claim.value is not second
+    assert tuple(item.name for item in fields(claim.value)) == (
+        "session_id",
+        "settings_revision",
+        "active_view",
+        "focus_control_id",
+    )
+    assert not hasattr(claim.value, "__dict__")
+    for private_field in (
+        "api_key",
+        "headers",
+        "base_url",
+        "system_prompt",
+        "pinned_prefill",
+        "transcript",
+    ):
+        assert not hasattr(claim.value, private_field)
+    assert claim.value.to_context() == {
+        "session_id": "session-2",
+        "settings_revision": 5,
+        "active_view": "context",
+        "focus_control_id": None,
+    }
+    assert store.acknowledge(claim) is True
+
+
+def test_conversation_settings_return_handoff_requires_exact_ack_and_supports_release() -> None:
+    store = PendingHandoffStore()
+    intent = ConversationSettingsReturnIntent("session-1", 4, "model", None)
+    store.stage(HandoffChannel.CONVERSATION_SETTINGS_RETURN, intent)
+    claim = store.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+    assert claim is not None
+    assert store.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN) is None
+    assert store.acknowledge(replace(claim)) is False
+    assert store.release(replace(claim)) is False
+    assert store.release(claim) is True
+    retry = store.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+    assert retry is not None
+    assert retry.revision == claim.revision
+    assert store.acknowledge(retry) is True
+
+
+def test_settle_transferred_claim_atomically_settles_exact_in_flight_return() -> None:
+    """A modal-owned return is terminal without a screen-owned cleanup step."""
+
+    store = PendingHandoffStore()
+    intent = ConversationSettingsReturnIntent("session-1", 4, "model", None)
+    revision = store.stage(HandoffChannel.CONVERSATION_SETTINGS_RETURN, intent)
+    claim = store.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+
+    assert claim is not None
+    assert store.settle_transferred_claim(claim) is True
+    assert (
+        store.exact_revision_status(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN, revision
+        )
+        == "settled"
+    )
+    assert store.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN) is None
+
+
+def test_settle_transferred_claim_atomically_removes_exact_requeued_return() -> None:
+    """A partial prior release cannot leave a snapshot-less pending replay."""
+
+    store = PendingHandoffStore()
+    intent = ConversationSettingsReturnIntent("session-1", 4, "model", None)
+    revision = store.stage(HandoffChannel.CONVERSATION_SETTINGS_RETURN, intent)
+    claim = store.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+
+    assert claim is not None
+    assert store.release(claim) is True
+    assert store.settle_transferred_claim(claim) is True
+    assert (
+        store.exact_revision_status(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN, revision
+        )
+        == "settled"
+    )
+
+
+def test_settle_transferred_claim_preserves_pending_replacement() -> None:
+    """Settling in-flight A leaves pending B's exact revision and value intact."""
+
+    store = PendingHandoffStore()
+    first = ConversationSettingsReturnIntent("session-1", 4, "model", None)
+    replacement = ConversationSettingsReturnIntent(
+        "session-2", 5, "context", "console-settings-provider"
+    )
+    first_revision = store.stage(HandoffChannel.CONVERSATION_SETTINGS_RETURN, first)
+    first_claim = store.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+    replacement_revision = store.stage(
+        HandoffChannel.CONVERSATION_SETTINGS_RETURN, replacement
+    )
+
+    assert first_claim is not None
+    assert store.settle_transferred_claim(first_claim) is True
+    assert (
+        store.exact_revision_status(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN, first_revision
+        )
+        == "superseded"
+    )
+    replacement_claim = store.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+    assert replacement_claim is not None
+    assert replacement_claim.revision == replacement_revision
+    assert replacement_claim.value == replacement
+    assert store.settle_transferred_claim(first_claim) is True
+    assert store.is_current_claim(replacement_claim) is True
+
+
+def test_settle_transferred_claim_recognizes_terminal_return_without_mutation() -> None:
+    """Repeated or superseded settlement is terminal and cannot consume B."""
+
+    store = PendingHandoffStore()
+    first = ConversationSettingsReturnIntent("session-1", 4, "model", None)
+    replacement = ConversationSettingsReturnIntent("session-2", 5, "context", None)
+    store.stage(HandoffChannel.CONVERSATION_SETTINGS_RETURN, first)
+    first_claim = store.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+    assert first_claim is not None
+    assert store.acknowledge(first_claim) is True
+    assert store.settle_transferred_claim(first_claim) is True
+
+    replacement_revision = store.stage(
+        HandoffChannel.CONVERSATION_SETTINGS_RETURN, replacement
+    )
+    assert store.settle_transferred_claim(first_claim) is True
+    replacement_claim = store.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+    assert replacement_claim is not None
+    assert replacement_claim.revision == replacement_revision
+    assert replacement_claim.value == replacement
+
+
+def test_settle_transferred_claim_rejects_other_current_claim_identity() -> None:
+    """A stale claim object cannot settle a newly claimed retry of its revision."""
+
+    store = PendingHandoffStore()
+    intent = ConversationSettingsReturnIntent("session-1", 4, "model", None)
+    store.stage(HandoffChannel.CONVERSATION_SETTINGS_RETURN, intent)
+    first_claim = store.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+    assert first_claim is not None
+    assert store.release(first_claim) is True
+    retry_claim = store.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+
+    assert retry_claim is not None
+    assert retry_claim is not first_claim
+    assert store.settle_transferred_claim(first_claim) is False
+    assert store.is_current_claim(retry_claim) is True
+    assert store.settle_transferred_claim(retry_claim) is True
+
+
+def test_settle_transferred_claim_validates_type_channel_and_owner_thread() -> None:
+    """The atomic transfer boundary keeps the store's affine typed contract."""
+
+    store = PendingHandoffStore()
+    with pytest.raises(TypeError, match="HandoffClaim"):
+        store.settle_transferred_claim(object())  # type: ignore[arg-type]
+
+    store.stage(HandoffChannel.CHAT, _chat_payload())
+    chat_claim = store.claim(HandoffChannel.CHAT)
+    assert chat_claim is not None
+    with pytest.raises(ValueError, match="Conversation settings"):
+        store.settle_transferred_claim(chat_claim)
+
+    store.stage(
+        HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+        ConversationSettingsReturnIntent("session-1", 4, "model", None),
+    )
+    return_claim = store.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+    assert return_claim is not None
+    with pytest.raises(ValueError, match="positive exact integer"):
+        store.settle_transferred_claim(replace(return_claim, revision=True))
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        failure = executor.submit(
+            store.settle_transferred_claim, return_claim
+        ).exception()
+    assert isinstance(failure, RuntimeError)
+    assert "owner thread" in str(failure)
+
+
+def test_exact_revision_status_distinguishes_pending_in_flight_and_terminal() -> None:
+    """Consumers can distinguish ownership without reading a handoff value."""
+
+    store = PendingHandoffStore()
+    intent = ConversationSettingsReturnIntent("session-1", 4, "model", None)
+    revision = store.stage(HandoffChannel.CONVERSATION_SETTINGS_RETURN, intent)
+
+    assert (
+        store.exact_revision_status(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN, revision
+        )
+        == "pending"
+    )
+    claim = store.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+    assert claim is not None
+    assert (
+        store.exact_revision_status(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN, revision
+        )
+        == "in_flight"
+    )
+    assert store.acknowledge(claim)
+    assert (
+        store.exact_revision_status(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN, revision
+        )
+        == "settled"
+    )
+
+    newer_revision = store.stage(
+        HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+        ConversationSettingsReturnIntent("session-2", 0, "context", None),
+    )
+    assert newer_revision > revision
+    assert (
+        store.exact_revision_status(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN, revision
+        )
+        == "superseded"
+    )
+
+
+def test_conversation_settings_return_handoff_explicit_clear() -> None:
+    store = PendingHandoffStore()
+    store.stage(
+        HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+        ConversationSettingsReturnIntent("session-1", 4, "model", None),
+    )
+    assert store.clear_pending(HandoffChannel.CONVERSATION_SETTINGS_RETURN) == 2
+    assert store.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN) is None
 
 
 def test_claim_is_exclusive_until_exact_claim_settles() -> None:

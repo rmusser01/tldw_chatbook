@@ -2839,7 +2839,7 @@ async def test_resolve_for_send_blocks_generic_base_url_override_that_differs_fr
     )
 
     assert resolved.ready is False
-    assert "save the endpoint in Settings" in resolved.visible_copy
+    assert "save the endpoint in Conversation settings" in resolved.visible_copy
     assert "Selected endpoint: http://127.0.0.1:9999/v1" in resolved.visible_copy
     assert "Saved endpoint: http://127.0.0.1:11434" in resolved.visible_copy
     assert "user" not in resolved.visible_copy
@@ -2871,7 +2871,7 @@ async def test_resolve_for_send_preserves_explicit_cloud_url_without_configured_
     assert resolved.readiness_key == "openai"
     assert resolved.execution_key == "openai"
     assert resolved.base_url == "http://127.0.0.1:9999/v1"
-    assert "save the endpoint in Settings" not in resolved.visible_copy
+    assert "save the endpoint in Conversation settings" not in resolved.visible_copy
 
 
 @pytest.mark.asyncio
@@ -3109,7 +3109,7 @@ async def test_resolve_for_send_blocks_malformed_generic_base_url_without_crashi
     )
 
     assert resolved.ready is False
-    assert "save the endpoint in Settings" in resolved.visible_copy
+    assert "save the endpoint in Conversation settings" in resolved.visible_copy
 
 
 @pytest.mark.asyncio
@@ -8757,6 +8757,54 @@ async def test_auxiliary_completion_is_one_shot_nonstreaming_and_tool_free() -> 
     assert is_sensitive_llm_request() is False
 
 
+def test_auxiliary_adapter_kwargs_forward_bounded_transport_policy() -> None:
+    gateway = ConsoleProviderGateway()
+    resolution = _auxiliary_resolution(
+        request_timeout=15.0,
+        request_retries=0,
+        request_retry_delay=0.0,
+    )
+    request = _auxiliary_request(resolution=resolution, max_output_tokens=1)
+
+    kwargs = gateway._auxiliary_chat_api_kwargs(request, resolution)
+
+    assert kwargs["request_timeout"] == 15.0
+    assert kwargs["request_retries"] == 0
+    assert kwargs["request_retry_delay"] == 0.0
+    assert kwargs["max_tokens"] == 1
+
+
+@pytest.mark.asyncio
+async def test_generation_probe_anthropic_budget_cannot_expand_one_token_bound() -> None:
+    calls = []
+    resolution = _auxiliary_resolution(
+        provider="anthropic",
+        readiness_key="anthropic",
+        execution_key="anthropic",
+        max_tokens=1,
+        reasoning_effort=None,
+        reasoning_summary=None,
+        verbosity=None,
+        thinking_effort=None,
+        thinking_budget_tokens=None,
+        request_timeout=15.0,
+        request_retries=0,
+        request_retry_delay=0.0,
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **kwargs: calls.append(kwargs) or "ok"
+    )
+
+    await gateway.complete_auxiliary(
+        _auxiliary_request(resolution=resolution, max_output_tokens=1)
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["max_tokens"] == 1
+    assert "thinking_effort" not in calls[0]
+    assert "thinking_budget_tokens" not in calls[0]
+
+
 @pytest.mark.asyncio
 async def test_auxiliary_completion_cannot_inherit_capture_on_shadow() -> None:
     calls: list[dict[str, object]] = []
@@ -8836,6 +8884,28 @@ async def test_auxiliary_completion_redacts_provider_exception_and_resets_contex
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure", "expected_status"),
+    [
+        (TimeoutError("TIMEOUT-SECRET"), 408),
+        (ConnectionError("CONNECT-SECRET"), 503),
+    ],
+)
+async def test_auxiliary_adapter_transport_failure_keeps_bounded_category(
+    failure, expected_status
+) -> None:
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **_kwargs: (_ for _ in ()).throw(failure)
+    )
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        await gateway.complete_auxiliary(_auxiliary_request())
+
+    assert exc_info.value.status_code == expected_status
+    assert "SECRET" not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
 async def test_auxiliary_completion_ignores_injected_raw_error_formatter() -> None:
     def fail(**_kwargs):
         raise RuntimeError("EXCEPTION-CANARY")
@@ -8881,6 +8951,35 @@ async def test_auxiliary_completion_cancellation_starts_no_second_call_and_reset
     assert calls == 1
     assert observed == [True, True]
     assert is_sensitive_llm_request() is False
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_outer_timeout_does_not_claim_blocking_adapter_work_stopped() -> None:
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    def blocking(**_kwargs):
+        started.set()
+        release.wait(timeout=2)
+        finished.set()
+        return "late"
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=blocking)
+
+    async def run_with_outer_timeout():
+        async with asyncio.timeout(0.1):
+            return await gateway.complete_auxiliary(_auxiliary_request())
+
+    task = asyncio.create_task(run_with_outer_timeout())
+    try:
+        assert await asyncio.to_thread(started.wait, 1)
+        with pytest.raises(TimeoutError):
+            await task
+        assert finished.is_set() is False
+    finally:
+        release.set()
+        assert await asyncio.to_thread(finished.wait, 1)
 
 
 @pytest.mark.asyncio
@@ -8933,6 +9032,49 @@ async def test_auxiliary_direct_llama_is_nonstreaming_exact_and_sensitive() -> N
         "chat_template_kwargs": {"reasoning_effort": "high"},
         "reasoning_budget_tokens": 2048,
     }
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_direct_llama_uses_one_request_and_15_second_timeout() -> None:
+    seen = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(
+            (
+                json.loads(request.content),
+                dict(request.extensions.get("timeout", {})),
+            )
+        )
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "ok"}}]}
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = ConsoleProviderGateway(http_client=client)
+    resolution = _auxiliary_resolution(
+        provider="llama_cpp",
+        execution_key="llama_cpp",
+        readiness_key="llama_cpp",
+        base_url="http://127.0.0.1:9099",
+        reasoning_effort=None,
+        thinking_effort=None,
+        thinking_budget_tokens=None,
+        request_timeout=15.0,
+        request_retries=0,
+        request_retry_delay=0.0,
+    )
+
+    await gateway.complete_auxiliary(
+        _auxiliary_request(resolution=resolution, max_output_tokens=1)
+    )
+
+    assert len(seen) == 1
+    payload, timeout = seen[0]
+    assert payload["max_tokens"] == 1
+    assert "chat_template_kwargs" not in payload
+    assert "reasoning_budget_tokens" not in payload
+    assert timeout["read"] == 15.0
     await client.aclose()
 
 
@@ -9029,6 +9171,44 @@ async def test_auxiliary_vllm_terminal_capture_failure_is_content_free() -> None
 
     assert canary not in str(exc_info.value)
     assert canary not in repr(exc_info.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure_factory", "expected_status"),
+    [
+        (
+            lambda request: httpx.ReadTimeout("TIMEOUT-SECRET", request=request),
+            408,
+        ),
+        (
+            lambda request: httpx.ConnectError("CONNECT-SECRET", request=request),
+            503,
+        ),
+    ],
+)
+async def test_auxiliary_llama_transport_failure_keeps_bounded_category(
+    failure_factory, expected_status
+) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise failure_factory(request)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = ConsoleProviderGateway(http_client=client)
+    resolution = _auxiliary_resolution(
+        provider="llama_cpp",
+        execution_key="llama_cpp",
+        readiness_key="llama_cpp",
+        base_url="http://127.0.0.1:9099",
+        request_timeout=15.0,
+    )
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        await gateway.complete_auxiliary(_auxiliary_request(resolution=resolution))
+
+    assert exc_info.value.status_code == expected_status
+    assert "SECRET" not in str(exc_info.value)
+    await client.aclose()
 
 
 # -- PR3a-1 Task 6b (audit F5, first half) ---------------------------------

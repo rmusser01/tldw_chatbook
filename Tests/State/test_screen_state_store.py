@@ -4,6 +4,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError, fields
 import logging
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,6 +13,14 @@ from tldw_chatbook.UI.Navigation.screen_state_store import (
     ConsolePromptTargetProjection,
     RuntimeIdentity,
     ScreenStateStore,
+)
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
+from tldw_chatbook.Widgets.Console.console_settings_modal import (
+    ConsoleSettingsDraftSnapshot,
 )
 
 
@@ -31,6 +40,143 @@ def _projection(
         target_session_id=target_session_id,
         system_fingerprint=system_fingerprint,
     )
+
+
+def test_suspended_conversation_draft_snapshot_rejects_malformed_nested_state() -> None:
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-temperature": "0.7"},
+        provider_model_drafts={"openai": "gpt-5"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id="console-settings-model-picker",
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+    malformed = snapshot.to_mapping()
+    malformed["raw_values"] = {"not-a-modal-control": "value"}
+
+    assert ConsoleSettingsDraftSnapshot.from_mapping(malformed) is None
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("version",), True),
+        (("raw_values", "console-settings-temperature"), True),
+        (("raw_values", "console-settings-streaming"), "true"),
+        (("provider_model_drafts", "openai\nunsafe"), "gpt-5"),
+        (("provider_model_drafts", "openai"), "model\nunsafe"),
+        (("provider_base_url_drafts", "openai"), "https://example.invalid/\x00"),
+        (("context_policy_overrides", "custom_budget_tokens"), True),
+        (("context_policy_overrides", "budget_mode"), 1),
+        (("context_policy_overrides", "budget_mode"), " automatic "),
+    ],
+)
+def test_suspended_conversation_draft_snapshot_fails_closed_on_unsafe_primitives(
+    path: tuple[str, ...], value: object
+) -> None:
+    """Screen-state parser accepts only its exact primitive wire types."""
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={
+            "console-settings-temperature": "0.7",
+            "console-settings-streaming": True,
+        },
+        provider_model_drafts={"openai": "gpt-5"},
+        provider_base_url_drafts={"openai": "https://example.invalid"},
+        active_view="model",
+        scroll_anchor=0,
+        focus_control_id="console-settings-model-picker",
+        disclosure_state={"advanced_generation": False, "connection_details": False},
+    )
+    malformed = snapshot.to_mapping()
+    target: object = malformed
+    for key in path[:-1]:
+        assert isinstance(target, dict)
+        target = target[key]
+    assert isinstance(target, dict)
+    target[path[-1]] = value
+
+    assert ConsoleSettingsDraftSnapshot.from_mapping(malformed) is None
+
+
+def test_native_console_state_keeps_suspended_settings_draft_process_local() -> None:
+    """The screen snapshot, not a handoff or route, owns raw draft content."""
+    snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            base_url="http://127.0.0.1:9099",
+            system_prompt="private system text",
+            pinned_prefill="private prefill text",
+        ),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-base-url": "http://127.0.0.1:9099"},
+        provider_model_drafts={"llama_cpp": "model-a"},
+        provider_base_url_drafts={"llama_cpp": "http://127.0.0.1:9099"},
+        active_view="model",
+        scroll_anchor=4,
+        focus_control_id="console-settings-model-picker",
+        disclosure_state={"advanced_generation": False, "connection_details": True},
+    )
+
+    def bare_screen(store: ConsoleChatStore) -> ChatScreen:
+        screen = ChatScreen.__new__(ChatScreen)
+        image_state = SimpleNamespace(
+            prune=lambda _ids: None,
+            serialize=lambda: {},
+            restore=lambda _value: None,
+        )
+        screen._console_runtime_ref = SimpleNamespace(
+            chat_store=store,
+            set_chat_store=lambda value: setattr(
+                screen._console_runtime_ref, "chat_store", value
+            ),
+        )
+        screen._session = SimpleNamespace(_console_visible_draft_session_id=None)
+        screen._stash_console_pending_attachments = lambda _store: None
+        screen._console_visible_draft_session_id = None
+        screen._console_composer_or_none = lambda: None
+        screen._ensure_console_image_view = lambda: (
+            image_state,
+            SimpleNamespace(clear=lambda: None),
+        )
+        screen._task_resume_state = TaskResumeState()
+        screen._console_library_rag_source_types = ("media", "notes", "conversations")
+        screen._pending_console_launch_context = None
+        screen._console_evidence_sent_notice = None
+        screen._message = SimpleNamespace(
+            invalidate_console_speech_context=lambda: None,
+        )
+        screen._ensure_console_chat_store = lambda: store
+        screen._adopt_console_pending_attachments = lambda _store: None
+        return screen
+
+    store = ConsoleChatStore()
+    store.create_session(settings=snapshot.settings)
+    screen = bare_screen(store)
+    screen._suspended_conversation_settings = snapshot
+    screen._suspended_conversation_settings_token = 19
+
+    payload = screen._serialize_native_console_state()
+
+    assert payload is not None
+    retained = payload["suspended_conversation_settings"]
+    assert retained is not None
+    assert retained["settings"]["system_prompt"] == "private system text"
+    assert retained["settings"]["pinned_prefill"] == "private prefill text"
+    assert retained["raw_values"]["console-settings-base-url"] == "http://127.0.0.1:9099"
+    assert payload["suspended_conversation_settings_token"] == 19
+
+    restored = bare_screen(ConsoleChatStore())
+    restored._restore_native_console_state(payload)
+
+    assert restored._suspended_conversation_settings == snapshot
+    assert restored._suspended_conversation_settings_token == 19
+    assert restored._next_suspended_conversation_settings_token == 19
 
 
 def test_console_prompt_target_projection_is_minimal_frozen_and_safe() -> None:
