@@ -19,7 +19,7 @@ Make durable Canvas documents and immutable revisions portable across devices wi
 ## Related Design
 
 - `Docs/superpowers/specs/2026-09-03-chatbook-canvas-design.md`
-- `backlog/decisions/081-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+- `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
