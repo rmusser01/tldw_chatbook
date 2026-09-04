@@ -1,6 +1,6 @@
 # ADR-081: Local versioned Canvas artifacts and browser sandbox
 
-Status: Proposed
+Status: Accepted
 Date: 2026-09-03
 Related Task: Implementation tasks will be created from the approved design during planning.
 Related: TASK-31003, ADR-069, ADR-032
