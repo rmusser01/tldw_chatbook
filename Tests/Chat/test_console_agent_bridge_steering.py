@@ -79,9 +79,7 @@ def test_steer_by_run_id_reaches_the_same_mailbox(tmp_path):
     handle_id = _live_child(coordinator, run_id="run-77")
 
     assert bridge.steer_subagent(CONV, "run-77", "check the appendix") is True
-    assert coordinator.drain_steering(handle_id) == [
-        ("user", "check the appendix")
-    ]
+    assert coordinator.drain_steering(handle_id) == [("user", "check the appendix")]
 
 
 def test_a_live_handle_id_beats_a_colliding_run_id(tmp_path):
@@ -125,7 +123,9 @@ def test_oversize_refused_and_at_cap_accepted(tmp_path):
     bridge, coordinator = _bridge_with_fleet(tmp_path)
     handle_id = _live_child(coordinator)
 
-    assert bridge.steer_subagent(CONV, handle_id, "x" * (MAX_STEERING_CHARS + 1)) is False
+    assert (
+        bridge.steer_subagent(CONV, handle_id, "x" * (MAX_STEERING_CHARS + 1)) is False
+    )
     assert coordinator.drain_steering(handle_id) == []
     assert bridge.steer_subagent(CONV, handle_id, "x" * MAX_STEERING_CHARS) is True
     entries = coordinator.drain_steering(handle_id)

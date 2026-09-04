@@ -181,11 +181,14 @@ def test_auto_speak_decision_table(
         hands_free_active=hands_free,
     )
 
-    assert decide_auto_speak(
-        _message(role=role, status=status),
-        session_id=SESSION_ID,
-        context=context,
-    ) is expected
+    assert (
+        decide_auto_speak(
+            _message(role=role, status=status),
+            session_id=SESSION_ID,
+            context=context,
+        )
+        is expected
+    )
 
 
 @pytest.mark.parametrize(
@@ -215,24 +218,30 @@ def test_non_reply_messages_are_ineligible(
     content: object,
     status: object,
 ) -> None:
-    assert decide_auto_speak(
-        _message(role=role, content=content, status=status),
-        session_id=SESSION_ID,
-        context=_context(),
-    ) is AutoSpeakDisposition.INELIGIBLE
+    assert (
+        decide_auto_speak(
+            _message(role=role, content=content, status=status),
+            session_id=SESSION_ID,
+            context=_context(),
+        )
+        is AutoSpeakDisposition.INELIGIBLE
+    )
 
 
 def test_message_ineligibility_precedes_every_context_state() -> None:
-    assert decide_auto_speak(
-        _message(role=ConsoleMessageRole.USER, content="", status="streaming"),
-        session_id=SESSION_ID,
-        context=_context(
-            preferences=object(),
-            destination_fingerprint=None,
-            active_session_id=None,
-            hands_free_active="yes",
-        ),
-    ) is AutoSpeakDisposition.INELIGIBLE
+    assert (
+        decide_auto_speak(
+            _message(role=ConsoleMessageRole.USER, content="", status="streaming"),
+            session_id=SESSION_ID,
+            context=_context(
+                preferences=object(),
+                destination_fingerprint=None,
+                active_session_id=None,
+                hands_free_active="yes",
+            ),
+        )
+        is AutoSpeakDisposition.INELIGIBLE
+    )
 
 
 @pytest.mark.parametrize(
@@ -288,35 +297,44 @@ def test_eligible_reply_decision_precedence_is_explicit(
     hands_free: object,
     expected: AutoSpeakDisposition,
 ) -> None:
-    assert decide_auto_speak(
-        _message(),
-        session_id=SESSION_ID,
-        context=_context(
-            preferences=preferences,
-            destination_fingerprint=destination,
-            active_session_id=active_session,
-            hands_free_active=hands_free,
-        ),
-    ) is expected
+    assert (
+        decide_auto_speak(
+            _message(),
+            session_id=SESSION_ID,
+            context=_context(
+                preferences=preferences,
+                destination_fingerprint=destination,
+                active_session_id=active_session,
+                hands_free_active=hands_free,
+            ),
+        )
+        is expected
+    )
 
 
 def test_malformed_preferences_fail_closed_without_raising() -> None:
-    assert decide_auto_speak(
-        _message(),
-        session_id=SESSION_ID,
-        context=_context(preferences={"auto_speak": True}),
-    ) is AutoSpeakDisposition.DISABLED
+    assert (
+        decide_auto_speak(
+            _message(),
+            session_id=SESSION_ID,
+            context=_context(preferences={"auto_speak": True}),
+        )
+        is AutoSpeakDisposition.DISABLED
+    )
 
     forged = ConsoleSpeechPreferences(
         auto_speak=True,
         consent_destination=DESTINATION,
     )
     object.__setattr__(forged, "auto_speak", 1)
-    assert decide_auto_speak(
-        _message(),
-        session_id=SESSION_ID,
-        context=_context(preferences=forged),
-    ) is AutoSpeakDisposition.DISABLED
+    assert (
+        decide_auto_speak(
+            _message(),
+            session_id=SESSION_ID,
+            context=_context(preferences=forged),
+        )
+        is AutoSpeakDisposition.DISABLED
+    )
 
 
 @pytest.mark.parametrize(
@@ -324,11 +342,14 @@ def test_malformed_preferences_fail_closed_without_raising() -> None:
     [None, "", "sha256:" + "A" * 64, "sha256:" + "a" * 63, 42],
 )
 def test_malformed_current_destination_requires_consent(destination: object) -> None:
-    assert decide_auto_speak(
-        _message(),
-        session_id=SESSION_ID,
-        context=_context(destination_fingerprint=destination),
-    ) is AutoSpeakDisposition.NEEDS_CONSENT
+    assert (
+        decide_auto_speak(
+            _message(),
+            session_id=SESSION_ID,
+            context=_context(destination_fingerprint=destination),
+        )
+        is AutoSpeakDisposition.NEEDS_CONSENT
+    )
 
 
 @pytest.mark.parametrize(
@@ -338,14 +359,17 @@ def test_malformed_current_destination_requires_consent(destination: object) -> 
 def test_background_reply_precedes_destination_consent(
     destination: object,
 ) -> None:
-    assert decide_auto_speak(
-        _message(),
-        session_id=SESSION_ID,
-        context=_context(
-            destination_fingerprint=destination,
-            active_session_id="other-session",
-        ),
-    ) is AutoSpeakDisposition.BACKGROUND
+    assert (
+        decide_auto_speak(
+            _message(),
+            session_id=SESSION_ID,
+            context=_context(
+                destination_fingerprint=destination,
+                active_session_id="other-session",
+            ),
+        )
+        is AutoSpeakDisposition.BACKGROUND
+    )
 
 
 @pytest.mark.parametrize(
@@ -355,25 +379,31 @@ def test_background_reply_precedes_destination_consent(
 def test_active_hands_free_precedes_destination_consent(
     destination: object,
 ) -> None:
-    assert decide_auto_speak(
-        _message(),
-        session_id=SESSION_ID,
-        context=_context(
-            destination_fingerprint=destination,
-            hands_free_active=True,
-        ),
-    ) is AutoSpeakDisposition.HANDSFREE_OWNS
+    assert (
+        decide_auto_speak(
+            _message(),
+            session_id=SESSION_ID,
+            context=_context(
+                destination_fingerprint=destination,
+                hands_free_active=True,
+            ),
+        )
+        is AutoSpeakDisposition.HANDSFREE_OWNS
+    )
 
 
 def test_malformed_hands_free_precedes_destination_consent_fail_closed() -> None:
-    assert decide_auto_speak(
-        _message(),
-        session_id=SESSION_ID,
-        context=_context(
-            destination_fingerprint=None,
-            hands_free_active="unknown",
-        ),
-    ) is AutoSpeakDisposition.HANDSFREE_OWNS
+    assert (
+        decide_auto_speak(
+            _message(),
+            session_id=SESSION_ID,
+            context=_context(
+                destination_fingerprint=None,
+                hands_free_active="unknown",
+            ),
+        )
+        is AutoSpeakDisposition.HANDSFREE_OWNS
+    )
 
 
 @pytest.mark.parametrize(
@@ -384,35 +414,47 @@ def test_malformed_or_nonmatching_session_identity_is_background(
     session_id: object,
     active_session_id: object,
 ) -> None:
-    assert decide_auto_speak(
-        _message(),
-        session_id=session_id,  # type: ignore[arg-type]
-        context=_context(active_session_id=active_session_id),
-    ) is AutoSpeakDisposition.BACKGROUND
+    assert (
+        decide_auto_speak(
+            _message(),
+            session_id=session_id,  # type: ignore[arg-type]
+            context=_context(active_session_id=active_session_id),
+        )
+        is AutoSpeakDisposition.BACKGROUND
+    )
 
 
 @pytest.mark.parametrize("hands_free", [1, "false", None, object()])
 def test_malformed_hands_free_state_reserves_speech_ownership(
     hands_free: object,
 ) -> None:
-    assert decide_auto_speak(
-        _message(),
-        session_id=SESSION_ID,
-        context=_context(hands_free_active=hands_free),
-    ) is AutoSpeakDisposition.HANDSFREE_OWNS
+    assert (
+        decide_auto_speak(
+            _message(),
+            session_id=SESSION_ID,
+            context=_context(hands_free_active=hands_free),
+        )
+        is AutoSpeakDisposition.HANDSFREE_OWNS
+    )
 
 
 def test_malformed_message_or_context_fails_closed_without_raising() -> None:
-    assert decide_auto_speak(
-        None,  # type: ignore[arg-type]
-        session_id=SESSION_ID,
-        context=_context(),
-    ) is AutoSpeakDisposition.INELIGIBLE
-    assert decide_auto_speak(
-        _message(),
-        session_id=SESSION_ID,
-        context=None,  # type: ignore[arg-type]
-    ) is AutoSpeakDisposition.DISABLED
+    assert (
+        decide_auto_speak(
+            None,  # type: ignore[arg-type]
+            session_id=SESSION_ID,
+            context=_context(),
+        )
+        is AutoSpeakDisposition.INELIGIBLE
+    )
+    assert (
+        decide_auto_speak(
+            _message(),
+            session_id=SESSION_ID,
+            context=None,  # type: ignore[arg-type]
+        )
+        is AutoSpeakDisposition.DISABLED
+    )
 
 
 def test_decision_is_repeatable_and_does_not_mutate_inputs() -> None:

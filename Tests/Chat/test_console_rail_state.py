@@ -1025,7 +1025,7 @@ def test_build_console_rail_state_carries_section_flags():
         preference_key=key,
         stored_preferences={
             "details_open": True,
-                "workspace_open": False,
+            "workspace_open": False,
             "conversations_open": True,
         },
     )

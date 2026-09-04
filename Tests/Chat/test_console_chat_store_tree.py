@@ -210,7 +210,9 @@ def test_delete_persists_whole_subtree_and_restart_cannot_restore_it(tmp_path):
         child_persisted,
     }
     assert {envelope["entity_version"] for envelope in delete_envelopes} == {2}
-    assert all(envelope["payload_clear"] == {"deleted": True} for envelope in delete_envelopes)
+    assert all(
+        envelope["payload_clear"] == {"deleted": True} for envelope in delete_envelopes
+    )
     db.close_connection()
 
     restarted = CharactersRAGDB(database_path, "delete-restart")
@@ -232,9 +234,9 @@ def test_delete_persists_whole_subtree_and_restart_cannot_restore_it(tmp_path):
             active_leaf_persisted_id=root_persisted,
         )
         assert len(restored.active_path_message_ids(loaded.id)) == 1
-        assert [message.content for message in restored.messages_for_session(loaded.id)] == [
-            "keep"
-        ]
+        assert [
+            message.content for message in restored.messages_for_session(loaded.id)
+        ] == ["keep"]
     finally:
         restarted.close_connection()
 
@@ -275,7 +277,10 @@ def test_persisted_ancestor_edit_tombstones_and_projects_old_descendants(tmp_pat
         session.id, role=ConsoleMessageRole.USER, content="original", persist=True
     )
     branch = store.append_message(
-        session.id, role=ConsoleMessageRole.ASSISTANT, content="old answer", persist=True
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="old answer",
+        persist=True,
     )
     child = store.append_message(
         session.id, role=ConsoleMessageRole.USER, content="old follow-up", persist=True
@@ -452,7 +457,9 @@ def test_deferred_active_leaf_pointer_written_on_append_after_swipe():
         sid = session.id
 
         # U1 -> A1 (assistant streams then completes)
-        store.append_message(sid, role=ConsoleMessageRole.USER, content="u1", persist=True)
+        store.append_message(
+            sid, role=ConsoleMessageRole.USER, content="u1", persist=True
+        )
         a1 = store.append_message(
             sid, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
         )

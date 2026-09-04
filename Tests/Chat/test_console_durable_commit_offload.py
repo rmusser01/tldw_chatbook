@@ -245,9 +245,7 @@ async def test_cancel_during_offloaded_commit_leaves_consistent_state(
                     break
                 await asyncio.sleep(0.05)
             counts = {
-                table: fresh.execute(
-                    f"SELECT COUNT(*) FROM {table}"
-                ).fetchone()[0]
+                table: fresh.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
                 for table in (
                     "conversations",
                     "messages",

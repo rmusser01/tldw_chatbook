@@ -131,9 +131,7 @@ def test_two_model_calls_update_only_their_correlated_marker_across_navigation(
     assert "beta-only" not in by_command["printf alpha"].tool_output_full
     assert "beta-only" in by_command["printf beta"].tool_output_full
     assert "alpha-only" not in by_command["printf beta"].tool_output_full
-    assert {
-        command: marker.id for command, marker in by_command.items()
-    } == original
+    assert {command: marker.id for command, marker in by_command.items()} == original
 
 
 def test_matching_result_finalizes_the_same_marker_and_late_progress_is_ignored(
@@ -247,9 +245,7 @@ def test_provider_forwards_stream_and_settlement_with_run_and_call_identity(
     call = ToolCall("shell_exec", {"command": "printf streamed"}, "call-a")
     pending = provider.pending_gate_for(call)
     assert pending is not None
-    provider.apply_batch_decisions(
-        "run-1", {"call-a": "approve_once"}, [pending]
-    )
+    provider.apply_batch_decisions("run-1", {"call-a": "approve_once"}, [pending])
 
     with use_run_id("run-1"), use_tool_call_id("call-a"):
         result = provider.invoke("shell_exec", call.args)

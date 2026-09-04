@@ -66,9 +66,7 @@ class _LessonService:
             "public_note_id": note_id,
             "note_id": note_id,
             "note_version": int(self.note_payload["revision"]),
-            "keywords": tuple(
-                row["name"] for row in item.get("keyword_metadata", ())
-            ),
+            "keywords": tuple(row["name"] for row in item.get("keyword_metadata", ())),
             "organization_version": item["organization_version"],
             "receipt_state": receipt_state,
             "receipt_note_version": (
@@ -121,7 +119,10 @@ def _hook(provider, request):
 
 def test_primary_lesson_save_uses_exact_per_call_rows_and_approve_once_only():
     provider = LibraryToolProvider(_LessonService())
-    calls = [_save_call("call-a", title="Allowed"), _save_call("call-b", title="Denied")]
+    calls = [
+        _save_call("call-a", title="Allowed"),
+        _save_call("call-b", title="Denied"),
+    ]
     seen = []
 
     def request(rows):
@@ -151,9 +152,12 @@ def test_primary_lesson_save_uses_exact_per_call_rows_and_approve_once_only():
     )
     assert approved is not None
     assert approved.preflight.classification.reason == "requested_marker"
-    assert provider.peek_agent_lesson_approval(
-        "run-1", "call-b", seen[1].arguments["call_digest"]
-    ) is None
+    assert (
+        provider.peek_agent_lesson_approval(
+            "run-1", "call-b", seen[1].arguments["call_digest"]
+        )
+        is None
+    )
 
 
 def test_rejected_exact_preview_never_dispatches_or_issues_authority():
@@ -264,9 +268,9 @@ def test_current_marker_and_actual_receipt_states_force_review(payload, reason):
     seen = []
 
     with use_run_actor(CurrentRunActor("primary", "run-1", None)):
-        verdicts = _hook(provider, lambda rows: seen.extend(rows) or {"call-update": "approve_once"})(
-            [call], "run-1"
-        )
+        verdicts = _hook(
+            provider, lambda rows: seen.extend(rows) or {"call-update": "approve_once"}
+        )([call], "run-1")
 
     assert verdicts["call-update"] == "proceed"
     assert seen[0].arguments["classification"] == reason
@@ -332,7 +336,9 @@ def test_real_pending_receipt_snapshot_keeps_actual_database_state(tmp_path):
 
 
 def test_case_variant_and_ordinary_note_do_not_enter_lesson_review():
-    provider = LibraryToolProvider(_LessonService(_note_payload(keywords=("Agent-Lesson",))))
+    provider = LibraryToolProvider(
+        _LessonService(_note_payload(keywords=("Agent-Lesson",)))
+    )
     call = _save_call(
         "call-ordinary",
         note_id="note:bm90ZS0x",

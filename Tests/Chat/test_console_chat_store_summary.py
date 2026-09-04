@@ -101,7 +101,9 @@ class _RecordingDB:
         self.calls = []
         self._summary_pair = summary_pair
 
-    def set_conversation_context_summary(self, conversation_id, summary, boundary_message_id):
+    def set_conversation_context_summary(
+        self, conversation_id, summary, boundary_message_id
+    ):
         self.calls.append((conversation_id, summary, boundary_message_id))
 
     def get_conversation_context_summary(self, conversation_id):

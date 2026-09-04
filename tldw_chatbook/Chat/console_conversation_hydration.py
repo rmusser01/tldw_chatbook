@@ -96,6 +96,7 @@ class ConsoleGenerationSettingsHydration:
                 "Valid generation metadata must carry its durable snapshot."
             )
 
+
 class ConversationServiceUnavailable(RuntimeError):
     """The app has no conversation service that can load a tree."""
 

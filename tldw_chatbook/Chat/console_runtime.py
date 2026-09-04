@@ -910,9 +910,7 @@ class ConsoleRuntime:
                 ),
                 citation_repository=citation_repository,
             )
-            legacy_normalization_enabled = callable(
-                getattr(db, "transaction", None)
-            )
+            legacy_normalization_enabled = callable(getattr(db, "transaction", None))
             legacy_normalizer: Any | None = None
             native_reader: Any | None = None
 
@@ -959,9 +957,7 @@ class ConsoleRuntime:
                 ConsoleTraceProjection(
                     legacy_reader=db.get_message_exchanges,
                     normalized_reader=(
-                        read_normalized_calls
-                        if legacy_normalization_enabled
-                        else None
+                        read_normalized_calls if legacy_normalization_enabled else None
                     ),
                     normalized_reads_enabled=lambda: (
                         runtime_capture_policy().normalized_reads_enabled
@@ -1043,9 +1039,7 @@ class ConsoleRuntime:
                         "legacy trace maintenance paused after {}",
                         type(exc).__name__,
                     )
-                    await asyncio.sleep(
-                        LEGACY_TRACE_MAINTENANCE_RETRY_DELAY_SECONDS
-                    )
+                    await asyncio.sleep(LEGACY_TRACE_MAINTENANCE_RETRY_DELAY_SECONDS)
                     continue
                 if result.logical_complete:
                     now = time.monotonic()

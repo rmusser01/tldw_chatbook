@@ -44,26 +44,31 @@ def _state(**overrides) -> ConsoleRailState:
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "columns",
-    range(CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS, CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS + 1),
+    range(
+        CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS,
+        CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS + 1,
+    ),
 )
 def test_auto_open_is_declined_across_the_whole_band_when_context_is_visible(columns):
     """Every column of the former dead zone must decline the automatic open."""
-    assert console_auto_open_would_evict_context(_state(left_open=True), columns) is True
+    assert (
+        console_auto_open_would_evict_context(_state(left_open=True), columns) is True
+    )
 
 
 @pytest.mark.unit
 def test_auto_open_is_allowed_when_context_is_already_closed():
     """With no Context rail to evict there is nothing to protect."""
-    assert (
-        console_auto_open_would_evict_context(_state(left_open=False), 120) is False
-    )
+    assert console_auto_open_would_evict_context(_state(left_open=False), 120) is False
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize("columns", [None, 99, 150, 160, 200])
 def test_auto_open_is_allowed_outside_the_priority_conflict_band(columns):
     """Outside 100..149 both rails coexist, so the guard must not fire."""
-    assert console_auto_open_would_evict_context(_state(left_open=True), columns) is False
+    assert (
+        console_auto_open_would_evict_context(_state(left_open=True), columns) is False
+    )
 
 
 @pytest.mark.unit

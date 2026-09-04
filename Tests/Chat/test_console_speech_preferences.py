@@ -47,8 +47,9 @@ def test_preferences_model_accepts_the_canonical_destination_boundary():
 
     assert speech.is_console_speech_destination(DESTINATION) is True
     assert (
-        speech.ConsoleSpeechPreferences(consent_destination=DESTINATION)
-        .consent_destination
+        speech.ConsoleSpeechPreferences(
+            consent_destination=DESTINATION
+        ).consent_destination
         == DESTINATION
     )
 

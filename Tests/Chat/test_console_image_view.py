@@ -300,17 +300,27 @@ def test_resolve_show_character_avatar_defaults_true():
 def test_resolve_show_character_avatar_explicit_false():
     from tldw_chatbook.Chat.console_image_view import resolve_show_character_avatar
 
-    assert resolve_show_character_avatar(
-        {"chat": {"images": {"show_character_avatar": False}}}
-    ) is False
+    assert (
+        resolve_show_character_avatar(
+            {"chat": {"images": {"show_character_avatar": False}}}
+        )
+        is False
+    )
 
 
 def test_resolve_show_character_avatar_live_shape():
     from tldw_chatbook.Chat.console_image_view import resolve_show_character_avatar
 
-    assert resolve_show_character_avatar(
-        {"COMPREHENSIVE_CONFIG_RAW": {"chat": {"images": {"show_character_avatar": False}}}}
-    ) is False
+    assert (
+        resolve_show_character_avatar(
+            {
+                "COMPREHENSIVE_CONFIG_RAW": {
+                    "chat": {"images": {"show_character_avatar": False}}
+                }
+            }
+        )
+        is False
+    )
 
 
 # --- Roleplay UAT regression: the chat character avatar showed only its corner ---

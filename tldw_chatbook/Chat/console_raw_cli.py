@@ -547,9 +547,7 @@ class RawCliRuntime:
             invocation.cancel_event.set()
         return tuple(invocation_id for invocation_id, _invocation in active)
 
-    def set_model_authority_revoker(
-        self, callback: Callable[[], None] | None
-    ) -> None:
+    def set_model_authority_revoker(self, callback: Callable[[], None] | None) -> None:
         """Set the process-local controller callback used by disarm.
 
         The callback runs after admission and session grants are closed but

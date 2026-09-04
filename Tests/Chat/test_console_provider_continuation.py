@@ -526,12 +526,12 @@ async def test_resume_target_mismatch_blocks_before_bridge_or_tool() -> None:
         async def resolve_for_send(self, selection):
             self.calls += 1
             return provider_resolution(
-                       ready=True,
-                       provider="ZAI",
-                       model="glm-5",
-                       base_url="https://api.z.ai/v1",
-                       api_mode="chat_completions",
-                   )
+                ready=True,
+                provider="ZAI",
+                model="glm-5",
+                base_url="https://api.z.ai/v1",
+                api_mode="chat_completions",
+            )
 
     gateway = Gateway()
     controller = ConsoleChatController(
@@ -560,12 +560,12 @@ async def test_resume_without_translator_sets_specific_unavailable_warning() -> 
     class Gateway:
         async def resolve_for_send(self, _selection):
             return provider_resolution(
-                       ready=True,
-                       provider="Moonshot",
-                       model="kimi-k2",
-                       base_url="https://api.moonshot.ai/v1",
-                       api_mode="chat_completions",
-                   )
+                ready=True,
+                provider="Moonshot",
+                model="kimi-k2",
+                base_url="https://api.moonshot.ai/v1",
+                api_mode="chat_completions",
+            )
 
     controller = ConsoleChatController(
         store=store,
@@ -654,12 +654,12 @@ async def test_resume_excludes_visible_owner_and_reports_failed_completion(
 
         async def resolve_for_send(self, _selection):
             return provider_resolution(
-                       ready=True,
-                       provider="Moonshot",
-                       model="kimi-k2",
-                       base_url="https://api.moonshot.ai/v1",
-                       api_mode="chat_completions",
-                   )
+                ready=True,
+                provider="Moonshot",
+                model="kimi-k2",
+                base_url="https://api.moonshot.ai/v1",
+                api_mode="chat_completions",
+            )
 
     controller = ConsoleChatController(
         store=store,
@@ -879,12 +879,12 @@ async def test_resume_forwards_only_policy_retained_prior_complete_sidecars(
 
             async def resolve_for_send(self, _selection):
                 return provider_resolution(
-                           ready=True,
-                           provider=provider,
-                           model=model,
-                           base_url=base_url,
-                           api_mode=protocol,
-                       )
+                    ready=True,
+                    provider=provider,
+                    model=model,
+                    base_url=base_url,
+                    api_mode=protocol,
+                )
 
         controller = ConsoleChatController(
             store=store, provider_gateway=Gateway(), agent_bridge=object()
@@ -909,7 +909,10 @@ async def test_resume_forwards_only_policy_retained_prior_complete_sidecars(
             captured["restore_provider_target"] if expected_prior else None
         )
         provider_rows = captured["provider_messages"]
-        assert sum(row.get("content") == "prior visible answer" for row in provider_rows) == 1
+        assert (
+            sum(row.get("content") == "prior visible answer" for row in provider_rows)
+            == 1
+        )
         assert all(row.get("content") != "active visible" for row in provider_rows)
     finally:
         database.close_connection()
@@ -933,12 +936,12 @@ async def test_concurrent_resume_is_serialized_at_controller_session_boundary(
             resolving.set()
             await release.wait()
             return provider_resolution(
-                       ready=True,
-                       provider="Moonshot",
-                       model="kimi-k2",
-                       base_url="https://api.moonshot.ai/v1",
-                       api_mode="chat_completions",
-                   )
+                ready=True,
+                provider="Moonshot",
+                model="kimi-k2",
+                base_url="https://api.moonshot.ai/v1",
+                api_mode="chat_completions",
+            )
 
     gateway = Gateway()
     controller = ConsoleChatController(
@@ -993,12 +996,12 @@ async def test_stale_variant_recovery_rejects_inactive_owner_before_side_effects
         async def resolve_for_send(self, _selection):
             self.calls += 1
             return provider_resolution(
-                       ready=True,
-                       provider="Moonshot",
-                       model="kimi-k2",
-                       base_url="https://api.moonshot.ai/v1",
-                       api_mode="chat_completions",
-                   )
+                ready=True,
+                provider="Moonshot",
+                model="kimi-k2",
+                base_url="https://api.moonshot.ai/v1",
+                api_mode="chat_completions",
+            )
 
     gateway = Gateway()
     controller = ConsoleChatController(
@@ -1067,12 +1070,12 @@ async def test_resume_revalidates_active_variant_after_async_resolution(
             store.set_active_leaf(session.id, sibling.id)
             await asyncio.sleep(0)
             return provider_resolution(
-                       ready=ready,
-                       provider="Moonshot",
-                       model="kimi-k2",
-                       base_url="https://api.moonshot.ai/v1",
-                       api_mode="chat_completions",
-                   )
+                ready=ready,
+                provider="Moonshot",
+                model="kimi-k2",
+                base_url="https://api.moonshot.ai/v1",
+                api_mode="chat_completions",
+            )
 
     gateway = Gateway()
     controller = ConsoleChatController(
@@ -1216,12 +1219,12 @@ async def test_accepted_recovery_is_false_while_checkpoint_remains_active(
 
         async def resolve_for_send(self, _selection):
             return provider_resolution(
-                       ready=True,
-                       provider="Moonshot",
-                       model="kimi-k2",
-                       base_url="https://api.moonshot.ai/v1",
-                       api_mode="chat_completions",
-                   )
+                ready=True,
+                provider="Moonshot",
+                model="kimi-k2",
+                base_url="https://api.moonshot.ai/v1",
+                api_mode="chat_completions",
+            )
 
     controller = ConsoleChatController(
         store=store,
