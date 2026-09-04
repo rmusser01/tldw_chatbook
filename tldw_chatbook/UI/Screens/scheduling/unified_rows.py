@@ -680,9 +680,10 @@ def build_unified_rows(
             ``SchedulingService.list_tasks(owner_id=None)``, filtered to
             real `ReminderTask` rows -- briefing/watchlist projections
             stay out of the unified list per plan ruling 1).
-        definitions: Local + server-mirrored ``recurring_question``
-            definition rows (the existing Automations-tab merge
-            precedent: `_load_local_automations` + `_load_server_automations`).
+        definitions: Local + server-mirrored definition rows of EVERY
+            family (PR-4 ruling 1 -- not just ``recurring_question``; the
+            existing Automations-tab merge precedent: `_load_local_
+            automations` + `_load_server_automations`).
         results: One all-owners `list_automation_results(owner_id=None)`
             listing, used only to derive `UnifiedRow.unread_count`.
         local_definitions: The FULL local definitions table

@@ -26,6 +26,9 @@ from tldw_chatbook.Scheduling.events import (
 )
 from tldw_chatbook.Scheduling.models import ReminderTask, ScheduleKind
 from tldw_chatbook.UI.Screens.scheduling.definition_detail import DefinitionDetail
+from tldw_chatbook.UI.Screens.scheduling.forms.automation_definition_form import (
+    AutomationDefinitionForm,
+)
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
 from tldw_chatbook.UI.Screens.scheduling.task_detail import TaskDetail
 
@@ -53,17 +56,22 @@ def _reminder(
     )
 
 
-def _definition(def_id: str, name: str, *, lifecycle: str = "configured") -> dict:
+def _definition(
+    def_id: str,
+    name: str,
+    *,
+    lifecycle: str = "configured",
+    family: str = "recurring_question",
+) -> dict:
     return {
         "id": def_id,
         "server_id": None,
         "owner_id": "local",
         "name": name,
-        # Qodo MEDIUM (schedules-redesign PR-2): `build_unified_rows`
-        # filters definitions to `family == "recurring_question"` --
-        # every real definition row carries a family, so this fixture
-        # must too.
-        "family": "recurring_question",
+        # `build_unified_rows` lists every family now (PR-4 ruling 1) --
+        # every real definition row carries a family regardless, so this
+        # fixture always sets one.
+        "family": family,
         "lifecycle": lifecycle,
         "schedule": {"kind": "one_time", "run_at": "2099-01-01T00:00:00+00:00"},
         "input": {"question": f"Question for {name}?"},
@@ -367,14 +375,20 @@ async def test_reminder_actions_still_fire_amid_a_mixed_list():
 
 
 # ---------------------------------------------------------------------------
-# Definition rows: no actions in this PR
+# Definition rows: mark/toggle still no-op; run-now/edit are routed
+# (redesign PR-4, task 3 -- supersedes the original "no actions until
+# PR-4" pin from plan ruling 1).
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_definition_rows_expose_no_actions():
-    """Edit/mark/toggle/delete on a definition row must no-op -- plan
-    ruling 1: definition rows are viewable + detail only until PR-4."""
+async def test_definition_row_mark_and_toggle_still_no_op():
+    """Mark/toggle-enabled on a definition row still no-op -- PR-4 task 3
+    only wired run-now (`r`) and edit-in-full (`e`) onto Queue definition
+    rows; `x`/`space` remain unrouted (see `test_definition_row_edit_
+    opens_the_form_for_a_recurring_question_row` for the two that now
+    act, and `test_definition_row_keys_answer_honestly_by_kind` for the
+    full per-key picture)."""
     async with _App().run_test(size=(160, 48)) as pilot:
         workbench = await _mounted(pilot)
         table = workbench.query_one("#scheduling-task-table", DataTable)
@@ -393,13 +407,35 @@ async def test_definition_rows_expose_no_actions():
         await pilot.pause()
         assert not workbench._marked_ids
 
-        workbench.action_edit_task()
-        await pilot.pause()
-        assert isinstance(pilot.app.screen, SchedulesWorkbench)  # no form pushed
-
         workbench.action_toggle_enabled()
         await pilot.pause()
         assert workbench._scheduling_service.updated == []
+
+
+@pytest.mark.asyncio
+async def test_definition_row_edit_opens_the_form_for_a_recurring_question_row():
+    """redesign PR-4, task 3: `e` on a Queue definition row now opens the
+    SAME `AutomationDefinitionForm` the Automations tab's own `e` opens
+    (`_edit_selected_automation` reused via `_selected_queue_definition`)
+    -- this fixture's rows are all `recurring_question`, so the family
+    gate never refuses here."""
+    async with _App().run_test(size=(160, 48)) as pilot:
+        workbench = await _mounted(pilot)
+        table = workbench.query_one("#scheduling-task-table", DataTable)
+        definition_index = next(
+            i
+            for i, row in enumerate(workbench._visible_rows)
+            if row.kind == "definition"
+        )
+        table.move_cursor(row=definition_index)
+        await pilot.pause()
+
+        workbench.action_edit_task()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert isinstance(pilot.app.screen, AutomationDefinitionForm)
 
 
 # ---------------------------------------------------------------------------
@@ -1020,13 +1056,24 @@ async def test_filter_placeholder_names_title_and_question():
         assert "type" not in placeholder.lower()
 
 
-# --- F8: definition rows answer the reminder keys honestly ----------------
+# --- F8: definition rows answer the reminder keys honestly -----------------
+# (redesign PR-4, task 3 supersedes part of this: `r`/`e` are ROUTED now,
+# not refused -- see the class/test docstrings below for the current
+# per-key picture.)
 
 
 @pytest.mark.asyncio
-async def test_definition_row_keys_say_where_the_action_lives():
-    """Final review F8: `r` was swallowed in silence and the other keys
-    answered "select a task first" while a row was plainly selected."""
+async def test_definition_row_keys_answer_honestly_by_kind():
+    """Final review F8, superseded by redesign PR-4 ruling 1 + task 3:
+    `x`/`space`/`d` (mark/toggle/delete) are UNCHANGED -- still not wired
+    to definition rows -- and keep answering "managed on the Automations
+    tab" rather than doing nothing. `r`/`e` are ROUTED now: `r` attempts
+    a real dispatch for ANY family (`_run_automation_now` is owner-routed
+    only, never family-gated); `e` opens `AutomationDefinitionForm` for
+    this fixture's `recurring_question` row (see `test_definition_row_
+    edit_refuses_honestly_for_a_non_recurring_question_row` for the
+    family-gated refusal, which reads differently from the "Automations
+    tab" copy below)."""
     async with _App().run_test(size=(160, 48)) as pilot:
         workbench = await _mounted(pilot)
         table = workbench.query_one("#scheduling-task-table", DataTable)
@@ -1039,8 +1086,6 @@ async def test_definition_row_keys_say_where_the_action_lives():
         await pilot.pause()
 
         for action in (
-            workbench.action_run_task_now,
-            workbench.action_edit_task,
             workbench.action_mark_task,
             workbench.action_toggle_enabled,
             workbench.action_delete,
@@ -1054,9 +1099,71 @@ async def test_definition_row_keys_say_where_the_action_lives():
                 f"{action.__name__} said {new!r}"
             )
 
-        # d must not reach TaskDetail.request_delete, which would open a
-        # confirmation for whatever reminder the pane last held.
+        # `d` must not reach TaskDetail.request_delete, which would open
+        # a confirmation for whatever reminder the pane last held.
         assert isinstance(pilot.app.screen, SchedulesWorkbench)
+
+        # `r`: routed now (task 3) -- a real dispatch attempt, not the
+        # old refusal. The stub service has no `run_automation_now`, so
+        # the attempt fails honestly rather than silently.
+        before = len(_toasts(pilot.app))
+        workbench.action_run_task_now()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        run_toasts = _toasts(pilot.app)[before:]
+        assert any("Failed to run" in message for message in run_toasts), run_toasts
+
+        # `e`: routed now too -- opens the SAME AutomationDefinitionForm
+        # the Automations tab's own `e` opens (this row is `recurring_
+        # question`).
+        workbench.action_edit_task()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(pilot.app.screen, AutomationDefinitionForm)
+
+
+class _AgentTaskOnlyService(MockSchedulingServiceMixin):
+    """One `agent_task` definition, no reminders -- isolates the Queue's
+    only row so `e`'s family-gated refusal can be pinned deterministically
+    (redesign PR-4 ruling 1: a non-`recurring_question` definition now
+    has a home on the Queue too)."""
+
+    def __init__(self) -> None:
+        self.db = MockSchedulingDB(
+            automation_definitions=[
+                _definition("def-agent", "Nightly agent run", family="agent_task"),
+            ]
+        )
+
+    async def list_tasks(self, owner_id=None, include_projections=True):
+        return []
+
+
+@pytest.mark.asyncio
+async def test_definition_row_edit_refuses_honestly_for_a_non_recurring_question_row():
+    """redesign PR-4, task 3: `e` on an `agent_task` Queue row refuses --
+    the SAME family-gate copy the Automations tab's own `e` already gives
+    (`_edit_selected_automation`'s existing refusal, reused verbatim) --
+    which is NOT the "managed on the Automations tab" copy the other
+    (still-unrouted) keys use."""
+    app = _App()
+    app.scheduling_service = _AgentTaskOnlyService()
+    async with app.run_test(size=(160, 48)) as pilot:
+        workbench = await _mounted(pilot)
+        table = workbench.query_one("#scheduling-task-table", DataTable)
+        table.move_cursor(row=0)
+        await pilot.pause()
+
+        before = len(_toasts(pilot.app))
+        workbench.action_edit_task()
+        await pilot.pause()
+        new = _toasts(pilot.app)[before:]
+
+        assert isinstance(pilot.app.screen, SchedulesWorkbench)  # no form pushed
+        assert any("recurring-question" in message for message in new), new
+        assert not any("Automations tab" in message for message in new), new
 
 
 # --- F10: empty-state copy at widths where the chips are hidden -----------
