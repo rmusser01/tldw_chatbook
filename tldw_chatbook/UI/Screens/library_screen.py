@@ -347,13 +347,10 @@ from ...Library.library_rag_service import (
     run_library_rag_search,
 )
 from ...Library.library_rag_state import (
-    LIBRARY_RAG_QUERY_MAX_LENGTH,
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
-    LIBRARY_RAG_USE_IN_CONSOLE_LOCKED_NOTICE,
     LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS,
     LIBRARY_SEARCH_HISTORY_LIMIT,
     LibraryRagPanelState,
-    library_rag_scope_summary,
     update_search_history,
 )
 from ...Library.library_rail_state import (
@@ -590,16 +587,12 @@ from ..Library_Modules.library_notes_work_session import (
     reduce_notes_work_session,
 )
 from ..Library_Modules.library_rag_search_controller import LibraryRagSearchController
-from ..Library_Modules.library_rag_search_state import (
-    SEARCH_PREFIXED_STATE_FIELDS,
-    LibraryRagSearchState,
-)
+from ..Library_Modules.library_rag_search_state import LibraryRagSearchState
 from ..Library_Modules.library_snapshot_cache import (
     clone_library_source_snapshot,
 )
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
-from ..Views.RAGSearch.search_handoff import build_library_rag_console_live_work_payload
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
 from .model_browser_state import install_failure_message
 from .skills_screen import SkillTrustBootstrapModal, SkillTrustPassphraseModal
@@ -9675,23 +9668,27 @@ class LibraryScreen(BaseAppScreen):
         state["library_notes_view"] = self._library_notes_view
         state["selected_media_id"] = self._selected_media_id
         state["library_media_view"] = self._library_media_view
-        state["library_rag_query"] = self._library_rag_query
-        state["library_rag_mode"] = self._library_rag_mode
-        state["library_rag_scope_deselected"] = set(self._library_rag_scope_deselected)
-        state["library_rag_results"] = tuple(self._library_rag_results)
-        state["library_rag_selected_result_id"] = self._library_rag_selected_result_id
-        state["library_rag_retrieval_status"] = self._library_rag_retrieval_status
-        state["library_rag_recovery_state"] = self._library_rag_recovery_state
-        state["library_rag_diagnostics"] = dict(self._library_rag_diagnostics)
-        state["library_rag_searched_query"] = self._library_rag_searched_query
+        state["library_rag_query"] = self._rag_search_state.query
+        state["library_rag_mode"] = self._rag_search_state.mode
+        state["library_rag_scope_deselected"] = set(
+            self._rag_search_state.scope_deselected
+        )
+        state["library_rag_results"] = tuple(self._rag_search_state.results)
+        state["library_rag_selected_result_id"] = (
+            self._rag_search_state.selected_result_id
+        )
+        state["library_rag_retrieval_status"] = self._rag_search_state.retrieval_status
+        state["library_rag_recovery_state"] = self._rag_search_state.recovery_state
+        state["library_rag_diagnostics"] = dict(self._rag_search_state.diagnostics)
+        state["library_rag_searched_query"] = self._rag_search_state.searched_query
         # PR-3 Task 4: the answer travels with the results it was generated
         # from -- same lifecycle as the two fields above, and for the same
         # reason (a `LibraryRagAnswer` is a frozen dataclass, so it is safe
-        # to carry verbatim). `_library_rag_answer_in_flight` is deliberately
-        # absent: see its `__init__` comment.
-        state["library_rag_answer"] = self._library_rag_answer
-        state["library_rag_answer_query"] = self._library_rag_answer_query
-        state["library_rag_answer_mode"] = self._library_rag_answer_mode
+        # to carry verbatim). `_rag_search_state.answer_in_flight` is
+        # deliberately absent: see its `__init__` comment.
+        state["library_rag_answer"] = self._rag_search_state.answer
+        state["library_rag_answer_query"] = self._rag_search_state.answer_query
+        state["library_rag_answer_mode"] = self._rag_search_state.answer_mode
         applied_media = self._library_media_browse_controller.applied_result
         state["library_media_scope"] = dataclasses.asdict(
             applied_media.scope if applied_media is not None else MediaBrowseScope()
@@ -9825,12 +9822,12 @@ class LibraryScreen(BaseAppScreen):
                 return None
             scope = {"page": applied.page}
         elif row_id == LIBRARY_ROW_BROWSE_SEARCH:
-            if self._library_rag_retrieval_status not in {"ready", "empty"}:
+            if self._rag_search_state.retrieval_status not in {"ready", "empty"}:
                 return None
             scope = {
-                "query": self._library_rag_searched_query,
-                "mode": self._library_rag_mode,
-                "scope_deselected": sorted(self._library_rag_scope_deselected),
+                "query": self._rag_search_state.searched_query,
+                "mode": self._rag_search_state.mode,
+                "scope_deselected": sorted(self._rag_search_state.scope_deselected),
             }
         else:
             return None
@@ -10050,56 +10047,58 @@ class LibraryScreen(BaseAppScreen):
         self._selected_media_id = selected_media_id
         self._library_media_view = media_view
 
-        self._library_rag_query = str(state.get("library_rag_query") or "")
+        self._rag_search_state.query = str(state.get("library_rag_query") or "")
         rag_mode = state.get("library_rag_mode")
-        self._library_rag_mode = rag_mode if rag_mode in ("search", "rag") else "search"
+        self._rag_search_state.mode = (
+            rag_mode if rag_mode in ("search", "rag") else "search"
+        )
         scope_deselected = state.get("library_rag_scope_deselected")
-        self._library_rag_scope_deselected = (
+        self._rag_search_state.scope_deselected = (
             set(scope_deselected)
             if isinstance(scope_deselected, (set, frozenset, list, tuple))
             else set()
         )
         rag_results = state.get("library_rag_results")
-        self._library_rag_results = (
+        self._rag_search_state.results = (
             tuple(rag_results) if isinstance(rag_results, (list, tuple)) else ()
         )
-        self._library_rag_selected_result_id = str(
+        self._rag_search_state.selected_result_id = str(
             state.get("library_rag_selected_result_id") or ""
         )
         restored_retrieval_status = str(state.get("library_rag_retrieval_status") or "")
-        self._library_rag_retrieval_status = (
+        self._rag_search_state.retrieval_status = (
             ""
             if restored_retrieval_status == "searching"
             else restored_retrieval_status
         )
         recovery_state = state.get("library_rag_recovery_state")
-        self._library_rag_recovery_state = (
+        self._rag_search_state.recovery_state = (
             recovery_state
             if isinstance(recovery_state, DestinationRecoveryState)
             else None
         )
         rag_diagnostics = state.get("library_rag_diagnostics")
-        self._library_rag_diagnostics = (
+        self._rag_search_state.diagnostics = (
             dict(rag_diagnostics) if isinstance(rag_diagnostics, Mapping) else {}
         )
-        self._library_rag_searched_query = str(
+        self._rag_search_state.searched_query = str(
             state.get("library_rag_searched_query") or ""
         )
         rag_answer = state.get("library_rag_answer")
-        self._library_rag_answer = (
+        self._rag_search_state.answer = (
             rag_answer if isinstance(rag_answer, LibraryRagAnswer) else None
         )
-        self._library_rag_answer_query = str(
+        self._rag_search_state.answer_query = str(
             state.get("library_rag_answer_query") or ""
         )
         rag_answer_mode = state.get("library_rag_answer_mode")
-        self._library_rag_answer_mode = (
+        self._rag_search_state.answer_mode = (
             rag_answer_mode if rag_answer_mode in ("search", "rag") else ""
         )
-        # `_library_rag_answer_in_flight` (and its Task 3 companion,
-        # `_library_rag_answer_in_flight_provider`) are intentionally left
-        # at their `__init__` defaults (False / ""): this instance has no
-        # answer worker running, so restoring an in-flight "answering"
+        # `_rag_search_state.answer_in_flight` (and its Task 3 companion,
+        # `_rag_search_state.answer_in_flight_provider`) are intentionally
+        # left at their `__init__` defaults (False / ""): this instance has
+        # no answer worker running, so restoring an in-flight "answering"
         # status would be a dangling one nothing could ever resolve.
 
         restored_media_scope = self._restore_library_media_scope(state)
@@ -10190,9 +10189,11 @@ class LibraryScreen(BaseAppScreen):
             elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
                 self._collections_state.requested_page = scope.get("page", 1)
             elif row_id == LIBRARY_ROW_BROWSE_SEARCH:
-                self._library_rag_query = scope["query"]
-                self._library_rag_mode = scope["mode"]
-                self._library_rag_scope_deselected = set(scope["scope_deselected"])
+                self._rag_search_state.query = scope["query"]
+                self._rag_search_state.mode = scope["mode"]
+                self._rag_search_state.scope_deselected = set(
+                    scope["scope_deselected"]
+                )
         # task-2858 AC#3 (LIB-12): restore the durable export receipt
         # (see the field's ``__init__`` comment) -- a foreign/corrupted
         # dict degrades to "no receipt yet" rather than raising.
@@ -11887,7 +11888,7 @@ class LibraryScreen(BaseAppScreen):
                 rail.sync_state(
                     shell,
                     self._library_rail_preferences(),
-                    query=self._library_rag_query,
+                    query=self._rag_search_state.query,
                     lifecycle=self._library_lifecycle,
                     onboarding_all_empty=self._library_onboarding_all_empty,
                 )
@@ -12302,7 +12303,7 @@ class LibraryScreen(BaseAppScreen):
             rail.sync_state(
                 shell,
                 self._library_rail_preferences(),
-                query=self._library_rag_query,
+                query=self._rag_search_state.query,
                 lifecycle=self._library_lifecycle,
                 onboarding_all_empty=self._library_onboarding_all_empty,
             )
@@ -13859,7 +13860,7 @@ class LibraryScreen(BaseAppScreen):
         # falsely count as "selected".
         #
         # PR-T1 final review (C2): that count intersection is only honest
-        # once counts EXIST. `restore_state` carries `_library_rag_results`
+        # once counts EXIST. `restore_state` carries `_rag_search_state.results`
         # across navigation but NOT `_local_source_counts` (bulk snapshots
         # are deliberately re-fetched -- see `save_state`), so a fresh
         # `LibraryScreen` composes with all-zero counts while
@@ -13894,7 +13895,7 @@ class LibraryScreen(BaseAppScreen):
         selected_source_types: tuple[str, ...] | None = tuple(
             source_type
             for source_type in LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES
-            if source_type not in self._library_rag_scope_deselected
+            if source_type not in self._rag_search_state.scope_deselected
         )
         if not (self._library_loaded and not self._library_lookup_error):
             selected_source_types = None
@@ -13918,11 +13919,11 @@ class LibraryScreen(BaseAppScreen):
                 or 0,
                 "workspaces": 0,
             },
-            query=self._library_rag_query,
-            searched_query=self._library_rag_searched_query,
-            mode=self._library_rag_mode,
-            results=self._library_rag_results,
-            selected_result_id=self._library_rag_selected_result_id,
+            query=self._rag_search_state.query,
+            searched_query=self._rag_search_state.searched_query,
+            mode=self._rag_search_state.mode,
+            results=self._rag_search_state.results,
+            selected_result_id=self._rag_search_state.selected_result_id,
             # PR-3 Task 4: the in-flight answer OVERLAYS the settled
             # retrieval status for display only ("answering" is what Task 3's
             # normalizer and run-gate override key off) -- the retrieval's
@@ -13930,26 +13931,26 @@ class LibraryScreen(BaseAppScreen):
             # restores it exactly.
             retrieval_status=(
                 "answering"
-                if self._library_rag_answer_in_flight
-                else self._library_rag_retrieval_status
+                if self._rag_search_state.answer_in_flight
+                else self._rag_search_state.retrieval_status
             ),
             # PR-3 Task 3: named for the in-flight "Asking <provider>..."
             # line -- gated on the same flag as `retrieval_status` above,
             # belt-and-suspenders against a reset gap ever leaving a stale
             # provider name forwarded once the flag itself reads False.
             in_flight_answer_provider=(
-                self._library_rag_answer_in_flight_provider
-                if self._library_rag_answer_in_flight
+                self._rag_search_state.answer_in_flight_provider
+                if self._rag_search_state.answer_in_flight
                 else ""
             ),
             recovery_copy=(
-                self._library_rag_recovery_state.visible_copy
-                if self._library_rag_recovery_state is not None
+                self._rag_search_state.recovery_state.visible_copy
+                if self._rag_search_state.recovery_state is not None
                 else ""
             ),
             recovery_selector=(
-                self._library_rag_recovery_state.stable_selector
-                if self._library_rag_recovery_state is not None
+                self._rag_search_state.recovery_state.stable_selector
+                if self._rag_search_state.recovery_state is not None
                 else ""
             ),
             # Deliberately always ready: the UI path never imports torch (or
@@ -13991,10 +13992,10 @@ class LibraryScreen(BaseAppScreen):
             provider_name=provider_gate.provider,
             provider_credential_recovery=provider_gate.credential_recovery,
             selected_source_types=selected_source_types,
-            history=self._library_search_history,
-            history_collapsed=self._library_rag_history_collapsed,
-            diagnostics=self._library_rag_diagnostics,
-            answer=self._library_rag_answer,
+            history=self._rag_search_state.history,
+            history_collapsed=self._rag_search_state.history_collapsed,
+            diagnostics=self._rag_search_state.diagnostics,
+            answer=self._rag_search_state.answer,
         )
 
     def _library_collections_capture_presentation(
@@ -14362,7 +14363,7 @@ class LibraryScreen(BaseAppScreen):
             rail = LibraryRail(
                 shell,
                 preferences,
-                query=self._library_rag_query,
+                query=self._rag_search_state.query,
                 search_placeholder=self._library_rail_search_placeholder(),
                 workspaces_body_factory=self._compose_workspaces_rail_body,
                 top_action_factory=self._compose_library_rail_top_action,
@@ -14421,7 +14422,7 @@ class LibraryScreen(BaseAppScreen):
             rail = LibraryRail(
                 shell,
                 preferences,
-                query=self._library_rag_query,
+                query=self._rag_search_state.query,
                 search_placeholder=self._library_rail_search_placeholder(),
                 workspaces_body_factory=self._compose_workspaces_rail_body,
                 top_action_factory=self._compose_library_rail_top_action,
@@ -14464,7 +14465,7 @@ class LibraryScreen(BaseAppScreen):
             rail = LibraryRail(
                 shell,
                 preferences,
-                query=self._library_rag_query,
+                query=self._rag_search_state.query,
                 search_placeholder=self._library_rail_search_placeholder(),
                 workspaces_body_factory=self._compose_workspaces_rail_body,
                 top_action_factory=self._compose_library_rail_top_action,
@@ -14516,7 +14517,7 @@ class LibraryScreen(BaseAppScreen):
             rail = LibraryRail(
                 shell,
                 preferences,
-                query=self._library_rag_query,
+                query=self._rag_search_state.query,
                 search_placeholder=self._library_rail_search_placeholder(),
                 workspaces_body_factory=self._compose_workspaces_rail_body,
                 top_action_factory=self._compose_library_rail_top_action,
@@ -14562,7 +14563,7 @@ class LibraryScreen(BaseAppScreen):
             rail = LibraryRail(
                 shell,
                 preferences,
-                query=self._library_rag_query,
+                query=self._rag_search_state.query,
                 search_placeholder=self._library_rail_search_placeholder(),
                 workspaces_body_factory=self._compose_workspaces_rail_body,
                 top_action_factory=self._compose_library_rail_top_action,
@@ -14613,7 +14614,7 @@ class LibraryScreen(BaseAppScreen):
             rail = LibraryRail(
                 shell,
                 preferences,
-                query=self._library_rag_query,
+                query=self._rag_search_state.query,
                 search_placeholder=self._library_rail_search_placeholder(),
                 workspaces_body_factory=self._compose_workspaces_rail_body,
                 top_action_factory=self._compose_library_rail_top_action,
@@ -14681,7 +14682,7 @@ class LibraryScreen(BaseAppScreen):
             rail = LibraryRail(
                 shell,
                 preferences,
-                query=self._library_rag_query,
+                query=self._rag_search_state.query,
                 search_placeholder=self._library_rail_search_placeholder(),
                 workspaces_body_factory=self._compose_workspaces_rail_body,
                 top_action_factory=self._compose_library_rail_top_action,
@@ -14717,7 +14718,7 @@ class LibraryScreen(BaseAppScreen):
             rail = LibraryRail(
                 shell,
                 preferences,
-                query=self._library_rag_query,
+                query=self._rag_search_state.query,
                 search_placeholder=self._library_rail_search_placeholder(),
                 workspaces_body_factory=self._compose_workspaces_rail_body,
                 top_action_factory=self._compose_library_rail_top_action,
@@ -14990,7 +14991,7 @@ class LibraryScreen(BaseAppScreen):
                         # rendered" key so the next incremental refresh rebuilds
                         # unconditionally instead of reasoning about whether
                         # compose happened to render the same thing.
-                        self._library_rag_answer_render_key = None
+                        self._rag_search_state.answer_render_key = None
                         yield LibrarySearchRagPanel(
                             self._library_rag_panel_state(),
                             id="library-search-rag-panel",
@@ -22114,7 +22115,7 @@ class LibraryScreen(BaseAppScreen):
         rail.sync_state(
             rail.shell,
             rail.preferences,
-            query=self._library_rag_query,
+            query=self._rag_search_state.query,
             lifecycle=self._library_lifecycle,
             onboarding_all_empty=self._library_onboarding_all_empty,
         )
@@ -22520,12 +22521,6 @@ class LibraryScreen(BaseAppScreen):
         )
         return entries[:LIBRARY_SEARCH_HISTORY_LIMIT]
 
-    def _record_library_search_history(self, query: str) -> None:
-        return self._rag_search_controller._record_library_search_history(query)
-
-    def _persist_library_search_history(self, history_list: list[str]) -> None:
-        return self._rag_search_controller._persist_library_search_history(history_list)
-
     @work(thread=True)
     def _save_library_search_history(self, history: list[str]) -> None:
         """Persist Library Search/RAG query history without blocking the UI thread."""
@@ -22831,7 +22826,7 @@ class LibraryScreen(BaseAppScreen):
                     library_pane=LibraryRail(
                         shell_state,
                         self._library_rail_preferences(),
-                        query=self._library_rag_query,
+                        query=self._rag_search_state.query,
                         search_placeholder=self._library_rail_search_placeholder(),
                         workspaces_body_factory=self._compose_workspaces_rail_body,
                         top_action_factory=self._compose_library_rail_top_action,
@@ -41475,7 +41470,7 @@ class LibraryScreen(BaseAppScreen):
         """Keep the OTHER mounted search input showing the same query text.
 
         The rail box and the Search canvas's query box share one state
-        field (``_library_rag_query``); this keeps the mounted WIDGETS in
+        field (``_rag_search_state.query``); this keeps the mounted WIDGETS in
         lockstep as the user types in either. The programmatic assignment
         suppresses the sibling's own ``Input.Changed`` event.
         """
@@ -41490,9 +41485,6 @@ class LibraryScreen(BaseAppScreen):
     @on(Input.Submitted, "#library-search-input")
     async def handle_library_search_submitted(self, event: Input.Submitted) -> None:
         return await self._rag_search_controller.handle_library_search_submitted(event)
-
-    def _focus_library_search_input(self) -> None:
-        return self._rag_search_controller._focus_library_search_input()
 
     def _library_rail_search_placeholder(self) -> str:
         return self._rag_search_controller._library_rail_search_placeholder()
@@ -41664,15 +41656,6 @@ class LibraryScreen(BaseAppScreen):
     @on(Input.Submitted, "#library-rag-query-input")
     async def submit_library_rag_query(self, event: Input.Submitted) -> None:
         return await self._rag_search_controller.submit_library_rag_query(event)
-
-    def _reset_library_rag_retrieval_state(self) -> None:
-        return self._rag_search_controller._reset_library_rag_retrieval_state()
-
-    def _reset_library_rag_answer_state(self) -> None:
-        return self._rag_search_controller._reset_library_rag_answer_state()
-
-    def _reset_library_rag_in_flight_status(self) -> None:
-        return self._rag_search_controller._reset_library_rag_in_flight_status()
 
     @on(Button.Pressed, "#library-rag-run-query")
     async def run_library_rag_query(self, event: Button.Pressed) -> None:
@@ -41885,17 +41868,9 @@ class LibraryScreen(BaseAppScreen):
     async def select_library_rag_result(self, event: Button.Pressed) -> None:
         return await self._rag_search_controller.select_library_rag_result(event)
 
-    async def _select_library_rag_result_by_index(
-        self, result_index: int | None
-    ) -> None:
-        return await self._rag_search_controller._select_library_rag_result_by_index(result_index)
-
     @on(Button.Pressed, ".library-rag-result-open")
     async def open_library_rag_result(self, event: Button.Pressed) -> None:
         return await self._rag_search_controller.open_library_rag_result(event)
-
-    async def _open_library_rag_result_by_index(self, index: int | None) -> None:
-        return await self._rag_search_controller._open_library_rag_result_by_index(index)
 
     def _focused_library_rag_result_card_index(self) -> int | None:
         return self._rag_search_controller._focused_library_rag_result_card_index()
@@ -42256,9 +42231,6 @@ class LibraryScreen(BaseAppScreen):
     async def action_library_rag_use_in_console(self) -> None:
         return await self._rag_search_controller.action_library_rag_use_in_console()
 
-    def _use_library_rag_result_in_console(self, event: Button.Pressed) -> None:
-        return self._rag_search_controller._use_library_rag_result_in_console(event)
-
     def _console_setup_would_block(self) -> bool:
         """Best-effort predict whether Console is currently locked behind setup.
 
@@ -42317,9 +42289,6 @@ class LibraryScreen(BaseAppScreen):
             first_send_completed=coerce_console_first_send_completed(raw_first_send),
         )
 
-    def _stage_library_rag_result_in_console(self) -> None:
-        return self._rag_search_controller._stage_library_rag_result_in_console()
-
     @work(exclusive=True, group="library_rag_search")
     async def _execute_library_rag_search(
         self, request: LibraryRagSearchRequest
@@ -42368,16 +42337,6 @@ class LibraryScreen(BaseAppScreen):
         outcome: LibraryRagSearchOutcome,
     ) -> None:
         return await self._rag_search_controller._apply_library_rag_search_outcome(request, outcome)
-
-    def _reveal_library_rag_results(self) -> None:
-        return self._rag_search_controller._reveal_library_rag_results()
-
-    def _start_library_rag_answer(
-        self,
-        request: LibraryRagSearchRequest,
-        outcome: LibraryRagSearchOutcome,
-    ) -> None:
-        return self._rag_search_controller._start_library_rag_answer(request, outcome)
 
     def _library_rag_answer_chat_kwargs(self) -> dict[str, Any] | None:
         return self._rag_search_controller._library_rag_answer_chat_kwargs()
@@ -42443,7 +42402,7 @@ class LibraryScreen(BaseAppScreen):
         no-`await` constraint) and has no coroutine of its own in which to
         `await widget.remove()` / `await container.mount(...)`.
 
-        Takes `_library_rag_panel_refresh_lock` -- the SAME lock
+        Takes `_rag_search_state.panel_refresh_lock` -- the SAME lock
         `_refresh_search_rag_panel_state_widgets` holds for its own
         remove/mount of this exact block -- rather than firing the
         remove/mount unawaited from the sync method above. Both approaches
@@ -42475,7 +42434,7 @@ class LibraryScreen(BaseAppScreen):
             "#library-search-rag-panel"
         ):
             return
-        async with self._library_rag_panel_refresh_lock:
+        async with self._rag_search_state.panel_refresh_lock:
             if (
                 self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH
                 or not self.query("#library-search-rag-panel")
@@ -42493,7 +42452,7 @@ class LibraryScreen(BaseAppScreen):
             # triggered scheduling): if a newer snapshot superseded this one
             # before the worker's turn came up, the cache must reflect what
             # actually got mirrored, not what was true a moment earlier.
-            self._library_rag_scope_recovery_visible = library_rag_scope_shows_recovery(
+            self._rag_search_state.scope_recovery_visible = library_rag_scope_shows_recovery(
                 panel_state.scope
             )
 
@@ -42525,7 +42484,7 @@ class LibraryScreen(BaseAppScreen):
                 DO need them (Submit/Run, evidence selection, outcome
                 application, scope/mode toggles) all pass the default True.
 
-        Serialized by `_library_rag_panel_refresh_lock` (PR-3 Task 4): every
+        Serialized by `_rag_search_state.panel_refresh_lock` (PR-3 Task 4): every
         step below is a remove-then-mount of fixed-id widgets, so two
         overlapping calls can each capture their removal list, await, and
         then both mount -- `DuplicateIds`. Two-phase answering made that
@@ -42539,7 +42498,7 @@ class LibraryScreen(BaseAppScreen):
         ):
             return
 
-        async with self._library_rag_panel_refresh_lock:
+        async with self._rag_search_state.panel_refresh_lock:
             # Re-checked INSIDE the lock: the check above happened before an
             # unbounded wait, and the panel can be gone by the time this
             # refresh actually runs (a rail switch, or a recompose, while a
@@ -42569,7 +42528,7 @@ class LibraryScreen(BaseAppScreen):
             # never wrong (the mirror always re-derives its target from a
             # fresh `panel_state`, not from the cache), just a possible
             # redundant reconciliation on the next in-place snapshot.
-            self._library_rag_scope_recovery_visible = library_rag_scope_shows_recovery(
+            self._rag_search_state.scope_recovery_visible = library_rag_scope_shows_recovery(
                 panel_state.scope
             )
 
@@ -42578,7 +42537,7 @@ class LibraryScreen(BaseAppScreen):
             # class as the query-status block rebuilt just above, nothing
             # like the ~100+ result/history rows that gate exists for), and
             # keeping it on every refresh path means it can never drift out
-            # of lockstep with `_library_rag_answer`/the in-flight flag.
+            # of lockstep with `_rag_search_state.answer`/the in-flight flag.
             await self._refresh_library_rag_answer_widgets(panel_state)
 
             if not include_results_and_history:
@@ -42978,32 +42937,13 @@ LibraryExportController._safe_text = staticmethod(LibraryScreen._safe_text)
 # `LibraryCollectionsController`'s own generated shim loop (installed by
 # task 6) for where the SAME shape now lives permanently, one layer down.
 
-# --- BEGIN generated search+rag-state shims (delete wholesale at cleanup) ---
-# wave-3 task 2: keeps every original `_library_rag_<field>`/
-# `_library_search_<field>` name working as a property over
-# `self._rag_search_state`; attached programmatically so the class body
-# gains no FunctionDefs (the size ratchet counts those). Every field uses
-# the cluster's default `_library_rag_` prefix except the ones named in
-# `SEARCH_PREFIXED_STATE_FIELDS` (imported from `library_rag_search_state`
-# -- the single authoritative home for that one-name exception, not a
-# second, independently-drifting copy; see the conversations exemplar's
-# own task-8 fix-round lesson for why this mattered enough to avoid from
-# the start).
-for _rss_field in dataclasses.fields(LibraryRagSearchState):
-    _rss_prefix = (
-        "_library_search_"
-        if _rss_field.name in SEARCH_PREFIXED_STATE_FIELDS
-        else "_library_rag_"
-    )
-    setattr(
-        LibraryScreen,
-        _rss_prefix + _rss_field.name,
-        property(
-            lambda self, _n=_rss_field.name: getattr(self._rag_search_state, _n),
-            lambda self, value, _n=_rss_field.name: setattr(
-                self._rag_search_state, _n, value
-            ),
-        ),
-    )
-del _rss_field, _rss_prefix
-# --- END generated search+rag-state shims ---
+# wave-3 task 4 (search+RAG cleanup, search+RAG series 3/3) deleted the
+# generated search+rag-state shim block that used to live here (wave-3
+# task 2): every remaining screen-side `_library_rag_<field>`/
+# `_library_search_history` reference was retargeted to
+# `self._rag_search_state.<field>` and every test attribute path/dynamic-
+# dispatch string was retargeted to match, so nothing on `LibraryScreen`
+# needs the flat property names anymore -- see
+# `LibraryRagSearchController`'s own generated shim loop (installed by
+# task 3) for where the SAME shape now lives permanently, one layer down,
+# exactly mirroring the collections precedent immediately above.

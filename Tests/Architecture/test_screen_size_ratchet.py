@@ -291,7 +291,38 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # bodies) / -1010 deletions (the 42 moved bodies' original lines, net
     # of restoring `_load_library_search_history`'s full body once it was
     # excluded). 43923/1316 -> 43009/1316.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43009, 1316),
+    # 2026-09-03, wave-3 task 4 (combined search+RAG cleanup, series 3/3):
+    # the generated search+rag-state shim block (task 2) deleted wholesale;
+    # every remaining screen-side `_library_rag_<field>`/`_library_search_
+    # history` literal retargeted to `self._rag_search_state.<field>` (35
+    # occurrences across 9 screen methods via one mechanical regex pass,
+    # AST-reverified to zero remaining live consumers). A wider census also
+    # flagged `canvas_sync.py`'s `_sync_library_canvas` (its `"search"`
+    # branch writes `screen._library_rag_answer_render_key` directly) as a
+    # candidate -- an initial retarget to `screen._rag_search_state.
+    # answer_render_key` broke `test_library_canvas_scoped_sync.py::
+    # test_media_choice_and_rag_toggles_are_canvas_scoped` (caught by this
+    # task's own sweep, not left latent): that branch's ONLY two callers
+    # (`cycle_library_rag_mode`/`toggle_library_rag_scope_source`) forward
+    # `self` = the CONTROLLER as the `screen` parameter, which has no
+    # `_rag_search_state` attribute at all (by design -- see the
+    # controller's own permanent shim's docstring). Reverted: the flat
+    # name is correct AS-IS, resolving through the controller's own
+    # mirrored shim exactly the way the conversations controller's
+    # identical `self`-forwarding shape already relies on;
+    # `canvas_sync.py` needed NO change. Of the 42 delegators
+    # task 3 left in place, 12 had ZERO references anywhere outside their
+    # own one-line body (14 `@on` handlers + 3 `action_*` handlers always
+    # kept per the recipe's transform whitelist; 13 more non-`@on` names
+    # kept for a genuine screen-resident or test caller) -- pruned, along
+    # with the one import (`build_library_rag_console_live_work_payload`)
+    # that prune made newly dead, plus 3 more already-dead-since-task-3
+    # imports (`LIBRARY_RAG_QUERY_MAX_LENGTH`, `LIBRARY_RAG_USE_IN_CONSOLE_
+    # LOCKED_NOTICE`, `library_rag_scope_summary`) and the `SEARCH_PREFIXED_
+    # STATE_FIELDS` import the deleted shim was the screen's only consumer
+    # of. 12 fewer `FunctionDef`s -- exactly the 12 pruned delegators; no
+    # method body touched. 43009/1316 -> 42949/1304.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 42949, 1304),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

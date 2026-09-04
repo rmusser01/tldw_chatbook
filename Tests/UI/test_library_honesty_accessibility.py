@@ -947,7 +947,7 @@ async def test_blocked_run_records_nothing_in_recent_searches():
 
         await screen._start_library_rag_query()  # blank query -> gate blocked
         await pilot.pause()
-        assert screen._library_search_history == ()
+        assert screen._rag_search_state.history == ()
         assert not list(screen.query(".library-rag-history-row"))
 
 

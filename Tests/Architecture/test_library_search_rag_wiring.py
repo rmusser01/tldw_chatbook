@@ -1,21 +1,29 @@
 """Combined Search+RAG extraction series: state object and controller are screen-wired.
 
-Wave-3 Task 2 (state PR -- search+RAG series 1/3) and Task 3 (controller PR
--- search+RAG series 2/3; recipe: backlog/docs/library-decomposition-recipe.md;
-export/collections series precedent: Tests/Architecture/
-test_library_export_wiring.py / test_library_collections_wiring.py; the
-conversations exemplar's own test_library_conversations_wiring.py is the
-precedent for a state object whose fields split across TWO shim prefixes).
+Wave-3 Task 2 (state PR -- search+RAG series 1/3), Task 3 (controller PR --
+search+RAG series 2/3), and Task 4 (cleanup PR -- search+RAG series 3/3;
+recipe: backlog/docs/library-decomposition-recipe.md; export/collections
+series precedent: Tests/Architecture/test_library_export_wiring.py /
+test_library_collections_wiring.py; the conversations exemplar's own
+test_library_conversations_wiring.py is the precedent for a state object
+whose fields split across TWO shim prefixes).
 
 Task 2's ``test_state_object_fields_match_the_shim_surface`` (every
 ``LibraryRagSearchState`` field <-> a matching generated property shim on
-``LibraryScreen``) is unchanged below -- it stays green through the
-controller move (the screen's own shim block is a Task-4 cleanup deletion,
-not a Task-3 concern, per the conversations/export/collections precedent).
-Task 3 adds the full-cluster ownership/same-name-delegator-forwarding checks
-(``_RAG_SEARCH_CLUSTER_METHOD_NAMES``, 42 names) and the controller-side
-state-field-coverage check, mirroring ``test_library_collections_wiring.py``
-exactly.
+``LibraryScreen``) is GONE as of Task 4: the screen's generated shim block
+was deleted wholesale in cleanup (``self._rag_search_state`` is a real
+``LibraryRagSearchState`` instance now, not a shimmed screen attribute), so
+there is nothing left on ``LibraryScreen`` for that assertion to check --
+exactly the conversations exemplar's own Task 9 precedent and the export/
+collections series' own Task 4/Task 7 precedent.
+``test_rag_search_controller_exposes_every_state_field`` below already
+covers the equivalent job on the controller side and needed no change.
+Task 3's full-cluster ownership/same-name-delegator-forwarding checks
+(``_RAG_SEARCH_CLUSTER_METHOD_NAMES``, 42 names) are unchanged in shape;
+Task 4 adds the ``_RAG_SEARCH_CLUSTER_SCREEN_DELEGATOR_PRUNED`` skip/
+absence-assertion pair to ``test_screen_delegates_rag_search_handlers``,
+mirroring ``_COLLECTIONS_CLUSTER_SCREEN_DELEGATOR_PRUNED`` in the
+collections wiring test.
 """
 from __future__ import annotations
 
@@ -29,25 +37,6 @@ from tldw_chatbook.UI.Library_Modules.library_rag_search_state import (
     SEARCH_PREFIXED_STATE_FIELDS,
     LibraryRagSearchState,
 )
-
-
-@pytest.mark.unit
-def test_state_object_fields_match_the_shim_surface() -> None:
-    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
-
-    field_names = {f.name for f in dataclasses.fields(LibraryRagSearchState)}
-    assert field_names, "state object is empty"
-    missing = []
-    for name in field_names:
-        prefix = (
-            "_library_search_"
-            if name in SEARCH_PREFIXED_STATE_FIELDS
-            else "_library_rag_"
-        )
-        shim = getattr(LibraryScreen, prefix + name, None)
-        if not isinstance(shim, property):
-            missing.append(prefix + name)
-    assert not missing, f"no screen shim property found for: {missing!r}"
 
 
 @pytest.mark.unit
@@ -128,6 +117,43 @@ _RAG_SEARCH_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
     }
 )
 
+#: Task 4 cleanup: these 12 names have ZERO references anywhere except their
+#: own one-line screen delegator (checked via a repo-wide census across
+#: `tldw_chatbook/` and `Tests/`, including `Tests/Live/`) -- every call is
+#: either the controller's own internal `self.<name>()` (moved-body-
+#: internal) or this wiring test's own shape-check list; nothing outside the
+#: controller ever called `screen.<name>()`. Their screen delegators were
+#: deleted as dead weight; the names remain in
+#: `_RAG_SEARCH_CLUSTER_METHOD_NAMES` above (the controller still genuinely
+#: owns and uses each one) but are excluded from the delegation-forwarding
+#: check below, same shape as the collections series' own
+#: `_COLLECTIONS_CLUSTER_SCREEN_DELEGATOR_PRUNED` (14 names) and the export
+#: series' own `_EXPORT_CLUSTER_SCREEN_DELEGATOR_PRUNED` (1 name). This
+#: 12-of-42 prune fraction (~29%) sits between export's 1-of-22 (~5%) and
+#: collections' 14-of-64 (~22%)/conversations' 18-of-61 (~30%): of the 25
+#: non-`@on`/`action_*` names, 13 were kept for a genuine screen-resident
+#: caller (some of the Task-3 round-2/round-3 exclusions -- e.g.
+#: `_execute_library_rag_answer` calling `_apply_library_rag_answer`,
+#: `_refresh_search_rag_panel_state_widgets` calling the four
+#: `_refresh_library_rag_*_widgets` methods -- or a test that calls/patches
+#: the screen delegator directly), and 12 had none.
+_RAG_SEARCH_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
+    {
+        "_focus_library_search_input",
+        "_open_library_rag_result_by_index",
+        "_persist_library_search_history",
+        "_record_library_search_history",
+        "_reset_library_rag_answer_state",
+        "_reset_library_rag_in_flight_status",
+        "_reset_library_rag_retrieval_state",
+        "_reveal_library_rag_results",
+        "_select_library_rag_result_by_index",
+        "_stage_library_rag_result_in_console",
+        "_start_library_rag_answer",
+        "_use_library_rag_result_in_console",
+    }
+)
+
 
 @pytest.mark.unit
 def test_rag_search_controller_owns_its_cluster() -> None:
@@ -157,11 +183,24 @@ def test_screen_delegates_rag_search_handlers() -> None:
     Mirrors `test_screen_delegates_collections_handlers`: a same-name
     forwarding check, not a loose "the controller is referenced somewhere"
     substring check.
+
+    Skips `_RAG_SEARCH_CLUSTER_SCREEN_DELEGATOR_PRUNED` (Task 4 deleted
+    those 12 screen delegators as dead weight -- zero external references)
+    and instead asserts each such name is genuinely ABSENT from
+    `LibraryScreen`, so a future accidental re-add would fail loudly here
+    rather than silently reintroducing dead code.
     """
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
     not_delegators = []
     for name in _RAG_SEARCH_CLUSTER_METHOD_NAMES:
+        if name in _RAG_SEARCH_CLUSTER_SCREEN_DELEGATOR_PRUNED:
+            assert getattr(LibraryScreen, name, None) is None, (
+                f"{name!r} was pruned from the screen (task 4) but is back -- "
+                "either wire it as a delegator again or drop it from "
+                "_RAG_SEARCH_CLUSTER_SCREEN_DELEGATOR_PRUNED"
+            )
+            continue
         method = getattr(LibraryScreen, name, None)
         if method is None:
             not_delegators.append(f"{name!r} (missing entirely)")

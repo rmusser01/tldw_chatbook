@@ -154,7 +154,18 @@ _BUDGETS: dict[str, int] = {
     # in this module's own docstring were corrected in place (no methods
     # touched, no bodies re-shaped -- byte-for-byte canon on the 42 moved
     # bodies is unaffected). 1857 -> 1890.
-    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 1890,
+    # 2026-09-03, wave-3 task 4 (search+RAG cleanup, series 3/3): the ruled
+    # cleanup item from task 3's own report -- `_sync_library_rag_scope_
+    # toggle_and_run_gate_widgets`'s moved-body docstring carried the
+    # ORIGINAL false caller claim ("Called synchronously from
+    # `_apply_local_source_snapshot`'s in-place branch"), byte-for-byte
+    # original text the byte-for-byte canon correctly forbade fixing in
+    # task 3 itself -- corrected in place here to name the actual caller
+    # (`_reconcile_library_entry_state`, screen-resident), matching the
+    # module docstring's own already-corrected paragraph. Comment-only
+    # growth; no method body, mover count, or byte-for-byte canon content
+    # changed. 1890 -> 1895.
+    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 1895,
     "tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py": 760,
     "tldw_chatbook/UI/Library_Modules/library_skills_browse_controller.py": 413,
 }

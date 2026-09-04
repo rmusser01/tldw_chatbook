@@ -1,10 +1,10 @@
 ---
 id: TASK-31203
 title: 'Library decomposition wave 3: combined search+RAG series'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-03 05:55'
-updated_date: '2026-09-03 20:49'
+updated_date: '2026-09-04 02:19'
 labels: []
 dependencies: []
 ---
@@ -17,11 +17,19 @@ Wave-2 Task 8's entanglement gate fired: 8/14 search methods (57.1%) call or are
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Combined cluster enumerated with the recipe ownership script (search 14 + rag ~39 at 2026-09-02 snapshot)
-- [ ] #2 Series follows the recipe (state, RED-commit wiring, controller(s), cleanup) with both guards green throughout
-- [ ] #3 Recipe per-subsystem table updated with actual numbers
+- [x] #1 Combined cluster enumerated with the recipe ownership script (search 14 + rag ~39 at 2026-09-02 snapshot)
+- [x] #2 Series follows the recipe (state, RED-commit wiring, controller(s), cleanup) with both guards green throughout
+- [x] #3 Recipe per-subsystem table updated with actual numbers
 - [x] #4 Wave-2 final review's size-governance note considered: Library_Modules controller files (e.g. library_collections_controller.py, 1,689 lines; library_conversations_controller.py, 1,738 lines) have no size-ratchet governance today, unlike the screens they were extracted from -- wave 3 records a decision (add _BUDGETS-style rows for Library_Modules controllers, an equivalent mechanism, or an explicit defer-with-reason) rather than leaving the question unaddressed
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+AC#4 only (Task 1 of the wave-3 plan): decided option (a), exact per-file _BUDGETS rows in a new sibling guard, Tests/Architecture/test_library_modules_size_ratchet.py, discovered by glob (UI/Library_Modules/*_controller.py) so a new controller is born governed instead of needing a hand-edit. 12 current controller files pinned at their exact measured line counts (699-2023 lines). Mutation-tested both directions plus the self-defending unlisted-file property (all 4 fire correctly, reverted cleanly). Full decision, reasoning, re-pin flow, and measured rows recorded in backlog/docs/library-decomposition-recipe.md new section 17. This ticks AC#4 only -- AC#1-3 (the search+RAG extraction series itself) remain To Do; task stays not-Done.
+
+AC#1-3 (Tasks 2-4 of the wave-3 plan, the extraction series itself): complete. Task 2 (state PR) re-derived the combined cluster fresh (60 raw "search"/"rag" name matches, 50 after excluding 3 Prompts-owned + 7 Media-owned) and moved 20 fields to LibraryRagSearchState (one combined object -- field-level census found all 20 consumed inside one lock-serialized call graph, so no search/rag split). Task 3 (controller PR) re-verified the single-controller decision independently at the method level and moved 42 of the 50 candidates to LibraryRagSearchController (8 excluded: 3 @work framework-decorator hazard, 1 module-globals-coupling exclusion found by running the battery, 4 instance-attribute-monkeypatch test bypasses); one fix round corrected two false-caller-count claims and a shipped-red path-census test. Task 4 (cleanup PR) deleted the screen's generated state shim (35 literal field references across 9 screen-resident methods retargeted to self._rag_search_state.<field>); a wider census also flagged canvas_sync.py's _sync_library_canvas (a cross-module write of the flat name), but its only two callers forward the CONTROLLER as "screen" (which has no _rag_search_state attribute by design), so retargeting it broke a real test caught by this task's own sweep -- reverted, canvas_sync.py needed no change (see recipe §18 for the full trace). Pruned 12 of the 42 screen delegators with zero references anywhere outside their own body, removed 5 dead imports, and fixed the one moved-body docstring Task 3's review had ruled out of scope for the controller PR itself. Final pins: library_screen.py 43977/1316 (task 2 start) -> 42949/1304 (task 4 final); library_rag_search_controller.py born-governed at 1857 -> 1895. Full per-task detail in backlog/docs/library-decomposition-recipe.md §18 and .superpowers/sdd/2026-09-03-library-decomposition-wave3-search-rag/task-{2,3,4}-report.md. All four ACs now met; task moves to Done.
+<!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
 
@@ -45,9 +53,3 @@ sweep as `TASK-27020` -> `TASK-31202` above (true max at merge time:
 captures of specific historical commit ranges and were deliberately
 left unedited, for the same reason recorded on `TASK-31202`'s
 provenance note.
-
-## Implementation Notes
-
-<!-- SECTION:NOTES:BEGIN -->
-AC#4 only (Task 1 of the wave-3 plan): decided option (a), exact per-file _BUDGETS rows in a new sibling guard, Tests/Architecture/test_library_modules_size_ratchet.py, discovered by glob (UI/Library_Modules/*_controller.py) so a new controller is born governed instead of needing a hand-edit. 12 current controller files pinned at their exact measured line counts (699-2023 lines). Mutation-tested both directions plus the self-defending unlisted-file property (all 4 fire correctly, reverted cleanly). Full decision, reasoning, re-pin flow, and measured rows recorded in backlog/docs/library-decomposition-recipe.md new section 17. This ticks AC#4 only -- AC#1-3 (the search+RAG extraction series itself) remain To Do; task stays not-Done.
-<!-- SECTION:NOTES:END -->

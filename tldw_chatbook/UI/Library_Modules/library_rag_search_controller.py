@@ -1473,10 +1473,15 @@ class LibraryRagSearchController:
         """Refresh the scope-toggle counts and the Run gate in place, with
         NO `await` (RAG-27 fix-review).
 
-        Called synchronously from `_apply_local_source_snapshot`'s
-        in-place branch, which fires off the UI thread on every ingest
-        done-count growth -- a moment with no coordination against the
-        panel's four other refresh callers (`update_library_rag_query`,
+        Called synchronously from `_reconcile_library_entry_state`'s
+        (screen-resident, `library_screen.py`, never a cluster candidate)
+        `LIBRARY_ROW_BROWSE_SEARCH` branch -- itself scheduled via
+        `call_later` off every snapshot-generation bump
+        (`_apply_local_source_snapshot` and its siblings), so this still
+        runs off the UI thread on every ingest done-count growth, just not
+        literally inline inside `_apply_local_source_snapshot`'s own call
+        stack -- a moment with no coordination against the panel's four
+        other refresh callers (`update_library_rag_query`,
         `_start_library_rag_query`, `select_library_rag_result`,
         `_apply_library_rag_search_outcome`), all of which `await
         self._refresh_search_rag_panel_state_widgets(...)` directly with

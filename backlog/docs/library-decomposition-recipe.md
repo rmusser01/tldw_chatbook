@@ -463,6 +463,30 @@ rediscover the same red from scratch.
   concurrently, when machine time allows** -- the concurrent shortcut
   used here to save wall-clock time cost real investigation effort this
   task's own report accounts for in full.
+- Wave-3 Task 4 (search+RAG cleanup PR) found 1 more via the targeted
+  regression battery, confirmed identical on a `git stash -u` pristine
+  baseline of the pre-task tree (`801c5375e`), reproducing in true
+  isolation on both trees:
+  `Tests/UI/test_library_canvas_scoped_sync.py::
+  test_notes_per_click_updates_keep_screen_and_canvas_identity` -- a
+  Notes-only canvas-identity characterization test with no Search/RAG
+  interaction; this task's own diff touches none of its assertions or the
+  Notes canvas-sync path. Not investigated further (out of this task's
+  subsystem scope), but recorded per this section's own mandate rather
+  than left for the next task to rediscover.
+- The same task's own full sequential xdist paired-baseline sweep found 2
+  more among its 5 branch-unique names, confirmed identical on a SECOND
+  `git stash -u` to the same pristine `801c5375e` tree, run in the same
+  true-isolation combination as the original branch-unique triage:
+  `Tests/UI/test_library_shell.py::
+  test_library_media_page_error_retains_rows_and_gates_unsafe_controls`
+  and `Tests/UI/test_screen_navigation.py::
+  test_skills_route_lands_on_library_with_skills_row_selected` -- a Media
+  page-error test and a Skills-route navigation test, neither touching
+  Search/RAG; this task's own diff touches neither. The other 3 of the 5
+  branch-unique names passed cleanly on the same combined re-run
+  (ordinary xdist noise, not investigated further per §7's own
+  precedent for a name that passes on re-run).
 
 ## 8. Subsystem order (spec, "Order of work")
 
@@ -476,9 +500,8 @@ days whose subjects name the subsystem (measured 2026-09-01):
 | 1 | **conversations** (exemplar) — **complete** (Tasks 6–9) | 10 | 68 methods, 19 fields (2026-09-01 estimate); see §11 for the series' actual, as-landed numbers |
 | 2 | **export** — **complete** (wave-2 Tasks 2–4) | 3 | 13 fields moved; 22 of 51 "export"-named method candidates moved / 29 excluded (18 other-subsystem, 2 `@work` framework-decorator self-type-assertion hazard, 9 unbound-fake-self/silent-Mock test bypasses); see §12 for the series' actual, as-landed numbers |
 | 2 | **collections** — **complete** (wave-2 Tasks 5–7) | 6 | 26 fields moved (1 wiring field stayed); 64 of 67 "collection"-named method candidates moved / 3 excluded (Prompts-owned); see §13–§15 for the series' actual, as-landed numbers |
-| 2 | **search** — **BLOCKED at the entanglement gate** (wave-2 Task 8) | 6 | 14 candidate methods census'd; 8/14 (57.1%, conservative floor 45.5%) cross-call RAG-named methods, both far past the plan's 1/3 gate — the top search bar's submit path *is* the RAG query entry point, not a sibling of it. No code touched (`library_screen.py` byte-identical to HEAD at task start). Per the wave plan's pre-committed contingency, deferred to a COMBINED search+RAG series in wave 3 (task-31203); see §16 and `.superpowers/sdd/2026-09-02-library-decomposition-wave2-cold-trio/task-8-report.md` for the full census |
+| 2 | **search + RAG** — **complete** (wave-3 Tasks 2–4, task-31203) | 6 + 16 | Deferred from wave-2 (search alone was BLOCKED at the entanglement gate, wave-2 Task 8) into ONE combined series once RAG's own pool was folded in. 20 fields moved to `LibraryRagSearchState`; 42 of 50 combined "search"+"rag"-named method candidates moved to `LibraryRagSearchController` (3 Prompts-owned + 7 Media-owned excluded from the raw 60 name matches before the 50-candidate cluster is even formed; of the 50, 8 excluded: 3 `@work` framework-decorator hazard, 1 module-globals-coupling, 4 instance-attribute-monkeypatch test bypass); 12 of 42 screen delegators pruned at cleanup. See §18 for the series' actual, as-landed numbers |
 | 3 | skills | 15 | |
-| 3 | RAG / onboarding plumbing | 16 | search (above) merges into this pool for wave 3 (task-31203) — see §16 |
 | 3 | ingest | 23 | |
 | 4 | prompts | 41 | |
 | 4 | media | 55 | |
@@ -1969,3 +1992,264 @@ output; the file's final committed state is a clean, zero-diff
 round-trip back to the real measured values — `test_library_modules_
 size_ratchet.py` itself was never left in a mutated state between
 commits.
+## 18. The search+RAG series, as landed — the third rehearsal, and the first combined-subsystem series
+
+Search+RAG (wave-3 task-31203) is the third subsystem series to run this
+recipe, and the first that combines two subsystems the spec originally
+named separately (search, RAG) into ONE series -- forced by wave-2 Task 8's
+entanglement finding (§16: 57.1% of the search cluster cross-calls
+RAG-named methods; the top search bar's submit path *is* the RAG query
+entry point). Its series (wave-3 Tasks 2-4: state PR, controller PR,
+cleanup PR) is complete. This section records what actually landed and
+what the rehearsal added to or reconfirmed about the recipe above.
+
+### Cluster derivation
+
+`ast`-walked `LibraryScreen` for method names containing `"search"` (24 raw
+matches) or `"rag"` (39 raw matches), unioned minus the 3-name overlap
+(`_apply_library_rag_search_outcome`, `_execute_library_rag_search`,
+`_refresh_search_rag_panel_state_widgets`): **60 candidates**. Reading
+every body (not the substring) finds **3 Prompts-owned** (the unrelated
+Prompts search-box debounce trio) and **7 Media-owned** (Media's own
+content/trash search boxes), leaving **50 genuinely combined-cluster
+candidates** -- exactly matching wave-2 Task 8's own search-side count (14)
+plus the unchanged 39-strong RAG-named set, re-derived fresh rather than
+carried over (recipe §6).
+
+### Single vs. split state/controller -- confirmed independently, twice
+
+Task 2's field-level census found all 20 state fields consumed inside one
+lock-serialized call graph rooted at
+`_refresh_search_rag_panel_state_widgets`/`_library_rag_panel_state`. Task
+3 re-verified the SAME conclusion independently, at the METHOD level, with
+an `ast` call-graph walk of all 50 candidates: the "search"- and
+"rag"-prefixed naming families call directly into each other throughout
+(`handle_library_search_submitted`/`rerun_library_search_from_history`/
+`submit_library_rag_query`/`run_library_rag_query` all call
+`_start_library_rag_query` directly; that method calls
+`_record_library_search_history` as an ordinary step). **Decision: ONE
+combined `LibraryRagSearchState`/`LibraryRagSearchController`**, confirmed
+by two independent derivations rather than either alone -- exactly the
+combined-series contingency's own premise, borne out in practice rather
+than merely asserted.
+
+### Fields/methods moved, per task
+
+| Task | PR | What moved | Screen delta |
+|---|---|---|---|
+| 2 | State | 20 fields (19 `_library_rag_*` + 1 `_library_search_history`) → `LibraryRagSearchState` (0 methods; a programmatic two-prefix property-shim loop, the SAME shape the conversations exemplar's own plural-prefix split established -- `SEARCH_PREFIXED_STATE_FIELDS`, a frozenset with one name, is the single authoritative home for the one exception, applying the conversations exemplar's own task-8 fix-round lesson from the start instead of re-discovering it) | 43977 → 43923 lines, 1316 methods (unchanged) |
+| 3 | Controller | 42 methods → `LibraryRagSearchController` (14 `@on` + 3 `action_*` + 25 plain; of 50 candidates, 8 excluded: 3 `@work` framework-decorator hazard, 1 module-globals-coupling exclusion found by running the battery -- not the static census -- and reverted mid-task after it broke a real `get_cli_setting` monkeypatch fixture, 4 instance-attribute-monkeypatch test-bypass) | 43923 → 43009 lines, 1316 methods (unchanged: pure move, 42 `FunctionDef`s out, 42 one-line delegators in) |
+| 4 | Cleanup | Shim block (20 properties across 2 prefixes) deleted; every remaining screen-side field reference retargeted to `self._rag_search_state.<field>` (35 literal occurrences across 9 screen-resident methods via one mechanical regex pass, AST-reverified to zero remaining live consumers); a wider census also flagged 1 cross-module site outside both named scopes (`canvas_sync.py`'s `_sync_library_canvas`, writing `screen._library_rag_answer_render_key` directly) whose ONLY callers forward the CONTROLLER as `screen` -- retargeting it broke a real test (caught by this task's own sweep) and was reverted; `canvas_sync.py` needed no change (see the dedicated finding below); 12 of the 42 screen delegators deleted (repo-wide census, all three test roots plus the whole `tldw_chatbook/` tree: zero references anywhere outside their own one-line body); 5 dead imports removed (1 newly dead from the delegator prune, 3 already dead since Task 3's move but left for this cleanup PR per the export/collections split, 1 whose only screen-side consumer was the deleted shim) | 43009 → **42949 lines, 1304 methods** (12 fewer `FunctionDef`s — exactly the 12 pruned delegators) |
+
+**Pin trajectory** (`_BUDGETS["tldw_chatbook/UI/Screens/library_screen.py"]`
+in `Tests/Architecture/test_screen_size_ratchet.py`):
+`43977/1316 → 43923/1316 → 43009/1316 → 42949/1304` (final).
+
+**Controller-file governance pin** (task-31203 AC#4, §17):
+`library_rag_search_controller.py` was born-governed the moment it existed
+(Task 3), pinned at its exact measured line count: `1857 → 1890` (Task 3
+fix round 1, two false-caller-count corrections in the module docstring)
+`→ 1895` (this cleanup task, the ruled moved-body-docstring correction
+below -- comment-only growth both times, zero method bodies touched
+either time).
+
+### Delegator census -- 30 KEEP, 12 PRUNED (~29%)
+
+Of the 42 moved names: **14 `@on` handlers and 3 `action_*` handlers KEEP
+unconditionally** per the recipe's own transform whitelist (Textual
+dispatches both by CSS-selector message routing and by string-keyed action
+lookup, neither of which a literal grep can see). Of the remaining 25
+plain methods, **13 have a genuine external caller** beyond their own
+delegator body: a screen-resident method calls it (4 of the 8 Task-3
+exclusions call back into a handful of these -- `_execute_library_rag_
+answer` calls `_apply_library_rag_answer`; `_execute_library_rag_search`
+calls `_apply_library_rag_search_outcome`; `_refresh_search_rag_panel_
+state_widgets` calls all four `_refresh_library_rag_*_widgets` plus
+`_library_rag_scope_summary`; `_mirror_library_rag_scope_recovery` calls
+`_apply_library_rag_scope_recovery_block` -- plus `_reconcile_library_
+entry_state`, a screen-resident method that was NEVER one of the 50
+candidates, calling `_sync_library_rag_scope_toggle_and_run_gate_widgets`),
+a test that calls the screen delegator directly (`_apply_library_rag_
+answer`, `_apply_library_rag_search_outcome`, `_library_rag_answer_chat_
+kwargs`, `_start_library_rag_query`), or an instance-attribute monkeypatch
+relying on the delegator's SLOT existing at all (`_focused_library_rag_
+result_card_index`, `_sync_library_rag_scope_toggle_and_run_gate_widgets`)
+--
+and **12 have ZERO references anywhere outside their own one-line body**,
+confirmed by a repo-wide census across `tldw_chatbook/`, `Tests/UI`,
+`Tests/Library`, and `Tests/Live` for each of the 25 individually (not a
+sample): `_focus_library_search_input`, `_open_library_rag_result_by_
+index`, `_persist_library_search_history`, `_record_library_search_
+history`, `_reset_library_rag_answer_state`, `_reset_library_rag_in_
+flight_status`, `_reset_library_rag_retrieval_state`, `_reveal_library_
+rag_results`, `_select_library_rag_result_by_index`, `_stage_library_rag_
+result_in_console`, `_start_library_rag_answer`, `_use_library_rag_
+result_in_console`. Every one of these 12 is still called internally,
+controller-to-controller, by its own sibling movers -- the exact "no
+screen-resident sibling left behind to call it back" shape the collections
+series' own 14-of-64 prune (§15) first identified, at a smaller cluster
+scale here (12 of 42, ~29%, between export's 1-of-22 (~5%) and
+collections' 14-of-64 (~22%)/conversations' 18-of-61 (~30%)).
+
+### A genuinely new finding: a shared dispatcher's `self`-forwarding shape makes a flat name LOOK stale when it is not — retargeting it is the bug
+
+A repo-wide census of the 20 flat field names across the WHOLE
+`tldw_chatbook/` tree (not just `library_screen.py`, per the collections
+series' own "widen the root" lesson, §16 lesson 2) found exactly one hit
+outside the screen: `canvas_sync.py`'s `_sync_library_canvas` (the
+shared, multi-subsystem canvas-sync dispatcher already flagged twice in
+this series — Task 3's own module-globals-coupling paragraph, §3b of its
+docstring, documents its bare-`self`-forwarding risk), whose `"search"`
+branch writes `screen._library_rag_answer_render_key = None` directly.
+
+**The obvious-looking fix is wrong, and this task shipped it once before
+catching it with the sweep.** The instinct (this report's own first
+draft) is: the screen's shim is being deleted, so retarget this to
+`screen._rag_search_state.answer_render_key = None`, exactly like every
+other flat-name site in this cleanup. That edit passed every unit-scoped
+check and the wiring suite, then failed
+`Tests/UI/test_library_canvas_scoped_sync.py::
+test_media_choice_and_rag_toggles_are_canvas_scoped` in the narrow
+`-k "(search or rag) and library"` sweep — a test neither Task 2 nor
+Task 3's own documented failure lists mention, so it demanded
+investigation rather than a shrug. Tracing `_sync_library_canvas`'s
+ACTUAL callers for `kind == "search"` (`grep -rn
+"_sync_library_canvas(" tldw_chatbook/`, not an assumption from the
+function's own `screen: "LibraryScreen"` type annotation) finds exactly
+two, both `LibraryRagSearchController` methods
+(`cycle_library_rag_mode`/`toggle_library_rag_scope_source`), both calling
+`_sync_library_canvas(self, "search")` — `self` there is the CONTROLLER,
+forwarded AS the `screen` parameter. The controller has no
+`_rag_search_state` attribute at all, by design (its own permanent
+shim's docstring says so explicitly: "reading/writing through the
+injected `rag_search_state_accessor` instead of a direct
+`self._rag_search_state` attribute (this class has none)"). The dotted
+retarget therefore raised `AttributeError` on every real invocation of
+this branch; the FLAT name was already correct, resolving through the
+controller's own generated shim (`_library_rag_answer_render_key`,
+installed permanently by Task 3, mirroring the screen's now-deleted one)
+— exactly the polymorphism that shim exists to preserve. Reverted;
+`canvas_sync.py` needed NO change at all for this subsystem's cleanup.
+
+**The lesson is sharper than "grep the whole tree" (§16 lesson 2), which
+this finding also reconfirms: for a flat name found OUTSIDE the screen
+file, trace its actual callers before retargeting, because the receiving
+object at that call site may not be a `LibraryScreen` at all.** A
+parameter's static type annotation is not proof of its runtime type when
+a shared, multi-subsystem dispatcher is deliberately called with `self`
+forwarded from a controller (the conversations controller's own
+`_sync_library_conversation_canvas` does the identical forwarding, with
+no accommodation needed, precisely because ITS controller's shim ALSO
+mirrors the screen's). A future subsystem whose OWN controller does not
+yet carry a mirrored flat-name shim (i.e., before its own controller PR
+lands) would need a different fix here — this reconfirms why the
+byte-for-byte canon has every subsystem's controller carry that
+permanent shim from its own Task-2/3 landing, not just as a convenience,
+but as the exact mechanism that keeps a shared dispatcher's polymorphic
+`self`-forwarding working after the SCREEN's copy is deleted.
+
+### A second finding: name collisions across unrelated subsystems require checking the RECEIVER, not just the string
+
+A repo-wide grep for the flat field name `_library_rag_query` surfaces two
+files that have nothing to do with this cluster:
+`Tests/UI/test_console_rag_settings_modal.py` and `Tests/UI/test_console_
+library_search_modal.py`, both setting `controller._library_rag_query =
+lambda: ...` where `controller` is a `ConsoleRetrievalController`
+(`tldw_chatbook/UI/Console_Modules/retrieval.py`) -- a completely
+unrelated Console feature that happens to use the identical attribute name
+as its OWN named-dependency callable for an unrelated "current RAG query"
+concept. Neither file was touched; both were confirmed unrelated by
+reading the receiver's class, not by the string match alone. **A field-name
+census for one subsystem's cleanup must confirm the receiver's TYPE (or at
+minimum, the surrounding class/module) before assuming a hit belongs to
+the subsystem being cleaned up** -- a bare grep on a common-enough name
+(here, "the current query", a concept multiple unrelated subsystems each
+have their own field for) will over-match.
+
+### The ruled moved-docstring correction (Task-3-deferred, landed here)
+
+Task 3's own review found `_sync_library_rag_scope_toggle_and_run_gate_
+widgets`'s moved-body docstring carrying a false caller claim ("Called
+synchronously from `_apply_local_source_snapshot`'s in-place branch") --
+but that text was BYTE-FOR-BYTE ORIGINAL (present on the screen before
+Task 3's own move), so fixing it inside the controller-PR would have
+violated the byte-for-byte canon on a body the move PR is not allowed to
+edit. Task 3's own ruling (progress.md) deferred the fix to this cleanup
+PR, per the wave-2 `_apply_library_row_toggle` precedent (a moved-body
+docstring correction is squarely cleanup-PR-legal, mirroring how a
+cleanup PR is already allowed to retarget test attribute paths). Fixed
+here: the docstring now names the actual caller,
+`_reconcile_library_entry_state` (screen-resident, never a cluster
+candidate), and clarifies that the call is not literally synchronous with
+`_apply_local_source_snapshot`'s own stack frame -- it is scheduled via
+`call_later` off every snapshot-generation bump that method (and its
+siblings) triggers, so the "fires off the UI thread on every ingest
+done-count growth" framing survives, just attributed to the right
+intermediate caller. Matches the module docstring's own already-corrected
+paragraph (Task 3 fix round 1) rather than introducing a second, possibly
+divergent, correction.
+
+### Sweep evidence
+
+`-k "(search or rag) and library"` across `Tests/UI`+`Tests/Library`+
+`Tests/Live` (single-process, matching Task 2/3's own per-task check):
+**12 failed, 792 passed, 3 skipped** on the corrected tree -- every one
+of the 12 matches an already-documented name (10 from Task 2's own
+pre-existing list, 2 from Task 3's own "confirmed pre-existing/flaky"
+bucket), zero new failures. This is the RE-RUN after the `canvas_sync.py`
+near-regression above (found by the FIRST run of this same command) was
+reverted -- the sweep is what caught it, exactly the discipline §7 exists
+for.
+
+The full sequential xdist paired-baseline sweep (`Tests/UI -k "library" -p
+no:randomly -q -n 8 --dist worksteal`, branch then a `git stash -u`
+pristine baseline of the pre-task tree, per recipe §7's own "concurrent
+runs amplify flakiness" lesson): **350 failed/3931 passed (branch,
+1314.03s) vs 349 failed/3932 passed (baseline, 1340.34s)**, both inside
+the documented ~330–355 backdrop. 345 shared, 4 baseline-unique (one of
+them itself a search/RAG test, failing only on the baseline -- noise in
+the opposite direction), 5 branch-unique -- 3 confirmed xdist noise on a
+combined single-process re-run, 2 confirmed genuinely pre-existing via a
+SECOND `git stash -u` to the same pristine tree in the same
+true-isolation combination (added to this section's own list below).
+Full per-test detail in this task's own report
+(`.superpowers/sdd/2026-09-03-library-decomposition-wave3-search-rag/
+task-4-report.md`).
+
+### Lessons
+
+1. **The combined-series contingency (wave-2's pre-committed fallback for
+   an entanglement-gate BLOCK) works cleanly across all three PR types,
+   not just the controller PR the entanglement was originally measured
+   at.** Every recipe mechanism designed for a SINGLE subsystem -- the
+   field-ownership script (§2), the monkeypatch-routing doctrine (§3), the
+   delegator census, the pin-lowering flow (§6) -- applied to the combined
+   20-field/50-candidate cluster with no adaptation needed beyond widening
+   the candidate set upfront (union two name substrings instead of one).
+   Nothing about "two subsystems, one series" required a new mechanism;
+   it required deciding ONCE, early (Task 2's field census, reconfirmed
+   independently by Task 3's method census), that no split seam exists,
+   and then running the ordinary three-PR series against the combined
+   set.
+2. **A flat name found outside the screen file needs its caller traced,
+   not just retargeted -- a shared dispatcher's `self`-forwarding shape
+   can make an already-correct flat name LOOK stale.** See the dedicated
+   finding above: this task's own first-draft retarget of `canvas_sync.
+   py`'s `_sync_library_canvas` broke a real test, caught by the sweep,
+   because the "screen" parameter at that call site is actually the
+   CONTROLLER (forwarded via `self`), which relies on its OWN permanent
+   mirrored shim to resolve the flat name -- a dotted retarget assumed a
+   receiver type the annotation implied but the actual call graph
+   contradicted. Widening the census to the whole `tldw_chatbook/` tree
+   (the collections series' own "grep the whole `Tests/` tree" lesson,
+   §16 lesson 2, extended to production code) is necessary to FIND a site
+   like this, but not sufficient to know what to do with it -- `grep -rn
+   "<dispatcher-name>(" tldw_chatbook/` for every hit's actual callers,
+   before editing, is the additional step this finding adds.
+3. **A flat field name is not a unique key across the whole codebase --
+   confirm the receiver before treating a grep hit as this subsystem's
+   own.** See the name-collision finding above (`_library_rag_query` on
+   an unrelated Console controller). Cost here was small (two files read
+   and correctly excluded), but a less careful census could have
+   "retargeted" an unrelated module's own field by string-matching alone.
+
