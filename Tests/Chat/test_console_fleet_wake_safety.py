@@ -22,6 +22,7 @@ worker-thread <-> UI-thread ``request_mcp_approvals`` round trip):
    whole intake, and only the explicit UI resolution releases the turn;
    the deferred wake then fires on the terminal transition.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -135,10 +136,7 @@ async def test_a_woken_turns_gated_tool_still_raises_the_approval_card(tmp_path)
         assert card["calls"][0]["llm_name"] == "mcp__srv__run", (
             "same card, same shape, as the manual twin"
         )
-        decision_key = (
-            card["calls"][0].get("call_id")
-            or card["calls"][0]["llm_name"]
-        )
+        decision_key = card["calls"][0].get("call_id") or card["calls"][0]["llm_name"]
         round_id = card["round_id"]
 
         # The wake notice is not approval: the round sits undecided while
@@ -175,8 +173,10 @@ async def test_a_woken_turns_gated_tool_still_raises_the_approval_card(tmp_path)
             ("local:srv", "run", {"x": 1}, "agent", "approved")
         ], "the tool executed only under the explicit approval"
         assert await _settle(
-            lambda: not app.conversation_local_marks_service.has_mark(
-                session.id, ConversationLocalMarksService.FLEET_UNSEEN
+            lambda: (
+                not app.conversation_local_marks_service.has_mark(
+                    session.id, ConversationLocalMarksService.FLEET_UNSEEN
+                )
             ),
             seconds=5.0,
         ), "delivery completed: the mark clears after the accepted wake"
@@ -216,9 +216,7 @@ async def test_a_wake_defers_behind_a_pending_card_and_cannot_resolve_it(
             runs_db, session.id, result="finished while you decided"
         )
 
-        send_task = asyncio.ensure_future(
-            controller.submit_draft("please run it")
-        )
+        send_task = asyncio.ensure_future(controller.submit_draft("please run it"))
         surfaced = await _settle(lambda: received and received[-1] is not None)
         assert surfaced, "the manual turn's approval card never surfaced"
         round_id = received[-1]["round_id"]
@@ -253,16 +251,17 @@ async def test_a_wake_defers_behind_a_pending_card_and_cannot_resolve_it(
             )
         )
         assert woke, (
-            "the deferred wake never fired after the manual turn's "
-            "terminal transition"
+            "the deferred wake never fired after the manual turn's terminal transition"
         )
         # Settled, not sampled: the reply CONTENT lands a beat before the
         # wake turn's own terminal transition, so reading the run state at
         # the content's first appearance races finalization (caught as an
         # interference-only failure in the full battery).
         assert await _settle(
-            lambda: controller.run_state_for(session.id).status
-            is ConsoleRunStatus.COMPLETED,
+            lambda: (
+                controller.run_state_for(session.id).status
+                is ConsoleRunStatus.COMPLETED
+            ),
             seconds=10.0,
         ), "the wake turn must settle terminal like any turn"
     finally:
@@ -312,8 +311,9 @@ async def test_a_wake_dispatches_run_reply_under_the_same_authority_as_manual(
         assert (wake_kwargs["review_tool_calls"] is None) == (
             manual_kwargs["review_tool_calls"] is None
         ), "a woken turn must route tool calls through the same review hook"
-        assert wake_kwargs["native_tools_enabled"] == (
-            manual_kwargs["native_tools_enabled"]
+        assert (
+            wake_kwargs["native_tools_enabled"]
+            == (manual_kwargs["native_tools_enabled"])
         )
         # And the payload the wake hands the model ends on its own
         # machine-labelled user-role entry, never a widened toolset.

@@ -213,9 +213,7 @@ async def test_leaving_console_still_denies_a_parked_approval_round():
     """
     store = ConsoleChatStore()
     session = store.ensure_session()
-    controller = ConsoleChatController(
-        store=store, provider_gateway=_StalledGateway()
-    )
+    controller = ConsoleChatController(store=store, provider_gateway=_StalledGateway())
     controller.mcp_approval_timeout_seconds = lambda: 60.0
     # Without an app the round never reaches the poll loop -- see `_ThreadApp`.
     controller.app = _ThreadApp()
@@ -227,9 +225,7 @@ async def test_leaving_console_still_denies_a_parked_approval_round():
     def _run_round() -> None:
         armed.set()
         decisions.update(
-            controller.request_mcp_approvals(
-                [_pending_call()], session_id=session.id
-            )
+            controller.request_mcp_approvals([_pending_call()], session_id=session.id)
         )
 
     worker = threading.Thread(target=_run_round, daemon=True)
@@ -276,8 +272,7 @@ async def test_leaving_console_does_not_cancel_an_in_flight_wake_turn():
     await asyncio.wait_for(runtime.leave_console(), timeout=2)
 
     assert not task.cancelled() and not task.done(), (
-        "leaving Console cancelled a wake turn -- the owner ruling is that "
-        "it must not"
+        "leaving Console cancelled a wake turn -- the owner ruling is that it must not"
     )
     assert controller._active_stream_tasks.get(session.id) is task
     gateway.never_release.set()
@@ -288,9 +283,7 @@ async def test_leaving_console_does_not_cancel_an_in_flight_wake_turn():
 async def test_the_wake_exemption_never_outlives_its_turn():
     """A wake turn that finishes leaves nothing exempt behind."""
     store = ConsoleChatStore()
-    controller = ConsoleChatController(
-        store=store, provider_gateway=_StalledGateway()
-    )
+    controller = ConsoleChatController(store=store, provider_gateway=_StalledGateway())
     with pytest.raises(PermissionError):
         # No coordinator-issued token -> refused before anything runs, which
         # is enough to prove the registry is not populated by the attempt.
@@ -305,9 +298,7 @@ async def test_the_wake_exemption_never_outlives_its_turn():
 
 def test_begin_visit_installs_a_fresh_cancellation_event():
     store = ConsoleChatStore()
-    controller = ConsoleChatController(
-        store=store, provider_gateway=_StalledGateway()
-    )
+    controller = ConsoleChatController(store=store, provider_gateway=_StalledGateway())
     first = controller._shutdown_requested
     first.set()
 
@@ -320,9 +311,7 @@ def test_begin_visit_installs_a_fresh_cancellation_event():
 
 def test_a_disposed_controller_is_never_re_opened():
     store = ConsoleChatStore()
-    controller = ConsoleChatController(
-        store=store, provider_gateway=_StalledGateway()
-    )
+    controller = ConsoleChatController(store=store, provider_gateway=_StalledGateway())
     controller.begin_shutdown()
     event = controller._shutdown_requested
 
@@ -344,9 +333,7 @@ async def test_a_round_from_the_previous_visit_is_not_resurrected():
     """
     store = ConsoleChatStore()
     session = store.ensure_session()
-    controller = ConsoleChatController(
-        store=store, provider_gateway=_StalledGateway()
-    )
+    controller = ConsoleChatController(store=store, provider_gateway=_StalledGateway())
     controller.mcp_approval_timeout_seconds = lambda: 60.0
     # Without an app the round never reaches the poll loop -- see `_ThreadApp`.
     controller.app = _ThreadApp()
@@ -359,9 +346,7 @@ async def test_a_round_from_the_previous_visit_is_not_resurrected():
     def _run_round() -> None:
         armed.set()
         decisions.update(
-            controller.request_mcp_approvals(
-                [_pending_call()], session_id=session.id
-            )
+            controller.request_mcp_approvals([_pending_call()], session_id=session.id)
         )
         resolved.set()
 
@@ -399,9 +384,7 @@ async def test_the_prompt_queue_admits_again_on_the_next_visit():
     """
     store = ConsoleChatStore()
     session = store.ensure_session()
-    controller = ConsoleChatController(
-        store=store, provider_gateway=_StalledGateway()
-    )
+    controller = ConsoleChatController(store=store, provider_gateway=_StalledGateway())
     runtime = _runtime_with(controller, _View())
     coordinator = controller.prompt_queue_coordinator
 
@@ -673,9 +656,7 @@ async def test_the_visit_cancellation_event_is_set_between_visits():
     one when the next view attaches so a returning Console works.
     """
     store = ConsoleChatStore()
-    controller = ConsoleChatController(
-        store=store, provider_gateway=_StalledGateway()
-    )
+    controller = ConsoleChatController(store=store, provider_gateway=_StalledGateway())
     runtime = _runtime_with(controller, _View())
     assert not controller._shutdown_requested.is_set()
 
@@ -692,9 +673,7 @@ async def test_the_visit_cancellation_event_is_set_between_visits():
 @pytest.mark.asyncio
 async def test_leave_console_is_idempotent_and_cheap_with_no_work():
     store = ConsoleChatStore()
-    controller = ConsoleChatController(
-        store=store, provider_gateway=_StalledGateway()
-    )
+    controller = ConsoleChatController(store=store, provider_gateway=_StalledGateway())
     runtime = _runtime_with(controller, _View())
 
     started = time.monotonic()

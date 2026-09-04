@@ -265,8 +265,7 @@ async def test_the_relaxed_wake_gate_does_not_revive_the_visits_cancellation(
         worker.join(timeout=10)
         assert not worker.is_alive(), "the round never resolved after leaving"
         assert decisions == {"write_file": "deny"}, (
-            "leaving Console must still DENY a parked approval round: "
-            f"{decisions}"
+            f"leaving Console must still DENY a parked approval round: {decisions}"
         )
 
         _parent, run_id = _terminal_subagent_run(runs_db, session.id)
@@ -350,13 +349,12 @@ async def test_exactly_once_across_a_refusal_a_retry_and_a_restart_headless(
         )
         restart_wake = restart_controller.fleet_wake
         restart_wake.wire(app=app)
-        assert marks.has_mark(
-            session.id, ConversationLocalMarksService.FLEET_UNSEEN
-        ), "harness precondition: the mark outlives the delivery (off-view)"
+        assert marks.has_mark(session.id, ConversationLocalMarksService.FLEET_UNSEEN), (
+            "harness precondition: the mark outlives the delivery (off-view)"
+        )
 
         assert restart_wake.seed_from_marks() == 0, (
-            "the mount claim re-announced a run the ledger already shows "
-            "delivered"
+            "the mount claim re-announced a run the ledger already shows delivered"
         )
         assert restart_wake.pending_conversation_ids() == ()
         restart_wake.retry_soon()
@@ -716,8 +714,7 @@ async def test_a_busy_session_defers_a_headless_wake_until_it_goes_terminal(
             _drain(session.id, _survivor(run_id, session_id=session.id))
         )
         assert await _quiet(lambda: gateway.payloads), (
-            "a headless wake must never fire into a session whose run is in "
-            "flight"
+            "a headless wake must never fire into a session whose run is in flight"
         )
         assert dispatches == [], (
             "the wake tried to SEND into a busy session and relied on "
