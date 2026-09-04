@@ -20,61 +20,81 @@
     margin: 1 0 0 0;
 }
 
-.settings-preview-grid {
+/* TASK-31259: the preview is a Console-shaped stub whose rows are painted from
+   the palette being edited (see SettingsThemeEditor._refresh_preview), so it
+   follows every keystroke instead of the applied app theme. */
+.settings-theme-preview {
     width: 100%;
     height: auto;
-    min-height: 8;
     margin: 1 0;
+    border: solid $ds-grid-line;
 }
 
-.preview-column {
-    width: 1fr;
-    height: auto;
-    padding: 0 1;
-}
-
-.color-swatch {
-    width: 7;
-    min-width: 7;
+.settings-theme-preview-row {
+    width: 100%;
     height: 1;
     min-height: 1;
-    border: solid $ds-grid-line;
+}
+
+/* TASK-31254: a 1-row Static with `border: solid` paints only its top border
+   glyphs -- the hex text (and the "invalid" label) never had a content row.
+   No border; the colour IS the swatch and the text sits on it. */
+.color-swatch {
+    width: 9;
+    min-width: 9;
+    height: 1;
+    min-height: 1;
+    border: none;
     content-align: center middle;
     text-style: bold;
 }
 
 .color-preset-swatch {
-    width: 2;
-    min-width: 2;
+    width: 3;
+    min-width: 3;
     height: 1;
     min-height: 1;
     margin: 0 1 0 0;
-    border: solid $ds-grid-line;
+    border: none;
 }
 
 /* task-1369: preset swatches are keyboard-activatable (focusable + Enter/
-   Space), so they need a visible focus indicator. */
+   Space), so they need a visible focus indicator. An outline paints over the
+   swatch's own cells without needing a border row, so the colour stays
+   visible (TASK-31254). */
 .color-preset-swatch:focus {
-    border: solid $ds-focus-accent;
+    outline: solid $ds-focus-accent;
     text-style: bold;
 }
 
-.preview-button {
-    width: 100%;
+/* TASK-31254: escape the app-wide `Checkbox { height: 2 }` + tall border that
+   leaves zero content rows (the TASK-18960 family; same idiom as
+   `.settings-imagegen-backend-row Checkbox`). One row: glyph + On/Off label. */
+#settings-theme-dark-mode {
+    width: auto;
     height: 1;
     min-height: 1;
-    margin: 0 0 1 0;
+    margin-bottom: 0;
+    border: none;
+    padding: 0;
+}
+#settings-theme-dark-mode > .toggle--button {
+    color: $ds-surface-panel;
+}
+#settings-theme-dark-mode.-on > .toggle--button {
+    color: $success;
 }
 
-.preview-surface-demo,
-.preview-panel-demo,
-.preview-boost-demo {
+
+/* TASK-31279: below SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH (100 cols) the
+   detail pane is ~45 cells; four 16-cell-minimum buttons cannot share a row,
+   so the library and action rows stack and each button takes the width. */
+#settings-workbench.settings-workbench-compact #settings-theme-card .settings-action-row {
+    layout: vertical;
+    height: auto;
+}
+#settings-workbench.settings-workbench-compact #settings-theme-card .theme-editor-action {
     width: 100%;
-    height: 1;
-    min-height: 1;
-    margin: 0 0 1 0;
-    border: solid $ds-grid-line;
-    content-align: center middle;
 }
 
 /* ===== Settings splash screen viewer ===== */

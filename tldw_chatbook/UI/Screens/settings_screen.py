@@ -590,7 +590,20 @@ def _force_restore_audio_cpp_merge_delta(
 
 def _theme_save_target() -> Path:
     """Return the active profile's directory for custom theme files."""
-    return get_cli_config_path().parent / "themes"
+    from tldw_chatbook.config import get_user_themes_dir
+
+    return get_user_themes_dir()
+
+
+def _display_path(path: Path) -> str:
+    """Shorten a path for inspector copy: ``~`` for the home directory (TASK-31279).
+
+    The absolute themes directory wrapped over five inspector lines, twice.
+    """
+    try:
+        return "~" + os.sep + str(path.relative_to(Path.home()))
+    except ValueError:
+        return str(path)
 
 
 def _internal_prompts_save_target() -> Path:
@@ -4667,7 +4680,7 @@ class SettingsScreen(BaseAppScreen):
                     "use the editor's Apply/Save/Reset buttons."
                 ),
                 recovery_copy=(
-                    f"Themes are saved to {_theme_save_target()}{os.sep}; reset or delete "
+                    f"Themes are saved to {_display_path(_theme_save_target())}{os.sep}; reset or delete "
                     "files there to recover."
                 ),
             ),
@@ -8091,6 +8104,18 @@ class SettingsScreen(BaseAppScreen):
             seen.add(theme_name)
             options.append(
                 (theme_name.replace("_", " ").replace("-", " ").title(), theme_name)
+            )
+        # TASK-31250: the user's saved themes are registered with the app at
+        # startup and after Save; offer them like the shipped catalog.
+        registered = getattr(getattr(self, "app_instance", None), "available_themes", None) or {}
+        for theme_name in registered:
+            # custom_<name> is Apply's process-only registration of an unsaved
+            # palette; it would not exist at the next launch (PR #2375 #8).
+            if theme_name in seen or theme_name.startswith("custom_"):
+                continue
+            seen.add(theme_name)
+            options.append(
+                (f"{theme_name.replace('_', ' ').replace('-', ' ').title()} (saved)", theme_name)
             )
         current_theme = str(self._appearance_setting_values()["default_theme"])
         if current_theme and current_theme not in seen:
@@ -14036,7 +14061,7 @@ class SettingsScreen(BaseAppScreen):
             return (
                 (
                     "Affected config",
-                    f"custom theme files under {_theme_save_target()}{os.sep}",
+                    f"custom theme files under {_display_path(_theme_save_target())}{os.sep}",
                 ),
                 (
                     "Recovery",
@@ -19101,7 +19126,7 @@ class SettingsScreen(BaseAppScreen):
                 classes="destination-section",
             )
             yield Static("Focused field guide", classes="destination-section")
-            yield self._detail_row("Save target", f"{_theme_save_target()}{os.sep}")
+            yield self._detail_row("Save target", f"{_display_path(_theme_save_target())}{os.sep}")
             yield self._detail_row(
                 "Save", "editor-owned - use the editor's Apply/Save/Reset buttons"
             )
@@ -20784,6 +20809,15 @@ class SettingsScreen(BaseAppScreen):
             # (re)composed card at a workspace id a later visit's list may
             # not even show (e.g. after an archive elsewhere).
             self._settings_selected_workspace_id = None
+        if (
+            self.active_category == SettingsCategoryId.THEME.value
+            and category_value != SettingsCategoryId.THEME.value
+            and self.theme_editor_modified
+        ):
+            # TASK-31252: leaving Theme remounts the editor and drops the
+            # in-progress edit, so the dirty displays must not outlive it.
+            self.theme_editor_modified = False
+            self._refresh_theme_modified_widgets()
         category_changed = category_value != self.active_category
         self.active_category = category_value
 

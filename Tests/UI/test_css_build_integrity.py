@@ -519,7 +519,7 @@ def test_settings_splash_theme_rules_have_source_and_bundle_integrity() -> None:
     # The live, feature-scoped theme-editor + splash-viewer selectors remain.
     required_selectors = (
         "#settings-theme-tree",
-        ".settings-preview-grid",
+        ".settings-theme-preview",
         ".settings-splash-gallery",
         "#settings-splash-card-list",
         "#settings-splash-preview-scroll",

@@ -1,4 +1,6 @@
 # themes.py
+from pathlib import Path
+
 from textual.theme import Theme
 from textual.color import Color
 
@@ -34,6 +36,45 @@ def create_theme_from_dict(name: str, theme_dict: dict) -> Theme:
         else:  # For any other variables Textual's Theme constructor might support (e.g., 'variables' dict)
             theme_args[key] = value
     return Theme(**theme_args)
+
+
+def load_user_themes(themes_dir: str | Path) -> list[Theme]:
+    """Read every ``*.toml`` under ``themes_dir`` into Theme objects.
+
+    The Settings theme editor writes ``[theme] name/dark`` + ``[colors]``.
+    Unreadable files, and files without the primary colour Textual requires,
+    are skipped with a warning so one bad file cannot block startup
+    (TASK-31250).
+
+    Args:
+        themes_dir: Directory holding the saved theme files (normally the
+            active profile's ``themes/`` folder, see
+            ``config.get_user_themes_dir``). A missing directory yields no
+            themes.
+
+    Returns:
+        The successfully parsed themes, in file-name order.
+    """
+    import toml
+    from loguru import logger
+
+    themes: list[Theme] = []
+    root = Path(themes_dir)
+    if not root.is_dir():
+        return themes
+    for path in sorted(root.glob("*.toml")):
+        try:
+            data = toml.load(path)
+            meta = data.get("theme", {}) or {}
+            name = str(meta.get("name") or path.stem).strip() or path.stem
+            colors = dict(data.get("colors", {}) or {})
+            colors["dark"] = bool(meta.get("dark", True))
+            themes.append(create_theme_from_dict(name, colors))
+        except Exception as exc:  # noqa: BLE001 - one bad file must not block startup
+            # Only the file name: the themes directory is a user path and this
+            # warning reaches the persistent log (path-privacy policy).
+            logger.warning(f"Skipping unreadable user theme {path.name}: {exc}")
+    return themes
 
 
 RAW_THEMES_DATA = {

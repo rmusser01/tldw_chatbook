@@ -1128,12 +1128,28 @@ class ThemeProvider(Provider):
                 help="Open theme selection menu",
             )
 
-        # Get available theme names from registered themes
-        available_themes = ["textual-dark", "textual-light"]  # Built-in themes
-        # Add custom themes from ALL_THEMES
-        for theme in ALL_THEMES:
-            theme_name = theme.name if hasattr(theme, "name") else str(theme)
-            available_themes.append(theme_name)
+        # The two Textual built-ins, the shipped ALL_THEMES catalog, then any
+        # other registered theme -- the user's saved themes (TASK-31250).
+        # custom_<name> is the editor's process-only Apply registration;
+        # switching persists the default, and that name would not exist at
+        # the next launch.
+        available_themes = list(
+            dict.fromkeys(
+                [
+                    "textual-dark",
+                    "textual-light",
+                    *(
+                        theme.name if hasattr(theme, "name") else str(theme)
+                        for theme in ALL_THEMES
+                    ),
+                    *(
+                        name
+                        for name in getattr(self.app, "available_themes", {})
+                        if not str(name).startswith("custom_")
+                    ),
+                ]
+            )
+        )
 
         # Only show individual themes if user is specifically searching for
         # theme-related terms or (part of) a registered theme's name
@@ -14419,6 +14435,13 @@ class TldwCli(
         theme_start = time.perf_counter()
         for theme_name in ALL_THEMES:
             self.register_theme(theme_name)
+        # TASK-31250: saved user themes (Settings > Theme > Save) load like
+        # shipped ones so general.default_theme can name them.
+        from .config import get_user_themes_dir
+        from .css.Themes.themes import load_user_themes
+
+        for user_theme in load_user_themes(get_user_themes_dir()):
+            self.register_theme(user_theme)
 
         # Apply default theme from config
         default_theme = get_cli_setting("general", "default_theme", "textual-dark")

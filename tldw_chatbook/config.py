@@ -119,6 +119,12 @@ def get_cli_config_path() -> Path:
     return _get_effective_config_path()
 
 
+def get_user_themes_dir() -> Path:
+    """Directory holding the user's saved theme TOML files (active profile)."""
+
+    return get_cli_config_path().parent / "themes"
+
+
 def _optional_package_available(module_name: str) -> bool:
     """Return whether an optional top-level module is installed without importing it."""
 

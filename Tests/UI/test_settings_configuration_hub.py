@@ -12961,3 +12961,79 @@ async def test_settings_advanced_config_backup_load_never_clobbers_unsaved_typin
             ]
         finally:
             release.set()
+
+
+def test_settings_appearance_theme_options_include_registered_user_themes():
+    """TASK-31250: themes registered with the app (saved user themes) are offered."""
+    import types
+
+    stub = types.SimpleNamespace(
+        _appearance_setting_values=lambda: {"default_theme": "textual-dark"},
+        app_instance=types.SimpleNamespace(
+            available_themes={"textual-dark": object(), "ocean": object()}
+        ),
+    )
+    options = SettingsScreen._appearance_theme_options(stub)
+    assert ("Ocean (saved)", "ocean") in options
+    assert [value for _label, value in options].count("textual-dark") == 1
+
+
+@pytest.mark.asyncio
+async def test_theme_dirty_flag_clears_when_leaving_the_category():
+    """TASK-31252: leaving Theme drops the in-progress edit, so the rail marker
+    and inspector row must not keep saying 'unsaved' on the next visit."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-theme")
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
+        for _ in range(6):
+            await pilot.pause()
+        editor = screen.query_one("#settings-theme-editor")
+        editor.query_one("#settings-theme-color-primary", Input).value = "#123456"
+        for _ in range(6):
+            await pilot.pause()
+        assert screen.theme_editor_modified is True
+
+        screen._select_category(SettingsCategoryId.APPEARANCE.value)
+        for _ in range(6):
+            await pilot.pause()
+        assert screen.theme_editor_modified is False
+
+        screen._select_category(SettingsCategoryId.THEME.value)
+        await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
+        for _ in range(6):
+            await pilot.pause()
+        note = screen.query_one("#settings-theme-unsaved-note", Static)
+        assert "No" in str(note.renderable)
+
+
+def test_display_path_abbreviates_home_and_leaves_other_paths_alone(tmp_path):
+    """TASK-31279: the inspector's themes directory reads '~/...', not a
+    five-line absolute path; paths outside home are untouched."""
+    import os
+    from pathlib import Path
+
+    from tldw_chatbook.UI.Screens.settings_screen import _display_path
+
+    inside = Path.home() / ".config" / "tldw_cli" / "themes"
+    assert _display_path(inside) == "~" + os.sep + os.sep.join((".config", "tldw_cli", "themes"))
+    assert _display_path(tmp_path) == str(tmp_path) or _display_path(tmp_path).startswith("~")
+
+
+def test_settings_appearance_theme_options_skip_runtime_only_custom_themes():
+    """PR #2375 review #8: Apply registers an unsaved palette as custom_<name>; it
+    exists only for this process and must not be offered as a launch default."""
+    import types
+
+    stub = types.SimpleNamespace(
+        _appearance_setting_values=lambda: {"default_theme": "textual-dark"},
+        app_instance=types.SimpleNamespace(
+            available_themes={"textual-dark": object(), "ocean": object(), "custom_ocean": object()}
+        ),
+    )
+    options = SettingsScreen._appearance_theme_options(stub)
+    values = [value for _label, value in options]
+    assert "ocean" in values
+    assert "custom_ocean" not in values
