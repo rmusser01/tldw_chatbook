@@ -67,40 +67,16 @@ class RunReminderNowRequested(Message):
         self.task = task
 
 
-class TransferToServerRequested(Message):
-    """Posted when the user asks to move a local reminder to the server
-    (schedules-handoff spec §6.1, PR-5 task 7)."""
 
-    def __init__(self, task: ReminderTask) -> None:
-        super().__init__()
-        self.task = task
-
-
-class TransferToLocalRequested(Message):
-    """Posted when the user asks to move a server-owned reminder mirror to
-    this device (schedules-handoff spec §6.2, PR-5 task 7)."""
-
-    def __init__(self, task: ReminderTask) -> None:
-        super().__init__()
-        self.task = task
-
-
-class CancelTransferRequested(Message):
-    """Posted when the user cancels a reminder's in-progress transfer
-    (schedules-handoff spec §6.3, PR-5 task 7)."""
-
-    def __init__(self, task: ReminderTask) -> None:
-        super().__init__()
-        self.task = task
-
-
-class RetryTransferRequested(Message):
-    """Posted when the user retries a definitively-failed local -> server
-    transfer (schedules-handoff spec §6.1.5, PR-5 task 7)."""
-
-    def __init__(self, task: ReminderTask) -> None:
-        super().__init__()
-        self.task = task
+# redesign PR-4, task 4 (ruling 2): `TransferToServerRequested`/
+# `TransferToLocalRequested`/`CancelTransferRequested`/
+# `RetryTransferRequested` (schedules-handoff spec §6, PR-5 task 7) were
+# posted only by `TaskDetail`'s now-retired legacy Move/Retry/Cancel
+# buttons and consumed only by `SchedulesWorkbench`'s now-retired
+# `_begin_transfer`/`_cancel_transfer` -- deleted with both ends (`git
+# grep` verified zero remaining producers/consumers before removal). The
+# Runs-on row's dropdown + mini-bar uses `ReminderOwnerActionRequested`
+# below instead.
 
 
 class ReminderFieldEditRequested(Message):

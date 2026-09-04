@@ -13938,15 +13938,9 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     margin: 0 1 0 0;
 }
 
-/* Transfer action row (schedules-handoff spec §6, PR-5 task 7) */
-#scheduling-task-detail-transfer {
-    height: auto;
-    padding: 0 0 1 0;
-}
-
-#scheduling-task-detail-transfer Button {
-    margin: 0 1 0 0;
-}
+/* redesign PR-4, task 4: the legacy transfer action row (schedules-
+   handoff spec §6, PR-5 task 7) is retired along with its buttons -- the
+   Runs-on row's own dropdown/mini-bar is the one transfer surface now. */
 
 /* Follow-in-Console prominence */
 #schedules-follow-in-console {

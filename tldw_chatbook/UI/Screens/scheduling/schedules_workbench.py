@@ -28,7 +28,6 @@ from ...Workbench.workbench_widgets import DestinationHeader, RecoveryCallout
 from ....runtime_policy.bootstrap import set_authoritative_runtime_source
 from ....Scheduling.automation_health import compute_local_health
 from ....Scheduling.events import (
-    CancelTransferRequested,
     DefinitionFieldEditRequested,
     DefinitionLifecycleToggleRequested,
     DefinitionOwnerActionRequested,
@@ -40,12 +39,9 @@ from ....Scheduling.events import (
     EnableTaskRequested,
     ReminderFieldEditRequested,
     ReminderOwnerActionRequested,
-    RetryTransferRequested,
     RunReminderNowRequested,
     SyncCompleted,
     SyncFailed,
-    TransferToLocalRequested,
-    TransferToServerRequested,
     ViewDefinitionAuditRequested,
     ViewDefinitionResultsRequested,
 )
@@ -123,7 +119,6 @@ from .unified_rows import (
 if TYPE_CHECKING:
     from tldw_chatbook.Scheduling.services.scheduling_service import (
         SchedulingService,
-        TransferOutcome,
     )
     from tldw_chatbook.app import TldwCli
 
@@ -292,49 +287,73 @@ def _row_subtitle(row: UnifiedRow, now: datetime) -> str:
 class SchedulesWorkbench(BaseAppScreen):
     """Main workbench for managing scheduled runs, reminders, and jobs."""
 
+    # redesign PR-4, task 4: the spec §12 keyboard map. `1`-`4`/`f` cycle
+    # the Queue chips, `/` focuses the filter, `n` opens the create
+    # chooser (renamed from `c` -- straight rebind, survey §3), `p`
+    # pauses/resumes the selected row (routed by kind), `m` opens the
+    # selected row's Runs-on dropdown (the SAME activation Enter/click on
+    # the row already drives), `r` marks a selected definition row's
+    # unread results read. The legacy Automations-tab-only m/M/y/k
+    # transfer keybindings (schedules-handoff PR-5 task 7 fix round) are
+    # RETIRED here -- the Runs-on dropdown is the one transfer surface
+    # (ruling 2; `_begin_automation_transfer`/`_cancel_automation_
+    # transfer` and their action_* wrappers are deleted, zero remaining
+    # consumers verified). `escape` keeps its existing "clear marks"
+    # semantics (spec §12: "Esc back/close" -- WorkbenchHostScreen's own
+    # `escape` pop handles the pushed-view half of that; this screen has
+    # no back/close state beyond marks). `space`/`e`/`d`/`x`/`s`/`o`/`a`
+    # are not named in spec §12 -- the survey's own reading ("stay as-is,
+    # the spec text doesn't rule") keeps them unchanged. `r`'s OLD
+    # meaning (tab-routed run-now/mark-read, `action_run_task_now`) is no
+    # longer reachable via a key (ruling 2: "Run-now is NOT a global key
+    # -- a detail-pane button" -- `DefinitionDetail`/`TaskDetail` both
+    # already have one, task 3); the method itself stays for the
+    # still-live Automations/Results tabs' own routing until task 5
+    # retires them.
     BINDINGS = [
-        Binding("c", "create_reminder", "Create"),
+        Binding("1", "chip_all", "All", show=False),
+        Binding("2", "chip_active", "Active", show=False),
+        Binding("3", "chip_paused", "Paused", show=False),
+        Binding("4", "chip_completed", "Completed", show=False),
+        Binding("f", "cycle_chip", "Cycle filter"),
+        Binding("/", "focus_search", "Search"),
+        Binding("n", "create", "Create"),
+        Binding("p", "pause_resume", "Pause/Resume"),
+        Binding("m", "move_owner", "Move owner"),
+        Binding("r", "mark_read", "Mark read"),
         Binding("e", "edit_task", "Edit"),
-        Binding("r", "run_task_now", "Run now"),
         Binding("space", "toggle_enabled", "Enable/Disable"),
         Binding("d", "delete", "Delete"),
         Binding("x", "mark_task", "Mark"),
         Binding("escape", "clear_marks", "Clear marks"),
         Binding("s", "sync_now", "Sync"),
-        # Automations-tab-only (schedules-handoff PR-5 task 7 fix round):
-        # the tab has no per-row detail widget, so its actions are
-        # keybindings routed by active tab -- same idiom as r/e above,
-        # not new buttons (mirrors _edit_selected_automation/
-        # _run_automation_now, the tab's existing action grammar).
-        Binding("m", "move_automation_to_local", "Move to local"),
-        Binding("M", "move_automation_to_server", "Move to server"),
-        Binding("y", "retry_automation_transfer", "Retry transfer"),
-        Binding("k", "cancel_automation_transfer", "Cancel transfer"),
-        # Results-tab-only (schedules-handoff PR-6 task 3): read/dismiss
-        # reuse r/d via the SAME active-tab routing action_run_task_now/
-        # action_delete already do for Automations -- r=Read and d=Dismiss
-        # are natural readings of those same keys on this tab. Mark
-        # solved/Mark all read have no existing-key mnemonic to reuse, so
-        # they get fresh letters (o/a), guarded the same way m/M/y/k are.
+        # Results-tab-only (schedules-handoff PR-6 task 3), unaffected by
+        # the §12 remap: mark-solved/mark-all-read have no existing-key
+        # mnemonic to reuse, so they keep their own letters.
         Binding("o", "mark_result_solved", "Mark solved"),
         Binding("a", "mark_all_results_read", "Mark all read"),
     ]
 
-    # Footer hints must stay 1:1 with BINDINGS and only advertise implemented
-    # actions (ADR-031). Single letters are safe: focused inputs consume
-    # printable keys before screen bindings fire.
+    # Footer hints must stay 1:1 with BINDINGS (minus escape, which needs
+    # no advertising) and only advertise implemented actions (ADR-031).
+    # Single letters are safe: focused inputs consume printable keys
+    # before screen bindings fire.
     SCHEDULES_SHORTCUTS = (
-        ("c", "create"),
+        ("1", "all"),
+        ("2", "active"),
+        ("3", "paused"),
+        ("4", "completed"),
+        ("f", "cycle filter"),
+        ("/", "search"),
+        ("n", "create"),
+        ("p", "pause/resume"),
+        ("m", "move owner"),
+        ("r", "mark read"),
         ("e", "edit"),
-        ("r", "run now"),
         ("space", "toggle"),
         ("d", "delete"),
         ("x", "mark"),
         ("s", "sync"),
-        ("m", "move to local"),
-        ("M", "move to server"),
-        ("y", "retry transfer"),
-        ("k", "cancel transfer"),
         ("o", "mark solved"),
         ("a", "mark all read"),
     )
@@ -491,7 +510,7 @@ class SchedulesWorkbench(BaseAppScreen):
                                     "Create ▾",
                                     id="scheduling-new-task",
                                     variant="primary",
-                                    tooltip="Schedule a new task (c).",
+                                    tooltip="Schedule a new task (n).",
                                 )
                                 yield Button(
                                     "Mark all read",
@@ -1390,6 +1409,58 @@ class SchedulesWorkbench(BaseAppScreen):
             )
         self._render_table()
 
+    # -- redesign PR-4, task 4: spec §12 keyboard map ------------------------
+
+    def action_chip_all(self) -> None:
+        """`1`: switch the Queue chip to All."""
+        self._set_queue_chip("all")
+
+    def action_chip_active(self) -> None:
+        """`2`: switch the Queue chip to Active."""
+        self._set_queue_chip("active")
+
+    def action_chip_paused(self) -> None:
+        """`3`: switch the Queue chip to Paused."""
+        self._set_queue_chip("paused")
+
+    def action_chip_completed(self) -> None:
+        """`4`: switch the Queue chip to Completed."""
+        self._set_queue_chip("completed")
+
+    def action_cycle_chip(self) -> None:
+        """`f`: cycle to the next Queue chip, wrapping at the end.
+
+        Works "at every width" (task-4 brief: don't couple to chip
+        visibility) -- the chip row hides below 84 cols (`.compact`,
+        `_chips_hidden`), but `_set_queue_chip` only ever touches
+        `self._chip` and the still-MOUNTED button widgets' `.variant`,
+        never their `.display`, so cycling never depends on the row
+        being shown. `_CHIP_BY_BUTTON_ID`'s own insertion order
+        (all/active/paused/completed, matching the chip row's visual
+        left-to-right order) is reused as the cycle order rather than a
+        second hard-coded tuple.
+        """
+        order = list(self._CHIP_BY_BUTTON_ID.values())
+        next_chip = order[(order.index(self._chip) + 1) % len(order)]
+        self._set_queue_chip(next_chip)
+
+    def action_focus_search(self) -> None:
+        """`/`: focus the Queue filter input."""
+        search = self.query_one("#scheduling-queue-filter", Input)
+        if search.display:
+            search.focus()
+
+    def action_create(self) -> None:
+        """`n`: open the create-task chooser.
+
+        Renamed from `c` (survey §3: "straight rename/rebind, no
+        functional conflict") -- previously `c` skipped the chooser and
+        went straight to the reminder form (`action_create_reminder`),
+        which had drifted from the rail's own `Create ▾` button (always
+        the chooser); `n` now matches the button.
+        """
+        self._open_new_task_chooser()
+
     @on(DataTable.RowHighlighted)
     def _on_task_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         """Update the detail pane when the user highlights a task row.
@@ -1523,53 +1594,26 @@ class SchedulesWorkbench(BaseAppScreen):
     def _update_transfer_actions(
         self, task_detail: TaskDetail, task: ReminderTask | ScheduledTask
     ) -> None:
-        """Compute Move/Retry/Cancel disabled-reasons for the detail pane.
+        """Cache the Runs-on row's lock/failure state for the detail pane.
 
-        Reasons come straight from `SchedulingService.transfer_refusal`/
-        `cancel_refusal` (spec §6.4/§6.3) so the UI never re-derives the
-        refusal rules itself (health quoting included, and -- fix round
-        finding 1 -- cancel's own state branching too) -- each reason is
-        only computed for the button `TaskDetail.set_task` already
-        decided is structurally relevant (e.g. `to_local_reason` is never
-        computed for a local row, which would always trivially refuse
-        with "not server-owned" noise).
+        redesign PR-4 task 4 (ruling 2): this used to ALSO compute the
+        legacy Move/Retry/Cancel buttons' disabled-reasons via `set_
+        transfer_reasons` -- retired along with those buttons (the Runs-on
+        dropdown is the one transfer surface now). What is left is what
+        the dropdown/mini-bar still need: `transfer_lock_reason` (spec
+        §6.3 read-only-except-cancel, final review I7) and the stored
+        `to_server_failed` mutation errors (PR-3 task 5 fix round 1,
+        finding 2), both never re-derived elsewhere.
         """
         service = self._scheduling_service
         if service is None or not isinstance(task, ReminderTask):
-            task_detail.set_transfer_reasons(
-                to_server_reason=None,
-                to_local_reason=None,
-                retry_reason=None,
-                cancel_reason=None,
-                retry_errors=[],
-            )
             task_detail.set_lifecycle_lock(None)
             task_detail.set_runs_on_transfer_errors([])
             return
 
         row = transfer_row_dict(task)
-        is_server_owned = str(task.owner_id or "").startswith("server:")
-        transfer_state = task.transfer_state
-
-        # `transfer_refusal` already returns None for `to_server_failed`
-        # (Task 6's retry leg deliberately excludes it from "already in
-        # progress"), so this needs no extra state carve-out -- the same
-        # call also backs the Retry button below.
-        to_server_reason = (
-            service.transfer_refusal(row, "to_server") if not is_server_owned else None
-        )
-        to_local_reason = (
-            service.transfer_refusal(row, "to_local") if is_server_owned else None
-        )
-        cancel_reason = service.cancel_refusal(row)
-
-        # A `to_server_failed` row is never server-owned, so this is the
-        # exact same call `to_server_reason` already made above -- reused
-        # rather than repeated.
-        retry_reason: str | None = None
         retry_errors: list[str] = []
-        if transfer_state == "to_server_failed":
-            retry_reason = to_server_reason
+        if task.transfer_state == "to_server_failed":
             # fix round finding 3: keyed off the mutation's OWN owner_id
             # column, not a guess via "today's active server" -- a
             # `to_server_failed` row's mutation was recorded under
@@ -1578,19 +1622,10 @@ class SchedulesWorkbench(BaseAppScreen):
             # switch if guessed instead of read.
             retry_errors = _pending_transfer_errors(service, "reminder_task", task.id)
 
-        task_detail.set_transfer_reasons(
-            to_server_reason=to_server_reason,
-            to_local_reason=to_local_reason,
-            retry_reason=retry_reason,
-            cancel_reason=cancel_reason,
-            retry_errors=retry_errors,
-        )
-        # spec §6.3 read-only-except-cancel (final review I7). Applied
-        # AFTER set_transfer_reasons, which owns the same reason Static.
+        # spec §6.3 read-only-except-cancel (final review I7).
         task_detail.set_lifecycle_lock(service.transfer_lock_reason(row))
-        # PR-3 task 5 fix round 1 (finding 2): the SAME `retry_errors`
-        # feeds the Runs-on row's own failure text -- one source, not a
-        # second derivation.
+        # PR-3 task 5 fix round 1 (finding 2): feeds the Runs-on row's own
+        # failure text -- one source, not a second derivation.
         task_detail.set_runs_on_transfer_errors(retry_errors)
 
     def _refuse_if_transfer_locked(self, task: Any, verb: str) -> bool:
@@ -1773,43 +1808,17 @@ class SchedulesWorkbench(BaseAppScreen):
             group="schedules-delete-task",
         )  # type: ignore[arg-type]
 
-    @on(TransferToServerRequested)
-    def _on_transfer_to_server_requested(
-        self, event: TransferToServerRequested
-    ) -> None:
-        event.stop()
-        self._begin_transfer(event.task, "to_server")
-
-    @on(TransferToLocalRequested)
-    def _on_transfer_to_local_requested(
-        self, event: TransferToLocalRequested
-    ) -> None:
-        event.stop()
-        self._begin_transfer(event.task, "to_local")
-
-    @on(RetryTransferRequested)
-    def _on_retry_transfer_requested(self, event: RetryTransferRequested) -> None:
-        # Obligation (f)/spec §6.1.5: retrying a `to_server_failed` row is
-        # the SAME facade call as a first-time begin -- `transfer_refusal`
-        # deliberately narrows its "already in progress" check to exclude
-        # `to_server_failed`, and `begin_transfer_to_server`'s CAS accepts
-        # both `None` and `to_server_failed` as its starting state.
-        event.stop()
-        self._begin_transfer(event.task, "to_server")
-
-    @on(CancelTransferRequested)
-    def _on_cancel_transfer_requested(self, event: CancelTransferRequested) -> None:
-        event.stop()
-        self._cancel_transfer(event.task)
-
     @staticmethod
     def _transfer_confirm_dialog(
         name: str, direction: str, warnings: list[str]
     ) -> ConfirmationDialog:
         """Build the Move confirm dialog (spec §6.1/§6.2/§6.4) -- shared by
-        the reminder (`_begin_transfer`) and Automations-tab
-        (`_begin_automation_transfer`) flows (Task 7 fix round item 1: two
-        near-identical call sites, one copy of the confirm-dialog copy)."""
+        the reminder and definition Runs-on dropdown flows (`_run_owner_
+        transfer`, PR-3 task 5). The legacy button-driven `_begin_
+        transfer`/`_begin_automation_transfer` call sites this originally
+        served (Task 7 fix round item 1's "two near-identical call
+        sites") were retired in redesign PR-4 task 4 -- this stayed
+        because the dropdown is now the surface using it."""
         destination_label = "the server" if direction == "to_server" else "this device"
         lines = [f'Move "{escape_markup(name)}" to {destination_label}?']
         if warnings:
@@ -1842,134 +1851,6 @@ class SchedulesWorkbench(BaseAppScreen):
             f"'{name}' is queued to move to this device -- a dormant copy "
             "is ready and will arm once the server releases it."
         )
-
-    def _begin_transfer(self, task: ReminderTask, direction: str) -> None:
-        """Confirm, then start a transfer for ``task`` (spec §6.1/§6.2).
-
-        Always confirms first -- Move is not a casual action, and the
-        dialog is the one place `transfer_warnings` (imminent one-time
-        `run_at`, non-transferring `timeout_seconds`) actually reaches the
-        user before they commit, not only when something happens to be
-        wrong. `transfer_refusal` is checked again defensively (the
-        button should already be disabled when refused) before ever
-        opening the dialog.
-        """
-        service = self._scheduling_service
-        if service is None:
-            self.app_instance.notify(
-                "Scheduling service is unavailable; cannot start a transfer.",
-                severity="warning",
-            )
-            return
-
-        row = transfer_row_dict(task)
-        reason = service.transfer_refusal(row, direction)
-        if reason is not None:
-            self.app_instance.notify(reason, severity="warning")
-            return
-        warnings = service.transfer_warnings(row, direction)
-        dialog = self._transfer_confirm_dialog(task.title, direction, warnings)
-
-        async def _confirm_and_begin() -> None:
-            confirmed = await self.app.push_screen_wait(dialog)
-            if not confirmed:
-                return
-            try:
-                if direction == "to_server":
-                    outcome = await service.begin_transfer_to_server(
-                        "reminder_task", task.id
-                    )
-                else:
-                    outcome = await service.begin_transfer_to_local(
-                        "reminder_task", task.id
-                    )
-            except Exception:  # noqa: BLE001
-                logger.exception("Failed to begin transfer for {}", task.id)
-                self.app_instance.notify(
-                    f"Failed to start the transfer for '{task.title}'.",
-                    severity="error",
-                )
-                self._request_tasks_refresh(refresh_definitions=False)
-                return
-            self._notify_transfer_outcome(task, direction, outcome)
-            self._request_tasks_refresh(refresh_definitions=False)
-
-        self.run_worker(
-            _confirm_and_begin,
-            exclusive=True,
-            group="schedules-transfer",
-        )  # type: ignore[arg-type]
-
-    def _notify_transfer_outcome(
-        self, task: ReminderTask, direction: str, outcome: "TransferOutcome"
-    ) -> None:
-        """Toast a transfer's result -- honest about what actually happened
-        (spec §6.1.1: a queued-not-sent transfer never claims the task
-        stopped running here)."""
-        if outcome.status == "pending":
-            self.app_instance.notify(
-                self._transfer_pending_toast_text(task.title, direction),
-                severity="information",
-            )
-        elif outcome.status == "refused":
-            self.app_instance.notify(
-                outcome.reason or f"Could not move '{task.title}'.",
-                severity="warning",
-            )
-        elif outcome.status == "not_found":
-            self.app_instance.notify(
-                f"'{task.title}' no longer exists.", severity="warning"
-            )
-
-    def _cancel_transfer(self, task: ReminderTask) -> None:
-        """Cancel ``task``'s in-progress transfer immediately.
-
-        No confirm dialog: cancel is the escape hatch spec §6.3 exists
-        for, and gating the escape hatch behind its own confirmation
-        fights the point of it. `task.id` is whichever row is currently
-        selected -- for a release's dormant local copy that is already
-        the copy's OWN id (it is a first-class queue row, not reached
-        through the mirror), which is exactly the id `cancel_transfer`
-        needs for that leg (Task 6 handoff note).
-        """
-        service = self._scheduling_service
-        if service is None:
-            self.app_instance.notify(
-                "Scheduling service is unavailable; cannot cancel the "
-                "transfer.",
-                severity="warning",
-            )
-            return
-
-        async def _cancel_and_refresh() -> None:
-            try:
-                outcome = await service.cancel_transfer("reminder_task", task.id)
-            except Exception:  # noqa: BLE001
-                logger.exception("Failed to cancel transfer for {}", task.id)
-                self.app_instance.notify(
-                    f"Failed to cancel the transfer for '{task.title}'.",
-                    severity="error",
-                )
-                self._request_tasks_refresh(refresh_definitions=False)
-                return
-            if outcome.status == "cancelled":
-                self.app_instance.notify(
-                    _cancel_toast_text(task.title),
-                    severity="information",
-                )
-            else:
-                self.app_instance.notify(
-                    outcome.reason
-                    or f"Could not cancel the transfer for '{task.title}'.",
-                    severity="warning",
-                )
-            self._request_tasks_refresh(refresh_definitions=False)
-
-        self.run_worker(
-            _cancel_and_refresh,
-            exclusive=True,
-            group="schedules-transfer",
-        )  # type: ignore[arg-type]
 
     @on(Button.Pressed, "#scheduling-new-task")
     def _on_new_task_pressed(self, event: Button.Pressed) -> None:
@@ -2812,14 +2693,12 @@ class SchedulesWorkbench(BaseAppScreen):
 
     # -- Owner-row transfer dropdown (PR-3 task 5, spec §7 flow) -------------
     #
-    # A SECOND, row-scoped surface onto the SAME PR-5 transfer facade the
-    # legacy Move/Retry/Cancel buttons (`_begin_transfer`/`_cancel_
-    # transfer`/`_begin_automation_transfer`/`_cancel_automation_transfer`
-    # above/below) already drive -- deliberately independent end to end
-    # (own events, own helpers), not a refactor of them: coexistence is a
-    # pinned requirement (task-5 brief), and the two surfaces differ in
-    # how a refusal renders (this one uses `DetailValueRow.show_error`,
-    # the legacy ones toast/write the tab's shared inline notice).
+    # Originally a SECOND, row-scoped surface onto the PR-5 transfer
+    # facade alongside the legacy Move/Retry/Cancel buttons/keybindings
+    # (own events, own helpers, deliberately independent end to end --
+    # coexistence was a pinned requirement, task-5 brief). redesign PR-4
+    # task 4 retired the legacy side (ruling 2) -- this is now the ONE
+    # transfer surface. A refusal renders inline via `row.show_error`.
 
     async def _run_owner_transfer(
         self,
@@ -2834,10 +2713,9 @@ class SchedulesWorkbench(BaseAppScreen):
     ) -> None:
         """Shared move/retry body for both panes' Runs-on row.
 
-        `transfer_refusal` runs FIRST (health-quoting preserved, since it
-        is the SAME call `_begin_transfer`/`_begin_automation_transfer`
-        make) -- a refusal renders inline via `row.show_error`, never the
-        legacy toast/notice. Allowed -> the SAME `ConfirmationDialog` +
+        `transfer_refusal` runs FIRST (health-quoting preserved) -- a
+        refusal renders inline via `row.show_error`, never a toast.
+        Allowed -> the SAME `ConfirmationDialog` +
         `transfer_warnings` + honest-toast shape those flows already use;
         confirmed -> `begin_transfer_to_server`/`to_local` by `direction`
         with `row_id` (the CURRENTLY DISPLAYED row's own local id for
@@ -3045,17 +2923,24 @@ class SchedulesWorkbench(BaseAppScreen):
         self._run_reminder_now(event.task)
 
     def action_run_task_now(self) -> None:
-        """Run the highlighted task immediately (``r`` key).
+        """Run the highlighted task immediately.
 
-        Routes by active tab: the Automations tab's ``r`` dispatches a
+        redesign PR-4, task 4: no longer key-bound (ruling 2 -- "Run-now
+        is NOT a global key", `r` is reassigned to `action_mark_read`
+        below). This method itself stays: the still-live Automations
+        tab's own run-now routing (task 5 retires the tab) and the
+        Results tab's tab-routed mark-read both still call it, and a
+        Queue definition row's own `Run now` button (task 3) reaches the
+        SAME `_run_automation_now` this falls through to, directly.
+
+        Routes by active tab: the Automations tab dispatches a
         server-side run (ADR-077 -- the server owns execution); the
-        Results tab's ``r`` marks the selected result read instead
-        (schedules-handoff PR-6 task 3 -- a natural reading of the same
-        key); everywhere else it is the local reminder Run-now
-        (task-18938) OR, redesign PR-4 task 3, a Queue definition row's
-        own run-now (same owner-routed dispatch the Automations tab's
-        ``r`` uses -- `_run_automation_now` is family-agnostic, so this
-        works for every definition family, not just `recurring_
+        Results tab marks the selected result read instead
+        (schedules-handoff PR-6 task 3); everywhere else it is the local
+        reminder Run-now (task-18938) OR, redesign PR-4 task 3, a Queue
+        definition row's own run-now (same owner-routed dispatch the
+        Automations tab uses -- `_run_automation_now` is family-agnostic,
+        so this works for every definition family, not just `recurring_
         question`).
         """
         try:
@@ -3110,6 +2995,112 @@ class SchedulesWorkbench(BaseAppScreen):
         if row.kind != "definition":
             return None
         return row.source_row
+
+    def action_pause_resume(self) -> None:
+        """`p`: pause/resume the selected row (spec §12), routed by kind.
+
+        A reminder row (or a bulk mark selection) reuses `action_toggle_
+        enabled` VERBATIM -- same single-row/bulk-marked seam, same
+        transfer-lock refusal (`_refuse_if_transfer_locked`). A
+        definition row toggles `lifecycle` via the SAME facade call the
+        header Pause/Resume button drives (`_toggle_definition_
+        lifecycle`) -- the SAME `transfer_lock_reason` (never re-derived)
+        the button's own honest refusal uses, reported here as a
+        notification since this is a screen-level key, not a row with
+        its own error slot.
+        """
+        if self._marked_ids or self._selected_task() is not None:
+            self.action_toggle_enabled()
+            return
+        definition = self._selected_queue_definition()
+        if definition is not None:
+            service = self._scheduling_service
+            if service is None:
+                self.app_instance.notify(
+                    "Scheduling service is unavailable; cannot update the "
+                    "automation.",
+                    severity="warning",
+                )
+                return
+            name = str(definition.get("name") or definition.get("id") or "")
+            lock_reason = service.transfer_lock_reason(definition)
+            if lock_reason is not None:
+                self.app_instance.notify(
+                    f"Cannot pause/resume '{name}': {lock_reason}",
+                    severity="warning",
+                )
+                return
+            lifecycle = str(definition.get("lifecycle") or "configured")
+            action = "resume" if lifecycle != "configured" else "pause"
+            self._toggle_definition_lifecycle(definition, action)
+            return
+        self.app_instance.notify(
+            self._no_task_notice("pause or resume"), severity="warning"
+        )
+
+    def action_move_owner(self) -> None:
+        """`m`: open the selected row's Runs-on dropdown (spec §12/§7).
+
+        Posting `DetailValueRow.Activated` on the row directly drives the
+        exact same `on_detail_value_row_activated` path a real Enter/
+        click already does -- honest lock/family-note refusal (`row.
+        show_error`), then the dropdown -- so this needs no new
+        activation logic, only a reference to the right pane's row
+        (`TaskDetail`/`DefinitionDetail.runs_on_row`).
+        """
+        if self._selected_task() is not None:
+            row = self.query_one("#scheduling-task-detail", TaskDetail).runs_on_row
+        elif self._selected_queue_definition() is not None:
+            row = self.query_one(
+                "#scheduling-queue-definition-detail", DefinitionDetail
+            ).runs_on_row
+        else:
+            row = None
+        if row is None:
+            self.app_instance.notify(
+                self._no_task_notice("move"), severity="warning"
+            )
+            return
+        row.post_message(DetailValueRow.Activated(row))
+
+    def action_mark_read(self) -> None:
+        """`r`: mark the selected definition row's unread results read
+        (spec §12/§8) -- the SAME per-id fan-out `a`/the rail's `Mark all
+        read` already drive (`_dispatch_mark_all_results_read`), scoped
+        to just this one definition via `_definition_unread_result_ids`
+        (both id spaces). A reminder row has no results concept at all
+        (honest no-op copy)."""
+        if self._selected_task() is not None:
+            self.app_instance.notify(
+                "This task has no results to mark read.",
+                severity="information",
+            )
+            return
+        definition = self._selected_queue_definition()
+        if definition is None:
+            self.app_instance.notify(
+                self._no_task_notice("mark read"), severity="warning"
+            )
+            return
+        service = self._service()
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable.", severity="warning"
+            )
+            return
+        unread_ids = self._definition_unread_result_ids(service, definition)
+        if not unread_ids:
+            self.app_instance.notify(
+                "Nothing unread for this automation.", severity="information"
+            )
+            return
+
+        async def _mark() -> None:
+            await self._dispatch_mark_all_results_read(service, unread_ids)
+
+        self.run_worker(
+            _mark, exclusive=True, group="schedules-mark-all-read"
+        )  # type: ignore[arg-type]
 
     def _run_reminder_now(self, task: ReminderTask) -> None:
         """Dispatch one reminder through the scheduler's own path (task-18938)."""
@@ -3991,262 +3982,16 @@ class SchedulesWorkbench(BaseAppScreen):
         )
         return mirrored.get("id") if mirrored else None
 
-    # -- Automations-tab transfer actions (schedules-handoff spec §6,
-    # PR-5 task 7 fix round item 1) -----------------------------------
-    #
-    # With PR-5 as first shipped, `begin_transfer_to_server`/`begin_
-    # transfer_to_local`/`cancel_transfer` had no UI call site at all for
-    # `table_kind="automation_definition"` -- the facade fully supports
-    # it (Task 6), but nothing let a user ever start, cancel, or retry a
-    # definition's transfer. The tab has no per-row detail widget (no
-    # `TaskDetail` equivalent), so these are keybindings routed by active
-    # tab -- the SAME idiom `action_run_task_now`/`action_edit_task`
-    # already use for this tab's Run-now/Edit, not new buttons. A
-    # refusal renders inline in the tab's own notice Static (its only
-    # existing status affordance -- reused rather than adding a second
-    # one); an allowed Move reuses the same `ConfirmationDialog` +
-    # honest-toast shape the Queue tab's reminder flow already
-    # established. Move to server (`M`) and Retry (`y`) share one call:
-    # a retry IS a re-begin, so the difference is the label and which
-    # state each is offered in, not the code path.
-
-    def action_move_automation_to_local(self) -> None:
-        """m key: queue a server-owned automation mirror to move here
-        (spec §6.2), Automations-tab only."""
-        self._begin_automation_transfer("to_local")
-
-    def action_move_automation_to_server(self) -> None:
-        """M key: queue a LOCAL automation definition to move to the
-        server (spec §6.1), Automations-tab only.
-
-        The missing half of the definitions transfer UI (final review
-        M8): `y`/Retry already reached `begin_transfer_to_server`, but
-        only ever as a retry beside a failed transfer, so a plain local
-        definition had no way to start one. Same facade call -- a retry
-        IS a re-begin (`transfer_refusal` excludes `to_server_failed`
-        from "in progress", and the CAS accepts both `None` and
-        `to_server_failed`) -- given its own honest label and key, rather
-        than teaching users that "Retry" means "Move".
-        """
-        self._begin_automation_transfer("to_server")
-
-    def action_retry_automation_transfer(self) -> None:
-        """y key: retry a definitively-failed local -> server automation
-        transfer (spec §6.1.5), Automations-tab only."""
-        self._begin_automation_transfer("to_server")
-
-    def action_cancel_automation_transfer(self) -> None:
-        """k key: cancel the selected automation's in-progress transfer
-        (spec §6.3), Automations-tab only."""
-        self._cancel_automation_transfer()
-
-    def _is_automations_tab_active(self) -> bool:
-        try:
-            return (
-                self.query_one("#scheduling-tabs", TabbedContent).active
-                == "scheduling-automations-tab"
-            )
-        except Exception:  # noqa: BLE001
-            return False
-
-    def _show_automations_inline_reason(self, reason: str) -> None:
-        """Surface a transfer refusal/failure inline (fix round item 1's
-        "refusal -> inline reason" flow) -- the Automations pane's notice
-        Static is the tab's only existing status affordance
-        (`_automations_notice_text`'s own home), reused rather than
-        adding a second one. The next `load_automations()` (any other
-        action, or a completed transfer's own reload) naturally replaces
-        it with the aggregate summary again.
-        """
-        try:
-            notice = self.query_one("#scheduling-automations-notice", Static)
-        except Exception:  # noqa: BLE001
-            return
-        self._update_static_content(notice, reason)
-
-    def _begin_automation_transfer(self, direction: str) -> None:
-        """Move-to-local / Retry for the selected automation (spec
-        §6.1/§6.2), Automations-tab only. Same flow as the Queue tab's
-        `_begin_transfer`: refusal -> inline reason; allowed ->
-        `ConfirmationDialog` listing `transfer_warnings`; honest toast on
-        completion; reload via the tab's existing `_request_automations_
-        refresh` wiring.
-        """
-        if not self._is_automations_tab_active():
-            self.app_instance.notify(
-                "Switch to the Automations tab to move or retry an "
-                "automation's transfer.",
-                severity="warning",
-            )
-            return
-        definition = self._selected_automation()
-        if definition is None:
-            self.app_instance.notify(
-                "Nothing selected — select an automation first.",
-                severity="warning",
-            )
-            return
-        service = self._scheduling_service
-        if service is None:
-            self.app_instance.notify(
-                "Scheduling service is unavailable; cannot start a transfer.",
-                severity="warning",
-            )
-            return
-
-        async def _resolve_and_begin() -> None:
-            # redesign PR-2 Task 2 review round 2: a genuine user-
-            # triggered transfer attempt (m/M/y) -- the Queue's cached
-            # definitions rows may now be outdated regardless of which
-            # branch below this lands on (refused/pending/not_found all
-            # still touch the local mirror row via `_resolve_local_
-            # definition_id`).
-            self._definitions_stale = True
-            local_id = await self._resolve_local_definition_id(service, definition)
-            if local_id is None:
-                self.app_instance.notify(
-                    "Could not prepare this automation for transfer — see "
-                    "the log.",
-                    severity="error",
-                )
-                return
-            row = await asyncio.to_thread(
-                service.db.get_automation_definition, local_id
-            )
-            if row is None:
-                self.app_instance.notify(
-                    "This automation no longer exists.", severity="warning"
-                )
-                self._request_automations_refresh()
-                return
-            name = str(row.get("name") or definition.get("name") or local_id)
-            reason = service.transfer_refusal(row, direction)
-            if reason is not None:
-                self._show_automations_inline_reason(reason)
-                return
-            warnings = service.transfer_warnings(row, direction)
-            dialog = self._transfer_confirm_dialog(name, direction, warnings)
-            confirmed = await self.app.push_screen_wait(dialog)
-            if not confirmed:
-                return
-            try:
-                if direction == "to_server":
-                    outcome = await service.begin_transfer_to_server(
-                        "automation_definition", local_id
-                    )
-                else:
-                    outcome = await service.begin_transfer_to_local(
-                        "automation_definition", local_id
-                    )
-            except Exception:  # noqa: BLE001
-                logger.exception(
-                    "Failed to begin automation transfer for {}", local_id
-                )
-                self.app_instance.notify(
-                    f"Failed to start the transfer for '{name}'.",
-                    severity="error",
-                )
-                self._request_automations_refresh()
-                return
-            if outcome.status == "pending":
-                self.app_instance.notify(
-                    self._transfer_pending_toast_text(name, direction),
-                    severity="information",
-                )
-            elif outcome.status == "refused":
-                self._show_automations_inline_reason(
-                    outcome.reason or f"Could not move '{name}'."
-                )
-            elif outcome.status == "not_found":
-                self.app_instance.notify(
-                    f"'{name}' no longer exists.", severity="warning"
-                )
-            self._request_automations_refresh()
-
-        self.run_worker(
-            _resolve_and_begin,
-            exclusive=True,
-            group="schedules-automation-transfer",
-        )  # type: ignore[arg-type]
-
-    def _cancel_automation_transfer(self) -> None:
-        """Cancel the selected automation's in-progress transfer (spec
-        §6.3), Automations-tab only. No confirm dialog -- same rationale
-        as the Queue tab's cancel: it is the escape hatch, gating it
-        behind its own confirmation fights the point. The resolved LOCAL
-        row id is already the dormant copy's own id for a release in
-        progress -- `_load_local_automations` shows that copy directly (a
-        `server_id`-less local row), never through the mirror, so
-        resolution never routes to the mirror's id for that leg (same
-        construction as the reminder side's cancel).
-        """
-        if not self._is_automations_tab_active():
-            self.app_instance.notify(
-                "Switch to the Automations tab to cancel an automation's "
-                "transfer.",
-                severity="warning",
-            )
-            return
-        definition = self._selected_automation()
-        if definition is None:
-            self.app_instance.notify(
-                "Nothing selected — select an automation first.",
-                severity="warning",
-            )
-            return
-        service = self._scheduling_service
-        if service is None:
-            self.app_instance.notify(
-                "Scheduling service is unavailable; cannot cancel the "
-                "transfer.",
-                severity="warning",
-            )
-            return
-
-        async def _resolve_and_cancel() -> None:
-            # redesign PR-2 Task 2 review round 2: a genuine user-
-            # triggered cancel (k) -- see `_resolve_and_begin`'s matching
-            # comment for why this is marked unconditionally.
-            self._definitions_stale = True
-            local_id = await self._resolve_local_definition_id(service, definition)
-            if local_id is None:
-                self.app_instance.notify(
-                    "Could not resolve this automation locally — see the "
-                    "log.",
-                    severity="error",
-                )
-                return
-            name = str(definition.get("name") or local_id)
-            try:
-                outcome = await service.cancel_transfer(
-                    "automation_definition", local_id
-                )
-            except Exception:  # noqa: BLE001
-                logger.exception(
-                    "Failed to cancel automation transfer for {}", local_id
-                )
-                self.app_instance.notify(
-                    f"Failed to cancel the transfer for '{name}'.",
-                    severity="error",
-                )
-                self._request_automations_refresh()
-                return
-            if outcome.status == "cancelled":
-                self.app_instance.notify(
-                    _cancel_toast_text(name), severity="information"
-                )
-            else:
-                self._show_automations_inline_reason(
-                    outcome.reason
-                    or f"Could not cancel the transfer for '{name}'."
-                )
-            self._request_automations_refresh()
-
-        self.run_worker(
-            _resolve_and_cancel,
-            exclusive=True,
-            group="schedules-automation-transfer",
-        )  # type: ignore[arg-type]
+    # redesign PR-4, task 4 (ruling 2): the Automations-tab-only
+    # m/M/y/k transfer keybindings and their `_begin_automation_
+    # transfer`/`_cancel_automation_transfer` flow (schedules-handoff
+    # spec §6, PR-5 task 7 fix round item 1) are RETIRED -- the Runs-on
+    # row's dropdown (`_run_owner_transfer`/`_run_owner_cancel`, PR-3
+    # task 5) is the one transfer surface now. `git grep` verified zero
+    # remaining consumers of `action_move_automation_to_local`/`_to_
+    # server`, `action_retry_automation_transfer`, `action_cancel_
+    # automation_transfer`, `_is_automations_tab_active`, `_show_
+    # automations_inline_reason` before deleting them.
 
     # -- Results-tab actions (schedules-handoff PR-6 task 3) ---------------
     #
@@ -4626,7 +4371,7 @@ class SchedulesWorkbench(BaseAppScreen):
             # keep it reachable at compact widths when the queue is empty.
             base = "Detail and inspector hidden — widen the window to see them."
             if not self._tasks:
-                base += " Press c to schedule your first task."
+                base += " Press n to schedule your first task."
             self._resize_notice = base
         elif hide_inspector:
             self._resize_notice = "Inspector hidden — widen the window to see it."

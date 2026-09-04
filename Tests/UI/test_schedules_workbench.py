@@ -2777,7 +2777,8 @@ async def test_empty_queue_shows_friendly_empty_state():
             "#scheduling-task-detail-empty-state", Static
         )
         assert "No scheduled tasks yet" in empty_state.visual.plain
-        assert "Press c" in empty_state.visual.plain
+        # redesign PR-4 task 4: create rebound from c to n (spec §12).
+        assert "Press n" in empty_state.visual.plain
 
 
 @pytest.mark.asyncio
@@ -2791,7 +2792,8 @@ async def test_no_task_selected_shows_friendly_copy():
             "#scheduling-task-detail-empty-state", Static
         )
         assert "Select a task" in empty_state.visual.plain
-        assert "press c" in empty_state.visual.plain
+        # redesign PR-4 task 4: create rebound from c to n (spec §12).
+        assert "press n" in empty_state.visual.plain
 
 
 @pytest.mark.asyncio
@@ -4765,14 +4767,20 @@ async def test_runs_on_retry_button_rebegins_a_failed_transfer(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_runs_on_dropdown_and_legacy_transfer_buttons_coexist(tmp_path):
-    """Coexistence (task-5 brief, pinned): the PR-5 buttons stay
-    untouched until PR-4 -- both surfaces read/write the SAME underlying
-    transfer state and stay in sync with each other, side by side."""
+async def test_legacy_transfer_buttons_are_retired(tmp_path):
+    """redesign PR-4 task 4 (ruling 2): supersedes `test_runs_on_dropdown_
+    and_legacy_transfer_buttons_coexist` -- the PR-3 task 5 "coexistence
+    pinned" window (task-5 brief) is over, and the legacy Move/Retry/
+    Cancel buttons this test used to exercise ALONGSIDE the dropdown are
+    deleted. Begin/cancel via the dropdown itself stays pinned by `test_
+    runs_on_dropdown_confirm_begins_to_server_transfer`/`test_runs_on_
+    cancel_button_cancels_the_dormant_copy_using_its_own_id` (this file);
+    this only pins that the retired ids are actually gone and the
+    dropdown's own affordance is unaffected."""
     app = WorkbenchTestApp()
     db, service = _connected_service(tmp_path, app)
     try:
-        task_id = db.create_reminder_task(
+        db.create_reminder_task(
             owner_id="local",
             title="Nightly check",
             schedule_kind="one_time",
@@ -4786,44 +4794,15 @@ async def test_runs_on_dropdown_and_legacy_transfer_buttons_coexist(tmp_path):
             await pilot.pause()
 
             detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
-
-            # Legacy surface: begin via the EXISTING button, untouched.
-            legacy_to_server = pilot.app.screen.query_one(
-                "#scheduling-transfer-to-server", Button
-            )
-            assert not legacy_to_server.disabled
-            legacy_to_server.press()
-            await pilot.pause()
-            assert isinstance(pilot.app.screen, ConfirmationDialog)
-            pilot.app.screen.dismiss(True)
-            await pilot.pause()
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-
-            assert db.get_reminder_task(task_id)["transfer_state"] == "to_server_pending"
-            # BOTH surfaces now reflect the in-flight state.
-            legacy_cancel = pilot.app.screen.query_one(
-                "#scheduling-cancel-transfer", Button
-            )
-            assert not legacy_cancel.disabled
-            assert detail._runs_on_cancel_button.display is True
-            # Affordance stays ON (fix round 1 finding 2) -- activation
-            # would show the lock reason instead of opening a dropdown.
-            assert detail._runs_on_row.affordance is True
-
-            # NEW surface: cancel via the row's own affordance.
-            detail._runs_on_cancel_button.press()
-            await pilot.pause()
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-
-            assert db.get_reminder_task(task_id)["transfer_state"] is None
-            # The LEGACY button reflects the SAME underlying state,
-            # refreshed via the SAME `_request_tasks_refresh` seam.
-            legacy_cancel_after = pilot.app.screen.query_one(
-                "#scheduling-cancel-transfer", Button
-            )
-            assert legacy_cancel_after.disabled
+            for legacy_id in (
+                "scheduling-transfer-to-server",
+                "scheduling-transfer-to-local",
+                "scheduling-retry-transfer",
+                "scheduling-cancel-transfer",
+            ):
+                assert not detail.query(f"#{legacy_id}")
+            # The Runs-on row's own affordance is the one transfer
+            # surface now, unaffected by the legacy buttons' removal.
             assert detail._runs_on_row.affordance is True
     finally:
         db.close()
@@ -5230,19 +5209,32 @@ async def test_definition_runs_on_retry_button_rebegins_a_failed_transfer(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_definition_runs_on_dropdown_and_automations_tab_keybindings_coexist(
-    tmp_path,
-):
-    """Definition-pane twin of the reminder-side coexistence test -- the
-    Automations tab has no per-row transfer BUTTONS (spec §6, PR-5 task
-    7's own design: `m`/`M`/`y`/`k` keybindings instead), so "coexistence"
-    here means the keybinding-driven legacy flow
-    (`action_move_automation_to_server`/`_cancel_automation_transfer`)
-    and the NEW Runs-on row read/write the SAME underlying state."""
+async def test_automations_tab_transfer_keybindings_are_retired(tmp_path):
+    """redesign PR-4 task 4 (ruling 2): supersedes `test_definition_runs_
+    on_dropdown_and_automations_tab_keybindings_coexist` -- the
+    Automations-tab-only `m`/`M`/`y`/`k` keybindings and their `action_
+    move_automation_to_local`/`_to_server`/`action_retry_automation_
+    transfer`/`action_cancel_automation_transfer`/`_begin_automation_
+    transfer`/`_cancel_automation_transfer` flow are genuinely gone --
+    the Runs-on dropdown (already exercised end-to-end by `test_
+    definition_runs_on_dropdown_confirm_begins_to_server_transfer`/`test_
+    definition_runs_on_cancel_button_cancels_the_dormant_copy_using_its_
+    own_id` above, including on this SAME Automations-tab `DefinitionDetail`
+    instance) is the one transfer surface now."""
+    for legacy_action in (
+        "action_move_automation_to_local",
+        "action_move_automation_to_server",
+        "action_retry_automation_transfer",
+        "action_cancel_automation_transfer",
+    ):
+        assert not hasattr(SchedulesWorkbench, legacy_action)
+    bound_keys = {binding.key for binding in SchedulesWorkbench.BINDINGS}
+    assert bound_keys.isdisjoint({"M", "y", "k"})
+
     app = WorkbenchTestApp()
     db, service = _connected_service(tmp_path, app)
     try:
-        definition_id = db.create_automation_definition(
+        db.create_automation_definition(
             "local",
             "recurring_question",
             "Nightly digest automation",
@@ -5262,49 +5254,18 @@ async def test_definition_runs_on_dropdown_and_automations_tab_keybindings_coexi
             )
             await pilot.pause()
             table = workbench.query_one("#scheduling-automations-table", DataTable)
-            assert table.row_count == 1
             table.cursor_coordinate = (0, 0)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
-            # Legacy surface: begin via the EXISTING keybinding, untouched.
-            workbench.action_move_automation_to_server()
-            await pilot.pause()
-            assert isinstance(pilot.app.screen, ConfirmationDialog)
-            pilot.app.screen.dismiss(True)
-            await pilot.pause()
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-
-            assert (
-                db.get_automation_definition(definition_id)["transfer_state"]
-                == "to_server_pending"
-            )
-            # NEW surface reflects the state the LEGACY keybinding wrote.
+            # The Runs-on dropdown still activates fine on the
+            # Automations tab's own DefinitionDetail instance -- the
+            # retired keybindings' removal did not touch it.
             detail = workbench.query_one(
                 "#scheduling-automation-detail", DefinitionDetail
             )
-            assert detail._runs_on_cancel_button.display is True
             assert detail._runs_on_row.affordance is True
-
-            # NEW surface: cancel via the row's own affordance.
-            detail._runs_on_cancel_button.press()
-            await pilot.pause()
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-
-            fresh_row = db.get_automation_definition(definition_id)
-            assert fresh_row["transfer_state"] is None
-            # The LEGACY surface's own refusal check (`cancel_refusal`,
-            # what `_cancel_automation_transfer`'s keybinding path itself
-            # calls) sees the SAME state -- no drift between the two
-            # surfaces. Read directly rather than firing a second
-            # keybinding action: that action's own success/refusal notice
-            # is transient and gets overwritten by the very refresh it
-            # triggers (`_show_automations_inline_reason`'s own documented
-            # behavior), racy to assert on here.
-            assert service.cancel_refusal(fresh_row) is not None
     finally:
         db.close()
 

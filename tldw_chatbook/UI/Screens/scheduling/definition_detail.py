@@ -1044,6 +1044,16 @@ class DefinitionDetail(Vertical):
             row.clear_error()
 
     @property
+    def runs_on_row(self) -> DetailValueRow | None:
+        """The Runs-on row, for the workbench's `m` keybinding (redesign
+        PR-4 task 4) to activate programmatically -- posting `DetailValueRow.
+        Activated(row)` on it drives the exact same `on_detail_value_row_
+        activated` path (honest lock/family-note refusal, then the
+        dropdown) a real Enter/click already does, so `m` needs no new
+        activation logic, only this reference."""
+        return self._runs_on_row
+
+    @property
     def shown_definition_id(self) -> str:
         """The id of the definition this pane is painting, `""` for none.
 
