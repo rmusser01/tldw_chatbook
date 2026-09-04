@@ -698,18 +698,21 @@ def compile_canvas_document(
     parser = html5lib.HTMLParser(
         tree=html5lib.getTreeBuilder("etree"), namespaceHTMLElements=True
     )
+    document = None
     try:
         document = parser.parse(source)
     except (
         Exception
-    ) as exc:  # html5lib must not leak parser/source details across this boundary
+    ):  # html5lib must not leak parser/source details across this boundary
+        pass
+    if document is None:
         raise CanvasCompileError(
             (
                 _issue(
                     "html-parse-error", "HTML could not be parsed safely.", "document"
                 ),
             )
-        ) from exc
+        ) from None
 
     parse_issues = []
     for (line, column), code, _details in parser.errors:
@@ -1250,6 +1253,7 @@ def _image_signature_matches(mime_type: str, data: bytes) -> bool:
 
 
 def _compile_stylesheet(css: str, location: str) -> tuple[_CompiledCssRule, ...]:
+    _validate_css_lexical_closure(css, location)
     parsed = tinycss2.parse_stylesheet(css, skip_comments=True, skip_whitespace=True)
     compiled: list[_CompiledCssRule] = []
     for rule in parsed:
@@ -1306,10 +1310,103 @@ def _compile_qualified_rule(rule: Any, location: str) -> _CompiledCssRule:
 
 
 def _compile_declarations(css: str, location: str) -> str:
+    _validate_css_lexical_closure(css, location)
     tokens = tinycss2.parse_declaration_list(
         css, skip_comments=True, skip_whitespace=True
     )
     return _compile_parsed_declarations(tokens, location)
+
+
+def _validate_css_lexical_closure(css: str, location: str) -> None:
+    """Reject EOF recovery while matching CSS Syntax token boundaries."""
+    normalized = (
+        css.replace("\0", "\N{REPLACEMENT CHARACTER}")
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
+        .replace("\f", "\n")
+    )
+    expected_closers: list[str] = []
+    index = 0
+    while index < len(normalized):
+        if normalized.startswith("/*", index):
+            comment_end = normalized.find("*/", index + 2)
+            if comment_end < 0:
+                _fail(
+                    "css-parse-error",
+                    "CSS contains an unclosed lexical construct.",
+                    location,
+                )
+            index = comment_end + 2
+            continue
+
+        character = normalized[index]
+        if character in {'"', "'"}:
+            index = _consume_css_string(normalized, index, location)
+            continue
+        if character == "\\":
+            index = _consume_css_escape(normalized, index)
+            continue
+        if character in "{[(":
+            expected_closers.append({"{": "}", "[": "]", "(": ")"}[character])
+            index += 1
+            continue
+        if character in "}])":
+            if not expected_closers or expected_closers.pop() != character:
+                _fail(
+                    "css-parse-error",
+                    "CSS contains an unmatched lexical delimiter.",
+                    location,
+                )
+        index += 1
+
+    if expected_closers:
+        _fail(
+            "css-parse-error",
+            "CSS contains an unclosed lexical construct.",
+            location,
+        )
+
+
+def _consume_css_string(css: str, opening: int, location: str) -> int:
+    quote = css[opening]
+    index = opening + 1
+    while index < len(css):
+        if css[index] == quote:
+            return index + 1
+        if css[index] == "\\":
+            if index + 1 < len(css) and css[index + 1] == "\n":
+                index += 2
+            else:
+                index = _consume_css_escape(css, index)
+            continue
+        if css[index] == "\n":
+            _fail(
+                "css-parse-error",
+                "CSS contains an unclosed lexical construct.",
+                location,
+            )
+        index += 1
+    _fail(
+        "css-parse-error",
+        "CSS contains an unclosed lexical construct.",
+        location,
+    )
+
+
+def _consume_css_escape(css: str, backslash: int) -> int:
+    index = backslash + 1
+    if index >= len(css) or css[index] == "\n":
+        return index
+    if css[index] not in "0123456789abcdefABCDEF":
+        return index + 1
+    hex_end = index
+    while hex_end < len(css) and hex_end - index < 6:
+        if css[hex_end] not in "0123456789abcdefABCDEF":
+            break
+        hex_end += 1
+    if hex_end < len(css) and css[hex_end] in " \n\t":
+        hex_end += 1
+    return hex_end
 
 
 def _compile_declaration_tokens(tokens: list[Any], location: str) -> str:

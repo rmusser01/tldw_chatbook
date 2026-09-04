@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import html5lib
 import pytest
 from hypothesis import given, strategies as st
 
@@ -92,6 +93,27 @@ def test_html_parser_recovery_does_not_silently_change_malformed_complete_docume
         compile_canvas_document(source)
 
     assert "html-parse-error" in _issue_codes(caught.value)
+
+
+def test_unexpected_html_parser_failure_does_not_retain_raw_exception_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "SECRET-SOURCE-DETAIL"
+
+    def fail_with_source_detail(_parser: object, _source: str) -> object:
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr(html5lib.HTMLParser, "parse", fail_with_source_detail)
+
+    with pytest.raises(CanvasCompileError) as caught:
+        compile_canvas_document(
+            "<!doctype html><html><head></head><body></body></html>"
+        )
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert secret not in str(caught.value)
+    assert all(secret not in issue.message for issue in caught.value.issues)
 
 
 def test_classic_inline_scripts_are_extracted_in_document_order_and_omitted_from_tree() -> (
@@ -384,6 +406,63 @@ def test_stylesheet_resource_namespace_visited_and_unknown_constructs_fail_close
         compile_canvas_document(source)
 
     assert expected_code in _issue_codes(caught.value)
+
+
+@pytest.mark.parametrize(
+    "css",
+    [
+        "p{color:red",
+        "p{color:rgb(1 2 3",
+        "p{color:red;/*",
+    ],
+)
+def test_stylesheet_eof_recovery_cannot_silently_close_css_constructs(css: str) -> None:
+    source = f"<!doctype html><html><head><style>{css}</style></head><body><p>x</p></body></html>"
+
+    with pytest.raises(CanvasCompileError) as caught:
+        compile_canvas_document(source)
+
+    assert _issue_codes(caught.value) == {"css-parse-error"}
+
+
+@pytest.mark.parametrize(
+    "css",
+    [
+        "color:rgb(1 2 3",
+        "color:red;/*",
+        "color:calc((1px + 2px)",
+    ],
+)
+def test_inline_style_eof_recovery_cannot_silently_close_css_constructs(
+    css: str,
+) -> None:
+    source = (
+        f'<!doctype html><html><head></head><body><p style="{css}">x</p></body></html>'
+    )
+
+    with pytest.raises(CanvasCompileError) as caught:
+        compile_canvas_document(source)
+
+    assert _issue_codes(caught.value) == {"css-parse-error"}
+
+
+def test_css_closure_preflight_respects_comments_strings_escapes_and_nested_blocks() -> (
+    None
+):
+    source = (
+        "<!doctype html><html><head><style>"
+        r'.brace\{name[data-mark=")]}"]{color:rgb(1 2 3);/* )]} */}'
+        "</style></head><body>"
+        '<p class="brace{name" data-mark=")] users" '
+        "style='font-family:\"(]}\";color:rgb(1 2 3)'>x</p>"
+        "</body></html>"
+    )
+
+    plan = compile_canvas_document(source)
+
+    assert len(plan.css_rules) == 1
+    paragraph = next(node for node in _elements(plan.root) if node.tag == "p")
+    assert ("style", 'font-family:"(]}";color:rgb(1 2 3)') in paragraph.attributes
 
 
 @pytest.mark.parametrize(
