@@ -68,6 +68,7 @@ from ....UI.Screens.scheduling.results_tab import (
     solved_eligibility,
 )
 from ....UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
+from ....UI.Screens.scheduling.workbench_host_screen import WorkbenchHostScreen
 from ....Widgets.confirmation_dialog import ConfirmationDialog
 from ....Widgets.detail_value_row import DetailValueRow
 # schedules-redesign PR-1, Task 4: `automation_execution_target_label`/
@@ -1966,11 +1967,46 @@ class SchedulesWorkbench(BaseAppScreen):
 
     @on(Button.Pressed, "#scheduling-conflicts-badge")
     def _on_conflicts_badge_pressed(self, event: Button.Pressed) -> None:
-        """Status-strip conflicts badge (redesign PR-2, Task 3, plan
-        ruling 4) -- switches to the Conflicts tab, no overlay."""
+        """Status-strip conflicts badge (redesign PR-4, Task 1) -- pushes
+        the hosted Conflicts view as a fresh overlay instance instead of
+        flipping tabs (the tab flip cannot work once the tab bar is
+        retired). The Conflicts TAB itself stays reachable until Task 5
+        retires it -- both paths coexist this task."""
         event.stop()
-        self.query_one("#scheduling-tabs", TabbedContent).active = (
-            "scheduling-conflicts-tab"
+        self._push_conflicts_overlay()
+
+    def _push_conflicts_overlay(self) -> None:
+        """Push a standalone `ConflictsTab` instance via `WorkbenchHostScreen`.
+
+        Pre-reads the same `get_conflicts` shape `_refresh_conflicts_tab`
+        uses (no new query) and hands the result to the fresh instance as
+        `initial_conflicts` so it paints immediately on mount -- this
+        pushed instance has no external `.populate()` driver the way the
+        still-live TAB instance does. `dismissed=self._refresh_conflicts_
+        tab` re-syncs the tab/badge count on pop, in case the overlay
+        resolved anything while it was open.
+        """
+        service = self._service()
+        conflicts = (
+            service.db.get_conflicts(service.owner_id, primitive="reminder_task")
+            if service is not None
+            else []
+        )
+        sync_engine = service.sync_engine if service is not None else None
+
+        def _factory() -> ConflictsTab:
+            return ConflictsTab(
+                sync_engine=sync_engine,
+                initial_conflicts=conflicts,
+                id="scheduling-conflicts-overlay",
+            )
+
+        self.app.push_screen(
+            WorkbenchHostScreen(
+                _factory,
+                title="Conflicts",
+                dismissed=self._refresh_conflicts_tab,
+            )
         )
 
     @on(Button.Pressed, "#schedules-follow-in-console")

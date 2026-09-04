@@ -61,16 +61,30 @@ class ConflictsTab(Vertical):
     }
     """
 
-    def __init__(self, sync_engine: _SyncEngineProtocol | None, **kwargs) -> None:
+    def __init__(
+        self,
+        sync_engine: _SyncEngineProtocol | None,
+        *,
+        initial_conflicts: list[dict[str, Any]] | None = None,
+        **kwargs,
+    ) -> None:
         """Initialize the conflicts tab.
 
         Args:
             sync_engine: Engine providing ``resolve_conflict(conflict_id, resolution)``.
+            initial_conflicts: When given, ``populate()``s the table with
+                these on mount. The still-live Conflicts TAB instance stays
+                externally driven (the workbench calls ``.populate()``
+                itself after its own ``get_conflicts`` read); a standalone
+                pushed instance (redesign PR-4, Task 1's conflicts-badge
+                overlay, via ``WorkbenchHostScreen``) has no such external
+                driver, so it self-populates instead.
             **kwargs: Passed to the parent widget.
         """
         super().__init__(**kwargs)
         self.sync_engine = sync_engine
         self._conflicts_by_id: dict[str, dict[str, Any]] = {}
+        self._initial_conflicts = initial_conflicts
 
     def compose(self) -> ComposeResult:
         """Build the tab layout."""
@@ -154,10 +168,13 @@ class ConflictsTab(Vertical):
             )
 
     def on_mount(self) -> None:
-        """Configure the table cursor."""
+        """Configure the table cursor, and self-populate if constructed with data."""
         table = self.query_one("#scheduling-conflicts-table", DataTable)
         table.cursor_type = "row"
-        self._set_actions_enabled(False)
+        if self._initial_conflicts is not None:
+            self.populate(self._initial_conflicts)
+        else:
+            self._set_actions_enabled(False)
 
     @on(DataTable.RowHighlighted, "#scheduling-conflicts-table")
     def _on_conflict_highlighted(self, event: DataTable.RowHighlighted) -> None:

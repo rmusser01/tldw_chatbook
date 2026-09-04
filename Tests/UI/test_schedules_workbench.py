@@ -51,6 +51,9 @@ from tldw_chatbook.UI.Screens.scheduling.task_detail import (
     _STATUS_BADGE_CLASSES,
     _humanize_cron,
 )
+from tldw_chatbook.UI.Screens.scheduling.workbench_host_screen import (
+    WorkbenchHostScreen,
+)
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
 from tldw_chatbook.Widgets.detail_value_row import DetailValueRow
@@ -3745,12 +3748,17 @@ async def test_mark_all_read_visible_when_a_definition_has_unread_results():
 
 
 @pytest.mark.asyncio
-async def test_conflicts_badge_shows_count_and_switches_to_conflicts_tab():
-    """redesign PR-2, Task 3, plan ruling 4: the status strip's conflicts
-    badge mirrors `_refresh_conflicts_tab`'s own existing count (no new
-    query) and switches to the Conflicts tab on click -- no overlay."""
+async def test_conflicts_badge_pushes_conflicts_overlay_with_painted_content():
+    """redesign PR-4, Task 1: the status strip's conflicts badge mirrors
+    `_refresh_conflicts_tab`'s own existing count (no new query) and
+    pushes a fresh `ConflictsTab` overlay via `WorkbenchHostScreen` on
+    click -- the tab-flip this replaced cannot work once the tab bar is
+    retired (Task 5). The Conflicts TAB itself stays untouched by the
+    push (it is retired separately, in Task 5)."""
     app = _RailTestApp(
-        _RailService(conflicts=[{"id": "c1"}, {"id": "c2"}])
+        _RailService(
+            conflicts=[{"id": "c1", "local_state": {"title": "Digest"}}]
+        )
     )
     async with app.run_test() as pilot:
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
@@ -3758,16 +3766,35 @@ async def test_conflicts_badge_shows_count_and_switches_to_conflicts_tab():
         workbench = pilot.app.screen
 
         badge = workbench.query_one("#scheduling-conflicts-badge", Button)
-        assert str(badge.label) == "Conflicts (2)"
+        assert str(badge.label) == "Conflicts (1)"
         assert "scheduled task" in str(badge.tooltip).lower()
 
         tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
-        assert tabs.active != "scheduling-conflicts-tab"
+        original_active = tabs.active
 
         badge.press()
         await pilot.pause()
 
-        assert tabs.active == "scheduling-conflicts-tab"
+        # No tab flip -- a fresh screen is pushed on top instead.
+        assert tabs.active == original_active
+        assert pilot.app.screen is not workbench
+        assert isinstance(pilot.app.screen, WorkbenchHostScreen)
+
+        overlay_tab = pilot.app.screen.query_one(
+            "#scheduling-conflicts-overlay", ConflictsTab
+        )
+        overlay_table = overlay_tab.query_one(
+            "#scheduling-conflicts-table", DataTable
+        )
+        # Painted, not stored: what the table would actually render for
+        # row 0 (schedules_test_helpers.rendered_row_cells).
+        assert rendered_row_cells(overlay_table, 0)[0] == "Digest"
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        # Esc pops back to the same underlying workbench instance.
+        assert pilot.app.screen is workbench
 
 
 @pytest.mark.asyncio

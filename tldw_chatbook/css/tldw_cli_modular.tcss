@@ -14171,6 +14171,20 @@ DetailGroup {
     border-top: hkey $ds-grid-line;
 }
 
+/* redesign PR-4, Task 1: `WorkbenchHostScreen` (the narrow-layout/overlay
+ * push pattern, spec §11) hands the factory-built widget this class so it
+ * fills the space between the screen's `Header`/`Footer` regardless of
+ * whether the hosted widget sizes itself (`ConflictsTab` already does,
+ * via its own `BUNDLED_CSS` -- this covers the panes that don't, e.g.
+ * `TaskDetail`/`DefinitionDetail`, once later tasks push those). Bare
+ * class selector, carried only by whatever `WorkbenchHostScreen.compose`
+ * tags with it -- not ancestor-scoped, so it never counts against the
+ * bare-type fastpath ratchet (PR-3's `test_ancestor_scoped_bare_type_
+ * rule_count_is_a_ratchet`). */
+.workbench-host-body {
+    height: 1fr;
+}
+
 /* ===== MODULE: features/_code_repo.tcss ===== */
 /* ========================================
  * Code Repository Copy/Paste Feature Styles
