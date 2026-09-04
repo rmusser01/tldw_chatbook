@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 22:32'
-updated_date: '2026-09-04 17:23'
+updated_date: '2026-09-04 18:11'
 labels:
   - vllm
   - lab
@@ -36,6 +36,8 @@ Replace process-liveness completion with an explicit, privacy-bounded vLLM lifec
 - [x] #10 App-scoped READY and handoff actions remain unavailable until initial profile hydration completes and exact reconciliation succeeds; corrupt, future, unavailable, cancelled, dead, or indeterminate owned evidence fails closed while truthful Stop and profile-store recovery remain reachable.
 - [x] #11 Until initial profile reconciliation succeeds, the child vLLM view exposes no READY status, verified checklist row, ready activity, Use/default action, or stageable handoff across initial mount or explicit lifecycle refresh; exact readiness returns after reconciliation.
 - [x] #12 Screen departure preserves an external handoff only while the exact recorded channel revision and intent for the current departure generation remain pending or in flight; stale, superseded, unrelated, or unreadable receipts fail closed without allowing residue on another channel to preserve owned evidence.
+- [x] #13 Delayed profile hydration interaction-fences every vLLM draft/check/profile action at both child and screen boundaries so forged or programmatic events cannot replace inherited exact READY evidence; independently truthful Stop remains available.
+- [x] #14 External departure receipts are validated and cleaned independently per channel: stale or unreadable receipts are discarded without destroying another exact current pending/in-flight transfer, while no-valid-receipt departure invalidates readiness.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -106,6 +108,15 @@ UX Fix Round 5/5:
 ADR required: no
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: This is a narrow correction to ADR-117's existing hydration and revision-fenced handoff rules; no service, persistence, or consumer interface changes.
+Final closure:
+26. Add a RED production-mounted delayed-hydration race covering disabled mutation controls plus click, press, edit, and forged screen-message attempts against an inherited exact READY generation.
+27. Add RED mixed-receipt cases for stale plus valid, per-channel lookup failure plus valid, and no-valid cleanup.
+28. Interaction-fence the child and LLMScreen before profile reconciliation, preserving Stop; classify and clean each staged external receipt independently.
+29. Run the focused GREEN nodes and the full workflow, geometry/Tab, primary, compatibility, privacy, CSS, static, inventory, scope, and diff gates before restoring Done.
+
+ADR required: no
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: ADR-117 already requires exact hydration reconciliation, generation fencing, truthful Stop, and revision-owned handoff rollback; this closure enforces those boundaries without changing their contract.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -241,6 +252,33 @@ review, and `git diff --check` passed. No CSS, Chat, Console, Settings,
 persistence, or handoff-consumer file changed. This host still has no vLLM
 executable or importable module. ADR-117 remains sufficient; no new ADR or
 generalized lesson arose.
+
+Final closure interaction-fences the entire pending-hydration mutation surface:
+mode buttons, profile controls, guided and Advanced draft fields, Check,
+Start/Restart, and external selection are disabled in the child, while forged
+draft/check/start/restart/retry/selection messages also fail closed in
+`LLMScreen`. Stop remains independently enabled for the exact live owned
+process. The real delayed repository race was RED with `19` enabled mutation
+controls and an attempted preflight path; after the fence, the mounted
+click/press/Input/TextArea/forged-message regression preserves the exact READY
+token, target, draft, and profile worker until hydration, then restores Use.
+External unmount cleanup now validates each recorded channel revision and intent
+independently: the three-case regression was RED as `2 failed, 1 passed` for
+mixed stale/exact and one-channel lookup-error/exact receipts, then GREEN while
+also proving no-valid cleanup invalidates readiness.
+
+Final evidence: the combined focused closure nodes passed `5`; workflow passed
+`74`; geometry/Tab passed `71`; and the complete normal-FD five-file primary
+passed `343` in `446.64s`. Compatibility remains the unchanged `350/352`
+baseline, with only the untouched Settings-origin double and Console terminal
+persistence failures. Privacy passed `7`; CSS build/sync/staleness passed `39`;
+two builds reproduced SHA-256
+`8dd093edc0a8a6ce6281c42f39eb7c450b59146dea7b9e9e28bc6dfa903b32ae`.
+Critical Ruff, scoped format, `compileall`, profile-path and diagnostic
+inventories, forbidden-scope review, and `git diff --check` passed. No CSS,
+Chat, Console, Settings, persistence, or handoff-consumer file changed. The host
+still has no vLLM executable or importable module, so no live-vLLM claim was
+made. ADR-117 remains sufficient; no new ADR or generalized lesson arose.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

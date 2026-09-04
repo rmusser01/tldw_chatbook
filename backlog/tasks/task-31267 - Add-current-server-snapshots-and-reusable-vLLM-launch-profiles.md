@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 22:34'
-updated_date: '2026-09-04 17:23'
+updated_date: '2026-09-04 18:11'
 labels:
   - vllm
   - lab
@@ -33,6 +33,7 @@ Make repeated vLLM operation efficient and honest by separating the immutable ru
 - [x] #8 Initial saved-profile hydration is distinguished from deliberate profile selection: exact current launch evidence survives only for the bound profile/runtime fingerprint, and all profile mutation/select handlers are inert in existing-server mode even when invoked programmatically.
 - [x] #9 Initial profile-store hydration is a fail-closed readiness gate: success reconciles the exact selected profile before exposing READY, while corrupt, future, unavailable, or failed loads invalidate stale evidence and show persistent adjacent recovery without hiding truthful Stop.
 - [x] #10 A newly constructed or lazily mounted child view begins unreconciled and cannot project any saved-profile READY evidence until its parent explicitly supplies a reconciled profile document.
+- [x] #11 Before initial profile reconciliation, local profile selection/mutation and every draft field or mode control are disabled and forged child/screen events cannot mutate the placeholder draft, repository, or inherited connection generation.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -116,6 +117,14 @@ UX Fix Round 5/5:
 ADR required: no
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: ADR-117 already makes selected profile restoration a prerequisite for reusable readiness; this change closes a default-state projection hole without changing storage.
+Final closure:
+35. Add a RED delayed-repository race that exercises mounted controls and forged messages while the profile worker is blocked.
+36. Gate child draft/profile emitters and LLMScreen mutation handlers on completed hydration, leaving Stop independent.
+37. Run the complete requested qualification, record evidence, check the new AC, and restore Done.
+
+ADR required: no
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: This completes ADR-117's existing selected-profile hydration prerequisite without changing profile storage, schema, or ownership.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -225,6 +234,26 @@ normal FD limit. Compatibility retained the same two untouched baselines
 bundle sync, critical Ruff, scoped format, `compileall`, both inventories,
 scope/diff review, and `git diff --check` passed. ADR-117 remains the governing
 profile/readiness boundary; no new ADR or generalized lesson was needed.
+
+Final closure completes the hydration prerequisite at the interaction boundary.
+Every child control capable of changing the selected profile, launch draft,
+mode, check generation, or external model is disabled before reconciliation;
+child emitters and the corresponding `LLMScreen` message handlers reject
+programmatic attempts as well. The delayed repository regression exercises a
+real mount plus click, press, direct Input/TextArea edits, and forged screen
+messages while preserving the exact inherited READY generation and bound
+target; successful profile reconciliation restores readiness and Use. The
+pre-fix run exposed `19` enabled controls and attempted preflight, and the final
+focused closure set passed `5`.
+
+Final qualification passed workflow `74`, geometry/Tab `71`, and the complete
+five-file primary `343` in `446.64s`. Compatibility remains the exact unchanged
+`350/352` baseline; privacy `7`, CSS `39`, deterministic double build and bundle
+sync, critical Ruff, scoped format, `compileall`, both direct inventories,
+scope review, and `git diff --check` passed. No profile schema, repository,
+persistence, CSS, Chat, Console, Settings, or handoff-consumer file changed.
+ADR-117 remains the governing profile/readiness boundary; no new ADR or lesson
+was required.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

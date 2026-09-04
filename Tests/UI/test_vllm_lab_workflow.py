@@ -1360,6 +1360,13 @@ async def test_restart_termination_failure_keeps_old_snapshot_and_never_reserves
 async def test_source_specific_controls_and_mode_drafts_are_preserved():
     app = _VllmHost()
     async with app.run_test(size=(120, 40)) as pilot:
+        view = app.query_one(VllmSetupView)
+        view.apply_state(
+            draft=view.draft,
+            state=VllmReadinessState.NOT_CONFIGURED,
+            preflight=None,
+            profiles_ready=True,
+        )
         hf_input = app.query_one("#vllm-hf-model", Input)
         local_input = app.query_one("#vllm-local-model-directory", Input)
         assert hf_input.display
@@ -1830,6 +1837,141 @@ async def test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff(
         assert not fresh_view.query_one("#vllm-recovery-primary", Button).display
 
 
+async def test_delayed_profile_hydration_interaction_fence_preserves_exact_ready(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """Pending profile reconciliation rejects mounted and forged draft actions."""
+
+    repository = VllmProfileRepository(tmp_path / "profiles.json")
+    load_entered = threading.Event()
+    release_load = threading.Event()
+
+    class _DelayedRepository:
+        def load(self):
+            load_entered.set()
+            release_load.wait(5)
+            return repository.load()
+
+        def __getattr__(self, name):
+            return getattr(repository, name)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.llm_screen.VllmProfileRepository",
+        _DelayedRepository,
+    )
+
+    async def _no_network_preflight(self, token, draft):
+        return None
+
+    monkeypatch.setattr(
+        LLMScreen,
+        "_run_vllm_preflight_generation",
+        _no_network_preflight,
+    )
+    app = _build_test_app()
+    owner = VllmConnectionOwner()
+    app._vllm_connection_owner = owner
+    profile = default_vllm_profile()
+    draft = draft_from_profile(profile)
+    token = owner.begin(
+        draft,
+        runtime_owner="chatbook",
+        profile_id=profile.profile_id,
+        profile_name=profile.name,
+    )
+    claim = reserve_server_launch(app, "vllm", authority="chatbook-vllm")
+    assert claim is not None
+    assert owner.bind_launch_claim(token, claim)
+    assert publish_server_process(app, "vllm", claim, _RunningProcess())
+    expected_ready = _ready_result(token)
+    assert owner.settle(token, expected_ready)
+
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+        assert load_entered.wait(1)
+        assert not screen._vllm_profiles_loaded
+        before = owner.snapshot()
+        before_draft = screen._vllm_draft
+        profile_worker = screen._vllm_profile_worker
+        mutation_control_ids = (
+            "vllm-check-setup",
+            "vllm-start",
+            "vllm-restart",
+            "vllm-start-local-button",
+            "vllm-connect-existing-button",
+            "vllm-profile-select",
+            "vllm-profile-name",
+            "vllm-profile-create-button",
+            "vllm-profile-save-button",
+            "vllm-profile-rename-button",
+            "vllm-profile-duplicate-button",
+            "vllm-profile-delete-button",
+            "vllm-python-environment",
+            "vllm-browse-python-environment",
+            "vllm-hugging-face-source-button",
+            "vllm-local-model-source-button",
+            "vllm-hf-model",
+            "vllm-local-model-directory",
+            "vllm-browse-local-model-directory-button",
+            "vllm-bind-address",
+            "vllm-port",
+            "vllm-existing-server-url",
+            "vllm-existing-model",
+            "vllm-dtype",
+            "vllm-tensor-parallel-size",
+            "vllm-maximum-model-length",
+            "vllm-gpu-memory-utilization",
+            "vllm-trust-remote-code",
+            "vllm-raw-arguments",
+        )
+        enabled_before_hydration = tuple(
+            control_id
+            for control_id in mutation_control_ids
+            if not view.query_one(f"#{control_id}").disabled
+        )
+        forged_draft = replace(before_draft, port=before_draft.port + 1)
+        try:
+            await pilot.click("#vllm-connect-existing-button")
+            view.query_one("#vllm-check-setup", Button).press()
+            view.query_one(
+                "#vllm-python-environment", Input
+            ).value = "/private/HYDRATION_RACE/bin/python"
+            view.query_one("#vllm-raw-arguments", TextArea).text = "--HYDRATION_RACE"
+            screen._on_vllm_draft_changed(VllmSetupView.DraftChanged(forged_draft))
+            screen._on_vllm_check_requested(VllmSetupView.CheckRequested(forged_draft))
+            screen._on_vllm_retry_requested(VllmSetupView.RetryRequested())
+            screen._on_vllm_start_requested(VllmSetupView.StartRequested(forged_draft))
+            screen._on_vllm_restart_requested(
+                VllmSetupView.RestartRequested(forged_draft, ("Port",))
+            )
+            await pilot.pause()
+            during = owner.snapshot()
+            draft_during = screen._vllm_draft
+            worker_during = screen._vllm_profile_worker
+        finally:
+            release_load.set()
+
+        assert enabled_before_hydration == ()
+        assert not view.query_one("#vllm-stop", Button).disabled
+        assert during.current_token == before.current_token == token
+        assert during.state is before.state is VllmReadinessState.READY
+        assert during.target == before.target == expected_ready.target
+        assert draft_during == before_draft
+        assert worker_during is profile_worker
+
+        for _ in range(100):
+            await pilot.pause(0.02)
+            if screen._vllm_profiles_loaded:
+                break
+        assert screen._vllm_profiles_loaded
+        after = owner.snapshot()
+        assert after.current_token == token
+        assert after.state is VllmReadinessState.READY
+        assert after.target == expected_ready.target
+        assert not view.query_one("#vllm-use-console", Button).disabled
+
+
 async def test_fresh_screen_profile_load_failure_invalidates_ready_with_recovery(
     monkeypatch,
 ):
@@ -1868,7 +2010,7 @@ async def test_fresh_screen_profile_load_failure_invalidates_ready_with_recovery
     async with app.run_test(size=(235, 52)) as pilot:
         screen, _, view = await _mount_vllm_screen(app, pilot)
         assert load_entered.wait(1)
-        focused = view.query_one("#vllm-python-environment", Input)
+        focused = view.query_one("#vllm-stop", Button)
         focused.focus()
         await pilot.pause()
         assert app.focused is focused
@@ -2151,6 +2293,118 @@ async def test_external_handoff_revision_lookup_error_fails_closed(monkeypatch):
         assert snapshot.state is VllmReadinessState.NOT_CONFIGURED
         assert snapshot.target is None
         assert app.pending_handoffs.claim(HandoffChannel.VLLM_CONSOLE) is None
+
+
+@pytest.mark.parametrize(
+    "receipt_case",
+    ("mixed_stale_valid", "lookup_error_valid", "no_valid"),
+)
+async def test_external_departure_receipts_are_validated_independently(
+    monkeypatch,
+    receipt_case: str,
+):
+    """Each external receipt fails closed without discarding an exact peer."""
+
+    from tldw_chatbook.Constants import TAB_CHAT, TAB_SETTINGS
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+    from tldw_chatbook.UI.Navigation.vllm_handoff import (
+        VllmConsoleIntent,
+        VllmDefaultIntent,
+    )
+
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, _ = await _mount_vllm_screen(app, pilot)
+        for _ in range(50):
+            await pilot.pause(0.02)
+            if screen._vllm_profiles_loaded:
+                break
+        assert screen._vllm_profiles_loaded
+        draft = replace(
+            screen._vllm_draft,
+            mode=VllmMode.EXISTING,
+            existing_server_url="http://127.0.0.1:8000/v1",
+            existing_model_id="chatbook-vllm",
+        )
+        token = screen._vllm_owner.begin(draft, runtime_owner="external")
+        expected_ready = _ready_result(token)
+        assert screen._vllm_owner.settle(token, expected_ready)
+        screen._vllm_draft = draft
+
+        original_post_message = screen.post_message
+        monkeypatch.setattr(screen, "post_message", lambda *_args: True)
+        assert screen._stage_vllm_handoff(
+            channel=HandoffChannel.VLLM_DEFAULT,
+            intent_type=VllmDefaultIntent,
+            route=TAB_SETTINGS,
+        )
+        assert screen._stage_vllm_handoff(
+            channel=HandoffChannel.VLLM_CONSOLE,
+            intent_type=VllmConsoleIntent,
+            route=TAB_CHAT,
+        )
+        monkeypatch.setattr(screen, "post_message", original_post_message)
+
+        if receipt_case == "mixed_stale_valid":
+            unrelated_default = VllmDefaultIntent(
+                api_url="http://127.0.0.1:9000/v1/chat/completions",
+                model_id="org/unrelated",
+                generation=token.generation,
+            )
+            app.pending_handoffs.stage(
+                HandoffChannel.VLLM_DEFAULT,
+                unrelated_default,
+            )
+        elif receipt_case == "lookup_error_valid":
+            exact_revision_status = app.pending_handoffs.exact_revision_status
+
+            def fail_one_lookup(channel, revision):
+                if channel is HandoffChannel.VLLM_DEFAULT:
+                    raise RuntimeError("default receipt lookup unavailable")
+                return exact_revision_status(channel, revision)
+
+            monkeypatch.setattr(
+                app.pending_handoffs,
+                "exact_revision_status",
+                fail_one_lookup,
+            )
+        else:
+            for channel in (
+                HandoffChannel.VLLM_DEFAULT,
+                HandoffChannel.VLLM_CONSOLE,
+            ):
+                claim = app.pending_handoffs.claim(channel)
+                assert claim is not None
+                assert app.pending_handoffs.acknowledge(claim)
+
+        screen.on_unmount()
+
+        snapshot = screen._vllm_owner.snapshot()
+        if receipt_case == "no_valid":
+            assert snapshot.state is VllmReadinessState.NOT_CONFIGURED
+            assert snapshot.target is None
+            assert screen._vllm_staged_handoffs == {}
+            assert app.pending_handoffs.claim(HandoffChannel.VLLM_DEFAULT) is None
+            assert app.pending_handoffs.claim(HandoffChannel.VLLM_CONSOLE) is None
+            return
+
+        assert snapshot.state is VllmReadinessState.READY
+        assert snapshot.target == expected_ready.target
+        assert HandoffChannel.VLLM_DEFAULT not in screen._vllm_staged_handoffs
+        assert HandoffChannel.VLLM_CONSOLE in screen._vllm_staged_handoffs
+        console_claim = app.pending_handoffs.claim(HandoffChannel.VLLM_CONSOLE)
+        assert console_claim is not None
+        assert console_claim.value == VllmConsoleIntent.from_target(
+            expected_ready.target
+        )
+        assert app.pending_handoffs.acknowledge(console_claim)
+        if receipt_case == "mixed_stale_valid":
+            default_claim = app.pending_handoffs.claim(HandoffChannel.VLLM_DEFAULT)
+            assert default_claim is not None
+            assert default_claim.value == unrelated_default
+            assert app.pending_handoffs.acknowledge(default_claim)
+        else:
+            assert app.pending_handoffs.claim(HandoffChannel.VLLM_DEFAULT) is None
 
 
 async def test_staged_owned_handoff_survives_exact_live_unmount_for_consumption(

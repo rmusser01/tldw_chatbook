@@ -5,7 +5,7 @@ status: Done
 assignee:
   - codex
 created_date: '2026-09-03 22:34'
-updated_date: '2026-09-04 17:23'
+updated_date: '2026-09-04 18:11'
 labels:
   - vllm
   - lab
@@ -38,6 +38,7 @@ Ensure the complete vLLM setup, activity, profile, and Console-handoff workflow 
 - [x] #9 The 11-state responsive/Tab matrix treats the existing-server profile selector as disabled and unreachable while keeping Local-mode selection reachable, and fresh-screen hydration preserves truthful Use/Reverify/recovery actions without stealing focus.
 - [x] #10 During initial hydration the mounted Lab hides Use, Console, and Reverify actions derived only from unreconciled app state, keeps exact owned Stop reachable, and projects persistent adjacent profile-store recovery on load failure without focus theft.
 - [x] #11 The production-mounted delayed-hydration flow renders only non-verified readiness, checklist, and activity copy before reconciliation—even after lifecycle refresh—then restores the exact verified projection without focus theft after hydration.
+- [x] #12 During delayed hydration all visible vLLM draft, mode, check, and profile mutation controls are disabled and absent from actionable Tab flow, while exact owned Stop and non-destructive disclosures remain operable.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -125,6 +126,14 @@ UX Fix Round 5/5:
 ADR required: no
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: This completes ADR-117's existing truthful loading-state projection and adds no new visual or application structure.
+Final closure:
+20. Extend the production delayed-hydration assertions to every mutation control and exercise real click/press/edit behavior without changing focus or exact owner evidence.
+21. Preserve the established adaptive layout, disclosure controls, and independently truthful Stop while adding only the pending-hydration interaction fence.
+22. Re-run workflow, the 71-case geometry/Tab matrix, full qualification, CSS determinism, and direct static gates before restoring Done.
+
+ADR required: no
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: This is an interaction-state correction within ADR-117's existing responsive and hydration model; no new UI structure, copy system, or keyboard grammar is introduced.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -442,4 +451,22 @@ and bundle sync passed. Privacy `7`, critical Ruff, scoped format, `compileall`,
 both inventories, scope review, and diff checks passed. No stylesheet source or
 generated bundle changed, and no live-vLLM claim was possible on this host.
 ADR-117 remains sufficient; no new ADR or generalized lesson arose.
+
+Final closure adds the missing interaction fence without changing layout or
+keyboard grammar. While hydration is pending, every visible draft, mode,
+profile, Check, and launch mutation control is disabled and therefore absent
+from the actionable Tab sequence; non-destructive Collapsible disclosures are
+unchanged, and exact owned Stop remains enabled and focusable. The production
+delayed-load regression attempts mouse click, programmatic press, direct field
+edits, and forged screen messages, then proves exact readiness returns only
+after reconciliation. Its pre-fix state exposed `19` mutation controls; the
+focused final set passed `5`.
+
+Final qualification passed workflow `74`, all `71` eleven-state/three-size
+production-stylesheet geometry and complete Tab-order cases, and the five-file
+primary `343` in `446.64s`. Compatibility retains the same two untouched
+baseline failures (`350/352`). Privacy `7`, CSS `39`, deterministic double build
+and sync, critical Ruff, scoped format, `compileall`, both inventories, scope
+review, and `git diff --check` passed. The CSS source and generated bundles are
+unchanged. ADR-117 remains sufficient; no new ADR or lesson arose.
 <!-- SECTION:NOTES:END -->

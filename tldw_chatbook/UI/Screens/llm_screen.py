@@ -3187,6 +3187,8 @@ class LLMScreen(LabScreen):
         """Invalidate every semantic target edit without stealing focus."""
 
         event.stop()
+        if not self._vllm_profiles_loaded:
+            return
         self._vllm_handoff_departure_generation = None
         self._vllm_draft = event.draft
         self._vllm_preflight = None
@@ -3265,34 +3267,41 @@ class LLMScreen(LabScreen):
             store.discard_pending_exact(channel, revision, intent)
             self._vllm_staged_handoffs.pop(channel, None)
 
-    def _has_exact_external_departure_handoff(
+    def _retain_exact_external_departure_handoffs(
         self,
         *,
         store: PendingHandoffStore,
         generation: int | None,
     ) -> bool:
-        """Return whether an exact current external receipt owns departure."""
+        """Keep exact external receipts and discard each unproven peer."""
 
-        if generation is None:
-            return False
         snapshot = self._vllm_owner.snapshot()
-        if snapshot.generation != generation:
-            return False
-        for channel, receipt in self._vllm_staged_handoffs.items():
+        preserve_any = False
+        for channel, receipt in tuple(self._vllm_staged_handoffs.items()):
             revision, intent, runtime_owner = receipt
-            if (
-                runtime_owner != "external"
-                or intent.generation != generation
-                or not owner_has_current_intent(self._vllm_owner, intent)
-            ):
+            if runtime_owner != "external":
+                continue
+            exact_current = bool(
+                generation is not None
+                and snapshot.generation == generation
+                and intent.generation == generation
+                and owner_has_current_intent(self._vllm_owner, intent)
+            )
+            status = None
+            if exact_current:
+                try:
+                    status = store.exact_revision_status(channel, revision)
+                except Exception:  # noqa: BLE001 - this receipt must fail closed
+                    status = None
+            if exact_current and status in {"pending", "in_flight"}:
+                preserve_any = True
                 continue
             try:
-                status = store.exact_revision_status(channel, revision)
-            except Exception:  # noqa: BLE001 - departure must fail closed
-                return False
-            if status in {"pending", "in_flight"}:
-                return True
-        return False
+                store.discard_pending_exact(channel, revision, intent)
+            except Exception:  # noqa: BLE001 - detach still fails closed
+                pass
+            self._vllm_staged_handoffs.pop(channel, None)
+        return preserve_any
 
     @on(VllmSetupView.UseInConsoleRequested)
     def _on_vllm_use_in_console_requested(
@@ -3326,6 +3335,8 @@ class LLMScreen(LabScreen):
         """Start one bounded preflight generation from an immutable draft."""
 
         event.stop()
+        if not self._vllm_profiles_loaded:
+            return
         self._cancel_vllm_workers()
         draft = event.draft
         if draft.mode is VllmMode.EXISTING:
@@ -3415,6 +3426,8 @@ class LLMScreen(LabScreen):
         """Reserve and launch only the exact successfully checked generation."""
 
         event.stop()
+        if not self._vllm_profiles_loaded:
+            return
         snapshot = self._vllm_owner.snapshot()
         token = snapshot.current_token
         preflight = self._vllm_preflight
@@ -3537,6 +3550,8 @@ class LLMScreen(LabScreen):
         """Confirm one current restart using allowlisted labels only."""
 
         event.stop()
+        if not self._vllm_profiles_loaded:
+            return
         candidate = self._current_vllm_restart_candidate(event.draft)
         if candidate is None:
             self._apply_vllm_view_state(focus=True)
@@ -3556,7 +3571,7 @@ class LLMScreen(LabScreen):
         )
 
     def _confirm_vllm_restart(self, confirmed: bool, draft: VllmLaunchDraft) -> None:
-        if not confirmed:
+        if not confirmed or not self._vllm_profiles_loaded:
             return
         self.run_worker(
             self._restart_vllm_with_draft(draft),
@@ -3715,7 +3730,8 @@ class LLMScreen(LabScreen):
 
         event.stop()
         if (
-            self._vllm_draft.mode is not VllmMode.EXISTING
+            not self._vllm_profiles_loaded
+            or self._vllm_draft.mode is not VllmMode.EXISTING
             or event.model_id not in self._vllm_external_models
         ):
             return
@@ -3889,6 +3905,8 @@ class LLMScreen(LabScreen):
         """Retry verification as a fresh generation, never reuse old evidence."""
 
         event.stop()
+        if not self._vllm_profiles_loaded:
+            return
         self._cancel_vllm_workers()
         current_claim = current_server_claim(self.app_instance, "vllm")
         if (
@@ -3997,18 +4015,17 @@ class LLMScreen(LabScreen):
 
         preserve_generation = self._vllm_handoff_departure_generation
         store = getattr(self.app_instance, "pending_handoffs", None)
-        preserve_external_handoff = bool(
-            type(store) is PendingHandoffStore
-            and self._has_exact_external_departure_handoff(
+        if type(store) is PendingHandoffStore:
+            preserve_external_handoff = self._retain_exact_external_departure_handoffs(
                 store=cast(PendingHandoffStore, store),
                 generation=preserve_generation,
             )
-        )
+        else:
+            preserve_external_handoff = False
+            self._discard_staged_vllm_handoffs(runtime_owner="external")
         preserve_live_launch = self._live_vllm_ready_launch_snapshot() is not None
         if not preserve_live_launch:
             self._discard_staged_vllm_handoffs(runtime_owner="chatbook")
-        if not preserve_external_handoff:
-            self._discard_staged_vllm_handoffs(runtime_owner="external")
         self._vllm_handoff_departure_generation = None
         if not preserve_external_handoff and not preserve_live_launch:
             self._vllm_owner.invalidate("screen_detached")

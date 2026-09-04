@@ -792,6 +792,29 @@ class VllmSetupView(VerticalScroll):
             self.query_one(
                 "#vllm-browse-local-model-directory-button", Button
             ).display = local and not source_is_hf
+            for draft_control_id in (
+                "vllm-start-local-button",
+                "vllm-connect-existing-button",
+                "vllm-python-environment",
+                "vllm-browse-python-environment",
+                "vllm-hugging-face-source-button",
+                "vllm-local-model-source-button",
+                "vllm-hf-model",
+                "vllm-local-model-directory",
+                "vllm-browse-local-model-directory-button",
+                "vllm-bind-address",
+                "vllm-port",
+                "vllm-existing-server-url",
+                "vllm-dtype",
+                "vllm-tensor-parallel-size",
+                "vllm-maximum-model-length",
+                "vllm-gpu-memory-utilization",
+                "vllm-trust-remote-code",
+                "vllm-raw-arguments",
+            ):
+                self.query_one(
+                    f"#{draft_control_id}", Widget
+                ).disabled = not self._profiles_ready
             self.query_one("#vllm-mode-summary", Label).update(
                 "Start on this computer" if local else "Connect to existing server"
             )
@@ -815,7 +838,9 @@ class VllmSetupView(VerticalScroll):
                 )
                 if external_model.value != selected_external_model:
                     external_model.value = selected_external_model
-            external_model.disabled = not self._discovered_model_ids
+            external_model.disabled = (
+                not self._profiles_ready or not self._discovered_model_ids
+            )
             external_help = self.query_one("#vllm-existing-model-help", Label)
             if self._discovered_model_ids and selected_external_model is Select.NULL:
                 external_help.update("Select a returned model to verify it exactly.")
@@ -912,7 +937,10 @@ class VllmSetupView(VerticalScroll):
             use_in_console = self.query_one("#vllm-use-console", Button)
             make_default = self.query_one("#vllm-make-default", Button)
             start.disabled = not (
-                local and is_current_success and not self._runtime_active
+                self._profiles_ready
+                and local
+                and is_current_success
+                and not self._runtime_active
             )
             stop.disabled = not self._runtime_active
             retry.disabled = (
@@ -959,7 +987,11 @@ class VllmSetupView(VerticalScroll):
                 "Changed: " + " · ".join(changed_fields) if dirty else "No changes"
             )
             restart.disabled = not (
-                show_current and dirty and local and is_current_success
+                self._profiles_ready
+                and show_current
+                and dirty
+                and local
+                and is_current_success
             )
             dirty_restart = bool(show_current and dirty)
             check.label = (
@@ -973,7 +1005,9 @@ class VllmSetupView(VerticalScroll):
                 VllmReadinessState.NOT_CONFIGURED,
                 VllmReadinessState.READY_TO_START,
             }
-            check.disabled = self._state is VllmReadinessState.CHECKING
+            check.disabled = (
+                not self._profiles_ready or self._state is VllmReadinessState.CHECKING
+            )
             cancel_check.display = self._state is VllmReadinessState.CHECKING
             cancel_check.disabled = not (
                 token is not None
@@ -1236,6 +1270,8 @@ class VllmSetupView(VerticalScroll):
             self.query_one(f"#{widget_id}", Label).update(copy)
 
     def _change_draft(self, **changes: object) -> None:
+        if not self._profiles_ready:
+            return
         candidate = replace(self._draft, **changes)
         if semantic_fingerprint(candidate) == semantic_fingerprint(self._draft):
             return
@@ -1297,6 +1333,7 @@ class VllmSetupView(VerticalScroll):
     def _on_profile_selected(self, event: Select.Changed) -> None:
         if (
             self._rendering
+            or not self._profiles_ready
             or self._draft.mode is not VllmMode.LOCAL
             or not isinstance(event.value, str)
         ):
@@ -1305,7 +1342,11 @@ class VllmSetupView(VerticalScroll):
 
     @on(Select.Changed, "#vllm-dtype")
     def _on_dtype_selected(self, event: Select.Changed) -> None:
-        if self._rendering or not isinstance(event.value, str):
+        if (
+            self._rendering
+            or not self._profiles_ready
+            or not isinstance(event.value, str)
+        ):
             return
         self._change_draft(dtype=event.value)
 
@@ -1313,6 +1354,7 @@ class VllmSetupView(VerticalScroll):
     def _on_external_model_selected(self, event: Select.Changed) -> None:
         if (
             self._rendering
+            or not self._profiles_ready
             or not isinstance(event.value, str)
             or event.value not in self._discovered_model_ids
         ):
@@ -1322,6 +1364,11 @@ class VllmSetupView(VerticalScroll):
     @on(Button.Pressed)
     def _on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
+        if not self._profiles_ready and event.button.id not in {
+            "vllm-cancel-check",
+            "vllm-stop",
+        }:
+            return
         match event.button.id:
             case "vllm-start-local-button":
                 self._change_draft(mode=VllmMode.LOCAL)
