@@ -24,6 +24,10 @@ from textual.widgets import Button, Input, OptionList
 
 from tldw_chatbook.Library.library_media_reader_state import set_mode
 from tldw_chatbook.UI.Screens.library_screen import _sync_library_canvas
+from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+from tldw_chatbook.Widgets.Library.library_media_reader_shell import (
+    LibraryMediaReaderShell,
+)
 
 from Tests.UI.test_library_media_side_by_side import (
     _build_media_test_app,
@@ -38,6 +42,7 @@ from Tests.UI.test_library_media_reader_flow import (
     _wait_for_detail_call,
 )
 from Tests.UI.test_library_shell import (
+    LibraryGlobalKeyProductionCSSHarness,
     LibraryProductionCSSHarness,
     _seed_conversations,
     _two_conversations,
@@ -403,6 +408,529 @@ async def test_dismiss_receipt_paints_undo_at_the_items_pane_width():
         assert "Undo" in painted, painted
         assert "Dismiss" in painted, painted
 
+
+# ---------------------------------------------------------------------------
+# task-31271 -- the footer told the truth at four seams
+# ---------------------------------------------------------------------------
+
+
+def _footer_labels(screen) -> list[str]:
+    return [
+        label for _key, label in screen._library_footer_shortcuts_for_current_state()
+    ]
+
+
+def _painted_footer(host, screen) -> str:
+    return _painted(host, screen.query_one(AppFooterStatus).region)
+
+
+@pytest.mark.asyncio
+async def test_footer_drops_close_find_after_escape_closes_the_bar():
+    """Seam (a): Escape closes Find, so the esc chip must stop saying so.
+
+    ``_library_media_escape_label`` asked the DOM whether the Find bar was
+    mounted, and the read happened BEFORE the recompose that removes it --
+    so the footer kept promising "esc close find" over a closed bar (A cap
+    08/23, B cap_21) while Escape actually focused the Items pane.
+    task-31272 shortened that chip to the shared "close".
+    """
+    host, service = _analysis_flow_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _load_row_0(screen, service, pilot)
+        screen.query_one("#library-media-reader-find", Button).press()
+        search_input = await _wait_for_selector(
+            screen, pilot, "#library-media-content-search"
+        )
+        await _wait_for_condition(
+            pilot, lambda: search_input.has_focus, message="Find never focused."
+        )
+        # The chip is genuinely visible at this width before Escape, so its
+        # absence afterwards cannot be footer compaction.
+        assert "close" in _footer_labels(screen)
+        assert "close" in _painted_footer(host, screen)
+
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_find_open is False
+        labels = _footer_labels(screen)
+        assert "close" not in labels, labels
+        painted = _painted_footer(host, screen)
+        assert "close" not in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_pressing_s_focuses_a_media_row_so_space_toggles_immediately():
+    """Seam (b): "s" must land focus on a row, or the Space chip is a lie.
+
+    Entering select mode advertised "space toggle selection" while Space
+    was a no-op until the user hunted for a row (A cap 31->32, B cap_69).
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await pilot.press("s")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_select_mode is True
+        assert ("space", "toggle selection") in (
+            screen._library_footer_shortcuts_for_current_state()
+        )
+        focused = screen.focused
+        assert focused is not None and focused.has_class(
+            "library-media-row"
+        ), focused
+
+        await pilot.press("space")
+        await pilot.pause()
+        assert screen._library_media_row_selection.count == 1
+
+
+@pytest.mark.asyncio
+async def test_space_in_select_mode_never_reaches_the_pane_grip():
+    """Seam (b), second half: Space in select mode belongs to the selection.
+
+    With focus on the Library pane grip (a Button, so its own "space"
+    binding resolves before the screen's) Space COLLAPSED the Library pane
+    while the footer said "toggle selection" -- B cap_69.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await pilot.press("s")
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_media_select_mode is True
+
+        shell = screen.query_one(
+            "#library-media-reader-shell", LibraryMediaReaderShell
+        )
+        before = shell.effective_layout
+        shell.library_grip.focus()
+        await pilot.pause()
+
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.pause()
+
+        shell = screen.query_one(
+            "#library-media-reader-shell", LibraryMediaReaderShell
+        )
+        assert shell.effective_layout.library_open is before.library_open
+        assert screen._library_media_row_selection.count == 0
+
+
+@pytest.mark.asyncio
+async def test_reader_footer_advertises_l_c_t():
+    """Seam (d): l / c / t are real Reader keys and t ARMS DELETE (B cap_97).
+
+    All three shipped ``show=False`` and appeared in no footer set, so the
+    only way to discover the key that moves an item to Trash was to press
+    it.
+    """
+    host, service = _analysis_flow_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _load_row_0(screen, service, pilot)
+        shortcuts = screen._library_footer_shortcuts_for_current_state()
+        keys = [key for key, _label in shortcuts]
+        assert "l" in keys, shortcuts
+        assert "c" in keys, shortcuts
+        assert "t" in keys, shortcuts
+        # Painted, not just computed: the three chips are gated on the
+        # SETTLED session, and the footer registered at open time (while
+        # the detail request was still in flight) advertised none of them.
+        # Live, they only appeared after an unrelated F6.
+        painted = _painted_footer(host, screen)
+        assert "l read later" in painted, painted
+        assert "c use in Console" in painted, painted
+        assert "t trash" in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_space_in_select_mode_is_claimed_from_rows_and_grips_only():
+    """Seam (b), third half: Space is taken from the GRIP, not from every
+    button.
+
+    The priority binding outranks the focused widget, so the gate has to
+    claim exactly what Space should own: a media row (toggle it) and the
+    reader shell's pane grips (chrome -- swallow the collapse the footer
+    never promised). "Done" and the other select-mode buttons keep their
+    own key handling; asserted on the gate itself because Textual 8's
+    ``Button.BINDINGS`` is ``enter`` only -- Space does nothing on a plain
+    Button either way, so a "press Done with Space" assertion would pass
+    without the narrowing. Enter still presses Done, end to end.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await pilot.press("s")
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_media_select_mode is True
+
+        def claim() -> bool | None:
+            return screen.check_action("library_media_toggle_row_selection", ())
+
+        # Entry lands on a row: Space is the selection key there.
+        assert screen.focused.has_class("library-media-row"), screen.focused
+        assert claim() is True
+
+        shell = screen.query_one(
+            "#library-media-reader-shell", LibraryMediaReaderShell
+        )
+        shell.library_grip.focus()
+        await pilot.pause()
+        assert claim() is True  # swallowed, so the pane never collapses
+
+        done = screen.query_one("#library-media-select-toggle", Button)
+        assert str(done.label) == "Done"
+        done.focus()
+        await pilot.pause()
+        assert claim() is False  # the button keeps its own key handling
+
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_media_select_mode is False
+
+
+# ---------------------------------------------------------------------------
+# task-31272 (critique #4 P1): Escape, F6 and Back never strand focus in a
+# text input, and the Reader's exit ladder matches the layout on screen.
+# ---------------------------------------------------------------------------
+
+#: The whole Reader Escape vocabulary. Critique #4 saw eight distinct
+#: ``esc …`` chips live; every state now lands on one of these four (or on
+#: no chip at all, where Escape genuinely does nothing).
+_ESCAPE_LABELS = {"close", "focus Items", "focus Library", "back"}
+
+
+def _global_key_host() -> LibraryGlobalKeyProductionCSSHarness:
+    """``_host()`` with TldwCli's real global F6 binding attached."""
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    return LibraryGlobalKeyProductionCSSHarness(app)
+
+
+def _media_layout(screen):
+    return screen.query_one(
+        "#library-media-reader-shell", LibraryMediaReaderShell
+    ).effective_layout
+
+
+@pytest.mark.asyncio
+async def test_escape_from_the_reader_lands_on_the_loaded_row_then_the_rail_row():
+    """Escape walks Reader -> loaded row -> rail row, never into an Input.
+
+    Critique #4 (A cap 20): leaving the Reader took three Escapes and the
+    second landed inside "Search Library…", so the third was typed text.
+    The Reader also stays LIVE on the way out (the three-pane shell has no
+    "list mode" of its own), so ] / [ keep working from the Items row.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        layout = _media_layout(screen)
+        assert layout.items_open and layout.library_open, layout
+
+        screen.query_one("#library-media-viewer-content").focus()
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen.focused is not None
+        assert screen.focused.has_class("library-media-row"), screen.focused
+        assert screen._library_media_view == "viewer"
+        assert screen.check_action("library_media_next_item", ()) is True
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen.focused is not None
+        assert not isinstance(screen.focused, Input), screen.focused
+        assert screen.focused.id == "library-row-browse-media", screen.focused
+
+
+@pytest.mark.asyncio
+async def test_escape_closes_the_more_menu_from_any_reader_focus():
+    """Escape closes More wherever focus sits inside the Reader region.
+
+    Critique #4 (B cap_106): the footer promised "close more" and Escape
+    did nothing. Traced to the stale view flag -- "‹ Back" (and the rail's
+    Escape) set ``_library_media_view = "list"`` while the three-pane
+    Reader kept painting the document, and every Reader binding is gated
+    on that flag, so Escape/]/[ died on identical pixels.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        # The rail's own Escape must not strand the flag either.
+        screen.query_one("#library-row-browse-media").focus()
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_media_view == "viewer"
+        # The terminus leaves Escape UN-GATED rather than swallowing it
+        # (the Conversations seam): no chip, no action, no strand.
+        assert screen._library_media_escape_label() == ""
+        assert screen.check_action("library_media_viewer_back", ()) is False
+
+        screen.query_one("#library-media-reader-more", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-reader-more-actions")
+        screen.query_one("#library-media-viewer-content").focus()
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_media_reader_session.more_open is False
+        assert not screen.query("#library-media-reader-more-actions")
+
+
+@pytest.mark.asyncio
+async def test_f6_content_stop_is_visible_and_content_still_paints():
+    """The F6 Reader stop tints the content box's own border (task-31221).
+
+    Critique #4 (B cap_57): F6's first Reader candidate is the content
+    scroller, but nothing on screen said so. The cue must be the EXISTING
+    border, never an outline: the app-global ``*:focus`` outline paints
+    OVER the outermost rows, which is why this asserts painted text too.
+    """
+    host = _global_key_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        box = screen.query_one("#library-media-viewer-content")
+        unfocused = box.styles.border_top
+        screen.query_one("#library-search-input", Input).focus()
+        await pilot.pause()
+
+        for _ in range(6):
+            await pilot.press("f6")
+            await pilot.pause()
+            if str(getattr(screen.focused, "id", "")) in {
+                "library-media-viewer-content-text",
+                "library-media-viewer-content",
+            }:
+                break
+        assert str(getattr(screen.focused, "id", "")) in {
+            "library-media-viewer-content-text",
+            "library-media-viewer-content",
+        }, screen.focused
+
+        box = screen.query_one("#library-media-viewer-content")
+        focused_border = box.styles.border_top
+        assert focused_border[0] == unfocused[0] == "solid", (
+            focused_border,
+            unfocused,
+        )
+        assert focused_border[1] != unfocused[1], (focused_border, unfocused)
+        painted = _painted(host, box.region)
+        assert "product demo video walks through" in painted.lower(), painted
+
+
+@pytest.mark.asyncio
+async def test_back_button_is_not_composed_in_the_side_by_side_layout():
+    """"‹ Back" only renders where a "back to list" exit is real.
+
+    Critique #4 (A cap 25/31/39): in the three-pane shell the Items pane
+    already shows the list, so Back changed no pixels -- it only flipped
+    the view flag out from under the visible Reader.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        layout = _media_layout(screen)
+        assert layout.items_open and layout.library_open, layout
+        assert not screen.query("#library-media-back")
+
+    compact = _host()
+    async with compact.run_test(size=(100, 30)) as pilot:
+        screen = await _open_media_list(compact, pilot)
+        await _open_first_reader_row(screen, pilot)
+        layout = _media_layout(screen)
+        assert not (layout.items_open and layout.library_open), layout
+        assert screen.query("#library-media-back")
+
+
+@pytest.mark.asyncio
+async def test_escape_labels_are_one_of_four():
+    """Every Reader state's ``esc`` chip comes from one four-word set."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        seen: dict[str, str] = {}
+
+        def record(state: str) -> None:
+            label = screen._library_media_escape_label()
+            seen[state] = label
+            assert label in _ESCAPE_LABELS or label == "", (state, label)
+
+        screen.query_one("#library-media-viewer-content").focus()
+        await pilot.pause()
+        record("plain Reader")
+
+        screen.query_one("#library-media-reader-find", Button).press()
+        await _wait_for_selector(
+            screen, pilot, "#library-media-content-search-controls"
+        )
+        record("find open")
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.pause()
+
+        screen.query_one("#library-media-reader-more", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-reader-more-actions")
+        record("more open")
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.pause()
+
+        screen.query_one("#library-media-viewer-content").focus()
+        await pilot.pause()
+        await pilot.press("t")
+        await _wait_for_selector(screen, pilot, "#library-media-delete-cancel")
+        record("armed delete")
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.pause()
+
+        screen.query_one("#library-media-row-0", Button).focus()
+        await pilot.pause()
+        record("items focus")
+
+        screen.query_one("#library-row-browse-media").focus()
+        await pilot.pause()
+        record("rail focus")
+
+        assert seen["plain Reader"] == "focus Items", seen
+        assert seen["find open"] == "close", seen
+        assert seen["more open"] == "close", seen
+        assert seen["armed delete"] == "close", seen
+        assert seen["items focus"] == "focus Library", seen
+        # The rail row is the ladder's terminus: Escape does nothing
+        # there, so the footer advertises no chip rather than a "back"
+        # the three-pane shell cannot perform.
+        assert seen["rail focus"] == "", seen
+
+
+@pytest.mark.asyncio
+async def test_escape_to_the_row_restores_the_list_keys_beside_the_reader():
+    """The Items pane keeps its own keys while the three-pane Reader is open.
+
+    task-31272 review: with "‹ Back" gone, ``_library_media_view`` never
+    leaves "viewer" for the whole visit, so everything keyed on that flag
+    (the ``s`` select gate, the list/select footer sets, the type/sort
+    strips) would stay dead while the user is standing on a list row.
+    They key on the live list SURFACE instead -- the Items region holding
+    focus -- and hand the keys straight back on F6 into the Reader.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        screen.query_one("#library-media-viewer-content").focus()
+        await pilot.pause()
+        assert screen.check_action("library_media_toggle_select_mode", ()) is False
+        assert dict(screen._library_footer_shortcuts_for_current_state())["esc"] == (
+            "focus Items"
+        )
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen.focused is not None
+        assert screen.focused.has_class("library-media-row"), screen.focused
+        assert screen.check_action("library_media_toggle_select_mode", ()) is True
+        # The Reader keeps the footer from a list row -- ] / l / c / t are
+        # all still live from there -- and "s" joins it through its gate.
+        row_labels = _footer_labels(screen)
+        assert "select" in row_labels, row_labels
+        assert "read later" in row_labels, row_labels
+
+        await pilot.press("s")
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_media_select_mode is True
+        # Select mode is the Items pane genuinely taking the keys.
+        assert screen._library_footer_shortcuts_for_current_state() == (
+            screen.LIBRARY_MEDIA_SELECT_SHORTCUTS
+        )
+
+        # Leaving select mode puts the Reader's own set back -- REGISTERED,
+        # not just computed: the ] / [ chips derive from the mounted rows,
+        # and a registration mid-swap dropped them while the keys worked.
+        await pilot.press("s")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_media_select_mode is False
+                and "next item"
+                in [label for _key, label in screen._footer_shortcut_registration[1]]
+            ),
+            message="Leaving select mode left a stale footer registration.",
+        )
+
+        # F6 back into the Reader hands the Reader its own set again.
+        screen.query_one("#library-media-viewer-content").focus()
+        await pilot.pause()
+        labels = _footer_labels(screen)
+        assert "focus Items" in labels, labels
+        assert "toggle selection" not in labels, labels
+
+
+@pytest.mark.asyncio
+async def test_escape_cancels_an_items_choice_strip_over_the_reader():
+    """A type/sort strip opened beside the Reader owns Escape, as advertised."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        screen.query_one("#library-media-type-filter", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-type-choices")
+        await pilot.pause()
+        assert dict(screen._library_footer_shortcuts_for_current_state())["esc"] == (
+            "cancel"
+        )
+
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.pause()
+        assert not screen.query("#library-media-type-choices")
+        assert screen._library_media_view == "viewer"
+
+
+@pytest.mark.asyncio
+async def test_escape_cancels_a_strip_that_is_open_while_the_reader_has_focus():
+    """Qodo on #2386: strip VISIBILITY is not the same question as key ownership.
+
+    The open-strip check had picked up the Items region's focus gate, so a
+    strip left open while focus moved into the Reader was invisible to
+    Escape (which hopped focus instead of closing it) and to the chip that
+    describes Escape.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        screen.query_one("#library-media-sort", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-sort-choices")
+        screen.query_one("#library-media-viewer-content").focus()
+        await pilot.pause()
+        assert dict(screen._library_footer_shortcuts_for_current_state())["esc"] == (
+            "close"
+        )
+
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.pause()
+        assert not screen.query("#library-media-sort-choices")
+        assert screen._library_media_view == "viewer"
 
 @pytest.mark.asyncio
 async def test_find_is_disabled_with_a_reason_when_the_analysis_tab_has_nothing_to_search():

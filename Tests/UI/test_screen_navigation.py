@@ -2426,13 +2426,14 @@ def test_register_footer_shortcuts_distinguishes_plain_viewer_from_a_media_sub_s
     screen._library_media_view = "viewer"
 
     # Plain read-only viewer -- no sub-state active -- Escape genuinely
-    # goes straight to the list, so "back to list" is true here.
+    # goes straight to the list, so "back" is true here (task-31272
+    # shortened the vocabulary to four words).
     screen._library_media_editing = False
     screen._library_media_confirming_delete = False
     screen._library_media_editing_analysis = False
     screen._register_footer_shortcuts()
     _source, plain_shortcuts = screen._footer_shortcut_registration
-    assert dict(plain_shortcuts)["esc"] == "back to list"
+    assert dict(plain_shortcuts)["esc"] == "back"
 
     # Mid-edit sub-state active -- Escape only steps back to the plain
     # viewer (see action_library_media_viewer_back's staged exit), so the
@@ -2440,7 +2441,7 @@ def test_register_footer_shortcuts_distinguishes_plain_viewer_from_a_media_sub_s
     screen._library_media_editing = True
     screen._register_footer_shortcuts()
     _source, edit_shortcuts = screen._footer_shortcut_registration
-    assert dict(edit_shortcuts)["esc"] != "back to list"
+    assert dict(edit_shortcuts)["esc"] == "close"
     assert edit_shortcuts != plain_shortcuts
 
     # Same for the delete-confirm and analysis-edit sub-states.
@@ -2448,13 +2449,13 @@ def test_register_footer_shortcuts_distinguishes_plain_viewer_from_a_media_sub_s
     screen._library_media_confirming_delete = True
     screen._register_footer_shortcuts()
     _source, delete_shortcuts = screen._footer_shortcut_registration
-    assert dict(delete_shortcuts)["esc"] != "back to list"
+    assert dict(delete_shortcuts)["esc"] == "close"
 
     screen._library_media_confirming_delete = False
     screen._library_media_editing_analysis = True
     screen._register_footer_shortcuts()
     _source, analysis_shortcuts = screen._footer_shortcut_registration
-    assert dict(analysis_shortcuts)["esc"] != "back to list"
+    assert dict(analysis_shortcuts)["esc"] == "close"
 
 
 def test_register_footer_shortcuts_advertises_skill_editor_working_keys():
