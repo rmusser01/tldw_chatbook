@@ -103,7 +103,7 @@
 - [x] Add exact drift, structural, Ruff, focused-test, governance, and generated-artifact results to Implementation Notes.
 - [x] Clarify TASK-26000's directive-position definition and record the physical-line guard incident in the testing-evidence lessons so later formatter batches use the corrected metric.
 - [x] Check every acceptance criterion, set TASK-26947 to Done, and commit the task/plan closeout.
-- [x] Rebase onto publication-time origin/dev `24d931d0a4f6beec3e0fd7e94d24850ca196e86c`; its delta from the last paired-test base `1a1b5c19e0bb3243effb1ae9671158b6670ad6da` changed zero assigned paths. Retain the exact paired 55-module evidence from that unchanged assigned surface, rerun all-73 replay/v3, Ruff, governance, and inventory gates, and exercise the upstream-changed dependent Console/theme surfaces against both final HEAD and exact current dev; retain the one-file `console_agent_bridge.py` formatter follow-up that caught the earlier post-rebase blank-line omission.
+- [x] Rebase onto pre-merge origin/dev `f6896176c87ff9f00481b8bed64d342753e9b293`; its delta from the last paired-test base `1a1b5c19e0bb3243effb1ae9671158b6670ad6da` changed zero assigned paths. Retain the exact paired 55-module evidence from that unchanged assigned surface, rerun all-73 replay/v3, Ruff, governance, and inventory gates, and exercise the upstream-changed dependent Console/theme/settings surfaces against both final HEAD and exact current dev; retain the one-file `console_agent_bridge.py` formatter follow-up that caught the earlier post-rebase blank-line omission.
 - [ ] Root-owned integration after this documentation closeout: publish the PR, address Qodo and CI findings, enforce strict latest-base protection, and merge.
 
 ADR required: no
