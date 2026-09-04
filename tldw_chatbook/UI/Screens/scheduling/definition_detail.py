@@ -73,6 +73,7 @@ from ....Scheduling.events import (
     DefinitionFieldEditRequested,
     DefinitionLifecycleToggleRequested,
     DefinitionOwnerActionRequested,
+    ViewDefinitionResultsRequested,
 )
 # PR-3 task 5: same lock/failed-state gating `task_detail.py`'s own
 # Runs-on row uses (survey §3) -- see that module's import comment for
@@ -524,9 +525,12 @@ class DefinitionDetail(Vertical):
     the workbench handles, mirroring `TaskDetail`'s own Task 3 Frequency
     rows exactly -- this widget still performs no I/O of its own.
 
-    `Runs on`/`Last run`/`Run count`/`Unread results`/`Results` stay
-    permanently read-only (out of this task's row list; owner transfer is
-    a separate, not-yet-built feature per survey §7).
+    `Last run`/`Run count` stay permanently read-only. `Runs on` gets its
+    own owner-transfer affordance (survey §7, PR-3 task 5). `Unread
+    results` is activatable too (redesign PR-4, task 2): it is the live
+    replacement for the old "See Results tab" pointer, pushing a
+    `ResultsTab` scoped to this definition -- see `ViewDefinitionResults
+    Requested` and `on_detail_value_row_activated` below.
     """
 
     def __init__(self, *args, **kwargs: object) -> None:
@@ -727,21 +731,27 @@ class DefinitionDetail(Vertical):
             self._run_count_row = DetailValueRow(
                 "Run count", "-", value_id="scheduling-automation-detail-run-count"
             )
+            # redesign PR-4, task 2: the retired "See Results tab" pointer
+            # (a dangling string once the tab bar goes away, survey
+            # :734-736) becomes THIS row's live activation instead of a
+            # separate row -- the count and the destination are the same
+            # fact, so a second row saying "Results -- See Results tab"
+            # next to it was redundant, not a second affordance.
+            # Unconditionally clickable/focusable (never family-gated
+            # like the editable rows above): viewing history is sensible
+            # for any definition, including one with zero unread results.
             self._unread_row = DetailValueRow(
                 "Unread results",
                 "-",
                 value_id="scheduling-automation-detail-unread-results",
-            )
-            view_results_row = DetailValueRow(
-                "Results",
-                "See Results tab",
-                value_id="scheduling-automation-detail-view-results",
+                affordance=True,
+                can_focus=True,
+                row_key="view_results",
             )
             yield DetailGroup(
                 self._last_run_row,
                 self._run_count_row,
                 self._unread_row,
-                view_results_row,
                 title="History",
                 collapsed=True,
                 id="scheduling-automation-detail-group-history",
@@ -1030,8 +1040,21 @@ class DefinitionDetail(Vertical):
 
     def on_detail_value_row_activated(self, event: DetailValueRow.Activated) -> None:
         """Open the activated row's editor, or -- locked -- show why
-        editing is refused instead of doing nothing (ruling 2)."""
+        editing is refused instead of doing nothing (ruling 2).
+
+        The `Unread results` row is not an editable row at all (it never
+        opens an in-place editor) -- activating it instead posts
+        `ViewDefinitionResultsRequested` upward for the workbench to push
+        the definition-filtered Results view. Never gated on the
+        lifecycle lock or the family note: viewing history is not an
+        edit, so a locked/unsupported-family row can still be browsed.
+        """
         row = event.row
+        if row is self._unread_row:
+            event.stop()
+            if self._definition is not None:
+                self.post_message(ViewDefinitionResultsRequested(self._definition))
+            return
         if row not in self._editable_rows():
             return
         event.stop()

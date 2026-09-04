@@ -218,6 +218,20 @@ class DefinitionOwnerActionRequested(Message):
         self.row = row
 
 
+class ViewDefinitionResultsRequested(Message):
+    """Posted when a definition pane's 'Unread results' row is activated
+    (redesign PR-4, task 2 -- the retired "See Results tab" pointer's
+    live replacement). ``definition`` is the raw dict `DefinitionDetail.
+    set_definition` was last painted with; the workbench resolves both
+    its local/server id spaces (`index_definitions_by_id`'s own caveat)
+    and pushes a `ResultsTab` scoped to this one definition.
+    """
+
+    def __init__(self, definition: dict[str, Any]) -> None:
+        super().__init__()
+        self.definition = definition
+
+
 class SyncCompleted(Message):
     """Posted when a non-failing sync attempt completes.
 

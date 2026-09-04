@@ -45,6 +45,7 @@ from ....Scheduling.events import (
     SyncFailed,
     TransferToLocalRequested,
     TransferToServerRequested,
+    ViewDefinitionResultsRequested,
 )
 from ....Scheduling.models import ReminderTask, ScheduledTask
 from ....Scheduling.services.server_client import (
@@ -57,15 +58,20 @@ from ....Scheduling.services.sync_engine import (
 )
 from ....UI.Screens.scheduling.conflicts_tab import ConflictsTab
 from ....UI.Screens.scheduling.results_tab import (
+    RESULTS_HEADING,
+    ResultsHostScreen,
     ResultsTab,
-    definition_for_result,
     # NOT `rich.markup.escape`: this dialog copy is rendered by a
     # Textual `Label` -> `Content.from_markup`, whose tokenizer eats ANY
     # `[...]`, while rich's escape only covers `[a-z#/@]...` tags (task 6
     # round 1). Same parser, same escape as the results detail pane.
     escape_markup,
     index_definitions_by_id,
+    mark_results_read,
+    mark_selected_result_solved,
+    review_selected_result,
     solved_eligibility,
+    _result_sort_key,
 )
 from ....UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
 from ....UI.Screens.scheduling.workbench_host_screen import WorkbenchHostScreen
@@ -488,6 +494,21 @@ class SchedulesWorkbench(BaseAppScreen):
                                     "Mark all read",
                                     id="scheduling-mark-all-read",
                                     tooltip="Mark every unread automation result read (a).",
+                                )
+                                # redesign PR-4, task 2: the Results
+                                # relocation's rail affordance -- always
+                                # visible (unlike Mark all read, which
+                                # hides at zero unread: browsing READ
+                                # results is still useful), mirroring the
+                                # status strip's Conflicts badge's own
+                                # "(N)" idiom.
+                                yield Button(
+                                    "Results",
+                                    id="scheduling-results-badge",
+                                    tooltip=(
+                                        "Browse every automation result "
+                                        "(view/read/dismiss/mark solved)."
+                                    ),
                                 )
                             # redesign PR-2, Task 2: the chip row (spec S3)
                             # -- one of the four buttons always carries
@@ -1964,6 +1985,102 @@ class SchedulesWorkbench(BaseAppScreen):
         Results tab active."""
         event.stop()
         self._rail_mark_all_read()
+
+    @on(Button.Pressed, "#scheduling-results-badge")
+    def _on_results_badge_pressed(self, event: Button.Pressed) -> None:
+        """Rail `Results (N)` (redesign PR-4, task 2) -- pushes the whole
+        (unfiltered) inbox as a fresh `ResultsHostScreen` overlay, beside
+        `Mark all read`. The Results TAB itself stays reachable until
+        Task 5 retires it -- both paths coexist this task."""
+        event.stop()
+        self._push_results_overlay()
+
+    @on(ViewDefinitionResultsRequested)
+    def _on_view_definition_results_requested(
+        self, event: ViewDefinitionResultsRequested
+    ) -> None:
+        """A definition pane's `Unread results` row was activated
+        (redesign PR-4, task 2) -- the live replacement for the retired
+        "See Results tab" pointer. Fires from either sibling
+        `DefinitionDetail` instance (Queue or Automations tab)."""
+        event.stop()
+        self._push_results_overlay(definition=event.definition)
+
+    def _push_results_overlay(
+        self, *, definition: dict[str, Any] | None = None
+    ) -> None:
+        """Push a standalone `ResultsTab` instance via `ResultsHostScreen`
+        (redesign PR-4, task 2's Results relocation).
+
+        Mirrors `_push_conflicts_overlay`'s shape (pre-read once, hand
+        the fresh instance its own data) but the pushed view ALSO needs
+        its own read/dismiss/mark-solved/mark-all binding surface
+        (`ResultsHostScreen`, not the plain `WorkbenchHostScreen`):
+        `SchedulesWorkbench`'s own r/d/o/a bindings are tab-gated and,
+        more fundamentally, never fire while this screen is on top of
+        the stack. `query`/`unread_ids` are re-run after every mutation
+        to repaint the SAME scope; the workbench's own rail/Queue/tab
+        state only re-syncs once, on pop, via `dismissed` (brief:
+        "refresh the rail + unified rows on dismissed").
+
+        `definition=None` is the rail's global inbox; otherwise the
+        listing (and its cap line) is scoped to that one definition,
+        across both its local/server id spaces.
+        """
+        service = self._service()
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable.", severity="warning"
+            )
+            return
+
+        def _query() -> tuple[
+            list[dict[str, Any]], dict[str, dict[str, Any]], int
+        ]:
+            if definition is None:
+                results = service.db.list_automation_results(
+                    owner_id=None, limit=RESULTS_INBOX_LIMIT
+                )
+                total = service.db.count_automation_results(owner_id=None)
+            else:
+                results, total = self._definition_results_query(service, definition)
+            definitions_by_id = index_definitions_by_id(
+                service.db.list_automation_definitions(owner_id=None)
+            )
+            return results, definitions_by_id, total
+
+        def _unread_ids() -> list[str]:
+            if definition is None:
+                return self._unread_result_ids(service)
+            return self._definition_unread_result_ids(service, definition)
+
+        results, definitions_by_id, total = _query()
+        heading = RESULTS_HEADING
+        if definition is not None:
+            name = str(
+                definition.get("name") or definition.get("id") or "Untitled automation"
+            )
+            heading = f"{RESULTS_HEADING} — {escape_markup(name)}"
+
+        def _factory() -> ResultsTab:
+            return ResultsTab(
+                id="scheduling-results-overlay",
+                initial_results=results,
+                initial_definitions_by_id=definitions_by_id,
+                initial_total=total,
+                heading=heading,
+            )
+
+        self.app.push_screen(
+            ResultsHostScreen(
+                _factory,
+                title="Results",
+                service=service,
+                query=_query,
+                unread_ids=_unread_ids,
+                dismissed=self._refresh_results_surfaces,
+            )
+        )
 
     @on(Button.Pressed, "#scheduling-conflicts-badge")
     def _on_conflicts_badge_pressed(self, event: Button.Pressed) -> None:
@@ -4084,12 +4201,18 @@ class SchedulesWorkbench(BaseAppScreen):
         except Exception:  # noqa: BLE001
             return False
 
+    def _notify(self, message: str, severity: str) -> None:
+        self.app_instance.notify(message, severity=severity)
+
     def _review_selected_result(self, review_state: str) -> None:
         """r/d on the Results tab: read/dismiss the selected result.
 
-        `SchedulingService.review_automation_result` writes the local row
-        and, for a server mirror, queues the PR-3 pushback mutation in the
-        SAME DB transaction -- nothing extra to do here for that half.
+        The actual orchestration (`review_selected_result`, results_tab.py)
+        is shared with the pushed view's own `r`/`d` bindings
+        (`ResultsHostScreen`, redesign PR-4 task 2) -- both call the same
+        `SchedulingService.review_automation_result`, which writes the
+        local row and, for a server mirror, queues the sync pushback
+        mutation in the SAME DB transaction.
         """
         service = self._service()
         if service is None:
@@ -4098,20 +4221,11 @@ class SchedulesWorkbench(BaseAppScreen):
             )
             return
         results_tab = self.query_one("#scheduling-results", ResultsTab)
-        result = results_tab.selected_result()
-        if result is None:
-            self.app_instance.notify("Select a result first.", severity="warning")
-            return
 
         async def _review() -> None:
-            updated = await service.review_automation_result(
-                result["id"], review_state
+            await review_selected_result(
+                service, results_tab, review_state, self._notify
             )
-            if not updated:
-                self.app_instance.notify(
-                    "Could not update this result — see the log.",
-                    severity="error",
-                )
             self._refresh_results_surfaces()
 
         self.run_worker(
@@ -4159,20 +4273,14 @@ class SchedulesWorkbench(BaseAppScreen):
         # than re-deriving the id a second, divergent way. Non-None here
         # by construction: `solved_eligibility` returns ineligible when
         # the same lookup misses.
-        definition = definition_for_result(result, results_tab.definitions_by_id)
-        local_definition_id = str((definition or {}).get("id") or "")
+        # The async orchestration (`mark_selected_result_solved`,
+        # results_tab.py) is shared with the pushed view's own `o`
+        # binding (`ResultsHostScreen`, redesign PR-4 task 2).
 
         async def _mark_solved() -> None:
-            outcome = await service.resolve_definition(
-                local_definition_id, solved=True, result_id=result["id"]
+            await mark_selected_result_solved(
+                service, result, results_tab.definitions_by_id, self._notify
             )
-            if outcome.status == "saved":
-                self.app_instance.notify("Marked solved.", severity="information")
-            else:
-                self.app_instance.notify(
-                    outcome.reason or "Could not mark this result solved.",
-                    severity="warning",
-                )
             self._refresh_results_surfaces()
 
         self.run_worker(
@@ -4196,31 +4304,92 @@ class SchedulesWorkbench(BaseAppScreen):
         )
         return [result["id"] for result in results]
 
+    @staticmethod
+    def _definition_id_space(
+        definition: dict[str, Any],
+    ) -> tuple[str | None, str | None]:
+        """`(local_id, server_id)` for `definition`, either half `None`
+        when absent -- the two ids `automation_results.definition_id` may
+        carry for results BELONGING to this one definition
+        (`index_definitions_by_id`'s own caveat: a locally-created result
+        carries the local id, a server-mirrored one carries the server's)."""
+        local_id = str(definition.get("id") or "") or None
+        server_id = definition.get("server_id")
+        return local_id, (str(server_id) if server_id else None)
+
+    def _definition_results_query(
+        self, service: "SchedulingService", definition: dict[str, Any]
+    ) -> tuple[list[dict[str, Any]], int]:
+        """`(results, total)` for `definition` alone, across BOTH its id
+        spaces -- the definition-filtered pushed Results view's listing
+        (redesign PR-4 task 2). Capped at `RESULTS_INBOX_LIMIT`, same as
+        the global inbox (the brief: "preserve the cap-line honesty").
+
+        `ScheduledTasksDB.list_automation_results`/`count_automation_
+        results` only equality-filter ONE `definition_id` at a time (own
+        docstring's caveat), so a definition with results in both spaces
+        needs two queries, merged here and re-sorted by REAL instant
+        (`_result_sort_key`) rather than trusting either query's own
+        newest-first order to interleave correctly across the merge.
+        """
+        local_id, server_id = self._definition_id_space(definition)
+        merged: dict[str, dict[str, Any]] = {}
+        total = 0
+        for definition_id in (local_id, server_id):
+            if not definition_id:
+                continue
+            total += service.db.count_automation_results(
+                owner_id=None, definition_id=definition_id
+            )
+            for row in service.db.list_automation_results(
+                owner_id=None, definition_id=definition_id, limit=RESULTS_INBOX_LIMIT
+            ):
+                merged[row["id"]] = row
+        results = sorted(merged.values(), key=_result_sort_key, reverse=True)
+        return results[:RESULTS_INBOX_LIMIT], total
+
+    def _definition_unread_result_ids(
+        self, service: "SchedulingService", definition: dict[str, Any]
+    ) -> list[str]:
+        """Definition-scoped counterpart of `_unread_result_ids` -- every
+        unread result id for THIS definition alone (both id spaces),
+        uncapped by `RESULTS_INBOX_LIMIT` for the same Qodo-HIGH reason
+        that method's own docstring documents."""
+        local_id, server_id = self._definition_id_space(definition)
+        ids: list[str] = []
+        for definition_id in (local_id, server_id):
+            if not definition_id:
+                continue
+            unread_total = service.db.count_unread_results(
+                owner_id=None, definition_id=definition_id
+            )
+            if not unread_total:
+                continue
+            results = service.db.list_automation_results(
+                owner_id=None,
+                definition_id=definition_id,
+                review_state="unread",
+                limit=unread_total,
+            )
+            ids.extend(result["id"] for result in results)
+        return ids
+
     async def _dispatch_mark_all_results_read(
         self, service: "SchedulingService", unread_ids: list[str]
     ) -> None:
-        """Per-row `review_automation_result` fan-out for a batch of
-        result ids -- there is no bulk DB primitive for this (spec's
-        documented fan-out, mirroring `_on_bulk_delete_confirmed`'s
-        loop-and-count shape). Shared by the Results tab's `a` keybinding
-        and the rail's `Mark all read` button (redesign PR-2, Task 3) --
-        the Queue refresh included, which used to sit in the rail
-        button's own wrapper as if it were a rail-specific nicety (final
-        review F5): pressing `a` on the Results tab left the Queue's
-        unread dots painted and its rail button visible, and pressing
-        that button then reported "Nothing unread."
+        """Per-row fan-out for a batch of result ids -- the shared
+        `mark_results_read` (results_tab.py) does the actual DB calls +
+        notify, now also driving the pushed view's own `a` binding
+        (`ResultsHostScreen`, redesign PR-4 task 2). Shared by the
+        Results tab's `a` keybinding and the rail's `Mark all read`
+        button (redesign PR-2, Task 3) -- the Queue refresh included,
+        which used to sit in the rail button's own wrapper as if it were
+        a rail-specific nicety (final review F5): pressing `a` on the
+        Results tab left the Queue's unread dots painted and its rail
+        button visible, and pressing that button then reported "Nothing
+        unread."
         """
-        errors = 0
-        for result_id in unread_ids:
-            if not await service.review_automation_result(result_id, "read"):
-                errors += 1
-        count = len(unread_ids) - errors
-        self.app_instance.notify(
-            f"Marked {count} result{'s' if count != 1 else ''} read"
-            + (f" ({errors} failed)" if errors else "")
-            + ".",
-            severity="information" if not errors else "warning",
-        )
+        await mark_results_read(service, unread_ids, self._notify)
         self._refresh_results_surfaces()
 
     def action_mark_all_results_read(self) -> None:
@@ -4589,12 +4758,17 @@ class SchedulesWorkbench(BaseAppScreen):
             service.db.list_automation_definitions(owner_id=None)
         )
         results_tab.populate(results, definitions_by_id, total=total)
+        label = f"Results ({unread})" if unread else "Results"
         # Surface the unread count on the tab label itself (spec §4's
         # inbox badge, same UX-063 idiom as the Conflicts tab above).
-        self._set_tab_label(
-            "scheduling-results-tab",
-            f"Results ({unread})" if unread else "Results",
-        )
+        self._set_tab_label("scheduling-results-tab", label)
+        # redesign PR-4, task 2: same count, mirrored onto the rail's
+        # `Results` button (no new query) -- `_refresh_conflicts_tab`'s
+        # own precedent for its status-strip badge.
+        try:
+            self.query_one("#scheduling-results-badge", Button).label = label
+        except Exception:  # noqa: BLE001 - rail not mounted yet
+            pass
 
     def _refresh_results_surfaces(self) -> None:
         """Every surface a results MUTATION moves: the Results tab and the

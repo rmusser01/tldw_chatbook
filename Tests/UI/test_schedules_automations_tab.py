@@ -21,9 +21,11 @@ from Tests.UI.schedules_test_helpers import (
     MockServerClient,
     rendered_row_cells,
 )
+from tldw_chatbook.Scheduling.events import ViewDefinitionResultsRequested
 from tldw_chatbook.Scheduling.services.server_client import (
     ServerClientValidationError,
 )
+from tldw_chatbook.Widgets.detail_value_row import DetailValueRow
 from tldw_chatbook.UI.Screens.scheduling.definition_detail import DefinitionDetail
 from tldw_chatbook.UI.Screens.scheduling.forms.automation_definition_form import (
     AutomationDefinitionForm,
@@ -1041,10 +1043,51 @@ async def test_definition_detail_shows_counts_and_last_run_outcome():
         last_run_text = _detail_text(detail, "scheduling-automation-detail-last-run")
         assert "failed" in last_run_text
         assert "2026-08-20 09:00" in last_run_text
-        assert (
-            _detail_text(detail, "scheduling-automation-detail-view-results")
-            == "See Results tab"
-        )
+        # redesign PR-4, task 2: the separate "Results -- See Results
+        # tab" row (a dangling pointer once the tab bar retires) is gone
+        # -- the unread-results row itself is now the live activation
+        # (see test_unread_row_activation_requests_definition_results
+        # below).
+        assert detail._unread_row.affordance is True
+
+
+class _CapturingDefinitionDetailApp(_BareDefinitionDetailApp):
+    """`_BareDefinitionDetailApp` + captures `ViewDefinitionResultsRequested`
+    messages bubbled up to the App (redesign PR-4, task 2) -- there is no
+    `SchedulesWorkbench` mounted here to route them further, this only
+    proves `DefinitionDetail` posts the right message."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.captured: list[ViewDefinitionResultsRequested] = []
+
+    def on_view_definition_results_requested(
+        self, event: ViewDefinitionResultsRequested
+    ) -> None:
+        self.captured.append(event)
+
+
+@pytest.mark.asyncio
+async def test_unread_row_activation_requests_definition_results():
+    """redesign PR-4, task 2: activating the `Unread results` row posts
+    `ViewDefinitionResultsRequested` carrying the currently-painted
+    definition -- the live replacement for the retired "See Results tab"
+    pointer."""
+    app = _CapturingDefinitionDetailApp()
+    async with app.run_test() as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        definition = _frequency_definition()
+        detail.set_definition(definition, unread_count=2)
+        await pilot.pause()
+
+        row = detail._unread_row
+        assert row.affordance is True
+        assert row.can_focus is True
+        row.post_message(DetailValueRow.Activated(row))
+        await pilot.pause()
+
+        assert len(pilot.app.captured) == 1
+        assert pilot.app.captured[0].definition["id"] == definition["id"]
 
 
 @pytest.mark.asyncio

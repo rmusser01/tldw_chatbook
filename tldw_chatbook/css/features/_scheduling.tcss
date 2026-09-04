@@ -235,6 +235,15 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     margin-left: 1;
 }
 
+/* redesign PR-4, task 2: the rail's Results relocation affordance,
+ * beside Mark-all-read -- same auto-width row shape, always visible
+ * (never hidden, unlike Mark-all-read). */
+#scheduling-results-badge {
+    width: auto;
+    min-width: 9;
+    margin-left: 1;
+}
+
 /* Automations tab header (task-5): same title+button row shape as the
  * Queue pane's #scheduling-list-header above. */
 #scheduling-automations-header {

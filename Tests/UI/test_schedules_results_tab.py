@@ -30,11 +30,13 @@ from tldw_chatbook.Scheduling.services import SchedulingService
 from tldw_chatbook.Scheduling.services.server_client import SchedulingServerClient
 from tldw_chatbook.UI.Screens.scheduling.results_tab import (
     RESULTS_HEADING,
+    ResultsHostScreen,
     ResultsTab,
     _format_result_created,
     _result_kind_cell,
     _result_owner_suffix,
     _review_state_cell,
+    index_definitions_by_id,
     solved_eligibility,
 )
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
@@ -982,3 +984,248 @@ async def test_inbox_heading_stays_plain_when_everything_fits(results_db):
 
         heading = workbench.query_one("#scheduling-results-heading")
         assert str(heading.render()).strip() == RESULTS_HEADING
+
+
+# ---------------------------------------------------------------------------
+# redesign PR-4, task 2: Results relocation onto the pushed surface
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_initial_results_self_populate_with_custom_heading():
+    """`ConflictsTab.initial_conflicts`'s own self-populate-on-mount idiom
+    (task 1), plus the optional `heading` override a definition-filtered
+    pushed view uses -- the SAME "showing newest N of TOTAL" cap-line math
+    renders under whatever heading text it is given."""
+
+    class _App(ConsolidatedCSSApp):
+        def compose(self):
+            yield ResultsTab(
+                id="scheduling-results-overlay",
+                initial_results=[_base_result()],
+                initial_total=5,
+                heading="Automation results — Weekly digest",
+            )
+
+    app = _App()
+    async with app.run_test() as pilot:
+        tab = pilot.app.query_one(ResultsTab)
+        await pilot.pause()
+
+        table = tab.query_one("#scheduling-results-table", DataTable)
+        assert table.row_count == 1
+        heading = str(tab.query_one("#scheduling-results-heading").render()).strip()
+        assert heading == "Automation results — Weekly digest — showing newest 1 of 5"
+
+
+def _push_results_host_closures(service, *, definition_id: str | None = None):
+    """`(query, unread_ids)` closures matching `SchedulesWorkbench._push_
+    results_overlay`'s own shape, scoped to a single `definition_id`
+    string when given. These tests never mix local/server id spaces for
+    one definition -- that merge is `_definition_results_query`'s own
+    concern, exercised directly below."""
+
+    def query():
+        results = service.db.list_automation_results(
+            owner_id=None, definition_id=definition_id, limit=RESULTS_INBOX_LIMIT
+        )
+        total = service.db.count_automation_results(
+            owner_id=None, definition_id=definition_id
+        )
+        definitions_by_id = index_definitions_by_id(
+            service.db.list_automation_definitions(owner_id=None)
+        )
+        return results, definitions_by_id, total
+
+    def unread_ids():
+        total_unread = service.db.count_unread_results(
+            owner_id=None, definition_id=definition_id
+        )
+        if not total_unread:
+            return []
+        rows = service.db.list_automation_results(
+            owner_id=None,
+            definition_id=definition_id,
+            review_state="unread",
+            limit=total_unread,
+        )
+        return [row["id"] for row in rows]
+
+    return query, unread_ids
+
+
+async def _push_results_host_screen(pilot, service, *, definition_id: str | None = None):
+    """Push a `ResultsHostScreen` directly (no `SchedulesWorkbench`
+    involved) -- exercises the pushed view's own r/d/o/a binding surface
+    and the shared service orchestration in isolation."""
+    query, unread_ids = _push_results_host_closures(service, definition_id=definition_id)
+    results, definitions_by_id, total = query()
+
+    def _factory() -> ResultsTab:
+        return ResultsTab(
+            id="scheduling-results-overlay",
+            initial_results=results,
+            initial_definitions_by_id=definitions_by_id,
+            initial_total=total,
+        )
+
+    await pilot.app.push_screen(
+        ResultsHostScreen(
+            _factory, title="Results", service=service, query=query, unread_ids=unread_ids
+        )
+    )
+    await pilot.pause()
+    return pilot.app.screen
+
+
+@pytest.mark.asyncio
+async def test_hosted_read_action_updates_the_selected_result(results_db):
+    db = results_db
+    definition_id = _seed_definition(db)
+    result_id = _seed_result(db, definition_id=definition_id, dedupe_key="d1")
+
+    app = ResultsWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        service = pilot.app.scheduling_service
+        screen = await _push_results_host_screen(pilot, service)
+        table = screen.query_one("#scheduling-results-table", DataTable)
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+
+        await pilot.press("r")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert db.get_automation_result(result_id)["review_state"] == "read"
+
+
+@pytest.mark.asyncio
+async def test_hosted_dismiss_action_updates_the_selected_result(results_db):
+    db = results_db
+    definition_id = _seed_definition(db)
+    result_id = _seed_result(db, definition_id=definition_id, dedupe_key="d1")
+
+    app = ResultsWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        service = pilot.app.scheduling_service
+        screen = await _push_results_host_screen(pilot, service)
+        table = screen.query_one("#scheduling-results-table", DataTable)
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+
+        await pilot.press("d")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert db.get_automation_result(result_id)["review_state"] == "dismissed"
+
+
+@pytest.mark.asyncio
+async def test_hosted_mark_solved_action_resolves_the_definition(results_db):
+    db = results_db
+    definition_id = _seed_definition(db)
+    result_id = _seed_result(db, definition_id=definition_id, dedupe_key="d1")
+
+    app = ResultsWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        service = pilot.app.scheduling_service
+        screen = await _push_results_host_screen(pilot, service)
+        table = screen.query_one("#scheduling-results-table", DataTable)
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+
+        await pilot.press("o")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        definition = db.get_automation_definition(definition_id)
+        assert definition["resolution_state"] == "solved"
+        assert definition["resolved_result_id"] == result_id
+
+
+@pytest.mark.asyncio
+async def test_hosted_mark_all_read_action_fans_out(results_db):
+    db = results_db
+    definition_id = _seed_definition(db)
+    r1 = _seed_result(db, definition_id=definition_id, dedupe_key="d1")
+    r2 = _seed_result(db, definition_id=definition_id, dedupe_key="d2")
+
+    app = ResultsWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        service = pilot.app.scheduling_service
+        await _push_results_host_screen(pilot, service)
+
+        await pilot.press("a")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert db.get_automation_result(r1)["review_state"] == "read"
+        assert db.get_automation_result(r2)["review_state"] == "read"
+
+
+@pytest.mark.asyncio
+async def test_definition_results_query_merges_local_and_server_id_spaces(results_db):
+    """redesign PR-4 task 2: a definition mirrored from the server can
+    carry results in BOTH id spaces -- a locally-created one
+    (`definition_id` = the local row id) and a server-mirrored one
+    (`definition_id` = the server's id, `index_definitions_by_id`'s own
+    documented split). `_definition_results_query` must see both, and
+    count both toward its cap-line total -- neither single-id-space DB
+    query alone sees more than half. A result belonging to a different
+    definition must not leak in."""
+    db = results_db
+    definition_id = _seed_definition(db, owner_id="server:1", server_id="srv-def-1")
+    local_result_id = _seed_result(db, definition_id=definition_id, dedupe_key="local-1")
+    server_result_id = _seed_result(
+        db, definition_id="srv-def-1", server_id="srv-res-1", dedupe_key="server-1"
+    )
+    other_definition_id = _seed_definition(db, name="Other")
+    _seed_result(db, definition_id=other_definition_id, dedupe_key="other-1")
+
+    app = ResultsWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+        service = pilot.app.scheduling_service
+
+        definition = db.get_automation_definition(definition_id)
+        results, total = workbench._definition_results_query(service, definition)
+
+        assert total == 2
+        assert {row["id"] for row in results} == {local_result_id, server_result_id}
+
+
+@pytest.mark.asyncio
+async def test_definition_unread_result_ids_merges_both_id_spaces(results_db):
+    """`_definition_unread_result_ids` counterpart of the query merge test
+    above -- the `a` action inside a definition-filtered pushed view must
+    reach unread results in BOTH id spaces, and none belonging to another
+    definition."""
+    db = results_db
+    definition_id = _seed_definition(db, owner_id="server:1", server_id="srv-def-1")
+    local_result_id = _seed_result(db, definition_id=definition_id, dedupe_key="local-1")
+    server_result_id = _seed_result(
+        db, definition_id="srv-def-1", server_id="srv-res-1", dedupe_key="server-1"
+    )
+    other_definition_id = _seed_definition(db, name="Other")
+    other_result_id = _seed_result(
+        db, definition_id=other_definition_id, dedupe_key="other-1"
+    )
+
+    app = ResultsWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+        service = pilot.app.scheduling_service
+
+        definition = db.get_automation_definition(definition_id)
+        ids = workbench._definition_unread_result_ids(service, definition)
+
+        assert set(ids) == {local_result_id, server_result_id}
+        assert other_result_id not in ids

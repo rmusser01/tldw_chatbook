@@ -27,6 +27,7 @@ from tldw_chatbook.Scheduling.events import (
     ReminderOwnerActionRequested,
     SyncCompleted,
     SyncFailed,
+    ViewDefinitionResultsRequested,
 )
 from tldw_chatbook.Scheduling.models import (
     ReminderTask,
@@ -43,6 +44,7 @@ from tldw_chatbook.Scheduling.services import (
     scheduling_service as scheduling_service_module,
 )
 from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import ReminderForm
+from tldw_chatbook.UI.Screens.scheduling.results_tab import ResultsHostScreen, ResultsTab
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
 from tldw_chatbook.UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
 from tldw_chatbook.UI.Screens.scheduling.task_detail import (
@@ -3806,6 +3808,196 @@ async def test_conflicts_badge_defaults_to_no_count():
 
         badge = pilot.app.screen.query_one("#scheduling-conflicts-badge", Button)
         assert str(badge.label) == "Conflicts"
+
+
+@pytest.mark.asyncio
+async def test_results_badge_shows_unread_count_and_pushes_global_overlay():
+    """redesign PR-4, task 2: the rail's `Results (N)` affordance mirrors
+    `_refresh_results_tab`'s own existing unread count (no new query,
+    the status strip's Conflicts badge's own idiom) and pushes a fresh
+    `ResultsHostScreen` overlay -- the Results TAB itself stays reachable
+    until Task 5 retires it (both paths coexist this task)."""
+    app = _RailTestApp(_RailService(unread=True))
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = pilot.app.screen
+
+        badge = workbench.query_one("#scheduling-results-badge", Button)
+        assert str(badge.label) == "Results (1)"
+
+        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
+        original_active = tabs.active
+
+        badge.press()
+        await pilot.pause()
+
+        # No tab flip -- a fresh screen is pushed on top instead.
+        assert tabs.active == original_active
+        assert pilot.app.screen is not workbench
+        assert isinstance(pilot.app.screen, ResultsHostScreen)
+
+        overlay_tab = pilot.app.screen.query_one(ResultsTab)
+        overlay_table = overlay_tab.query_one("#scheduling-results-table", DataTable)
+        assert overlay_table.row_count == 1
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        # Esc pops back to the same underlying workbench instance.
+        assert pilot.app.screen is workbench
+
+
+@pytest.mark.asyncio
+async def test_results_badge_defaults_to_no_count():
+    app = _RailTestApp(_RailService())
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        badge = pilot.app.screen.query_one("#scheduling-results-badge", Button)
+        assert str(badge.label) == "Results"
+
+
+@pytest.mark.asyncio
+async def test_unread_row_activation_pushes_definition_filtered_results_overlay(
+    tmp_path,
+):
+    """redesign PR-4, task 2: the definition pane's `Unread results` row
+    is the live replacement for the retired "See Results tab" pointer
+    (survey :734-736) -- activating it pushes a `ResultsHostScreen`
+    scoped to ONLY that definition's results, and `a` inside it only
+    marks THIS definition's unread results read (a sibling definition's
+    unread result must survive). Popping (Esc) re-syncs the rail badge
+    from the DB (`dismissed`)."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        target_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Weekly digest",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What changed?"},
+        )
+        other_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Other automation",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "Other?"},
+        )
+        target_result_id = db.create_automation_result(
+            owner_id="local",
+            definition_id=target_id,
+            run_id="run-1",
+            kind="finding",
+            title="Digest finding",
+            summary="s",
+            dedupe_key="d1",
+            answer="a",
+            source_refs=[],
+            review_state="unread",
+        )
+        db.create_automation_result(
+            owner_id="local",
+            definition_id=other_id,
+            run_id="run-1",
+            kind="finding",
+            title="Other finding",
+            summary="s",
+            dedupe_key="d2",
+            answer="a",
+            source_refs=[],
+            review_state="unread",
+        )
+
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            workbench = pilot.app.screen
+
+            detail = workbench.query_one(
+                "#scheduling-queue-definition-detail", DefinitionDetail
+            )
+            definition = db.get_automation_definition(target_id)
+            detail.set_definition(definition, unread_count=1)
+            await pilot.pause()
+
+            row = detail._unread_row
+            assert row.affordance is True
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, ResultsHostScreen)
+            overlay_tab = pilot.app.screen.query_one(ResultsTab)
+            overlay_table = overlay_tab.query_one("#scheduling-results-table", DataTable)
+            assert overlay_table.row_count == 1
+            assert rendered_row_cells(overlay_table, 0)[1] == "Digest finding"
+
+            await pilot.press("a")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert db.get_automation_result(target_result_id)["review_state"] == "read"
+            other_result = db.list_automation_results(
+                owner_id=None, definition_id=other_id
+            )[0]
+            assert other_result["review_state"] == "unread"
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert pilot.app.screen is workbench
+            # `dismissed` re-synced the rail badge from the DB: the
+            # target definition's unread result is now read, but the
+            # other definition's is still unread -> total unread == 1.
+            badge = workbench.query_one("#scheduling-results-badge", Button)
+            assert str(badge.label) == "Results (1)"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_definition_filtered_overlay_heading_escapes_the_definition_name(
+    tmp_path,
+):
+    """redesign PR-4, task 2: the definition-filtered heading is rendered
+    through the same `Static.update(str)` -> `Content.from_markup` parser
+    the detail pane's own `escape_markup` guards against (results_tab.py's
+    docstring) -- a bracket-bearing definition name must render
+    literally, not get eaten as a markup tag."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Digest [urgent]",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What changed?"},
+        )
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            workbench = pilot.app.screen
+
+            definition = db.get_automation_definition(definition_id)
+            workbench._push_results_overlay(definition=definition)
+            await pilot.pause()
+
+            overlay_tab = pilot.app.screen.query_one(ResultsTab)
+            heading = str(
+                overlay_tab.query_one("#scheduling-results-heading").render()
+            ).strip()
+            assert "Digest [urgent]" in heading
+    finally:
+        db.close()
 
 
 @pytest.mark.asyncio
