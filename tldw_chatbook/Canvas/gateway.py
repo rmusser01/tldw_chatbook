@@ -54,6 +54,8 @@ _BOOT_TTL_SECONDS = 30.0
 _FRAME_TTL_SECONDS = 20.0
 _ACTION_TTL_SECONDS = 30.0
 _BROWSER_SESSION_TTL_SECONDS = 30 * 60.0
+_BRIDGE_SETTLEMENT_TTL_SECONDS = 300.0
+_MAX_BRIDGE_SETTLEMENTS = 64
 _MAX_BROWSER_SESSIONS = 64
 _MAX_SHELL_BINDINGS = 64
 _SENSITIVE_QUERY_KEYS = frozenset(
@@ -269,6 +271,19 @@ class CanvasGatewayLaunch:
 
 
 @dataclass(slots=True, repr=False)
+class _BridgeSettlementRecord:
+    browser_session_id: str
+    load_id: str
+    selection_epoch: int
+    request_id: str
+    request_kind: str
+    payload_digest: bytes
+    expires_at: float
+    completed: asyncio.Event = field(default_factory=asyncio.Event)
+    response: BridgeConfirmationResponse | None = None
+
+
+@dataclass(slots=True, repr=False)
 class _BrowserSession:
     digest: bytes
     csrf_digest: bytes
@@ -277,6 +292,7 @@ class _BrowserSession:
     shell_incarnation_id: str
     selection_epoch: int = 0
     current_load_id: str | None = None
+    bridge_settlements: dict[str, _BridgeSettlementRecord] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,7 +309,7 @@ class CanvasBridgeSettlementLease:
         "_finalized",
         "_gateway",
         "_load_id",
-        "_request_id",
+        "_record",
         "_selection_epoch",
         "_session",
         "_settled",
@@ -307,14 +323,14 @@ class CanvasBridgeSettlementLease:
         gateway: CanvasGateway,
         session: _BrowserSession,
         load_id: str,
-        request_id: str,
+        record: _BridgeSettlementRecord,
         selection_epoch: int,
         effect_allowed: bool,
     ) -> None:
         self._gateway = gateway
         self._session = session
         self._load_id = load_id
-        self._request_id = request_id
+        self._record = record
         self._selection_epoch = selection_epoch
         self._effect_allowed = effect_allowed
         self._finalized = False
@@ -337,10 +353,7 @@ class CanvasBridgeSettlementLease:
         with self._gateway._state_lock:
             if not self._settled:
                 return None
-            return BridgeConfirmationResponse(
-                request_id=self._request_id,
-                status="confirmed",
-            )
+            return self._record.response
 
     def try_settle(self, effect: Callable[[], object]) -> bool:
         """Run one synchronous effect only while the captured load is current."""
@@ -351,19 +364,38 @@ class CanvasBridgeSettlementLease:
             if self._finalized or self._used:
                 return False
             self._used = True
-            if not self._effect_allowed or not self._gateway._bridge_lease_is_current(
-                self._session,
-                load_id=self._load_id,
-                selection_epoch=self._selection_epoch,
+            if (
+                not self._effect_allowed
+                or not self._gateway._bridge_lease_is_current(
+                    self._session,
+                    load_id=self._load_id,
+                    selection_epoch=self._selection_epoch,
+                )
+                or not self._gateway._bridge_record_is_current(
+                    self._session, self._record
+                )
             ):
                 self._stale = True
                 return False
+            committed = BridgeConfirmationResponse(
+                request_id=self._record.request_id,
+                status="confirmed",
+            )
+            committed_expires_at = min(
+                self._session.expires_at,
+                self._gateway._clock() + _BRIDGE_SETTLEMENT_TTL_SECONDS,
+            )
             result = effect()
             if inspect.isawaitable(result):
                 close = getattr(result, "close", None)
                 if callable(close):
                     close()
                 raise TypeError("Canvas bridge settlement effect must be synchronous")
+            self._gateway._commit_bridge_record(
+                self._record,
+                committed,
+                expires_at=committed_expires_at,
+            )
             self._settled = True
             return True
 
@@ -372,6 +404,8 @@ class CanvasBridgeSettlementLease:
 
         with self._gateway._state_lock:
             self._finalized = True
+            if not self._settled:
+                self._gateway._abandon_bridge_record(self._session, self._record)
 
     def __repr__(self) -> str:
         return (
@@ -393,6 +427,7 @@ class CanvasGateway:
         max_request_bytes: int | None = None,
         max_browser_sessions: int = _MAX_BROWSER_SESSIONS,
         max_shell_bindings: int = _MAX_SHELL_BINDINGS,
+        max_bridge_settlements: int = _MAX_BRIDGE_SETTLEMENTS,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         try:
@@ -433,6 +468,14 @@ class CanvasGateway:
         ):
             raise ValueError("max_shell_bindings is outside the safe range")
         self._max_shell_bindings = max_shell_bindings
+        if (
+            not isinstance(max_bridge_settlements, int)
+            or isinstance(max_bridge_settlements, bool)
+            or max_bridge_settlements < 1
+            or max_bridge_settlements > _MAX_BRIDGE_SETTLEMENTS
+        ):
+            raise ValueError("max_bridge_settlements is outside the safe range")
+        self._max_bridge_settlements = max_bridge_settlements
         self.capabilities = CanvasCapabilityStore(clock=clock)
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
@@ -477,6 +520,16 @@ class CanvasGateway:
     def browser_session_count(self) -> int:
         self._discard_expired_sessions()
         return len(self._sessions)
+
+    @property
+    def bridge_settlement_count(self) -> int:
+        """Return bounded current-load idempotency records across live sessions."""
+
+        with self._state_lock:
+            self._discard_expired_sessions()
+            return sum(
+                len(session.bridge_settlements) for session in self._sessions.values()
+            )
 
     @property
     def routes(self) -> tuple[web.AbstractRoute, ...]:
@@ -602,6 +655,7 @@ class CanvasGateway:
                 canvas_id=previous.canvas_id,
                 revision_id=previous.revision_id,
             )
+            self._clear_bridge_records(session)
             session.scope = scope
             session.selection_epoch += 1
             session.current_load_id = None
@@ -613,6 +667,8 @@ class CanvasGateway:
             with self._state_lock:
                 self._closed = True
                 self.capabilities.close()
+                for session in self._sessions.values():
+                    self._clear_bridge_records(session)
                 self._sessions.clear()
                 self._session_ids.clear()
                 self._shell_bindings.clear()
@@ -805,6 +861,7 @@ class CanvasGateway:
             if not self._session_is_current(session, session.scope):
                 return _error_response("session_refused", 403)
             if session.current_load_id is not None:
+                self._clear_bridge_records(session)
                 self.capabilities.revoke_load(
                     session.scope.browser_session_id, session.current_load_id
                 )
@@ -1041,11 +1098,29 @@ class CanvasGateway:
             self.capabilities.consume(token, expected_scope=expected)
         except CanvasCapabilityError:
             return _error_response("bridge_refused", 401)
+        reservation, record = self._reserve_bridge_record(
+            session,
+            load_id=load_id,
+            confirmation=confirmation,
+        )
+        if reservation == "collision":
+            return _error_response("bridge_request_collision", 409)
+        if reservation == "capacity":
+            return _error_response("bridge_settlement_capacity", 503)
+        assert record is not None
+        if reservation == "replay":
+            assert record.response is not None
+            return _bridge_confirmation_response(record.response)
+        if reservation == "wait":
+            await record.completed.wait()
+            if record.response is None:
+                return _error_response("bridge_refused", 503)
+            return _bridge_confirmation_response(record.response)
         settlement = CanvasBridgeSettlementLease(
             gateway=self,
             session=session,
             load_id=load_id,
-            request_id=confirmation.request.request_id,
+            record=record,
             selection_epoch=session.selection_epoch,
             effect_allowed=confirmation.approved,
         )
@@ -1067,9 +1142,7 @@ class CanvasGateway:
             settlement._finalize()
         committed = settlement.committed_response
         if committed is not None:
-            return web.json_response(
-                {"request_id": committed.request_id, "status": committed.status}
-            )
+            return _bridge_confirmation_response(committed)
         if callback_failed:
             return _error_response("bridge_refused", 503)
         if not isinstance(result, BridgeConfirmationResponse):
@@ -1084,9 +1157,7 @@ class CanvasGateway:
             or (settlement.settled and result.status != "confirmed")
         ):
             return _error_response("bridge_refused", 503)
-        return web.json_response(
-            {"request_id": result.request_id, "status": result.status}
-        )
+        return _bridge_confirmation_response(result)
 
     async def _close_session(self, request: web.Request) -> web.Response:
         session = self._require_session(request, csrf=True)
@@ -1159,22 +1230,25 @@ class CanvasGateway:
         return session
 
     def _discard_expired_sessions(self) -> None:
-        expired = [
-            session.scope.browser_session_id
-            for session in self._sessions.values()
-            if self._clock() >= session.expires_at
-        ]
-        for browser_session_id in expired:
-            self._revoke_session_id(browser_session_id)
-        now = self._clock()
-        expired_shells = [
-            shell_incarnation_id
-            for shell_incarnation_id, binding in self._shell_bindings.items()
-            if now >= binding.expires_at
-            and binding.browser_session_id not in self._session_ids
-        ]
-        for shell_incarnation_id in expired_shells:
-            self._shell_bindings.pop(shell_incarnation_id, None)
+        with self._state_lock:
+            for session in tuple(self._sessions.values()):
+                self._discard_expired_bridge_records(session)
+            expired = [
+                session.scope.browser_session_id
+                for session in self._sessions.values()
+                if self._clock() >= session.expires_at
+            ]
+            for browser_session_id in expired:
+                self._revoke_session_id(browser_session_id)
+            now = self._clock()
+            expired_shells = [
+                shell_incarnation_id
+                for shell_incarnation_id, binding in self._shell_bindings.items()
+                if now >= binding.expires_at
+                and binding.browser_session_id not in self._session_ids
+            ]
+            for shell_incarnation_id in expired_shells:
+                self._shell_bindings.pop(shell_incarnation_id, None)
 
     def _session_is_current(
         self, session: _BrowserSession, scope: CanvasGatewayScope
@@ -1203,6 +1277,111 @@ class CanvasGateway:
             and session.selection_epoch == selection_epoch
         )
 
+    def _reserve_bridge_record(
+        self,
+        session: _BrowserSession,
+        *,
+        load_id: str,
+        confirmation: BridgeConfirmationRequest,
+    ) -> tuple[str, _BridgeSettlementRecord | None]:
+        """Reserve or replay one exact, source-free bridge idempotency record."""
+
+        with self._state_lock:
+            for live_session in self._sessions.values():
+                self._discard_expired_bridge_records(live_session)
+            request = confirmation.request
+            payload_digest = _bridge_payload_digest(request.value)
+            existing = session.bridge_settlements.get(request.request_id)
+            if existing is not None:
+                matches = (
+                    existing.browser_session_id == session.scope.browser_session_id
+                    and existing.load_id == load_id
+                    and existing.selection_epoch == session.selection_epoch
+                    and existing.request_kind == request.kind
+                    and hmac.compare_digest(existing.payload_digest, payload_digest)
+                )
+                if not matches:
+                    return "collision", None
+                if existing.response is not None:
+                    return "replay", existing
+                return "wait", existing
+            active_records = sum(
+                len(live_session.bridge_settlements)
+                for live_session in self._sessions.values()
+            )
+            if active_records >= self._max_bridge_settlements:
+                return "capacity", None
+            record = _BridgeSettlementRecord(
+                browser_session_id=session.scope.browser_session_id,
+                load_id=load_id,
+                selection_epoch=session.selection_epoch,
+                request_id=request.request_id,
+                request_kind=request.kind,
+                payload_digest=payload_digest,
+                expires_at=min(
+                    session.expires_at,
+                    self._clock() + _BRIDGE_SETTLEMENT_TTL_SECONDS,
+                ),
+            )
+            session.bridge_settlements[request.request_id] = record
+            return "owner", record
+
+    def _bridge_record_is_current(
+        self,
+        session: _BrowserSession,
+        record: _BridgeSettlementRecord,
+    ) -> bool:
+        return (
+            self._clock() < record.expires_at
+            and session.bridge_settlements.get(record.request_id) is record
+            and record.response is None
+        )
+
+    def _commit_bridge_record(
+        self,
+        record: _BridgeSettlementRecord,
+        response: BridgeConfirmationResponse,
+        *,
+        expires_at: float,
+    ) -> None:
+        # `try_settle` already checked this record while holding `_state_lock`.
+        # Do not re-read the clock after the synchronous effect: once that
+        # effect returns, publishing its receipt must be exception-free.
+        record.response = response
+        record.expires_at = expires_at
+        record.completed.set()
+
+    def _abandon_bridge_record(
+        self,
+        session: _BrowserSession,
+        record: _BridgeSettlementRecord,
+    ) -> None:
+        if (
+            record.response is None
+            and session.bridge_settlements.get(record.request_id) is record
+        ):
+            session.bridge_settlements.pop(record.request_id, None)
+            record.completed.set()
+
+    def _discard_expired_bridge_records(self, session: _BrowserSession) -> None:
+        now = self._clock()
+        expired = [
+            record
+            for record in session.bridge_settlements.values()
+            if now >= record.expires_at
+        ]
+        for record in expired:
+            if session.bridge_settlements.get(record.request_id) is record:
+                session.bridge_settlements.pop(record.request_id, None)
+                record.completed.set()
+
+    @staticmethod
+    def _clear_bridge_records(session: _BrowserSession) -> None:
+        records = tuple(session.bridge_settlements.values())
+        session.bridge_settlements.clear()
+        for record in records:
+            record.completed.set()
+
     def _revoke_session_id(
         self,
         browser_session_id: str,
@@ -1212,7 +1391,9 @@ class CanvasGateway:
         with self._state_lock:
             digest = self._session_ids.pop(browser_session_id, None)
             if digest is not None:
-                self._sessions.pop(digest, None)
+                session = self._sessions.pop(digest, None)
+                if session is not None:
+                    self._clear_bridge_records(session)
             shells = [
                 shell_incarnation_id
                 for shell_incarnation_id, binding in self._shell_bindings.items()
@@ -1314,6 +1495,29 @@ def _authorization_capability(request: web.Request) -> str | None:
 
 async def _maybe_await(value: Any) -> Any:
     return await value if inspect.isawaitable(value) else value
+
+
+def _bridge_payload_digest(value: object) -> bytes:
+    encoded = json.dumps(
+        _canonical_json_wire(value),
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).digest()
+
+
+def _canonical_json_wire(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {key: _canonical_json_wire(child) for key, child in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_canonical_json_wire(child) for child in value]
+    return value
+
+
+def _bridge_confirmation_response(result: BridgeConfirmationResponse) -> web.Response:
+    return web.json_response({"request_id": result.request_id, "status": result.status})
 
 
 def _render_plan_wire(plan: CanvasRenderPlan) -> dict[str, Any]:
