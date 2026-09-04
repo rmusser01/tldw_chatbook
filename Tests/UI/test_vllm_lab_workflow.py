@@ -49,6 +49,7 @@ from tldw_chatbook.UI.LLM_Management.vllm_setup_view import VllmSetupView
 from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 pytestmark = pytest.mark.asyncio
 
@@ -216,6 +217,203 @@ async def test_profile_buttons_post_exact_actions_and_raw_arguments_are_launch_o
             VllmSetupView.DuplicateProfileRequested,
             VllmSetupView.DeleteProfileRequested,
         ]
+
+
+async def _wait_for_profile_confirmation(app, pilot) -> ConfirmationDialog:
+    for _ in range(40):
+        await pilot.pause()
+        if isinstance(app.screen, ConfirmationDialog):
+            return app.screen
+    raise AssertionError("profile deletion confirmation did not mount")
+
+
+async def _wait_for_profile_mutation_idle(screen: LLMScreen, pilot) -> None:
+    for _ in range(4):
+        await pilot.pause()
+    for _ in range(80):
+        worker = screen._vllm_profile_worker
+        if worker is None or worker.is_finished:
+            await pilot.pause()
+            worker = screen._vllm_profile_worker
+            if worker is None or worker.is_finished:
+                return
+        await pilot.pause()
+    raise AssertionError("profile mutation did not settle")
+
+
+@pytest.mark.parametrize("dismissal", ["cancel", "escape"])
+async def test_profile_delete_cancel_or_escape_preserves_exact_document(
+    dismissal, monkeypatch, tmp_path: Path
+):
+    """Removing the confirmation gate must let Delete mutate before consent."""
+
+    repo = VllmProfileRepository(tmp_path / "vllm_launch_profiles.json")
+    profile = profile_from_draft(
+        "PROFILE_SECRET_CANARY",
+        VllmLaunchDraft(
+            mode=VllmMode.LOCAL,
+            python_environment="/private/PYTHON_PATH_CANARY",
+            model_source=VllmModelSource.LOCAL_DIRECTORY,
+            model_value="/private/MODEL_PATH_CANARY",
+        ),
+    )
+    saved = repo.save(profile, expected_revision=0)
+    calls = []
+    real_delete = repo.delete
+
+    def observed_delete(profile_id, *, expected_revision):
+        calls.append((profile_id, expected_revision))
+        return real_delete(profile_id, expected_revision=expected_revision)
+
+    monkeypatch.setattr(repo, "delete", observed_delete)
+    app = _build_test_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+        screen._vllm_profile_repository = repo
+        screen._accept_vllm_profiles(saved.document)
+        await _wait_for_profile_mutation_idle(screen, pilot)
+        baseline = screen._vllm_profiles
+        before = repo.path.read_bytes()
+
+        await pilot.click("#vllm-profile-delete-button")
+        dialog = await _wait_for_profile_confirmation(app, pilot)
+        assert repo.path.read_bytes() == before
+        assert calls == []
+        copy = " ".join(
+            str(widget.renderable) for widget in dialog.query("Label, Static")
+        )
+        assert not any(
+            canary in copy
+            for canary in (
+                "PROFILE_SECRET_CANARY",
+                "PYTHON_PATH_CANARY",
+                "MODEL_PATH_CANARY",
+            )
+        )
+
+        if dismissal == "cancel":
+            await pilot.click("#cancel-button")
+        else:
+            await pilot.press("escape")
+        await pilot.pause()
+
+        assert app.screen is screen
+        assert repo.path.read_bytes() == before
+        assert repo.load() == baseline
+        assert calls == []
+        assert app.focused is view.query_one("#vllm-profile-delete-button", Button)
+
+
+async def test_confirmed_profile_delete_executes_selected_claim_once_and_recreates_default(
+    monkeypatch, tmp_path: Path
+):
+    """Bypassing confirm or replaying its callback must break the exact call count."""
+
+    repo = VllmProfileRepository(tmp_path / "vllm_launch_profiles.json")
+    profile = profile_from_draft(
+        "Only profile",
+        VllmLaunchDraft(
+            mode=VllmMode.LOCAL,
+            python_environment="python",
+            model_source=VllmModelSource.HUGGING_FACE,
+            model_value="org/model",
+        ),
+    )
+    saved = repo.save(profile, expected_revision=0)
+    calls = []
+    real_delete = repo.delete
+
+    def observed_delete(profile_id, *, expected_revision):
+        calls.append((profile_id, expected_revision))
+        return real_delete(profile_id, expected_revision=expected_revision)
+
+    monkeypatch.setattr(repo, "delete", observed_delete)
+    app = _build_test_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen, _, _ = await _mount_vllm_screen(app, pilot)
+        screen._vllm_profile_repository = repo
+        screen._accept_vllm_profiles(saved.document)
+        await _wait_for_profile_mutation_idle(screen, pilot)
+        claim = screen._vllm_profiles
+
+        await pilot.click("#vllm-profile-delete-button")
+        await _wait_for_profile_confirmation(app, pilot)
+        assert calls == []
+        await pilot.click("#confirm-button")
+        for _ in range(80):
+            await pilot.pause()
+            if calls and screen._vllm_profiles.revision > claim.revision:
+                break
+        else:
+            raise AssertionError("confirmed profile deletion did not settle")
+
+        assert calls == [(profile.profile_id, claim.revision)]
+        restored = repo.load()
+        assert restored == screen._vllm_profiles
+        assert len(restored.profiles) == 1
+        assert restored.profiles[0].name == "Default vLLM"
+
+
+async def test_profile_delete_confirmation_rejects_stale_selection_claim(
+    monkeypatch, tmp_path: Path
+):
+    """Dropping the revision/selection recheck must delete the wrong profile."""
+
+    repo = VllmProfileRepository(tmp_path / "vllm_launch_profiles.json")
+    first = repo.save(
+        profile_from_draft(
+            "First",
+            VllmLaunchDraft(
+                mode=VllmMode.LOCAL,
+                python_environment="python",
+                model_source=VllmModelSource.HUGGING_FACE,
+                model_value="org/first",
+            ),
+        ),
+        expected_revision=0,
+    )
+    second = repo.save(
+        profile_from_draft(
+            "Second",
+            replace(draft_from_profile(first.profile), model_value="org/second"),
+        ),
+        expected_revision=first.document.revision,
+    )
+    selected_first = repo.select(
+        first.profile.profile_id,
+        expected_revision=second.document.revision,
+    )
+    calls = []
+    real_delete = repo.delete
+
+    def observed_delete(profile_id, *, expected_revision):
+        calls.append((profile_id, expected_revision))
+        return real_delete(profile_id, expected_revision=expected_revision)
+
+    monkeypatch.setattr(repo, "delete", observed_delete)
+    app = _build_test_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+        screen._vllm_profile_repository = repo
+        screen._accept_vllm_profiles(selected_first.document)
+        await _wait_for_profile_mutation_idle(screen, pilot)
+        claim = screen._vllm_profiles
+
+        await pilot.click("#vllm-profile-delete-button")
+        await _wait_for_profile_confirmation(app, pilot)
+        newer = repo.select(
+            second.profile.profile_id,
+            expected_revision=claim.revision,
+        )
+        screen._accept_vllm_profiles(newer.document)
+        before_confirm = repo.path.read_bytes()
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+
+        assert calls == []
+        assert repo.path.read_bytes() == before_confirm
+        assert repo.load() == newer.document
+        assert app.focused is view.query_one("#vllm-profile-delete-button", Button)
 
 
 async def test_profile_repository_io_is_threaded_and_selected_profile_restores(

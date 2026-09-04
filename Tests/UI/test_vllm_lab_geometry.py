@@ -40,6 +40,7 @@ from tldw_chatbook.UI.LLM_Management.vllm_setup import (
 from tldw_chatbook.UI.LLM_Management.vllm_setup_view import VllmSetupView
 from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 pytestmark = pytest.mark.asyncio
 
@@ -250,7 +251,7 @@ def _state_projection(state: str):
     }
 
 
-def _visible_focusables(view: VllmSetupView, compositor) -> tuple[Widget, ...]:
+def _visible_focusables(view: Widget, compositor) -> tuple[Widget, ...]:
     return tuple(
         widget
         for widget in view.query("*").results(Widget)
@@ -265,6 +266,20 @@ def _owner_region(widget: Widget, view: VllmSetupView) -> Region:
     if parent is None or parent is view.screen:
         return view.content_region
     return parent.content_region
+
+
+async def _wait_for_profile_mutation_idle(screen: LLMScreen, pilot) -> None:
+    for _ in range(4):
+        await pilot.pause()
+    for _ in range(80):
+        worker = screen._vllm_profile_worker
+        if worker is None or worker.is_finished:
+            await pilot.pause()
+            worker = screen._vllm_profile_worker
+            if worker is None or worker.is_finished:
+                return
+        await pilot.pause()
+    raise AssertionError("profile mutation did not settle")
 
 
 @pytest.mark.parametrize("size", VLLM_GEOMETRY_SIZES)
@@ -290,6 +305,10 @@ async def test_every_visible_focusable_is_inside_its_owner(size, state):
                 f"{state} {size}: {widget.id} escaped {widget.parent.id}: "
                 f"widget={widget.region}, owner={owner}"
             )
+            assert widget.region.intersection(view.content_region) == widget.region, (
+                f"{state} {size}: {widget.id} escaped the active vLLM viewport: "
+                f"widget={widget.region}, viewport={view.content_region}"
+            )
 
         inspector = screen.query_one("#lab-inspector")
         if size != (120, 40):
@@ -308,6 +327,60 @@ async def test_every_visible_focusable_is_inside_its_owner(size, state):
             )
             assert str(view.query_one(f"#{_STATE_TAB_IDS[state][0]}").label) in painted
             assert "more below" in painted
+
+
+@pytest.mark.parametrize("size", VLLM_GEOMETRY_SIZES)
+async def test_profile_delete_confirmation_is_contained_and_keyboard_cancelable(size):
+    """Removing the real modal or clipping either action must fail this contract."""
+
+    app = _build_test_app()
+    async with app.run_test(size=size) as pilot:
+        screen, view = await _mounted_vllm_view(app, pilot)
+        screen._apply_vllm_view_state()
+        await _wait_for_profile_mutation_idle(screen, pilot)
+        delete = view.query_one("#vllm-profile-delete-button", Button)
+        delete.scroll_visible()
+        await pilot.pause()
+        path = screen._vllm_profile_repository.path
+        before = path.read_bytes() if path.exists() else None
+
+        delete.press()
+        for _ in range(40):
+            await pilot.pause()
+            if isinstance(app.screen, ConfirmationDialog):
+                break
+        else:
+            raise AssertionError("profile deletion confirmation did not mount")
+
+        dialog = app.screen
+        pane = dialog.query_one("#confirmation-dialog")
+        focusables = _visible_focusables(dialog, dialog._compositor)
+        assert tuple(widget.id for widget in focusables) == (
+            "cancel-button",
+            "confirm-button",
+        )
+        for widget in focusables:
+            owner = widget.parent.content_region
+            assert widget.region.intersection(owner) == widget.region
+            assert widget.region.intersection(pane.content_region) == widget.region
+        copy = " ".join(
+            str(widget.renderable) for widget in dialog.query("Label, Static")
+        )
+        assert "Delete selected vLLM profile?" in copy
+        assert "PROFILE_SECRET_CANARY" not in copy
+        cancel = dialog.query_one("#cancel-button", Button)
+        cancel.focus()
+        await pilot.press("tab")
+        assert app.focused.id == "confirm-button"
+        await pilot.press("tab")
+        assert app.focused.id == "cancel-button"
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.screen is screen
+        assert app.focused is delete
+        after = path.read_bytes() if path.exists() else None
+        assert after == before
 
 
 @pytest.mark.parametrize("size", VLLM_GEOMETRY_SIZES)

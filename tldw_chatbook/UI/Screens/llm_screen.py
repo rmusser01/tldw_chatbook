@@ -2731,11 +2731,51 @@ class LLMScreen(LabScreen):
         self, event: VllmSetupView.DeleteProfileRequested
     ) -> None:
         event.stop()
+        document = self._vllm_profiles
+        if event.profile_id != document.selected_profile_id or not any(
+            profile.profile_id == event.profile_id for profile in document.profiles
+        ):
+            return
+        self.app.push_screen(
+            ConfirmationDialog(
+                title="Delete vLLM profile?",
+                message=("Delete selected vLLM profile? This cannot be undone."),
+                confirm_label="Delete profile",
+                cancel_label="Cancel",
+            ),
+            lambda confirmed: self._confirm_vllm_profile_delete(
+                bool(confirmed),
+                event.profile_id,
+                document.revision,
+            ),
+        )
+
+    def _confirm_vllm_profile_delete(
+        self,
+        confirmed: bool,
+        profile_id: str,
+        revision: int,
+    ) -> None:
+        """Delete exactly the selected profile claimed by the confirmation."""
+
+        current = self._vllm_profiles
+        if (
+            not confirmed
+            or not self.is_attached
+            or current.revision != revision
+            or current.selected_profile_id != profile_id
+            or not any(profile.profile_id == profile_id for profile in current.profiles)
+        ):
+            view = self._vllm_view()
+            if view is not None:
+                delete = view.query_one("#vllm-profile-delete-button", Button)
+                self.call_after_refresh(delete.focus)
+            return
         self._start_vllm_profile_mutation(
             partial(
                 self._vllm_profile_repository.delete,
-                event.profile_id,
-                expected_revision=self._vllm_profiles.revision,
+                profile_id,
+                expected_revision=revision,
             )
         )
 

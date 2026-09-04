@@ -73,6 +73,12 @@ preserves focus; explicit state changes land on Start, Stop, Use in Console, or 
 recovery action. `_lab.tcss` remains the source and the generated modular bundle was
 rebuilt deterministically.
 
+Fix Round 1 gates profile deletion behind the repository's existing confirmation
+dialog pattern. Cancel and Escape preserve the exact profile document, confirmation
+deletes the captured selected/revision claim once, and a changed selection or
+revision fails closed. The real dialog is keyboard-contained and fully inside its
+modal pane at all three supported terminal sizes.
+
 ADR required: no. ADR-115 already owns the responsive, focus, runtime, persistence,
 privacy, and Console-handoff boundaries; this task adds no new architectural choice.
 
@@ -87,7 +93,7 @@ same node name).
 2. Local launch and existing-server modes — `test_source_specific_controls_and_mode_drafts_are_preserved`, `test_existing_server_accepts_namespace_model_id`.
 3. Separate process/API/model/Console/default states — `test_ready_requires_health_and_exact_models_identity`, `test_lifecycle_projection_enables_stop_only_while_runtime_is_active`, `test_handoff_buttons_enable_only_for_current_verified_target`, `test_vllm_handoff_stages_only_current_target_and_uses_normal_navigation`.
 4. No-retype Lab-to-Console handoff — `test_vllm_handoff_intents_are_secret_free_exact_and_strict`, `test_vllm_handoff_stages_only_current_target_and_uses_normal_navigation`.
-5. Device-local reusable profiles — `test_default_path_is_device_local_active_profile_data`, `test_profile_round_trip_has_exact_v1_schema_and_excludes_launch_only_fields`, `test_profile_repository_io_is_threaded_and_selected_profile_restores`.
+5. Device-local reusable profiles and confirmed deletion — `test_default_path_is_device_local_active_profile_data`, `test_profile_round_trip_has_exact_v1_schema_and_excludes_launch_only_fields`, `test_profile_repository_io_is_threaded_and_selected_profile_restores`, `test_profile_delete_cancel_or_escape_preserves_exact_document`, `test_confirmed_profile_delete_executes_selected_claim_once_and_recreates_default`, `test_profile_delete_confirmation_rejects_stale_selection_claim`.
 6. Immutable current versus editable next restart — `test_launch_snapshot_is_immutable_exact_and_changed_labels_are_allowlisted`, `test_current_server_is_separate_from_modified_next_restart_without_path_leak`.
 7. Bounded sanitized activity/recovery — `test_owner_keeps_only_current_operation_bounded_allowlisted_activity`, `test_owner_snapshot_excludes_launch_privacy_canaries`, `test_mounted_activity_renders_ready_and_expands_bounded_failure`.
 8. Focus-correct at all three sizes — `test_every_visible_focusable_is_inside_its_owner`, `test_complete_tab_walk_stays_in_active_vllm_provider`, `test_background_projection_preserves_focus_but_explicit_transition_moves_it`.
@@ -118,7 +124,7 @@ same node name).
 8. Health timeout — `test_probe_timeout_is_bounded_and_sanitized`.
 9. Expected model missing — `test_healthy_api_without_exact_model_is_not_ready`, `test_existing_server_rejects_path_like_or_noncanonical_model_ids`.
 10. Credential required/configured credential — `test_auth_required_never_echoes_response_or_credential`, `test_configured_authorization_is_used_without_entering_result`.
-11. Profile unavailable/repair — `test_load_rejects_invalid_profile_field_types_and_values`, `test_profile_accepts_nonexistent_safe_local_directory_for_repair`, `test_corrupt_document_fails_closed_without_overwrite`.
+11. Profile unavailable/repair and deletion confirmation — `test_load_rejects_invalid_profile_field_types_and_values`, `test_profile_accepts_nonexistent_safe_local_directory_for_repair`, `test_corrupt_document_fails_closed_without_overwrite`, `test_profile_delete_cancel_or_escape_preserves_exact_document`, `test_profile_delete_confirmation_rejects_stale_selection_claim`.
 12. Profile-store unavailable/future-safe recovery — `test_future_version_is_preserved_byte_for_byte`, `test_atomic_write_failure_preserves_old_bytes`, `test_fresh_save_ownership_failure_precedes_all_filesystem_mutation`.
 13. No exception/HTTP/path/model/process leakage — `test_preflight_rejects_oversize_or_unclassified_probe_output`, `test_owner_snapshot_excludes_launch_privacy_canaries`, `test_vllm_handoff_intents_are_secret_free_exact_and_strict`, `test_current_server_is_separate_from_modified_next_restart_without_path_leak`.
 14. Allowlisted bounded Activity only — `test_owner_keeps_only_current_operation_bounded_allowlisted_activity`, `test_mounted_activity_renders_ready_and_expands_bounded_failure`, `test_oversized_models_response_is_rejected_without_retention`.
@@ -128,7 +134,7 @@ same node name).
 1. Wide body composition, horizontal-capable setup, and above-fold readiness/action — `test_every_visible_focusable_is_inside_its_owner[state-size2]` across all eight states (`size2` is 120x40); the spec permits rather than requires both rails to remain open.
 2. Medium Inspector collapse, stacked overflowing groups, and conditional fold cue — `test_every_visible_focusable_is_inside_its_owner[state-size1]` across all eight states (`size1` is 100x30).
 3. Compact persisted catalog collapse plus painted standard reopen action — `test_every_visible_focusable_is_inside_its_owner[state-size0]` across all eight states (`size0` is 80x24).
-4. Compact complete rows/full-width Browse/owned focus geometry — `test_every_visible_focusable_is_inside_its_owner[profile_management-size0]`, including local Browse.
+4. Compact complete rows/full-width Browse/owned focus geometry — `test_every_visible_focusable_is_inside_its_owner[profile_management-size0]`, including local Browse; `test_profile_delete_confirmation_is_contained_and_keyboard_cancelable` proves the real deletion dialog's controls remain inside both direct owner and modal viewport at 80x24, 100x30, and 120x40.
 5. Compact readiness plus current next action and fold cue in the first paint — `test_every_visible_focusable_is_inside_its_owner[state-size0]` asserts the state action and `more below` are rendered.
 6. Displayed/enabled controls only, no hidden provider bodies, cyclic active-pane Tab order — `test_complete_tab_walk_stays_in_active_vllm_provider` for the exact eight-state by three-size matrix.
 7. Explicit transition focus and passive refresh preservation — `test_explicit_vllm_state_transition_focuses_phase_action`, `test_background_projection_preserves_focus_but_explicit_transition_moves_it`.
@@ -143,29 +149,34 @@ same node name).
 4. Fingerprint/generation invalidation — `test_semantic_fingerprint_changes_for_every_launch_field_except_profile_name`, `test_older_generation_cannot_replace_newer_owner_state`, `test_mounted_recomposition_and_detach_invalidate_readiness_generation`.
 5. Served-model/path-ID admissibility — `test_chatbook_owned_ready_result_requires_exact_served_alias`, `test_existing_server_rejects_path_like_or_noncanonical_model_ids`, `test_existing_server_accepts_namespace_model_id`.
 6. Product-state projection — `test_lifecycle_sync_projects_vllm_without_legacy_button_queries`, `test_lifecycle_projection_enables_stop_only_while_runtime_is_active`, `test_explicit_vllm_state_transition_focuses_phase_action`.
-7. Profile limits/round trip/atomic/corrupt/future cases — `test_repository_caps_profiles_at_32`, `test_profile_round_trip_has_exact_v1_schema_and_excludes_launch_only_fields`, `test_atomic_write_failure_preserves_old_bytes`, `test_corrupt_document_fails_closed_without_overwrite`, `test_future_version_is_preserved_byte_for_byte`.
+7. Profile limits/round trip/atomic/corrupt/future/confirmed-deletion cases — `test_repository_caps_profiles_at_32`, `test_profile_round_trip_has_exact_v1_schema_and_excludes_launch_only_fields`, `test_atomic_write_failure_preserves_old_bytes`, `test_corrupt_document_fails_closed_without_overwrite`, `test_future_version_is_preserved_byte_for_byte`, `test_profile_delete_cancel_or_escape_preserves_exact_document`, `test_confirmed_profile_delete_executes_selected_claim_once_and_recreates_default`, `test_profile_delete_confirmation_rejects_stale_selection_claim`.
 8. Loopback health/models ready/missing/auth/timeout/cancel/stale contracts — `test_ready_requires_health_and_exact_models_identity`, `test_healthy_api_without_exact_model_is_not_ready`, `test_auth_required_never_echoes_response_or_credential`, `test_probe_timeout_is_bounded_and_sanitized`, `test_cancellation_prevents_any_http_probe`, `test_older_generation_cannot_replace_newer_owner_state`.
 9. Exact launch/stop/restart process ownership — `test_stop_request_settles_the_owned_server_without_opening_a_picker`, `test_restart_proves_old_process_dead_and_released_before_new_generation`, `test_restart_termination_failure_keeps_old_snapshot_and_never_reserves`.
 10. Mounted session adoption without config writes — `test_vllm_handoff_stages_only_current_target_and_uses_normal_navigation`.
-11. Durable-default delegation preserving unrelated settings — `test_existing_chat_action_routes_ignore_later_new_chat_default`; this exact compatibility node is a documented pre-existing baseline failure at both `0643c2713a` and `127cc898ab`, not introduced by TASK-31221.
+11. Durable-default delegation preserving unrelated settings — `test_existing_chat_action_routes_ignore_later_new_chat_default`; this exact compatibility node is a documented pre-existing baseline failure at Task 5 base `0643c2713a`, original feature base `127cc898ab`, and fetched `origin/dev` `d6eb7fe1c2`, not introduced by TASK-31221.
 12. Recomposition/profile restore/obsolete-worker invalidation — `test_profile_repository_io_is_threaded_and_selected_profile_restores`, `test_mounted_recomposition_and_detach_invalidate_readiness_generation`.
-13. Production stylesheet geometry states — `test_every_visible_focusable_is_inside_its_owner` covers `setup_incomplete`, `preflight_ready`, `launching`, `loading`, `ready`, `failed`, `dirty_restart`, and `profile_management` at 80x24, 100x30, and 120x40.
+13. Production stylesheet geometry states — `test_every_visible_focusable_is_inside_its_owner` covers `setup_incomplete`, `preflight_ready`, `launching`, `loading`, `ready`, `failed`, `dirty_restart`, and `profile_management` at 80x24, 100x30, and 120x40, with every visible enabled focusable fully inside both its direct owner and the active vLLM viewport; `test_profile_delete_confirmation_is_contained_and_keyboard_cancelable` applies the same rule to the real modal.
 14. Complete Tab walk/hidden providers/lifecycle landing — `test_complete_tab_walk_stays_in_active_vllm_provider`, `test_explicit_vllm_state_transition_focuses_phase_action`, `test_background_projection_preserves_focus_but_explicit_transition_moves_it`.
 15. Live evidence — production `TldwCli` was driven under disposable HOME/XDG/config/data/cache roots at all three sizes. The host has cached `Qwen/Qwen2.5-0.5B-Instruct`, but neither a `vllm` executable nor importable `vllm` package; therefore no real server/model was launched and loopback tests are contract verification, not real-vLLM qualification. Real config and data aggregate fingerprints were unchanged before/after.
 
 ### Verification and trade-offs
 
-The primary focused matrix passed 206 tests. The compatibility matrix passed 271
-tests and retained two unrelated baseline failures. Both exact failures reproduce in
-detached worktrees at Task 5 base `0643c2713a` and latest-development
-`127cc898ab`, proving they are not TASK-31221 regressions. No unrelated Console
-test-harness/database repair was included. The generated CSS hash was identical
-before and after a final rebuild; the Impeccable detector returned no findings.
+The final primary focused matrix passed 213 tests. The compatibility matrix passed
+271 tests and retained two unrelated baseline failures. Both exact failures
+reproduce in detached worktrees at Task 5 base `0643c2713a`, original feature base
+`127cc898ab`, and the real `origin/dev` fetched at `2026-09-04T06:46:11Z`
+(`d6eb7fe1c24188ead22359b6bc8d0713de2829fa`), proving they are not TASK-31221
+regressions. No unrelated Console test-harness/database repair was included. Fix
+Round 1 changed no stylesheet source, so the generated bundle was intentionally not
+rebuilt. The Impeccable detector returned no findings.
 
 Modified files: `vllm_setup_view.py`, `LLM_Management_Window.py`, `llm_screen.py`,
 `_lab.tcss`, generated `tldw_cli_modular.tcss`,
 `Tests/UI/test_vllm_lab_workflow.py`, and new
 `Tests/UI/test_vllm_lab_geometry.py`.
+
+Fix Round 1 modified only `llm_screen.py`, `test_vllm_lab_workflow.py`,
+`test_vllm_lab_geometry.py`, and this task ledger.
 
 No lesson entry was added: this task produced no new generalizable incident beyond
 the production-CSS/layout evidence rules already recorded in
