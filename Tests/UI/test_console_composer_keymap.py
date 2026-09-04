@@ -26,6 +26,7 @@ thing itself.
 from __future__ import annotations
 
 import pytest
+from textual.events import Key
 
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
@@ -122,6 +123,27 @@ async def test_ctrl_c_clears_an_unselected_focused_draft_and_is_undoable():
 
         assert composer.draft_text() == "throw me away"
         assert composer.cursor_index == len("throw me away")
+
+
+@pytest.mark.unit
+def test_ctrl_c_handler_records_history_and_posts_draft_changed(monkeypatch):
+    composer = ConsoleComposerBar()
+    composer.load_draft("throw me away")
+    composer.has_focus = True
+    posted: list[object] = []
+    monkeypatch.setattr(composer, "post_message", posted.append)
+
+    assert composer.handle_console_key(Key("ctrl+c", None)) is True
+
+    assert composer.draft_text() == ""
+    assert composer.cursor_index == 0
+    assert len(posted) == 1
+    message = posted[0]
+    assert isinstance(message, ConsoleComposerBar.DraftChanged)
+    assert message.composer is composer
+    assert message.is_insertion is False
+    assert composer.undo() is True
+    assert composer.draft_text() == "throw me away"
 
 
 # ---------------------------------------------------------------------------
