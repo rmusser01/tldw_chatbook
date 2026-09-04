@@ -8109,7 +8109,9 @@ class SettingsScreen(BaseAppScreen):
         # startup and after Save; offer them like the shipped catalog.
         registered = getattr(getattr(self, "app_instance", None), "available_themes", None) or {}
         for theme_name in registered:
-            if theme_name in seen:
+            # custom_<name> is Apply's process-only registration of an unsaved
+            # palette; it would not exist at the next launch (PR #2375 #8).
+            if theme_name in seen or theme_name.startswith("custom_"):
                 continue
             seen.add(theme_name)
             options.append(

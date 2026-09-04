@@ -1,4 +1,6 @@
 # themes.py
+from pathlib import Path
+
 from textual.theme import Theme
 from textual.color import Color
 
@@ -36,15 +38,23 @@ def create_theme_from_dict(name: str, theme_dict: dict) -> Theme:
     return Theme(**theme_args)
 
 
-def load_user_themes(themes_dir) -> list[Theme]:
+def load_user_themes(themes_dir: str | Path) -> list[Theme]:
     """Read every ``*.toml`` under ``themes_dir`` into Theme objects.
 
     The Settings theme editor writes ``[theme] name/dark`` + ``[colors]``.
-    Unreadable files are skipped with a warning so one bad file cannot block
-    startup (TASK-31250).
-    """
-    from pathlib import Path
+    Unreadable files, and files without the primary colour Textual requires,
+    are skipped with a warning so one bad file cannot block startup
+    (TASK-31250).
 
+    Args:
+        themes_dir: Directory holding the saved theme files (normally the
+            active profile's ``themes/`` folder, see
+            ``config.get_user_themes_dir``). A missing directory yields no
+            themes.
+
+    Returns:
+        The successfully parsed themes, in file-name order.
+    """
     import toml
     from loguru import logger
 

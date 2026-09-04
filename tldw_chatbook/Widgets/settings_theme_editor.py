@@ -498,8 +498,27 @@ class SettingsThemeEditor(Vertical):
         makes those echoes no-ops.
         """
         name = event.value.strip()
-        if name and name != self.current_theme_name:
+        if name != self.current_theme_name:
+            # An emptied box clears the name too (PR #2375 review #6), so no
+            # action can fall back to the previously loaded theme.
             self.current_theme_name = name
+
+    def _require_theme_name(self) -> str | None:
+        """Return the current theme name if it is non-empty and file-safe.
+
+        Notifies and returns ``None`` otherwise, so Apply/Export/Delete/Reset/
+        Set-as-default share Save's guard instead of trusting a raw value.
+        """
+        name = self.current_theme_name.strip()
+        if not name:
+            self.app.notify("Please enter a theme name", severity="warning")
+            return None
+        try:
+            validate_filename(name)
+        except ValueError as exc:
+            self.app.notify(f"Invalid theme name: {exc}", severity="warning")
+            return None
+        return name
 
     @on(Checkbox.Changed, "#settings-theme-dark-mode")
     def on_dark_mode_changed(self, event: Checkbox.Changed) -> None:
@@ -514,6 +533,8 @@ class SettingsThemeEditor(Vertical):
     @on(Button.Pressed, "#settings-theme-apply")
     def on_apply_theme(self) -> None:
         """Apply the current theme to the app."""
+        if self._require_theme_name() is None:
+            return
         try:
             theme_dict = {**self.current_theme_data, "dark": self.is_dark_theme}
             theme = create_theme_from_dict(
@@ -618,7 +639,9 @@ class SettingsThemeEditor(Vertical):
     @on(Button.Pressed, "#settings-theme-set-default")
     def on_set_launch_default(self) -> None:
         """Make the current saved theme the startup theme (TASK-31250)."""
-        name = self.current_theme_name
+        name = self._require_theme_name()
+        if name is None:
+            return
         saved = (self.custom_themes_path / f"{name}.toml").exists()
         if not saved and not self._is_catalog_theme(name):
             self.app.notify(
@@ -628,7 +651,13 @@ class SettingsThemeEditor(Vertical):
             return
         from ..config import save_setting_to_cli_config
 
-        save_setting_to_cli_config("general", "default_theme", name)
+        # PR #2375 review #7: the config write reports success as a bool.
+        if not save_setting_to_cli_config("general", "default_theme", name):
+            self.app.notify(
+                "Could not save the launch default; check the config file",
+                severity="error",
+            )
+            return
         self.app.notify(f"'{name}' will load at the next launch", severity="success")
 
     @on(Button.Pressed, "#settings-theme-reset")
@@ -637,6 +666,8 @@ class SettingsThemeEditor(Vertical):
         # task-1371: Reset throws away unapplied edits; the Settings screen
         # confirms its equivalent discard (revert) per ADR-031 rule 3, so the
         # editor follows the same confirmation rule.
+        if self._require_theme_name() is None:
+            return
         if not self.is_modified:
             # TASK-31261: nothing to discard -- say so instead of claiming a
             # reset happened (still no confirmation dialog, task-1371).
@@ -763,10 +794,7 @@ class SettingsThemeEditor(Vertical):
         built_in_names = {"textual-dark", "textual-light"}
         shipped_names = {t.name for t in ALL_THEMES if hasattr(t, "name")}
 
-        try:
-            validate_filename(self.current_theme_name)
-        except ValueError:
-            self.app.notify("Cannot delete theme: invalid theme name", severity="warning")
+        if self._require_theme_name() is None:
             return
 
         # File existence decides: anything saved in the user themes directory
@@ -830,6 +858,30 @@ class SettingsThemeEditor(Vertical):
                             break
                     break
 
+            # PR #2375 review #9: drop the runtime registration so Appearance
+            # and the palette stop offering the deleted theme; a user file that
+            # shadowed a shipped theme hands the shipped registration back.
+            shipped = next(
+                (t for t in ALL_THEMES if getattr(t, "name", None) == theme_name), None
+            )
+            if shipped is not None:
+                self.app.register_theme(shipped)
+            else:
+                self.app.unregister_theme(theme_name)
+
+            from ..config import get_cli_setting, save_setting_to_cli_config
+
+            if str(get_cli_setting("general", "default_theme", "textual-dark")) == theme_name:
+                if save_setting_to_cli_config("general", "default_theme", "textual-dark"):
+                    self.app.notify(
+                        "Launch default reset to textual-dark", severity="information"
+                    )
+                else:
+                    self.app.notify(
+                        "Could not reset the launch default; check the config file",
+                        severity="error",
+                    )
+
             self.load_theme("textual-dark")
         except Exception as e:
             logger.error(f"Failed to delete theme '{theme_name}': {e}")
@@ -838,13 +890,11 @@ class SettingsThemeEditor(Vertical):
     @on(Button.Pressed, "#settings-theme-export")
     def on_export_theme(self) -> None:
         """Export the current theme."""
-        try:
-            validate_filename(self.current_theme_name)
-        except ValueError as exc:
-            self.app.notify(f"Invalid theme name: {exc}", severity="warning")
+        name = self._require_theme_name()
+        if name is None:
             return
 
-        export_path = Path.home() / "Downloads" / f"{self.current_theme_name}_theme.toml"
+        export_path = Path.home() / "Downloads" / f"{name}_theme.toml"
 
         theme_data = {
             "theme": {

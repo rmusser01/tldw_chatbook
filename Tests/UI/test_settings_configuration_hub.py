@@ -13020,3 +13020,20 @@ def test_display_path_abbreviates_home_and_leaves_other_paths_alone(tmp_path):
     inside = Path.home() / ".config" / "tldw_cli" / "themes"
     assert _display_path(inside) == "~" + os.sep + os.sep.join((".config", "tldw_cli", "themes"))
     assert _display_path(tmp_path) == str(tmp_path) or _display_path(tmp_path).startswith("~")
+
+
+def test_settings_appearance_theme_options_skip_runtime_only_custom_themes():
+    """PR #2375 review #8: Apply registers an unsaved palette as custom_<name>; it
+    exists only for this process and must not be offered as a launch default."""
+    import types
+
+    stub = types.SimpleNamespace(
+        _appearance_setting_values=lambda: {"default_theme": "textual-dark"},
+        app_instance=types.SimpleNamespace(
+            available_themes={"textual-dark": object(), "ocean": object(), "custom_ocean": object()}
+        ),
+    )
+    options = SettingsScreen._appearance_theme_options(stub)
+    values = [value for _label, value in options]
+    assert "ocean" in values
+    assert "custom_ocean" not in values
