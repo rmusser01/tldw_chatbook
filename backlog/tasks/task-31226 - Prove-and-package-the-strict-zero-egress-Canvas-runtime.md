@@ -1,7 +1,7 @@
 ---
 id: TASK-31226
 title: Prove and package the strict-zero-egress Canvas runtime
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-03'
 updated_date: '2026-09-03'
@@ -32,3 +32,15 @@ Establish the trusted compiler and virtual JavaScript execution foundation that 
 - `Docs/superpowers/specs/2026-09-03-chatbook-canvas-design.md`
 - `Docs/superpowers/plans/2026-09-03-chatbook-canvas-implementation.md`
 - `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+
+## Implementation Plan
+
+- ADR required: yes
+- ADR path: `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+- Reason: this task implements and records the runtime/dependency boundary already accepted by ADR-115; the chosen engine and packaging details will be added as an ADR addendum.
+
+1. Define the versioned render-plan and bridge wire models plus shared hard-limit validators through strict red/green TDD.
+2. Parse complete HTML/CSS into a closed allowlisted render plan and reject every native execution, navigation, and resource-fetch surface with bounded diagnostics.
+3. Review, pin, reproducibly vendor, license, package, and integrity-check the selected WebAssembly ECMAScript runtime.
+4. Build the worker-hosted virtual DOM and trusted patch renderer, then prove strict zero egress with adversarial real-browser tests.
+5. Run the targeted unit/property/package/browser suites, complete a security-focused review, record evidence and limitations, and stop the rollout if zero egress is not demonstrated.
