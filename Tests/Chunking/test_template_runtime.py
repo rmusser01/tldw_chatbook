@@ -135,6 +135,15 @@ class TestTemplateFromRecord:
 
 
 class TestApplyTemplate:
+    def test_legacy_apply_does_not_use_strict_lab_admission(self):
+        template = {
+            "chunking": {"method": "words", "config": {"max_size": 2, "overlap": 0}},
+            "preprocessing": [{"operation": "unknown_operation"}],
+        }
+        assert [
+            chunk["text"] for chunk in tr.apply_template(template, "one two three")
+        ] == ["one two", "three"]
+
     def test_apply_runs_pre_and_post_pinned_exact_output(self):
         # AC 10: preprocessing AND postprocessing both run; the output is an
         # exact pinned value that differs from the chunking stage alone.
