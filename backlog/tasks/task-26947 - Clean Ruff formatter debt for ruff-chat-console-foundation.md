@@ -126,8 +126,8 @@ Clean the `ruff-chat-console-foundation` Ruff formatter batch at the owner bound
 <!-- SECTION:PLAN:BEGIN -->
 1. Reconcile all 73 TASK-26000 assigned paths against current origin/dev, record upstream lineage and the untouched focused-test baseline, and capture Python 3.12.11 AST/comment/directive evidence.
 2. Run Ruff 0.15.22 format with all 73 paths supplied explicitly, reject any unassigned Python diff, and require the structural comparison to match.
-3. Run Ruff lint/format checks, the 55 assigned Console foundation test modules, backlog task-ID uniqueness, and git diff --check; require the post-format focused result to introduce no failure beyond the untouched origin/dev baseline.
-4. Commit only formatter-owned Python changes, request independent review, then record exact evidence and close TASK-26947 in a task-only commit.
+3. Run Ruff lint/format checks, mechanically remove any immutable-base unused imports found only in assigned test paths, and run the 55 assigned Console foundation test modules, backlog task-ID uniqueness, and git diff --check; require the final focused result to introduce no failure beyond the untouched origin/dev baseline.
+4. Commit only formatter-owned Python changes plus any mechanically lint-fixed assigned test imports, request independent review, then record exact evidence and close TASK-26947 in a task-only commit.
 
 ADR required: no
 ADR path: N/A

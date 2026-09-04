@@ -66,6 +66,7 @@
 
 - Verify: the exact 73 assigned paths.
 - Verify: the exact 55 assigned Tests/Chat modules.
+- Modify only if required by an immutable-base Ruff lint failure: assigned test imports proven unused and side-effect-free.
 - Create temporary evidence only: /tmp/task26947_after.xml.
 
 **Interfaces:**
@@ -74,10 +75,12 @@
 - Produces: Ruff, structural, focused-test, governance, and scope evidence suitable for task closeout.
 
 - [ ] Run Ruff 0.15.22 check and format --check on all 73 assigned paths.
+- [ ] If Ruff lint reproduces an unused-import failure on the immutable base, capture the owning test module result, use Ruff's safe fix on only the affected assigned test path, and require the same test result plus a clean lint/format check afterward; do not change production code or suppress the diagnostic.
 - [ ] Run the same 55-module focused pytest command with JUnit XML at /tmp/task26947_after.xml.
 - [ ] Compare normalized before/after failure keys and require no additions or removals.
 - [ ] Run Tests/CI/test_backlog_task_id_uniqueness.py and git diff --check.
 - [ ] Reproduce every formatted assigned file by formatting its immutable branch-base blob through Ruff stdin and compare bytes.
+- [ ] Keep the formatter-commit byte replay anchored to commit 44f5408e8d; separately prove any later assigned-test lint-fix commit with its immutable-base Ruff diagnostic, safe-fix diff, and targeted pre/post test result.
 - [ ] Run the persistent-diagnostic inventory check; if Ruff changes only a tracked statement's source-layout digest, regenerate only that derived artifact and record the semantic-equivalence evidence.
 - [ ] If the diagnostic check requires a generated inventory refresh, commit only that derived artifact after its own verification.
 
@@ -95,7 +98,7 @@
 - Consumes: all Task 1-3 evidence.
 - Produces: a formatter commit, reviewed task closeout, and merge-ready branch.
 
-- [ ] Confirm Task 2's formatter commit contains only assigned Python paths and any Task 3 generated-artifact commit contains only the required inventory refresh.
+- [ ] Confirm Task 2's formatter commit contains only assigned Python paths and any Task 3 commits contain only the reviewed assigned-test lint cleanup and required generated-inventory refresh.
 - [ ] Request independent code review and address every Critical or Important finding.
 - [ ] Add exact drift, structural, Ruff, focused-test, governance, and generated-artifact results to Implementation Notes.
 - [ ] Clarify TASK-26000's directive-position definition and record the physical-line guard incident in the testing-evidence lessons so later formatter batches use the corrected metric.
