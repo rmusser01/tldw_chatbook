@@ -178,7 +178,7 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
             )
             assert (
                 app.screen._console_provider_blocker_copy()
-                == "Provider setup needed: OpenAI missing API key"
+                == "Provider setup needed: API key missing for OpenAI"
             )
             # The shared Workbench recovery banner stays hidden — the setup
             # card's action button is the recovery/control surface now

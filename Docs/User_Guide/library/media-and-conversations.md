@@ -250,14 +250,17 @@ them one by one, with your place and progress saved between visits.
   Sets.") — creating never silently strands a walk.
 - **Resume on entry** — opening the media area with a set active loads its
   current item into the Reader automatically, on every entry, so the banner
-  and the open document always agree (Escape shows the list until the next
-  entry).
+  and the open document always agree (in narrower layouts Escape shows the
+  list again until the next entry; the three-pane layout keeps showing it in
+  the Items pane throughout).
 - **Walk** — while a set is active the Reader carries a banner naming the
   set, your place, and the open item's own state ("Reviewing: All media — 2
   of 14 · 1 reviewed · ✓ reviewed"), and the footer shows the same place. `]` advances and marks the item you leave as reviewed;
   `[` goes back without marking; `m` toggles the loaded item's reviewed mark;
-  a final `]` on the last item marks it done in place. **Escape** leaves the
-  Reader but keeps the set active — re-entering resumes at your cursor.
+  a final `]` on the last item marks it done in place. **Escape** steps out
+  of the Reader — to the loaded Items row, and to the list itself in
+  narrower layouts — and keeps the set active; re-entering resumes at your
+  cursor.
   **R** (Exit review) deactivates the set without deleting it.
 - **Resume / switch / dismiss** — **Sets** on the media list title row opens
   the saved-set picker: each row shows the set's name, live progress, and
@@ -380,15 +383,46 @@ setting**; it supplies one bundle of **staged context** for the next send.
 
 The Media type chooser supports **Up/Down**, **Home/End**, and **Enter**;
 **Escape** cancels without applying a choice and returns focus to its opener.
-The Media grips accept **Enter** and **Space**. Arrow-key traversal moves the
-Items selection with a short settle delay; **Enter** loads immediately.
-**Escape** closes transient Reader state before moving outward through Items
-and Library. While a review set is active, the Reader adds **]** (next in
+The Media grips accept **Enter**; in Select mode **Space** is reserved for
+toggling the focused row, so the grips take Enter only there. Arrow-key
+traversal moves the Items selection with a short settle delay; **Enter**
+loads immediately.
+**Escape** closes transient Reader state first — the Find bar, the More
+menu, an open type/sort strip, or an armed delete or edit — and then steps
+outward: from the Reader to the loaded **Items row**, from Items to the
+**Media row in the rail**. Neither of those steps lands in a text box.
+In the three-pane layout (verified at 235x52) Escape never leaves the
+Reader at all: the Items pane is already showing the list, so the document
+stays open and `]`/`[` keep working from the row. The rail row is the last
+stop, and the footer drops its `esc` chip there rather than advertise a key
+that does nothing.
+Where the Library pane is collapsed but the Items pane still shows the list
+(verified at 100x30) the "‹ Back" control returns you to the list, and so
+does Escape from the Items row. Below about 92 columns both panes are
+collapsed: the control and the key still register the exit, but nothing on
+screen changes yet — the Reader keeps painting the item it had, and `]`/`[`
+stop working until you re-enter Media from the rail. A follow-up will open
+the Items pane on that exit.
+**F6** cycles Library → Items → the Reader's content box, which tints its
+own border in the accent colour while it holds focus (no overlay, so the
+text stays readable).
+From a focused Items row beside the Reader, the Reader's own keys stay
+live and are advertised with it: **]** / **[** walk items, **l** toggles
+read-later, **c** sends the item to Console, **t** arms Move to trash, and
+**s** enters Select mode (where Space toggles a row and **s** again is
+Done). On the last item of an active review set **]** reads "finish
+review" and marks it done in place.
+While a review set is active, the Reader adds **]** (next in
 set, marking the item you leave), **[** (previous, never marks), **m**
 (toggle reviewed), and **R** (exit review, keeping the set resumable); the
 footer shows these alongside your "X of M · N reviewed" progress. **Enter** submits the "Filter conversations… (Enter)", **Filter
 media**, and "Search content…" boxes. Global
 navigation keys live in the [guide index](../index.md).
+
+*Verified against fix/media-wave4-b — 2026-09-04 (task-31272: the Escape
+ladder to the rail row, More closed by Escape from a focused rail input,
+and the F6 content-stop border tint all live in tmux 235x52; "‹ Back" and
+Escape's return to the list live at 100x30).*
 
 ## Related settings & docs
 

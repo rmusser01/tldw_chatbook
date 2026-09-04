@@ -257,7 +257,7 @@ def test_variant_action_labels_fit_compact_terminal_width_budget():
     assert len(" ".join(labels)) <= 52
 
 
-def test_failed_action_labels_include_retry_inside_terminal_width_budget():
+def test_failed_action_labels_offer_retry_instead_of_continue():
     service = ConsoleMessageActionService()
     message = ConsoleChatMessage(
         role=ConsoleMessageRole.ASSISTANT,
@@ -265,9 +265,13 @@ def test_failed_action_labels_include_retry_inside_terminal_width_budget():
         status="failed",
     )
 
-    labels = service.plain_action_labels(message)
+    actions = service.available_actions(message)
+    action_ids = [action.action_id for action in actions]
+    labels = service.expand_plain_action_labels(actions)
 
-    assert " ".join(labels) == "Copy Edit Fork Retry ---> More…"
+    assert "retry" in action_ids
+    assert "continue" not in action_ids
+    assert " ".join(labels) == "Copy Edit Save as... Fork Retry 👍 👎 🗑"
     assert len(" ".join(labels)) <= 52
 
 
@@ -580,6 +584,49 @@ def test_continue_action_targets_selected_variant_content():
     assert result.status == "continue_requested"
     assert result.target_message_id == "m1"
     assert result.target_content == "second"
+
+
+def test_continue_action_is_blocked_for_failed_response():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="partial response",
+        status="failed",
+        id="m1",
+    )
+
+    result = service.dispatch("continue", message)
+
+    assert result.status == "blocked"
+    assert result.visible_copy == "Retry the failed response instead."
+
+
+def test_continue_action_remains_available_for_stopped_response():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="partial response",
+        status="stopped",
+        id="m1",
+    )
+
+    result = service.dispatch("continue", message)
+
+    assert result.status == "continue_requested"
+
+
+def test_continue_action_remains_available_for_failed_user_message():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="partial request",
+        status="failed",
+        id="m1",
+    )
+
+    result = service.dispatch("continue", message)
+
+    assert result.status == "continue_requested"
 
 
 # --- TASK-1: speak (TTS) action ------------------------------------------

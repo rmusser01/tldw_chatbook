@@ -12,7 +12,9 @@ from textual.css.query import NoMatches, QueryError
 from textual.widget import Widget
 from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
+from tldw_chatbook.Library.library_shell_state import library_disabled_action_label
 from tldw_chatbook.Library.library_media_viewer_state import (
+    analysis_find_unavailable_reason,
     LibraryMediaHighlightRow,
     LibraryMediaViewerState,
     find_content_matches,
@@ -96,6 +98,7 @@ class LibraryMediaViewer(Vertical):
         image_preview_available: bool = False,
         image_preview_source: Any = None,
         review_banner: str = "",
+        back_visible: bool = True,
         **kwargs: Any,
     ) -> None:
         """Hold the viewer's compose inputs.
@@ -112,6 +115,11 @@ class LibraryMediaViewer(Vertical):
                 <name> — X of M · N reviewed · ✓ reviewed"), or "" when no
                 set is active (task-30045). Rendered as literal text (set
                 names derive from user input).
+            back_visible: Whether the "‹ Back" control renders. False in the
+                three-pane shell, where the Items pane already shows the
+                list so Back changed no pixels while revoking every Reader
+                binding gated on the view flag (task-31272); the screen
+                decides from the shell's effective layout.
         """
         super().__init__(**kwargs)
         self.viewer = viewer
@@ -138,6 +146,7 @@ class LibraryMediaViewer(Vertical):
         self.image_preview_available = image_preview_available
         self.image_preview_source = image_preview_source
         self.review_banner = review_banner
+        self.back_visible = back_visible
         # Fill the (already 13fr) canvas host, not an independent 13fr: an `fr`
         # width here breaks width:100% child resolution so long lines (analysis
         # summary, a long URL) clip instead of wrapping. 1fr fills the same
@@ -220,7 +229,8 @@ class LibraryMediaViewer(Vertical):
                 id="library-media-review-banner",
                 markup=False,
             )
-        yield Button("‹ Back", id="library-media-back", compact=True)
+        if self.back_visible:
+            yield Button("‹ Back", id="library-media-back", compact=True)
         yield Static(
             "Edit media details" if self.editing else self.viewer.title,
             id="library-media-viewer-title",
@@ -275,7 +285,23 @@ class LibraryMediaViewer(Vertical):
     def _compose_primary_toolbar(self) -> ComposeResult:
         """Render the always-reachable Reader actions."""
         with Horizontal(classes="ds-toolbar", id="library-media-reader-primary-toolbar"):
-            yield Button("Find", id="library-media-reader-find", compact=True)
+            # Qodo on #2378: an Analysis tab with nothing to search has no
+            # bar to mount -- say why Find is off instead of toggling silently.
+            find_reason = analysis_find_unavailable_reason(
+                mode=self.reader_mode,
+                analysis=self.viewer.analysis,
+                generating=self.generating_analysis,
+                editing=self.editing_analysis,
+            )
+            find = Button(
+                library_disabled_action_label("Find", bool(find_reason)),
+                id="library-media-reader-find",
+                compact=True,
+            )
+            if find_reason:
+                find.disabled = True
+                find.tooltip = find_reason
+            yield find
             if not self.external_detail:
                 yield Button(
                     "Remove later" if self.viewer.read_later else "Read later",

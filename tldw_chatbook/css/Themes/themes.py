@@ -164,7 +164,8 @@ modern_dark_dracula_theme = Theme(
     variables={
         "footer-key-foreground": "#8be9fd",  # Cyan
         "input-selection-background": "#bd93f9 40%",  # Purple with 40% alpha
-        "text-muted": "#6272a4",  # Lighter purple/gray for comments/dimmed text
+        "text-muted": "#afb8d1",  # Lighter purple/gray for comments/dimmed text
+        "text-error": "#ff9d9d",
     },
 )
 
@@ -185,7 +186,7 @@ paper_light_theme = Theme(
     variables={
         "footer-key-foreground": "#5B4636",  # Sepia
         "input-selection-background": "#AACCFF 50%",  # Soft blue with 50% alpha
-        "text-muted": "#777777",  # Lighter gray for subtle text
+        "text-muted": "#636363",  # Lighter gray for subtle text
     },
 )
 
@@ -206,6 +207,8 @@ high_contrast_yellow_black_theme = Theme(
     variables={
         "footer-key-foreground": "#FFFFFF",  # White
         "input-selection-background": "#FFFFFF 30%",  # White with 30% alpha
+        "text-error": "#ff6d6d",
+        "block-cursor-blurred-background": "#dedede4c",
     },
 )
 
@@ -229,6 +232,7 @@ ocean_depths_theme = Theme(
         "text-muted": "#ADD8E6",  # Light blue
         "statusbar-background": "#F0E68C",  # Sandy beige (for specific components like status bar)
         "statusbar-foreground": "#0A2342",  # Deep dark blue (text on status bar)
+        "text-error": "#ffa392",
     },
 )
 
@@ -249,7 +253,7 @@ solarized_dark_theme = Theme(
     variables={
         "footer-key-foreground": "#2aa198",  # cyan
         "input-selection-background": "#268bd2 40%",  # blue with 40% alpha
-        "text-muted": "#586e75",  # base01 (dimmed text)
+        "text-muted": "#879da5",  # base01 (dimmed text)
         "text-highlight": "#93a1a1",  # base1 (more important text)
     },
 )
@@ -271,7 +275,7 @@ solarized_light_theme = Theme(
     variables={
         "footer-key-foreground": "#2aa198",  # cyan
         "input-selection-background": "#268bd2 40%",  # blue with 40% alpha
-        "text-muted": "#93a1a1",  # base1 (dimmed text for light theme)
+        "text-muted": "#5c6a6a",  # base1 (dimmed text for light theme)
         "text-highlight": "#586e75",  # base01 (more important text for light theme)
     },
 )
@@ -293,9 +297,10 @@ monokai_pro_theme = Theme(
     variables={
         "footer-key-foreground": "#66D9EF",  # Blue
         "input-selection-background": "#AE81FF 40%",  # Purple with 40% alpha
-        "text-muted": "#75715E",  # Gray (comments)
+        "text-muted": "#b9b6a8",  # Gray (comments)
         "log-view-background": "#272822",  # Custom for specific widget example
         "log-view-foreground": "#E6DB74",  # Custom for specific widget example
+        "block-cursor-blurred-background": "#91cb1c4c",
     },
 )
 
@@ -316,7 +321,7 @@ gruvbox_dark_theme = Theme(
     variables={
         "footer-key-foreground": "#83a598",  # Bright Blue
         "input-selection-background": "#fabd2f 40%",  # Bright Yellow with 40% alpha
-        "text-muted": "#a89984",  # Gray
+        "text-muted": "#afa28e",  # Gray
     },
 )
 
@@ -337,7 +342,7 @@ gruvbox_light_theme = Theme(
     variables={
         "footer-key-foreground": "#458588",  # Dark Blue
         "input-selection-background": "#d65d0e 40%",  # Dark Orange with 40% alpha
-        "text-muted": "#7c6f64",  # Gray for light background
+        "text-muted": "#685d54",  # Gray for light background
     },
 )
 
@@ -379,8 +384,10 @@ earthy_nature_theme = Theme(
     variables={
         "footer-key-foreground": "#E2725B",  # Terracotta
         "input-selection-background": "#CD853F 40%",  # Peru with 40% alpha
-        "text-muted": "#BDB76B",  # Dark Khaki
+        "text-muted": "#e5e3c5",  # Dark Khaki
         "tree-control-background": "#3A322A",  # Darker Brown for tree view specific (example)
+        "text-error": "#f3dddd",
+        "block-cursor-blurred-background": "#3f27104c",
     },
 )
 
@@ -403,6 +410,9 @@ pastel_dreams_theme = Theme(
         "input-border-default": "#C9EBFB",  # Light Sky Blue for input border
         "button-default-foreground": "#BF8A7E",  # Muted Rose for default button text
         "button-confirm-foreground": "#7BAA8F",  # Muted Mint for confirm button text
+        "text-error": "#87575e",
+        "text-muted": "#636363",
+        "block-cursor-blurred-background": "#ff84564c",
     },
 )
 
@@ -426,6 +436,8 @@ sweet_sorbet_theme = Theme(
         "button-special-foreground": "#996570",  # Muted Dark Pink for special button text
         "progressbar-background": "#FFE0CC",  # Light peach track for progress bar
         "progressbar-color": "#FFB6C1",  # Raspberry fill for progress bar
+        "text-error": "#935f67",
+        "block-cursor-blurred-background": "#b6a4004c",
     },
 )
 
@@ -444,12 +456,14 @@ cloudy_day_theme = Theme(
     error="#DEB0B0",  # Soft Red
     dark=False,
     variables={
-        "text-muted": "#778899",  # Light Slate Gray for info text
+        "text-muted": "#607080",  # Light Slate Gray for info text
         "input-background": "#FFFFFF",  # White for input backgrounds
         "input-border-default": "#D0D8E0",  # Default input border
         "button-default-background": "#FAFAFA",  # Soft white for default buttons
         "button-default-foreground": "#5A6470",  # Cool dark gray for default button text
         "button-navigation-foreground": "#42505E",  # Text for navigation buttons
+        "text-error": "#836767",
+        "block-cursor-blurred-background": "#7c9dc84c",
     },
 )
 
@@ -473,6 +487,7 @@ kawaii_candy_theme = Theme(
         "markdown-h1-color": "#FF69B4",
         "markdown-h2-color": "#754C59",
         "markdown-link-color": "#7FFFD4",
+        "block-cursor-blurred-background": "#9595ea4c",
     },
 )
 
@@ -495,6 +510,8 @@ bunny_fluff_theme = Theme(
         "button-default-foreground": "#7A736E",  # Default button text color
         "footer-background": "#F0EBE8",
         "footer-foreground": "#8D8580",
+        "text-error": "#756666",
+        "block-cursor-blurred-background": "#a3a32f4c",
     },
 )
 
@@ -517,6 +534,7 @@ neon_sunset_drive_theme = Theme(
         "input-border-default": "#00FFFF",  # Cyan for input border
         "button-default-foreground": "#FFD700",  # Golden Yellow for default button text
         "button-action-foreground": "#FFFFFF",  # White for action button text
+        "block-cursor-blurred-background": "#00bdbd4c",
     },
 )
 
@@ -541,6 +559,7 @@ palm_mall_theme = Theme(
         "header-foreground": "#4B0082",
         "statusbar-background": "#4B0082",
         "statusbar-foreground": "#B0E0E6",  # Soft Cyan for status bar text
+        "text-error": "#9a4d60",
     },
 )
 
@@ -584,6 +603,8 @@ paradise_virtua_theme = Theme(
         "button-select-foreground": "#002030",  # Dark text for select buttons
         "titlebar-background": "#FF007F",  # Magenta Rose for title bar
         "titlebar-foreground": "#FFFFFF",  # White text for title bar
+        "text-error": "#ffe0e0",
+        "text-muted": "#dce9eb",
     },
 )
 
@@ -602,7 +623,7 @@ lost_artifacts_atari_theme = Theme(
     error="#B07070",  # Dusty Rose
     dark=True,
     variables={
-        "text-muted": "#70A0A0",  # Muted Cyan for descriptions
+        "text-muted": "#82acac",  # Muted Cyan for descriptions
         "button-critical-background": "#B07070",  # Dusty Rose for critical buttons
         "button-critical-foreground": "#FFFFFF",  # White text for critical buttons
     },
@@ -710,7 +731,7 @@ ghost_in_the_shell_theme = Theme(
     error="#907070",  # Very subtle desaturated red
     dark=True,
     variables={
-        "text-muted": "#888888",
+        "text-muted": "#9c9c9c",
         "input-border-default": "#555555",
         "statusbar-background": "#111111",
         "statusbar-foreground": "#A0A0A0",
@@ -736,10 +757,11 @@ retro_mint_chip_theme = Theme(
     error="#D2691E",  # Chocolate Brown/Sienna (error messages)
     dark=False,
     variables={
-        "text-muted": "#8C7853",  # Muted brown for less important text
+        "text-muted": "#716143",  # Muted brown for less important text
         "input-placeholder": "#BEB2A7",  # Lighter placeholder text
         "border-subtle": "#D1C7B7",  # Subtle border color
         "scrollbar-color": "#68B0AB",  # Primary color for scrollbar
+        "block-cursor-blurred-background": "#5098934c",
     },
 )
 
@@ -763,6 +785,7 @@ blueprint_tech_theme = Theme(
         "grid-line-major": "#3030A0",  # For schematic-like grids
         "grid-line-minor": "#181860",  # Fainter grid lines
         "code-background": "#000060",  # Background for code blocks
+        "text-muted": "#9f9fec",
     },
 )
 
@@ -805,10 +828,11 @@ twilight_lavender_fields_theme = Theme(
     error="#DB7093",  # PaleVioletRed (Dusky Rose/Muted Magenta)
     dark=True,
     variables={
-        "text-muted": "#B0A4C4",  # Muted light purple for less important text
+        "text-muted": "#bfb5cf",  # Muted light purple for less important text
         "focus-border": "#FFB6C1",  # Accent color for focus borders
         "progress-bar-color": "#9370DB",  # Primary color for progress bars
         "tooltip-background": "#483D8B",  # Surface color for tooltips
+        "text-error": "#e9a6bc",
     },
 )
 
@@ -828,7 +852,7 @@ golden_hour_desert_theme = Theme(
     error="#B22222",  # Rusty Red (Firebrick)
     dark=False,
     variables={
-        "text-muted": "#8B7D6B",  # Muted sandy brown
+        "text-muted": "#665b4e",  # Muted sandy brown
         "button-primary-hover-background": "#E06000",  # Darker orange for hover
         "link-color": "#007BA7",  # Cerulean blue for links
         "border-strong": "#A0522D",  # Sienna for stronger borders
@@ -855,6 +879,7 @@ industrial_gearworks_theme = Theme(
         "border-heavy": "#A9A9A9",  # DarkGray for heavier borders
         "widget-border": "#505050",  # Standard widget border
         "tooltip-background": "#4A4A4A",  # Tooltip background
+        "text-error": "#e49292",
     },
 )
 
@@ -874,7 +899,7 @@ coral_bloom_theme = Theme(
     error="#FF4081",  # Bright Pink (Material Pink A200)
     dark=False,
     variables={
-        "text-muted": "#778899",  # LightSlateGray
+        "text-muted": "#637484",  # LightSlateGray
         "list-item-active-background": "#FFEBCD",  # BlanchedAlmond (warm highlight)
         "highlight-primary": "#FF7F50 30%",  # Primary color with alpha for selections
         "badge-background": "#40E0D0",  # Secondary for badges
@@ -902,6 +927,7 @@ autumn_embers_theme = Theme(
         "log-date-foreground": "#F1C40F",  # Golden yellow for dates in logs
         "code-comment-color": "#A0522D",  # Sienna for code comments
         "button-hover-text": "#FFFFFF",
+        "text-error": "#d8a6a6",
     },
 )
 
@@ -921,10 +947,11 @@ zen_garden_theme = Theme(
     error="#CD5C5C",  # Terracotta/Muted Red (IndianRed)
     dark=False,
     variables={
-        "text-muted": "#707070",  # Medium gray for muted text
+        "text-muted": "#686868",  # Medium gray for muted text
         "border-zen": "#C0C0C0",  # Silver for subtle borders
         "input-focus-border": "#8FBC8F",  # Primary color for input focus border
         "container-background-alt": "#ECECEC",  # Alternative background for containers
+        "block-cursor-blurred-background": "#5f9f5f4c",
     },
 )
 
@@ -969,7 +996,7 @@ volcanic_ash_lava_theme = Theme(
     variables={
         "tooltip-background": "#3D3D3D",  # Darker tooltip background
         "border-accent": "#FF5A00",  # Use primary for prominent borders
-        "text-muted": "#777777",  # Muted grey for less important text
+        "text-muted": "#949494",  # Muted grey for less important text
         "scrollbar-color-hover": "#FF8C00",  # DarkOrange for scrollbar hover
     },
 )
@@ -994,6 +1021,7 @@ spring_meadowburst_theme = Theme(
         "text-highlight-bg": "#FFFFB3",  # Pale yellow for text selection background
         "input-border-active": "#7FFF00",  # Primary color for active input border
         "footer-background": "#D0E0D0",  # Light, earthy green for footer
+        "block-cursor-blurred-background": "#59b2004c",
     },
 )
 
@@ -1038,7 +1066,7 @@ ancient_papyrus_theme = Theme(
     variables={
         "blockquote-text": "#4A2E20",  # Darker brown for blockquote text
         "header-underline-color": "#0047AB",  # Primary color for header underlines
-        "text-muted": "#A08C78",  # Muted beige/brown for less important text
+        "text-muted": "#7a6856",  # Muted beige/brown for less important text
         "border-subtle": "#D2B48C",  # Tan for subtle borders
     },
 )
@@ -1063,6 +1091,8 @@ urban_stealth_camo_theme = Theme(
         "button-outline-focus": "#787269",  # Accent for button focus outline
         "panel-border": "#404552",  # Border for panels
         "placeholder-text": "#525860",  # Darker placeholder text
+        "text-error": "#cca1a1",
+        "block-cursor-blurred-background": "#677d8e4c",
     },
 )
 
@@ -1086,6 +1116,7 @@ confectionery_bliss_theme = Theme(
         "text-flavor-berry": "#800080",  # Purple for special flavor text
         "highlight-secondary": "#AFEEEE 40%",  # Secondary color with alpha for selection
         "button-text-primary": "#483263",  # Darker purple for text on primary buttons
+        "block-cursor-blurred-background": "#ff6f844c",
     },
 )
 
@@ -1109,6 +1140,7 @@ mystic_redwood_grove_theme = Theme(
         "log-level-debug": "#3AAFA9",  # Primary color for debug logs
         "code-background": "#243137",  # Background for code blocks
         "text-ephemeral": "#88B0A4",  # Muted teal for less important text
+        "text-error": "#da906f",
     },
 )
 
@@ -1132,6 +1164,7 @@ art_deco_metropolis_theme = Theme(
         "text-title": "#CAA472",  # Primary color for titles
         "widget-highlight-border": "#006A4E",  # Accent color for special widget borders
         "input-selection": "#455A64 50%",  # BlueGrey with alpha for input selection
+        "text-error": "#c47d7a",
     },
 )
 
@@ -1153,7 +1186,7 @@ desert_oasis_mirage_theme = Theme(
     variables={
         "water-text": "#00A2CA",  # Primary color for water-themed text
         "sand-dune-highlight": "#FAF0C8",  # Very light sand for highlights
-        "text-muted": "#8B7965",  # Muted sandy brown
+        "text-muted": "#786857",  # Muted sandy brown
         "border-strong": "#A0522D",  # Sienna for stronger borders
     },
 )
@@ -1178,6 +1211,8 @@ starlight_cinema_noir_theme = Theme(
         "text-subtle-contrast": "#CCCCCC",  # Lighter grey for subtitles or less critical text
         "button-critical-background": "#990000",  # Darker red for critical action buttons
         "dialog-border": "#444444",  # Border for dialogs
+        "text-error": "#e35f5f",
+        "block-cursor-blurred-background": "#f617224c",
     },
 )
 
@@ -1247,6 +1282,8 @@ magical_girl_transform_theme = Theme(
         "friendship-aura-bg": "#FFB6C1 30%",  # Primary pink with alpha for highlights
         "compact-mirror-border": "#C0C0C0",  # Silver for item borders
         "mascot-guide-text": "#4682B4",  # Steel blue for helper text
+        "text-error": "#86445a",
+        "block-cursor-blurred-background": "#ff3b9d4c",
     },
 )
 
@@ -1270,6 +1307,7 @@ jujutsu_sorcery_night_theme = Theme(
         "cursed-tool-sheen": "#A9A9A9",  # Dark grey for metallic tools
         "shikigami-outline": "#708090",  # Slate grey for summoned outlines
         "sukuna-tattoo-red": "#800000",  # Darker red for specific accents
+        "text-error": "#bb6969",
     },
 )
 
@@ -1293,6 +1331,8 @@ akira_neo_tokyo_grit_theme = Theme(
         "espers-power-glow": "#8A2BE2 40%",  # BlueViolet with alpha
         "government-data-blue": "#3366CC",  # Official blue for specific text
         "city-lights-yellow": "#FFFF66",  # Pale yellow for distant lights
+        "text-error": "#da8585",
+        "block-cursor-blurred-background": "#ff31314c",
     },
 )
 
@@ -1316,6 +1356,8 @@ scouting_legionnaire_theme = Theme(
         "uniform-strap-color": "#704214",  # Darker brown for details
         "titan-steam-white": "#F5F5F5 30%",  # Off-white with alpha for steam
         "flare-gun-green": "#2E8B57",  # SeaGreen for signals
+        "text-error": "#ce9c9c",
+        "block-cursor-blurred-background": "#6782394c",
     },
 )
 
@@ -1339,6 +1381,8 @@ saiyan_power_orange_theme = Theme(
         "scouter-display-green": "#00FF00",  # Bright green for scouter text
         "kame-house-roof": "#B22222",  # Firebrick for Namekian details
         "training-ground-earth": "#DEB887",  # BurlyWood for environment colors
+        "text-error": "#960000",
+        "block-cursor-blurred-background": "#a65b004c",
     },
 )
 
@@ -1385,6 +1429,7 @@ sakura_viewing_picnic_theme = Theme(
         "tatami-mat-beige": "#EEE8AA",  # PaleGoldenrod for surfaces
         "koi-pond-blue": "#87CEFA",  # LightSkyBlue for decorative elements
         "falling-petal-accent": "#FFC0CB 60%",  # Pink with alpha for subtle effects
+        "block-cursor-blurred-background": "#ff677e4c",
     },
 )
 
@@ -1799,7 +1844,7 @@ litestep_dark_theme = Theme(
     panel="#3a3a38",
     success="#8aa860",
     warning="#e0b040",
-    error="#e05a48",
+    error="#e26655",
     dark=True,
     variables={
         "ds-surface-panel": "#3a3a38",
@@ -1820,8 +1865,8 @@ litestep_dark_theme = Theme(
         "ds-status-info": "#a8b4c4",
         "ds-status-warning": "#e0b040",
         "ds-status-approval-required": "#c08a2a",
-        "ds-status-blocked": "#e05a48",
-        "ds-status-error": "#e05a48",
+        "ds-status-blocked": "#e26655",
+        "ds-status-error": "#e26655",
         "ds-status-paused": "#9a86b8",
         "ds-status-unsaved": "#e0b040",
         "ds-status-recovered": "#8aa860",

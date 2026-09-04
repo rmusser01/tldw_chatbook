@@ -17,7 +17,7 @@ $ds-text-muted: $text-muted;
 $ds-text-disabled: $text-disabled;
 $ds-action-focus: $primary;
 $ds-focus-fg: $ds-text-primary;
-$ds-focus-bg: #51677e;
+$ds-focus-bg: $block-cursor-blurred-background;
 $ds-focus-accent: $primary;
 $ds-input-focus-border: $primary;
 $ds-input-focus-bg: $ds-focus-bg;
@@ -30,9 +30,9 @@ $ds-status-warning: $warning;
 $ds-status-approval-required: $warning;
 $ds-status-blocked: $error;
 $ds-status-error: $error;
-$ds-status-error-readable: #ff8fa3;
-$ds-text-placeholder: #8a8a8a;
-$ds-text-disabled-readable: #8a8a8a;
+$ds-status-error-readable: $text-error;
+$ds-text-placeholder: $text-muted;
+$ds-text-disabled-readable: $text-muted;
 $ds-status-paused: $warning;
 $ds-status-unsaved: $warning;
 $ds-status-recovered: $success;
@@ -2421,6 +2421,25 @@ with stray left-edge border fragments), and padding 0 1 so the full
 #library-media-viewer-content-text,
 #library-media-viewer-content-markdown {
     max-width: 92;
+}
+
+/* task-31272 (critique #4, B cap_57): F6's first Reader stop IS this box
+   (``_MEDIA_WORKBENCH_FOCUS_TARGETS``), but nothing on screen said so --
+   a keyboard user could not tell the scroll keys had somewhere to land.
+   The cue tints the border the box ALREADY draws: an outline would paint
+   over the first and last TEXT rows of the document (the task-31221
+   lesson, third widget bitten by ``*:focus { outline: solid }``), and a
+   border on the inner ScrollView would cost two rows of reading surface.
+   ``:focus-within`` covers both modes: Raw focuses the inner ScrollView,
+   Rendered focuses this container itself (Textual's ``has_focus_within``
+   is true for the node itself as well as its descendants). */
+#library-media-viewer-content:focus-within {
+    border: solid $accent;
+}
+
+#library-media-viewer-content:focus,
+#library-media-viewer-content-text:focus {
+    outline: none;
 }
 
 #library-media-viewer-content-text {

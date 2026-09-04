@@ -79,7 +79,9 @@ async def test_late_media_detail_arrival_cannot_clobber_the_trash_view() -> None
         # one this open started.
         screen.query_one("#library-media-row-0", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
-        screen.query_one("#library-media-back", Button).press()
+        # task-31272: "‹ Back" is not composed in the three-pane shell, so
+        # leave through the seam the button and Escape both share.
+        screen._exit_library_media_viewer()
         await _wait_for_selector(screen, pilot, "#library-media-trash-open")
 
         screen.query_one("#library-media-trash-open", Button).press()

@@ -1177,7 +1177,7 @@ async def test_console_transcript_empty_state_renders_ready_activation_copy():
             "Choose a provider for this Console session",
         ),
         (
-            "Provider setup needed: OpenAI missing API key",
+            "Provider setup needed: API key missing for OpenAI",
             CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
             "Configure API and API key before sending",
         ),
@@ -1231,7 +1231,7 @@ async def test_console_empty_transcript_provider_recovery_label_matches_setup_bl
 
 def test_console_empty_recovery_action_keeps_provider_label_with_empty_tooltip():
     assert ChatScreen._console_empty_recovery_action_copy(
-        "Provider setup needed: OpenAI missing API key",
+        "Provider setup needed: API key missing for OpenAI",
         provider_action_label="Localized recovery label",
         provider_action_tooltip="",
     ) == ("Localized recovery label", "")
@@ -1353,7 +1353,7 @@ def test_console_disabled_reason_copy_prefers_setup_blocker():
             "Send blocked — choose a provider to continue",
         ),
         (
-            "Provider setup needed: OpenAI missing API key",
+            "Provider setup needed: API key missing for OpenAI",
             "Send blocked — add an API key to continue",
         ),
         (

@@ -3643,6 +3643,25 @@ with stray left-edge border fragments), and padding 0 1 so the full
     max-width: 92;
 }
 
+/* task-31272 (critique #4, B cap_57): F6's first Reader stop IS this box
+   (``_MEDIA_WORKBENCH_FOCUS_TARGETS``), but nothing on screen said so --
+   a keyboard user could not tell the scroll keys had somewhere to land.
+   The cue tints the border the box ALREADY draws: an outline would paint
+   over the first and last TEXT rows of the document (the task-31221
+   lesson, third widget bitten by ``*:focus { outline: solid }``), and a
+   border on the inner ScrollView would cost two rows of reading surface.
+   ``:focus-within`` covers both modes: Raw focuses the inner ScrollView,
+   Rendered focuses this container itself (Textual's ``has_focus_within``
+   is true for the node itself as well as its descendants). */
+#library-media-viewer-content:focus-within {
+    border: solid $accent;
+}
+
+#library-media-viewer-content:focus,
+#library-media-viewer-content-text:focus {
+    outline: none;
+}
+
 #library-media-viewer-content-text {
     /* task-22500: the widget sets its own height from the wrap index,
        bounded by the room its parent actually has (the parent's max-height

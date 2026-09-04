@@ -152,8 +152,9 @@ tool, code, and link styling keeps priority over immersive coloring.
   move the caret between wrapped lines. While you type, a dim ghost
   completion of the most recent matching past prompt may appear after the
   caret — press **Right** at the end of the draft to accept it.
-- **Ctrl+A** selects the whole draft; with that full selection active,
-  **Ctrl+C** copies it to the clipboard. **Ctrl+U** clears the draft;
+- **Ctrl+C** clears the draft while the composer owns the cursor. If you first
+  use **Ctrl+A** to select the whole draft, **Ctrl+C** copies it instead.
+  **Ctrl+U** also clears the draft; **Ctrl+Z** restores an accidental clear;
   **Ctrl+W** deletes the word left of the caret.
 - **PageUp / PageDown** scroll the transcript — the composer never uses
   paging keys.
@@ -421,8 +422,9 @@ Composer:
 | Ctrl+J | Insert a newline (works in any terminal) |
 | Shift+Enter | Insert a newline (where the terminal delivers it) |
 | Ctrl+A | Select the whole draft |
-| Ctrl+C | Copy the draft (with the full selection active) |
+| Ctrl+C | Clear the draft; copy it instead when the full selection is active |
 | Ctrl+U | Clear the draft |
+| Ctrl+Z | Undo the last edit, including a cleared draft |
 | Ctrl+W | Delete the word left of the caret |
 | Home / End | Move the caret to the start / end of the draft |
 | Up / Down | Recall past prompts on the draft's first/last row; move the caret between wrapped rows otherwise |

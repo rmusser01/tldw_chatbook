@@ -539,6 +539,9 @@ async def test_escaped_chat_stash_keeps_segment_payload_and_restore_consistent()
             parse=Mock(side_effect=AssertionError("pasted body must not parse"))
         ),
         _dispatch_console_draft_send=dispatch,
+        # PRD A8: the real screen answers a mounted question card here; this
+        # stub has none, so the send must fall through to dispatch.
+        _answer_pending_question_with_draft=lambda draft: False,
     )
 
     assert await ChatScreen._send_console_message_from_visible_action(screen) is True

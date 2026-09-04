@@ -20,7 +20,9 @@ from Tests.UI.test_settings_configuration_hub import (
 from tldw_chatbook.Chat import provider_setup_persistence as provider_persistence_module
 from tldw_chatbook.Chat.provider_test_evidence import ProviderProbeResult
 from tldw_chatbook.config import ConfigMutationResult
-from tldw_chatbook.UI.Screens import settings_screen as settings_screen_module
+from tldw_chatbook.UI.Screens import (
+    settings_endpoint_probe as settings_endpoint_probe_module,
+)
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
     SettingsEndpointProbeOutcome,
@@ -282,7 +284,11 @@ async def test_exact_probe_evidence_survives_returned_model_selection_and_save(
             model_ids=("model-a", "model-b"),
         )
 
-    monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
+    monkeypatch.setattr(
+        settings_endpoint_probe_module,
+        "probe_settings_endpoint",
+        fake_probe,
+    )
     monkeypatch.setattr(
         provider_persistence_module,
         "apply_settings_mutation_to_cli_config",
@@ -349,7 +355,11 @@ async def test_exact_draft_key_probe_evidence_survives_successful_commit(
             model_ids=("model-a",),
         )
 
-    monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
+    monkeypatch.setattr(
+        settings_endpoint_probe_module,
+        "probe_settings_endpoint",
+        fake_probe,
+    )
     monkeypatch.setattr(
         provider_persistence_module,
         "apply_settings_mutation_to_cli_config",
