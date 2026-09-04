@@ -339,6 +339,7 @@ class LibraryMediaContentSearchControls(Vertical):
         query: str,
         matches: tuple[int, ...],
         match_index: int,
+        focus_on_mount: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -346,19 +347,24 @@ class LibraryMediaContentSearchControls(Vertical):
         self.query = query
         self.matches = matches
         self.match_index = match_index
+        self.focus_on_mount = focus_on_mount
         self.set_class(bool(self.query), self.ACTIVE_SEARCH_CLASS)
 
     def on_mount(self) -> None:
-        """Take focus into the input on the Find-gesture mount (task-31237).
+        """Take focus into the input only on the Find-gesture mount.
 
-        The bar now mounts only when the Find action opens it (or a query
-        is already applied). On the gesture mount -- empty query -- the
-        input takes focus from THIS widget's own post-refresh hook (its
-        children exist by then), because no screen-level defer can order
-        itself after a nested recompose-mount; an active-query remount
-        (match navigation, mode flips) never steals focus.
+        task-31269 (critique #4 P0): inferring the gesture from an empty
+        query made EVERY mount with no query steal focus -- each ]/[ item
+        load in Analysis mode, and any walk with the bar still empty,
+        parked the caret in this Input and the next key was typed. The
+        gesture is now an explicit token the screen sets in the Find
+        handler and the viewer spends on the one compose that follows;
+        every other mount (item change, mode flip, match navigation)
+        leaves focus alone. The focus still runs from THIS widget's
+        post-refresh hook because no screen-level defer can order itself
+        after a nested recompose-mount (task-31237).
         """
-        if not self.query:
+        if self.focus_on_mount:
             self.call_after_refresh(self._focus_search_input)
 
     def _focus_search_input(self) -> None:

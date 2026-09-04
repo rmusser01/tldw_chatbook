@@ -204,7 +204,7 @@ item-specific empty state; it does not silently switch modes.
 
 | Button | What it does |
 |---|---|
-| "Find" | Opens the in-item search bar (collapsed until then) focused and ready to type; this never filters Items. Escape closes the bar again. |
+| "Find" | Opens the search bar for the tab you are reading — the transcript on Read, the analysis on Analysis — focused and ready to type; a second press or Escape closes it. Walking with `]`/`[` keeps an active query but never moves your cursor into the field. This never filters Items. |
 | "Use in Console" | Stages this item as context for your next Console message. |
 | "Read later" ↔ "Remove later" | Toggles the loaded item's persisted reading-list state. |
 | "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. |
@@ -247,8 +247,9 @@ them one by one, with your place and progress saved between visits.
   that still exist, and a set whose items were all removed reports "No items
   to review" instead of completing.
 
-*Verified against fix/media-review-continuity — 2026-09-04 (task-31233/34/36/38:
-live create-from-selection → every-entry resume → dismiss-undo pass in tmux).*
+*Verified against fix/media-wave4-a — 2026-09-04 (task-31269: Analysis-mode [ ] walk over
+three items, Find on the Analysis tab, Escape, Find toggle, all live in tmux 235x52; the earlier
+task-31233/34/36/38 create-from-selection → every-entry resume → dismiss-undo pass still holds).*
 
 ### Conversations
 

@@ -2660,6 +2660,10 @@ class LibraryScreen(BaseAppScreen):
         # action opens it -- a permanently open "Search content…" input
         # duplicated the Find button and spent 3 rows on every fresh item.
         self._library_media_find_open: bool = False
+        # task-31269: one-shot Find-gesture token; spent by the next viewer
+        # build/sync so an item change can never move focus into the
+        # search Input.
+        self._library_media_find_focus_pending: bool = False
         # task-22209: in-content match list for the open item, memoized on
         # (detail object identity, query). Both the query submit and every
         # Prev/Next click need it, and deriving it costs a full content
@@ -40479,6 +40483,7 @@ class LibraryScreen(BaseAppScreen):
             content_match_index=self._library_media_content_match_index,
             content_mode=self._library_media_content_mode,
             find_open=self._library_media_find_open,
+            find_focus_pending=self._consume_library_media_find_focus(),
             loading=(
                 self._library_media_reader_session.pending_request is not None
                 and self._library_media_reader_session.error is None
@@ -40723,6 +40728,7 @@ class LibraryScreen(BaseAppScreen):
             and viewer.content_match_index == self._library_media_content_match_index
             and viewer.content_mode == self._library_media_content_mode
             and viewer.find_open == self._library_media_find_open
+            and not self._library_media_find_focus_pending
             and viewer.error_message == (self._library_media_reader_session.error or "")
             and viewer.reader_mode == self._library_media_reader_session.mode
             and viewer.more_open == self._library_media_reader_session.more_open
@@ -40768,6 +40774,7 @@ class LibraryScreen(BaseAppScreen):
             viewer.content_match_index = self._library_media_content_match_index
             viewer.content_mode = self._library_media_content_mode
             viewer.find_open = self._library_media_find_open
+            viewer.find_focus_pending = self._consume_library_media_find_focus()
             viewer.loading = loading
             viewer.loading_message = loading_message
             viewer.error_message = self._library_media_reader_session.error or ""
@@ -41060,24 +41067,37 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_content_query = ""
         self._library_media_content_match_index = 0
 
+    def _consume_library_media_find_focus(self) -> bool:
+        """Return and clear the one-shot Find-gesture focus token (task-31269)."""
+        pending = self._library_media_find_focus_pending
+        self._library_media_find_focus_pending = False
+        return pending
+
     @on(Button.Pressed, "#library-media-reader-find")
     def handle_library_media_reader_find(self, event: Button.Pressed) -> None:
-        """Take Find to the loaded item's content body.
+        """Open (or close) the Find bar for the tab being read.
 
         Args:
             event: The Find button press.
         """
         event.stop()
-        # task-28026: Find is a real Analysis->Read transition too, so it
-        # clears any active analysis search before focusing the transcript
-        # find bar -- the same reset the Reader mode buttons apply.
-        self._reset_library_media_search_on_mode_change("read")
-        # task-31237: the bar is collapsed until this gesture opens it
-        # (AFTER the reset above, which closes it as part of the mode seam).
-        self._library_media_find_open = True
-        self._library_media_reader_session = set_mode(
-            self._library_media_reader_session, "read"
+        if self._library_media_find_open:
+            # task-31269 AC4: Find is a toggle -- a second press closes the
+            # bar (live: it did nothing while the bar was open).
+            self._close_library_media_find()
+            self._sync_library_media_viewer_or_recompose()
+            return
+        # task-31269: Find searches the tab you are reading. The Analysis
+        # tab's bar is gated exactly like Read's now, so Find no longer
+        # jumps Analysis -> Read (task-28026's transition predates the
+        # collapsed bar). A same-mode reset is a no-op by design.
+        self._reset_library_media_search_on_mode_change(
+            self._library_media_reader_session.mode
         )
+        # task-31237: the bar is collapsed until this gesture opens it; the
+        # token below is what lets its mount take focus -- once.
+        self._library_media_find_open = True
+        self._library_media_find_focus_pending = True
         self._sync_library_media_viewer_or_recompose()
         self.call_after_refresh(self._focus_library_media_content_search_input)
 
