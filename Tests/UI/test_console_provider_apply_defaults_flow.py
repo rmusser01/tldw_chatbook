@@ -75,6 +75,9 @@ from tldw_chatbook.UI.Console_Modules.left_rail import (
 )
 from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
 from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
+from tldw_chatbook.Widgets.Console.console_settings_summary import (
+    ConsoleSettingsSummary,
+)
 from tldw_chatbook.config import load_settings
 
 
@@ -1200,6 +1203,69 @@ async def test_vllm_console_handoff_replaces_only_active_session_without_config_
         assert summary.model_row == "Model: chatbook-vllm (Endpoint not saved)"
         assert "127.0.0.1:8000" in summary.endpoint_row
         assert summary.readiness_label == "Endpoint not saved"
+        assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
+
+
+@pytest.mark.asyncio
+async def test_vllm_console_handoff_rolls_back_after_post_mutation_sync_failure(
+    monkeypatch,
+) -> None:
+    """A sync exception after store mutation must restore every active projection."""
+
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+    from tldw_chatbook.UI.Navigation.vllm_handoff import VllmConsoleIntent
+
+    app = _console_app()
+    _, target = _install_ready_vllm_target(app)
+    harness = _ConsoleFlowHarness(app)
+
+    async with harness.run_test(size=(120, 42)) as pilot:
+        console = harness.screen_stack[-1]
+        assert isinstance(console, ChatScreen)
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        session_store = console._ensure_console_chat_store()
+        before = console._session._active_console_session_settings()
+        session_id = session_store.active_session_id
+        assert before is not None and session_id is not None
+        controller = console._ensure_console_chat_controller()
+        controller_before = (
+            controller.provider,
+            controller.model,
+            controller.base_url,
+        )
+        summary_widget = console.query_one(
+            "#console-settings-summary",
+            ConsoleSettingsSummary,
+        )
+        original_sync = console._sync_console_settings_summary
+        calls = 0
+
+        def sync_then_raise_once() -> None:
+            nonlocal calls
+            calls += 1
+            original_sync()
+            if calls == 1:
+                raise RuntimeError("controlled post-mutation sync failure")
+
+        monkeypatch.setattr(console, "_sync_console_settings_summary", sync_then_raise_once)
+        app.pending_handoffs.stage(
+            HandoffChannel.VLLM_CONSOLE,
+            VllmConsoleIntent.from_target(target),
+        )
+
+        assert console.consume_pending_vllm_console_intent() is False
+        assert session_store.active_session_id == session_id
+        assert session_store.session_settings(session_id) == before
+        assert (
+            controller.provider,
+            controller.model,
+            controller.base_url,
+        ) == controller_before
+        assert summary_widget.state == console._build_console_settings_summary_state()
+        assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
+
+        monkeypatch.setattr(console, "_sync_console_settings_summary", original_sync)
+        assert console.consume_pending_vllm_console_intent() is True
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
 
 

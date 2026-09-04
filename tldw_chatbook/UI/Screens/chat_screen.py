@@ -7445,7 +7445,7 @@ class ChatScreen(BaseAppScreen):
         session_store = None
         session_id = None
         current = None
-        replaced = False
+        replacement_started = False
         try:
             intent = claim.value
             if type(intent) is not VllmConsoleIntent:
@@ -7473,8 +7473,8 @@ class ChatScreen(BaseAppScreen):
             )
             if errors:
                 raise ValueError("vLLM Console session settings are invalid")
+            replacement_started = True
             self._session._replace_active_console_session_settings(next_settings)
-            replaced = True
             if (
                 not self.is_attached
                 or session_store.active_session_id != session_id
@@ -7483,7 +7483,11 @@ class ChatScreen(BaseAppScreen):
             ):
                 raise RuntimeError("vLLM Console handoff changed during adoption")
         except BaseException as error:
-            if replaced and session_store is not None and session_id is not None:
+            if (
+                replacement_started
+                and session_store is not None
+                and session_id is not None
+            ):
                 try:
                     session_store.replace_session_settings(session_id, current)
                     if session_store.active_session_id == session_id:

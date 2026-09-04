@@ -18,7 +18,7 @@ _WINDOWS_ROOT = re.compile(r"^[A-Za-z]:[/\\]")
 
 
 def _is_admissible_model_id(value: object) -> bool:
-    if not isinstance(value, str) or not 1 <= len(value) <= 120:
+    if type(value) is not str or not 1 <= len(value) <= 120:
         return False
     if value != " ".join(value.split()) or not value.isprintable():
         return False

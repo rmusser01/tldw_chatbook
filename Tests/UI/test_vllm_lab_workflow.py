@@ -515,6 +515,30 @@ async def test_vllm_handoff_intents_are_secret_free_exact_and_strict():
         )
 
 
+async def test_vllm_handoff_intents_reject_mutable_string_subclasses():
+    """Exact handoff text must not retain subclass attributes or behavior."""
+
+    from tldw_chatbook.UI.Navigation.vllm_handoff import (
+        VllmConsoleIntent,
+        VllmDefaultIntent,
+    )
+
+    class MutableModelId(str):
+        def __new__(cls, value: str):
+            instance = super().__new__(cls, value)
+            instance.extras = []
+            return instance
+
+    model_id = MutableModelId("chatbook-vllm")
+    for intent_type in (VllmConsoleIntent, VllmDefaultIntent):
+        with pytest.raises((TypeError, ValueError)):
+            intent_type(
+                api_url="http://127.0.0.1:8000/v1/chat/completions",
+                model_id=model_id,
+                generation=7,
+            )
+
+
 async def test_handoff_buttons_enable_only_for_current_verified_target():
     """Stale readiness must never leave either cross-screen action enabled."""
 

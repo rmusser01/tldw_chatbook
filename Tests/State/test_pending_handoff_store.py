@@ -28,6 +28,10 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import (
 from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
     ConversationSettingsReturnIntent,
 )
+from tldw_chatbook.UI.Navigation.vllm_handoff import (
+    VllmConsoleIntent,
+    VllmDefaultIntent,
+)
 from tldw_chatbook.UI.Screens.study_scope_models import (
     STUDY_INITIAL_SECTIONS,
     StudyScopeContext,
@@ -90,6 +94,51 @@ def _claim_title(store: PendingHandoffStore, channel: HandoffChannel) -> str:
     title = claim.value.title
     assert store.acknowledge(claim) is True
     return title
+
+
+@pytest.mark.parametrize(
+    ("channel", "intent_type"),
+    (
+        (HandoffChannel.VLLM_CONSOLE, VllmConsoleIntent),
+        (HandoffChannel.VLLM_DEFAULT, VllmDefaultIntent),
+    ),
+)
+def test_vllm_channels_reject_mutable_model_text_during_stage_and_claim(
+    channel,
+    intent_type,
+) -> None:
+    """Detached reconstruction must reject subclass state at both boundaries."""
+
+    class MutableModelId(str):
+        def __new__(cls, value: str):
+            instance = super().__new__(cls, value)
+            instance.extras = []
+            return instance
+
+    forged = object.__new__(intent_type)
+    object.__setattr__(
+        forged,
+        "api_url",
+        "http://127.0.0.1:8000/v1/chat/completions",
+    )
+    object.__setattr__(forged, "model_id", MutableModelId("chatbook-vllm"))
+    object.__setattr__(forged, "generation", 7)
+
+    with pytest.raises(HandoffValueError):
+        PendingHandoffStore().stage(channel, forged)
+
+    store = PendingHandoffStore()
+    revision = store.stage(
+        channel,
+        intent_type(
+            api_url="http://127.0.0.1:8000/v1/chat/completions",
+            model_id="chatbook-vllm",
+            generation=7,
+        ),
+    )
+    store._slots[channel].pending = (revision, forged)
+    with pytest.raises(HandoffValueError):
+        store.claim(channel)
 
 
 def test_stage_replaces_unclaimed_value_with_channel_local_revision() -> None:

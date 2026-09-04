@@ -4,7 +4,7 @@ title: Adopt verified vLLM targets into Console
 status: Done
 assignee: []
 created_date: '2026-09-03 22:33'
-updated_date: '2026-09-04 03:03'
+updated_date: '2026-09-04 03:17'
 labels:
   - vllm
   - lab
@@ -53,4 +53,8 @@ Console performs one generation-fenced active-session replacement, preserves dif
 Modified the vLLM setup view, LLMScreen, pending handoff store, Console, canonical Settings screen, and focused Console/Lab/session tests; no app.py change was required because TldwCli already owns PendingHandoffStore and Task 2 already installs the app-scoped readiness owner.
 
 Verification: focused Lab, Console/Settings/provider-persistence, pending-store, and upstream vLLM suites pass; Ruff, focused handoff/store mypy, py_compile, and git diff --check pass. The broad legacy screen mypy invocation still reports its existing baseline errors; no scoped seam errors remain. ADR required: yes. ADR path: backlog/decisions/115-vllm-lab-console-readiness-and-profiles.md.
+
+Fix Round 1 plan: reproduce post-mutation Console sync failure and exact-text boundary defects; add compensating rollback and exact built-in string validation; rerun Task 3 and upstream focused evidence before returning Done.
+
+Fix Round 1: compensation now begins before the existing active-session replacement owner is invoked, so exceptions from either downstream projection sync restore the captured session and resynchronize the active controller/summary before releasing the claim for exact retry. The Task 3 model boundary now accepts only exact built-in str values, preventing detached intents from retaining subclass state. Added focused regression coverage for post-mutation failure, projection restoration, replay success, and mutable model text rejection at construction, stage, and claim. All Task 3 focused, pending-store, upstream vLLM, Ruff, focused mypy, py_compile, and diff checks pass; ADR-115 remains the governing contract.
 <!-- SECTION:NOTES:END -->
