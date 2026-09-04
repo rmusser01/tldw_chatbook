@@ -436,6 +436,103 @@ def test_create_and_open_review_set_warns_on_truncation(tmp_path):
     assert any(severity == "warning" for _msg, severity in fake._notices)
 
 
+def test_create_notifies_when_it_pauses_an_in_progress_active_set(tmp_path):
+    """task-31238: creating a set silently deactivated the active one.
+
+    A walk in progress just stopped being resumable-by-] with no
+    acknowledgment. The create now names the paused set and its live
+    progress, and points at the resume path.
+    """
+    service = _service(tmp_path)
+    old = service.create_review_set(
+        "Read later", origin="read_later", items=[(10, "A"), (11, "B")]
+    )
+    service.mark_item_done(old, 10, True)
+    service.set_cursor(old, 1)
+    fake = _entry_fake(service)
+    fake._review_set_live_ids = lambda ids: {int(i) for i in ids}
+
+    LibraryScreen._create_and_open_review_set(
+        fake, "New", "browse", [(20, "C")]
+    )
+
+    assert any(
+        "Paused" in message
+        and "Read later" in message
+        and "2 of 2 · 1 reviewed" in message
+        for message, _severity in fake._notices
+    )
+
+
+def test_create_stays_quiet_when_no_active_set_was_displaced(tmp_path):
+    """task-31238 AC#3: no pause notice when nothing was displaced."""
+    fake = _entry_fake(_service(tmp_path))
+
+    LibraryScreen._create_and_open_review_set(
+        fake, "New", "browse", [(20, "C")]
+    )
+
+    assert not any("Paused" in message for message, _severity in fake._notices)
+
+
+def test_create_stays_quiet_when_the_displaced_set_was_complete(tmp_path):
+    """A finished set being displaced loses nothing — no pause notice."""
+    service = _service(tmp_path)
+    old = service.create_review_set("Done", origin="browse", items=[(10, "A")])
+    service.mark_item_done(old, 10, True)
+    service.refresh_completion(old, lambda _id: True)
+    fake = _entry_fake(service)
+    fake._review_set_live_ids = lambda ids: {int(i) for i in ids}
+
+    LibraryScreen._create_and_open_review_set(
+        fake, "New", "browse", [(20, "C")]
+    )
+
+    assert not any("Paused" in message for message, _severity in fake._notices)
+
+
+def test_create_from_selection_exits_select_mode_before_landing(
+    tmp_path, monkeypatch
+):
+    """task-31233: the Select-path create leaves select mode, then lands.
+
+    Critique #3 P1: "Review selected" toasted "Reviewing 2 items." but left
+    the user in select mode with a blank reader — the viewer open at the end
+    of _create_and_open_review_set never surfaced because select mode was
+    still armed (it is cleared only by Done/bulk-delete). The exit must come
+    BEFORE the open, sync the CANVAS (the viewer open syncs only the viewer
+    in place — live-verified stale select toolbar without it), and not
+    announce a discard — the selection was consumed, not thrown away.
+    """
+    import tldw_chatbook.UI.Screens.library_screen as screen_module
+
+    service = _service(tmp_path)
+    fake = _entry_fake(service)
+    fake._library_media_select_mode = True
+    events: list[object] = []
+    fake._exit_library_media_select_mode = (
+        lambda *, announce_discard: events.append(("exit", announce_discard))
+    )
+    monkeypatch.setattr(
+        screen_module,
+        "_sync_library_canvas",
+        lambda _screen, kind, **_kw: events.append(("canvas_sync", kind)),
+    )
+    fake._open_library_media_viewer = lambda media_id: events.append(
+        ("open", media_id)
+    )
+
+    LibraryScreen._create_and_open_review_set(
+        fake, "2 selected items", "selection", [(10, "A"), (11, "B")]
+    )
+
+    assert events == [
+        ("exit", False),
+        ("canvas_sync", "media"),
+        ("open", "local:media:10"),
+    ]
+
+
 def _worker_fake(service, *, search_media, scope=None):
     """Fake screen for the entry-point workers, wiring the real methods."""
     fake = _entry_fake(service)
@@ -584,7 +681,8 @@ async def test_picker_worker_lists_rows_and_opens_the_chosen_set(tmp_path):
     assert {row[0] for row in rows} == {first, second}
     by_id = {row[0]: row for row in rows}
     assert by_id[second][3] is True  # newest set was the active one
-    assert by_id[first][2] == "1 of 1 · 0 reviewed"
+    # task-31238: the detail label carries the created date after progress.
+    assert by_id[first][2] == "1 of 1 · 0 reviewed · 2026-09-02 00:00"
     active = service.get_active_review_set()
     assert active is not None and active.set_id == first  # switched (one-active)
     assert fake._opened == ["local:media:10"]  # landed at its cursor
@@ -626,20 +724,151 @@ async def test_picker_worker_open_persists_a_resolved_tombstoned_cursor(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_picker_worker_dismiss_soft_deletes_without_opening(tmp_path):
+async def test_picker_worker_dismiss_soft_deletes_and_arms_the_undo_receipt(
+    tmp_path, monkeypatch
+):
+    import tldw_chatbook.UI.Screens.library_screen as screen_module
+
     service = _service(tmp_path)
     set_id = service.create_review_set("X", origin="browse", items=[(10, "A")])
     fake = _picker_fake(service, decision=("dismiss", set_id))
+    canvas_syncs: list[str] = []
+    monkeypatch.setattr(
+        screen_module,
+        "_sync_library_canvas",
+        lambda _screen, kind, **_kw: canvas_syncs.append(kind),
+    )
 
     await fake._review_set_picker_worker()
 
     assert service.list_review_sets() == ()
     assert fake._opened == []
-    assert fake._notices  # the dismissal is confirmed
+    # task-31236: the confirmation is the undo receipt, not a toast -- a
+    # one-click dismissal of a mid-walk set must be recoverable in place.
+    # (set_id, name, was_active) so Undo can restore the activation too.
+    assert fake._library_media_review_dismiss_receipt == (set_id, "X", True)
     # Dismissing the ACTIVE set must refresh the Reader chrome -- the footer
     # kept advertising "] next in set · 1 of 3" after a live dismissal
-    # (live-verified 2026-09-02).
+    # (live-verified 2026-09-02). The CANVAS sync is separate and required:
+    # the viewer seam updates only the viewer in place, so the receipt row
+    # never mounted without it (live-verified 2026-09-04).
     assert fake._syncs == [True]
+    assert canvas_syncs == ["media"]
+
+
+@pytest.mark.asyncio
+async def test_dismiss_undo_worker_restores_the_set(tmp_path, monkeypatch):
+    """task-31236 AC#2: Undo brings the set back — marks, cursor, active."""
+    import tldw_chatbook.UI.Screens.library_screen as screen_module
+
+    monkeypatch.setattr(
+        screen_module, "_sync_library_canvas", lambda *_a, **_kw: None
+    )
+    service = _service(tmp_path)
+    set_id = service.create_review_set(
+        "X", origin="browse", items=[(10, "A"), (11, "B")]
+    )
+    service.mark_item_done(set_id, 10, True)
+    service.set_cursor(set_id, 1)
+    fake = _picker_fake(service, decision=("dismiss", set_id))
+    await fake._review_set_picker_worker()
+    assert service.list_review_sets() == ()
+
+    fake._review_dismiss_undo_worker = MethodType(
+        LibraryScreen._review_dismiss_undo_worker, fake
+    )
+    await fake._review_dismiss_undo_worker(
+        fake._library_media_review_dismiss_receipt
+    )
+
+    restored = service.get_active_review_set()
+    assert restored is not None and restored.set_id == set_id
+    assert restored.cursor == 1
+    assert [item.done for item in restored.items] == [True, False]
+    assert fake._library_media_review_dismiss_receipt is None
+    assert fake._syncs == [True, True]  # chrome refreshed after the restore
+
+
+def test_dismiss_undo_and_receipt_close_cannot_race(tmp_path):
+    """Qodo on #2366: one in-flight undo owns the receipt until it settles.
+
+    Without the guard, Dismiss could clear the receipt while the undo's DB
+    call was pending (the worker then restored a set whose receipt was
+    already gone), and a second Undo press would CANCEL the first through
+    the exclusive worker group.
+    """
+    scheduled: list = []
+    fake = SimpleNamespace(
+        _library_media_review_dismiss_receipt=("set-1", "X", True),
+        _review_dismiss_undo_in_flight=False,
+        run_worker=lambda coro, **_kw: (scheduled.append(coro), coro.close()),
+        _review_dismiss_undo_worker=lambda receipt: (None for _ in ()),
+    )
+    event = SimpleNamespace(stop=lambda: None)
+
+    LibraryScreen.handle_library_media_review_dismiss_undo(fake, event)
+    assert fake._review_dismiss_undo_in_flight is True
+
+    # A second Undo press while in flight schedules nothing (it would
+    # cancel the first via the exclusive group).
+    LibraryScreen.handle_library_media_review_dismiss_undo(fake, event)
+    assert len(scheduled) == 1
+
+    # Receipt-close while in flight is refused: the receipt still stands.
+    LibraryScreen.handle_library_media_review_dismiss_receipt_close(
+        fake, event
+    )
+    assert fake._library_media_review_dismiss_receipt == ("set-1", "X", True)
+
+
+@pytest.mark.asyncio
+async def test_dismiss_undo_worker_clears_the_in_flight_flag(
+    tmp_path, monkeypatch
+):
+    """The flag drops on success AND on failure (finally)."""
+    import tldw_chatbook.UI.Screens.library_screen as screen_module
+
+    monkeypatch.setattr(
+        screen_module, "_sync_library_canvas", lambda *_a, **_kw: None
+    )
+    service = _service(tmp_path)
+    set_id = service.create_review_set("X", origin="browse", items=[(10, "A")])
+    fake = _picker_fake(service, decision=None)
+    fake._review_dismiss_undo_in_flight = True
+    fake._review_dismiss_undo_worker = MethodType(
+        LibraryScreen._review_dismiss_undo_worker, fake
+    )
+    fake._library_media_review_dismiss_receipt = (set_id, "X", True)
+
+    await fake._review_dismiss_undo_worker((set_id, "X", True))
+    assert fake._review_dismiss_undo_in_flight is False
+
+    fake._review_dismiss_undo_in_flight = True
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("db gone")
+
+    fake._review_set_service = boom
+    await fake._review_dismiss_undo_worker((set_id, "X", True))  # no raise
+    assert fake._review_dismiss_undo_in_flight is False
+
+
+@pytest.mark.asyncio
+async def test_dismiss_undo_worker_failure_notifies(tmp_path):
+    service = _service(tmp_path)
+    fake = _picker_fake(service, decision=None)
+    fake._review_dismiss_undo_worker = MethodType(
+        LibraryScreen._review_dismiss_undo_worker, fake
+    )
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("db gone")
+
+    fake._review_set_service = boom
+
+    await fake._review_dismiss_undo_worker(("set-1", "X", True))  # no raise
+
+    assert any(severity == "error" for _msg, severity in fake._notices)
 
 
 @pytest.mark.asyncio
@@ -924,10 +1153,12 @@ def _auto_resume_fake(service, *, live_ids=None):
 
 
 @pytest.mark.asyncio
-async def test_auto_resume_opens_the_active_sets_cursor_item_once(tmp_path):
-    # task-28245 AC#1: entering the media area with an active set loads its
-    # cursor item without a keypress -- but only ONCE per set per screen
-    # session, so Escape-to-list + re-entry shows the list, not a yank loop.
+async def test_auto_resume_opens_the_cursor_item_on_every_entry(tmp_path):
+    # task-31234 (SUPERSEDES task-28245's once-per-set AC — user ruling at
+    # the critique #3 close): EVERY entry to the media area with an active
+    # set lands on its cursor item. The once-per-set gate re-armed the
+    # banner over whatever document was showing on re-entry — the frame
+    # restored, the item not, and the first ] became a silent sync.
     service = _service(tmp_path)
     set_id = service.create_review_set(
         "X", origin="browse", items=[(10, "A"), (11, "B")]
@@ -939,7 +1170,7 @@ async def test_auto_resume_opens_the_active_sets_cursor_item_once(tmp_path):
     assert fake._opened == ["local:media:11"]
 
     await fake._auto_resume_review_set_worker()
-    assert fake._opened == ["local:media:11"]  # once per set
+    assert fake._opened == ["local:media:11", "local:media:11"]  # every entry
 
 
 def test_auto_resume_runs_in_its_own_worker_group():
@@ -966,6 +1197,24 @@ def test_auto_resume_runs_in_its_own_worker_group():
 
     assert recorded["group"] != "library_review_set"
     assert recorded["exclusive"] is True  # still debounces its own re-entries
+
+
+@pytest.mark.asyncio
+async def test_auto_resume_persists_a_resolved_tombstoned_cursor(tmp_path):
+    # Qodo on #2366 (the Qodo #2337 pattern, third path): the landing
+    # resolver opened the item resolved from a tombstoned cursor without
+    # persisting that position — a later restore of the deleted media could
+    # yank a subsequent entry backward to the stale cursor.
+    service = _service(tmp_path)
+    set_id = service.create_review_set(
+        "X", origin="browse", items=[(10, "A"), (11, "B")]
+    )
+    fake = _auto_resume_fake(service, live_ids={11})
+
+    await fake._auto_resume_review_set_worker()
+
+    assert fake._opened == ["local:media:11"]
+    assert service.get_review_set(set_id).cursor == 1  # persisted resolve
 
 
 @pytest.mark.asyncio

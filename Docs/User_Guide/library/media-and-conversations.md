@@ -218,11 +218,14 @@ them one by one, with your place and progress saved between visits.
 - **Create** — **Review these** on the media list pins the whole filtered
   result (in the current sort order, capped at 500 items with a notice when
   trimmed); in Select mode, **Review selected** pins just the checked items in
-  list order. Creating a set activates it and opens its first item in the
-  Reader.
+  list order and leaves Select mode. Creating a set activates it and opens its
+  first item in the Reader. If another set was mid-walk, a notice names it and
+  its progress ("Paused 'Read later' at 1 of 2 · 0 reviewed. Resume from
+  Sets.") — creating never silently strands a walk.
 - **Resume on entry** — opening the media area with a set active loads its
-  current item into the Reader automatically (once per set per session;
-  Escape back to the list and re-entering shows the list).
+  current item into the Reader automatically, on every entry, so the banner
+  and the open document always agree (Escape shows the list until the next
+  entry).
 - **Walk** — while a set is active the Reader carries a banner naming the
   set, your place, and the open item's own state ("Reviewing: All media — 2
   of 14 · 1 reviewed · ✓ reviewed"), and the footer shows the same place. `]` advances and marks the item you leave as reviewed;
@@ -231,17 +234,21 @@ them one by one, with your place and progress saved between visits.
   Reader but keeps the set active — re-entering resumes at your cursor.
   **R** (Exit review) deactivates the set without deleting it.
 - **Resume / switch / dismiss** — **Sets** on the media list title row opens
-  the saved-set picker: each row shows the set's name and live progress, with
+  the saved-set picker: each row shows the set's name, live progress, and
+  created date (so two "2 selected items" sets stay distinguishable), with
   the active set marked `✓`. Picking a set activates it (deactivating any
   other) and lands at its saved cursor; picking a completed set reopens it.
-  **Dismiss** soft-deletes a set. **Review read-later** in the same picker
-  builds a new set from your read-later queue, newest saves first.
+  **Dismiss** soft-deletes a set and leaves a "✓ dismissed · name" receipt on
+  the media list with **Undo** (restores the set — cursor, reviewed marks,
+  and active state intact) and **Dismiss** to clear the receipt. **Review
+  read-later** in the same picker builds a new set from your read-later
+  queue, newest saves first.
 - Deleted media items become skipped tombstones: progress counts only items
   that still exist, and a set whose items were all removed reports "No items
   to review" instead of completing.
 
-*Verified against feat/review-sets-p4 — 2026-09-02 (task-28240..28243: live
-end-to-end create → walk → exit → resume → dismiss pass in tmux).*
+*Verified against fix/media-review-continuity — 2026-09-04 (task-31233/34/36/38:
+live create-from-selection → every-entry resume → dismiss-undo pass in tmux).*
 
 ### Conversations
 

@@ -354,6 +354,39 @@ class ReviewSetService:
                 (timestamp, timestamp, set_id),
             )
 
+    def undismiss(self, set_id: str, *, reactivate: bool) -> None:
+        """Restore a dismissed set (the task-31236 undo receipt).
+
+        Dismiss only flipped ``deleted_at``/``active``, so this is an
+        un-tombstone: cursor and done marks come back untouched.
+        Re-activation happens only when asked AND no other live set became
+        active since -- the one-active invariant outranks the undo.
+
+        Args:
+            set_id: The dismissed set to restore.
+            reactivate: Whether the set was active when dismissed.
+        """
+        timestamp = self._now()
+        with self._db.transaction() as conn:
+            conn.execute(
+                "UPDATE review_sets SET deleted_at = NULL, updated_at = ? "
+                "WHERE set_id = ?",
+                (timestamp, set_id),
+            )
+            if reactivate:
+                other_active = conn.execute(
+                    "SELECT 1 FROM review_sets "
+                    "WHERE active = 1 AND deleted_at IS NULL "
+                    "AND set_id != ? LIMIT 1",
+                    (set_id,),
+                ).fetchone()
+                if other_active is None:
+                    conn.execute(
+                        "UPDATE review_sets SET active = 1, updated_at = ? "
+                        "WHERE set_id = ?",
+                        (timestamp, set_id),
+                    )
+
     def deactivate_active(self) -> None:
         """Deactivate the active set ("Exit review"), keeping it resumable.
 

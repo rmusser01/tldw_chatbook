@@ -43,3 +43,7 @@ Split from task-28241 AC#4. The walker (AC1-3) resumes the SET STATE automatical
 <!-- SECTION:NOTES:BEGIN -->
 Shipped in PR #2342 (dev e364bf662). _auto_resume_review_set_worker resolves the active set's live cursor off-loop and opens via _open_library_media_viewer (same path as a row press, so ReadingProgress restore untouched - AC#2); once per set per screen session (guard burned only when the open happens). ONE hook only: the rail-select seam's media branch - the mount-leg kick was added then deliberately REMOVED because its boot-time timing made the worker's lazy imports race the _ui_ready module census (flaky Perf Guard 977>972); the rail gesture cannot race boot, which also settles AC#3 structurally. Auto-resume runs in its own exclusive worker group (library_review_set_resume) after Qodo caught the shared group cancelling in-flight set creation. Live-verified: restart -> click Media -> auto-loads cursor item at '2 of 3 · 1 reviewed'; Escape -> away -> re-entry shows the list.
 <!-- SECTION:NOTES:END -->
+
+## Superseded (task-31234)
+
+The once-per-set gate was REMOVED by task-31234 (critique #3 P1, user ruling at the close): re-entry re-armed the banner over an off-set document — the frame restored, the item not. Auto-resume now opens the cursor item on EVERY entry gesture; "Escape + re-entry shows the list" no longer holds (re-entry lands in the Reader at the saved place). AC#3's cold-start yank guard is unchanged.
