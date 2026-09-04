@@ -11081,3 +11081,25 @@ the primary, which is the assertion a palette generator needs.
 
 **What to do.** Multiply `hsl.h` by 360 before any degree-based maths, and test
 generated palettes by hue distance for several primaries, not by eyeballing one.
+
+## Theme `variables` dict entries are NOT overrides — tcss definitions shadow them (task-31264, 2026-09-04)
+
+**What happened.** PR #2374 "fixed" light themes inheriting dark-tuned tokens
+by adding `ds-status-error-readable`/`ds-text-placeholder` entries to each
+theme's `Theme.variables` dict, verified with contrast arithmetic on the dict
+values. The fix was inert at runtime: a `$name: value` definition in any tcss
+source shadows app-supplied variables for that source (proven with a minimal
+`Stylesheet(variables=...)` probe — the file's value tokens are appended after
+the app's and last-token-wins), and `_variables.tcss` defines every `ds-*`
+token. The frozen `$ds-focus-bg: #51677e` literal was painting slate focus
+states on every light theme regardless of what the theme dict said.
+
+**What to do.** A theme's `variables` dict only reaches CSS for tokens NO
+loaded stylesheet defines; for `ds-*` tokens it is documentation, not an
+override. To make a design token theme-aware, define it in tcss as a
+*reference* to one of Textual's generated polarity-aware variables
+(`$text-error`, `$text-muted`, `$block-cursor-blurred-background`, …), never a
+hex literal. And never verify a color fix by arithmetic on configuration
+values — check the resolved paint (rule-match probe or live capture); the
+dict-value contrast test in PR #2374 passed while the app painted the
+opposite.

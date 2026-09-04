@@ -295,7 +295,12 @@ async def test_escape_focus_restore_keeps_two_row_workspace_tree_visible() -> No
             "the global focus outline consumes both rows of the compact tree"
         )
         focused_cursor = tree.get_component_styles("tree--cursor").background
-        assert focused_cursor == Color.parse("#51677e")
+        # task-31264: $ds-focus-bg is the polarity-aware generated focus tint
+        # (block-cursor-blurred-background), no longer the #51677e literal.
+        expected = Color.parse(
+            host.theme_variables["block-cursor-blurred-background"]
+        )
+        assert focused_cursor == expected
         rendered = "\n".join(
             tree.render_line(row).text for row in range(tree.region.height)
         )

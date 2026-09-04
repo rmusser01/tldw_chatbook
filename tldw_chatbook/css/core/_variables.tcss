@@ -19,9 +19,14 @@ $ds-focus-fg: $ds-text-primary;
    surfaces — it previously aliased $ds-surface-raised (= $surface), which
    nullified the non-obscuring focus contract's own mechanism (~1.1:1 focus
    shifts measured live; an invisible-focus Tab+Enter activated 'Save as…').
-   A raised steel-blue, ~3:1 against the dark control/panel surfaces, still
-   muted enough to keep the contract's no-accent character. */
-$ds-focus-bg: #51677e;
+   task-31264: the steel-blue literal (#51677e) that replaced the alias was
+   tuned for dark canvases only, and a `$name: value` here shadows every
+   theme's variables dict for this source (per-source variable scope) — so
+   light themes painted a frozen slate focus. Textual's generated
+   block-cursor-blurred-background ($primary at 30%) gives a polarity-aware
+   tint on every theme; the Button:focus rule's bold-underline cues carry
+   the handful of themes whose primary sits close to their surface. */
+$ds-focus-bg: $block-cursor-blurred-background;
 $ds-focus-accent: $primary;
 $ds-input-focus-border: $primary;
 /* task-1586: this token still aliased $ds-surface-raised (= $surface),
@@ -46,26 +51,35 @@ $ds-status-error: $error;
 /* task-2230 (a11y): $error measures 3.06:1 on the app's dark canvases --
    an AA fail, and LESS readable than ordinary help text (7.21:1), which
    inverts the importance hierarchy. This token is the readable error
-   foreground (7.71:1) for text and marks that must be READ, while
-   $ds-status-error stays the decorative status hue. */
-$ds-status-error-readable: #ff8fa3;
+   foreground for text and marks that must be READ, while $ds-status-error
+   stays the decorative status hue. task-31264: the original literal
+   (#ff8fa3) was dark-canvas-only and, being a per-source definition, could
+   not be overridden by any theme — light themes rendered error text at
+   1.4–2.0:1. Textual's generated $text-error is the same idea computed per
+   theme polarity (agentic_terminal resolves to #FF929C, within a hair of
+   the old hand-tuned value). */
+$ds-status-error-readable: $text-error;
 /* task-14824 (3): Textual's stock placeholder colour ($text-disabled)
    measured 3.52:1 on an enabled ingest field and 3.49:1 on a disabled one
    -- below AA for normal text, and a 0.03 delta means a placeholder is
-   also useless as a disabled-state cue. This grey clears AA against BOTH
-   the resting field surface (rgb 30) and the darkened disabled surface
-   (rgb 13) -- measured 4.94:1 / 5.63:1 -- while staying obviously dimmer
-   than a real value ($text, rgb 224), so a placeholder still reads as an
-   absent value rather than as content. */
-$ds-text-placeholder: #8a8a8a;
+   also useless as a disabled-state cue. The token must clear AA against
+   the field surfaces while staying obviously dimmer than a real value, so
+   a placeholder still reads as an absent value rather than as content.
+   task-31264: the grey literal (#8a8a8a) that implemented this was
+   measured on dark surfaces only and shadowed every theme (per-source
+   variable scope; 2.2–3.2:1 on the light themes). $text-muted is the same
+   dimmer-but-readable role generated per theme polarity. */
+$ds-text-placeholder: $text-muted;
 /* TASK-25822 (a11y): `Button:disabled` stacked `opacity: 50%` ON TOP of an
    already-dim $text-disabled, compositing to a measured 1.34:1 -- a disabled
    primary read as ABSENT, not unavailable, while the dismissive action beside
-   it stayed near 14:1 and inverted the dialog's hierarchy. This grey clears
-   AA-large against the darkened disabled button surface (measured 5.09:1 on
-   rgb 25) while staying far dimmer than live label text ($text, rgb 224), so
-   "disabled" still reads as a state rather than as content. */
-$ds-text-disabled-readable: #8a8a8a;
+   it stayed near 14:1 and inverted the dialog's hierarchy. The token must
+   clear AA-large on the disabled surface while staying far dimmer than live
+   label text, so "disabled" still reads as a state rather than as content.
+   task-31264: same polarity story as $ds-text-placeholder above -- the grey
+   literal was dark-tuned and theme-frozen; $text-muted is the generated
+   polarity-aware equivalent. */
+$ds-text-disabled-readable: $text-muted;
 $ds-status-paused: $warning;
 $ds-status-unsaved: $warning;
 $ds-status-recovered: $success;

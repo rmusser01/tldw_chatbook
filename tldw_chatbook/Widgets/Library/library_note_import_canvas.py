@@ -55,7 +55,7 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
     """Render one immutable import snapshot and post typed physical intents."""
 
     BUNDLED_CSS = """
-    $ds-status-error-readable: #ff8fa3;
+    $ds-status-error-readable: $text-error;
 
     LibraryNoteImportCanvas {
         width: 1fr;
