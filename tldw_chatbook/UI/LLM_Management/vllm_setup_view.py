@@ -13,6 +13,12 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Collapsible, Input, Label, Select, TextArea
 
+from tldw_chatbook.Utils.input_validation import (
+    RAW_CLI_COMMAND_MAX_BYTES,
+    validate_raw_cli_command,
+    validate_vllm_draft_input,
+)
+
 from .vllm_connection import VllmConnectionSnapshot
 from .vllm_profiles import (
     VllmProfileDocumentV1,
@@ -84,6 +90,18 @@ _PREFLIGHT_ISSUE_COPY = {
     ),
     "invalid_trust_remote_code": "Choose whether remote model code is allowed.",
 }
+_LEXICAL_ERROR_COPY = "Value is too long or contains unsupported control characters."
+_RAW_ARGUMENTS_ERROR_COPY = (
+    "Advanced arguments must be no larger than 16 KiB and cannot contain NUL."
+)
+
+
+def _control_classes(extra: str = "") -> str:
+    return " ".join(filter(None, ("vllm-control vllm-focus-target", extra)))
+
+
+def _button_classes(extra: str = "") -> str:
+    return " ".join(filter(None, ("vllm-button vllm-focus-target", extra)))
 
 
 def _preflight_issue_copy(issue: VllmIssue) -> str:
@@ -250,6 +268,7 @@ class VllmSetupView(VerticalScroll):
         self._profiles_ready = False
         self._profile_store_error = False
         self._rendering = False
+        self._accepted_profile_name = initial_profile.name
 
     def compose(self) -> ComposeResult:
         yield Label("Set up vLLM / OPERATE", classes="section-title")
@@ -266,18 +285,57 @@ class VllmSetupView(VerticalScroll):
             yield Label("○ Model · choose a model", id="vllm-check-model")
             yield Label("○ Network · not checked", id="vllm-check-network")
         with Horizontal(id="vllm-next-action", classes="vllm-action-bar"):
-            yield Button("Check setup", id="vllm-check-setup")
-            yield Button("Cancel check", id="vllm-cancel-check")
-            yield Button("Start", id="vllm-start", disabled=True)
-            yield Button("Stop", id="vllm-stop", disabled=True)
-            yield Button("Retry check", id="vllm-recovery-primary", disabled=True)
-            yield Button("Restart with draft", id="vllm-restart", disabled=True)
-            yield Button("Use in Console", id="vllm-use-console", disabled=True)
+            yield Button(
+                "Check setup",
+                id="vllm-check-setup",
+                classes=_button_classes("vllm-action-button"),
+            )
+            yield Button(
+                "Cancel check",
+                id="vllm-cancel-check",
+                classes=_button_classes("vllm-action-button"),
+            )
+            yield Button(
+                "Start",
+                id="vllm-start",
+                disabled=True,
+                classes=_button_classes("vllm-action-button"),
+            )
+            yield Button(
+                "Stop",
+                id="vllm-stop",
+                disabled=True,
+                classes=_button_classes("vllm-action-button"),
+            )
+            yield Button(
+                "Retry check",
+                id="vllm-recovery-primary",
+                disabled=True,
+                classes=_button_classes("vllm-action-button"),
+            )
+            yield Button(
+                "Restart with draft",
+                id="vllm-restart",
+                disabled=True,
+                classes=_button_classes("vllm-action-button"),
+            )
+            yield Button(
+                "Use in Console",
+                id="vllm-use-console",
+                disabled=True,
+                classes=_button_classes("vllm-action-button"),
+            )
         yield Label("▼ more below — scroll", id="vllm-fold-cue")
         with Horizontal(classes="vllm-mode-actions"):
-            yield Button("Start on this computer", id="vllm-start-local-button")
             yield Button(
-                "Connect to existing server", id="vllm-connect-existing-button"
+                "Start on this computer",
+                id="vllm-start-local-button",
+                classes=_button_classes("vllm-action-button"),
+            )
+            yield Button(
+                "Connect to existing server",
+                id="vllm-connect-existing-button",
+                classes=_button_classes("vllm-action-button"),
             )
         yield Label("Launch mode", classes="section_label")
         yield Label("", id="vllm-mode-summary")
@@ -287,6 +345,7 @@ class VllmSetupView(VerticalScroll):
             value=self._profiles.selected_profile_id,
             allow_blank=False,
             id="vllm-profile-select",
+            classes=_control_classes(),
         )
         yield Input(
             value=next(
@@ -296,6 +355,8 @@ class VllmSetupView(VerticalScroll):
             ),
             id="vllm-profile-name",
             placeholder="Profile name",
+            max_length=120,
+            classes=_control_classes(),
         )
         yield Label(
             "",
@@ -303,11 +364,31 @@ class VllmSetupView(VerticalScroll):
             classes="prereq-hint vllm-field-help",
         )
         with Horizontal(classes="vllm-profile-actions"):
-            yield Button("New profile", id="vllm-profile-create-button")
-            yield Button("Save changes", id="vllm-profile-save-button")
-            yield Button("Rename", id="vllm-profile-rename-button")
-            yield Button("Duplicate", id="vllm-profile-duplicate-button")
-            yield Button("Delete", id="vllm-profile-delete-button")
+            yield Button(
+                "New profile",
+                id="vllm-profile-create-button",
+                classes=_button_classes("vllm-action-button"),
+            )
+            yield Button(
+                "Save changes",
+                id="vllm-profile-save-button",
+                classes=_button_classes("vllm-action-button"),
+            )
+            yield Button(
+                "Rename",
+                id="vllm-profile-rename-button",
+                classes=_button_classes("vllm-action-button"),
+            )
+            yield Button(
+                "Duplicate",
+                id="vllm-profile-duplicate-button",
+                classes=_button_classes("vllm-action-button"),
+            )
+            yield Button(
+                "Delete",
+                id="vllm-profile-delete-button",
+                classes=_button_classes("vllm-action-button"),
+            )
         with Container(id="vllm-local-setup"):
             yield Label("Python environment", classes="inline-label")
             with Horizontal(classes="vllm-picker-row"):
@@ -315,11 +396,13 @@ class VllmSetupView(VerticalScroll):
                     value=self._draft.python_environment,
                     id="vllm-python-environment",
                     placeholder="python or /path/to/venv/bin/python",
+                    max_length=4096,
+                    classes=_control_classes("vllm-picker-input"),
                 )
                 yield Button(
                     "Browse",
                     id="vllm-browse-python-environment",
-                    classes="browse_button",
+                    classes=_button_classes("browse_button vllm-picker-button"),
                 )
             yield Label(
                 "",
@@ -329,37 +412,55 @@ class VllmSetupView(VerticalScroll):
             yield Label("Model source", classes="inline-label")
             with Horizontal(classes="vllm-source-actions"):
                 yield Button(
-                    "Hugging Face repository", id="vllm-hugging-face-source-button"
+                    "Hugging Face repository",
+                    id="vllm-hugging-face-source-button",
+                    classes=_button_classes("vllm-action-button"),
                 )
                 yield Button(
-                    "Local model directory", id="vllm-local-model-source-button"
+                    "Local model directory",
+                    id="vllm-local-model-source-button",
+                    classes=_button_classes("vllm-action-button"),
                 )
             yield Input(
                 value=self._draft.model_value,
                 id="vllm-hf-model",
                 placeholder="organization/model",
+                max_length=96,
+                classes=_control_classes(),
             )
             yield Input(
                 value=self._draft.model_value,
                 id="vllm-local-model-directory",
                 placeholder="Select a local model directory",
+                max_length=4096,
+                classes=_control_classes(),
             )
             yield Button(
                 "Browse",
                 id="vllm-browse-local-model-directory-button",
-                classes="browse_button",
+                classes=_button_classes("browse_button vllm-picker-button"),
             )
             yield Label("", id="vllm-model-help", classes="prereq-hint vllm-field-help")
             yield Label("Network", classes="section_label")
             yield Label("Bind address", classes="inline-label")
-            yield Input(value=self._draft.bind_address, id="vllm-bind-address")
+            yield Input(
+                value=self._draft.bind_address,
+                id="vllm-bind-address",
+                max_length=255,
+                classes=_control_classes(),
+            )
             yield Label(
                 "",
                 id="vllm-bind-address-help",
                 classes="prereq-hint vllm-field-help",
             )
             yield Label("Port", classes="inline-label")
-            yield Input(value=str(self._draft.port), id="vllm-port")
+            yield Input(
+                value=str(self._draft.port),
+                id="vllm-port",
+                max_length=5,
+                classes=_control_classes(),
+            )
             yield Label("", id="vllm-port-help", classes="prereq-hint vllm-field-help")
         with Container(id="vllm-existing-setup"):
             yield Label("Existing server URL", classes="inline-label")
@@ -367,6 +468,8 @@ class VllmSetupView(VerticalScroll):
                 value=self._draft.existing_server_url,
                 id="vllm-existing-server-url",
                 placeholder="http://127.0.0.1:8000/v1",
+                max_length=2048,
+                classes=_control_classes(),
             )
             yield Label(
                 "",
@@ -384,6 +487,7 @@ class VllmSetupView(VerticalScroll):
                 allow_blank=True,
                 prompt="Check connection, then choose a model",
                 id="vllm-existing-model",
+                classes=_control_classes(),
             )
             yield Label(
                 "Check connection to load available model IDs.",
@@ -401,15 +505,23 @@ class VllmSetupView(VerticalScroll):
             yield Label("", id="vllm-next-restart-changes")
         yield Label("No activity yet.", id="vllm-activity-summary")
         activity = Collapsible(
-            title="Activity details", id="vllm-activity-details", collapsed=True
+            title="Activity details",
+            id="vllm-activity-details",
+            collapsed=True,
+            classes="vllm-control",
         )
         activity._title.id = "vllm-activity-toggle"
+        activity._title.add_class("vllm-focus-target")
         with activity:
             yield Label("No activity yet.", id="vllm-activity-events")
         advanced = Collapsible(
-            title="Advanced options", id="vllm-advanced-options", collapsed=True
+            title="Advanced options",
+            id="vllm-advanced-options",
+            collapsed=True,
+            classes="vllm-control",
         )
         advanced._title.id = "vllm-advanced-toggle"
+        advanced._title.add_class("vllm-focus-target")
         with advanced:
             yield Label("dtype", classes="inline-label")
             yield Select(
@@ -423,6 +535,7 @@ class VllmSetupView(VerticalScroll):
                 value="",
                 allow_blank=False,
                 id="vllm-dtype",
+                classes=_control_classes(),
             )
             yield Label(
                 "",
@@ -430,7 +543,12 @@ class VllmSetupView(VerticalScroll):
                 classes="prereq-hint vllm-field-help",
             )
             yield Label("Tensor parallel size", classes="inline-label")
-            yield Input(id="vllm-tensor-parallel-size", placeholder="Automatic")
+            yield Input(
+                id="vllm-tensor-parallel-size",
+                placeholder="Automatic",
+                max_length=10,
+                classes=_control_classes(),
+            )
             yield Label(
                 "Number of GPUs used together for each model replica.",
                 classes="description",
@@ -441,7 +559,12 @@ class VllmSetupView(VerticalScroll):
                 classes="prereq-hint vllm-field-help",
             )
             yield Label("Maximum model length", classes="inline-label")
-            yield Input(id="vllm-maximum-model-length", placeholder="Model default")
+            yield Input(
+                id="vllm-maximum-model-length",
+                placeholder="Model default",
+                max_length=10,
+                classes=_control_classes(),
+            )
             yield Label(
                 "Limits the model context length; larger values use more GPU memory.",
                 classes="description",
@@ -452,7 +575,12 @@ class VllmSetupView(VerticalScroll):
                 classes="prereq-hint vllm-field-help",
             )
             yield Label("GPU memory utilization", classes="inline-label")
-            yield Input(id="vllm-gpu-memory-utilization", placeholder="vLLM default")
+            yield Input(
+                id="vllm-gpu-memory-utilization",
+                placeholder="vLLM default",
+                max_length=32,
+                classes=_control_classes(),
+            )
             yield Label(
                 "Fraction from greater than 0 through 1; higher values leave less headroom.",
                 classes="description",
@@ -462,7 +590,11 @@ class VllmSetupView(VerticalScroll):
                 id="vllm-gpu-memory-utilization-help",
                 classes="prereq-hint vllm-field-help",
             )
-            yield Button("Trust remote code · Disabled", id="vllm-trust-remote-code")
+            yield Button(
+                "Trust remote code · Disabled",
+                id="vllm-trust-remote-code",
+                classes=_button_classes(),
+            )
             yield Label(
                 "Disabled is safer. Enable only when you trust the model code source.",
                 id="vllm-trust-remote-code-help",
@@ -477,15 +609,18 @@ class VllmSetupView(VerticalScroll):
                 title="Advanced arguments",
                 id="vllm-advanced-arguments",
                 collapsed=True,
+                classes="vllm-control",
             )
             arguments._title.id = "vllm-advanced-arguments-toggle"
+            arguments._title.add_class("vllm-focus-target")
             with arguments:
                 yield Label(
                     "Launch only · not saved in profiles. Managed and secret flags are rejected.",
                     id="vllm-raw-arguments-scope",
                 )
                 yield TextArea(
-                    id="vllm-raw-arguments", classes="additional_args_textarea"
+                    id="vllm-raw-arguments",
+                    classes=_control_classes("additional_args_textarea"),
                 )
                 yield Label(
                     "",
@@ -497,6 +632,7 @@ class VllmSetupView(VerticalScroll):
                 "Make default for new chats",
                 id="vllm-make-default",
                 disabled=True,
+                classes=_button_classes("vllm-action-button"),
             )
         yield Label(
             "Session only · restart uses your saved provider endpoint.",
@@ -924,6 +1060,7 @@ class VllmSetupView(VerticalScroll):
             if profile_name.value != active_profile.name:
                 with profile_name.prevent(Input.Changed):
                     profile_name.value = active_profile.name
+            self._accepted_profile_name = profile_name.value
             base_profile_disabled = not local or not self._profiles_ready
             profile_name.disabled = (
                 base_profile_disabled or self._profile_store_requires_repair
@@ -1324,53 +1461,133 @@ class VllmSetupView(VerticalScroll):
         self._render_projection()
         self.post_message(self.DraftChanged(self._draft))
 
+    def _show_lexical_error(self, help_id: str, copy: str) -> None:
+        """Show fixed adjacent feedback without retaining or echoing rejected text."""
+
+        help_label = self.query_one(f"#{help_id}", Label)
+        help_label.update(copy)
+        help_label.display = True
+
+    def _restore_input_value(self, widget: Input, value: str) -> None:
+        """Restore the last accepted input without recursively handling the edit."""
+
+        with widget.prevent(Input.Changed):
+            widget.value = value
+
     @on(Input.Changed)
     def _on_input_changed(self, event: Input.Changed) -> None:
         if self._rendering:
             return
-        field_for_id = {
-            "vllm-python-environment": "python_environment",
-            "vllm-hf-model": "model_value",
-            "vllm-local-model-directory": "model_value",
-            "vllm-bind-address": "bind_address",
-            "vllm-existing-server-url": "existing_server_url",
+        input_contracts = {
+            "vllm-profile-name": (
+                "profile_name",
+                None,
+                "vllm-profile-name-help",
+            ),
+            "vllm-python-environment": (
+                "python_environment",
+                "python_environment",
+                "vllm-python-environment-help",
+            ),
+            "vllm-hf-model": (
+                "hugging_face_model",
+                "model_value",
+                "vllm-model-help",
+            ),
+            "vllm-local-model-directory": (
+                "local_model_directory",
+                "model_value",
+                "vllm-model-help",
+            ),
+            "vllm-bind-address": (
+                "bind_address",
+                "bind_address",
+                "vllm-bind-address-help",
+            ),
+            "vllm-existing-server-url": (
+                "existing_server_url",
+                "existing_server_url",
+                "vllm-existing-server-url-help",
+            ),
+            "vllm-port": ("port", "port", "vllm-port-help"),
+            "vllm-tensor-parallel-size": (
+                "tensor_parallel_size",
+                "tensor_parallel_size",
+                "vllm-tensor-parallel-size-help",
+            ),
+            "vllm-maximum-model-length": (
+                "maximum_model_length",
+                "maximum_model_length",
+                "vllm-maximum-model-length-help",
+            ),
+            "vllm-gpu-memory-utilization": (
+                "gpu_memory_utilization",
+                "gpu_memory_utilization",
+                "vllm-gpu-memory-utilization-help",
+            ),
         }
-        field = field_for_id.get(event.input.id)
-        if field:
-            self._change_draft(**{field: event.value})
-        elif event.input.id == "vllm-port":
+        contract = input_contracts.get(event.input.id or "")
+        if contract is None:
+            return
+        control_id, field, help_id = contract
+        if field is None:
+            previous = self._accepted_profile_name
+        else:
+            current = getattr(self._draft, field)
+            previous = "" if current is None else str(current)
+        try:
+            value = validate_vllm_draft_input(control_id, event.value)
+        except ValueError:
+            self._restore_input_value(event.input, previous)
+            self._show_lexical_error(help_id, _LEXICAL_ERROR_COPY)
+            return
+        if field is None:
+            if event.input.value != value:
+                self._restore_input_value(event.input, value)
+            self._accepted_profile_name = value
+            return
+        if field == "port":
             try:
-                port = int(event.value)
+                parsed: object = int(value)
             except ValueError:
-                port = 0
-            self._change_draft(port=port)
-        elif event.input.id in {
-            "vllm-tensor-parallel-size",
-            "vllm-maximum-model-length",
-        }:
-            field = {
-                "vllm-tensor-parallel-size": "tensor_parallel_size",
-                "vllm-maximum-model-length": "maximum_model_length",
-            }[event.input.id]
+                parsed = value
+        elif field in {"tensor_parallel_size", "maximum_model_length"}:
             try:
-                value: object = int(event.value) if event.value.strip() else None
+                parsed = int(value) if value.strip() else None
             except ValueError:
-                value = event.value
-            self._change_draft(**{field: value})
-        elif event.input.id == "vllm-gpu-memory-utilization":
+                parsed = value
+        elif field == "gpu_memory_utilization":
             try:
-                utilization: object = (
-                    float(event.value) if event.value.strip() else None
-                )
+                parsed = float(value) if value.strip() else None
             except ValueError:
-                utilization = event.value
-            self._change_draft(gpu_memory_utilization=utilization)
+                parsed = value
+        else:
+            parsed = value
+        self._change_draft(**{field: parsed})
 
     @on(TextArea.Changed, "#vllm-raw-arguments")
     def _on_raw_arguments_changed(self, event: TextArea.Changed) -> None:
         if self._rendering:
             return
-        self._change_draft(raw_arguments=event.text_area.text)
+        value = event.text_area.text
+        try:
+            validated = (
+                value
+                if not value.strip()
+                else validate_raw_cli_command(
+                    value,
+                    max_bytes=RAW_CLI_COMMAND_MAX_BYTES,
+                )
+            )
+        except ValueError:
+            with event.text_area.prevent(TextArea.Changed):
+                event.text_area.text = self._draft.raw_arguments
+            self._show_lexical_error(
+                "vllm-raw-arguments-help",
+                _RAW_ARGUMENTS_ERROR_COPY,
+            )
+            return
+        self._change_draft(raw_arguments=validated)
 
     @on(Select.Changed, "#vllm-profile-select")
     def _on_profile_selected(self, event: Select.Changed) -> None:
@@ -1457,14 +1674,30 @@ class VllmSetupView(VerticalScroll):
             case "vllm-make-default":
                 self.post_message(self.MakeDefaultRequested())
             case "vllm-profile-create-button":
-                name = self.query_one("#vllm-profile-name", Input).value
+                profile_name = self.query_one("#vllm-profile-name", Input)
+                try:
+                    name = validate_vllm_draft_input("profile_name", profile_name.value)
+                except ValueError:
+                    self._restore_input_value(profile_name, self._accepted_profile_name)
+                    self._show_lexical_error(
+                        "vllm-profile-name-help", _LEXICAL_ERROR_COPY
+                    )
+                    return
                 self.post_message(self.CreateProfileRequested(name, self._draft))
             case "vllm-profile-save-button":
                 self.post_message(
                     self.SaveProfileRequested(self._active_profile_id, self._draft)
                 )
             case "vllm-profile-rename-button":
-                name = self.query_one("#vllm-profile-name", Input).value
+                profile_name = self.query_one("#vllm-profile-name", Input)
+                try:
+                    name = validate_vllm_draft_input("profile_name", profile_name.value)
+                except ValueError:
+                    self._restore_input_value(profile_name, self._accepted_profile_name)
+                    self._show_lexical_error(
+                        "vllm-profile-name-help", _LEXICAL_ERROR_COPY
+                    )
+                    return
                 self.post_message(
                     self.RenameProfileRequested(self._active_profile_id, name)
                 )

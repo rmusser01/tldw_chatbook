@@ -7,11 +7,11 @@ import ipaddress
 import math
 import os
 import re
-import select
 import shlex
 import shutil
 import socket
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
@@ -452,8 +452,11 @@ def _classify_probe_version(output: object) -> str | None:
 def _terminate_and_reap_probe(process: subprocess.Popen[bytes]) -> None:
     """Terminate a probe and deterministically reap it without leaking a child."""
 
-    if process.poll() is not None:
-        return
+    try:
+        if process.poll() is not None:
+            return
+    except (OSError, subprocess.SubprocessError):
+        pass
     try:
         process.terminate()
         process.wait(timeout=_PROBE_REAP_TIMEOUT_SECONDS)
@@ -468,7 +471,7 @@ def _terminate_and_reap_probe(process: subprocess.Popen[bytes]) -> None:
 
 
 def _run_default_probe(argv: list[str]) -> tuple[bool, str | None]:
-    """Stream default subprocess output through a strict byte ceiling."""
+    """Read a child pipe portably while enforcing time and byte ceilings."""
 
     try:
         process = subprocess.Popen(
@@ -480,37 +483,57 @@ def _run_default_probe(argv: list[str]) -> tuple[bool, str | None]:
         return False, None
     assert process.stdout is not None
     output = bytearray()
+    reader_done = threading.Event()
+    reader_failed = threading.Event()
+
+    def read_stdout() -> None:
+        try:
+            while len(output) <= _MAX_PROBE_OUTPUT_BYTES:
+                remaining = _MAX_PROBE_OUTPUT_BYTES + 1 - len(output)
+                chunk = process.stdout.read(remaining)
+                if not chunk:
+                    break
+                output.extend(chunk)
+        except Exception:  # noqa: BLE001 - normalize child pipe failures
+            reader_failed.set()
+        finally:
+            reader_done.set()
+
+    reader = threading.Thread(
+        target=read_stdout,
+        name="vllm-version-probe-reader",
+        daemon=True,
+    )
     deadline = time.monotonic() + _PROBE_TIMEOUT_SECONDS
+    succeeded = False
+    version: str | None = None
+    reader.start()
     try:
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                _terminate_and_reap_probe(process)
-                return False, None
-            readable, _, _ = select.select([process.stdout], [], [], remaining)
-            if not readable:
-                _terminate_and_reap_probe(process)
-                return False, None
-            chunk = os.read(
-                process.stdout.fileno(), _MAX_PROBE_OUTPUT_BYTES - len(output) + 1
-            )
-            if not chunk:
-                break
-            output.extend(chunk)
-            if len(output) > _MAX_PROBE_OUTPUT_BYTES:
-                _terminate_and_reap_probe(process)
-                return False, None
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not reader_done.wait(remaining):
+            return False, None
+        if reader_failed.is_set() or len(output) > _MAX_PROBE_OUTPUT_BYTES:
+            return False, None
         try:
             returncode = process.wait(timeout=max(0.0, deadline - time.monotonic()))
-        except subprocess.TimeoutExpired:
-            _terminate_and_reap_probe(process)
+        except (OSError, subprocess.SubprocessError):
             return False, None
         if returncode != 0:
             return False, None
-        return True, _classify_probe_version(output.decode("utf-8", errors="replace"))
+        succeeded = True
+        version = _classify_probe_version(output.decode("utf-8", errors="replace"))
+        return succeeded, version
     finally:
-        process.stdout.close()
-        _terminate_and_reap_probe(process)
+        if not succeeded:
+            _terminate_and_reap_probe(process)
+        try:
+            process.stdout.close()
+        except (OSError, ValueError):
+            pass
+        reader.join(timeout=_PROBE_REAP_TIMEOUT_SECONDS)
+        if reader.is_alive():
+            _terminate_and_reap_probe(process)
+            reader.join(timeout=_PROBE_REAP_TIMEOUT_SECONDS)
 
 
 def _run_probe(run: Callable[..., object], argv: list[str]) -> tuple[bool, str | None]:

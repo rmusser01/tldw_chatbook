@@ -100,7 +100,14 @@ _ISSUE_CODES = frozenset(
 
 
 def activity_elapsed_bucket(elapsed_seconds: float) -> str:
-    """Bucket elapsed activity against the bounded 30-second readiness window."""
+    """Bucket elapsed activity against the bounded 30-second readiness window.
+
+    Args:
+        elapsed_seconds: Monotonic elapsed duration in seconds.
+
+    Returns:
+        The stable identifier for the matching elapsed-time bucket.
+    """
 
     elapsed = max(0.0, elapsed_seconds)
     if elapsed < 1:
@@ -694,22 +701,34 @@ async def probe_vllm_target(
                     health_ok,
                     model_event,
                 )
-            model_ids = tuple(
-                dict.fromkeys(
-                    entry.get("id")
-                    for entry in data
-                    if isinstance(entry, dict)
-                    and _is_admissible_model_id(entry.get("id"))
-                    and entry.get("id") != credential
-                )
-            )[:_DISCOVERED_MODELS_LIMIT]
             if request.expected_model_id is not None:
-                selected_model = (
-                    request.expected_model_id
-                    if request.expected_model_id in model_ids
-                    else None
-                )
+                selected_model: str | None = None
+                for entry in data:
+                    candidate = entry.get("id") if isinstance(entry, dict) else None
+                    if (
+                        candidate == request.expected_model_id
+                        and _is_admissible_model_id(candidate)
+                        and candidate != credential
+                    ):
+                        selected_model = request.expected_model_id
+                        break
+                model_ids = (selected_model,) if selected_model is not None else ()
             else:
+                retained: list[str] = []
+                seen: set[str] = set()
+                for entry in data:
+                    candidate = entry.get("id") if isinstance(entry, dict) else None
+                    if (
+                        not _is_admissible_model_id(candidate)
+                        or candidate == credential
+                        or candidate in seen
+                    ):
+                        continue
+                    retained.append(candidate)
+                    seen.add(candidate)
+                    if len(retained) == _DISCOVERED_MODELS_LIMIT:
+                        break
+                model_ids = tuple(retained)
                 if not model_ids:
                     return _failure(
                         request,

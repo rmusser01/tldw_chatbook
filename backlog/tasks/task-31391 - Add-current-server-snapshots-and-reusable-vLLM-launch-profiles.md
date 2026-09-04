@@ -300,6 +300,15 @@ and inode-swap gap. GREEN evidence: repair repository `7`, mounted repair flows
 persistent-diagnostic inventories, task-ID CLI/CI checks, Ruff, formatting,
 `py_compile`, and diff checks pass. ADR-117 was clarified; no new ADR or schema
 change is required.
+
+Post-PR review hardening routes current-version profile JSON through frozen,
+strict Pydantic V1 payload models with exact primitive-type validators and
+forbidden unknown keys. Duplicate-key detection, the 2 MiB cap, future-version
+byte preservation, bounded legacy-bind repair, UUID/name/source ownership, and
+strict write revalidation remain unchanged. Validation failures cross the
+repository boundary as fixed domain errors with no Pydantic value, cause, or
+context leakage. All 95 profile tests and the profile-owned inventory pass;
+ADR-117 remains sufficient and the persisted schema is unchanged.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import select as select_module
 import subprocess
+import sys
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -96,19 +98,18 @@ def test_preflight_rejects_oversize_or_unclassified_probe_output(tmp_path):
 
 def test_default_probe_kills_and_reaps_child_at_output_byte_ceiling(tmp_path):
     pid_path = tmp_path / "noisy-child.pid"
-    executable = tmp_path / "noisy-probe.py"
-    executable.write_text(
-        "#!" + os.sys.executable + "\n"
+    script = tmp_path / "noisy-probe.py"
+    script.write_text(
         "import os, sys\n"
         f"open({str(pid_path)!r}, 'w').write(str(os.getpid()))\n"
         "while True:\n"
         "    sys.stdout.buffer.write(b'X' * 64)\n"
         "    sys.stdout.buffer.flush()\n"
     )
-    executable.chmod(0o755)
-
     started = time.monotonic()
-    succeeded, version = vllm_setup._run_probe(subprocess.run, [str(executable)])
+    succeeded, version = vllm_setup._run_probe(
+        subprocess.run, [sys.executable, str(script)]
+    )
     elapsed = time.monotonic() - started
 
     assert succeeded is False
@@ -117,6 +118,127 @@ def test_default_probe_kills_and_reaps_child_at_output_byte_ceiling(tmp_path):
     pid = int(pid_path.read_text())
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
+
+
+def test_default_probe_is_independent_of_pipe_select(monkeypatch, tmp_path: Path):
+    script = tmp_path / "version.py"
+    script.write_text("print('Python 3.12.0')\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        select_module,
+        "select",
+        lambda *_args: (_ for _ in ()).throw(OSError("pipe polling unsupported")),
+    )
+
+    assert vllm_setup._run_probe(subprocess.run, [sys.executable, str(script)]) == (
+        True,
+        "Python 3.12.0",
+    )
+
+
+def test_default_probe_times_out_and_reaps_a_quiet_child(monkeypatch, tmp_path: Path):
+    pid_path = tmp_path / "quiet-child.pid"
+    script = tmp_path / "quiet-probe.py"
+    script.write_text(
+        "import os, time\n"
+        f"open({str(pid_path)!r}, 'w').write(str(os.getpid()))\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(vllm_setup, "_PROBE_TIMEOUT_SECONDS", 0.1)
+
+    succeeded, version = vllm_setup._run_probe(
+        subprocess.run, [sys.executable, str(script)]
+    )
+
+    assert (succeeded, version) == (False, None)
+    pid = int(pid_path.read_text(encoding="utf-8"))
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+def test_default_probe_normalizes_reader_failure_without_error_text(monkeypatch):
+    class BrokenPipe:
+        closed = False
+
+        def read(self, _size: int) -> bytes:
+            raise OSError("READER_EXCEPTION_CANARY")
+
+        def close(self) -> None:
+            self.closed = True
+
+    class FakeProcess:
+        stdout = BrokenPipe()
+        reaped = False
+
+        def poll(self):
+            return None if not self.reaped else 0
+
+        def terminate(self) -> None:
+            self.reaped = True
+
+        def wait(self, timeout=None) -> int:
+            self.reaped = True
+            return 0
+
+        def kill(self) -> None:
+            self.reaped = True
+
+    process = FakeProcess()
+    monkeypatch.setattr(vllm_setup.subprocess, "Popen", lambda *_a, **_k: process)
+
+    result = vllm_setup._run_default_probe([sys.executable, "ignored.py"])
+
+    assert result == (False, None)
+    assert process.reaped
+    assert process.stdout.closed
+    assert "READER_EXCEPTION_CANARY" not in repr(result)
+
+
+def test_default_probe_normalizes_wait_failure_and_reaps(monkeypatch):
+    class VersionPipe:
+        closed = False
+
+        def __init__(self) -> None:
+            self.chunks = iter((b"Python 3.12.0", b""))
+
+        def read(self, _size: int) -> bytes:
+            return next(self.chunks)
+
+        def close(self) -> None:
+            self.closed = True
+
+    class FakeProcess:
+        stdout = VersionPipe()
+        reaped = False
+        waits = 0
+
+        def poll(self):
+            return None if not self.reaped else 0
+
+        def terminate(self) -> None:
+            self.reaped = True
+
+        def wait(self, timeout=None) -> int:
+            self.waits += 1
+            if self.waits == 1:
+                raise OSError("WAIT_EXCEPTION_CANARY")
+            self.reaped = True
+            return 0
+
+        def kill(self) -> None:
+            self.reaped = True
+
+    process = FakeProcess()
+    monkeypatch.setattr(vllm_setup.subprocess, "Popen", lambda *_a, **_k: process)
+
+    result = vllm_setup._run_default_probe([sys.executable, "ignored.py"])
+
+    assert result == (False, None)
+    assert process.reaped
+    assert process.waits == 2
+    assert process.stdout.closed
+    assert "WAIT_EXCEPTION_CANARY" not in repr(result)
 
 
 def test_bare_python_requires_sibling_vllm_not_path_lookup(tmp_path):

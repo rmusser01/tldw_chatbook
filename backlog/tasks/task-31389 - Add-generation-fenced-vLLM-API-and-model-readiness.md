@@ -286,6 +286,14 @@ bounded Needs attention issue with Retry/Edit recovery, hides the no-longer-
 truthful Cancel action, retains no raw exception/input, and cannot dispatch a
 probe for an invalid endpoint. ADR-117 remains the governing lifecycle/privacy
 contract; no new ADR is required.
+
+Post-PR review hardening keeps discovery capped to the first 100 admissible
+models while scanning the complete bounded response for an explicitly expected
+model. A match beyond the display limit now becomes Ready and retains only the
+canonical selected singleton. The public activity age bucketing helper also
+documents its input and result contract. The combined guarded vLLM matrix
+passed 416 tests; this is direct enforcement of ADR-117 rather than a new
+readiness contract.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

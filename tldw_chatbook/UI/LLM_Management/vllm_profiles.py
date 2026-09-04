@@ -17,6 +17,7 @@ from typing import BinaryIO, Literal
 from uuid import UUID, uuid4
 
 import portalocker
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
 
@@ -35,23 +36,6 @@ MAX_PROFILE_NAME_CODEPOINTS = 120
 MAX_PROFILE_DOCUMENT_BYTES = 2 * 1024 * 1024
 DEFAULT_PROFILE_NAME = "Default vLLM"
 _DEFAULT_PROFILE_ID = "00000000-0000-4000-8000-000000000001"
-_DOCUMENT_KEYS = frozenset({"version", "revision", "selected_profile_id", "profiles"})
-_PROFILE_KEYS = frozenset(
-    {
-        "profile_id",
-        "name",
-        "python_environment",
-        "model_source",
-        "model_value",
-        "bind_address",
-        "port",
-        "dtype",
-        "tensor_parallel_size",
-        "maximum_model_length",
-        "gpu_memory_utilization",
-        "trust_remote_code",
-    }
-)
 _DTYPES = frozenset({"auto", "half", "float16", "bfloat16", "float32"})
 _UNSAFE_TEXT_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
 _BARE_PYTHON_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
@@ -81,6 +65,108 @@ class VllmProfileConflict(VllmProfileError):
 
 class _DuplicateJsonKey(ValueError):
     """A JSON object repeated a key and cannot be decoded safely."""
+
+
+class _VllmProfilePayload(BaseModel):
+    """Strict external JSON shape for one V1 profile."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    profile_id: str
+    name: str
+    python_environment: str
+    model_source: Literal["hugging_face", "local_directory"]
+    model_value: str
+    bind_address: str
+    port: int
+    dtype: Literal["auto", "half", "float16", "bfloat16", "float32"]
+    tensor_parallel_size: int | None
+    maximum_model_length: int | None
+    gpu_memory_utilization: float | None
+    trust_remote_code: bool
+
+    @field_validator(
+        "profile_id",
+        "name",
+        "python_environment",
+        "model_source",
+        "model_value",
+        "bind_address",
+        "dtype",
+        mode="before",
+    )
+    @classmethod
+    def _exact_string(cls, value: object) -> object:
+        if type(value) is not str:
+            raise ValueError("string required")
+        return value
+
+    @field_validator("port", mode="before")
+    @classmethod
+    def _exact_port(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError("integer required")
+        return value
+
+    @field_validator(
+        "tensor_parallel_size",
+        "maximum_model_length",
+        mode="before",
+    )
+    @classmethod
+    def _exact_optional_integer(cls, value: object) -> object:
+        if value is not None and type(value) is not int:
+            raise ValueError("integer or null required")
+        return value
+
+    @field_validator("gpu_memory_utilization", mode="before")
+    @classmethod
+    def _exact_optional_float(cls, value: object) -> object:
+        if value is not None and type(value) is not float:
+            raise ValueError("float or null required")
+        return value
+
+    @field_validator("trust_remote_code", mode="before")
+    @classmethod
+    def _exact_boolean(cls, value: object) -> object:
+        if type(value) is not bool:
+            raise ValueError("boolean required")
+        return value
+
+
+class _VllmProfileDocumentPayload(BaseModel):
+    """Strict external JSON shape for the complete V1 document."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    version: Literal[1]
+    revision: int
+    selected_profile_id: str
+    profiles: list[_VllmProfilePayload] = Field(
+        min_length=1,
+        max_length=MAX_VLLM_PROFILES,
+    )
+
+    @field_validator("version", "revision", mode="before")
+    @classmethod
+    def _exact_integer(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError("integer required")
+        return value
+
+    @field_validator("selected_profile_id", mode="before")
+    @classmethod
+    def _exact_selected_id(cls, value: object) -> object:
+        if type(value) is not str:
+            raise ValueError("string required")
+        return value
+
+    @field_validator("profiles", mode="before")
+    @classmethod
+    def _exact_profiles(cls, value: object) -> object:
+        if type(value) is not list or any(type(item) is not dict for item in value):
+            raise ValueError("profile array required")
+        return value
 
 
 def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -140,8 +226,8 @@ def _profile_id(value: object) -> str:
         raise VllmProfileValidationError("profile_id must be a string UUID")
     try:
         parsed = UUID(value)
-    except (AttributeError, ValueError) as error:
-        raise VllmProfileValidationError("profile_id must be a UUID") from error
+    except (AttributeError, ValueError):
+        raise VllmProfileValidationError("profile_id must be a UUID") from None
     if str(parsed) != value:
         raise VllmProfileValidationError("profile_id must be a canonical UUID")
     return value
@@ -398,29 +484,21 @@ def _document_payload(document: VllmProfileDocumentV1) -> dict[str, object]:
     }
 
 
-def _decode_profile(value: object) -> VllmLaunchProfileV1:
-    if type(value) is not dict or set(value) != _PROFILE_KEYS:
-        raise VllmProfileValidationError("profile keys do not match V1")
-    source = value["model_source"]
-    if type(source) is not str:
-        raise VllmProfileValidationError("model_source must be a string")
-    try:
-        model_source = VllmModelSource(source)
-    except ValueError as error:
-        raise VllmProfileValidationError("model_source is invalid") from error
+def _decode_profile(value: _VllmProfilePayload) -> VllmLaunchProfileV1:
+    model_source = VllmModelSource(value.model_source)
     return VllmLaunchProfileV1(
-        profile_id=value["profile_id"],
-        name=value["name"],
-        python_environment=value["python_environment"],
+        profile_id=value.profile_id,
+        name=value.name,
+        python_environment=value.python_environment,
         model_source=model_source,
-        model_value=value["model_value"],
-        bind_address=value["bind_address"],
-        port=value["port"],
-        dtype=value["dtype"],
-        tensor_parallel_size=value["tensor_parallel_size"],
-        maximum_model_length=value["maximum_model_length"],
-        gpu_memory_utilization=value["gpu_memory_utilization"],
-        trust_remote_code=value["trust_remote_code"],
+        model_value=value.model_value,
+        bind_address=value.bind_address,
+        port=value.port,
+        dtype=value.dtype,
+        tensor_parallel_size=value.tensor_parallel_size,
+        maximum_model_length=value.maximum_model_length,
+        gpu_memory_utilization=value.gpu_memory_utilization,
+        trust_remote_code=value.trust_remote_code,
     )
 
 
@@ -430,16 +508,17 @@ def _decode_document(value: object) -> VllmProfileDocumentV1:
     version = value.get("version")
     if type(version) is int and version > PROFILE_DOCUMENT_VERSION:
         raise VllmProfileFutureVersion("profile document version is newer than V1")
-    if set(value) != _DOCUMENT_KEYS:
-        raise VllmProfileValidationError("document keys do not match V1")
-    profiles = value["profiles"]
-    if type(profiles) is not list:
-        raise VllmProfileValidationError("profiles must be an array")
+    try:
+        payload = _VllmProfileDocumentPayload.model_validate(value)
+    except ValidationError:
+        payload = None
+    if payload is None:
+        raise VllmProfileValidationError("profile document does not match V1") from None
     return VllmProfileDocumentV1(
-        version=value["version"],
-        revision=value["revision"],
-        selected_profile_id=value["selected_profile_id"],
-        profiles=tuple(_decode_profile(profile) for profile in profiles),
+        version=payload.version,
+        revision=payload.revision,
+        selected_profile_id=payload.selected_profile_id,
+        profiles=tuple(_decode_profile(profile) for profile in payload.profiles),
     )
 
 

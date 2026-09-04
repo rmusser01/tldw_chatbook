@@ -290,6 +290,38 @@ async def test_external_discovery_bounds_candidates_and_rejects_an_empty_list(
     assert empty.target is None
 
 
+@pytest.mark.asyncio
+async def test_exact_selected_model_after_display_limit_can_become_ready(
+    loopback_vllm,
+):
+    loopback_vllm.health_status = 200
+    loopback_vllm.models = [{"id": f"org/model-{index}"} for index in range(100)] + [
+        {"id": "org/selected"}
+    ]
+    owner = VllmConnectionOwner()
+    token = owner.begin(
+        replace(
+            local_draft(),
+            mode=VllmMode.EXISTING,
+            existing_server_url=loopback_vllm.url,
+        ),
+        runtime_owner="external",
+    )
+
+    result = await probe_vllm_target(
+        probe_request(
+            loopback_vllm.url,
+            token=token,
+            expected_model_id="org/selected",
+        )
+    )
+
+    assert result.state is VllmReadinessState.READY
+    assert result.target is not None
+    assert result.target.model_id == "org/selected"
+    assert result.discovered_model_ids == ("org/selected",)
+
+
 def test_older_generation_cannot_replace_newer_owner_state():
     owner = VllmConnectionOwner()
     old = owner.begin(local_draft(), runtime_owner="chatbook")

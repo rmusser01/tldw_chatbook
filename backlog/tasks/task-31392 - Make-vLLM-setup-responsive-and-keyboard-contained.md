@@ -476,6 +476,16 @@ LLMManagementWindow picker ownership. The removed legacy vLLM IDs remain absent;
 all non-vLLM legacy mappings remain exhaustively guarded. The production action
 file passes 17 tests. This is test/contract maintenance under ADR-117; no new ADR
 is required.
+
+Post-PR latency hardening gives vLLM controls semantic styling classes and
+re-keys exactly eight rightmost bare-type selectors without changing IDs,
+geometry, or Tab/focus behavior. The parsed application-wide selector census
+falls from the review RED of 282 to the existing 274 ceiling, all 71 geometry
+cases pass under the GC/FD guard, and two CSS builds reproduce bundle SHA-256
+`f8b1f729b5dbfd2255c4200653cb2f8347408edede666f2a1e5c1f377e9d27e0`.
+The shared strict per-control caps and adjacent content-free rejection feedback
+also close forged Input/TextArea mismatch paths. ADR-117 already owns the UI
+and privacy boundary; no new ADR or lesson was required.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

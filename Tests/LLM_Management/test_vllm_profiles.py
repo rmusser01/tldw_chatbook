@@ -198,6 +198,102 @@ def test_load_rejects_unknown_document_or_profile_keys(tmp_path: Path):
             VllmProfileRepository(path).load()
 
 
+def test_profile_json_ingress_uses_strict_pydantic_models(monkeypatch, tmp_path: Path):
+    path = tmp_path / "profiles.json"
+    VllmProfileRepository(path).save(profile_named("Strict"), expected_revision=0)
+    original = profile_storage._VllmProfileDocumentPayload.model_validate
+    calls: list[object] = []
+
+    def observed(value: object):
+        calls.append(value)
+        return original(value)
+
+    monkeypatch.setattr(
+        profile_storage._VllmProfileDocumentPayload,
+        "model_validate",
+        observed,
+    )
+
+    assert VllmProfileRepository(path).load().profiles[0].name == "Strict"
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("version", True),
+        ("revision", False),
+        ("selected_profile_id", 7),
+        ("port", 8000.0),
+        ("tensor_parallel_size", True),
+        ("maximum_model_length", 4096.0),
+        ("gpu_memory_utilization", 1),
+        ("trust_remote_code", 1),
+    ],
+)
+def test_profile_pydantic_ingress_rejects_scalar_coercion_without_canary_leak(
+    tmp_path: Path, field: str, value: object
+):
+    profile_id = str(uuid4())
+    profile = profile_storage._profile_payload(
+        profile_named("Strict", profile_id=profile_id)
+    )
+    document: dict[str, object] = {
+        "version": 1,
+        "revision": 0,
+        "selected_profile_id": profile_id,
+        "profiles": [profile],
+    }
+    target = document if field in document else profile
+    target[field] = value
+    path = tmp_path / f"{field}.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    path.chmod(0o600)
+
+    with pytest.raises(VllmProfileCorrupt) as caught:
+        VllmProfileRepository(path).load()
+
+    chain: list[str] = []
+    current: BaseException | None = caught.value
+    while current is not None:
+        chain.extend((str(current), repr(current)))
+        current = current.__cause__ or current.__context__
+    assert "PROFILE_VALIDATION_CANARY" not in " ".join(chain)
+
+
+def test_pydantic_validation_canary_is_absent_from_complete_exception_graph(
+    tmp_path: Path,
+) -> None:
+    profile_id = str(uuid4())
+    profile = profile_storage._profile_payload(
+        profile_named("Strict", profile_id=profile_id)
+    )
+    profile["unknown"] = "PROFILE_VALIDATION_CANARY"
+    path = tmp_path / "canary.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "revision": 0,
+                "selected_profile_id": profile_id,
+                "profiles": [profile],
+            }
+        ),
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+
+    with pytest.raises(VllmProfileCorrupt) as caught:
+        VllmProfileRepository(path).load()
+
+    rendered: list[str] = []
+    current: BaseException | None = caught.value
+    while current is not None:
+        rendered.extend((str(current), repr(current)))
+        current = current.__cause__ or current.__context__
+    assert "PROFILE_VALIDATION_CANARY" not in " ".join(rendered)
+
+
 def test_oversized_profile_document_is_bounded_and_preserved(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

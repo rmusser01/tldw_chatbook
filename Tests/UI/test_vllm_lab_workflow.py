@@ -1911,6 +1911,110 @@ async def test_source_specific_controls_and_mode_drafts_are_preserved():
         ).display
 
 
+async def test_vllm_inputs_use_shared_lexical_caps_and_restore_rejected_events():
+    app = _VllmHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        view = app.query_one(VllmSetupView)
+        view.apply_state(
+            draft=view.draft,
+            state=VllmReadinessState.NOT_CONFIGURED,
+            preflight=None,
+            profiles_ready=True,
+        )
+        port = view.query_one("#vllm-port", Input)
+        port.value = "-"
+        await pilot.pause()
+        assert view.draft.port == "-"
+
+        forged = type(
+            "ForgedInputChanged",
+            (),
+            {"input": port, "value": "123456"},
+        )()
+        view._on_input_changed(forged)
+
+        assert view.draft.port == "-"
+        assert port.value == "-"
+        help_label = view.query_one("#vllm-port-help", Label)
+        assert help_label.display
+        assert "unsupported control characters" in str(help_label.renderable)
+        assert "123456" not in str(help_label.renderable)
+
+
+@pytest.mark.parametrize(
+    "invalid_arguments",
+    ("RAW_ARGUMENT_CANARY\x00", "RAW_ARGUMENT_CANARY" + "x" * (16 * 1024)),
+)
+async def test_vllm_raw_arguments_reject_nul_or_oversize_without_echo(
+    invalid_arguments: str,
+):
+    app = _VllmHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        view = app.query_one(VllmSetupView)
+        view.apply_state(
+            draft=replace(view.draft, raw_arguments="--enable-prefix-caching"),
+            state=VllmReadinessState.NOT_CONFIGURED,
+            preflight=None,
+            profiles_ready=True,
+        )
+        arguments = view.query_one("#vllm-raw-arguments", TextArea)
+        arguments.text = invalid_arguments
+        await pilot.pause()
+
+        assert view.draft.raw_arguments == "--enable-prefix-caching"
+        assert arguments.text == "--enable-prefix-caching"
+        help_label = view.query_one("#vllm-raw-arguments-help", Label)
+        assert help_label.display
+        assert "16 KiB" in str(help_label.renderable)
+        assert "RAW_ARGUMENT_CANARY" not in str(help_label.renderable)
+
+
+async def test_vllm_raw_arguments_preserve_blank_and_nonblank_text_exactly():
+    app = _VllmHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        view = app.query_one(VllmSetupView)
+        view.apply_state(
+            draft=view.draft,
+            state=VllmReadinessState.NOT_CONFIGURED,
+            preflight=None,
+            profiles_ready=True,
+        )
+        arguments = view.query_one("#vllm-raw-arguments", TextArea)
+        arguments.text = "   "
+        await pilot.pause()
+        assert view.draft.raw_arguments == "   "
+
+        arguments.text = "  --enable-prefix-caching  "
+        await pilot.pause()
+        assert view.draft.raw_arguments == "  --enable-prefix-caching  "
+
+
+async def test_vllm_semantic_classes_and_input_caps_are_mounted():
+    app = _VllmHost()
+    async with app.run_test(size=(120, 40)):
+        view = app.query_one(VllmSetupView)
+        expected_caps = {
+            "vllm-profile-name": 120,
+            "vllm-python-environment": 4096,
+            "vllm-hf-model": 96,
+            "vllm-local-model-directory": 4096,
+            "vllm-bind-address": 255,
+            "vllm-port": 5,
+            "vllm-existing-server-url": 2048,
+            "vllm-tensor-parallel-size": 10,
+            "vllm-maximum-model-length": 10,
+            "vllm-gpu-memory-utilization": 32,
+        }
+        for widget_id, limit in expected_caps.items():
+            control = view.query_one(f"#{widget_id}", Input)
+            assert control.max_length == limit
+            assert control.has_class("vllm-control")
+            assert control.has_class("vllm-focus-target")
+        for button in view.query(Button):
+            assert button.has_class("vllm-button")
+            assert button.has_class("vllm-focus-target")
+
+
 async def test_preflight_blocker_is_adjacent_and_start_enables_only_for_current_success():
     app = _VllmHost()
     async with app.run_test(size=(120, 40)) as pilot:

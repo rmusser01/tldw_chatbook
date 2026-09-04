@@ -213,6 +213,16 @@ code points and malformed URL/parser inputs settle as field-local issues before
 any resolver, socket, or HTTP work. Focused bind/URL and mounted settlement
 regressions pass; no new ADR is required because this directly enforces the
 accepted preflight boundary.
+
+Post-PR review hardening replaces pipe polling in the default-version probe
+with one bounded reader thread and an owner-enforced monotonic deadline. Every
+oversize, timeout, reader, and process-wait failure now terminates, kills when
+needed, reaps, closes, and joins without retaining output or exception text;
+cross-platform subprocess tests cover each settlement path. The same round
+adds a shared strict lexical boundary for every vLLM draft control and raw
+arguments, preserving exact partial edits while rejecting bounded invalid
+events without echo. ADR-117 already governs these preflight and privacy
+boundaries, so no new ADR or contract change was required.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
