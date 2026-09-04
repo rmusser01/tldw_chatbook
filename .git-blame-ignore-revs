@@ -59,3 +59,9 @@ cdb43ebcc1a1e2e113ac78d0e16f2c88ac016b3f
 # -- every per-line change is a mechanical receiver swap or a removal, not
 # new logic.
 39a9763215eab9b8a832e45e4ebb7e85893d8b60
+
+# Wave-3 task 3: combined search+RAG controller move (search+RAG series
+# 2/3). 42 method bodies moved verbatim from library_screen.py to the new
+# LibraryRagSearchController (UI/Library_Modules/library_rag_search_
+# controller.py), each replaced by a one-line delegator.
+877eeaf9a883b809aca49f2328d769b4b43fb4de
