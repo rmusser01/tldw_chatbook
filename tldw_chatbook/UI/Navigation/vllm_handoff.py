@@ -23,8 +23,7 @@ def _is_admissible_model_id(value: object) -> bool:
     if value != " ".join(value.split()) or not value.isprintable():
         return False
     if any(
-        unicodedata.category(character) in {"Cc", "Cf", "Cs"}
-        for character in value
+        unicodedata.category(character) in {"Cc", "Cf", "Cs"} for character in value
     ):
         return False
     lowered = value.casefold()
@@ -39,7 +38,9 @@ def _is_admissible_model_id(value: object) -> bool:
     return all(segment not in {".", ".."} for segment in value.split("/"))
 
 
-def _validate_intent_fields(api_url: object, model_id: object, generation: object) -> None:
+def _validate_intent_fields(
+    api_url: object, model_id: object, generation: object
+) -> None:
     if type(api_url) is not str:
         raise TypeError("vLLM handoff URL must be exact text")
     resolution = resolve_provider_endpoint("vllm", api_url)

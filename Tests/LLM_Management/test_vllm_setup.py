@@ -40,9 +40,7 @@ def local_draft(**changes: object) -> VllmLaunchDraft:
     return VllmLaunchDraft(**values)
 
 
-def passing_preflight(
-    draft: VllmLaunchDraft, *, cli_path: Path
-):
+def passing_preflight(draft: VllmLaunchDraft, *, cli_path: Path):
     cli_path.parent.mkdir(parents=True, exist_ok=True)
     cli_path.touch()
     cli_path.chmod(0o755)
@@ -61,7 +59,9 @@ def passing_preflight(
     return run_vllm_preflight(
         draft,
         4,
-        which=lambda name: str(python_path) if name == draft.python_environment else None,
+        which=lambda name: (
+            str(python_path) if name == draft.python_environment else None
+        ),
         run=probe,
         port_available=lambda host, port: True,
     )
@@ -77,7 +77,9 @@ def test_preflight_rejects_oversize_or_unclassified_probe_output(tmp_path):
     python_path.chmod(0o755)
 
     def noisy_run(argv, **kwargs):
-        return type("Result", (), {"returncode": 0, "stdout": "CANARY_SECRET_" + "x" * 2048})()
+        return type(
+            "Result", (), {"returncode": 0, "stdout": "CANARY_SECRET_" + "x" * 2048}
+        )()
 
     result = run_vllm_preflight(
         local_draft(python_environment=str(python_path)),
@@ -128,15 +130,21 @@ def test_bare_python_requires_sibling_vllm_not_path_lookup(tmp_path):
     result = run_vllm_preflight(
         local_draft(),
         4,
-        which=lambda name: str(python_path) if name == "python" else str(unrelated_vllm),
-        run=lambda *args, **kwargs: type("Result", (), {"returncode": 0, "stdout": "Python 3.12.0"})(),
+        which=lambda name: (
+            str(python_path) if name == "python" else str(unrelated_vllm)
+        ),
+        run=lambda *args, **kwargs: type(
+            "Result", (), {"returncode": 0, "stdout": "Python 3.12.0"}
+        )(),
         port_available=lambda host, port: True,
     )
     assert VllmIssue("vllm_cli_unavailable", "python_environment") in result.issues
 
 
 @pytest.mark.asyncio
-async def test_local_directory_picker_returns_selected_directory_through_callback(tmp_path):
+async def test_local_directory_picker_returns_selected_directory_through_callback(
+    tmp_path,
+):
     selected = tmp_path / "model"
     selected.mkdir()
     received = {}
@@ -159,7 +167,9 @@ async def test_local_directory_picker_returns_selected_directory_through_callbac
             received["callback"] = callback
 
     app = App()
-    await vllm_events.handle_vllm_local_directory_browse_requested(window, app, object())
+    await vllm_events.handle_vllm_local_directory_browse_requested(
+        window, app, object()
+    )
     assert isinstance(received["picker"], EnhancedSelectDirectory)
     await received["callback"](selected)
     assert input_widget.value == str(selected)
@@ -173,7 +183,9 @@ def test_explicit_environment_rejects_unrelated_global_vllm_cli(tmp_path):
         local_draft(python_environment=str(python_path)),
         4,
         which=lambda _: "/usr/local/bin/vllm",
-        run=lambda *args, **kwargs: type("Result", (), {"returncode": 0, "stdout": "0.9.0\n"})(),
+        run=lambda *args, **kwargs: type(
+            "Result", (), {"returncode": 0, "stdout": "0.9.0\n"}
+        )(),
         port_available=lambda host, port: True,
     )
     assert VllmIssue("vllm_cli_unavailable", "python_environment") in result.issues
@@ -186,7 +198,9 @@ def test_preflight_rejects_a_non_executable_vllm_cli(tmp_path):
         local_draft(),
         4,
         which=lambda _: str(cli_path),
-        run=lambda *args, **kwargs: type("Result", (), {"returncode": 0, "stdout": "0.9.0\n"})(),
+        run=lambda *args, **kwargs: type(
+            "Result", (), {"returncode": 0, "stdout": "0.9.0\n"}
+        )(),
         port_available=lambda host, port: True,
     )
     assert VllmIssue("vllm_cli_unavailable", "python_environment") in result.issues
@@ -268,7 +282,9 @@ def test_raw_arguments_reject_tensor_parallel_short_alias(
     )
 
 
-def test_allowed_raw_option_reaches_command_without_overblocking(tmp_path: Path) -> None:
+def test_allowed_raw_option_reaches_command_without_overblocking(
+    tmp_path: Path,
+) -> None:
     draft = local_draft(raw_arguments="--enable-prefix-caching")
     preflight = passing_preflight(draft, cli_path=tmp_path / "vllm")
 
@@ -639,7 +655,9 @@ def test_lifecycle_sync_projects_vllm_without_legacy_button_queries():
 
 
 @pytest.mark.asyncio
-async def test_stop_request_settles_the_owned_server_without_opening_a_picker(monkeypatch):
+async def test_stop_request_settles_the_owned_server_without_opening_a_picker(
+    monkeypatch,
+):
     draft = local_draft()
     states = []
 
