@@ -615,8 +615,10 @@ class SchedulingService:
         """Validate and persist a single-row reminder edit (PR-3 task 3).
 
         Wraps `update_reminder` with the create form's own schedule
-        validators (`ReminderForm`'s `parse_forgiving_datetime`/
-        `_is_valid_zone`, plus `croniter.is_valid` for cron) -- reused
+        validators (`schedule_input_parsing.parse_forgiving_datetime`/
+        `is_valid_zone` -- the pure module `ReminderForm` itself also
+        imports these from, task 3's folded-in refactor -- plus
+        `croniter.is_valid` for cron) -- reused
         rather than re-derived, so a Repeat/At/Timezone row editor gets
         the same forgiving-local-datetime and known-zone behavior the
         create form gives, and the same errors when it doesn't parse.
@@ -660,15 +662,16 @@ class SchedulingService:
                 errors=[field_error("_row", "transfer_in_progress", locked)],
             )
 
-        # Deferred (ADR-097 boot ratchet): `ReminderForm` pulls in the
-        # whole Textual widget stack at module import time. By the time a
-        # row edit reaches this method the UI is already running and
-        # Textual is already loaded, so this costs nothing here -- it
-        # would cost boot time if hoisted to module level, same reasoning
-        # as the `automation_validation`/`automation_preview` imports
-        # elsewhere in this file.
-        from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import (
-            _is_valid_zone,
+        # redesign PR-3, task 3's folded-in refactor (task-2-review.md
+        # finding 1): these two used to live in `reminder_form.py`, a
+        # UI-layer module this service-layer file had no business
+        # importing from. Hoisted to a pure `Scheduling/`-side module --
+        # still function-local (ADR-097 boot ratchet), though this one no
+        # longer carries any Textual weight, so hoisting the IMPORT to
+        # module level would also be safe; left function-local anyway for
+        # a minimal diff against Task 2's shape.
+        from tldw_chatbook.Scheduling.schedule_input_parsing import (
+            is_valid_zone,
             parse_forgiving_datetime,
         )
 
@@ -697,7 +700,7 @@ class SchedulingService:
             # (reminder_form.py's `_save`): a zone already on the row must
             # keep validating even if this machine's tzdata can't resolve
             # it -- only a genuinely NEW zone value is checked.
-            if new_zone != row.get("timezone") and not _is_valid_zone(new_zone):
+            if new_zone != row.get("timezone") and not is_valid_zone(new_zone):
                 errors.append(
                     field_error(
                         "timezone", "invalid_timezone", f"Unknown timezone: {new_zone}"

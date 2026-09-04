@@ -6,6 +6,7 @@ from typing import Any
 
 from textual.message import Message
 
+from ..Widgets.detail_value_row import DetailValueRow
 from .models import ReminderTask
 
 
@@ -100,6 +101,30 @@ class RetryTransferRequested(Message):
     def __init__(self, task: ReminderTask) -> None:
         super().__init__()
         self.task = task
+
+
+class ReminderFieldEditRequested(Message):
+    """Posted when a reminder-pane Frequency row's inline editor commits
+    an edit (redesign PR-3, task 3).
+
+    ``row`` travels with the message so the handler (the workbench, which
+    owns the `SchedulingService` `TaskDetail` does not reach into) can
+    render a field-specific failure directly on the row that started the
+    edit (`DetailValueRow.show_error`) without a second lookup -- the
+    same "carry the widget the caller will need" idiom
+    `DetailValueRow.Activated` already uses for its own ``row``.
+    `TaskDetail` has already called `row.end_edit()` before posting this
+    (closing the editor, restoring the OLD display) -- a failure needs no
+    separate "restore" step beyond that.
+    """
+
+    def __init__(
+        self, task: ReminderTask, payload: dict[str, Any], row: DetailValueRow
+    ) -> None:
+        super().__init__()
+        self.task = task
+        self.payload = payload
+        self.row = row
 
 
 class SyncCompleted(Message):

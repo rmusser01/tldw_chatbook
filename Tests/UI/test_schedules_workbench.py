@@ -39,6 +39,7 @@ from tldw_chatbook.UI.Screens.scheduling.task_detail import (
 )
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
+from tldw_chatbook.Widgets.detail_value_row import DetailValueRow
 
 
 # Shared across the Schedules UI test files (task-23106 review round F15).
@@ -46,6 +47,7 @@ from Tests.UI.schedules_test_helpers import (
     MockSchedulingDB as _MockSchedulingDB,
     MockSchedulingServiceMixin as _MockSchedulingServiceMixin,
     MockServerClient as _MockServerClient,
+    rendered_row_cells,
 )
 
 
@@ -429,6 +431,435 @@ async def test_task_detail_shows_the_reminder_body_card():
         detail.set_task(_frequency_reminder(body=None))
         await pilot.pause()
         assert card.display is False
+
+
+# --- redesign PR-3, task 3: reminder-pane in-pane Frequency-row editing ----
+
+
+def _real_scheduling_service(tmp_path):
+    """A real (in-memory-file) `ScheduledTasksDB` + `SchedulingService`,
+    no server -- for tests that need genuine persistence/validation
+    (Task 2's bridge), not a hand-rolled stub of it."""
+    from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+    from tldw_chatbook.Scheduling.services.scheduling_service import SchedulingService
+
+    db = ScheduledTasksDB(tmp_path / "scheduled_tasks.db")
+    service = SchedulingService(db=db, runtime_source="local")
+    return db, service
+
+
+@pytest.mark.asyncio
+async def test_repeat_row_editor_opens_with_current_preset_preselected():
+    """Activating a recurring reminder's Repeat row mounts a Select
+    preloaded with the CURRENT cron's preset (task-3 brief AC)."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        # `_frequency_reminder`'s default cron "0 9 * * 1" == Monday 09:00.
+        detail.set_task(_frequency_reminder())
+        await pilot.pause()
+
+        repeat_row = detail._repeat_row
+        assert repeat_row.affordance is True
+        await pilot.click(repeat_row)
+        await pilot.pause()
+
+        editor = repeat_row.query_one(Select)
+        assert editor.value == "monday"
+
+
+@pytest.mark.asyncio
+async def test_at_row_editor_opens_with_current_run_at_preselected():
+    """A one-time reminder's At row opens an Input preloaded with the
+    task's own `run_at.isoformat()` -- the same prefill shape the
+    create/edit modal uses."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        run_at = datetime(2030, 1, 1, 9, 0, tzinfo=timezone.utc)
+        detail.set_task(
+            _frequency_reminder(
+                schedule_kind=ScheduleKind.ONE_TIME,
+                cron=None,
+                timezone=None,
+                run_at=run_at,
+            )
+        )
+        await pilot.pause()
+
+        at_row = detail._at_row
+        assert at_row.affordance is True
+        await pilot.click(at_row)
+        await pilot.pause()
+
+        editor = at_row.query_one(Input)
+        assert editor.value == run_at.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_timezone_row_editor_opens_with_current_zone_preselected():
+    """A recurring reminder's Timezone row opens a Select preloaded with
+    the task's OWN stored zone."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder())  # timezone="America/New_York"
+        await pilot.pause()
+
+        tz_row = detail._timezone_row
+        assert tz_row.affordance is True
+        await pilot.click(tz_row)
+        await pilot.pause()
+
+        editor = tz_row.query_one(Select)
+        assert editor.value == "America/New_York"
+
+
+@pytest.mark.asyncio
+async def test_frequency_row_affordance_matches_schedule_kind():
+    """Repeat/Timezone only apply to a recurring schedule, At only to a
+    one-time one (survey §2: the other combination is silently clobbered
+    by `update_reminder`'s own recompute step) -- the non-applicable row
+    stays read-only instead of offering a guaranteed-to-fail control."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder())  # recurring
+        await pilot.pause()
+        assert detail._repeat_row.affordance is True
+        assert detail._at_row.affordance is False
+        assert detail._timezone_row.affordance is True
+
+        detail.set_task(
+            _frequency_reminder(
+                schedule_kind=ScheduleKind.ONE_TIME,
+                cron=None,
+                timezone=None,
+                run_at=datetime(2030, 1, 1, 9, 0, tzinfo=timezone.utc),
+            )
+        )
+        await pilot.pause()
+        assert detail._repeat_row.affordance is False
+        assert detail._at_row.affordance is True
+        assert detail._timezone_row.affordance is False
+
+
+@pytest.mark.asyncio
+async def test_escape_cancels_open_editor_without_committing():
+    """Escape closes the open editor via `end_edit` -- no field-edit
+    request is posted, and the row's old value is still shown."""
+
+    class _CapturingApp(_BareTaskDetailApp):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.requests: list = []
+
+        def on_reminder_field_edit_requested(self, event) -> None:
+            self.requests.append(event)
+
+    async with _CapturingApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder())
+        await pilot.pause()
+
+        repeat_row = detail._repeat_row
+        await pilot.click(repeat_row)
+        await pilot.pause()
+        assert repeat_row.query(Select)
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert not repeat_row.query(Select)
+        assert pilot.app.requests == []
+        assert (
+            detail.query_one("#scheduling-detail-repeat", Static)
+            .render_line(0)
+            .text.strip()
+            == "Recurring"
+        )
+
+
+@pytest.mark.asyncio
+async def test_repeat_row_selecting_custom_target_refuses_without_a_bridge_call():
+    """Picking "Custom cron..." as a NEW Repeat target has no single-value
+    edit shape here (the raw cron field only exists in the full modal),
+    so it is refused client-side rather than sent to the bridge (ruling
+    2: never silent) -- distinct from "custom" merely being the row's
+    CURRENT (round-tripped) value, which never triggers a commit at all."""
+
+    class _CapturingApp(_BareTaskDetailApp):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.requests: list = []
+
+        def on_reminder_field_edit_requested(self, event) -> None:
+            self.requests.append(event)
+
+    async with _CapturingApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        # `_frequency_reminder`'s default cron "0 9 * * 1" == "monday".
+        detail.set_task(_frequency_reminder())
+        await pilot.pause()
+
+        repeat_row = detail._repeat_row
+        await pilot.click(repeat_row)
+        await pilot.pause()
+        editor = repeat_row.query_one(Select)
+        assert editor.value == "monday"
+
+        editor.value = "custom"  # a genuine change to an unsupported target
+        await pilot.pause()
+
+        assert not repeat_row.query(Select)  # editor closed
+        assert pilot.app.requests == []  # never reached the bridge
+        error = repeat_row.query_one(".detail-value-row-error", Static)
+        assert error.display is True
+        assert "full Edit form" in error.render_line(0).text
+        # The stored cron is untouched -- nothing was persisted.
+        assert (
+            detail.query_one("#scheduling-detail-at", Static)
+            .render_line(0)
+            .text.strip()
+            == "Weekly on Monday at 09:00 America/New_York"
+        )
+
+
+@pytest.mark.asyncio
+async def test_locked_row_activation_shows_lock_reason_and_opens_no_editor():
+    """Ruling 2 (never silent): a locked row's Frequency rows keep their
+    affordance ON so activation still responds -- with the lock reason
+    via `show_error`, never an editor."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder())
+        detail.set_lifecycle_lock(
+            "This row is moving between this device and the server -- it "
+            "is read-only until the move finishes. Cancel the transfer first."
+        )
+        await pilot.pause()
+
+        repeat_row = detail._repeat_row
+        assert repeat_row.affordance is True  # still responsive, not silently off
+        await pilot.click(repeat_row)
+        await pilot.pause()
+
+        assert not repeat_row.query(Select)
+        error = repeat_row.query_one(".detail-value-row-error", Static)
+        assert error.display is True
+        assert "moving between this device and the server" in error.render_line(0).text
+
+
+@pytest.mark.asyncio
+async def test_committing_repeat_edit_persists_and_repaints_pane_and_queue_list(
+    tmp_path,
+):
+    """Commit persists via Task 2's bridge; success repaints the pane from
+    a fresh read AND the unified Queue list's own row data (task-3 brief
+    AC: 'unified-list row updates after edit')."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        reminder = await service.create_reminder(
+            {
+                "title": "Weekly digest",
+                "schedule_kind": "recurring",
+                "run_at": None,
+                "cron": "0 9 * * 1",
+                "timezone": "America/New_York",
+            }
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+
+            table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+            assert table.row_count == 1
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+            at_before = detail.query_one("#scheduling-detail-at", Static)
+            assert (
+                at_before.render_line(0).text.strip()
+                == "Weekly on Monday at 09:00 America/New_York"
+            )
+
+            # `pilot.click` targets a screen coordinate computed from
+            # `Widget.region`, which the Frequency group's real position
+            # inside the full 3-pane workbench does not reliably match
+            # (Task 1's own click-mechanics tests are BARE-harness only,
+            # never embedded here) -- posting `Activated` directly drives
+            # the exact same handler a real click reaches, without
+            # depending on pixel-perfect layout in a pane this narrow.
+            detail._repeat_row.post_message(
+                DetailValueRow.Activated(detail._repeat_row)
+            )
+            await pilot.pause()
+            select = detail._repeat_row.query_one(Select)
+            select.value = "daily"
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert db.get_reminder_task(reminder.id)["cron"] == "0 9 * * *"
+
+            at_after = detail.query_one("#scheduling-detail-at", Static)
+            assert (
+                at_after.render_line(0).text.strip()
+                == "Daily at 09:00 America/New_York"
+            )
+
+            # The unified Queue list's own underlying row data, not just
+            # the detail pane, reflects the persisted edit -- proven via
+            # the workbench's own refreshed `_tasks` (deterministic; the
+            # rendered relative-time subtitle is wall-clock-dependent and
+            # not a safe assertion here).
+            workbench = pilot.app.screen
+            assert workbench._tasks[0].cron == "0 9 * * *"
+            assert rendered_row_cells(table, 0)[1] == "Weekly digest"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_committing_edit_on_a_server_owned_row_persists_under_its_own_owner(
+    tmp_path,
+):
+    """PR-2's Queue spans owners -- a server-owned row's edit must persist
+    (row-owner threading is the bridge's own job, Task 2) without ever
+    repointing the service's active ('local') owner (task-3 brief AC)."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        task_id = db.create_reminder_task(
+            owner_id="server:example.com",
+            title="Server reminder",
+            schedule_kind="recurring",
+            run_at=None,
+            cron="0 9 * * 1",
+            timezone="America/New_York",
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+
+            table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+            assert table.row_count == 1
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+            detail._timezone_row.post_message(
+                DetailValueRow.Activated(detail._timezone_row)
+            )
+            await pilot.pause()
+            select = detail._timezone_row.query_one(Select)
+            select.value = "UTC"
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            row = db.get_reminder_task(task_id)
+            assert row["timezone"] == "UTC"
+            assert row["owner_id"] == "server:example.com"
+        assert service.owner_id == "local"  # never repointed by the edit
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_junk_at_value_shows_inline_error_and_restores_old_display(tmp_path):
+    """A junk At submission surfaces the bridge's field error inline and
+    leaves the OLD display + DB value untouched (task-3 brief AC)."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        task_id = db.create_reminder_task(
+            owner_id="local",
+            title="One-off",
+            schedule_kind="one_time",
+            run_at="2030-01-01T09:00:00+00:00",
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+
+            table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+            assert table.row_count == 1
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+            at_row = detail._at_row
+            at_static = detail.query_one("#scheduling-detail-at", Static)
+            original_text = at_static.render_line(0).text.strip()
+
+            at_row.post_message(DetailValueRow.Activated(at_row))
+            await pilot.pause()
+            input_widget = at_row.query_one(Input)
+            input_widget.value = "not-a-date"
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            error = at_row.query_one(".detail-value-row-error", Static)
+            assert error.display is True
+            assert "Run At must be a date and time" in error.render_line(0).text
+
+            assert (
+                db.get_reminder_task(task_id)["run_at"]
+                == "2030-01-01T09:00:00+00:00"
+            )
+            assert at_static.render_line(0).text.strip() == original_text
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_locked_row_via_real_service_refuses_edit_and_leaves_row_unchanged(
+    tmp_path,
+):
+    """The lock guard holds end-to-end through the real bridge too: a
+    locked row's Repeat editor never opens, and the DB row is untouched."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        task_id = db.create_reminder_task(
+            owner_id="local",
+            title="Locked",
+            schedule_kind="recurring",
+            run_at=None,
+            cron="0 9 * * 1",
+            timezone="America/New_York",
+        )
+        db.set_transfer_state(
+            "reminder_task", task_id, "to_server_pending", expected=(None,)
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+
+            table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+            assert table.row_count == 1
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+            repeat_row = detail._repeat_row
+            assert repeat_row.affordance is True
+
+            repeat_row.post_message(DetailValueRow.Activated(repeat_row))
+            await pilot.pause()
+
+            assert not repeat_row.query(Select)
+            error = repeat_row.query_one(".detail-value-row-error", Static)
+            assert error.display is True
+            assert "moving between this device and the server" in error.render_line(0).text
+            assert db.get_reminder_task(task_id)["cron"] == "0 9 * * 1"
+    finally:
+        db.close()
 
 
 @pytest.mark.asyncio

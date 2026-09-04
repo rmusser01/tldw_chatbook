@@ -20,6 +20,12 @@ editor is already open, and the error slot coexists with an open editor.
 The affordance glyph also gains a live visual state -- it un-dims while the
 row (or its open editor) has focus, or on hover.
 
+schedules-redesign PR-3, Task 3 adds one more general behavior: Escape
+while an editor is open closes it via ``end_edit()`` without notifying the
+caller (no ``Activated`` re-fire, no commit) -- a plain cancel, available
+to every `DetailValueRow` consumer, not just the reminder pane that first
+wires a caller through it.
+
 Three PR-3 seams were left dormant in PR-1 (final review F13, fixed while
 the row had only two consumers) and are wired up starting with PR-3 Task 1
 above: ``affordance`` is a settable property, not a construction-only flag
@@ -217,7 +223,26 @@ class DetailValueRow(Vertical):
         self.post_message(self.Activated(self))
 
     def _on_key(self, event: events.Key) -> None:
-        """Activate on Enter -- see ``_on_click``."""
+        """Activate on Enter, or cancel an open editor on Escape.
+
+        PR-3 Task 3: Escape while editing closes the editor without
+        committing (``end_edit()``, no caller notified) -- checked FIRST
+        and independently of ``self._affordance`` so it works the same
+        whether or not the row's glyph is currently shown. Neither
+        `Select` nor `Input` binds Escape for anything while collapsed/
+        idle (verified against Textual's own `Select`/`Input`/
+        `SelectOverlay` BINDINGS -- only `SelectOverlay` binds it, and
+        only to dismiss its own open dropdown), so the raw key event
+        bubbles here untouched exactly like Task 1's Enter fix relies on
+        for the OPEN case; stopping it here for the EDITING case is safe
+        and deliberate, unlike the open-Select-overlay's own Enter, which
+        must keep bubbling to resolve via `App`'s BINDINGS chain.
+        """
+        if event.key == "escape" and self._editor is not None:
+            event.stop()
+            event.prevent_default()
+            self.end_edit()
+            return
         if event.key != "enter" or not self._affordance or self._editor is not None:
             return
         event.stop()

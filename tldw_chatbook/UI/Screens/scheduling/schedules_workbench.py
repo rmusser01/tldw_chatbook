@@ -34,6 +34,7 @@ from ....Scheduling.events import (
     AcknowledgeIncidentRequested,
     EditTaskRequested,
     EnableTaskRequested,
+    ReminderFieldEditRequested,
     RetryTransferRequested,
     RunReminderNowRequested,
     SyncCompleted,
@@ -64,6 +65,7 @@ from ....UI.Screens.scheduling.results_tab import (
 )
 from ....UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
 from ....Widgets.confirmation_dialog import ConfirmationDialog
+from ....Widgets.detail_value_row import DetailValueRow
 # schedules-redesign PR-1, Task 4: `automation_execution_target_label`/
 # `automation_name_cell` moved to `definition_detail.py` (that leaf
 # module's own "Model"/"Runs on" row formatters need them and importing
@@ -1424,6 +1426,10 @@ class SchedulesWorkbench(BaseAppScreen):
                 task,
                 run_history=self._run_history_for(task.id),
                 incidents=self._incidents_for(task.id),
+                # PR-3 task 3: same option source the create/edit modal's
+                # own Timezone selector reads (`_task_timezones`), so the
+                # pane's inline Timezone row editor offers the same zones.
+                known_timezones=self._task_timezones(),
             )
             self._update_transfer_actions(task_detail, task)
             self.query_one("#scheduling-task-inspector", TaskInspector).set_task(task)
@@ -2201,6 +2207,62 @@ class SchedulesWorkbench(BaseAppScreen):
         """Disable the requested reminder and refresh the queue."""
         event.stop()
         self._set_reminder_enabled(event.task, False)
+
+    @on(ReminderFieldEditRequested)
+    def _on_reminder_field_edit_requested(
+        self, event: ReminderFieldEditRequested
+    ) -> None:
+        """A Frequency row's inline editor committed a value (PR-3 task 3)."""
+        event.stop()
+        self._edit_reminder_field(event.task, event.payload, event.row)
+
+    def _edit_reminder_field(
+        self,
+        task: ReminderTask,
+        payload: dict[str, Any],
+        row: DetailValueRow,
+    ) -> None:
+        """Persist one Frequency row's edit via Task 2's validation bridge.
+
+        `TaskDetail` has already closed the row's editor (`end_edit`,
+        restoring the OLD display) before posting the request -- a
+        failure needs no separate "restore" step here, only `show_error`.
+        Success repaints authoritatively from a fresh read: the SAME
+        reminder-only refresh (`refresh_definitions=False`) every other
+        reminder mutation in this file uses, which re-selects the row by
+        id and re-feeds `TaskDetail.set_task` -- so the row shows the
+        value the bridge actually persisted, not a locally-guessed one.
+        """
+        service = self._scheduling_service
+        if service is None:
+            row.show_error(
+                "Scheduling service is unavailable; cannot save this edit."
+            )
+            return
+
+        async def _edit_and_refresh() -> None:
+            try:
+                outcome = await service.edit_reminder_fields(task.id, payload)
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to edit reminder field")
+                row.show_error("Failed to save this edit.")
+                return
+            if outcome.status != "saved":
+                message = "; ".join(
+                    str(err.get("message") or "")
+                    for err in outcome.errors
+                    if err.get("message")
+                ) or "This edit could not be saved."
+                row.show_error(message)
+                return
+            row.clear_error()
+            self._request_tasks_refresh(refresh_definitions=False)
+
+        self.run_worker(
+            _edit_and_refresh,
+            exclusive=True,
+            group="schedules-edit-reminder-field",
+        )  # type: ignore[arg-type]
 
     @on(RunReminderNowRequested)
     def _on_run_reminder_now_requested(self, event: RunReminderNowRequested) -> None:

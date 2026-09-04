@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import Any
 
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Select, Static
 
 from ....Scheduling.events import (
     CancelTransferRequested,
@@ -17,6 +18,7 @@ from ....Scheduling.events import (
     AcknowledgeIncidentRequested,
     EditTaskRequested,
     EnableTaskRequested,
+    ReminderFieldEditRequested,
     RetryTransferRequested,
     RunReminderNowRequested,
     TransferToLocalRequested,
@@ -26,6 +28,12 @@ from ....Scheduling.models import ReminderTask, ScheduledTask, ScheduleKind, Tas
 from ....Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
 from ....Widgets.detail_value_row import DetailGroup, DetailValueRow
 from ..destination_recovery import DestinationRecoveryState
+# PR-3 task 3: the Frequency row editors reuse the create/edit modal's own
+# preset<->cron mapping and timezone-option builder verbatim (never
+# re-derived) -- `reminder_form.py` is already part of this same lazy-
+# loaded Scheduling-screen import chain (`schedules_workbench.py` imports
+# it at module level too), so this adds no new boot-cost tier (ADR-097).
+from .forms.reminder_form import ReminderForm, cron_to_preset, preset_to_cron, timezone_options
 # Hoisted to `unified_rows.py` (redesign PR-2 Task 1) so that pure module can
 # reuse them without pulling Textual in as an import side effect; re-exported
 # here unchanged so every existing call site/test import keeps working.
@@ -36,6 +44,22 @@ from .unified_rows import (
     definition_cron_expression,  # noqa: F401  (re-export: definition_detail.py imports this from here)
     owner_display_label,
 )
+
+
+#: Stable ids for the Frequency row editors (PR-3 task 3), so the
+#: `on_select_changed`/`on_input_submitted` handlers can route by id --
+#: same "filter on `.id`" idiom `on_button_pressed` already uses in this
+#: file for its own action buttons.
+_REPEAT_EDITOR_ID = "scheduling-detail-repeat-editor"
+_AT_EDITOR_ID = "scheduling-detail-at-editor"
+_TIMEZONE_EDITOR_ID = "scheduling-detail-timezone-editor"
+
+#: Repeat's "custom" preset has no single-value edit target here (the raw
+#: cron field only exists in the full modal) -- shown so the row's current
+#: value round-trips (Select requires the initial value be among its
+#: options), but selecting it as a NEW target is refused with this copy
+#: rather than silently doing nothing (ruling 2: never silent).
+_REPEAT_CUSTOM_REFUSAL = "Use the full Edit form to set a custom cron expression."
 
 
 SCHEDULES_EMPTY_CONSOLE_RECOVERY = DestinationRecoveryState(
@@ -517,6 +541,18 @@ class TaskDetail(Vertical):
         self._timezone_row: DetailValueRow | None = None
         self._last_fire_row: DetailValueRow | None = None
         self._body_card: Static | None = None
+        # PR-3 task 3: cached from `set_lifecycle_lock` (never re-derived
+        # here, same "one source of truth" rule survey §8 names) so the
+        # Frequency rows' `Activated` handler can tell a locked row apart
+        # from an editable one without a second `transfer_lock_reason`
+        # call -- the workbench already computed this once per selection.
+        self._lifecycle_lock_reason: str | None = None
+        #: Zones already used by other tasks (task-23102), threaded in by
+        #: the workbench's own `set_task` call so the Timezone row editor
+        #: offers the same option set the create/edit modal does. Empty
+        #: by default: every other `set_task` caller (including every
+        #: pre-task-3 test) keeps working unchanged.
+        self._known_timezones: Sequence[str] = ()
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -880,6 +916,154 @@ class TaskDetail(Vertical):
         if confirmed and isinstance(self._current_task, ReminderTask):
             self.post_message(DeleteTaskRequested(self._current_task))
 
+    # -- Frequency row in-pane editing (PR-3 task 3) -------------------------
+
+    def _configure_frequency_editability(self, task: ReminderTask) -> None:
+        """Wire each Frequency row's affordance to whether it has a real
+        single-field edit target for the task's CURRENT schedule kind.
+
+        Repeat (regenerates `cron`) and Timezone (`timezone`) only apply
+        to a recurring schedule; At (`run_at`) only applies to a one-time
+        one. Editing the "wrong" one for the current kind is not merely
+        unhelpful -- `update_reminder`'s own recompute step (survey §2)
+        silently clobbers it back (a `cron`/`timezone` write on a
+        one-time row is reset to `None`; a `run_at` write on a recurring
+        row is reset to `None` too), so offering the affordance there
+        would be a guaranteed-to-silently-fail control. Notifications has
+        no backing field at all (survey §2 -- a reminder dispatch always
+        writes the same fixed inbox+toast, nothing per-row to persist)
+        and stays permanently read-only; `Runs on` is out of this task's
+        row list entirely.
+
+        Locked rows keep their affordance ON (not off): ruling 2 requires
+        activation to still respond with the lock reason via `show_error`
+        rather than going silent, and `on_detail_value_row_activated`
+        checks `self._lifecycle_lock_reason` before ever opening an
+        editor -- so the affordance glyph staying lit is what makes that
+        reachable at all, not a bug.
+        """
+        recurring = task.schedule_kind == ScheduleKind.RECURRING
+        for row, editable in (
+            (self._repeat_row, recurring),
+            (self._at_row, not recurring),
+            (self._timezone_row, recurring),
+        ):
+            assert row is not None
+            row.affordance = editable
+            row.can_focus = editable
+
+    def on_detail_value_row_activated(self, event: DetailValueRow.Activated) -> None:
+        """Open the activated Frequency row's editor, or -- locked -- show
+        why editing is refused instead of doing nothing (ruling 2)."""
+        row = event.row
+        if row not in (self._repeat_row, self._at_row, self._timezone_row):
+            return
+        event.stop()
+        if self._lifecycle_lock_reason is not None:
+            row.show_error(self._lifecycle_lock_reason)
+            return
+        task = self._current_task
+        if not isinstance(task, ReminderTask):
+            return
+        row.clear_error()
+        if row is self._repeat_row:
+            current_preset, _time_text = cron_to_preset(task.cron or "")
+            row.begin_edit(
+                Select(
+                    ReminderForm._preset_options(),
+                    allow_blank=False,
+                    value=current_preset,
+                    id=_REPEAT_EDITOR_ID,
+                )
+            )
+        elif row is self._at_row:
+            initial = task.run_at.isoformat() if task.run_at is not None else ""
+            row.begin_edit(Input(value=initial, id=_AT_EDITOR_ID))
+        elif row is self._timezone_row:
+            # task.timezone is guaranteed set here: this row's affordance
+            # is only ever True while `task.schedule_kind` is RECURRING,
+            # and `ReminderTask`'s own model validator requires a
+            # timezone for every recurring row.
+            row.begin_edit(
+                Select(
+                    timezone_options(task.timezone, self._known_timezones),
+                    allow_blank=False,
+                    value=task.timezone,
+                    id=_TIMEZONE_EDITOR_ID,
+                )
+            )
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """Route a Frequency Select editor's commit by its stable id."""
+        if event.select.id == _REPEAT_EDITOR_ID:
+            self._commit_repeat_edit(event)
+        elif event.select.id == _TIMEZONE_EDITOR_ID:
+            self._commit_timezone_edit(event)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Route the At row's Input editor commit (Enter submits)."""
+        if event.input.id == _AT_EDITOR_ID:
+            self._commit_at_edit(event)
+
+    def _commit_repeat_edit(self, event: Select.Changed) -> None:
+        task = self._current_task
+        row = self._repeat_row
+        if not isinstance(task, ReminderTask) or row is None:
+            return
+        event.stop()
+        new_preset = str(event.value)
+        current_preset, current_time_text = cron_to_preset(task.cron or "")
+        if new_preset == current_preset:
+            # `Select` posts a synthetic `Changed` the moment `begin_edit`
+            # mounts it with its CURRENT value preselected (Textual's own
+            # `_init_selected_option` assigns `self.value` on `_on_mount`,
+            # which its `_watch_value` always turns into a `Changed` post)
+            # -- indistinguishable from a real commit except by comparing
+            # against the stored value. Also correctly no-ops a genuine
+            # reselect of the unchanged value: nothing to persist either
+            # way, so the editor stays open for a real pick.
+            return
+        row.end_edit()
+        if new_preset == "custom":
+            row.show_error(_REPEAT_CUSTOM_REFUSAL)
+            return
+        new_cron = preset_to_cron(new_preset, current_time_text or "09:00")
+        assert new_cron is not None, (
+            "every _preset_options() value besides 'custom' always yields a cron"
+        )
+        self.post_message(ReminderFieldEditRequested(task, {"cron": new_cron}, row))
+
+    def _commit_timezone_edit(self, event: Select.Changed) -> None:
+        task = self._current_task
+        row = self._timezone_row
+        if not isinstance(task, ReminderTask) or row is None:
+            return
+        event.stop()
+        new_zone = str(event.value)
+        if new_zone == (task.timezone or ""):
+            # Same mount-time-synthetic-`Changed` guard as the Repeat
+            # editor above.
+            return
+        row.end_edit()
+        self.post_message(
+            ReminderFieldEditRequested(task, {"timezone": new_zone}, row)
+        )
+
+    def _commit_at_edit(self, event: Input.Submitted) -> None:
+        task = self._current_task
+        row = self._at_row
+        if not isinstance(task, ReminderTask) or row is None:
+            return
+        event.stop()
+        row.end_edit()
+        raw = event.value.strip()
+        # Validated by the bridge (`SchedulingService.edit_reminder_fields`
+        # reuses the exact same `parse_forgiving_datetime` this pane's
+        # `At` display already implies) -- junk/empty text comes back as
+        # a `run_at`-addressed field error, rendered via `row.show_error`
+        # by the workbench's own outcome handler.
+        self.post_message(ReminderFieldEditRequested(task, {"run_at": raw}, row))
+
     def set_task(
         self,
         task: ReminderTask | ScheduledTask | None,
@@ -887,10 +1071,20 @@ class TaskDetail(Vertical):
         queue_empty: bool = False,
         run_history=None,
         incidents=None,
+        known_timezones: Sequence[str] = (),
     ) -> None:
-        """Update the detail view for the given task (or clear it)."""
+        """Update the detail view for the given task (or clear it).
+
+        Args:
+            known_timezones: PR-3 task 3 -- zones already used by other
+                tasks, passed through to the Timezone row editor's option
+                source (`timezone_options`) so it offers the same choices
+                the create/edit modal does. Every pre-task-3 caller omits
+                this and is unaffected.
+        """
         self._current_task = task
         self._current_incidents = list(incidents or [])
+        self._known_timezones = known_timezones
         metadata = self.query_one("#scheduling-task-detail-metadata", Vertical)
         lifecycle = self.query_one("#scheduling-task-detail-lifecycle", Horizontal)
         self.query_one("#schedules-follow-in-console", Button)
@@ -920,6 +1114,11 @@ class TaskDetail(Vertical):
             self.query_one("#schedules-follow-in-console", Button).label = (
                 "Follow in Console"
             )
+            # PR-3 task 3: stale lock state from a PREVIOUS selection must
+            # not survive into a cleared pane (harmless today since the
+            # groups are hidden either way, but `on_detail_value_row_
+            # activated` reads this directly -- keep it honest).
+            self._lifecycle_lock_reason = None
             return
 
         empty_state.display = False
@@ -949,6 +1148,7 @@ class TaskDetail(Vertical):
             self._at_row.update_value(_reminder_at_label(task))
             self._timezone_row.update_value(_reminder_timezone_label(task))
             self._last_fire_row.update_value(_reminder_last_fire_label(task))
+            self._configure_frequency_editability(task)
 
         if isinstance(task, ReminderTask):
             # Structural visibility only (spec §6, PR-5 task 7): Move to
@@ -1187,7 +1387,13 @@ class TaskDetail(Vertical):
         line in the always-visible Static, since keyboard users cannot
         see tooltips (UX-073). ``None`` restores the row's normal
         enabled/disabled logic, which `set_task` has already applied.
+
+        PR-3 task 3: also cached for the Frequency rows' `Activated`
+        handler (`self._lifecycle_lock_reason`) -- the SAME reason, not a
+        second `transfer_lock_reason` call, per survey §8's one-source-
+        of-truth rule.
         """
+        self._lifecycle_lock_reason = reason
         locked = reason is not None
         for button_id, tooltip in (
             ("scheduling-edit-task", "Edit this scheduled task."),

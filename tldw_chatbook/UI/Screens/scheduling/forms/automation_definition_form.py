@@ -4,9 +4,12 @@ Mirrors `ReminderForm`'s structure (ADR-099 idiom parity: the modal box is
 its own scroll container, a docked footer keeps the live preview/errors/
 actions visible, Escape triggers a discard guard). The recurring-cron
 schedule sub-form reuses `reminder_form.py`'s task-23102 pure helpers
-(`preset_to_cron`, `cron_to_preset`, `parse_forgiving_datetime`, timezone
-helpers) directly -- only the Textual wiring (widget ids, compose layout)
-is necessarily duplicated, since it is bound to this form's own field ids.
+(`preset_to_cron`, `cron_to_preset`) directly, plus `parse_forgiving_
+datetime`/`is_valid_zone` from `Scheduling/schedule_input_parsing.py`
+(redesign PR-3, task 3 hoisted these two out of `reminder_form.py` -- pure
+stdlib, no Textual, no layering reason left to route through the form
+module) -- only the Textual wiring (widget ids, compose layout) is
+necessarily duplicated, since it is bound to this form's own field ids.
 `cron_to_preset` is used for edit-mode prefill (mapping a stored cron
 expression back onto the preset/time-of-day fields); nothing here needs
 `parse_time_of_day` directly since `cron_to_preset` already returns the
@@ -35,6 +38,10 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Label, Select, Static, TextArea
 
 from tldw_chatbook.Scheduling.models import PreviewStatus, ScheduleKind
+from tldw_chatbook.Scheduling.schedule_input_parsing import (
+    is_valid_zone,
+    parse_forgiving_datetime,
+)
 
 from ..task_detail import definition_cron_expression
 
@@ -42,10 +49,8 @@ from .reminder_form import (
     _CURATED_TIMEZONES,
     _DEFAULT_TIMEZONE,
     _TIME_OF_DAY_PRESETS,
-    _is_valid_zone,
     cron_to_preset,
     detect_system_timezone,
-    parse_forgiving_datetime,
     preset_to_cron,
     system_timezone_name,
 )
@@ -543,7 +548,7 @@ class AutomationDefinitionForm(ModalScreen):
         zones = [detected or _DEFAULT_TIMEZONE]
         stored = self._stored_timezone()
         for zone in list(_CURATED_TIMEZONES) + ([stored] if stored else []):
-            if zone not in zones and _is_valid_zone(zone):
+            if zone not in zones and is_valid_zone(zone):
                 zones.append(zone)
         options = [(zone, zone) for zone in zones]
         if stored and stored not in zones:
