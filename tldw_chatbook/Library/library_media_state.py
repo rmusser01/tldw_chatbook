@@ -949,7 +949,14 @@ def build_library_media_browse_state(
     loaded_id: str = "",
     review_dismiss_receipt_name: str = "",
 ) -> LibraryMediaCanvasState:
-    """Project one exact Media page without filtering, sorting, or slicing it."""
+    """Project one exact Media page without filtering, sorting, or slicing it.
+
+    Args:
+        review_dismiss_receipt_name: Name of the most recently dismissed
+            review set, rendered as a "✓ dismissed · <name>" undo receipt
+            until acted on or replaced (task-31236). "" (the default)
+            means no receipt to show.
+    """
     if not isinstance(result, MediaBrowseResult):
         raise TypeError("result must be a MediaBrowseResult.")
     if type(type_options) is not tuple or any(
@@ -1117,6 +1124,10 @@ def build_library_media_state(
             receipt with Undo/Dismiss until acted on or replaced by a
             newer bulk-delete action. 0 (the default) means no receipt to
             show.
+        review_dismiss_receipt_name: Name of the most recently dismissed
+            review set, rendered as a "✓ dismissed · <name>" undo receipt
+            until acted on or replaced (task-31236). "" (the default)
+            means no receipt to show.
 
     Returns:
         Immutable canvas state: rows, type options, active type, status/empty copy,

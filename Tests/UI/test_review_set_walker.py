@@ -682,7 +682,7 @@ async def test_picker_worker_lists_rows_and_opens_the_chosen_set(tmp_path):
     by_id = {row[0]: row for row in rows}
     assert by_id[second][3] is True  # newest set was the active one
     # task-31238: the detail label carries the created date after progress.
-    assert by_id[first][2] == "1 of 1 · 0 reviewed · 2026-09-02"
+    assert by_id[first][2] == "1 of 1 · 0 reviewed · 2026-09-02 00:00"
     active = service.get_active_review_set()
     assert active is not None and active.set_id == first  # switched (one-active)
     assert fake._opened == ["local:media:10"]  # landed at its cursor
@@ -787,6 +787,70 @@ async def test_dismiss_undo_worker_restores_the_set(tmp_path, monkeypatch):
     assert [item.done for item in restored.items] == [True, False]
     assert fake._library_media_review_dismiss_receipt is None
     assert fake._syncs == [True, True]  # chrome refreshed after the restore
+
+
+def test_dismiss_undo_and_receipt_close_cannot_race(tmp_path):
+    """Qodo on #2366: one in-flight undo owns the receipt until it settles.
+
+    Without the guard, Dismiss could clear the receipt while the undo's DB
+    call was pending (the worker then restored a set whose receipt was
+    already gone), and a second Undo press would CANCEL the first through
+    the exclusive worker group.
+    """
+    scheduled: list = []
+    fake = SimpleNamespace(
+        _library_media_review_dismiss_receipt=("set-1", "X", True),
+        _review_dismiss_undo_in_flight=False,
+        run_worker=lambda coro, **_kw: (scheduled.append(coro), coro.close()),
+        _review_dismiss_undo_worker=lambda receipt: (None for _ in ()),
+    )
+    event = SimpleNamespace(stop=lambda: None)
+
+    LibraryScreen.handle_library_media_review_dismiss_undo(fake, event)
+    assert fake._review_dismiss_undo_in_flight is True
+
+    # A second Undo press while in flight schedules nothing (it would
+    # cancel the first via the exclusive group).
+    LibraryScreen.handle_library_media_review_dismiss_undo(fake, event)
+    assert len(scheduled) == 1
+
+    # Receipt-close while in flight is refused: the receipt still stands.
+    LibraryScreen.handle_library_media_review_dismiss_receipt_close(
+        fake, event
+    )
+    assert fake._library_media_review_dismiss_receipt == ("set-1", "X", True)
+
+
+@pytest.mark.asyncio
+async def test_dismiss_undo_worker_clears_the_in_flight_flag(
+    tmp_path, monkeypatch
+):
+    """The flag drops on success AND on failure (finally)."""
+    import tldw_chatbook.UI.Screens.library_screen as screen_module
+
+    monkeypatch.setattr(
+        screen_module, "_sync_library_canvas", lambda *_a, **_kw: None
+    )
+    service = _service(tmp_path)
+    set_id = service.create_review_set("X", origin="browse", items=[(10, "A")])
+    fake = _picker_fake(service, decision=None)
+    fake._review_dismiss_undo_in_flight = True
+    fake._review_dismiss_undo_worker = MethodType(
+        LibraryScreen._review_dismiss_undo_worker, fake
+    )
+    fake._library_media_review_dismiss_receipt = (set_id, "X", True)
+
+    await fake._review_dismiss_undo_worker((set_id, "X", True))
+    assert fake._review_dismiss_undo_in_flight is False
+
+    fake._review_dismiss_undo_in_flight = True
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("db gone")
+
+    fake._review_set_service = boom
+    await fake._review_dismiss_undo_worker((set_id, "X", True))  # no raise
+    assert fake._review_dismiss_undo_in_flight is False
 
 
 @pytest.mark.asyncio
@@ -1133,6 +1197,24 @@ def test_auto_resume_runs_in_its_own_worker_group():
 
     assert recorded["group"] != "library_review_set"
     assert recorded["exclusive"] is True  # still debounces its own re-entries
+
+
+@pytest.mark.asyncio
+async def test_auto_resume_persists_a_resolved_tombstoned_cursor(tmp_path):
+    # Qodo on #2366 (the Qodo #2337 pattern, third path): the landing
+    # resolver opened the item resolved from a tombstoned cursor without
+    # persisting that position — a later restore of the deleted media could
+    # yank a subsequent entry backward to the stale cursor.
+    service = _service(tmp_path)
+    set_id = service.create_review_set(
+        "X", origin="browse", items=[(10, "A"), (11, "B")]
+    )
+    fake = _auto_resume_fake(service, live_ids={11})
+
+    await fake._auto_resume_review_set_worker()
+
+    assert fake._opened == ["local:media:11"]
+    assert service.get_review_set(set_id).cursor == 1  # persisted resolve
 
 
 @pytest.mark.asyncio

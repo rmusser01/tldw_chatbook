@@ -2633,6 +2633,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_review_dismiss_receipt: (
             tuple[str, str, bool] | None
         ) = None
+        # Qodo on #2366: one in-flight undo owns the receipt until it
+        # settles (blocks a second Undo and a racing receipt-close).
+        self._review_dismiss_undo_in_flight: bool = False
         # task-4025: "list" | "viewer" | "trash" -- the Trash view is the
         # third in-canvas view of the media canvas (never a rail row or a
         # `type:` cycle value; see the task file's mechanism decision).
@@ -39467,8 +39470,15 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         receipt = self._library_media_review_dismiss_receipt
-        if receipt is None:
+        # Qodo on #2366: one in-flight undo owns the receipt until it
+        # settles -- a second press would CANCEL the first through the
+        # exclusive worker group, and a racing receipt-close would strand
+        # the restore without its receipt.
+        if receipt is None or getattr(
+            self, "_review_dismiss_undo_in_flight", False
+        ):
             return
+        self._review_dismiss_undo_in_flight = True
         self.run_worker(
             self._review_dismiss_undo_worker(receipt),
             group="library_review_set",
@@ -39486,6 +39496,11 @@ class LibraryScreen(BaseAppScreen):
             event: The receipt row's "Dismiss" press.
         """
         event.stop()
+        # Qodo on #2366: the receipt belongs to a pending undo until that
+        # settles -- clearing it mid-restore left the restored set with no
+        # visible acknowledgment.
+        if getattr(self, "_review_dismiss_undo_in_flight", False):
+            return
         self._library_media_review_dismiss_receipt = None
         _sync_library_canvas(self, "media")
 
@@ -39527,6 +39542,8 @@ class LibraryScreen(BaseAppScreen):
             self._notify_review_set(
                 "Couldn't restore the review set.", severity="error"
             )
+        finally:
+            self._review_dismiss_undo_in_flight = False
 
     async def _review_read_later_pairs(self) -> list[tuple[int, str]]:
         """Build ordered (backing_id, title) pairs from the read-later queue.
@@ -39746,6 +39763,11 @@ class LibraryScreen(BaseAppScreen):
         landing = {item.position: item for item in review_set.items}.get(resolved)
         if landing is None or landing.backing_media_id not in live_ids:
             return None
+        # Qodo on #2366 (the Qodo #2337 pattern, third path): persist a
+        # tombstone-resolved cursor so a later restore of the deleted item
+        # cannot yank a subsequent entry back to the stale position.
+        if resolved != review_set.cursor:
+            service.set_cursor(review_set.set_id, resolved)
         return review_set.set_id, landing.backing_media_id
 
     def _focus_library_media_items_pane(self) -> None:

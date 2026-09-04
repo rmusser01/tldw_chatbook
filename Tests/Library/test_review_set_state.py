@@ -270,8 +270,8 @@ def test_picker_rows_carry_id_name_progress_and_active_in_order():
     rows = build_picker_rows(sets, is_live=_live())
 
     assert rows == [
-        ("s1", "All media", "2 of 2 · 1 reviewed · 2026-09-01", True),
-        ("s2", "pdf items", "1 of 1 · 0 reviewed · 2026-09-01", False),
+        ("s1", "All media", "2 of 2 · 1 reviewed · 2026-09-01 00:00", True),
+        ("s2", "pdf items", "1 of 1 · 0 reviewed · 2026-09-01 00:00", False),
     ]
 
 
@@ -279,7 +279,7 @@ def test_picker_rows_progress_is_live_only():
     # id 11 tombstoned: total counts live items, done tombstones don't count.
     sets = (_review_set("s1", "Set", _items((10, False), (11, True))),)
     rows = build_picker_rows(sets, is_live=_live(11))
-    assert rows == [("s1", "Set", "1 of 1 · 0 reviewed · 2026-09-01", False)]
+    assert rows == [("s1", "Set", "1 of 1 · 0 reviewed · 2026-09-01 00:00", False)]
 
 
 def test_picker_rows_completed_and_empty_labels():
@@ -288,14 +288,15 @@ def test_picker_rows_completed_and_empty_labels():
         _review_set("gone", "Gone set", _items((20, False))),
     )
     rows = build_picker_rows(sets, is_live=_live(20))
-    assert rows[0][2] == "All 2 reviewed · 2026-09-01"
-    assert rows[1][2] == "No items to review · 2026-09-01"
+    assert rows[0][2] == "All 2 reviewed · 2026-09-01 00:00"
+    assert rows[1][2] == "No items to review · 2026-09-01 00:00"
 
 
 def test_picker_rows_same_name_sets_are_distinguishable():
     """task-31238: auto-names ("2 selected items") rendered two selection
     sets as identical picker rows -- the detail label ends with the created
-    date so same-name sets can be told apart."""
+    minute so same-name sets can be told apart even when created the SAME
+    DAY (Qodo on #2366: date-only left same-day twins identical)."""
     twin_a = _review_set("a", "2 selected items", _items((10, False)))
     twin_b = ReviewSet(
         set_id="b",
@@ -305,15 +306,15 @@ def test_picker_rows_same_name_sets_are_distinguishable():
         active=False,
         completed_at=None,
         items=_items((20, False)),
-        created_at="2026-08-15T12:30:00Z",
-        updated_at="2026-08-15T12:30:00Z",
+        created_at="2026-09-01T12:30:00Z",
+        updated_at="2026-09-01T12:30:00Z",
     )
     rows = build_picker_rows((twin_a, twin_b), is_live=_live())
 
     labels = [(name, detail) for _sid, name, detail, _active in rows]
     assert len(set(labels)) == 2  # not identical any more
-    assert rows[0][2].endswith("2026-09-01")
-    assert rows[1][2].endswith("2026-08-15")
+    assert rows[0][2].endswith("2026-09-01 00:00")
+    assert rows[1][2].endswith("2026-09-01 12:30")
 
 
 def test_picker_rows_tolerate_a_malformed_created_timestamp():

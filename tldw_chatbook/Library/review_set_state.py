@@ -337,9 +337,10 @@ def build_picker_rows(
     Returns:
         ``(set_id, name, detail_label, active)`` per set, where
         ``detail_label`` is :func:`format_review_progress` over the set's
-        live items, suffixed with the created DATE (task-31238: auto-names
-        like "2 selected items" otherwise render identical rows for two
-        selection sets — the date makes same-name sets distinguishable).
+        live items, suffixed with the created MINUTE ("YYYY-MM-DD HH:MM";
+        task-31238: auto-names like "2 selected items" otherwise render
+        identical rows for two selection sets — and Qodo on #2366: a
+        date-only suffix left same-DAY twins identical too).
     """
     return [
         (
@@ -360,10 +361,16 @@ def build_picker_rows(
 
 
 def _with_created_date(label: str, created_at: str) -> str:
-    """Suffix ``label`` with the ISO date part of ``created_at``, if any."""
-    date_part = (created_at or "")[:10]
-    if len(date_part) == 10 and date_part[4] == "-" and date_part[7] == "-":
-        return f"{label} · {date_part}"
+    """Suffix ``label`` with ``created_at``'s "YYYY-MM-DD HH:MM", if valid."""
+    stamp = (created_at or "")[:16]
+    if (
+        len(stamp) == 16
+        and stamp[4] == "-"
+        and stamp[7] == "-"
+        and stamp[10] == "T"
+        and stamp[13] == ":"
+    ):
+        return f"{label} · {stamp[:10]} {stamp[11:]}"
     return label
 
 
