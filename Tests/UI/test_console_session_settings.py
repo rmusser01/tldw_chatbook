@@ -5229,6 +5229,27 @@ async def test_console_settings_modal_cancel_discards_draft() -> None:
 
 
 @pytest.mark.asyncio
+async def test_console_settings_delayed_initial_focus_is_safe_after_unmount() -> None:
+    """A queued initial-focus callback must tolerate a modal dismissed first."""
+    app = ModalHarness()
+    modal = ConsoleSettingsModal(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        app_config=app.app_config,
+        providers_models={"llama_cpp": ["model-a"]},
+        context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+        can_save=True,
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        await app.pop_screen()
+        await pilot.pause()
+
+        modal._focus_highest_priority_connection()
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_escape_dismisses_none() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
@@ -7806,6 +7827,7 @@ async def test_console_inspector_hosts_staged_context_above_source_readiness() -
         settings = console.query_one("#console-settings-summary")
         rail = console.query_one("#console-right-rail")
         rail_body = console.query_one("#console-inspector-rail-body")
+        project_status = console.query_one("#console-project-instruction-status")
         run_inspector = console.query_one("#console-run-inspector")
         readiness = console.query_one("#console-live-work-source-readiness")
         live_work = console.query_one("#console-live-work-section")
@@ -9815,7 +9837,7 @@ def test_console_missing_key_recovery_action_is_provider_specific() -> None:
     )
 
 
-def test_console_unsaved_generic_endpoint_blocks_inspector_with_endpoint_details() -> (
+def test_console_unsaved_generic_endpoint_blocks_with_safe_in_modal_recovery() -> (
     None
 ):
     app = _build_test_app()
@@ -9839,16 +9861,21 @@ def test_console_unsaved_generic_endpoint_blocks_inspector_with_endpoint_details
     label, target, tooltip = screen._console_provider_recovery_action()
 
     assert provider_row.value == "blocked"
-    assert "Selected endpoint: http://127.0.0.1:9999/v1" in provider_row.recovery
-    assert "Saved endpoint: http://127.0.0.1:11434" in provider_row.recovery
-    assert "save the endpoint in Settings" in screen._console_provider_blocker_copy()
+    assert provider_row.recovery == (
+        "Provider setup needed: save the endpoint in Conversation settings"
+    )
+    assert "127.0.0.1" not in provider_row.recovery
+    assert (
+        "save the endpoint in Conversation settings"
+        in screen._console_provider_blocker_copy()
+    )
     assert label == "Configure endpoint"
-    assert target == "settings"
-    assert tooltip == "Save the Ollama endpoint in Settings"
+    assert target == "console"
+    assert tooltip == "Save the Ollama endpoint in Conversation settings"
     assert screen._console_provider_recovery_field() == "endpoint"
     assert (
         screen._console_setup_blocked_reason()
-        == "Save provider endpoint in Settings > Providers & Models before sending."
+        == "Save provider endpoint in Conversation settings before sending."
     )
 
 
@@ -9866,7 +9893,7 @@ def test_console_no_provider_recovery_action_and_card_step_are_provider_actions(
         session.id, ConsoleSessionSettings(provider="", model=None)
     )
 
-    label, target, _tooltip = screen._console_provider_recovery_action()
+    label, target, tooltip = screen._console_provider_recovery_action()
     card_state = screen._build_console_setup_card_state()
     _settings, readiness = screen._active_console_settings_readiness()
 
@@ -9980,12 +10007,16 @@ def test_console_unsaved_endpoint_no_model_recovery_action_is_configure_endpoint
         ),
     )
 
-    label, target, _tooltip = screen._console_provider_recovery_action()
+    label, target, tooltip = screen._console_provider_recovery_action()
     card_state = screen._build_console_setup_card_state()
 
-    assert "save the endpoint in Settings" in screen._console_provider_blocker_copy()
+    assert (
+        "save the endpoint in Conversation settings"
+        in screen._console_provider_blocker_copy()
+    )
     assert label == "Configure endpoint"
-    assert target == "settings"
+    assert target == "console"
+    assert tooltip == "Save the Ollama endpoint in Conversation settings"
     assert screen._console_provider_recovery_field() == "endpoint"
     step_one, step_two, _step_three = card_state.steps
     assert step_one.state == "active"
@@ -10013,14 +10044,15 @@ def test_console_invalid_endpoint_no_model_recovery_action_is_configure_endpoint
         ),
     )
 
-    label, target, _tooltip = screen._console_provider_recovery_action()
+    label, target, tooltip = screen._console_provider_recovery_action()
     card_state = screen._build_console_setup_card_state()
     _settings, readiness = screen._active_console_settings_readiness()
 
     assert readiness.label == "Invalid URL"
     assert "invalid base URL" in screen._console_provider_blocker_copy()
     assert label == "Configure endpoint"
-    assert target == "settings"
+    assert target == "console"
+    assert tooltip == "Configure the provider endpoint before sending"
     assert screen._console_provider_recovery_field() == "endpoint"
     step_one, step_two, _step_three = card_state.steps
     assert step_one.state == "active"
@@ -12892,6 +12924,18 @@ async def test_unverified_model_requires_exact_secondary_confirmation() -> None:
         app,
         providers_models={"llama_cpp": ["custom-model"]},
     )
+    fallback_calls = 0
+    original_focus_fallback = modal._focus_connection_fallback
+
+    def counted_focus_fallback() -> None:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        # Keep a re-entrant focus regression bounded so it reports an
+        # assertion instead of starving the Textual event loop indefinitely.
+        if fallback_calls <= 8:
+            original_focus_fallback()
+
+    modal._focus_connection_fallback = counted_focus_fallback
 
     async with app.run_test(size=(120, 60)) as pilot:
         await app.push_screen(modal)
@@ -12927,6 +12971,7 @@ async def test_unverified_model_requires_exact_secondary_confirmation() -> None:
         assert keep.display is False
         assert use.disabled is False
         assert use.has_focus is True
+        assert fallback_calls <= 3
 
         picker = modal.query_one(ModelSearchPicker)
         picker.set_custom_value("changed-model")
@@ -12951,6 +12996,7 @@ async def test_unverified_model_requires_exact_secondary_confirmation() -> None:
         assert keep.display is False
         assert use.disabled is False
         assert use.has_focus is True
+        assert fallback_calls <= 3
 
 
 @pytest.mark.parametrize(
@@ -13511,6 +13557,11 @@ async def test_console_settings_modal_unsaved_endpoint_requires_provider_setup_w
         assert default_action.disabled is False
         assert str(default_action.label) == "Save endpoint & use model"
         assert _visible_enabled_primary_buttons(modal) == [default_action]
+        disabled_reason = modal.query_one(
+            "#console-settings-primary-disabled-reason", Static
+        )
+        assert disabled_reason.display is False
+        assert str(disabled_reason.renderable) == ""
         assert str(
             modal.query_one("#console-settings-default-scope", Static).renderable
         ) == "Updates this provider for future conversations."

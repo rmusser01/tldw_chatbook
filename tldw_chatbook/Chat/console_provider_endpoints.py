@@ -13,7 +13,8 @@ from tldw_chatbook.Chat.provider_endpoint_contract import (
 )
 
 UNSAVED_ENDPOINT_COPY = (
-    "Provider blocked: save the endpoint in Settings before using it from Console."
+    "Provider blocked: save the endpoint in Conversation settings before using it "
+    "from Console."
 )
 _ENDPOINT_SETTING_KEYS = (
     "api_base_url",

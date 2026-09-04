@@ -2612,6 +2612,8 @@ class ConsoleSettingsModal(
 
     def _focus_highest_priority_connection(self) -> None:
         """Focus the first actionable blocker, or Provider when ready."""
+        if not self.is_mounted or not self.query("#console-settings-provider"):
+            return
         readiness = build_console_settings_readiness(
             self._build_draft(),
             app_config=self._app_config,
@@ -2810,7 +2812,8 @@ class ConsoleSettingsModal(
 
     def _focus_connection_fallback(self) -> None:
         """Focus a live Connection control when an old logical target is unavailable."""
-        self._show_settings_view("model")
+        if self._active_view != "model":
+            self._show_settings_view("model")
         for selector, widget_type in (
             ("#console-settings-provider-picker", ConsoleProviderPicker),
             ("#console-settings-model-picker", ModelSearchPicker),

@@ -1617,7 +1617,7 @@ def test_readiness_blocks_unsaved_generic_endpoint_with_safe_details() -> None:
 
     assert readiness.label == "Endpoint not saved"
     assert readiness.native_send_supported is False
-    assert "save the endpoint in Settings" in readiness.detail
+    assert "save the endpoint in Conversation settings" in readiness.detail
     assert "Selected endpoint: http://127.0.0.1:9999/v1" in readiness.detail
     assert "Saved endpoint: http://127.0.0.1:11434" in readiness.detail
 
@@ -3040,6 +3040,8 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
             )
             store = SimpleNamespace(
                 active_session_id=session.id,
+                ensure_session=lambda: session,
+                session_settings_revision=lambda _session_id: 0,
                 switch_session=lambda _session_id: session,
             )
 
@@ -3073,6 +3075,9 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
                 ),
                 _ensure_console_chat_controller=lambda: controller,
                 _ensure_console_chat_store=lambda: store,
+                _console_run_active=lambda: False,
+                _test_console_connection=lambda _request: None,
+                _test_console_generation=lambda _session_id, _request: None,
                 _active_console_settings_context_estimate=lambda: estimate,
                 _active_console_context_control_state=lambda *, estimate, **_kwargs: (
                     build_console_context_control_state(

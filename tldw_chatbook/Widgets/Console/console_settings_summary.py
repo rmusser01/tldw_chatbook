@@ -48,7 +48,7 @@ _BLOCKER_COPY = {
     "provider_unsupported": "provider is not supported",
     "provider_configuration_invalid": "review provider settings",
     "endpoint_invalid": "invalid base URL",
-    "endpoint_not_saved": "save the endpoint in Settings",
+    "endpoint_not_saved": "save the endpoint in Conversation settings",
     "credential_missing": "missing API key",
     "credential_rejected": "credential was rejected",
     "model_missing": "choose a model",
@@ -61,7 +61,11 @@ _RECOVERY_COPY = {
     "select_supported_provider": ("Choose provider", "console", "Choose a supported provider for this Console session"),
     "review_provider_settings": ("Review settings", "console", "Review this Console session's settings"),
     "configure_endpoint": ("Configure endpoint", "console", "Configure the provider endpoint before sending"),
-    "save_endpoint": ("Configure endpoint", "settings", "Save the provider endpoint in Settings"),
+    "save_endpoint": (
+        "Configure endpoint",
+        "console",
+        "Save the provider endpoint in Conversation settings",
+    ),
     "configure_credential": ("Configure API key", "settings", "Configure the provider API and API key in Settings"),
     "select_model": ("Choose model", "console", "Choose a model for this Console session"),
     "retry_connection": ("Retry connection", "console", "Retry the provider connection"),
@@ -129,8 +133,8 @@ def build_console_readiness_presentation(
         elif readiness.recovery_action == "save_endpoint":
             action = (
                 "Configure endpoint",
-                "settings",
-                f"Save the {provider} endpoint in Settings",
+                "console",
+                f"Save the {provider} endpoint in Conversation settings",
             )
 
     credential_value = {

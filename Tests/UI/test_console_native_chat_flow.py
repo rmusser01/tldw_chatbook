@@ -2457,6 +2457,12 @@ async def test_dirty_return_confirmation_survives_real_router_navigation_away_an
                 break
             await pilot.pause(0.05)
         assert returned_modal is not None
+        await _wait_for_selector(
+            returned_modal,
+            pilot,
+            "#console-settings-return-status",
+            timeout=10.0,
+        )
         assert "Returned without saving" in str(
             returned_modal.query_one(
                 "#console-settings-return-status", Static
@@ -5867,6 +5873,7 @@ async def test_console_composer_stop_is_subdued_when_idle():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         _select_llamacpp_console(console)
+        assert console._console_setup_blocked_reason() == ""
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         send_button = composer.query_one("#console-send-message", Button)
@@ -5922,6 +5929,7 @@ async def test_console_duplicate_send_during_stream_does_not_break_stop_control(
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         _select_llamacpp_console(console)
+        assert console._console_setup_blocked_reason() == ""
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
@@ -5931,6 +5939,12 @@ async def test_console_duplicate_send_during_stream_does_not_break_stop_control(
 
         composer.load_draft("second send")
         send_button = console.query_one("#console-send-message", Button)
+        for _ in range(40):
+            if send_button.label.plain == "Queue":
+                break
+            await pilot.pause(0.05)
+        else:
+            raise AssertionError("accepted live turn did not expose Queue")
         # TASK-2154.6: genuinely disabled while the run blocks sends; the
         # direct handler dispatch below (not `press()`, which no-ops on a
         # disabled control) is exactly how the Enter hotkey still reaches it.
@@ -12306,6 +12320,11 @@ def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
     """
     screen = ChatScreen.__new__(ChatScreen)
     screen._console_runtime_ref = ConsoleRuntime(None)
+    screen._retrieval = SimpleNamespace(_capture_console_staged_rag=Mock())
+    screen._skill = SimpleNamespace(
+        _set_console_pending_skill_install=Mock(),
+        _set_console_pending_skill_script=Mock(),
+    )
     screen._console_chat_store = store
     # A bare, uninitialized `ConsoleSessionController` -- `__init__` was
     # never run, so every OTHER dependency is unset by default. Only the
@@ -14773,6 +14792,11 @@ async def test_console_settings_save_fires_success_toast():
                 modal = host.screen_stack[-1]
                 break
         assert modal is not None, "ConsoleSettingsModal never opened"
+        await _wait_for_selector(
+            modal,
+            pilot,
+            "#console-settings-model-select",
+        )
         # task-14920: decomposition wave 2 (4de93c10d) moved this seam onto
         # `ConsoleSessionController` without a ChatScreen delegator; this
         # test was written afterwards and had never run green.

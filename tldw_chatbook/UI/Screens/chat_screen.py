@@ -13116,14 +13116,19 @@ class ChatScreen(BaseAppScreen):
         _settings, readiness = self._active_console_settings_readiness()
         if readiness.operability == "ready_to_send":
             return ""
+        if readiness.recovery_action == "wait_for_active_run":
+            # The prompt-queue presentation owns active-run admission: it
+            # blocks while a turn is preparing, then enables Queue once the
+            # provider has accepted it. Settings readiness still blocks
+            # mutations during the run, but must not override that composer
+            # lifecycle with a second, permanently-blocked gate.
+            return ""
         if readiness.recovery_action == "select_model":
             return "Choose a model in Console Settings before sending."
         if readiness.recovery_action == "configure_credential":
             return "Add API key in Settings > Providers & Models before sending."
         if readiness.recovery_action == "save_endpoint":
-            return "Save provider endpoint in Settings > Providers & Models before sending."
-        if readiness.recovery_action == "wait_for_active_run":
-            return "Wait for the current run to finish before sending."
+            return "Save provider endpoint in Conversation settings before sending."
         return "Finish provider setup before sending."
 
     def _console_provider_recovery_field(self) -> str:
@@ -16728,7 +16733,13 @@ class ChatScreen(BaseAppScreen):
                     "Review source authority before sending."
                 )
         _readiness_settings, readiness = self._active_console_settings_readiness()
-        if readiness.operability == "not_ready":
+        if (
+            readiness.operability == "not_ready"
+            and readiness.recovery_action != "wait_for_active_run"
+        ):
+            # Active-run admission belongs to the prompt queue. It refuses
+            # while the turn is preparing and admits Queue after acceptance;
+            # only actual provider setup gaps belong in this gate.
             if readiness.recovery_action == "configure_credential":
                 provider = readiness.provider_display_name or "this provider"
                 return (
@@ -16743,8 +16754,6 @@ class ChatScreen(BaseAppScreen):
                 return "Console send blocked: Enter a valid provider endpoint before sending."
             if readiness.recovery_action == "retry_connection":
                 return "Console send blocked: Retry the provider connection before sending."
-            if readiness.recovery_action == "wait_for_active_run":
-                return "Console send blocked: Wait for the current run to finish."
             return "Console send blocked: Finish provider setup before sending."
         attachment_reason = self._console_attachment_blocked_reason()
         if attachment_reason:
