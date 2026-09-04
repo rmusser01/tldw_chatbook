@@ -4,12 +4,17 @@ import json
 import pytest
 
 from Tests.Chat.test_citation_trace_repository import (
-    _TrackingKeyProvider,
     _exact_governed_payload_write,
-    _identity as citation_identity,
-    _repository as citation_repository,
     _sealed_write,
+    _TrackingKeyProvider,
 )
+from Tests.Chat.test_citation_trace_repository import (
+    _identity as citation_identity,
+)
+from Tests.Chat.test_citation_trace_repository import (
+    _repository as citation_repository,
+)
+from tldw_chatbook.Canvas.staging import CanvasStagingStore
 from tldw_chatbook.Chat.chat_persistence_service import (
     ChatPersistenceService,
     CitationPersistenceUnavailable,
@@ -27,6 +32,11 @@ from tldw_chatbook.Chat.citation_trace_repository import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, MessageAttachment
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicyCandidate,
+)
 from tldw_chatbook.Chat.console_roleplay_metadata import (
     ConsoleRoleplayContext,
     merge_console_roleplay_context,
@@ -56,6 +66,90 @@ def db_instance(db_path, client_id):
 
 @pytest.mark.integration
 class TestChatPersistenceService:
+    @pytest.mark.parametrize("fail_after_write", [1, 2, 3, 4])
+    def test_canvas_promotion_rolls_back_every_canvas_write_prefix(
+        self,
+        db_instance: CharactersRAGDB,
+        monkeypatch: pytest.MonkeyPatch,
+        fail_after_write: int,
+    ) -> None:
+        """Any Canvas INSERT escaping the bundle rollback leaves an orphan graph."""
+
+        from tldw_chatbook.Chat import console_transaction_contribution as seam
+
+        staging = CanvasStagingStore()
+        created = staging.create_canvas(
+            session_id="temporary-session",
+            run_id="turn-1",
+            tool_call_id="call-1",
+            title="Temporary",
+            source="<!doctype html><html><body>one</body></html>",
+            origin_message_id="native-assistant",
+        )
+        staging.update_canvas(
+            session_id="temporary-session",
+            run_id="turn-2",
+            tool_call_id="call-2",
+            canvas_id=created.revision.canvas_id,
+            expected_parent_revision_id=created.revision.revision_id,
+            source="<!doctype html><html><body>two</body></html>",
+            origin_message_id="native-assistant",
+        )
+        contribution = staging.promotion_contribution("temporary-session")
+        assert contribution is not None
+        original_execute = seam._CursorConsoleTransactionWriter.execute
+        write_count = 0
+
+        def fail_at_prefix(self, statement, parameters):
+            nonlocal write_count
+            original_execute(self, statement, parameters)
+            if statement.startswith("INSERT INTO canvas_"):
+                write_count += 1
+                if write_count == fail_after_write:
+                    raise RuntimeError("private source must not escape")
+
+        monkeypatch.setattr(
+            seam._CursorConsoleTransactionWriter, "execute", fail_at_prefix
+        )
+        service = ChatPersistenceService(db_instance)
+        with pytest.raises(RuntimeError) as captured:
+            service.promote_console_conversation_bundle(
+                conversation_id="00000000-0000-4000-8000-000000000001",
+                policy_candidate=ConsoleLibraryPolicyCandidate(
+                    auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                    assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+                ),
+                conversation_kwargs={"conversation_title": "Promoted"},
+                messages=(
+                    {
+                        "native_id": "native-assistant",
+                        "create_kwargs": {
+                            "message_id": "00000000-0000-4000-8000-000000000002",
+                            "sender": "assistant",
+                            "content": "Canvas origin",
+                            "parent_message_id": None,
+                            "feedback": None,
+                        },
+                    },
+                ),
+                active_leaf_message_id="00000000-0000-4000-8000-000000000002",
+                contributions=(contribution,),
+            )
+
+        assert "one" not in str(captured.value)
+        assert "two" not in str(captured.value)
+        connection = db_instance.get_connection()
+        for table in (
+            "conversations",
+            "messages",
+            "canvas_documents",
+            "canvas_revisions",
+            "canvas_conversation_hints",
+        ):
+            assert (
+                connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+            )
+
     def test_roleplay_version_readers_reject_boolean_versions(
         self, db_instance: CharactersRAGDB, monkeypatch: pytest.MonkeyPatch
     ):

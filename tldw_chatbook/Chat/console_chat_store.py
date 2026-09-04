@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
-from copy import deepcopy
 import hashlib
 import inspect
 import json
@@ -12,7 +10,9 @@ import math
 import threading
 import time
 from collections import OrderedDict, deque
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
@@ -32,13 +32,9 @@ from uuid import uuid4
 
 from loguru import logger
 
-from tldw_chatbook.Character_Chat.character_mood import detect_character_mood
-from tldw_chatbook.Character_Chat.emote_directives import (
-    CharacterEmoteEvent,
-    CharacterEmoteRunSnapshot,
-    CharacterEmoteStreamParser,
-    utf16_length,
-)
+if TYPE_CHECKING:
+    from tldw_chatbook.Canvas.staging import CanvasPromotionContribution
+
 from tldw_chatbook.Agents.agent_models import (
     FinalContinuation,
     ProviderContinuationEvent,
@@ -47,8 +43,14 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCallFinished,
 )
 from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
+from tldw_chatbook.Character_Chat.character_mood import detect_character_mood
+from tldw_chatbook.Character_Chat.emote_directives import (
+    CharacterEmoteEvent,
+    CharacterEmoteRunSnapshot,
+    CharacterEmoteStreamParser,
+    utf16_length,
+)
 from tldw_chatbook.Chat.attachment_core import MAX_ATTACHMENT_BYTES, PendingAttachment
-from tldw_chatbook.DB.ChaChaNotes_DB import TrajectoryRowWrite
 from tldw_chatbook.Chat.citation_trace_models import (
     ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX,
     SealedCitationWrite,
@@ -56,26 +58,11 @@ from tldw_chatbook.Chat.citation_trace_models import (
 from tldw_chatbook.Chat.citation_trace_repository import (
     CitationPersistenceUnavailable,
 )
-from tldw_chatbook.Chat.console_chat_models import (
-    CONSOLE_GLOBAL_WORKSPACE_ID,
-    CONSOLE_EPHEMERAL_PROMOTION_BLOCK_COPY,
-    DEFAULT_CONSOLE_SESSION_TITLE,
-    ConsoleActivityPresentation,
-    ConsoleChatMessage,
-    ConsoleCitationPresentation,
-    ConsoleMessageFeedback,
-    ConsoleMessageRole,
-    ConsoleMessageStatus,
-    ConsoleDispatchRecoveryActionId,
-    ConsoleDispatchRecoveryKind,
-    ConsoleDispatchRecoveryState,
-    ConsoleVariant,
-    ConsoleVariantSet,
-    ConsoleWorkspaceContext,
-    GenerationVariantMeta,
-    MessageAttachment,
-    RawCliPresentation,
-    console_dispatch_recovery_from_checkpoint,
+from tldw_chatbook.Chat.console_capture_policy_repository import (
+    CapturePolicyReadResult,
+    CapturePolicyReadStatus,
+    CapturePolicyWriteStatus,
+    ConsoleCapturePolicyRepository,
 )
 from tldw_chatbook.Chat.console_chat_fork import (
     CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT,
@@ -96,6 +83,27 @@ from tldw_chatbook.Chat.console_chat_fork import (
     normalize_fork_title,
     validate_console_fork_image_payload,
 )
+from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_EPHEMERAL_PROMOTION_BLOCK_COPY,
+    CONSOLE_GLOBAL_WORKSPACE_ID,
+    DEFAULT_CONSOLE_SESSION_TITLE,
+    ConsoleActivityPresentation,
+    ConsoleChatMessage,
+    ConsoleCitationPresentation,
+    ConsoleDispatchRecoveryActionId,
+    ConsoleDispatchRecoveryKind,
+    ConsoleDispatchRecoveryState,
+    ConsoleMessageFeedback,
+    ConsoleMessageRole,
+    ConsoleMessageStatus,
+    ConsoleVariant,
+    ConsoleVariantSet,
+    ConsoleWorkspaceContext,
+    GenerationVariantMeta,
+    MessageAttachment,
+    RawCliPresentation,
+    console_dispatch_recovery_from_checkpoint,
+)
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_context_repository import (
     ContextPolicyWriteResult,
@@ -113,7 +121,19 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleResolvedDestination,
     ConsoleTurnLibraryAuthority,
 )
-from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
+from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail, capture_to_blob
+from tldw_chatbook.Chat.console_generation_settings_metadata import (
+    ConsoleGenerationSettingsReadStatus,
+    ConsoleGenerationSettingsSnapshot,
+    ConsoleGenerationSettingsWriteResult,
+    ConsoleGenerationSettingsWriteStatus,
+    merge_console_generation_settings,
+    snapshot_from_session_settings,
+)
+from tldw_chatbook.Chat.console_library_activity_buffer import (
+    ConsoleLibraryActivityBuffer,
+    LibraryActivityFlushResult,
+)
 from tldw_chatbook.Chat.console_library_destination import (
     ConsoleLibraryDestinationRuntimeState,
     settle_console_library_destination_runtime,
@@ -132,35 +152,12 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.Chat.console_library_policy_coordinator import (
     ConsoleLibraryPolicyCoordinator,
 )
-from tldw_chatbook.Chat.console_library_activity_buffer import (
-    ConsoleLibraryActivityBuffer,
-    LibraryActivityFlushResult,
-)
-from tldw_chatbook.Chat.console_turn_preparation import (
-    ConsolePreparationPauseKind,
-    ConsolePreparationTransition,
-    ConsoleTurnPreparation,
-    ConsoleTurnPreparationState,
-    admit_promoted_temporary_capture,
-    apply_preparation_transition,
-)
-from tldw_chatbook.Chat.console_transaction_contribution import (
-    ConsoleTransactionContribution,
-)
-from tldw_chatbook.Chat.library_activity import (
-    LibraryActivityContribution,
-    LibraryActivityEvent,
-    LibraryActivityView,
-    encode_library_activity_event,
-    project_library_activity,
-)
-from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail, capture_to_blob
-from tldw_chatbook.Chat.console_trace_provenance import ConsoleTraceCaptureMode
-from tldw_chatbook.Chat.console_capture_policy_repository import (
-    CapturePolicyReadResult,
-    CapturePolicyReadStatus,
-    CapturePolicyWriteStatus,
-    ConsoleCapturePolicyRepository,
+from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+    decode_project_context_json,
+    encode_project_context_json,
+    sanitize_fork_project_instruction_state,
 )
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsolePresentationContext,
@@ -196,41 +193,55 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsSurface,
     validate_console_settings_origin,
 )
-from tldw_chatbook.Chat.console_project_instructions import (
-    ProjectInstructionControlState,
-    decode_project_context_json,
-    encode_project_context_json,
-    sanitize_fork_project_instruction_state,
-)
 from tldw_chatbook.Chat.console_speech import (
     ConsoleSpeechSnapshotRejected,
     ConsoleSpeechSnapshotRejectionCode,
     TTSMessageSpeechSnapshot,
 )
 from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+from tldw_chatbook.Chat.console_trace_provenance import ConsoleTraceCaptureMode
+from tldw_chatbook.Chat.console_transaction_contribution import (
+    ConsoleTransactionContribution,
+)
+from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
+from tldw_chatbook.Chat.console_turn_preparation import (
+    ConsolePreparationPauseKind,
+    ConsolePreparationTransition,
+    ConsoleTurnPreparation,
+    ConsoleTurnPreparationState,
+    admit_promoted_temporary_capture,
+    apply_preparation_transition,
+)
+from tldw_chatbook.Chat.library_activity import (
+    LibraryActivityContribution,
+    LibraryActivityEvent,
+    LibraryActivityView,
+    encode_library_activity_event,
+    project_library_activity,
+)
 from tldw_chatbook.Chat.message_metadata import (
     CharacterEmoteEventMetadata,
     CharacterEmoteMetadata,
     MessageMetadata,
 )
-from tldw_chatbook.Chat.provider_usage import ProviderUsage
-from tldw_chatbook.Chat.thinking_blocks import (
-    ThinkingHistoryPolicy,
-    ThinkingEnvelope,
-    ThinkingStatus,
-    dump_thinking_blocks_json,
-    normalize_thinking_history_policy,
-    read_thinking_blocks_json,
-)
-from tldw_chatbook.Chat.trajectory import contains_local_path
 from tldw_chatbook.Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
     read_provider_continuation_json,
     transition_provider_call,
 )
-
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.rag_scope import RagScope, SessionScopeHolder, serialize_scope
+from tldw_chatbook.Chat.thinking_blocks import (
+    ThinkingEnvelope,
+    ThinkingHistoryPolicy,
+    ThinkingStatus,
+    dump_thinking_blocks_json,
+    normalize_thinking_history_policy,
+    read_thinking_blocks_json,
+)
+from tldw_chatbook.Chat.trajectory import contains_local_path
+from tldw_chatbook.DB.ChaChaNotes_DB import TrajectoryRowWrite
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.TTS.profile_errors import ProfileValidationError
 from tldw_chatbook.TTS.profile_types import CharacterRef
@@ -361,15 +372,15 @@ def _validate_raw_cli_marker_text(field_name: str, value: object) -> None:
 
 if TYPE_CHECKING:
     # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (annotation-only in this module)
-    from tldw_chatbook.Chat.console_trace_projection import (
-        ConsoleTraceProjection,
-        ProjectedTraceCall,
-    )
     # Annotation-only: ``from __future__ import annotations`` (top of file)
     # defers evaluation of every type hint below, so this class never needs
     # to exist at runtime here -- only ``capture_to_blob`` (imported above)
     # is actually called.
     from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture
+    from tldw_chatbook.Chat.console_trace_projection import (
+        ConsoleTraceProjection,
+        ProjectedTraceCall,
+    )
     from tldw_chatbook.Chat.console_trace_repository import TraceForkBoundary
 
 #: Maximum number of attachments a Console session may stage before send.
@@ -1102,6 +1113,26 @@ class ConsoleChatSyncProducer(Protocol):
         """Project an exact committed tombstone into durable sync state."""
 
 
+class ConsoleCanvasPromotionParticipant(Protocol):
+    """Optional process-local Canvas owner participating in chat promotion."""
+
+    def promotion_contribution(
+        self, session_id: str
+    ) -> CanvasPromotionContribution | None:
+        """Freeze the session's current Canvas graph for one transaction."""
+
+    def confirm_contribution(
+        self, session_id: str, contribution: CanvasPromotionContribution
+    ) -> bool:
+        """Discard a still-current contribution only after commit."""
+
+    def discard_session(self, session_id: str) -> None:
+        """Destroy one session's temporary Canvas state."""
+
+    def discard_all(self) -> None:
+        """Destroy all temporary Canvas state at process teardown."""
+
+
 @dataclass(frozen=True, slots=True)
 class ContinuationDurabilityResult:
     """Bounded, private-data-free result for the execution durability barrier."""
@@ -1504,6 +1535,7 @@ class ConsoleChatStore:
         library_policy_coordinator: ConsoleLibraryPolicyCoordinator | None = None,
         trace_projection: ConsoleTraceProjection | None = None,
         settle_provider_traces_off_thread: bool = False,
+        canvas_promotion_participant: ConsoleCanvasPromotionParticipant | None = None,
     ) -> None:
         """Initialize the Console chat store.
 
@@ -1539,8 +1571,11 @@ class ConsoleChatStore:
                 bare/test stores remain database-free when omitted.
             settle_provider_traces_off_thread: Run provider-trace settlement on
                 the app-owned store's single worker instead of the UI thread.
+            canvas_promotion_participant: Optional process-local Canvas staging
+                owner used for atomic temporary-conversation promotion.
         """
         self.persistence = persistence
+        self.canvas_promotion_participant = canvas_promotion_participant
         self.trace_projection = trace_projection
         self._provider_trace_settlements: dict[str, dict[str, object]] = {}
         self._provider_trace_settlement_owned_call_ids: set[str] = set()
@@ -4194,6 +4229,9 @@ class ConsoleChatStore:
     def _purge_session_runtime_state(self, session_id: str) -> None:
         """Delete one session's exact process-local ownership without DB writes."""
         self._session_or_raise(session_id)
+
+        if self.canvas_promotion_participant is not None:
+            self.canvas_promotion_participant.discard_session(session_id)
 
         # Purge EVERY message the session owns, not just the active-path view:
         # off-path tree nodes and dropped display-only TOOL markers both live in
@@ -9681,6 +9719,8 @@ class ConsoleChatStore:
         if self.library_policy_coordinator is not None:
             for replaced_session_id in tuple(self._sessions):
                 self.library_policy_coordinator.unregister_holder(replaced_session_id)
+        if self.canvas_promotion_participant is not None:
+            self.canvas_promotion_participant.discard_all()
         self._sessions.clear()
         self._messages_by_session.clear()
         self._message_session_index.clear()
@@ -9779,6 +9819,9 @@ class ConsoleChatStore:
 
     def end_app_runtime(self) -> None:
         """Drop every volatile recovery projection at explicit app teardown."""
+
+        if self.canvas_promotion_participant is not None:
+            self.canvas_promotion_participant.discard_all()
 
         with self._fence_provider_trace_settlement_registrations(
             (),
@@ -16450,9 +16493,19 @@ class ConsoleChatStore:
         activity_contribution = self._library_activity_buffer.promotion_contribution(
             session_id
         )
+        canvas_contribution = (
+            self.canvas_promotion_participant.promotion_contribution(session_id)
+            if self.canvas_promotion_participant is not None
+            else None
+        )
         combined_contributions: tuple[ConsoleTransactionContribution, ...] = tuple(
             contributions
         )
+        if canvas_contribution is not None:
+            combined_contributions = (
+                *combined_contributions,
+                canvas_contribution,
+            )
         if activity_contribution is not None:
             combined_contributions = (
                 *combined_contributions,
@@ -16462,6 +16515,7 @@ class ConsoleChatStore:
             session,
             contributions=combined_contributions,
             activity_contribution=activity_contribution,
+            canvas_contribution=canvas_contribution,
             excluded_transient_message_id=excluded_transient_message_id,
         )
 
@@ -16471,6 +16525,7 @@ class ConsoleChatStore:
         *,
         contributions: Sequence[ConsoleTransactionContribution],
         activity_contribution: LibraryActivityContribution | None = None,
+        canvas_contribution: CanvasPromotionContribution | None = None,
         excluded_transient_message_id: str | None = None,
     ) -> str:
         """Stage the promotable transcript and publish after commit only."""
@@ -16691,6 +16746,13 @@ class ConsoleChatStore:
                 session_id, activity_contribution
             )
             self._bump_library_activity_revision(session_id)
+        if (
+            canvas_contribution is not None
+            and self.canvas_promotion_participant is not None
+        ):
+            self.canvas_promotion_participant.confirm_contribution(
+                session_id, canvas_contribution
+            )
 
         self.publish_committed_identity(session_id, identity)
         if staged_generation_snapshot is not None:

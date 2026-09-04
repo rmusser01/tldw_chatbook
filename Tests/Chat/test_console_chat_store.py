@@ -1,6 +1,6 @@
 import asyncio
-from copy import deepcopy
 import json
+from copy import deepcopy
 from dataclasses import FrozenInstanceError, replace
 from datetime import datetime
 from threading import Event, Thread, get_ident
@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.Canvas.staging import CanvasStagingStore
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import (
@@ -21,13 +22,17 @@ from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatStore,
     ConsoleGenerationProjectionQuarantined,
 )
-from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_conversation_hydration import (
     console_messages_from_conversation_tree,
 )
-from tldw_chatbook.Chat.console_provider_gateway import ProviderThinkingDelta
-from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
-from tldw_chatbook.Chat.console_turn_grouping import project_thinking_activities
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleEgressClass,
+    ConsoleLibraryItemScopeSnapshot,
+    ConsoleProviderIntent,
+    ConsoleResolvedDestination,
+    ConsoleTurnLibraryAuthority,
+)
 from tldw_chatbook.Chat.console_library_policy import (
     AUTOMATIC_LIBRARY_SOURCE_TYPES,
     ConsoleAssistantLibraryAccess,
@@ -39,19 +44,19 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.Chat.console_library_policy_coordinator import (
     ConsoleLibraryPolicyCoordinator,
 )
-from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
-from tldw_chatbook.Chat.console_dispatch_checkpoint import (
-    ConsoleEgressClass,
-    ConsoleLibraryItemScopeSnapshot,
-    ConsoleProviderIntent,
-    ConsoleResolvedDestination,
-    ConsoleTurnLibraryAuthority,
-)
+from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
+from tldw_chatbook.Chat.console_provider_gateway import ProviderThinkingDelta
 from tldw_chatbook.Chat.console_roleplay_identity import (
     resolve_console_message_presentation,
 )
 from tldw_chatbook.Chat.console_roleplay_metadata import ConsoleRoleplayContext
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_speech import (
+    ConsoleSpeechSnapshotRejected,
+    ConsoleSpeechSnapshotRejectionCode,
+)
+from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
+from tldw_chatbook.Chat.console_turn_grouping import project_thinking_activities
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem, read_conversation_scope
@@ -65,10 +70,6 @@ from tldw_chatbook.tldw_api import SyncV2Envelope
 from tldw_chatbook.TTS.profile_types import CharacterRef
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Video_Generation.video_store import video_content_marker
-from tldw_chatbook.Chat.console_speech import (
-    ConsoleSpeechSnapshotRejected,
-    ConsoleSpeechSnapshotRejectionCode,
-)
 from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID, LocalWorkspaceRegistryService
 
 
@@ -8573,3 +8574,223 @@ def test_atomic_promotion_adapter_failure_preserves_ephemeral_fake_state():
 
     assert persistence.created_conversations == []
     assert session.ephemeral is True
+
+
+def test_canvas_participant_joins_promotion_and_confirms_only_after_success(tmp_path):
+    """Omitting the participant or confirming before commit loses temporary history."""
+
+    db = CharactersRAGDB(tmp_path / "canvas-promotion.sqlite", "canvas-promotion")
+    try:
+        staging = CanvasStagingStore()
+        store = ConsoleChatStore(
+            persistence=ChatPersistenceService(db),
+            canvas_promotion_participant=staging,
+        )
+        session = store.create_session(ephemeral=True)
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Canvas created.",
+        )
+        staged = staging.create_canvas(
+            session_id=session.id,
+            run_id="run-create",
+            tool_call_id="call-create",
+            title="Planner",
+            source="<!doctype html><html><body>planner</body></html>",
+            origin_message_id=assistant.id,
+        )
+        updated_origin = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Canvas updated.",
+        )
+        staging.update_canvas(
+            session_id=session.id,
+            run_id="run-update",
+            tool_call_id="call-update",
+            canvas_id=staged.revision.canvas_id,
+            expected_parent_revision_id=staged.revision.revision_id,
+            source="<!doctype html><html><body>updated planner</body></html>",
+            origin_message_id=updated_origin.id,
+        )
+        rename_origin = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="Call it Schedule.",
+        )
+        renamed = staging.rename_canvas(
+            session_id=session.id,
+            run_id="run-rename",
+            tool_call_id="call-rename",
+            canvas_id=staged.revision.canvas_id,
+            expected_parent_revision_id=staged.revision.revision_id,
+            title="Schedule",
+            origin_message_id=rename_origin.id,
+        )
+
+        conversation_id = store.promote_ephemeral_session(session.id)
+
+        assert conversation_id is not None
+        row = (
+            db.get_connection()
+            .execute(
+                "SELECT revision.origin_message_id, revision.origin_turn_id "
+                "FROM canvas_revisions AS revision WHERE revision.id = ?",
+                (staged.revision.revision_id,),
+            )
+            .fetchone()
+        )
+        assert row is not None
+        assert row[0] == store.get_message(assistant.id).persisted_message_id
+        assert row[1] == "run-create"
+        history = (
+            db.get_connection()
+            .execute(
+                "SELECT parent_revision_id, sequence, title, actor_kind, origin_message_id "
+                "FROM canvas_revisions WHERE canvas_id = ? ORDER BY sequence",
+                (staged.revision.canvas_id,),
+            )
+            .fetchall()
+        )
+        assert [tuple(row[:4]) for row in history] == [
+            (None, 1, "Planner", "assistant"),
+            (staged.revision.revision_id, 2, "Planner", "assistant"),
+            (staged.revision.revision_id, 3, "Schedule", "user_rename"),
+        ]
+        assert (
+            history[1][4] == store.get_message(updated_origin.id).persisted_message_id
+        )
+        assert history[2][4] == store.get_message(rename_origin.id).persisted_message_id
+        assert (
+            db.get_connection()
+            .execute(
+                "SELECT last_canvas_id FROM canvas_conversation_hints "
+                "WHERE conversation_id = ?",
+                (conversation_id,),
+            )
+            .fetchone()[0]
+            == renamed.revision.canvas_id
+        )
+        assert (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM sync_log WHERE entity LIKE 'canvas%'")
+            .fetchone()[0]
+            == 0
+        )
+        assert staging.staged_revision_count(session.id) == 0
+        assert session.ephemeral is False
+    finally:
+        db.close_connection()
+
+
+def test_failed_canvas_promotion_preserves_chat_and_staging_for_retry(
+    tmp_path, monkeypatch
+):
+    """Publishing identities or clearing staging on rollback makes retry impossible."""
+
+    from tldw_chatbook.Chat import console_transaction_contribution as seam
+
+    db = CharactersRAGDB(tmp_path / "canvas-promotion-retry.sqlite", "canvas-retry")
+    try:
+        staging = CanvasStagingStore()
+        store = ConsoleChatStore(
+            persistence=ChatPersistenceService(db),
+            canvas_promotion_participant=staging,
+        )
+        session = store.create_session(ephemeral=True)
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Canvas created.",
+        )
+        staged = staging.create_canvas(
+            session_id=session.id,
+            run_id="run-create",
+            tool_call_id="call-create",
+            title="Planner",
+            source="<!doctype html><html><body>private planner</body></html>",
+            origin_message_id=assistant.id,
+        )
+        original_execute = seam._CursorConsoleTransactionWriter.execute
+        failed = False
+
+        def fail_once(self, statement, parameters):
+            nonlocal failed
+            original_execute(self, statement, parameters)
+            if statement.startswith("INSERT INTO canvas_documents") and not failed:
+                failed = True
+                raise RuntimeError("injected_canvas_write_failure")
+
+        monkeypatch.setattr(seam._CursorConsoleTransactionWriter, "execute", fail_once)
+        with pytest.raises(RuntimeError, match="canvas_promotion_failed"):
+            store.promote_ephemeral_session(session.id)
+
+        assert session.ephemeral is True
+        assert session.persisted_conversation_id is None
+        assert assistant.persisted_message_id is None
+        assert staging.staged_revision_count(session.id) == 1
+        connection = db.get_connection()
+        assert (
+            connection.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 0
+        )
+        assert connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+        assert (
+            connection.execute("SELECT COUNT(*) FROM canvas_documents").fetchone()[0]
+            == 0
+        )
+
+        monkeypatch.setattr(
+            seam._CursorConsoleTransactionWriter, "execute", original_execute
+        )
+        conversation_id = store.promote_ephemeral_session(session.id)
+
+        assert conversation_id is not None
+        assert session.ephemeral is False
+        assert staging.staged_revision_count(session.id) == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM canvas_revisions WHERE id = ?",
+                (staged.revision.revision_id,),
+            ).fetchone()[0]
+            == 1
+        )
+    finally:
+        db.close_connection()
+
+
+def test_console_lifecycle_discards_exact_canvas_staging() -> None:
+    """A close, restore replacement, or app teardown retaining plans leaks source."""
+
+    staging = CanvasStagingStore()
+    store = ConsoleChatStore(canvas_promotion_participant=staging)
+    closed = store.create_session(ephemeral=True)
+    _create_staged_canvas_for_console(staging, closed.id, "closed")
+    survivor = store.create_session(ephemeral=True)
+    _create_staged_canvas_for_console(staging, survivor.id, "survivor")
+
+    store.close_session(closed.id)
+
+    assert staging.staged_revision_count(closed.id) == 0
+    assert staging.staged_revision_count(survivor.id) == 1
+
+    replacement = replace(survivor)
+    store.restore_state(sessions=[replacement], messages_by_session={survivor.id: ()})
+
+    assert staging.staged_revision_count(survivor.id) == 0
+    _create_staged_canvas_for_console(staging, survivor.id, "teardown")
+    store.end_app_runtime()
+    assert staging.staged_revision_count(survivor.id) == 0
+
+
+def _create_staged_canvas_for_console(
+    staging: CanvasStagingStore, session_id: str, suffix: str
+):
+    return staging.create_canvas(
+        session_id=session_id,
+        run_id=f"run-{suffix}",
+        tool_call_id=f"call-{suffix}",
+        title="Temporary",
+        source=f"<!doctype html><html><body>{suffix}</body></html>",
+        origin_message_id=f"assistant-{suffix}",
+    )
