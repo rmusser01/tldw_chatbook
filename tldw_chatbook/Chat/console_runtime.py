@@ -728,6 +728,7 @@ class ConsoleRuntime:
         self._canvas_controller: Any | None = None
         self._canvas_gateway: Any | None = None
         self._canvas_gateway_authority: Any | None = None
+        self._canvas_native_authority: Any | None = None
         self._legacy_trace_maintenance_task: asyncio.Task[None] | None = None
         # One app-wide mutation lane for exact persisted-conversation opens.
         # Individual ChatScreen workspaces are disposable views over this
@@ -884,6 +885,37 @@ class ConsoleRuntime:
         self._canvas_gateway_authority = authority
         return self._canvas_gateway
 
+    def ensure_canvas_native_authority(
+        self,
+        *,
+        scope_resolver: Callable[[str], Any],
+        bridge_sink: Callable[[str], None] | None = None,
+        auto_open: Callable[[str, Any], None] | None = None,
+    ) -> Any:
+        """Return the single Console-bound Canvas browser authority."""
+
+        if self._canvas_native_authority is None:
+            from tldw_chatbook.Canvas.native_authority import (
+                NativeConsoleCanvasAuthority,
+            )
+
+            self._canvas_native_authority = NativeConsoleCanvasAuthority(
+                scope_resolver=scope_resolver,
+                canvas_controller=self._canvas_controller,
+                bridge_sink=bridge_sink,
+                auto_open=auto_open,
+            )
+            self._canvas_controller.add_mutation_listener(
+                self._canvas_native_authority.on_tool_mutation
+            )
+        else:
+            self._canvas_native_authority.rebind_view(
+                scope_resolver=scope_resolver,
+                bridge_sink=bridge_sink,
+                auto_open=auto_open,
+            )
+        return self._canvas_native_authority
+
     # -- construction ------------------------------------------------------
 
     def ensure_chat_store(
@@ -985,17 +1017,20 @@ class ConsoleRuntime:
                 )
         else:
             legacy_normalization_enabled = False
+        from tldw_chatbook.Chat.console_canvas_controller import (
+            ConsoleCanvasController,
+        )
+
+        durable_canvas_service = None
         if db is not None:
             from tldw_chatbook.Canvas.service import CanvasService
-            from tldw_chatbook.Chat.console_canvas_controller import (
-                ConsoleCanvasController,
-            )
             from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
             if isinstance(db, CharactersRAGDB):
-                self._canvas_controller = ConsoleCanvasController(
-                    durable_service=CanvasService(db)
-                )
+                durable_canvas_service = CanvasService(db)
+        self._canvas_controller = ConsoleCanvasController(
+            durable_service=durable_canvas_service
+        )
         self._chat_store = ConsoleChatStore(
             persistence=persistence,
             settle_provider_traces_off_thread=True,

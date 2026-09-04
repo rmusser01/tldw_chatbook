@@ -187,6 +187,31 @@ class CanvasService:
     ) -> CanvasCreateResult:
         """Compile then durably create a Canvas at the captured active-path leaf."""
 
+        return self._create_canvas(
+            scope, title=title, source=source, actor_kind="assistant"
+        )
+
+    def import_canvas(
+        self,
+        scope: CanvasScope,
+        *,
+        title: str,
+        source: str,
+    ) -> CanvasCreateResult:
+        """Durably import a user-selected transcript HTML block."""
+
+        return self._create_canvas(
+            scope, title=title, source=source, actor_kind="user_import"
+        )
+
+    def _create_canvas(
+        self,
+        scope: CanvasScope,
+        *,
+        title: str,
+        source: str,
+        actor_kind: str,
+    ) -> CanvasCreateResult:
         self._validate_scope(scope, require_active_path=True)
         plan = self._compile(source)
         repository_error: CanvasServiceError | None = None
@@ -196,7 +221,7 @@ class CanvasService:
                 title=title,
                 source=source,
                 runtime_profile="canvas-v1",
-                actor_kind="assistant",
+                actor_kind=actor_kind,
                 origin_message_id=scope.active_message_ids[-1],
                 origin_turn_id=scope.run_id,
                 active_message_ids=scope.active_message_ids,
@@ -225,6 +250,41 @@ class CanvasService:
     ) -> CanvasMutationResult | CanvasConflictResult:
         """Append a complete replacement from the exact captured reachable base."""
 
+        return self._update_canvas(
+            scope,
+            canvas_id,
+            expected_parent_revision_id=expected_parent_revision_id,
+            source=source,
+            actor_kind="assistant",
+        )
+
+    def import_update_canvas(
+        self,
+        scope: CanvasScope,
+        canvas_id: str,
+        *,
+        expected_parent_revision_id: str,
+        source: str,
+    ) -> CanvasMutationResult | CanvasConflictResult:
+        """Append a replacement imported explicitly by the user."""
+
+        return self._update_canvas(
+            scope,
+            canvas_id,
+            expected_parent_revision_id=expected_parent_revision_id,
+            source=source,
+            actor_kind="user_import",
+        )
+
+    def _update_canvas(
+        self,
+        scope: CanvasScope,
+        canvas_id: str,
+        *,
+        expected_parent_revision_id: str,
+        source: str,
+        actor_kind: str,
+    ) -> CanvasMutationResult | CanvasConflictResult:
         verified = self._validate_scope(scope, require_active_path=True)
         canvas_id = self._validate_uuid_argument(canvas_id, "invalid_canvas_id")
         expected_parent_revision_id = self._validate_uuid_argument(
@@ -245,7 +305,7 @@ class CanvasService:
                 title=base.title,
                 source=source,
                 runtime_profile=base.runtime_profile,
-                actor_kind="assistant",
+                actor_kind=actor_kind,
                 origin_message_id=scope.active_message_ids[-1],
                 origin_turn_id=scope.run_id,
                 active_message_ids=scope.active_message_ids,

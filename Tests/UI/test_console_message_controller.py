@@ -305,6 +305,108 @@ async def test_roleplay_character_greeting_actions_use_live_presentation():
 
 
 @pytest.mark.asyncio
+async def test_production_message_controller_resolves_canvas_source_only_at_open_callback():
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session(title="Canvas")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="```html\n<!doctype html><title>Native</title><p>secret</p>\n```",
+    )
+    screen._message._open_canvas_block_fn = AsyncMock()
+    event = SimpleNamespace(
+        button=SimpleNamespace(
+            id="canvas-open",
+            console_action_id="canvas-open-0",
+            console_message_id=message.id,
+        ),
+        stop=Mock(),
+    )
+
+    assert await screen.handle_console_message_action(event) is True
+
+    screen._message._open_canvas_block_fn.assert_awaited_once_with(
+        message.id,
+        "<!doctype html><title>Native</title><p>secret</p>\n",
+        False,
+    )
+    result = screen._message._last_console_action
+    assert result.target_content is None
+    assert "secret" not in repr(result)
+
+
+@pytest.mark.asyncio
+async def test_production_message_controller_prefills_canvas_repair_without_source_state():
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session(title="Canvas repair")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="```html\n<script src='https://example.test/private.js'></script>\n```",
+    )
+    screen._message._prefill_canvas_repair_fn = Mock()
+    event = SimpleNamespace(
+        button=SimpleNamespace(
+            id="canvas-repair",
+            console_action_id="canvas-open-0",
+            console_message_id=message.id,
+        ),
+        stop=Mock(),
+    )
+
+    assert await screen.handle_console_message_action(event) is True
+
+    repair = screen._message._prefill_canvas_repair_fn.call_args.args[0]
+    assert "self-contained Canvas V1" in repair
+    assert "example.test" not in repair
+    assert screen._message._last_console_action.target_content is None
+
+
+@pytest.mark.asyncio
+async def test_production_canvas_card_handler_routes_exact_and_retry_mints_fresh_open():
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session(title="Canvas card")
+    open_selection = AsyncMock()
+    screen._open_console_canvas_selection = open_selection
+
+    exact = SimpleNamespace(
+        canvas_id="canvas-a",
+        revision_id="revision-2",
+        follow_latest=False,
+        stop=Mock(),
+    )
+    await screen.handle_console_canvas_card_open(exact)
+    open_selection.assert_awaited_once_with(
+        session_id=session.id,
+        canvas_id="canvas-a",
+        revision_id="revision-2",
+        follow_latest=False,
+    )
+
+    open_selection.reset_mock()
+    screen._canvas_last_open_request = (
+        session.id,
+        "canvas-a",
+        "revision-2",
+        False,
+    )
+    retry = SimpleNamespace(stop=Mock())
+    await screen.handle_console_canvas_open_retry(retry)
+    open_selection.assert_awaited_once_with(
+        session_id=session.id,
+        canvas_id="canvas-a",
+        revision_id="revision-2",
+        follow_latest=False,
+    )
+
+
+@pytest.mark.asyncio
 async def test_fork_requested_dispatches_to_the_named_session_callback_once():
     """The message controller remains a narrow action-to-session seam."""
 

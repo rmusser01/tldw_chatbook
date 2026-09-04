@@ -203,6 +203,40 @@ class CanvasSourceResponse:
 
 
 @dataclass(frozen=True, slots=True)
+class CanvasGatewayOption:
+    """One reachable source-free Canvas selector option."""
+
+    canvas_id: str
+    revision_id: str
+    title: str
+
+
+@dataclass(frozen=True, slots=True)
+class CanvasGatewayProjection:
+    """Server-owned displayed revision and reachable selector state."""
+
+    scope: CanvasGatewayScope
+    options: tuple[CanvasGatewayOption, ...]
+    title: str
+    sequence: int
+    parent_revision_id: str | None
+    source_bytes: int
+    content_sha256: str
+    origin_message_id: str
+    origin_turn_id: str
+    temporary: bool
+    following: bool
+
+
+@dataclass(frozen=True, slots=True)
+class CanvasGatewayNavigation:
+    """Atomic authority response for one browser navigation mutation."""
+
+    scope: CanvasGatewayScope
+    projection: CanvasGatewayProjection
+
+
+@dataclass(frozen=True, slots=True)
 class BridgeConfirmationRequest:
     """Closed trusted-shell decision for one validated bridge request."""
 
@@ -245,6 +279,19 @@ class CanvasGatewayAuthority(Protocol):
     def read_source(
         self, scope: CanvasGatewayScope
     ) -> CanvasSourceResponse | Awaitable[CanvasSourceResponse]: ...
+
+    def describe_selection(
+        self, scope: CanvasGatewayScope
+    ) -> CanvasGatewayProjection | Awaitable[CanvasGatewayProjection]: ...
+
+    def navigate(
+        self,
+        scope: CanvasGatewayScope,
+        *,
+        action: str,
+        canvas_id: str | None = None,
+        title: str | None = None,
+    ) -> CanvasGatewayNavigation | Awaitable[CanvasGatewayNavigation]: ...
 
     def read_events(
         self, scope: CanvasGatewayScope, *, after_event_id: str | None
@@ -724,6 +771,8 @@ class CanvasGateway:
         self._app.router.add_get(f"{root}/", self._shell, allow_head=False)
         self._app.router.add_post(f"{root}/api/boot", self._boot)
         self._app.router.add_post(f"{root}/api/frame", self._frame)
+        self._app.router.add_get(f"{root}/api/state", self._state, allow_head=False)
+        self._app.router.add_post(f"{root}/api/navigate", self._navigate)
         self._app.router.add_get(f"{root}/render", self._renderer, allow_head=False)
         self._app.router.add_get(f"{root}/api/plan", self._plan, allow_head=False)
         self._app.router.add_get(f"{root}/api/events", self._events, allow_head=False)
@@ -936,6 +985,60 @@ class CanvasGateway:
             max_age=int(_FRAME_TTL_SECONDS),
         )
         return response
+
+    async def _state(self, request: web.Request) -> web.Response:
+        session = self._require_session(request)
+        if session is None:
+            return _error_response("session_refused", 401)
+        scope = session.scope
+        projection = await _maybe_await(self._authority.describe_selection(scope))
+        if (
+            not self._session_is_current(session, scope)
+            or not isinstance(projection, CanvasGatewayProjection)
+            or projection.scope != scope
+        ):
+            return _error_response("state_unavailable", 503)
+        return web.json_response(_projection_wire(projection))
+
+    async def _navigate(self, request: web.Request) -> web.Response:
+        session = self._require_session(request, csrf=True)
+        if session is None:
+            return _error_response("session_refused", 403)
+        value = await self._read_json(request)
+        if not isinstance(value, Mapping) or set(value) - {"action", "canvas_id", "title"}:
+            return _error_response("invalid_navigation", 400)
+        action = value.get("action")
+        canvas_id = value.get("canvas_id")
+        title = value.get("title")
+        if (
+            action not in {"select", "pin", "follow", "previous", "rename"}
+            or (canvas_id is not None and not isinstance(canvas_id, str))
+            or (title is not None and not isinstance(title, str))
+        ):
+            return _error_response("invalid_navigation", 400)
+        captured = session.scope
+        try:
+            navigation = await _maybe_await(
+                self._authority.navigate(
+                    captured, action=action, canvas_id=canvas_id, title=title
+                )
+            )
+        except (TypeError, ValueError):
+            return _error_response("navigation_refused", 409)
+        if (
+            not self._session_is_current(session, captured)
+            or not isinstance(navigation, CanvasGatewayNavigation)
+            or navigation.scope.browser_session_id != captured.browser_session_id
+            or navigation.scope.conversation_session_id
+            != captured.conversation_session_id
+            or navigation.projection.scope != navigation.scope
+        ):
+            return _error_response("navigation_unavailable", 503)
+        self.change_selection(
+            browser_session_id=captured.browser_session_id,
+            scope=navigation.scope,
+        )
+        return web.json_response(_projection_wire(navigation.projection))
 
     async def _renderer(self, request: web.Request) -> web.Response:
         if (
@@ -1704,6 +1807,36 @@ def _render_plan_wire(plan: CanvasRenderPlan) -> dict[str, Any]:
             }
             for issue in plan.compatibility_issues
         ],
+    }
+
+
+def _projection_wire(projection: CanvasGatewayProjection) -> dict[str, Any]:
+    """Return the bounded source-free shell state payload."""
+
+    return {
+        "selection": {
+            "canvas_id": projection.scope.canvas_id,
+            "revision_id": projection.scope.revision_id,
+        },
+        "options": [
+            {
+                "canvas_id": option.canvas_id,
+                "revision_id": option.revision_id,
+                "title": option.title,
+            }
+            for option in projection.options
+        ],
+        "metadata": {
+            "title": projection.title,
+            "sequence": projection.sequence,
+            "parent_revision_id": projection.parent_revision_id,
+            "source_bytes": projection.source_bytes,
+            "content_sha256": projection.content_sha256,
+            "origin_message_id": projection.origin_message_id,
+            "origin_turn_id": projection.origin_turn_id,
+            "temporary": projection.temporary,
+        },
+        "following": projection.following,
     }
 
 

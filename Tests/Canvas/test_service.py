@@ -132,6 +132,38 @@ def _append_revision(
     )
 
 
+def test_user_import_create_and_update_preserve_durable_actor_provenance(db) -> None:
+    conversation_id = _conversation(db)
+    message_id = _message(db, conversation_id, "Import this HTML")
+    service = CanvasService(db)
+    scope = _scope(conversation_id, message_id, run_id="import-create")
+    created = service.import_canvas(scope, title="Imported", source=_html("one"))
+    selected = replace(
+        scope,
+        selected_canvas_id=created.revision.canvas_id,
+        selected_revision_id=created.revision.revision_id,
+        run_id="import-update",
+    )
+
+    updated = service.import_update_canvas(
+        selected,
+        created.revision.canvas_id,
+        expected_parent_revision_id=created.revision.revision_id,
+        source=_html("two"),
+    )
+
+    assert updated.revision.parent_revision_id == created.revision.revision_id
+    rows = (
+        db.get_connection()
+        .execute(
+            "SELECT actor_kind FROM canvas_revisions WHERE canvas_id = ? ORDER BY sequence",
+            (created.revision.canvas_id,),
+        )
+        .fetchall()
+    )
+    assert [row[0] for row in rows] == ["user_import", "user_import"]
+
+
 def _revision_count(db: CharactersRAGDB, canvas_id: str | None = None) -> int:
     if canvas_id is None:
         row = (

@@ -139,6 +139,7 @@ from ...Chat.console_image_view import IMAGE_CACHE_MAX_ENTRIES
 from ...Chat.console_message_actions import (
     ConsoleActionResult,
     ConsoleMessageActionService,
+    resolve_canvas_html_block,
 )
 from ...Chat.console_save_targets import (
     console_chatbook_artifact_payload,
@@ -236,6 +237,8 @@ class ConsoleMessageController:
         save_console_video_copy: Callable[[str], Any] | None = None,
         regenerate_console_video_message: Callable[[str], Any] | None = None,
         request_console_chat_fork: Callable[[str], Any] | None = None,
+        open_canvas_block: Callable[[str, str, bool], Any] | None = None,
+        prefill_canvas_repair: Callable[[str], Any] | None = None,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -385,6 +388,8 @@ class ConsoleMessageController:
         self._request_console_chat_fork_fn = request_console_chat_fork or (
             lambda _message_id: None
         )
+        self._open_canvas_block_fn = open_canvas_block
+        self._prefill_canvas_repair_fn = prefill_canvas_repair
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
         # `ChatScreen` keeps proxy properties under the original attribute
@@ -1481,6 +1486,37 @@ class ConsoleMessageController:
             and result.target_content is not None
         ):
             result = replace(result, target_content=presentation.content)
+        if result.status == "canvas_repair_requested":
+            repair = result.target_content
+            if repair is None or self._prefill_canvas_repair_fn is None:
+                self.app_instance.notify(
+                    "Canvas repair is unavailable in this Console.", severity="warning"
+                )
+                return True
+            applied = self._prefill_canvas_repair_fn(repair)
+            if inspect.isawaitable(applied):
+                await applied
+            self._last_console_action = replace(result, target_content=None)
+            return True
+        if result.status == "canvas_open_requested":
+            reference = result.canvas_block_ref
+            block = (
+                resolve_canvas_html_block(message, reference)
+                if reference is not None
+                else None
+            )
+            if block is None or self._open_canvas_block_fn is None:
+                self.app_instance.notify(
+                    "That HTML block is no longer available.", severity="warning"
+                )
+                return True
+            opened = self._open_canvas_block_fn(
+                message.id, block.html, reference.create_new
+            )
+            if inspect.isawaitable(opened):
+                await opened
+            self._last_console_action = result
+            return True
         self._last_console_action = result
         if action_id == "fork" and result.status == "fork_requested":
             requested = self._request_console_chat_fork_fn(message_id)

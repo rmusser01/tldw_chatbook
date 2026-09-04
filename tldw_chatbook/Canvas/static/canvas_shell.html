@@ -9,6 +9,13 @@
   <script src="static/canvas_shell.js" defer></script>
 </head>
 <body>
+  <noscript>
+    <section class="scripts-disabled-recovery">
+      <h1>Chatbook Canvas needs trusted shell scripts</h1>
+      <p>The generated page remains isolated, but this browser has disabled the Chatbook-owned controls needed to load it.</p>
+      <p>Enable JavaScript for this loopback Chatbook page, then reload. Generated scripts still run only inside the zero-egress Canvas runtime.</p>
+    </section>
+  </noscript>
 <!--
 THESIS: A quiet, preview-dominant workbench that keeps revision authority visible without competing with the user's artifact.
 OWN-WORLD: Extends Chatbook's Precision Workbench in Operate mode; the trusted shell remains visually and structurally separate from generated content.
@@ -52,7 +59,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     </section>
 
     <section id="compatibility" class="compatibility" role="alert" hidden>
-      <strong id="compatibility-title">Incompatible</strong>
+      <strong id="compatibility-title">Compatibility note</strong>
       <span id="compatibility-copy"></span>
       <button id="scripts-disabled-button" type="button">Reopen with scripts disabled</button>
     </section>
@@ -67,7 +74,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       ></iframe>
     </section>
 
-    <aside id="source-panel" class="source-panel" aria-labelledby="source-heading" hidden>
+    <aside id="source-panel" class="source-panel" role="dialog" aria-modal="true" aria-labelledby="source-heading" tabindex="-1" hidden>
       <div class="source-header">
         <div>
           <h2 id="source-heading">Revision source</h2>
@@ -78,12 +85,5 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       <textarea id="source-view" readonly aria-label="Canvas revision source" spellcheck="false"></textarea>
     </aside>
   </main>
-  <noscript>
-    <section class="scripts-disabled-recovery">
-      <h1>Chatbook Canvas needs trusted shell scripts</h1>
-      <p>The generated page remains isolated, but this browser has disabled the Chatbook-owned controls needed to load it.</p>
-      <p>Enable JavaScript for this loopback Chatbook page, then reload. Generated scripts still run only inside the zero-egress Canvas runtime.</p>
-    </section>
-  </noscript>
 </body>
 </html>

@@ -16,6 +16,7 @@ import re
 import threading
 import time
 from typing import Any, Dict, Literal, Optional, TYPE_CHECKING
+from uuid import uuid4
 
 import toml
 from loguru import logger
@@ -175,6 +176,12 @@ from ...Chat.console_context_compaction import (
     complete_durable_units,
 )
 from ...Chat.console_runtime import ensure_console_runtime, leave_console_runtime
+from ...Widgets.Console.console_canvas_card import (
+    ConsoleCanvasCardOpenRequested,
+    ConsoleCanvasOpenRecoveryCard,
+    ConsoleCanvasOpenRetryRequested,
+    open_canvas_with_textual,
+)
 from ...Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
 )
@@ -8914,6 +8921,13 @@ class ChatScreen(BaseAppScreen):
         elif store.active_session_id is None and not resume_pending:
             if workspace_context is not None:
                 store.set_workspace_context(workspace_context)
+        runtime = self._console_runtime()
+        if runtime.canvas_controller is not None:
+            runtime.ensure_canvas_native_authority(
+                scope_resolver=self._console_canvas_scope,
+                bridge_sink=self._prefill_console_canvas_repair,
+                auto_open=self._schedule_console_canvas_tool_open,
+            )
         return store
 
     def _ensure_console_agent_bridge(self) -> Any:
@@ -19343,6 +19357,187 @@ class ChatScreen(BaseAppScreen):
         ):
             return True
         return await self._message.handle_console_message_action(event)
+
+    def _console_canvas_scope(self, session_id: str) -> Any:
+        """Capture the exact active Console branch for native Canvas authority."""
+
+        from tldw_chatbook.Canvas.models import CanvasScope
+
+        store = self._ensure_console_chat_store()
+        if store.active_session_id != session_id:
+            raise RuntimeError("Canvas session is no longer active")
+        session = self._session._active_native_console_session()
+        if session is None or session.id != session_id:
+            raise RuntimeError("Canvas session is unavailable")
+        active_ids: list[str] = []
+        for native_id in store.active_path_message_ids(session_id):
+            message = store.get_message(native_id)
+            active_ids.append(message.persisted_message_id or message.id)
+        if not active_ids:
+            raise RuntimeError("Canvas requires an active transcript message")
+        return CanvasScope(
+            session_id=session_id,
+            conversation_id=session.persisted_conversation_id or session_id,
+            active_message_ids=tuple(active_ids),
+            selected_canvas_id=None,
+            selected_revision_id=None,
+            run_id=str(uuid4()),
+        )
+
+    def _prefill_console_canvas_repair(self, repair: str) -> None:
+        """Place the bounded repair request into the exact current unsent draft."""
+
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        composer = self._console_composer_or_none()
+        if session_id is None or composer is None:
+            raise RuntimeError("Canvas repair composer is unavailable")
+        composer.load_draft(repair)
+        store.set_session_draft(session_id, repair)
+        composer.focus()
+
+    def _console_canvas_authority(self) -> Any:
+        store = self._ensure_console_chat_store()
+        if store.active_session_id is None:
+            raise RuntimeError("Canvas session is unavailable")
+        runtime = self._console_runtime()
+        return runtime.ensure_canvas_native_authority(
+            scope_resolver=self._console_canvas_scope,
+            bridge_sink=self._prefill_console_canvas_repair,
+            auto_open=self._schedule_console_canvas_tool_open,
+        )
+
+    def _schedule_console_canvas_tool_open(self, session_id: str, info: Any) -> None:
+        """Auto-open a created tool Canvas or let its live shell hot-reload."""
+
+        def schedule() -> None:
+            gateway = self._console_runtime().canvas_gateway
+            if gateway is not None and gateway.browser_session_count:
+                return
+            self.run_worker(
+                self._open_console_canvas_selection(
+                    session_id=session_id,
+                    canvas_id=info.canvas_id,
+                    revision_id=info.revision_id,
+                    follow_latest=True,
+                ),
+                exclusive=True,
+                group="console-canvas-auto-open",
+            )
+
+        call_from_thread = getattr(self.app_instance, "call_from_thread", None)
+        if callable(call_from_thread):
+            try:
+                call_from_thread(schedule)
+                return
+            except Exception as exc:  # noqa: BLE001 - fall back to UI-thread schedule
+                logger.debug(
+                    f"Canvas auto-open thread handoff failed: {type(exc).__name__}"
+                )
+        schedule()
+
+    async def _open_console_canvas_block(
+        self, message_id: str, source: str, create_new: bool
+    ) -> Any:
+        """Import one authorized HTML block and open its native preview."""
+
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        if session_id is None or store.session_id_for_message(message_id) != session_id:
+            raise RuntimeError("Canvas source message is no longer current")
+        authority = self._console_canvas_authority()
+        info = authority.import_html(
+            session_id=session_id, source=source, create_new=create_new
+        )
+        return await self._open_console_canvas_selection(
+            session_id=session_id,
+            canvas_id=info.canvas_id,
+            revision_id=info.revision_id,
+            follow_latest=True,
+        )
+
+    async def _open_console_canvas_selection(
+        self,
+        *,
+        session_id: str,
+        canvas_id: str,
+        revision_id: str | None,
+        follow_latest: bool,
+    ) -> Any:
+        authority = self._console_canvas_authority()
+        browser_id = f"browser-{session_id}"
+        scope = authority.gateway_scope(
+            session_id=session_id,
+            browser_session_id=browser_id,
+            canvas_id=canvas_id,
+            revision_id=revision_id,
+            follow_latest=follow_latest,
+        )
+        gateway = self._console_runtime().ensure_canvas_gateway(authority=authority)
+        self._canvas_last_open_request = (
+            session_id,
+            canvas_id,
+            revision_id,
+            follow_latest,
+        )
+        launch = await open_canvas_with_textual(gateway, scope, self.app_instance)
+        if launch.opened is False:
+            await self._show_console_canvas_open_failure(launch.browser_url)
+        else:
+            try:
+                self.query_one("#console-canvas-open-recovery").remove()
+            except (NoMatches, QueryError):
+                pass
+        return launch
+
+    async def _show_console_canvas_open_failure(self, browser_url: str) -> None:
+        try:
+            existing = self.query_one(
+                "#console-canvas-open-recovery", ConsoleCanvasOpenRecoveryCard
+            )
+        except (NoMatches, QueryError):
+            existing = None
+        if existing is not None:
+            existing.update_url(browser_url)
+            return
+        region = self._console_transcript_region_or_none()
+        if region is not None:
+            await region.mount(ConsoleCanvasOpenRecoveryCard(browser_url))
+
+    @on(ConsoleCanvasOpenRetryRequested)
+    async def handle_console_canvas_open_retry(
+        self, event: ConsoleCanvasOpenRetryRequested
+    ) -> None:
+        """Mint a fresh one-time bootstrap instead of replaying the failed URL."""
+
+        event.stop()
+        request = getattr(self, "_canvas_last_open_request", None)
+        if request is None:
+            return
+        session_id, canvas_id, revision_id, follow_latest = request
+        await self._open_console_canvas_selection(
+            session_id=session_id,
+            canvas_id=canvas_id,
+            revision_id=revision_id,
+            follow_latest=follow_latest,
+        )
+
+    @on(ConsoleCanvasCardOpenRequested)
+    async def handle_console_canvas_card_open(
+        self, event: ConsoleCanvasCardOpenRequested
+    ) -> None:
+        """Reopen a transcript card at its exact revision or reachable head."""
+
+        event.stop()
+        store = self._ensure_console_chat_store()
+        if store.active_session_id is None:
+            return
+        await self._open_console_canvas_selection(
+            session_id=store.active_session_id,
+            canvas_id=event.canvas_id,
+            revision_id=event.revision_id,
+            follow_latest=event.follow_latest,
+        )
 
     def _console_save_as_destinations(self, message: Any) -> list[Any]:
         """Delegate to `ConsoleMessageController` (wave-3 task 1) -- kept

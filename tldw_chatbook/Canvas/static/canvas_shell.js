@@ -19,8 +19,8 @@
   let csrf = "";
   let selection = null;
   let displayedRevisionId = "";
-  let previousRevisionId = "";
-  let latestMetadata = {};
+  let displayedMetadata = {};
+  let latestRevisionId = "";
   let lastEventId = "";
   let following = true;
   let closed = false;
@@ -50,24 +50,29 @@
     ui.follow.hidden = value;
   }
 
-  function rememberCanvas(canvasId, title) {
-    if (![...ui.selector.options].some((option) => option.value === canvasId)) {
-      ui.selector.add(new Option(title || "Canvas", canvasId));
-    }
-    ui.selector.value = canvasId;
+  function applyProjection(projection) {
+    selection = projection.selection;
+    displayedRevisionId = selection.revision_id;
+    latestRevisionId = selection.revision_id;
+    displayedMetadata = {...projection.metadata};
+    ui.selector.replaceChildren(...(projection.options || []).map((option) => new Option(option.title, option.canvas_id)));
+    ui.selector.value = selection.canvas_id;
+    const title = typeof displayedMetadata.title === "string" && displayedMetadata.title ? displayedMetadata.title : "Canvas";
+    ui.title.value = title;
+    const sequence = Number.isInteger(displayedMetadata.sequence) ? displayedMetadata.sequence : "—";
+    ui.revision.textContent = `Revision ${sequence}`;
+    ui.temporary.hidden = displayedMetadata.temporary !== true;
+    const message = displayedMetadata.origin_message_id || "unknown message";
+    const turn = displayedMetadata.origin_turn_id || "unknown turn";
+    ui.provenance.textContent = `From ${message} · ${turn} · ${selection.revision_id}`;
+    setFollowing(projection.following === true);
   }
 
-  function applyMetadata(metadata = {}) {
-    latestMetadata = {...latestMetadata, ...metadata};
-    const title = typeof latestMetadata.title === "string" && latestMetadata.title ? latestMetadata.title : "Canvas";
-    ui.title.value = title;
-    rememberCanvas(selection.canvas_id, title);
-    const sequence = Number.isInteger(latestMetadata.sequence) ? latestMetadata.sequence : "—";
-    ui.revision.textContent = `Revision ${sequence}`;
-    ui.temporary.hidden = latestMetadata.temporary !== true;
-    const message = latestMetadata.origin_message_id || "unknown message";
-    const turn = latestMetadata.origin_turn_id || "unknown turn";
-    ui.provenance.textContent = `From ${message} · ${turn} · ${selection.revision_id}`;
+  async function navigate(action, values = {}, {updated = false, reload = true} = {}) {
+    const previous = displayedRevisionId;
+    const projection = await post("api/navigate", {action, ...values});
+    applyProjection(projection);
+    if (reload) await loadFrame({updated, previousRevisionId: previous});
   }
 
   function showNotice(copy, {previous = false, follow = false} = {}) {
@@ -90,7 +95,7 @@
     return response.text();
   }
 
-  async function loadFrame({updated = false, scriptsDisabled = false} = {}) {
+  async function loadFrame({updated = false, scriptsDisabled = false, previousRevisionId = ""} = {}) {
     rendererReady = false;
     pendingPlan = null;
     if (currentPort) currentPort.close();
@@ -108,9 +113,7 @@
     ui.compatibility.hidden = issues.length === 0;
     ui.compatibilityCopy.textContent = issues.map((issue) => issue.message).join(" ");
     ui.frame.src = frame.renderer_url;
-    previousRevisionId = displayedRevisionId;
-    displayedRevisionId = selection.revision_id;
-    if (updated) showNotice("Updated · Undo / View previous", {previous: Boolean(previousRevisionId)});
+    if (updated) showNotice("Updated · View previous", {previous: Boolean(previousRevisionId || displayedMetadata.parent_revision_id)});
     if (scriptsDisabled) showNotice("Opened with generated scripts disabled.");
   }
 
@@ -132,6 +135,10 @@
         } else if (message.state === "failed") {
           ui.loading.textContent = message.message || "Canvas preview failed. Inspect source or reload.";
           ui.loading.hidden = false;
+          ui.compatibility.hidden = false;
+          byId("compatibility-title").textContent = "Preview issue";
+          ui.compatibilityCopy.textContent = "The generated script failed in the isolated runtime. You can retry without generated scripts.";
+          ui.scriptsDisabled.hidden = false;
         }
       }
     };
@@ -160,11 +167,10 @@
           continue;
         }
         const changed = event.revision_id !== displayedRevisionId;
-        selection = {canvas_id: event.canvas_id, revision_id: event.revision_id};
-        applyMetadata(event.metadata);
+        latestRevisionId = event.revision_id;
         if (!changed) continue;
-        if (following || event.kind === "selection_changed") {
-          await loadFrame({updated: event.kind === "updated"});
+        if (following) {
+          await navigate("follow", {}, {updated: event.kind === "updated"});
         } else {
           showNotice("New version available", {follow: true});
         }
@@ -184,9 +190,9 @@
     if (!bootstrap) throw new Error("This Canvas link has expired. Reopen it from Chatbook.");
     const result = await post("api/boot", {bootstrap});
     csrf = result.csrf;
-    selection = result.selection;
-    rememberCanvas(selection.canvas_id, "Canvas");
-    applyMetadata();
+    const projectionResponse = await fetch(api("api/state"), {cache: "no-store"});
+    if (!projectionResponse.ok) throw new Error("Canvas state is unavailable.");
+    applyProjection(await projectionResponse.json());
     await loadFrame();
     void pollEvents();
   }
@@ -197,10 +203,11 @@
     initializeRenderer();
   });
 
-  ui.pin.addEventListener("click", () => setFollowing(false));
-  ui.follow.addEventListener("click", async () => { setFollowing(true); dismissNotice(); await loadFrame({updated: displayedRevisionId !== selection.revision_id}); });
+  ui.selector.addEventListener("change", () => navigate("select", {canvas_id: ui.selector.value}));
+  ui.pin.addEventListener("click", () => navigate("pin", {}, {reload: false}));
+  ui.follow.addEventListener("click", async () => { dismissNotice(); await navigate("follow", {}, {updated: displayedRevisionId !== latestRevisionId}); });
   ui.noticeFollow.addEventListener("click", () => ui.follow.click());
-  ui.noticePrevious.addEventListener("click", () => { setFollowing(false); dismissNotice(); });
+  ui.noticePrevious.addEventListener("click", async () => { dismissNotice(); await navigate("previous"); });
   ui.noticeDismiss.addEventListener("click", dismissNotice);
   ui.reload.addEventListener("click", () => loadFrame());
   ui.scriptsDisabled.addEventListener("click", () => loadFrame({scriptsDisabled: true}));
@@ -208,11 +215,19 @@
     try {
       ui.sourceView.value = await readSource();
       ui.sourcePanel.hidden = false;
+      for (const child of document.querySelector(".canvas-workbench").children) {
+        if (child !== ui.sourcePanel) child.inert = true;
+      }
       ui.source.setAttribute("aria-expanded", "true");
       ui.sourceClose.focus();
     } catch (error) { showNotice(error.message); }
   });
-  ui.sourceClose.addEventListener("click", () => { ui.sourcePanel.hidden = true; ui.source.setAttribute("aria-expanded", "false"); ui.source.focus(); });
+  ui.sourceClose.addEventListener("click", () => {
+    ui.sourcePanel.hidden = true;
+    for (const child of document.querySelector(".canvas-workbench").children) child.inert = false;
+    ui.source.setAttribute("aria-expanded", "false");
+    ui.source.focus();
+  });
   ui.copy.addEventListener("click", async () => {
     try {
       ui.sourceView.value = await readSource();
@@ -246,13 +261,24 @@
     ui.loading.hidden = false;
     setConnection("Disconnected", true);
   });
-  ui.title.addEventListener("change", () => {
-    const title = ui.title.value.trim() || "Canvas";
-    ui.title.value = title;
-    ui.selector.selectedOptions[0].textContent = title;
-    showNotice("Title edited locally · the next Chatbook rename revision will preserve this value.");
+  ui.title.addEventListener("change", async () => {
+    const previous = displayedMetadata.title || "Canvas";
+    try {
+      await navigate("rename", {title: ui.title.value});
+      showNotice("Title saved as a new revision.");
+    } catch (_) {
+      ui.title.value = previous;
+      showNotice("Title was not changed. Use 1–200 characters.");
+    }
   });
   document.addEventListener("keydown", (event) => {
+    if (!ui.sourcePanel.hidden && event.key === "Tab") {
+      const focusable = [...ui.sourcePanel.querySelectorAll("button, textarea")];
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
     if (event.key !== "Escape") return;
     if (!ui.sourcePanel.hidden) ui.sourceClose.click();
     else if (!ui.notice.hidden) dismissNotice();

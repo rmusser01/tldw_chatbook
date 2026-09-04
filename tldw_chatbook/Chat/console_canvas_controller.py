@@ -11,6 +11,8 @@ from enum import Enum
 from typing import Any
 from uuid import uuid4
 
+from loguru import logger
+
 from tldw_chatbook.Canvas.compiler import compile_canvas_document
 from tldw_chatbook.Canvas.limits import sha256_utf8
 from tldw_chatbook.Canvas.models import (
@@ -71,6 +73,7 @@ class _StagedRevision:
     source: str = field(repr=False, compare=False)
     created_at: str
     creates_document: bool
+    actor_kind: str = "assistant"
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,7 +150,7 @@ class CanvasTurnContribution(ConsoleExactNativeIdTransactionContribution):
                     source=row.source,
                     content_sha256=row.info.content_sha256,
                     source_bytes=row.info.source_bytes,
-                    actor_kind="assistant",
+                    actor_kind=row.actor_kind,
                     origin_message_id=origin_id,
                     origin_turn_id=row.info.origin.run_id,
                     created_at=row.created_at,
@@ -295,6 +298,28 @@ class ConsoleCanvasController:
         self._promotion_leases: dict[str, object] = {}
         self._session_generations: dict[str, int] = {}
         self._lock = threading.RLock()
+        self._mutation_listeners: list[Any] = []
+
+    def add_mutation_listener(self, listener: Any) -> None:
+        """Observe source-free successful tool mutations."""
+
+        if callable(listener) and listener not in self._mutation_listeners:
+            self._mutation_listeners.append(listener)
+
+    def _emit_mutation(self, scope: CanvasScope, result: CanvasMutationResult) -> None:
+        for listener in tuple(self._mutation_listeners):
+            try:
+                listener(scope, result)
+            except Exception as exc:  # noqa: BLE001 - observers cannot fail mutations
+                logger.warning(
+                    "canvas_mutation_listener_failed: {}", type(exc).__name__
+                )
+
+    @property
+    def durable_service(self) -> object | None:
+        """Expose the canonical service to the runtime-owned browser authority."""
+
+        return self._durable_service
 
     def activate_session(self, session_id: str) -> CanvasSessionOwner:
         """Activate a fresh temporary incarnation and retire same-ID predecessors."""
@@ -452,7 +477,264 @@ class ConsoleCanvasController:
             result = CanvasMutationResult(info, plan.compatibility_issues)
             self._append(stage, _StagedRevision(info, html, now, True))
             stage.replays[(scope.run_id, tool_call_id)] = (request_digest, result)
+            self._emit_mutation(scope, result)
             return result
+
+    def interactive_create_canvas(
+        self,
+        scope: CanvasScope,
+        *,
+        origin_message_id: str,
+        title: str,
+        html: str,
+        temporary: bool,
+    ) -> CanvasMutationResult:
+        """Create a user-opened Canvas through the shared staging authority."""
+
+        with self._lock:
+            if not temporary:
+                created = self._service_call(
+                    "import_canvas", scope, title=title, source=html
+                )
+                return CanvasMutationResult(
+                    created.revision, created.compatibility_issues
+                )
+            stage = self._new_interactive_stage(
+                scope, origin_message_id=origin_message_id, temporary=True
+            )
+            plan = compile_canvas_document(html)
+            now = datetime.now(UTC).isoformat()
+            info = CanvasRevisionInfo(
+                canvas_id=str(uuid4()),
+                revision_id=str(uuid4()),
+                parent_revision_id=None,
+                title=title,
+                runtime_profile="canvas-v1",
+                content_sha256=plan.source_identity.sha256,
+                source_bytes=plan.source_identity.source_bytes,
+                sequence=1,
+                origin=CanvasOrigin(origin_message_id, scope.run_id),
+            )
+            self._append(stage, _StagedRevision(info, html, now, True, "user_import"))
+            stage.state = CanvasRunState.COMMITTED
+            self._session_generations[scope.session_id] = (
+                self._session_generations.get(scope.session_id, 0) + 1
+            )
+            return CanvasMutationResult(info, plan.compatibility_issues)
+
+    def interactive_update_canvas(
+        self,
+        scope: CanvasScope,
+        *,
+        origin_message_id: str,
+        canvas_id: str,
+        expected_parent_revision_id: str,
+        html: str,
+        temporary: bool,
+    ) -> CanvasMutationResult | CanvasConflictResult:
+        """Append a user import replacement through durable or staged history."""
+
+        with self._lock:
+            selected = replace(
+                scope,
+                selected_canvas_id=canvas_id,
+                selected_revision_id=expected_parent_revision_id,
+            )
+            if not temporary:
+                return self._service_call(
+                    "import_update_canvas",
+                    selected,
+                    canvas_id,
+                    expected_parent_revision_id=expected_parent_revision_id,
+                    source=html,
+                )
+            current = self.read_session_canvas(selected, canvas_id, temporary=True)
+            if current.revision.revision_id != expected_parent_revision_id:
+                return CanvasConflictResult(
+                    "stale_parent",
+                    canvas_id,
+                    current.revision.revision_id,
+                    current.revision.content_sha256,
+                    current.revision.title,
+                    current.revision.sequence,
+                    current.revision.origin,
+                )
+            stage = self._new_interactive_stage(
+                scope, origin_message_id=origin_message_id, temporary=True
+            )
+            plan = compile_canvas_document(html)
+            info = CanvasRevisionInfo(
+                canvas_id=canvas_id,
+                revision_id=str(uuid4()),
+                parent_revision_id=current.revision.revision_id,
+                title=current.revision.title,
+                runtime_profile=current.revision.runtime_profile,
+                content_sha256=plan.source_identity.sha256,
+                source_bytes=plan.source_identity.source_bytes,
+                sequence=self._temporary_max_sequence(scope, canvas_id) + 1,
+                origin=CanvasOrigin(origin_message_id, scope.run_id),
+            )
+            self._append(
+                stage,
+                _StagedRevision(
+                    info,
+                    html,
+                    datetime.now(UTC).isoformat(),
+                    False,
+                    "user_import",
+                ),
+            )
+            stage.state = CanvasRunState.COMMITTED
+            self._session_generations[scope.session_id] = (
+                self._session_generations.get(scope.session_id, 0) + 1
+            )
+            return CanvasMutationResult(info, plan.compatibility_issues)
+
+    def interactive_rename_canvas(
+        self,
+        scope: CanvasScope,
+        *,
+        origin_message_id: str,
+        canvas_id: str,
+        expected_parent_revision_id: str,
+        title: str,
+        temporary: bool,
+    ) -> CanvasMutationResult | CanvasConflictResult:
+        """Append a same-source title revision through the shared authority."""
+
+        with self._lock:
+            selected = replace(
+                scope,
+                selected_canvas_id=canvas_id,
+                selected_revision_id=expected_parent_revision_id,
+            )
+            if not temporary:
+                return self._service_call(
+                    "rename_canvas",
+                    selected,
+                    canvas_id,
+                    expected_parent_revision_id=expected_parent_revision_id,
+                    title=title,
+                )
+            current = self.read_session_canvas(selected, canvas_id, temporary=True)
+            if current.revision.revision_id != expected_parent_revision_id:
+                return CanvasConflictResult(
+                    "stale_parent",
+                    canvas_id,
+                    current.revision.revision_id,
+                    current.revision.content_sha256,
+                    current.revision.title,
+                    current.revision.sequence,
+                    current.revision.origin,
+                )
+            stage = self._new_interactive_stage(
+                scope, origin_message_id=origin_message_id, temporary=True
+            )
+            info = replace(
+                current.revision,
+                revision_id=str(uuid4()),
+                parent_revision_id=current.revision.revision_id,
+                title=title,
+                sequence=self._temporary_max_sequence(scope, canvas_id) + 1,
+                origin=CanvasOrigin(origin_message_id, scope.run_id),
+            )
+            self._append(
+                stage,
+                _StagedRevision(
+                    info,
+                    current.source,
+                    datetime.now(UTC).isoformat(),
+                    False,
+                    "user_rename",
+                ),
+            )
+            stage.state = CanvasRunState.COMMITTED
+            self._session_generations[scope.session_id] = (
+                self._session_generations.get(scope.session_id, 0) + 1
+            )
+            return CanvasMutationResult(info)
+
+    def list_session_canvases(
+        self, scope: CanvasScope, *, temporary: bool
+    ) -> tuple[CanvasListItem, ...]:
+        """List reachable Canvases outside an in-flight assistant run."""
+
+        with self._lock:
+            items = {
+                item.canvas_id: item
+                for item in (
+                    ()
+                    if temporary
+                    else self._service_call("list_canvases", scope, default=())
+                )
+            }
+            if temporary:
+                items.update(
+                    {
+                        canvas_id: self._list_item(row.info, scope)
+                        for canvas_id, row in self._temporary_latest_rows(scope).items()
+                    }
+                )
+            path = set(scope.active_message_ids)
+            for stage in self._runs.values():
+                if (
+                    stage.scope.session_id != scope.session_id
+                    or stage.scope.conversation_id != scope.conversation_id
+                    or stage.state not in {CanvasRunState.OPEN, CanvasRunState.READY}
+                    or not self._stage_owner_current(stage)
+                ):
+                    continue
+                for canvas_id, row in stage.latest_by_canvas_id.items():
+                    if row.info.origin.message_id in path:
+                        items[canvas_id] = self._list_item(row.info, scope)
+            return tuple(items[key] for key in sorted(items))
+
+    def read_session_canvas(
+        self, scope: CanvasScope, canvas_id: str, *, temporary: bool
+    ) -> CanvasReadResult:
+        """Read a reachable exact/head revision outside an assistant run."""
+
+        with self._lock:
+            if scope.selected_revision_id is not None:
+                for stage in self._runs.values():
+                    row = stage.by_revision_id.get(scope.selected_revision_id)
+                    if (
+                        row is not None
+                        and row.info.canvas_id == canvas_id
+                        and stage.scope.session_id == scope.session_id
+                        and self._stage_owner_current(stage)
+                    ):
+                        return CanvasReadResult(row.info, row.source)
+            if not temporary:
+                return self._service_call("read_canvas", scope, canvas_id)
+            row = self._temporary_latest_rows(scope).get(canvas_id)
+            if row is None:
+                raise RuntimeError("canvas_base_unavailable")
+            return CanvasReadResult(row.info, row.source)
+
+    def _new_interactive_stage(
+        self,
+        scope: CanvasScope,
+        *,
+        origin_message_id: str,
+        temporary: bool,
+    ) -> _RunStage:
+        if self._closed:
+            raise RuntimeError("canvas_runtime_closed")
+        if temporary and scope.session_id not in self._session_owners:
+            raise RuntimeError("canvas_session_not_active")
+        if scope.run_id in self._runs:
+            raise RuntimeError("canvas_run_owner_changed")
+        owner = CanvasRunOwner(scope.run_id)
+        stage = _RunStage(
+            scope=scope,
+            assistant_message_id=origin_message_id,
+            temporary=temporary,
+            owner=self._session_owners.get(scope.session_id) if temporary else None,
+            run_owner=owner,
+        )
+        self._runs[scope.run_id] = stage
+        return stage
 
     def update_canvas(
         self,
@@ -532,6 +814,7 @@ class ConsoleCanvasController:
                 _StagedRevision(info, html, datetime.now(UTC).isoformat(), False),
             )
             stage.replays[(scope.run_id, tool_call_id)] = (request_digest, result)
+            self._emit_mutation(scope, result)
             return result
 
     def finish_run(

@@ -93,6 +93,24 @@ def assistant_canvas_html_blocks(
     return tuple(blocks)
 
 
+def resolve_canvas_html_block(
+    message: ConsoleChatMessage, reference: ConsoleCanvasBlockReference
+) -> ConsoleCanvasHtmlBlock | None:
+    """Resolve one exact parsed block at the immediate trusted consumer seam."""
+
+    if message.id != reference.message_id:
+        return None
+    return next(
+        (
+            block
+            for block in assistant_canvas_html_blocks(message)
+            if block.index == reference.block_index
+            and block.identity == reference.identity
+        ),
+        None,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ConsoleMessageActionGroups:
     """Stable direct, overflow, and media action groups for one row."""
@@ -166,6 +184,16 @@ def resolve_console_header_speech(
 
 
 @dataclass(frozen=True)
+class ConsoleCanvasBlockReference:
+    """Source-free identity resolved only by the immediate Console consumer."""
+
+    message_id: str
+    block_index: int
+    identity: str
+    create_new: bool
+
+
+@dataclass(frozen=True)
 class ConsoleActionResult:
     """Result of dispatching a Console selected-message action."""
 
@@ -176,6 +204,7 @@ class ConsoleActionResult:
     target_message_id: str | None = None
     target_content: str | None = None
     target_invocation_id: str | None = None
+    canvas_block_ref: ConsoleCanvasBlockReference | None = None
 
 
 @dataclass(frozen=True)
@@ -824,8 +853,12 @@ class ConsoleMessageActionService:
                     else "Opening HTML in Canvas."
                 ),
                 target_message_id=message.id,
-                target_content=block.html,
-                target_invocation_id=None if create_new else block.identity,
+                canvas_block_ref=ConsoleCanvasBlockReference(
+                    message_id=message.id,
+                    block_index=block.index,
+                    identity=block.identity,
+                    create_new=create_new,
+                ),
             )
         if (
             action_id in {"feedback-up", "feedback-down"}

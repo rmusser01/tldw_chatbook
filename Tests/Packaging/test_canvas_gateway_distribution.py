@@ -23,8 +23,12 @@ CANVAS_GATEWAY_PATHS = frozenset(
     {
         "tldw_chatbook/Canvas/capabilities.py",
         "tldw_chatbook/Canvas/gateway.py",
+        "tldw_chatbook/Canvas/native_authority.py",
         "tldw_chatbook/Canvas/static/THIRD_PARTY_LICENSES.txt",
         "tldw_chatbook/Canvas/static/canvas_renderer.js",
+        "tldw_chatbook/Canvas/static/canvas_shell.css",
+        "tldw_chatbook/Canvas/static/canvas_shell.html",
+        "tldw_chatbook/Canvas/static/canvas_shell.js",
         "tldw_chatbook/Canvas/static/canvas_runtime_worker.js",
         "tldw_chatbook/Canvas/static/quickjs-runtime.js",
         "tldw_chatbook/Canvas/static/runtime-manifest.json",

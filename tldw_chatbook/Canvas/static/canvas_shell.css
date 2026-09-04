@@ -141,6 +141,7 @@ h1 { margin: 0 0.25rem 0 0; font-size: 1rem; white-space: nowrap; }
   grid-template-rows: auto 1fr;
   background: var(--panel);
   border-left: 1px solid var(--line);
+  box-shadow: 0 0 0 100vmax rgb(0 0 0 / 48%);
 }
 .source-panel[hidden] { display: none; }
 .source-header { display: flex; align-items: start; gap: 1rem; padding: 1rem; border-bottom: 1px solid var(--line); }
@@ -149,7 +150,7 @@ h1 { margin: 0 0.25rem 0 0; font-size: 1rem; white-space: nowrap; }
 .source-header p { margin: 0; color: var(--muted); font-size: 0.8rem; line-height: 1.45; }
 #source-view { width: 100%; height: 100%; resize: none; border: 0; padding: 1rem; line-height: 1.5; background: #101417; color: #e8edef; caret-color: #73c5e0; scrollbar-color: #59636b #101417; }
 
-.scripts-disabled-recovery { max-width: 48rem; margin: 12vh auto; padding: 1.5rem; border: 1px solid var(--error); background: var(--panel); }
+.scripts-disabled-recovery { position: fixed; z-index: 100; inset: 0; display: grid; align-content: center; max-width: none; margin: 0; padding: clamp(1.5rem, 8vw, 8rem); border: 0; background: var(--canvas); }
 
 @media (prefers-color-scheme: dark) {
   :root {
@@ -182,6 +183,7 @@ h1 { margin: 0 0.25rem 0 0; font-size: 1rem; white-space: nowrap; }
   #canvas-selector, #canvas-title { width: 100%; min-width: 0; }
   .canvas-state { justify-content: flex-start; overflow-x: auto; }
   .canvas-actions { justify-content: flex-start; margin-inline: -0.1rem; scrollbar-width: auto; }
+  .canvas-actions { background: linear-gradient(90deg, transparent calc(100% - 1.5rem), var(--accent-soft)); }
   .canvas-actions button { min-height: 2.6rem; }
   .provenance { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }

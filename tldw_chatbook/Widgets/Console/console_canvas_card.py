@@ -7,8 +7,9 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.message import Message
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
 
 async def open_canvas_with_textual(gateway: Any, scope: Any, app: Any) -> Any:
@@ -69,6 +70,55 @@ class ConsoleCanvasCardOpenRequested(Message):
         self.follow_latest = follow_latest
 
 
+class ConsoleCanvasOpenRetryRequested(Message):
+    """Request a fresh browser bootstrap after a platform-open failure."""
+
+
+class ConsoleCanvasOpenRecoveryCard(Vertical):
+    """Persistent, actionable recovery surface for browser-open failures."""
+
+    BUNDLED_CSS = """
+    ConsoleCanvasOpenRecoveryCard {
+        width: 100%;
+        height: auto;
+        border: round $warning;
+        padding: 0 1;
+        margin: 0 0 1 0;
+    }
+    ConsoleCanvasOpenRecoveryCard Input { width: 100%; height: 3; }
+    ConsoleCanvasOpenRecoveryCard .console-canvas-recovery-actions { height: 3; }
+    """
+
+    def __init__(self, browser_url: str) -> None:
+        super().__init__(id="console-canvas-open-recovery")
+        self.browser_url = browser_url
+
+    def compose(self) -> ComposeResult:
+        yield Static("Canvas could not open your system browser. Copy this URL or retry with a fresh link.")
+        yield Input(
+            self.browser_url,
+            id="console-canvas-recovery-url",
+            select_on_focus=True,
+        )
+        yield Horizontal(
+            Button("Retry opening", id="console-canvas-retry-open"),
+            classes="console-canvas-recovery-actions",
+        )
+
+    def update_url(self, browser_url: str) -> None:
+        self.browser_url = browser_url
+        try:
+            self.query_one("#console-canvas-recovery-url", Input).value = browser_url
+        except NoMatches:
+            pass
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id != "console-canvas-retry-open":
+            return
+        event.stop()
+        self.post_message(ConsoleCanvasOpenRetryRequested())
+
+
 class ConsoleCanvasCard(Vertical):
     """Focused Canvas card that never carries source bytes."""
 
@@ -79,12 +129,6 @@ class ConsoleCanvasCard(Vertical):
         border: round $surface-lighten-1;
         padding: 0 1;
         margin: 0 0 1 0;
-    }
-
-    ConsoleCanvasCard .console-canvas-card-kicker {
-        color: $text-muted;
-        text-style: bold;
-        height: 1;
     }
 
     ConsoleCanvasCard .console-canvas-card-label {
@@ -125,7 +169,6 @@ class ConsoleCanvasCard(Vertical):
         self._id_suffix = f"{message_id}-{card_index}"
 
     def compose(self) -> ComposeResult:
-        yield Static("Canvas artifact", classes="console-canvas-card-kicker")
         yield Static(self.presentation.label, classes="console-canvas-card-label")
         if self.presentation.error_code:
             yield Static(

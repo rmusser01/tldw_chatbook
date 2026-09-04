@@ -47,11 +47,16 @@ def test_canvas_html_actions_use_parsed_fences_and_stable_block_identity():
     ]
     result = service.dispatch("canvas-open-0", message)
     assert result.status == "canvas_open_requested"
-    assert result.target_content == blocks[0].html
-    assert result.target_invocation_id == blocks[0].identity
+    assert result.target_content is None
+    assert result.canvas_block_ref is not None
+    assert result.canvas_block_ref.message_id == message.id
+    assert result.canvas_block_ref.block_index == 0
+    assert result.canvas_block_ref.identity == blocks[0].identity
+    assert repr(result).find("<!doctype") == -1
     open_as_new = service.dispatch("canvas-open-new-0", message)
     assert open_as_new.status == "canvas_open_requested"
-    assert open_as_new.target_invocation_id is None
+    assert open_as_new.canvas_block_ref is not None
+    assert open_as_new.canvas_block_ref.create_new is True
 
 
 def test_incompatible_canvas_html_prefills_repair_without_returning_source():
