@@ -74,6 +74,14 @@ _RESULT_REVIEW_PRIMITIVE = "automation_result_review"
 #: mutations, SyncEngine the consumer/replayer).
 _DEFINITION_PRIMITIVE = "automation_definition"
 
+#: Matches ScheduledTasksDB._LIFECYCLE_PRIMITIVE / SyncEngine's constant of
+#: the same value. Pause/resume/archive get their OWN `pending_mutations`
+#: slot (Qodo findings 5+6) so a queued lifecycle change and a queued edit
+#: can coexist on one row instead of destroying each other in the shared
+#: `UNIQUE(local_id, primitive, owner_id)` slot -- see the DB constant's
+#: comment for the full rationale.
+_LIFECYCLE_PRIMITIVE = "automation_lifecycle"
+
 #: v1 scope guard (schedules-handoff PR-4, task 4): only this family can be
 #: authored through `preview_definition`/`save_definition`. `agent_task`
 #: authoring rides a follow-up program -- see `_reject_unsupported_family`.
@@ -1535,16 +1543,16 @@ class SchedulingService:
 
     #: The `automation_definition` payload actions `save_definition` OWNS
     #: -- the only ones it may replace in the shared queue slot (final
-    #: review C1). Every other action in that slot belongs to a different
-    #: writer (lifecycle, transfer) and must not be silently overwritten.
+    #: review C1). The transfer actions in that slot belong to a different
+    #: writer and must not be silently overwritten.
     _EDIT_ACTIONS = frozenset({"create", "update"})
 
     #: User-facing names for the non-edit actions that can be holding the
-    #: slot, for `_cross_action_mutation_reason`'s refusal copy.
+    #: `automation_definition` slot, for `_cross_action_mutation_reason`'s
+    #: refusal copy. Lifecycle actions are absent by design: they live in
+    #: `_LIFECYCLE_PRIMITIVE`'s own slot now (Qodo findings 5+6) and
+    #: coexist with an edit rather than being refused.
     _PENDING_ACTION_LABELS = {
-        "pause": "a pause",
-        "resume": "a resume",
-        "archive": "an archive",
         "transfer_to_server": "a move to the server",
         "release_from_server": "a move to this device",
     }
@@ -1553,18 +1561,21 @@ class SchedulingService:
         """Why editing ``row_id`` must be refused right now, or ``None``.
 
         `pending_mutations` holds exactly ONE row per `(local_id,
-        primitive, owner_id)`, and lifecycle, edit and transfer mutations
-        all share the `automation_definition` primitive -- so a
-        server-owned row can only ever have one of them queued. An edit
-        committed while a pause is waiting destroys that pause twice over
-        (final review C1, probe-proven both online and offline): offline,
-        `record_pending_mutation`'s `INSERT OR REPLACE` overwrites it;
-        online, the server echo reverts `lifecycle` and the mirror clears
-        the queued mutation outright. Neither leaves a trace.
+        primitive, owner_id)`, and edit and TRANSFER mutations still
+        share the `automation_definition` primitive -- so a server-owned
+        row can have only one of those two queued. An edit committed
+        while a transfer is waiting would destroy it silently
+        (`record_pending_mutation`'s `INSERT OR REPLACE`), so the edit is
+        refused at the entry instead, naming the change that is waiting
+        -- the same shape as `transfer_lock_reason`'s refusal, which both
+        panes already render inline under the row.
 
-        So the edit is refused at the entry instead, naming the change
-        that is waiting -- the same shape as `transfer_lock_reason`'s
-        refusal, which both panes already render inline under the row.
+        LIFECYCLE is no longer part of this refusal (Qodo findings 5+6,
+        reversing final review C1's lifecycle half): pause/resume/archive
+        moved to `_LIFECYCLE_PRIMITIVE`, a different slot, so an edit and
+        a lifecycle change now coexist -- both queue, both replay, both
+        land -- instead of one being refused to protect the other.
+
         Same-ACTION replacement (an update over a queued update) is
         untouched: that coalescing is what `_save_definition_offline`
         documents and wants.
@@ -1593,12 +1604,16 @@ class SchedulingService:
         Scoped to `_EDIT_ACTIONS` rather than clearing whatever sits in
         the slot: the only mutation this save supersedes is an earlier
         offline save of its own (`_mirror_server_definition`'s docstring).
-        A lifecycle or transfer mutation in the slot was queued by another
-        writer DURING the online round-trip -- `_cross_action_mutation_
-        reason` refused the edit if one was already there -- so deleting
-        it would silently drop a pause the server has not heard about.
-        Same action-scoped-delete shape, for the same reason, as
+        A TRANSFER mutation in the slot was queued by another writer
+        DURING the online round-trip -- `_cross_action_mutation_reason`
+        refused the edit if one was already there -- so deleting it would
+        silently drop a move the server has not heard about. Same
+        action-scoped-delete shape, for the same reason, as
         `_delete_transfer_mutation`.
+
+        Lifecycle needs no scoping here at all any more (Qodo findings
+        5+6): a queued pause lives in `_LIFECYCLE_PRIMITIVE`'s own slot,
+        which this `_DEFINITION_PRIMITIVE`-keyed lookup cannot even see.
         """
         mutation = self.db.get_pending_mutation_for_local_id(
             row_id, _DEFINITION_PRIMITIVE
@@ -1630,6 +1645,15 @@ class SchedulingService:
         (`update_automation_definition`'s `pending_mutation` kwarg), for
         the replay to push -- so a lifecycle change made offline survives
         and lands on the next sync, exactly like an offline edit.
+
+        That mutation is recorded under `_LIFECYCLE_PRIMITIVE`, NOT the
+        shared `_DEFINITION_PRIMITIVE` (Qodo findings 5+6). `pending_
+        mutations` is `UNIQUE(local_id, primitive, owner_id)`, so a
+        lifecycle change sharing the definition primitive occupied the
+        one slot an offline edit also needs: whichever was queued second
+        silently destroyed the first. Its own primitive is its own slot,
+        with no schema change -- an offline pause and an offline edit of
+        the same row now both queue, both replay, and both land.
 
         The UI caller is the definition pane's header Pause/Resume
         affordance (schedules-redesign PR-3 Task 4,
@@ -1694,7 +1718,7 @@ class SchedulingService:
         pending_mutation = None
         if self._owner_uses_server(owner_id):
             pending_mutation = {
-                "primitive": _DEFINITION_PRIMITIVE,
+                "primitive": _LIFECYCLE_PRIMITIVE,
                 "owner_id": owner_id,
                 "payload": {
                     "action": action,
@@ -2298,8 +2322,10 @@ class SchedulingService:
                     definition_id=definition_id,
                 )
             payload = self._merge_definition_payload(payload, local_row)
-            # final review C1: only a SERVER-owned row queues mutations at
-            # all, so only it can collide in the shared slot. A local row
+            # final review C1 (lifecycle half reversed by Qodo 5+6; the
+            # TRANSFER half stands): only a SERVER-owned row queues
+            # mutations at all, so only it can collide in the shared
+            # `automation_definition` slot with a transfer. A local row
             # -- including a `to_server_failed` one, which deliberately
             # keeps its transfer mutation queued and stays editable
             # (`transfer_lock_reason`) -- writes straight through below
@@ -2530,9 +2556,10 @@ class SchedulingService:
         Either way, a pending `automation_definition` EDIT mutation left
         over from an earlier offline save on this row is cleared once this
         online save actually lands (`_clear_stale_edit_mutation`; final
-        review C1 scoped it to the edit actions, so a lifecycle or
-        transfer mutation that took the shared slot mid-round-trip
-        survives) -- same precedent as
+        review C1 scoped it to the edit actions, so a transfer mutation
+        that took the shared slot mid-round-trip survives -- a lifecycle
+        mutation is in a different slot entirely and was never at risk
+        here) -- same precedent as
         `_persist_server_reminder_response`'s `delete_pending_mutation_
         for_record` call. Without this, a stale queued mutation survives a
         later successful online save and the next sync replays it: for a

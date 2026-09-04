@@ -43,6 +43,7 @@ from tldw_chatbook.Scheduling.schedule_input_parsing import parse_forgiving_date
 from ..task_detail import definition_cron_expression
 
 from .reminder_form import (
+    DEFAULT_TIME_OF_DAY,
     _TIME_OF_DAY_PRESETS,
     cron_to_preset,
     preset_to_cron,
@@ -358,7 +359,10 @@ class AutomationDefinitionForm(ModalScreen):
                 )
                 with Vertical(id="automation-preset-time-group"):
                     yield Label("Time of day (24-hour):", classes="form-label")
-                    yield Input(placeholder="09:00", id="automation-preset-time")
+                    yield Input(
+                        placeholder=DEFAULT_TIME_OF_DAY,
+                        id="automation-preset-time",
+                    )
                 with Vertical(id="automation-cron-custom-group"):
                     yield Label("Cron Expression:", classes="form-label")
                     yield Input(placeholder="0 9 * * 1", id="automation-cron")
@@ -412,7 +416,7 @@ class AutomationDefinitionForm(ModalScreen):
                     yield Button("Cancel", id="automation-cancel")
 
     def on_mount(self) -> None:
-        self.query_one("#automation-preset-time", Input).value = "09:00"
+        self.query_one("#automation-preset-time", Input).value = DEFAULT_TIME_OF_DAY
         self.query_one("#automation-cron", Input).value = "0 9 * * *"
         self._update_schedule_field_visibility(ScheduleKind.ONE_TIME.value)
         self._update_preset_field_visibility("daily")

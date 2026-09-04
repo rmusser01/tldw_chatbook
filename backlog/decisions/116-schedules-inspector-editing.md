@@ -50,15 +50,28 @@ every group already renders with:
    server` gained a two-layer guard scoped to the `lifecycle` column
    only, ported field-for-field from `upsert_automation_results_from_
    server`'s existing TOCTOU/same-cycle-echo design (schedules-handoff
-   program): (1) an in-transaction check for a pending local mutation
-   whose `payload["action"]` is `pause`/`resume`/`archive` withholds
-   `lifecycle` on that row for that pull; (2) a `skip_lifecycle_server_
-   ids` set, threaded from `SyncEngine`'s own lifecycle-replay phase,
-   withholds it for ids already pushed *this* sync cycle, whose pending
-   mutation is already gone by the time the pull runs. Every other field
-   keeps writing server-wins unconditionally; the guard is surgical to
-   one column because `automation_definition` also carries ordinary edit
-   and transfer mutations that must not freeze alongside a lifecycle one.
+   program): (1) an in-transaction check for a pending local mutation in
+   the `automation_lifecycle` slot withholds `lifecycle` on that row for
+   that pull; (2) a `skip_lifecycle_server_ids` set, threaded from
+   `SyncEngine`'s own lifecycle-replay phase, withholds it for ids
+   already pushed *this* sync cycle, whose pending mutation is already
+   gone by the time the pull runs. Every other field keeps writing
+   server-wins unconditionally; the guard is surgical to one column.
+4. **Lifecycle mutations get their own primitive, not a shared slot.**
+   `pending_mutations` is `UNIQUE(local_id, primitive, owner_id)`, so
+   filing pause/resume/archive under `automation_definition` alongside
+   edits and transfers gave each row exactly one queue slot: an offline
+   edit and an offline pause could not coexist, and whichever was queued
+   second destroyed the first without a trace. Recording them under
+   `automation_lifecycle` instead is a new slot **by construction, with
+   no schema migration** — both queue, both replay, both land. The
+   consequences: `SyncEngine`'s definition-push phase reads both slots
+   (definition first, so the edit's echo is adopted while the pause is
+   still queued and the pull guard above can withhold the stale
+   `lifecycle`); the guard becomes a plain slot-presence check instead of
+   a `payload["action"]` inspection; and the edit-vs-lifecycle
+   cross-action refusal is deleted. The edit-vs-**transfer** refusal
+   stays — those two do still share the definition slot.
 
 ## Context
 

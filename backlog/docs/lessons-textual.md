@@ -439,3 +439,26 @@ restores the opener (focus was inside the popup); outside-click and stranded-Esc
 paths skip it. The pinned test is
 `test_click_outside_closes_the_menu_without_dispatching`, which asserts focus is NOT
 the opener after the click.
+
+## `run_worker(exclusive=True)` CANCELS the group — it never queues behind it
+
+**schedules-redesign PR-3 Qodo round, 2026-09-03.** The Automations pane's in-place
+row editors dispatch one `save_definition` worker per commit, and `save_definition`
+merges the payload onto the row it reads at entry — a read-merge-write. A first review
+found that grouping every commit under one key made a second row's edit cancel the
+first mid-flight (fixed by keying the group per FIELD); the Qodo round then found the
+mirror bug: per-field groups let two fields of the SAME definition run concurrently, so
+the slower one wrote back a snapshot taken before the faster one landed. The pinned
+test (`test_two_fields_of_one_definition_both_land_without_a_lost_update`) fails on the
+per-field version with `KeyError: 'model'` — the first edit is simply gone.
+
+The obvious fix — key the group per definition and keep `exclusive=True` — does NOT
+serialize them. `WorkerManager._new_worker` cancels the group's running workers and
+then starts the new one; there is no queue. That version fails the same test from the
+other side, with `WorkerCancelled: Worker was cancelled, and did not complete.`
+raised out of `pilot.app.workers.wait_for_complete()`.
+
+`exclusive=True` means "only the newest matters" (a live filter, a repaint, a search).
+When every dispatch must actually land, that is the wrong primitive: hold an
+`asyncio.Lock` keyed by whatever must serialize, and leave the worker non-exclusive.
+The group name is then only a label for observability.

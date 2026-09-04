@@ -1758,7 +1758,7 @@ def test_upsert_definitions_pending_lifecycle_mutation_blocks_lifecycle_field(tm
     local_id = db.list_automation_definitions(owner_id="server:42")[0]["id"]
     db.record_pending_mutation(
         local_id,
-        "automation_definition",
+        "automation_lifecycle",
         "server:42",
         {"action": "pause", "server_definition_id": "srv-def-1"},
     )
@@ -1777,10 +1777,10 @@ def test_upsert_definitions_pending_lifecycle_mutation_blocks_lifecycle_field(tm
 def test_upsert_definitions_pending_non_lifecycle_mutation_does_not_block_lifecycle(
     tmp_path,
 ):
-    """`automation_definition` also carries `save_definition`'s edit-path
-    and transfer mutations under the SAME primitive -- the guard must
-    inspect `payload["action"]`, not just "a pending mutation exists",
-    or an unrelated pending edit would wrongly freeze lifecycle too."""
+    """A queued EDIT lives in the `automation_definition` slot, which the
+    guard (keyed on `automation_lifecycle` since Qodo findings 5+6) never
+    reads -- so an unrelated pending edit does not freeze `lifecycle`,
+    and the two coexist on one row instead of sharing a slot."""
     db = _mk_db(tmp_path)
     db.upsert_automation_definitions_from_server("server:42", [_definition_item()])
     local_id = db.list_automation_definitions(owner_id="server:42")[0]["id"]
@@ -1871,7 +1871,7 @@ def test_upsert_definitions_pending_lifecycle_mutation_recorded_mid_loop_still_b
                     "VALUES (?, ?, ?, ?, ?)",
                     (
                         local_id_2,
-                        "automation_definition",
+                        "automation_lifecycle",
                         "server:42",
                         '{"action": "pause", "server_definition_id": "srv-def-2"}',
                         "2026-09-01T00:00:00+00:00",
@@ -2154,7 +2154,7 @@ def test_adopt_server_definition_identity_withholds_lifecycle_under_the_guard(tm
         local_id,
         lifecycle="paused",
         pending_mutation={
-            "primitive": "automation_definition",
+            "primitive": "automation_lifecycle",
             "owner_id": "server:42",
             "payload": {"action": "pause", "server_definition_id": "srv-def-9"},
         },
@@ -2181,10 +2181,11 @@ def test_adopt_server_definition_identity_withholds_lifecycle_under_the_guard(tm
 def test_adopt_server_definition_identity_applies_lifecycle_under_an_edit_mutation(
     tmp_path,
 ):
-    """The guard is action-scoped, not "any pending mutation": the replay
-    that CALLS this method always still has its own edit mutation queued
-    (it is deleted right after), so a bare check would freeze `lifecycle`
-    on every push."""
+    """The guard is SLOT-scoped, not "any pending mutation for this row":
+    the replay that CALLS this method always still has its own edit
+    mutation queued in the `automation_definition` slot (it is deleted
+    right after), so a primitive-blind check would freeze `lifecycle` on
+    every push."""
     db = _mk_db(tmp_path)
     local_id = db.create_automation_definition(
         "server:42", "recurring_question", "Draft", lifecycle="paused"

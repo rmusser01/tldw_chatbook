@@ -3174,7 +3174,7 @@ async def test_set_definition_lifecycle_local_writes_without_a_mutation(db):
 
     assert outcome.status == "saved"
     assert db.get_automation_definition(definition_id)["lifecycle"] == "paused"
-    assert db.get_pending_mutations(primitive="automation_definition") == []
+    assert db.get_pending_mutations(primitive="automation_lifecycle") == []
 
 
 @pytest.mark.asyncio
@@ -3191,9 +3191,12 @@ async def test_set_definition_lifecycle_server_row_records_the_replay_mutation(d
 
     assert outcome.status == "saved"
     assert db.get_automation_definition(definition_id)["lifecycle"] == "configured"
-    mutations = db.get_pending_mutations("server:1", primitive="automation_definition")
+    mutations = db.get_pending_mutations("server:1", primitive="automation_lifecycle")
     assert [m["payload"]["action"] for m in mutations] == ["resume"]
     assert mutations[0]["payload"]["server_definition_id"] == "srv-def-1"
+    # Its OWN slot -- nothing lands in the shared definition primitive
+    # (Qodo findings 5+6), which is what leaves room for a queued edit.
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
 
 
 @pytest.mark.asyncio
@@ -3218,9 +3221,13 @@ async def test_set_definition_lifecycle_refused_while_transferring(db):
 
 
 # ----------------------------------------------------------------------
-# Mutation-slot collision: an edit must not destroy a queued lifecycle
-# change (redesign PR-3 final review C1). Both probes from that review,
-# turned into pinned tests -- the class reintroduces easily.
+# Mutation-slot COEXISTENCE: an edit and a lifecycle change queue in
+# different `pending_mutations` slots (`automation_definition` vs
+# `automation_lifecycle`), so neither destroys the other -- Qodo findings
+# 5+6, which reversed final review C1's cross-action refusal for the
+# lifecycle half. Both of C1's probes are kept, inverted: what used to be
+# refused now succeeds with BOTH mutations intact. The edit-vs-TRANSFER
+# refusal below still stands (those two DO share a slot).
 # ----------------------------------------------------------------------
 
 
@@ -3239,7 +3246,7 @@ def _paused_server_definition(db):
         definition_id,
         lifecycle="paused",
         pending_mutation={
-            "primitive": "automation_definition",
+            "primitive": "automation_lifecycle",
             "owner_id": "server:1",
             "payload": {"action": "pause", "server_definition_id": "srv-def-1"},
         },
@@ -3249,14 +3256,17 @@ def _paused_server_definition(db):
 
 def _assert_pause_survived(db, definition_id):
     assert db.get_automation_definition(definition_id)["lifecycle"] == "paused"
-    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    pending = db.get_pending_mutations("server:1", primitive="automation_lifecycle")
     assert [m["payload"]["action"] for m in pending] == ["pause"]
 
 
 @pytest.mark.asyncio
-async def test_edit_refused_while_a_pause_is_queued_online(db):
-    """C1 probe 1: server reachable. The echo used to revert `lifecycle`
-    and the mirror then deleted the queued pause -- silently, both ends."""
+async def test_edit_coexists_with_a_queued_pause_online(db):
+    """C1 probe 1, inverted. The edit goes through (it no longer collides
+    with anything), the echo cannot revert `lifecycle` -- `adopt_server_
+    definition_identity`'s guard reads the lifecycle slot and sees the
+    pause -- and `_clear_stale_edit_mutation` cannot reach the pause
+    either, since it only ever clears the definition slot."""
     definition_id = _paused_server_definition(db)
     server_client = AsyncMock()
     server_client.preview_automation_definition.return_value = {
@@ -3264,7 +3274,11 @@ async def test_edit_refused_while_a_pause_is_queued_online(db):
         "status": "valid",
         "validation_errors": [],
     }
-    server_client.update_automation_definition.return_value = _server_definition_echo()
+    # The echo carries the server's PRE-pause `lifecycle` -- the exact
+    # payload that used to revert the row.
+    server_client.update_automation_definition.return_value = _server_definition_echo(
+        name="Edited", lifecycle="configured"
+    )
     svc = SchedulingService(
         db=db, server_client=server_client, runtime_source="server:1"
     )
@@ -3273,19 +3287,18 @@ async def test_edit_refused_while_a_pause_is_queued_online(db):
         _definition_payload(name="Edited"), "server:1", definition_id=definition_id
     )
 
-    assert outcome.status == "error"
-    assert outcome.errors[0]["code"] == "pending_mutation"
-    assert "pause" in outcome.errors[0]["message"].lower()
+    assert outcome.status == "saved"
+    assert db.get_automation_definition(definition_id)["name"] == "Edited"
     _assert_pause_survived(db, definition_id)
-    assert db.get_automation_definition(definition_id)["name"] == "Daily Q"
-    # Refused at the entry -- the network is never reached at all.
-    server_client.preview_automation_definition.assert_not_awaited()
+    server_client.preview_automation_definition.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_edit_refused_while_a_pause_is_queued_offline(db):
-    """C1 probe 2: seam unreachable. `record_pending_mutation`'s
-    `INSERT OR REPLACE` used to overwrite the queued pause with the edit."""
+async def test_offline_edit_coexists_with_a_queued_pause(db):
+    """C1 probe 2, inverted -- the finding-5 headline. `record_pending_
+    mutation`'s `INSERT OR REPLACE` is keyed `(local_id, primitive,
+    owner_id)`: with the pause in its own primitive, the queued edit
+    lands BESIDE it instead of overwriting it, so both replay."""
     definition_id = _paused_server_definition(db)
     server_client = AsyncMock()
     server_client.preview_automation_definition.side_effect = ServerUnavailableError(
@@ -3299,17 +3312,56 @@ async def test_edit_refused_while_a_pause_is_queued_offline(db):
         _definition_payload(name="Edited"), "server:1", definition_id=definition_id
     )
 
-    assert outcome.status == "error"
-    assert outcome.errors[0]["code"] == "pending_mutation"
+    assert outcome.status == "queued"
     _assert_pause_survived(db, definition_id)
+    queued_edits = db.get_pending_mutations(
+        "server:1", primitive="automation_definition"
+    )
+    assert [m["payload"]["action"] for m in queued_edits] == ["update"]
+    assert queued_edits[0]["payload"]["definition_payload"]["name"] == "Edited"
+
+
+@pytest.mark.asyncio
+async def test_pause_after_an_offline_edit_keeps_both_queued(db):
+    """The MIRROR direction of finding 5 (the C1 deferral this reversal
+    closes): pausing a row that already has an offline edit queued used
+    to discard that edit's push. Order must not matter."""
+    definition_id = db.create_automation_definition(
+        "server:1",
+        "recurring_question",
+        "Daily Q",
+        server_id="srv-def-1",
+        schedule={"kind": "interval", "every_seconds": 3600},
+        input={"question": "What happened today?"},
+        config={},
+    )
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    edited = await svc.save_definition(
+        _definition_payload(name="Edited"), "server:1", definition_id=definition_id
+    )
+    paused = await svc.set_definition_lifecycle(definition_id, "pause")
+
+    assert (edited.status, paused.status) == ("queued", "saved")
+    _assert_pause_survived(db, definition_id)
+    queued_edits = db.get_pending_mutations(
+        "server:1", primitive="automation_definition"
+    )
+    assert [m["payload"]["action"] for m in queued_edits] == ["update"]
 
 
 @pytest.mark.asyncio
 async def test_edit_refused_while_a_release_transfer_is_queued(db):
-    """C1 covers the whole non-edit action class, not just lifecycle: a
-    queued `release_from_server` shares the same single slot, and the
-    mirror row carries no `transfer_state` for `transfer_lock_reason` to
-    catch."""
+    """C1's TRANSFER half stands after Qodo 5+6: a queued
+    `release_from_server` still shares the `automation_definition` slot
+    an edit would take, and the mirror row carries no `transfer_state`
+    for `transfer_lock_reason` to catch."""
     definition_id = _paused_server_definition(db)
     db.record_pending_mutation(
         definition_id,
@@ -3392,9 +3444,10 @@ async def test_local_row_edit_is_never_refused_by_its_retained_transfer_mutation
 
 @pytest.mark.asyncio
 async def test_online_save_does_not_clear_a_lifecycle_mutation_queued_mid_flight(db):
-    """C1's second leg: a pause queued DURING the online round trip (the
-    entry guard read an empty slot before the network call) must survive
-    both the echo's `lifecycle` and the mirror's queue clear."""
+    """C1's second leg, still live after Qodo 5+6: a pause queued DURING
+    the online round trip must survive both the echo's `lifecycle` (the
+    adopt-identity belt withholds it) and the mirror's queue clear (which
+    only ever touches the definition slot)."""
     definition_id = db.create_automation_definition(
         "server:1",
         "recurring_question",
@@ -3417,7 +3470,7 @@ async def test_online_save_does_not_clear_a_lifecycle_mutation_queued_mid_flight
             definition_id,
             lifecycle="paused",
             pending_mutation={
-                "primitive": "automation_definition",
+                "primitive": "automation_lifecycle",
                 "owner_id": "server:1",
                 "payload": {
                     "action": "pause",

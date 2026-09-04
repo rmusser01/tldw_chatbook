@@ -220,12 +220,15 @@ target and only changes through **Edit in full…** or the create form.
   and clears any inline error under it — an edit always commits against
   the row you opened it on, never against whichever row the pane happens
   to be showing by the time you press Enter.
-- An automation whose **Pause**, **Resume** or pending move has not
-  reached the server yet refuses an in-place edit and says which change
-  is waiting ("A pause is waiting to sync — edit this automation once it
-  lands."). Only one pending change per automation can be queued for the
-  server at a time, and saving the edit would throw the other one away
-  without telling you. Sync (or reconnect), then edit.
+- An automation whose pending **move** (to the server, or back to this
+  device) has not reached the server yet refuses an in-place edit and
+  says which change is waiting ("A move to the server is waiting to sync
+  — edit this automation once it lands."). An edit and a move share one
+  queue slot, so saving the edit would throw the move away without
+  telling you. Sync (or reconnect), then edit. A pending **Pause** or
+  **Resume** does *not* refuse an edit — lifecycle changes queue
+  separately, so you can pause an automation while offline, edit it, and
+  have both land on the next sync.
 - `Runs on`'s dropdown is the same transfer flow described under
   "Moving a task between this device and the server", below — picking
   the other owner runs the same refusal check and confirmation dialog,

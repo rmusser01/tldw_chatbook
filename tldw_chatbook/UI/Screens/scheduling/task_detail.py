@@ -42,7 +42,13 @@ from ..destination_recovery import DestinationRecoveryState
 # re-derived) -- `reminder_form.py` is already part of this same lazy-
 # loaded Scheduling-screen import chain (`schedules_workbench.py` imports
 # it at module level too), so this adds no new boot-cost tier (ADR-097).
-from .forms.reminder_form import ReminderForm, cron_to_preset, preset_to_cron, timezone_options
+from .forms.reminder_form import (
+    DEFAULT_TIME_OF_DAY,
+    ReminderForm,
+    cron_to_preset,
+    preset_to_cron,
+    timezone_options,
+)
 # Hoisted to `unified_rows.py` (redesign PR-2 Task 1) so that pure module can
 # reuse them without pulling Textual in as an import side effect; re-exported
 # here unchanged so every existing call site/test import keeps working.
@@ -1275,7 +1281,9 @@ class TaskDetail(Vertical):
         if new_preset == "custom":
             row.show_error(_REPEAT_CUSTOM_REFUSAL)
             return
-        new_cron = preset_to_cron(new_preset, current_time_text or "09:00")
+        new_cron = preset_to_cron(
+            new_preset, current_time_text or DEFAULT_TIME_OF_DAY
+        )
         assert new_cron is not None, (
             "every _preset_options() value besides 'custom' always yields a cron"
         )
@@ -1366,6 +1374,20 @@ class TaskDetail(Vertical):
         """Update the detail view for the given task (or clear it).
 
         Args:
+            task: The row to paint, or ``None`` for the empty state. A
+                `ReminderTask` fills every group; a bare `ScheduledTask`
+                (the legacy shape) paints only what it carries.
+            queue_empty: True when the queue has no rows at all, which
+                picks the "schedule your first task" empty copy over the
+                "select a task" one. Read only when ``task`` is ``None``.
+            run_history: Pre-fetched run rows for the History group,
+                already read off the event loop by the caller (this
+                method performs no I/O of its own). ``None``/empty
+                renders `format_run_history`'s own no-history copy.
+            incidents: Pre-fetched incident rows -- rendered by
+                `format_incidents` and retained for the acknowledge
+                action's own open-incident lookup. Same caller-fetched
+                contract as ``run_history``.
             known_timezones: PR-3 task 3 -- zones already used by other
                 tasks, passed through to the Timezone row editor's option
                 source (`timezone_options`) so it offers the same choices

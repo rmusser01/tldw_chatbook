@@ -30,11 +30,17 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 #: `_RESULT_REVIEW_PRIMITIVE`'s review-pushback shape.
 _DEFINITION_PRIMITIVE = "automation_definition"
 
-#: `payload["action"]` values that identify a pending `automation_
-#: definition` mutation as a lifecycle change specifically -- matches
-#: `ScheduledTasksDB._DEFINITION_LIFECYCLE_ACTIONS` and
-#: `SchedulingService._LIFECYCLE_ACTIONS`'s keys (redesign PR-3 ruling 4
-#: lifecycle pull-guard).
+#: Pending pause/resume/archive mutations, in their OWN queue slot --
+#: matches `ScheduledTasksDB._LIFECYCLE_PRIMITIVE`/`SchedulingService.
+#: _LIFECYCLE_PRIMITIVE` (Qodo findings 5+6; see the DB constant's comment
+#: for why a lifecycle change cannot share the definition primitive's
+#: `UNIQUE(local_id, primitive, owner_id)` slot with an edit).
+_LIFECYCLE_PRIMITIVE = "automation_lifecycle"
+
+#: The `payload["action"]` verbs `_push_definition_lifecycle` replays --
+#: matches `SchedulingService._LIFECYCLE_ACTIONS`'s keys. Still an action
+#: set (not just "everything in `_LIFECYCLE_PRIMITIVE`") because the push
+#: loop dispatches on `action` and reports per-action outcomes.
 _DEFINITION_LIFECYCLE_ACTIONS = frozenset({"pause", "resume", "archive"})
 
 #: Matches ScheduledTasksDB._RESULT_REVIEW_PRIMITIVE -- pending mutations
@@ -512,7 +518,27 @@ class SyncEngine:
     async def _replay_definition_mutations(
         self, owner_id: str
     ) -> tuple[dict[str, int], frozenset[str]]:
-        """Replay pending `automation_definition` mutations to the server.
+        """Replay pending automation-definition mutations to the server.
+
+        Reads BOTH definition queue slots -- `_DEFINITION_PRIMITIVE`
+        (create/update/transfer) and `_LIFECYCLE_PRIMITIVE`
+        (pause/resume/archive, its own slot since Qodo findings 5+6) --
+        and settles them in ONE phase rather than two. The dispatch is
+        `payload["action"]`-keyed either way, and one phase keeps the
+        existing containment discipline intact unchanged: one
+        `_run_phase` error entry, one abort-on-retryable-error boundary,
+        one `pushed_lifecycle_server_ids` set threaded into the pull
+        below it.
+
+        Definition mutations are replayed FIRST so that, for a row
+        carrying both, the edit's server echo is adopted while the
+        lifecycle mutation is still queued -- which is exactly when
+        `adopt_server_definition_identity`'s pull-guard withholds the
+        echoed (pre-transition) `lifecycle`. The reverse order converges
+        too: the lifecycle push lands server-side before the edit's
+        round-trip, so the echo already carries the new value. Both
+        orders are pinned (`test_sync_now_replays_a_queued_edit_and_
+        pause_together`).
 
         `create` -> preview(mode="create") -> a `"valid"` preview is
         consumed via `create_automation_definition`, and the response's
@@ -555,7 +581,7 @@ class SyncEngine:
         assert self.server_client is not None
         mutations = self.db.get_pending_mutations(
             owner_id, primitive=_DEFINITION_PRIMITIVE
-        )
+        ) + self.db.get_pending_mutations(owner_id, primitive=_LIFECYCLE_PRIMITIVE)
         counts: dict[str, int] = {}
         pushed_lifecycle_server_ids: set[str] = set()
         for mutation in mutations:
@@ -659,8 +685,8 @@ class SyncEngine:
             return "invalid"
 
         logger.warning(
-            f"Unknown pending automation_definition mutation action {action!r} "
-            f"for local {local_id}; dropping"
+            f"Unknown pending {mutation.get('primitive')} mutation action "
+            f"{action!r} for local {local_id}; dropping"
         )
         self.db.delete_pending_mutation(mutation_id)
         return "unknown"
@@ -832,8 +858,8 @@ class SyncEngine:
         response = response if isinstance(response, dict) else {}
         # Delete BEFORE mirroring the echo (Task 2 lifecycle pull-guard):
         # this mutation is what the guard's own pending-mutation check
-        # would key off (same local_id/primitive/owner_id, `action` in
-        # `_DEFINITION_LIFECYCLE_ACTIONS`) -- if it were still present
+        # would key off (same local_id/owner_id in `_LIFECYCLE_
+        # PRIMITIVE`'s slot) -- if it were still present
         # when `upsert_automation_definitions_from_server` runs, the guard
         # would (correctly, in general) withhold `lifecycle` from THIS
         # write too, and the just-confirmed transition would never reach

@@ -9,8 +9,9 @@ widget" finding). `DefinitionDetail` fills that gap using the same
 Queue tab's `TaskDetail` -- Details/Frequency/History groups. PR-1 shipped
 every row read-only (`affordance` at its `False` default); schedules-
 redesign PR-3, task 4 wires in-pane editing onto the Details/Frequency
-rows (Model/Generation/Finding policy/Sources/Notifications always
-editable, Repeat/At/Timezone gated by schedule kind) plus a header
+rows (Model/Generation/Finding policy/Sources/Notifications editable,
+Repeat/At/Timezone gated by schedule kind, and all of them gated on the
+`recurring_question` family this pane can actually author) plus a header
 Pause/Resume affordance -- see the `DefinitionDetail` class docstring
 below for the row-editing/lifecycle-toggle design. `Runs on`/History rows
 stay read-only.
@@ -88,7 +89,14 @@ from .forms.automation_definition_form import (
 # re-derived) -- same precedent `task_detail.py`'s Task 3 reminder rows
 # already established; `reminder_form.py` is already part of this same
 # lazy-loaded Scheduling-screen import chain (ADR-097).
-from .forms.reminder_form import ReminderForm, cron_to_preset, preset_to_cron, timezone_options
+from .forms.reminder_form import (
+    DEFAULT_TIME_OF_DAY,
+    ReminderForm,
+    cron_to_preset,
+    parse_time_of_day,
+    preset_to_cron,
+    timezone_options,
+)
 from .task_detail import (
     _TRANSFER_STATE_ROW_LABELS,
     _format_timezone,
@@ -138,6 +146,36 @@ _SOURCES_CHECKBOX_IDS: dict[str, str] = {
 #: value be among its options), but selecting it as a NEW target is
 #: refused with this copy rather than silently doing nothing (ruling 2).
 _REPEAT_CUSTOM_REFUSAL = "Use the full Edit form to set a custom cron expression."
+
+#: Schedule kinds whose `At` row has a single-value edit target, and which
+#: payload field that target is (Qodo finding 8). A definition's schedule
+#: `kind` is one of `schedule_compute.py`'s five (`one_time`, `interval`,
+#: `daily`, `weekly`, `cron`) -- not the two the pane originally assumed.
+#: `At` used to be editable for every non-`cron` kind and always committed
+#: `{"kind": "one_time", "run_at": ...}`, so editing the time on a `daily`
+#: automation silently CONVERTED it to a one-shot and dropped its
+#: `time_of_day`/`weekday`. Kind is never converted by a row edit now:
+#: `one_time` edits its `run_at`, `daily`/`weekly` edit their shared
+#: `time_of_day`, and `interval`/`cron` (and any unknown kind) leave the
+#: row read-only, exactly as `task_detail._configure_frequency_
+#: editability` gates the reminder pane's own Repeat/At/Timezone trio.
+_AT_EDIT_FIELD_BY_KIND: dict[str, str] = {
+    "one_time": "run_at",
+    "daily": "time_of_day",
+    "weekly": "time_of_day",
+}
+
+#: Refusal copy for the Automations pane's family gate (Qodo finding 11).
+#: `save_definition` only authors `recurring_question` (`_reject_
+#: unsupported_family`), and every row-edit payload this module builds
+#: hard-codes that family -- so offering editors on, say, an `agent_task`
+#: row invited an edit that either bounced or, worse, re-normalized the
+#: row through the wrong family's rules. The create form already refuses
+#: the same way; this is that refusal, stated in the pane.
+_UNSUPPORTED_FAMILY_NOTE = (
+    "This automation isn't a recurring question — its fields are "
+    "read-only here."
+)
 
 #: The header Pause/Resume button's two reachable actions (this pane never
 #: offers Archive -- not named anywhere in the task-4 brief, and a
@@ -536,6 +574,11 @@ class DefinitionDetail(Vertical):
         #: at `begin_edit` time and validated at commit time by
         #: `_editing_definition`. Never reset by a repaint.
         self._editing_definition_id: str | None = None
+        #: Qodo finding 11: why every row is read-only right now, or
+        #: `None`. Set from the painted definition's `family` and shown
+        #: in the same `#scheduling-automation-detail-why` Static the
+        #: transfer lock uses (`_refresh_why_note`).
+        self._family_note: str | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the empty pane skeleton (populated by `set_definition`).
@@ -760,8 +803,8 @@ class DefinitionDetail(Vertical):
             # not survive into a cleared pane -- same discipline `TaskDetail.
             # set_task`'s `None` branch already documents.
             self._lifecycle_lock_reason = None
-            if self._why_static is not None:
-                self._why_static.update("")
+            self._family_note = None
+            self._refresh_why_note()
             # PR-3 task 5: the Runs-on row's Cancel/Retry buttons from a
             # PREVIOUS selection must not stay visible in a cleared pane.
             if self._runs_on_cancel_button is not None:
@@ -815,32 +858,60 @@ class DefinitionDetail(Vertical):
             _HISTORY_READ_FAILED if history_error else str(unread_count)
         )
 
+        self._family_note = (
+            None if definition.get("family") == _FAMILY else _UNSUPPORTED_FAMILY_NOTE
+        )
         self._configure_row_editability(schedule)
         self._configure_runs_on_row(definition)
         self._refresh_lifecycle_button()
+        self._refresh_why_note()
 
     # -- In-pane row editing (PR-3 task 4) -----------------------------------
+
+    def _refresh_why_note(self) -> None:
+        """Repaint `#scheduling-automation-detail-why` from the two
+        reasons that can make this pane read-only.
+
+        The transfer lock wins when both apply -- it is the transient one
+        and the one with a user action attached (cancel the move); the
+        family note is a standing property of the row. Both are plain
+        text in an always-visible Static, never a hover tooltip (UX-073).
+        """
+        if self._why_static is not None:
+            self._why_static.update(self._lifecycle_lock_reason or self._family_note or "")
 
     def _configure_row_editability(self, schedule: dict[str, Any]) -> None:
         """Wire each editable row's affordance for the CURRENT definition.
 
-        Model/Generation/Finding policy/Sources/Notifications are always
-        editable -- none of them depend on schedule kind. Repeat/Timezone
-        only apply to a `"cron"` schedule and At only to a `"one_time"`
-        one (same reasoning `task_detail._configure_frequency_
-        editability` already documents for the reminder pane's own
-        Repeat/At/Timezone trio -- editing the "wrong" one for the
-        current kind has no sensible target here either, even though
-        THIS pane controls the whole outgoing `schedule` dict itself and
-        so has no service-side clobber risk to avoid).
+        Model/Generation/Finding policy/Sources/Notifications do not
+        depend on schedule kind and stay editable. Repeat/Timezone only apply
+        to a `"cron"` schedule; `At` applies to the kinds that have a
+        single-value time target (`_AT_EDIT_FIELD_BY_KIND` -- `one_time`'s
+        `run_at`, `daily`/`weekly`'s `time_of_day`) and stays read-only
+        for `interval` and `cron`. Same reasoning `task_detail._configure_
+        frequency_editability` documents for the reminder pane's own
+        Repeat/At/Timezone trio: editing the "wrong" one for the current
+        kind has no sensible target, and here it was worse than useless
+        -- the commit hard-coded `kind: "one_time"`, so an `At` edit on a
+        `daily` automation converted it to a one-shot (Qodo finding 8).
 
-        Locked rows keep their affordance ON (not off): ruling 2 requires
-        activation to still respond with the lock reason via
-        `show_error`, and `on_detail_value_row_activated` checks `self.
-        _lifecycle_lock_reason` before ever opening an editor -- so the
-        affordance glyph staying lit is what makes that reachable at all
-        (`set_lifecycle_lock` never touches row affordance).
+        A definition of any family but `recurring_question` turns EVERY
+        row read-only, Runs-on included (Qodo finding 11): this pane's
+        payloads all declare `family=recurring_question`, which the
+        service's own scope guard is the only thing standing between an
+        `agent_task` row and a re-normalization through the wrong
+        family's rules. `_family_note` says so under the header.
+
+        Locked rows (a transfer in flight) keep their affordance ON, in
+        contrast: ruling 2 requires activation to still respond with the
+        lock reason via `show_error`, and `on_detail_value_row_activated`
+        checks `self._lifecycle_lock_reason` before ever opening an
+        editor -- so the affordance glyph staying lit is what makes that
+        reachable at all (`set_lifecycle_lock` never touches row
+        affordance). A family refusal needs no such affordance: it is
+        permanent for this row and stated in the always-visible note.
         """
+        supported_family = self._family_note is None
         recurring = schedule.get("kind") == "cron"
         for row, editable in (
             (self._model_row, True),
@@ -849,12 +920,12 @@ class DefinitionDetail(Vertical):
             (self._sources_row, True),
             (self._notifications_row, True),
             (self._repeat_row, recurring),
-            (self._at_row, not recurring),
+            (self._at_row, schedule.get("kind") in _AT_EDIT_FIELD_BY_KIND),
             (self._timezone_row, recurring),
         ):
             assert row is not None
-            row.affordance = editable
-            row.can_focus = editable
+            row.affordance = editable and supported_family
+            row.can_focus = editable and supported_family
 
     def _configure_runs_on_row(self, definition: dict[str, Any]) -> None:
         """Definition-pane counterpart of `task_detail.TaskDetail._
@@ -863,11 +934,18 @@ class DefinitionDetail(Vertical):
         stays ON unconditionally; `on_detail_value_row_activated` decides
         dropdown-vs-show-why; Cancel/Retry are plain `.display`-toggled
         siblings, never `begin_edit`-mounted into the row); only the
-        state-read (dict key vs. attribute) differs here."""
+        state-read (dict key vs. attribute) differs here.
+
+        One definition-only departure: the owner dropdown is family-gated
+        like every other editor in this pane (Qodo finding 11).
+        `transfer_refusal` already refuses a non-`recurring_question`
+        transfer on family grounds, so the dropdown could only ever offer
+        a move that bounces. Cancel/Retry stay visible either way -- a
+        transfer already in flight still needs its exit."""
         row = self._runs_on_row
         assert row is not None
-        row.affordance = True
-        row.can_focus = True
+        row.affordance = self._family_note is None
+        row.can_focus = row.affordance
         state = definition.get("transfer_state")
         failed = state == "to_server_failed"
         locked = failed or state in IN_FLIGHT_TRANSFER_STATES
@@ -915,6 +993,19 @@ class DefinitionDetail(Vertical):
             row.end_edit(restore_focus=False)
             row.clear_error()
 
+    @property
+    def shown_definition_id(self) -> str:
+        """The id of the definition this pane is painting, `""` for none.
+
+        The read half of `_editing_definition`'s captured-identity belt,
+        exposed publicly for `SchedulesWorkbench._edit_definition_field`
+        (Qodo finding 9): its save worker holds a `DetailValueRow`
+        reference across an `await`, and a failure landing after the
+        selection moved on would otherwise paint the old row's error
+        under a different automation's field.
+        """
+        return str((self._definition or {}).get("id") or "")
+
     def _editing_definition(self) -> dict[str, Any] | None:
         """The definition an open editor was opened against, or ``None``
         -- `task_detail.TaskDetail._editing_task`'s twin (final review
@@ -945,6 +1036,15 @@ class DefinitionDetail(Vertical):
         event.stop()
         if self._lifecycle_lock_reason is not None:
             row.show_error(self._lifecycle_lock_reason)
+            return
+        if self._family_note is not None:
+            # Belt for the family gate (Qodo finding 11): a gated row's
+            # `affordance` is already off, so it does not normally post
+            # `Activated` at all -- but a row activated on the frame
+            # before a repaint swapped in an unsupported family would
+            # otherwise open an editor whose commit declares the wrong
+            # family. Same "say why, never go silent" shape as the lock.
+            row.show_error(self._family_note)
             return
         definition = self._definition
         if definition is None:
@@ -987,9 +1087,14 @@ class DefinitionDetail(Vertical):
             )
             provider = str(input_fields.get("provider") or "").strip()
             model = str(input_fields.get("model") or "").strip()
-            initial = (
-                f"{provider}/{model}" if provider and model else (provider or model)
-            )
+            # The exact inverse of `_commit_model_edit`'s parse (Qodo
+            # finding 10), NOT the row's display label: bare text has to
+            # mean "provider" there (the common case), so a stored
+            # model-with-no-provider must seed the editor as `/model` or
+            # submitting it back unchanged silently moved the value into
+            # the provider slot. `"".partition("/")` reads `/model` back
+            # as exactly `(None, model)`.
+            initial = f"{provider}/{model}" if model else provider
             row.begin_edit(
                 Input(
                     value=initial,
@@ -1061,8 +1166,20 @@ class DefinitionDetail(Vertical):
                 if isinstance(definition.get("schedule"), dict)
                 else {}
             )
-            initial = str(schedule.get("run_at") or "")
-            row.begin_edit(Input(value=initial, id=_AT_EDITOR_ID))
+            # Whichever field THIS kind's `At` actually owns (Qodo
+            # finding 8) -- `run_at` for `one_time`, `time_of_day` for
+            # `daily`/`weekly`. Unreachable for any other kind: the row
+            # is not editable there.
+            field = _AT_EDIT_FIELD_BY_KIND.get(str(schedule.get("kind") or ""))
+            if field is None:
+                return
+            initial = str(schedule.get(field) or "")
+            placeholder = (
+                "2026-08-28 09:00" if field == "run_at" else DEFAULT_TIME_OF_DAY
+            )
+            row.begin_edit(
+                Input(value=initial, placeholder=placeholder, id=_AT_EDITOR_ID)
+            )
         elif row is self._timezone_row:
             schedule = (
                 definition.get("schedule")
@@ -1241,6 +1358,14 @@ class DefinitionDetail(Vertical):
         self.post_message(DefinitionFieldEditRequested(definition, payload, row))
 
     def _commit_model_edit(self, event: Input.Submitted) -> None:
+        """Parse `provider/model` text back into the two `input` fields.
+
+        The inverse of the editor's own seed value (see the `_model_row`
+        branch of `on_detail_value_row_activated`, Qodo finding 10): a
+        leading `/` means "model only, no provider", bare text means
+        "provider only", and empty means neither (`auto`). Every stored
+        shape therefore round-trips through an unchanged submit.
+        """
         definition = self._editing_definition()
         row = self._model_row
         if definition is None or row is None:
@@ -1307,7 +1432,9 @@ class DefinitionDetail(Vertical):
         if new_preset == "custom":
             row.show_error(_REPEAT_CUSTOM_REFUSAL)
             return
-        new_cron = preset_to_cron(new_preset, current_time_text or "09:00")
+        new_cron = preset_to_cron(
+            new_preset, current_time_text or DEFAULT_TIME_OF_DAY
+        )
         assert new_cron is not None, (
             "every _preset_options() value besides 'custom' always yields a cron"
         )
@@ -1346,31 +1473,50 @@ class DefinitionDetail(Vertical):
         self.post_message(DefinitionFieldEditRequested(definition, payload, row))
 
     def _commit_at_edit(self, event: Input.Submitted) -> None:
+        """Commit the `At` row, writing THIS schedule kind's own field.
+
+        Never converts the kind (Qodo finding 8): the outgoing schedule
+        is the stored dict with one field replaced, so a `daily` row
+        keeps `kind`/`weekday`/`timezone` and only its `time_of_day`
+        moves. Each kind is validated by the parser that owns its format
+        -- `parse_forgiving_datetime` for a `one_time` `run_at` (the same
+        one `AutomationDefinitionForm._client_side_schedule_error` runs,
+        since the ported server validator only checks `kind`), and
+        `parse_time_of_day` for a `daily`/`weekly` `time_of_day` (the
+        same one `preset_to_cron` runs).
+        """
         definition = self._editing_definition()
         row = self._at_row
         if definition is None or row is None:
             return
         event.stop()
-        row.end_edit()
-        raw = event.value.strip()
-        if not raw:
-            row.show_error("Run at is required for one-time automations.")
-            return
-        # Reused, not re-derived: the exact parser the create/edit modal's
-        # own client-side preflight (`AutomationDefinitionForm._client_
-        # side_schedule_error`) already runs, since the ported server
-        # validator (`validate_schedule`) only checks `kind`, never
-        # `run_at`'s own parseability.
-        parsed, _assumed_local = parse_forgiving_datetime(raw)
-        if parsed is None:
-            row.show_error("Run at must be a date and time like 2026-08-28 09:00.")
-            return
         schedule = (
             definition.get("schedule")
             if isinstance(definition.get("schedule"), dict)
             else {}
         )
-        new_schedule = {**schedule, "kind": "one_time", "run_at": parsed.isoformat()}
+        field = _AT_EDIT_FIELD_BY_KIND.get(str(schedule.get("kind") or ""))
+        if field is None:
+            return
+        row.end_edit()
+        raw = event.value.strip()
+        if field == "run_at":
+            if not raw:
+                row.show_error("Run at is required for one-time automations.")
+                return
+            parsed, _assumed_local = parse_forgiving_datetime(raw)
+            if parsed is None:
+                row.show_error("Run at must be a date and time like 2026-08-28 09:00.")
+                return
+            new_value: Any = parsed.isoformat()
+        else:
+            parsed_time = parse_time_of_day(raw)
+            if parsed_time is None:
+                row.show_error("Time of day must be a 24-hour time like 09:00.")
+                return
+            hour, minute = parsed_time
+            new_value = f"{hour:02d}:{minute:02d}"
+        new_schedule = {**schedule, field: new_value}
         payload = _definition_edit_payload(definition, schedule=new_schedule)
         self.post_message(DefinitionFieldEditRequested(definition, payload, row))
 
@@ -1482,5 +1628,4 @@ class DefinitionDetail(Vertical):
         """
         self._lifecycle_lock_reason = reason
         self._refresh_lifecycle_button()
-        if self._why_static is not None:
-            self._why_static.update(reason or "")
+        self._refresh_why_note()

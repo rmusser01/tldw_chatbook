@@ -1374,6 +1374,93 @@ async def test_sync_now_replays_definition_update(tmp_path):
     assert row["name"] == "New name"
 
 
+@pytest.mark.parametrize("pause_queued_first", [False, True])
+@pytest.mark.asyncio
+async def test_sync_now_replays_a_queued_edit_and_pause_together(
+    tmp_path, pause_queued_first
+):
+    """Qodo findings 5+6: an offline edit and an offline pause on the SAME
+    row occupy different `pending_mutations` slots, so both survive being
+    queued and both replay in one cycle -- whichever was queued first.
+
+    The convergence hinge is the echo. `_replay_definition_mutations`
+    settles the definition slot BEFORE the lifecycle slot, so when
+    `adopt_server_definition_identity` applies the PATCH response (which
+    here still reports the pre-pause `lifecycle` -- the server write/read
+    lag this whole guard family exists for), the pause is still queued,
+    and the adopt-identity belt withholds `lifecycle` on exactly that
+    basis. Without that belt the row would end the cycle `configured`
+    with nothing left to correct it."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Old name", server_id="srv-def-2"
+    )
+
+    def _queue_pause():
+        db.record_pending_mutation(
+            local_id,
+            "automation_lifecycle",
+            "server:1",
+            {"action": "pause", "server_definition_id": "srv-def-2"},
+        )
+
+    def _queue_edit():
+        db.record_pending_mutation(
+            local_id,
+            "automation_definition",
+            "server:1",
+            {
+                "action": "update",
+                "definition_payload": {
+                    "family": "recurring_question",
+                    "name": "New name",
+                },
+                "server_definition_id": "srv-def-2",
+            },
+        )
+
+    for step in (
+        (_queue_pause, _queue_edit)
+        if pause_queued_first
+        else (_queue_edit, _queue_pause)
+    ):
+        step()
+
+    server_client = _empty_reminders_client()
+    server_client.list_automation_definitions.return_value = _definition_page([])
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-2",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.update_automation_definition.return_value = {
+        "id": "srv-def-2",
+        "name": "New name",
+        # Stale: the pause has not been pushed yet at echo time.
+        "lifecycle": "configured",
+    }
+    server_client.pause_automation_definition.return_value = {
+        "id": "srv-def-2",
+        "family": "recurring_question",
+        "name": "New name",
+        "lifecycle": "paused",
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.update_automation_definition.assert_awaited_once_with(
+        "srv-def-2", "prev-2"
+    )
+    server_client.pause_automation_definition.assert_awaited_once_with("srv-def-2")
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    assert db.get_pending_mutations("server:1", primitive="automation_lifecycle") == []
+    row = db.get_automation_definition(local_id)
+    assert row["name"] == "New name"
+    assert row["lifecycle"] == "paused"
+
+
 @pytest.mark.asyncio
 async def test_sync_now_definition_update_without_server_id_converts_to_create(
     tmp_path,
@@ -1586,7 +1673,7 @@ async def test_sync_now_replays_definition_pause_and_mirrors_echo(tmp_path):
     )
     db.record_pending_mutation(
         local_id,
-        "automation_definition",
+        "automation_lifecycle",
         "server:1",
         {"action": "pause", "server_definition_id": "srv-def-1"},
     )
@@ -1604,7 +1691,7 @@ async def test_sync_now_replays_definition_pause_and_mirrors_echo(tmp_path):
     assert outcome.status == "ok"
     server_client.pause_automation_definition.assert_awaited_once_with("srv-def-1")
     assert (
-        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+        db.get_pending_mutations("server:1", primitive="automation_lifecycle") == []
     )
     row = db.get_automation_definition(local_id)
     assert row["lifecycle"] == "paused"
@@ -1622,7 +1709,7 @@ async def test_sync_now_replays_definition_resume(tmp_path):
     )
     db.record_pending_mutation(
         local_id,
-        "automation_definition",
+        "automation_lifecycle",
         "server:1",
         {"action": "resume", "server_definition_id": "srv-def-1"},
     )
@@ -1640,7 +1727,7 @@ async def test_sync_now_replays_definition_resume(tmp_path):
     assert outcome.status == "ok"
     server_client.resume_automation_definition.assert_awaited_once_with("srv-def-1")
     assert (
-        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+        db.get_pending_mutations("server:1", primitive="automation_lifecycle") == []
     )
     assert db.get_automation_definition(local_id)["lifecycle"] == "configured"
 
@@ -1653,7 +1740,7 @@ async def test_sync_now_replays_definition_archive(tmp_path):
     )
     db.record_pending_mutation(
         local_id,
-        "automation_definition",
+        "automation_lifecycle",
         "server:1",
         {"action": "archive", "server_definition_id": "srv-def-1"},
     )
@@ -1672,7 +1759,7 @@ async def test_sync_now_replays_definition_archive(tmp_path):
     assert outcome.status == "ok"
     server_client.archive_automation_definition.assert_awaited_once_with("srv-def-1")
     assert (
-        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+        db.get_pending_mutations("server:1", primitive="automation_lifecycle") == []
     )
     row = db.get_automation_definition(local_id)
     assert row["lifecycle"] == "archived"
@@ -1695,7 +1782,7 @@ async def test_sync_now_pull_skips_stale_lifecycle_echo_pushed_same_cycle(tmp_pa
     )
     db.record_pending_mutation(
         local_id,
-        "automation_definition",
+        "automation_lifecycle",
         "server:1",
         {"action": "pause", "server_definition_id": "srv-def-1"},
     )
@@ -1738,7 +1825,7 @@ async def test_sync_now_definition_lifecycle_not_found_clears_without_sync_error
     )
     db.record_pending_mutation(
         local_id,
-        "automation_definition",
+        "automation_lifecycle",
         "server:1",
         {"action": "archive", "server_definition_id": "srv-def-gone"},
     )
@@ -1752,7 +1839,7 @@ async def test_sync_now_definition_lifecycle_not_found_clears_without_sync_error
 
     assert outcome.status == "ok"
     assert (
-        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+        db.get_pending_mutations("server:1", primitive="automation_lifecycle") == []
     ), "nothing left server-side to transition -- clear rather than retry forever"
     state = db.get_sync_state("server:1") or {}
     assert not (state.get("sync_errors") or []), "a 404 here is not a user-facing error"
@@ -1775,7 +1862,7 @@ async def test_sync_now_definition_lifecycle_validation_error_does_not_block_the
     )
     db.record_pending_mutation(
         poisoned_id,
-        "automation_definition",
+        "automation_lifecycle",
         "server:1",
         {"action": "pause", "server_definition_id": "srv-def-old"},
     )
@@ -1784,7 +1871,7 @@ async def test_sync_now_definition_lifecycle_validation_error_does_not_block_the
     )
     db.record_pending_mutation(
         healthy_id,
-        "automation_definition",
+        "automation_lifecycle",
         "server:1",
         {"action": "resume", "server_definition_id": "srv-def-healthy"},
     )
@@ -1806,7 +1893,7 @@ async def test_sync_now_definition_lifecycle_validation_error_does_not_block_the
     # The healthy resume went through despite the poisoned pause ahead of it.
     assert db.get_automation_definition(healthy_id)["lifecycle"] == "configured"
     # And the poisoned one is settled, not left to jam the queue forever.
-    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    assert db.get_pending_mutations("server:1", primitive="automation_lifecycle") == []
     errors = (db.get_sync_state("server:1") or {}).get("sync_errors") or []
     assert any("lifecycle_transition_invalid" in error["message"] for error in errors)
 
@@ -1819,7 +1906,7 @@ async def test_sync_now_definition_lifecycle_retryable_error_retains_mutation(tm
     )
     db.record_pending_mutation(
         local_id,
-        "automation_definition",
+        "automation_lifecycle",
         "server:1",
         {"action": "pause", "server_definition_id": "srv-def-1"},
     )
@@ -1833,7 +1920,7 @@ async def test_sync_now_definition_lifecycle_retryable_error_retains_mutation(tm
 
     assert outcome.status == "error"
     assert "offline" in (outcome.error or "")
-    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    pending = db.get_pending_mutations("server:1", primitive="automation_lifecycle")
     assert len(pending) == 1, "the mutation must be left queued for retry"
     assert db.get_automation_definition(local_id)["lifecycle"] == "configured"
 
@@ -1851,7 +1938,7 @@ async def test_sync_now_definition_lifecycle_without_server_id_drops_mutation(tm
     )
     db.record_pending_mutation(
         local_id,
-        "automation_definition",
+        "automation_lifecycle",
         "server:1",
         {"action": "pause", "server_definition_id": None},
     )
@@ -1863,7 +1950,7 @@ async def test_sync_now_definition_lifecycle_without_server_id_drops_mutation(tm
     assert outcome.status == "ok"
     server_client.pause_automation_definition.assert_not_awaited()
     assert (
-        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+        db.get_pending_mutations("server:1", primitive="automation_lifecycle") == []
     )
 
 

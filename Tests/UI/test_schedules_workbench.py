@@ -1875,6 +1875,342 @@ async def test_committing_at_edit_persists_and_repaints_automations_pane(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_at_edit_on_a_daily_automation_edits_time_of_day_not_run_at(tmp_path):
+    """Qodo finding 8: the `At` row commits the field THIS schedule kind
+    owns and never converts the kind.
+
+    A `daily` schedule's `At` used to be editable (the row was gated on
+    "not cron") while the commit hard-coded `{"kind": "one_time",
+    "run_at": ...}` -- so setting the time on a daily automation turned it
+    into a one-shot and dropped `time_of_day`. The pin is the whole
+    schedule dict, `weekday` included: only the edited field moves."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Weekly digest",
+            schedule={
+                "kind": "weekly",
+                "time_of_day": "09:00",
+                "weekday": 2,
+                "timezone": "America/New_York",
+            },
+            input={"question": "What shipped?"},
+            config={},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            row = detail._at_row
+            assert row.affordance is True, "a weekly schedule has a time target"
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            input_widget = row.query_one(Input)
+            # Seeded from the field the kind owns, not from `run_at`.
+            assert input_widget.value == "09:00"
+            input_widget.value = "7:30"
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            stored = db.get_automation_definition(definition_id)["schedule"]
+            assert stored["time_of_day"] == "07:30"  # normalized, zero-padded
+            assert stored["kind"] == "weekly"  # NEVER converted
+            assert stored["weekday"] == 2  # sibling fields preserved
+            assert stored["timezone"] == "America/New_York"
+            assert "run_at" not in stored
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_at_row_is_read_only_for_an_interval_automation(tmp_path):
+    """Qodo finding 8, the other half: an `interval` schedule has no
+    single time field for `At` to edit, so the row offers no affordance
+    rather than an editor that would rewrite the kind."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Every hour",
+            schedule={"kind": "interval", "every_seconds": 3600},
+            input={"question": "What shipped?"},
+            config={},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            assert detail._at_row.affordance is False
+            assert detail._at_row.can_focus is False
+            detail._at_row.post_message(DetailValueRow.Activated(detail._at_row))
+            await pilot.pause()
+            assert not detail._at_row.query(Input)
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_two_fields_of_one_definition_both_land_without_a_lost_update(tmp_path):
+    """Qodo finding 7: the edit worker groups per DEFINITION, not per
+    field.
+
+    With a per-FIELD group the two commits below ran concurrently, and
+    `save_definition` merges each payload onto the row it read at entry
+    -- so whichever finished second wrote back a snapshot taken before
+    the first landed, silently reverting it. Serialized per definition,
+    both survive."""
+    from tldw_chatbook.UI.Screens.scheduling.definition_detail import (
+        _definition_edit_payload,
+    )
+
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Daily standup question",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What shipped?"},
+            config={"generation_mode": "optional"},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            definition = dict(detail._definition)
+
+            # Two DIFFERENT fields of the SAME definition, dispatched
+            # back to back with nothing awaited in between -- the shape
+            # a fast typist produces.
+            workbench._edit_definition_field(
+                definition,
+                _definition_edit_payload(definition, input={"model": "gpt-5"}),
+                detail._model_row,
+            )
+            workbench._edit_definition_field(
+                definition,
+                _definition_edit_payload(
+                    definition, config={"generation_mode": "required"}
+                ),
+                detail._generation_row,
+            )
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            stored = db.get_automation_definition(definition_id)
+            assert stored["config"]["generation_mode"] == "required"
+            assert stored["input"]["model"] == "gpt-5"  # not reverted by the second
+            assert stored["input"]["question"] == "What shipped?"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_model_only_target_round_trips_through_an_unchanged_submit(tmp_path):
+    """Qodo finding 10: a stored `model` with no `provider` must survive
+    being opened and submitted unchanged.
+
+    The editor seeds `/model` for that shape -- the exact inverse of the
+    commit's parse, where bare text means "provider". Seeding the bare
+    model instead (what the row's display label shows) silently moved the
+    value into the provider slot on the next Enter."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Daily standup question",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What shipped?", "model": "gpt-5"},
+            config={},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            # The row still READS as a bare model -- the display label is
+            # unchanged, only the editor's seed is the parse's inverse.
+            model_static = detail.query_one(
+                "#scheduling-automation-detail-model", Static
+            )
+            assert model_static.render_line(0).text.strip() == "gpt-5"
+
+            row = detail._model_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            assert row.query_one(Input).value == "/gpt-5"
+            await pilot.press("enter")  # submitted UNCHANGED
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            stored = db.get_automation_definition(definition_id)["input"]
+            assert stored["model"] == "gpt-5"
+            assert not stored.get("provider")
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_non_recurring_question_definition_exposes_no_editors(tmp_path):
+    """Qodo finding 11: the pane only authors `recurring_question`, and
+    every payload it builds declares that family -- so an `agent_task`
+    row renders every row read-only and says why, instead of offering
+    editors whose commit would push it through the wrong family's
+    normalizer."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        db.create_automation_definition(
+            "local",
+            "agent_task",
+            "Nightly agent run",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={},
+            config={},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            assert detail._definition["family"] == "agent_task"
+            assert [row.row_key for row in detail._editable_rows() if row.affordance] == []
+            for row in detail._editable_rows():
+                row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            assert not detail.query(Input)
+            assert not detail.query(Select)
+            why = detail.query_one("#scheduling-automation-detail-why", Static)
+            assert "isn't a recurring question" in why.render_line(0).text
+    finally:
+        db.close()
+
+
+def test_stale_definition_row_error_is_not_painted_on_another_row(tmp_path):
+    """Qodo finding 9: the edit worker holds a `DetailValueRow` across an
+    `await`, so a failure arriving after the pane moved on must not stamp
+    its message under a different automation's field. The commit path
+    already validates the captured identity (`_editing_definition`); this
+    is the same check on the error path."""
+    detail = DefinitionDetail()
+    detail._definition = {"id": "def-B"}
+    row = DetailValueRow("Model", "-", row_key="model")
+    # Not mounted under the pane: the helper reads the row's ancestors,
+    # so drive it through the pane it would really have found.
+    workbench = SchedulesWorkbench.__new__(SchedulesWorkbench)
+
+    painted: list[str] = []
+    row.show_error = painted.append  # type: ignore[method-assign]
+
+    with patch.object(
+        type(row), "ancestors", property(lambda _self: [detail])
+    ):
+        workbench._show_definition_row_error(row, {"def-A"}, "boom")
+        assert painted == [], "an error for def-A must not land while def-B shows"
+        workbench._show_definition_row_error(row, {"def-B"}, "boom")
+        assert painted == ["boom"]
+
+
+@pytest.mark.asyncio
 async def test_not_set_model_preserved_across_an_unrelated_edit(tmp_path):
     """The Model row's 'Not set'/blank honesty (task-4 brief AC) survives
     an edit to an UNRELATED row: `_definition_edit_payload`'s empty-dict
@@ -2154,8 +2490,12 @@ async def test_lifecycle_toggle_on_server_owned_row_survives_a_racing_pull(tmp_p
             button = detail.query_one("#scheduling-automation-pause-resume", Button)
             assert button.label.plain == "Resume"
 
+            # Qodo findings 5+6: the toggle queues under the LIFECYCLE
+            # primitive now, which is the same slot the pull guard reads.
+            # The optimistic path and the guard must stay keyed on the
+            # SAME primitive, or the racing pull below reverts the pause.
             mutation = db.get_pending_mutation_for_local_id(
-                definition_id, "automation_definition"
+                definition_id, "automation_lifecycle"
             )
             assert mutation is not None
             assert mutation["payload"]["action"] == "pause"

@@ -2665,18 +2665,28 @@ class ScheduledTasksDB(BaseDB):
     #: Primitive name pending `automation_definition` mutations are
     #: stored under -- matches `SchedulingService._DEFINITION_PRIMITIVE`/
     #: `SyncEngine._DEFINITION_PRIMITIVE` (duplicated per-module, same
-    #: precedent as `_RESULT_REVIEW_PRIMITIVE` above). This ONE primitive
-    #: covers `save_definition`'s edit path, the transfer machine, AND
-    #: lifecycle mutations -- see `_DEFINITION_LIFECYCLE_ACTIONS` below
-    #: for how the lifecycle pull-guard tells them apart.
+    #: precedent as `_RESULT_REVIEW_PRIMITIVE` above). Covers
+    #: `save_definition`'s edit path and the transfer machine; lifecycle
+    #: changes live in their OWN primitive, below.
     _DEFINITION_PRIMITIVE = "automation_definition"
 
-    #: `payload["action"]` values that identify a pending
-    #: `automation_definition` mutation as a LIFECYCLE change specifically
-    #: (as opposed to an edit or transfer mutation sharing the same
-    #: primitive) -- matches `SchedulingService._LIFECYCLE_ACTIONS`'s keys
-    #: and the verbs `SyncEngine._push_definition_lifecycle` replays.
-    _DEFINITION_LIFECYCLE_ACTIONS = frozenset({"pause", "resume", "archive"})
+    #: Primitive name pending pause/resume/archive mutations are stored
+    #: under -- matches `SchedulingService._LIFECYCLE_PRIMITIVE`/
+    #: `SyncEngine._LIFECYCLE_PRIMITIVE` (same per-module duplication
+    #: precedent as the two constants above).
+    #:
+    #: A SEPARATE primitive, not a `payload["action"]` discriminator
+    #: inside `_DEFINITION_PRIMITIVE` (Qodo findings 5+6, which reversed
+    #: final review C1's cross-action refusal): `pending_mutations` is
+    #: `UNIQUE(local_id, primitive, owner_id)`, so one shared primitive
+    #: gave a row exactly ONE queue slot -- an edit and a pause could not
+    #: coexist, and whichever was queued second destroyed the first
+    #: (`record_pending_mutation`'s `INSERT OR REPLACE`). Its own
+    #: primitive IS its own slot, by construction and with no schema
+    #: change: both queue, both replay, both land. It also reduces the
+    #: lifecycle pull-guard below to a plain "is anything queued in the
+    #: lifecycle slot" check instead of a payload inspection.
+    _LIFECYCLE_PRIMITIVE = "automation_lifecycle"
 
     #: Result columns that may be copied verbatim from a server item on
     #: insert, beyond id/server_id/owner_id (handled separately).
@@ -2715,15 +2725,11 @@ class ScheduledTasksDB(BaseDB):
         on the row still writes server-wins. Mirrors
         `upsert_automation_results_from_server`'s two-layer TOCTOU/same-
         cycle guard (see that method's docstring for the full rationale)
-        but scoped to one field instead of a fixed field allowlist,
-        because `automation_definition` is a much busier primitive: it
-        also carries `save_definition`'s edit-path mutations and the
-        transfer machine's, so a bare "any pending mutation for this row"
-        check would wrongly freeze `lifecycle` during an unrelated
-        pending edit or transfer. `_definition_lifecycle_guard_active`
-        (below) is what tells a lifecycle mutation apart from those --
-        it inspects `payload["action"]` against
-        `_DEFINITION_LIFECYCLE_ACTIONS`.
+        but scoped to one field instead of a fixed field allowlist.
+        `_definition_lifecycle_guard_active` (below) keys off
+        `_LIFECYCLE_PRIMITIVE`, the lifecycle mutations' own queue slot,
+        so an unrelated pending edit or transfer (which live in
+        `_DEFINITION_PRIMITIVE`) never wrongly freezes ``lifecycle``.
 
         1. Pending-mutation guard: a per-row `pending_mutations` SELECT
            run inside THIS write transaction, immediately before that
@@ -2844,27 +2850,24 @@ class ScheduledTasksDB(BaseDB):
         its callers need. `adopt_server_definition_identity` is the second
         caller (final review C1's belt) and passes an empty skip-set:
         layer 2 is a PULL-side concept.
+
+        Keyed on `_LIFECYCLE_PRIMITIVE` -- lifecycle mutations have their
+        own queue slot (Qodo findings 5+6), so mere PRESENCE of a row
+        there is the whole test; the old shared-slot version had to parse
+        `payload["action"]` to tell a pause apart from an edit sharing
+        the definition primitive.
         """
         if server_id in skip_lifecycle_server_ids:
             return True
         row = conn.execute(
             """
-            SELECT payload FROM pending_mutations
+            SELECT 1 FROM pending_mutations
             WHERE local_id = ? AND primitive = ? AND owner_id = ?
             LIMIT 1
             """,
-            (existing_id, self._DEFINITION_PRIMITIVE, owner_id),
+            (existing_id, self._LIFECYCLE_PRIMITIVE, owner_id),
         ).fetchone()
-        if row is None:
-            return False
-        try:
-            payload = json.loads(row["payload"])
-        except (TypeError, ValueError):
-            return False
-        return (
-            isinstance(payload, dict)
-            and payload.get("action") in self._DEFINITION_LIFECYCLE_ACTIONS
-        )
+        return row is not None
 
     def _serialize_definition_fields(self, fields: dict[str, Any]) -> dict[str, Any]:
         """Apply the same JSON/datetime conversion `update_automation_definition` uses.

@@ -376,6 +376,10 @@ class SchedulesWorkbench(BaseAppScreen):
         # `_selected_task_id` above stays reminder-only for the existing
         # action code that reads it directly.
         self._selected_row_id: str | None = None
+        #: One `asyncio.Lock` per definition an in-pane row edit has
+        #: touched, serializing that definition's read-merge-write saves
+        #: (Qodo finding 7) -- see `_edit_definition_field`.
+        self._definition_edit_locks: dict[str, asyncio.Lock] = {}
         self._marked_ids: set[str] = set()
         #: The current hidden-panes notice from on_resize; combined with
         #: the marks/glyph legend in _update_pane_notice (task-23107).
@@ -2282,7 +2286,14 @@ class SchedulesWorkbench(BaseAppScreen):
             try:
                 outcome = await service.edit_reminder_fields(task.id, payload)
             except Exception:  # noqa: BLE001
-                logger.exception("Failed to edit reminder field")
+                logger.exception(
+                    # Qodo finding 2: an unattributed "it failed" line is
+                    # unusable in a log with many reminders. Ids only --
+                    # the VALUE is the user's own reminder text.
+                    "Failed to edit reminder {task_id} field {field}",
+                    task_id=task.id,
+                    field=row.row_key,
+                )
                 row.show_error("Failed to save this edit.")
                 return
             if outcome.status != "saved":
@@ -2341,55 +2352,128 @@ class SchedulesWorkbench(BaseAppScreen):
         -- PLUS `_repaint_queue_definition_detail`, because that lazy
         Queue refresh is not a repaint of the Queue tab's own SECOND
         `DefinitionDetail` instance (final review F4/I4).
+
+        Every failure path paints through `_show_definition_row_error`
+        rather than `row.show_error` directly (Qodo finding 9): this
+        worker holds `row` across an `await`, so a late failure could
+        otherwise stamp its message under whatever automation the pane
+        moved on to -- the same crossed-identity class the commit path's
+        `_editing_definition` belt closes on the way in.
         """
         service = self._scheduling_service
+        definition_id = str(definition.get("id") or "")
         if service is None:
             row.show_error(
                 "Scheduling service is unavailable; cannot save this edit."
             )
             return
 
+        # Per-DEFINITION serialization (Qodo finding 7, narrowing final
+        # review M12): a field-keyed worker group let two edits of the
+        # SAME automation run concurrently, and `save_definition` merges
+        # each payload onto the row it read at ENTRY -- so the slower one
+        # wrote back a snapshot taken before the faster one landed,
+        # silently reverting it. The gate is a per-definition lock rather
+        # than `exclusive=True` on a per-definition group, because
+        # Textual's exclusivity CANCELS the running worker instead of
+        # queueing behind it: that turns "two quick edits" into "the
+        # first one is discarded", which is the same lost update by
+        # another route (M12 hit exactly this across rows). Different
+        # automations hold different locks and still run in parallel.
+        # The map is never pruned: one `asyncio.Lock` per definition
+        # edited this session, which is bounded by what a human clicks.
+        lock = self._definition_edit_locks.setdefault(definition_id, asyncio.Lock())
+
         async def _edit_and_refresh() -> None:
-            local_id = await self._resolve_local_definition_id(service, definition)
-            if local_id is None:
-                row.show_error(
-                    "Could not prepare this automation for editing — see "
-                    "the log."
+            async with lock:
+                await self._save_definition_field(
+                    service, definition, definition_id, payload, row
                 )
-                return
-            owner_id = str(definition.get("owner_id") or "local")
-            try:
-                outcome = await service.save_definition(
-                    payload, owner_id, definition_id=local_id
-                )
-            except Exception:  # noqa: BLE001
-                logger.exception(
-                    "Failed to edit automation definition field for {}", local_id
-                )
-                row.show_error("Failed to save this edit.")
-                return
-            if outcome.status not in ("saved", "queued"):
-                message = "; ".join(
-                    str(err.get("message") or "")
-                    for err in outcome.errors
-                    if err.get("message")
-                ) or "This edit could not be saved."
-                row.show_error(message)
-                return
-            row.clear_error()
-            self._definitions_stale = True
-            self._request_automations_refresh()
-            await self._repaint_queue_definition_detail(
-                service, local_id, definition
-            )
 
         self.run_worker(
             _edit_and_refresh,
-            exclusive=True,
-            # Per-ROW group (final review M12) -- see `_edit_reminder_
-            # field`'s own group for why.
-            group=f"schedules-edit-definition-field-{row.row_key}",
+            group=f"schedules-edit-definition-{definition_id}",
         )  # type: ignore[arg-type]
+
+    async def _save_definition_field(
+        self,
+        service: "SchedulingService",
+        definition: dict[str, Any],
+        definition_id: str,
+        payload: dict[str, Any],
+        row: DetailValueRow,
+    ) -> None:
+        """`_edit_definition_field`'s worker body, under its row lock."""
+        local_id = await self._resolve_local_definition_id(service, definition)
+        if local_id is None:
+            self._show_definition_row_error(
+                row,
+                {definition_id},
+                "Could not prepare this automation for editing — see the log.",
+            )
+            return
+        owner_id = str(definition.get("owner_id") or "local")
+        painted = {definition_id, local_id}
+        try:
+            outcome = await service.save_definition(
+                payload, owner_id, definition_id=local_id
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                # Qodo finding 2: which automation, and which of its
+                # fields -- never the value, which is the user's own
+                # question/model text.
+                "Failed to edit automation definition {definition_id} field "
+                "{field}",
+                definition_id=local_id,
+                field=row.row_key,
+            )
+            self._show_definition_row_error(row, painted, "Failed to save this edit.")
+            return
+        if outcome.status not in ("saved", "queued"):
+            message = "; ".join(
+                str(err.get("message") or "")
+                for err in outcome.errors
+                if err.get("message")
+            ) or "This edit could not be saved."
+            self._show_definition_row_error(row, painted, message)
+            return
+        row.clear_error()
+        self._definitions_stale = True
+        self._request_automations_refresh()
+        await self._repaint_queue_definition_detail(service, local_id, definition)
+
+    def _show_definition_row_error(
+        self, row: DetailValueRow, definition_ids: set[str], message: str
+    ) -> None:
+        """`row.show_error(message)`, unless the row moved on (finding 9).
+
+        The pane that owns ``row`` is asked what it is currently
+        painting; if that is no longer one of ``definition_ids`` -- the
+        listing id the edit was dispatched for plus the local id it
+        resolved to, the same both-shapes pair `_repaint_queue_
+        definition_detail` matches on -- the message is dropped with a
+        debug line instead of being stamped onto another automation's
+        field. An unparented row (never mounted, or already removed)
+        paints as before: there is no pane to contradict it.
+        """
+        pane = next(
+            (
+                ancestor
+                for ancestor in row.ancestors
+                if isinstance(ancestor, DefinitionDetail)
+            ),
+            None,
+        )
+        if pane is not None and pane.shown_definition_id not in definition_ids:
+            logger.debug(
+                "Dropping a stale automation edit error for {expected}: the "
+                "pane now shows {actual}",
+                expected=sorted(definition_ids),
+                actual=pane.shown_definition_id,
+            )
+            return
+        row.show_error(message)
 
     async def _repaint_queue_definition_detail(
         self,

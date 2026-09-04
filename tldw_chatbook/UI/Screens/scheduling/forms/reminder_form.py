@@ -95,6 +95,14 @@ def system_timezone_name() -> str:
     return detect_system_timezone() or _DEFAULT_TIMEZONE
 
 
+#: The time of day every preset-driven surface falls back to when it has
+#: no stored one to reuse: the two forms' `HH:MM` placeholder and reset
+#: value, and both detail panes' Repeat-row `preset_to_cron` fallback
+#: (Qodo finding 4 -- five copies of the same literal, one of which
+#: silently decides when a rescheduled automation actually fires).
+DEFAULT_TIME_OF_DAY = "09:00"
+
+
 def parse_time_of_day(raw: str) -> tuple[int, int] | None:
     """Parse ``HH:MM`` (24-hour, single-digit hour allowed) to (hour, minute).
 
@@ -521,7 +529,7 @@ class ReminderForm(ModalScreen):
                 with Vertical(id="reminder-preset-time-group"):
                     yield Label("Time of day (24-hour):", classes="form-label")
                     yield Input(
-                        placeholder="09:00",
+                        placeholder=DEFAULT_TIME_OF_DAY,
                         id="reminder-preset-time",
                     )
                 with Vertical(id="reminder-cron-custom-group"):
@@ -561,7 +569,7 @@ class ReminderForm(ModalScreen):
         """Prefill the form when editing an existing reminder."""
         if self._reminder_task is None:
             # Create mode: start from the default preset (daily at 09:00).
-            self.query_one("#reminder-preset-time", Input).value = "09:00"
+            self.query_one("#reminder-preset-time", Input).value = DEFAULT_TIME_OF_DAY
             self.query_one("#reminder-cron", Input).value = "0 9 * * *"
             self._update_preset_field_visibility("daily")
             self._update_cron_preview()
@@ -586,7 +594,7 @@ class ReminderForm(ModalScreen):
             # Recurring reveals a coherent preset + time (not both
             # sub-groups at once with a preset that silently overrides a
             # typed cron on save).
-            self.query_one("#reminder-preset-time", Input).value = "09:00"
+            self.query_one("#reminder-preset-time", Input).value = DEFAULT_TIME_OF_DAY
             self.query_one("#reminder-cron", Input).value = "0 9 * * *"
             self._update_preset_field_visibility("daily")
             self._update_cron_preview()
