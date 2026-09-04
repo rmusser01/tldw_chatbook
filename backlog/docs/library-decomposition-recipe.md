@@ -196,6 +196,91 @@ whichever set of files best expresses the invariant), not deferred to
 cleanup. Cleanup still handles the rest of that subsystem's routing work
 as usual.
 
+**A sixth bypass shape, found by the skills series (wave-4 task 2): bare
+`self` used as an IDENTITY-COMPARED or SCREEN-IDENTITY argument, not
+merely as an attribute-lookup receiver — and its close cousin, an
+unbound-attribute escape that silently takes a `getattr` default.** Every
+prior shape in this section either fails loudly (a real exception) or is
+a test-only bypass safely deferred to cleanup. This shape is neither: it
+is a genuine, silent, PRODUCTION behavior change a pure move introduces,
+found only by running the full battery (a same-name-forwarding regex and
+a byte-for-byte body diff cannot see a semantic identity bug or a
+literal-string `getattr` that never resolves).
+
+- *Identity-compared/screen-identity `self`, three confirmed instances,
+  two exclusion-worthy forms:*
+  - **Form A — a framework API's own identity filter.** Textual's
+    `WorkerManager.cancel_group(node, group)` filters `worker.node ==
+    node` by identity. A moved body calling `self.workers.cancel_group(
+    self, ...)` compares the CONTROLLER against workers actually
+    registered with the SCREEN as their node (since `run_worker` always
+    forwards to `self._screen.run_worker(...)`) — permanently `False`,
+    silently making the cancellation a no-op. Found by reading the
+    framework's own source before moving, not by a test failure.
+  - **Form B — a shared shell helper's own screen-identity check.**
+    `_library_screen_is_current(screen)` (`screen_helpers.py`) does
+    `current_screen = getattr(screen.app, "screen", screen); return
+    current_screen is screen`. A moved body forwarding bare `self` makes
+    this permanently `False` (`real_screen is controller` can never be
+    true), silently no-opping every guarded branch. Found the hard way —
+    a first draft moved four such names, the wiring/ratchet battery
+    stayed green, and two real Pilot-driven UI tests (each pressing a
+    real button and asserting a real DOM mount) failed, confirmed via a
+    paired baseline (both pass on the pre-move tree, fail on the
+    four-moved draft).
+  - **Form C — the identical Form-B shape, inlined instead of routed
+    through the shared helper.** `self.app.screen is self`, found the
+    same way — a SECOND draft moved a method carrying this exact
+    comparison inline; 8 `Tests/Skills/` tests (the wave's own
+    fourth-root trap) failed, confirmed genuine via the same
+    paired-baseline method.
+
+  All three exclude the carrying method(s) entirely (keep them
+  screen-resident, full-bodied, untouched — no accommodation exists,
+  unlike duck-typed attribute access, because identity can never be
+  satisfied by a proxy object). Named late-binding dependencies (the
+  usual binding-kind-2 shape) cover any remaining mover that calls the
+  excluded method.
+
+- *Unbound-attribute escape via `getattr(self, "<literal>", default)` —
+  found by a THIRD draft's own post-landing review, not the move's own
+  battery.* `getattr` with a literal string name and a default is
+  invisible to the recipe's own `self.<attr>` `ast.Attribute` census (the
+  name never appears as a literal `self.<name>` expression) AND produces
+  no exception when unbound — it just silently returns the default,
+  forever. A controller missing the corresponding framework-service
+  property (here, `focused`) degrades a real behavior — permanently,
+  quietly — with no red test anywhere in the standard battery, because
+  `has_focus`-shaped DOM assertions can be satisfied by an UNRELATED
+  Textual default-focus fallback landing on the same widget by
+  coincidence (confirmed empirically: a `.has_focus`-only assertion
+  passed identically whether the property existed or not). **Any future
+  subsystem's controller-PR sweep should grep the WHOLE moved-body
+  source for `getattr(self, "<literal-string>"` (not just `self.<attr>`
+  accesses) and confirm each literal name actually resolves on the
+  controller** — a repeat scan after adding a name is cheap and closes
+  the whole class for that controller, per the skills series' own
+  precedent (found exactly one instance, `focused`, confirmed by re-scan
+  after the fix). The covering test for a finding in this class needs a
+  signal PROVABLY tied to the code path (e.g. a spy on the exact
+  `query_one`/method call the fix's own logic makes), not a bare DOM
+  end-state assertion — the same false-negative risk (an unrelated
+  framework fallback satisfying the assertion) applies to writing the
+  test as it did to finding the bug.
+
+- *A battery-found hazard shrinking the mover set legitimately amends the
+  RED tuple — expected, not a smell.* When a controller-PR's own
+  verification battery (not the static census) surfaces one of these
+  shapes after the RED wiring commit already pinned a cluster-name tuple,
+  correcting that tuple (and the accompanying "N of 127" counts) in the
+  same commit that lands the fix is the expected shape of the work, not
+  evidence the RED commit was wrong when it was written — the census that
+  produces the RED tuple is necessarily static, and these shapes are, by
+  definition, only found by running code. Re-deriving the exact final
+  counts (movers, exclusions, per-category tallies) after every such
+  correction — not just patching the number that changed — is what keeps
+  the tuple and its own docstring narrative from drifting apart.
+
 ## 4. The transform whitelist
 
 An extraction PR may contain **only**:
