@@ -1,11 +1,11 @@
 ---
 id: TASK-26947
 title: Clean Ruff formatter debt for ruff-chat-console-foundation
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-31 18:31'
-updated_date: '2026-08-31 18:31'
+updated_date: '2026-09-04 18:03'
 labels:
   - maintenance
   - formatting
@@ -19,15 +19,15 @@ references:
 priority: medium
 ---
 
-<!-- TASK-26000-BATCH: ruff-chat-console-foundation -->
-<!-- TASK-26000-PATHS-SHA256: c4150a472d5ef3d79bcc9e6795e0db669d8a27268b8cef71d5d9a71e5d86bf5a -->
-<!-- TASK-26000-FINAL: false -->
-
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Clean the `ruff-chat-console-foundation` Ruff formatter batch at the owner boundary recorded as: Console service foundations outside narrower context, fleet, library, observability, and interaction owners.. The focused test surface recorded by TASK-26000 is `["Tests/Chat"]`.
 <!-- SECTION:DESCRIPTION:END -->
+
+<!-- TASK-26000-BATCH: ruff-chat-console-foundation -->
+<!-- TASK-26000-PATHS-SHA256: c4150a472d5ef3d79bcc9e6795e0db669d8a27268b8cef71d5d9a71e5d86bf5a -->
+<!-- TASK-26000-FINAL: false -->
 
 ## Assigned Paths
 
@@ -111,14 +111,14 @@ Clean the `ruff-chat-console-foundation` Ruff formatter batch at the owner bound
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] After rebasing onto current `origin/dev`, reproduce and reconcile every TASK-26000 assigned path; if upstream deleted, renamed, modified, or already formatted it, record that lineage and amend ownership mechanically without silently dropping it or absorbing an unassigned path. <!-- TASK-26000-CONTRACT: rebase-reconcile --><!-- TASK-26000-CONTRACT: drift-reconciliation -->
-- [ ] Run Ruff 0.15.22 formatting on only the assigned paths, with no unassigned Python path changed. <!-- TASK-26000-CONTRACT: assigned-paths-only -->
-- [ ] Before and after formatting, parse each assigned file on Python 3.12.11 with `ast.parse(..., type_comments=True)`, normalize only `TypeIgnore.lineno`, and require equal `ast.dump(..., include_attributes=False)`. <!-- TASK-26000-CONTRACT: ast-type-comments -->
-- [ ] Preserve ordered comment-token text; anchor inline `# noqa`, `# type: ignore`, and single-target Ruff directives to the same deepest AST-node path and normalized significant-token position within the nearest logical owner (the same-line `except` clause for an `ExceptHandler` header, otherwise the nearest containing AST statement), excluding only parenthesis pairs independently proven AST-neutral by shadow parse/dump equality; preserve standalone file directives between the same adjacent statement paths, and require each `# fmt: off` / `# fmt: on` range to enclose the same ordered AST-node interval. <!-- TASK-26000-CONTRACT: comment-directives -->
-- [ ] Ruff lint and `ruff format --check` pass on every touched Python path. <!-- TASK-26000-CONTRACT: ruff-checks -->
-- [ ] Implementation Notes record the focused-test rationale and every exact test command/result. <!-- TASK-26000-CONTRACT: focused-tests -->
-- [ ] `git diff --check` and `Tests/CI/test_backlog_task_id_uniqueness.py` pass. <!-- TASK-26000-CONTRACT: governance -->
-- [ ] The diff contains no hand-written production behavior change. <!-- TASK-26000-CONTRACT: no-handwritten-behavior -->
+- [x] #1 After rebasing onto current `origin/dev`, reproduce and reconcile every TASK-26000 assigned path; if upstream deleted, renamed, modified, or already formatted it, record that lineage and amend ownership mechanically without silently dropping it or absorbing an unassigned path. <!-- TASK-26000-CONTRACT: rebase-reconcile --><!-- TASK-26000-CONTRACT: drift-reconciliation -->
+- [x] #2 Run Ruff 0.15.22 formatting on only the assigned paths, with no unassigned Python path changed. <!-- TASK-26000-CONTRACT: assigned-paths-only -->
+- [x] #3 Before and after formatting, parse each assigned file on Python 3.12.11 with `ast.parse(..., type_comments=True)`, normalize only `TypeIgnore.lineno`, and require equal `ast.dump(..., include_attributes=False)`. <!-- TASK-26000-CONTRACT: ast-type-comments -->
+- [x] #4 Preserve ordered comment-token text; anchor inline `# noqa`, `# type: ignore`, and single-target Ruff directives to the same deepest AST-node path and normalized significant-token position within the nearest logical owner (the same-line `except` clause for an `ExceptHandler` header, otherwise the nearest containing AST statement), excluding only parenthesis pairs independently proven AST-neutral by shadow parse/dump equality; preserve standalone file directives between the same adjacent statement paths, and require each `# fmt: off` / `# fmt: on` range to enclose the same ordered AST-node interval. <!-- TASK-26000-CONTRACT: comment-directives -->
+- [x] #5 Ruff lint and `ruff format --check` pass on every touched Python path. <!-- TASK-26000-CONTRACT: ruff-checks -->
+- [x] #6 Implementation Notes record the focused-test rationale and every exact test command/result. <!-- TASK-26000-CONTRACT: focused-tests -->
+- [x] #7 `git diff --check` and `Tests/CI/test_backlog_task_id_uniqueness.py` pass. <!-- TASK-26000-CONTRACT: governance -->
+- [x] #8 The diff contains no hand-written production behavior change. <!-- TASK-26000-CONTRACT: no-handwritten-behavior -->
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -135,3 +135,13 @@ Reason: Mechanical formatter cleanup under TASK-26000 introduces no architectura
 
 Detailed plan: Docs/superpowers/plans/2026-09-04-task-26947-ruff-chat-console-foundation.md
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+- Authority and lineage: TASK-26000 authority cut `e555df102c950c29beed5e7119f433d35eee1f3c`; initial task base `282c733d6120c81d5823262d7bb4f3b61952e896`; then rebased to current `origin/dev` `65e11df720c061be7a42117600fd0a6986ce1230`. Of the 73 assigned paths, only `tldw_chatbook/Chat/console_runtime.py` drifted from that current-dev base; no assigned path was dropped or substituted.
+- Rebased implementation: formatter commit `243aca40e5`; final assigned-test lint commit `01a81d7f6b`. Ruff 0.15.22 formatted 71 of 73 assigned paths (2 were already unchanged) and changed no unassigned Python path. The v3 guard preserved ASTs, ordered comments, directive/range metadata, and replayed all formatter output 73/73 from current-dev blobs.
+- The original physical-NEWLINE guard was corrected twice: nearest logical-owner and AST-neutral-parenthesis handling, then fail-closed same-line `ExceptHandler` header handling. These plan deviations were necessary to avoid rejecting semicolon splitting and formatter grouping parentheses while retaining attachment checks. Ruff then exposed three immutable-base F401 imports in assigned tests; safe removal was limited to those demonstrably unused, side-effect-free bindings, with formatter replay kept separate.
+- Ruff `check` and `format --check` passed on all 73 paths. The exact focused command form was Python 3.12.11 `-m pytest --tb=line --disable-warnings --junitxml=<artifact>` with the 55 literal `Tests/Chat` paths in this task's Assigned Paths order, run once from detached current-dev (`/tmp/task26947_rebased_before.xml`) and once at final HEAD (`/tmp/task26947_rebased_after.xml`). Each JUnit report contains 2,255 cases: 2,201 passed, 52 known failures, 0 errors, and 2 skips; normalized failure/error keys have no additions or removals. This gate is **not green**: it is exact baseline parity. Protected pytest temporary-directory cleanup messages are environment cleanup warnings, not JUnit failures or errors.
+- Governance: Backlog uniqueness passed 3/3; `git diff --check` passed; the persistent diagnostic inventory was unchanged and passed with 572 owners / 1337 TASK-492 calls / 7599 TASK-494 calls / 10 sink files, so no diagnostic-inventory refresh was made. Independent formatter, lint-cleanup, and post-rebase evidence reviews found no Critical, Important, or Minor findings. No full suite was run. ADR required: no; no new ADR was needed because this is mechanical formatter cleanup under TASK-26000.
+<!-- SECTION:NOTES:END -->

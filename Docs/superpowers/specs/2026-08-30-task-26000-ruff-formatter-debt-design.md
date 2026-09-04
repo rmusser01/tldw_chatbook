@@ -266,10 +266,15 @@ Each child task is independently mergeable and must:
    type-ignore tag;
 4. prove the ordered comment-token text is unchanged; anchor each inline `# noqa`,
    `# type: ignore`, and single-target Ruff directive to the same deepest AST node
-   path covering its physical line, using its position in the logical statement's
-   significant-token stream as the tie-breaker; preserve standalone file directives
-   between the same adjacent statement paths; and prove every Ruff-format off/on
-   range encloses the same ordered AST-node interval before and after formatting;
+   path covering its physical line, using its significant-token position within its
+   nearest logical owner as the tie-breaker. For a same-line `ExceptHandler` header,
+   that owner is a uniquely, fail-closed validated `except` clause through its unique
+   depth-zero colon; otherwise it is the nearest containing `ast.stmt` or decorator
+   boundary. Exclude only parentheses independently proven AST-neutral by full-module
+   shadow parse/dump equality—never tuple commas or semantic grouping. Preserve
+   standalone file directives between the same adjacent statement paths; and prove
+   every Ruff-format off/on range encloses the same ordered AST-node interval before
+   and after formatting;
 5. run Ruff lint and format checks on every touched Python path;
 6. record the rationale for its focused test selection plus exact commands and
    results;
