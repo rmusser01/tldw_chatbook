@@ -12,11 +12,22 @@ from inside a ``with`` on any of the names -- self-deadlocks immediately.
 Nothing nests today (verified at C1 design time, tests included); keep it
 that way.
 
-Seams: the host holds the CONTROLLER and reads ``.app``, ``.store``, and
-the per-kind setter attributes late-bound, at call time -- they are
-assigned at screen attach, after construction, and UI tests swap in
-controller doubles. The full surface the host may touch is exactly what
-``Tests/Chat/test_console_interrupt_rounds.py``'s ``FakeSeams`` provides.
+Seams: the host holds the CONTROLLER and reads everything off it
+late-bound, at call time -- ``.app``, ``.store``, and the per-kind setter
+attributes are assigned at screen attach, after construction, and UI
+tests swap in controller doubles. The surface splits by entry point:
+
+* the payload helpers and ``remount_head`` touch only ``.app``,
+  ``.store``, and the ``KIND_SETTER_ATTRS`` setters -- that is exactly
+  what ``Tests/Chat/test_console_interrupt_rounds.py``'s ``FakeSeams``
+  provides;
+* ``run_round`` additionally calls ``_is_session_cancelled`` (its poll
+  probe), ``add_pending_round``/``discard_pending_round`` (the fleet
+  badge), and reads ``park_pending_approval`` (the background-session
+  toast) -- the superset that file's ``FakeSeamsFull`` provides.
+
+A double built for ``run_round`` therefore needs ``FakeSeamsFull``'s
+surface, not ``FakeSeams``'.
 """
 
 from __future__ import annotations
