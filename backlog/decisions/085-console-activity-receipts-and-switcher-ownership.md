@@ -108,6 +108,29 @@ Correlated server workflow activity, authority/version caches, exact Workflows
 handoff, and standalone workflow browsing are not owned by this ADR. They need
 a separate server contract, task, and ADR after the local release.
 
+## Amendment (2026-09-03, TASK-31241 — Character chats mode and activation)
+
+[ADR-116](116-character-conversation-navigation-and-local-meaning-search.md)
+adds `Character chats` as a third `Ctrl+K` mode beside Active and History while
+preserving the switcher's operational ownership. Every ordinary open still
+starts in Active, and blank Active Enter retains MRU-other-tab behavior. F3
+remains the sole modal-local mode key and cycles Active → History → Character
+chats → Active under ADR-031. Character chats owns a separate per-visit query
+and searches only eligible local character conversations in the active Data
+Profile; it does not auto-widen into another corpus or admit Personas, server,
+or cached-server rows.
+
+The modal remains mounted around an immutable highlighted target through
+`IDLE`, `OPENING_CANCELLABLE`, `COMMITTING`, and `FAILURE_VISIBLE`. It delegates
+to the Console-owned opener and waits for exactly `OPENED`,
+`CANCELLED_PRECOMMIT`, `NOT_FOUND`, `DATA_PROFILE_CHANGED`,
+`CHARACTER_UNAVAILABLE`, or `FAILED`. Escape can cancel only before the opener's
+atomic `commit_started` acknowledgement; later Escape is ignored while commit
+finishes or rolls back. Duplicate Enter, mode/query changes, and result movement
+remain disabled during activation, and only `OPENED` dismisses the modal after
+the exact Console destination is current and visible. This amendment is owned
+by [TASK-31241](../tasks/task-31241%20-%20Align-character-conversation-navigation-decisions.md).
+
 ## Context
 
 The incumbent switcher eagerly loads a mixed local tuple, mounts at most twenty

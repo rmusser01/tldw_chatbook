@@ -22,6 +22,25 @@ Editable Storage defaults are limited to:
 
 Settings can validate the draft paths for basic safety and parent-directory readiness. It can save valid persisted defaults to config and update `app_config` for display consistency. Runtime storage services remain the owner of active database connections until the next application launch.
 
+## Amendment (2026-09-03, TASK-31241 — character-chat search actions)
+
+[ADR-116](116-character-conversation-navigation-and-local-meaning-search.md)
+assigns Character-chat Meaning controls to the existing Settings commit models
+without changing this ADR's restart boundary for storage paths. Installed local
+embedding-model selection and `Keep future chats indexed` are saved staged
+preferences. They become authoritative only through Settings Save and are
+scoped by the active Data Profile's `data_authority_id`, not by the independently
+selectable RAG configuration profile.
+
+`Index existing chats`, Pause, Resume, Cancel, Rebuild, and Delete semantic
+index are immediate maintenance actions. They carry ADR-033's
+`applies immediately - no Save needed` label and operate only on saved
+configuration. Index, Rebuild, and Delete are unavailable while their relevant
+preference draft is dirty; Pause, Resume, and Cancel act on the existing job and
+never read draft values. Delete requires explicit confirmation and removes only
+derived generations, not conversations. This amendment is owned by
+[TASK-31241](../tasks/task-31241%20-%20Align-character-conversation-navigation-decisions.md).
+
 ## Context
 
 Settings currently exposes Storage as a validation-only panel. Users can check local paths, but they cannot configure database path defaults from the main configuration hub. This leaves Settings incomplete for a core configuration domain.

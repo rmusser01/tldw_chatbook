@@ -18,6 +18,32 @@ versioned media schema transition, including its `schema_version` update and
 seed data, executes in one real SQLite transaction; a failed transition rolls
 back all of its DDL, data, and version changes.
 
+## Amendment (2026-09-03, TASK-31241 — character-chat search generations)
+
+[ADR-116](116-character-conversation-navigation-and-local-meaning-search.md)
+applies this ADR's authoritative-source and eventual-cleanup principles to a
+separately owned character-conversation search projection; it does not broaden
+the media index. The active Data Profile's conversation SQLite database is
+authoritative. Character Keyword FTS and Meaning vector data are derived,
+`data_authority_id`-scoped generations; a RAG configuration profile never
+namespaces or establishes their data authority.
+
+Keyword uses a separate selected-branch FTS generation rather than broad
+`messages_fts`. Meaning uses embeddings-only staging generations. Each
+generation records its eligibility, projection, model/chunk, and source-revision
+compatibility and becomes queryable only after validation and an atomic ready
+swap. Partial, failed, paused, cancelled, or incompatible generations are never
+queried, and a failed rebuild preserves the prior ready generation.
+
+Authoritative conversation, message, branch-selection, character-link, and
+Data Profile mutations commit first, advance the source revision, and enqueue
+idempotent derived work. Query and activation revalidation makes deleted,
+ineligible, wrong-authority, or revision-stale content unavailable immediately;
+outbox replay and reconciliation clean or repair derived state afterward.
+Cleanup failure may temporarily omit results but cannot make stale content
+eligible. This amendment is owned by
+[TASK-31241](../tasks/task-31241%20-%20Align-character-conversation-navigation-decisions.md).
+
 ## Context
 
 Ingestion already emits a post-commit callback that asynchronously projects new

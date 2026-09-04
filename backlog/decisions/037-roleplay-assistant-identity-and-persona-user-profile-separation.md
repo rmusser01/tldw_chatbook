@@ -92,6 +92,31 @@ provenance, trusted speech snapshots, and assignment mutation service remain
 four ordered atomic tasks and PRs. Only the first advances to planning after
 the shared written design is approved.
 
+## Amendment (2026-09-03, TASK-31241 — local conversation navigation identity)
+
+[ADR-116](116-character-conversation-navigation-and-local-meaning-search.md)
+names the selected local conversation database as the **Data Profile** and
+exposes its existing durable `local_authority_id` as `data_authority_id` for
+character-conversation navigation. This is distinct from the independently
+selectable **RAG configuration profile**. Database paths, display labels,
+current selection, card names, and RAG configuration-profile IDs do not
+establish this authority.
+
+The shared projection serializes a closed, versioned identity union:
+
+```text
+ResolvedLocalCharacterKey(data_authority_id, character_id)
+UnresolvedConversationKey(data_authority_id, conversation_id)
+```
+
+Only the resolved variant plus an exact conversation ID is activatable. The
+unresolved variant remains stable for listing and Library recovery but never
+inherits the current card, a same-named card, or the current authority. The
+first-release navigation/search corpus accepts local authority only; this does
+not alter this ADR's existing server-assistant provenance contract for other
+features. This amendment is owned by
+[TASK-31241](../tasks/task-31241%20-%20Align-character-conversation-navigation-decisions.md).
+
 ## Context
 
 ADR-028 requires character assignments to use full source-aware authority.
