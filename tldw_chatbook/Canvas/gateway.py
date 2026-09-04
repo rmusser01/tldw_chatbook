@@ -14,6 +14,7 @@ import hmac
 import inspect
 import ipaddress
 import json
+import math
 import secrets
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -56,6 +57,7 @@ _ACTION_TTL_SECONDS = 30.0
 _BROWSER_SESSION_TTL_SECONDS = 30 * 60.0
 _BRIDGE_SETTLEMENT_TTL_SECONDS = 300.0
 _MAX_BRIDGE_SETTLEMENTS = 64
+_MAX_BRIDGE_WAITERS = 16
 _MAX_BROWSER_SESSIONS = 64
 _MAX_SHELL_BINDINGS = 64
 _SENSITIVE_QUERY_KEYS = frozenset(
@@ -281,6 +283,9 @@ class _BridgeSettlementRecord:
     expires_at: float
     completed: asyncio.Event = field(default_factory=asyncio.Event)
     response: BridgeConfirmationResponse | None = None
+    waiter_count: int = 0
+    expiry_handle: asyncio.TimerHandle | None = None
+    terminal_reason: str | None = None
 
 
 @dataclass(slots=True, repr=False)
@@ -383,7 +388,12 @@ class CanvasBridgeSettlementLease:
             )
             committed_expires_at = min(
                 self._session.expires_at,
-                self._gateway._clock() + _BRIDGE_SETTLEMENT_TTL_SECONDS,
+                self._gateway._clock() + self._gateway._bridge_settlement_ttl_seconds,
+            )
+            self._gateway._prepare_bridge_commit(
+                self._session,
+                self._record,
+                expires_at=committed_expires_at,
             )
             result = effect()
             if inspect.isawaitable(result):
@@ -428,6 +438,8 @@ class CanvasGateway:
         max_browser_sessions: int = _MAX_BROWSER_SESSIONS,
         max_shell_bindings: int = _MAX_SHELL_BINDINGS,
         max_bridge_settlements: int = _MAX_BRIDGE_SETTLEMENTS,
+        max_bridge_waiters: int = _MAX_BRIDGE_WAITERS,
+        bridge_settlement_ttl_seconds: float = _BRIDGE_SETTLEMENT_TTL_SECONDS,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         try:
@@ -476,6 +488,23 @@ class CanvasGateway:
         ):
             raise ValueError("max_bridge_settlements is outside the safe range")
         self._max_bridge_settlements = max_bridge_settlements
+        if (
+            not isinstance(max_bridge_waiters, int)
+            or isinstance(max_bridge_waiters, bool)
+            or max_bridge_waiters < 1
+            or max_bridge_waiters > _MAX_BRIDGE_WAITERS
+        ):
+            raise ValueError("max_bridge_waiters is outside the safe range")
+        self._max_bridge_waiters = max_bridge_waiters
+        if (
+            isinstance(bridge_settlement_ttl_seconds, bool)
+            or not isinstance(bridge_settlement_ttl_seconds, (int, float))
+            or not math.isfinite(bridge_settlement_ttl_seconds)
+            or bridge_settlement_ttl_seconds <= 0
+            or bridge_settlement_ttl_seconds > _BRIDGE_SETTLEMENT_TTL_SECONDS
+        ):
+            raise ValueError("bridge_settlement_ttl_seconds is outside the safe range")
+        self._bridge_settlement_ttl_seconds = float(bridge_settlement_ttl_seconds)
         self.capabilities = CanvasCapabilityStore(clock=clock)
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
@@ -1107,15 +1136,17 @@ class CanvasGateway:
             return _error_response("bridge_request_collision", 409)
         if reservation == "capacity":
             return _error_response("bridge_settlement_capacity", 503)
+        if reservation == "waiter_capacity":
+            return _error_response("bridge_waiter_capacity", 503)
         assert record is not None
         if reservation == "replay":
             assert record.response is not None
             return _bridge_confirmation_response(record.response)
         if reservation == "wait":
-            await record.completed.wait()
-            if record.response is None:
+            replay = await self._wait_for_bridge_record(session, record)
+            if replay is None:
                 return _error_response("bridge_refused", 503)
-            return _bridge_confirmation_response(record.response)
+            return _bridge_confirmation_response(replay)
         settlement = CanvasBridgeSettlementLease(
             gateway=self,
             session=session,
@@ -1143,6 +1174,8 @@ class CanvasGateway:
         committed = settlement.committed_response
         if committed is not None:
             return _bridge_confirmation_response(committed)
+        if record.terminal_reason in {"expired", "revoked"}:
+            return _error_response("bridge_settlement_stale", 409)
         if callback_failed:
             return _error_response("bridge_refused", 503)
         if not isinstance(result, BridgeConfirmationResponse):
@@ -1304,6 +1337,9 @@ class CanvasGateway:
                     return "collision", None
                 if existing.response is not None:
                     return "replay", existing
+                if existing.waiter_count >= self._max_bridge_waiters:
+                    return "waiter_capacity", None
+                existing.waiter_count += 1
                 return "wait", existing
             active_records = sum(
                 len(live_session.bridge_settlements)
@@ -1320,10 +1356,17 @@ class CanvasGateway:
                 payload_digest=payload_digest,
                 expires_at=min(
                     session.expires_at,
-                    self._clock() + _BRIDGE_SETTLEMENT_TTL_SECONDS,
+                    self._clock() + self._bridge_settlement_ttl_seconds,
                 ),
             )
             session.bridge_settlements[request.request_id] = record
+            try:
+                self._schedule_bridge_expiry(session, record)
+            except Exception:  # noqa: BLE001 - scheduling failures stay content-free
+                self._terminally_remove_bridge_record(
+                    session, record, reason="schedule_failed"
+                )
+                raise RuntimeError("Canvas bridge expiry scheduling failed") from None
             return "owner", record
 
     def _bridge_record_is_current(
@@ -1336,6 +1379,79 @@ class CanvasGateway:
             and session.bridge_settlements.get(record.request_id) is record
             and record.response is None
         )
+
+    def _schedule_bridge_expiry(
+        self,
+        session: _BrowserSession,
+        record: _BridgeSettlementRecord,
+    ) -> None:
+        """Arm the single self-enforcing deadline for one settlement record."""
+
+        self._cancel_bridge_expiry(record)
+        delay = max(0.0, record.expires_at - self._clock())
+        record.expiry_handle = asyncio.get_running_loop().call_later(
+            delay,
+            self._expire_bridge_record,
+            session,
+            record,
+        )
+
+    @staticmethod
+    def _cancel_bridge_expiry(record: _BridgeSettlementRecord) -> None:
+        handle = record.expiry_handle
+        record.expiry_handle = None
+        if handle is not None and not handle.cancelled():
+            handle.cancel()
+
+    def _expire_bridge_record(
+        self,
+        session: _BrowserSession,
+        record: _BridgeSettlementRecord,
+    ) -> None:
+        """Expire only the record still occupying its exact session slot."""
+
+        with self._state_lock:
+            if session.bridge_settlements.get(record.request_id) is not record:
+                self._cancel_bridge_expiry(record)
+                return
+            record.expiry_handle = None
+            if self._clock() < record.expires_at:
+                self._schedule_bridge_expiry(session, record)
+                return
+            self._terminally_remove_bridge_record(
+                session,
+                record,
+                reason="expired",
+            )
+
+    def _terminally_remove_bridge_record(
+        self,
+        session: _BrowserSession,
+        record: _BridgeSettlementRecord,
+        *,
+        reason: str,
+    ) -> None:
+        """Remove an exact record, cancel its timer, and wake every joiner."""
+
+        if session.bridge_settlements.get(record.request_id) is not record:
+            self._cancel_bridge_expiry(record)
+            return
+        session.bridge_settlements.pop(record.request_id, None)
+        record.terminal_reason = reason
+        self._cancel_bridge_expiry(record)
+        record.completed.set()
+
+    def _prepare_bridge_commit(
+        self,
+        session: _BrowserSession,
+        record: _BridgeSettlementRecord,
+        *,
+        expires_at: float,
+    ) -> None:
+        """Install the committed receipt deadline before its effect can run."""
+
+        record.expires_at = expires_at
+        self._schedule_bridge_expiry(session, record)
 
     def _commit_bridge_record(
         self,
@@ -1351,6 +1467,29 @@ class CanvasGateway:
         record.expires_at = expires_at
         record.completed.set()
 
+    async def _wait_for_bridge_record(
+        self,
+        session: _BrowserSession,
+        record: _BridgeSettlementRecord,
+    ) -> BridgeConfirmationResponse | None:
+        """Wait no longer than the record's monotonic deadline for its receipt."""
+
+        try:
+            while not record.completed.is_set():
+                remaining = record.expires_at - self._clock()
+                if remaining <= 0:
+                    self._expire_bridge_record(session, record)
+                    break
+                try:
+                    await asyncio.wait_for(record.completed.wait(), timeout=remaining)
+                except TimeoutError:
+                    self._expire_bridge_record(session, record)
+            return record.response
+        finally:
+            with self._state_lock:
+                if record.waiter_count > 0:
+                    record.waiter_count -= 1
+
     def _abandon_bridge_record(
         self,
         session: _BrowserSession,
@@ -1360,8 +1499,11 @@ class CanvasGateway:
             record.response is None
             and session.bridge_settlements.get(record.request_id) is record
         ):
-            session.bridge_settlements.pop(record.request_id, None)
-            record.completed.set()
+            self._terminally_remove_bridge_record(
+                session,
+                record,
+                reason="callback_complete",
+            )
 
     def _discard_expired_bridge_records(self, session: _BrowserSession) -> None:
         now = self._clock()
@@ -1371,16 +1513,20 @@ class CanvasGateway:
             if now >= record.expires_at
         ]
         for record in expired:
-            if session.bridge_settlements.get(record.request_id) is record:
-                session.bridge_settlements.pop(record.request_id, None)
-                record.completed.set()
+            self._terminally_remove_bridge_record(
+                session,
+                record,
+                reason="expired",
+            )
 
-    @staticmethod
-    def _clear_bridge_records(session: _BrowserSession) -> None:
+    def _clear_bridge_records(self, session: _BrowserSession) -> None:
         records = tuple(session.bridge_settlements.values())
-        session.bridge_settlements.clear()
         for record in records:
-            record.completed.set()
+            self._terminally_remove_bridge_record(
+                session,
+                record,
+                reason="revoked",
+            )
 
     def _revoke_session_id(
         self,
