@@ -726,6 +726,11 @@ def _library_ingest_options_for(owner: Any) -> dict[str, Any]:
 # than moved: it is new screen code, not part of the extracted support layer.)
 _MEDIA_SELECT_MODE_KEY = "s"
 _MEDIA_ROW_SELECT_KEY = "space"
+#: Qodo on #2386: the two ``_library_media_view`` values this branch's
+#: surface helpers compare against. Introduced with those helpers; the
+#: file's older sites still carry the literals.
+_MEDIA_VIEW_LIST = "list"
+_MEDIA_VIEW_VIEWER = "viewer"
 #: Qodo on #2378: one name for the review-set auto-resume worker group, shared
 #: by registration (_maybe_auto_resume_review_set) and cancellation.
 _REVIEW_SET_RESUME_WORKER_GROUP = "library_review_set_resume"
@@ -3643,6 +3648,12 @@ class LibraryScreen(BaseAppScreen):
                                 at_last=(
                                     progress.total > 0
                                     and progress.index >= progress.total
+                                    # Qodo on #2386: the cursor being at the
+                                    # end is necessary but not sufficient --
+                                    # ] only RESUMES the set while an off-set
+                                    # item is loaded. Measured second, so the
+                                    # extra read stays off the common path.
+                                    and self._active_review_loaded_at_last()
                                 ),
                             )
                         )
@@ -7658,7 +7669,7 @@ class LibraryScreen(BaseAppScreen):
             # recompose`` falls back to a whole-screen recompose when it is
             # not, which task-21116 pins to zero on this path.
             if (
-                self._library_media_view == "viewer"
+                self._library_media_view == _MEDIA_VIEW_VIEWER
                 and self._mounted_library_media_viewer() is not None
             ):
                 self._sync_library_media_viewer_or_recompose()
@@ -27812,7 +27823,8 @@ class LibraryScreen(BaseAppScreen):
         if action == "library_media_viewer_back":
             return (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
-                and getattr(self, "_library_media_view", "list") == "viewer"
+                and getattr(self, "_library_media_view", _MEDIA_VIEW_LIST)
+                == _MEDIA_VIEW_VIEWER
                 and not self._library_media_bulk_delete_in_flight
                 # task-31272: the same seam the footer chip reads (cf. the
                 # Conversations gate below). "" means Escape does nothing
@@ -31834,7 +31846,10 @@ class LibraryScreen(BaseAppScreen):
             strip, or ``None`` when no converged strip is showing.
         """
         if (
-            self._library_media_list_surface_active()
+            # Qodo on #2386: VISIBILITY, not key ownership -- a strip stays
+            # open while focus is in the Reader, and Escape (which closes
+            # it) and the chip that says so must both see it there.
+            self._library_media_list_surface_active(require_focus=False)
             and self._library_media_type_choices_visible
         ):
             return (
@@ -31843,7 +31858,7 @@ class LibraryScreen(BaseAppScreen):
                 "_library_media_type_choices_visible",
             )
         if (
-            self._library_media_list_surface_active()
+            self._library_media_list_surface_active(require_focus=False)
             and self._library_media_sort_choices_visible
         ):
             return (
@@ -39079,6 +39094,44 @@ class LibraryScreen(BaseAppScreen):
         is_live = lambda backing_id: backing_id in live_ids  # noqa: E731
         return review_progress(review_set.items, review_set.cursor, is_live)
 
+    def _active_review_loaded_at_last(self) -> bool:
+        """True when the Reader's LOADED item is the set's last live item.
+
+        Qodo on #2386: the footer's ``at_last`` came from the persisted
+        CURSOR, so with an off-set item in the Reader (PR A's "· this item
+        is not in the set" state) it promised "] finish review" while ``]``
+        would only RESUME the set at its cursor.
+        ``_walk_active_review_set`` has measured from the DISPLAYED item
+        since Qodo #2333; this makes the chip that describes it agree.
+
+        Returns:
+            True only when a set is active, the Reader holds one of its
+            live items, and that item is the last of them.
+        """
+        service = self._review_set_service()
+        if service is None:
+            return False
+        review_set = service.get_active_review_set()
+        if review_set is None:
+            return False
+        loaded_backing = self._library_media_reader_session.loaded_backing_id
+        try:
+            loaded_backing = (
+                int(loaded_backing) if loaded_backing is not None else None
+            )
+        except (TypeError, ValueError):
+            return False
+        if loaded_backing is None:
+            return False
+        live_ids = self._review_set_live_ids(
+            item.backing_media_id for item in review_set.items
+        )
+        live_items = sorted(
+            (item for item in review_set.items if item.backing_media_id in live_ids),
+            key=lambda item: item.position,
+        )
+        return bool(live_items) and live_items[-1].backing_media_id == loaded_backing
+
     def _active_review_set_banner(self) -> str | None:
         """Build the Reader's one-line review-set banner (task-30045).
 
@@ -40024,9 +40077,9 @@ class LibraryScreen(BaseAppScreen):
         """
         if self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA:
             return False
-        if self._library_media_view == "list":
+        if self._library_media_view == _MEDIA_VIEW_LIST:
             return True
-        if self._library_media_view != "viewer":
+        if self._library_media_view != _MEDIA_VIEW_VIEWER:
             return False
         try:
             shell = self.query_one(
@@ -40058,6 +40111,11 @@ class LibraryScreen(BaseAppScreen):
         if self._library_media_confirming_delete:
             return "close"
         if session.more_open:
+            return "close"
+        # Qodo on #2386: an Items strip opened over the Reader is a
+        # transient this Escape closes (see the matching branch in
+        # ``action_library_media_viewer_back``), wherever focus sits.
+        if self._library_open_choice_strip() is not None:
             return "close"
         focused = self.focused
         try:

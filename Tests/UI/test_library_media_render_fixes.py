@@ -904,6 +904,34 @@ async def test_escape_cancels_an_items_choice_strip_over_the_reader():
         assert not screen.query("#library-media-type-choices")
         assert screen._library_media_view == "viewer"
 
+
+@pytest.mark.asyncio
+async def test_escape_cancels_a_strip_that_is_open_while_the_reader_has_focus():
+    """Qodo on #2386: strip VISIBILITY is not the same question as key ownership.
+
+    The open-strip check had picked up the Items region's focus gate, so a
+    strip left open while focus moved into the Reader was invisible to
+    Escape (which hopped focus instead of closing it) and to the chip that
+    describes Escape.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        screen.query_one("#library-media-sort", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-sort-choices")
+        screen.query_one("#library-media-viewer-content").focus()
+        await pilot.pause()
+        assert dict(screen._library_footer_shortcuts_for_current_state())["esc"] == (
+            "close"
+        )
+
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.pause()
+        assert not screen.query("#library-media-sort-choices")
+        assert screen._library_media_view == "viewer"
+
 @pytest.mark.asyncio
 async def test_find_is_disabled_with_a_reason_when_the_analysis_tab_has_nothing_to_search():
     """Qodo on #2378: with Find now opening the bar for the tab being read,

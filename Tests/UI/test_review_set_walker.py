@@ -1309,6 +1309,49 @@ def test_review_footer_names_the_completion_gesture_on_the_last_item():
     assert [key for key, _label in complete] == ["m", "R", ""]
 
 
+def test_review_footer_at_last_follows_the_loaded_item_not_the_cursor(tmp_path):
+    """Qodo on #2386: ] only RESUMES the set while an off-set item is loaded.
+
+    The cursor sitting on the last item is necessary but not sufficient --
+    the walk measures from the DISPLAYED item (Qodo #2333), so the chip
+    that names it has to as well.
+    """
+    import inspect
+
+    service = _service(tmp_path)
+    set_id = service.create_review_set(
+        "X", origin="browse", items=[(10, "A"), (11, "B"), (12, "C")]
+    )
+    service.set_cursor(set_id, 2)  # cursor ON the last item
+
+    off_set = _walker_fake(service, loaded=99)
+    assert LibraryScreen._active_review_loaded_at_last(off_set) is False
+    assert LibraryScreen._review_footer_entries("3 of 3 · 0 reviewed")[0] == (
+        "]",
+        "next in set",
+    )
+
+    mid_set = _walker_fake(service, loaded=11)
+    assert LibraryScreen._active_review_loaded_at_last(mid_set) is False
+
+    on_last = _walker_fake(service, loaded=12)
+    assert LibraryScreen._active_review_loaded_at_last(on_last) is True
+    assert LibraryScreen._review_footer_entries(
+        "3 of 3 · 0 reviewed", at_last=True
+    )[0] == ("]", "finish review")
+
+    # A tombstoned tail moves "last" back to the newest LIVE item.
+    live_only = _walker_fake(service, live_ids={10, 11}, loaded=11)
+    assert LibraryScreen._active_review_loaded_at_last(live_only) is True
+
+    # ...and the footer genuinely composes the two (source-level pin, the
+    # idiom this file already uses for screen-only seams).
+    footer_src = inspect.getsource(
+        LibraryScreen._library_route_shortcuts_for_current_state
+    )
+    assert "_active_review_loaded_at_last()" in footer_src
+
+
 def test_active_review_progress_exposes_the_live_index_and_total(tmp_path):
     """The footer's ``at_last`` comes from live index/total, not the string."""
     service = _service(tmp_path)
