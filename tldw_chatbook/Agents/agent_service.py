@@ -4278,6 +4278,7 @@ class AgentService:
         resumed_from_run_id: str | None = None,
         spawn_event_id: str | None = None,
         spawn_parent_event_id: str | None = None,
+        requested_run_id: str | None = None,
         precreated_run_id: str | None = None,
         lifecycle_owner_seq_start: int | None = None,
         on_run_id: Callable[[str], None] | None = None,
@@ -4366,6 +4367,7 @@ class AgentService:
                 definition_fingerprint=definition_fingerprint,
                 resumed_from_run_id=resumed_from_run_id,
                 spawn_event_id=spawn_event_id,
+                run_id=requested_run_id,
             )
             lifecycle_owner_seq = 0
             lifecycle_event_id = (
@@ -7379,6 +7381,7 @@ class AgentService:
         continuation_owner_key: str | None = None,
         first_request_schema_plan: FirstRequestSchemaPlan | None = None,
         request_worktree_merge_confirm: "Callable[[dict], dict] | None" = None,
+        requested_run_id: str | None = None,
     ) -> tuple[str, RunOutcome]:
         """Run one primary-agent turn (and any sub-agents it spawns).
 
@@ -7442,6 +7445,10 @@ class AgentService:
                 round machinery. ``None`` (the default) means neither tool
                 has an approval surface in this session, so both fail
                 closed.
+            requested_run_id: Optional server-issued identity reserved by a
+                scoped tool provider. When present, the primary Agent row is
+                created with this exact ID so tool scope and terminal
+                settlement share one authoritative run identity.
 
         Returns:
             A ``(run_id, outcome)`` tuple: the new primary run's id and its
@@ -7488,6 +7495,12 @@ class AgentService:
             not a barrier -- it fsyncs the final segment and leaves the
             writer active, so a survivor's later appends still land.
         """
+        if requested_run_id is not None and (
+            not isinstance(requested_run_id, str)
+            or not requested_run_id
+            or len(requested_run_id.encode("utf-8")) > 256
+        ):
+            raise ValueError("requested_run_id must be a bounded non-empty string")
         if supersede_run_id:
             candidates = [
                 row
@@ -7636,6 +7649,7 @@ class AgentService:
             chain_id="primary",
             first_request_schema_plan=first_request_schema_plan,
             request_worktree_merge_confirm=request_worktree_merge_confirm,
+            requested_run_id=requested_run_id,
         )
         # Settle the children that must not outlive this turn. Must happen
         # BEFORE the manifest is written and the writer closed below: a

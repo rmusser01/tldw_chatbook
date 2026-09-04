@@ -176,6 +176,18 @@ def _invoke(provider: CanvasToolProvider, name: str, args: dict, *, call_id="cal
         return provider.invoke(f"canvas:{name}", args)
 
 
+def test_lifecycle_coordinator_requires_the_exact_registration_authority() -> None:
+    provider, coordinator, authority = _provider()
+
+    assert provider.lifecycle_coordinator(authority) is coordinator
+    assert provider.lifecycle_binding(authority) == (coordinator, SCOPE.run_id)
+    assert provider.lifecycle_coordinator(replace(authority)) is None
+    assert provider.lifecycle_binding(replace(authority)) is None
+    assert provider.lifecycle_coordinator(object()) is None
+    coordinator.current = False
+    assert provider.lifecycle_binding(authority) is None
+
+
 def test_canvas_schemas_are_closed_and_carry_shared_byte_limits() -> None:
     """Dropping a closed schema or central limit would admit hidden authority/payloads."""
     provider, _coordinator, _authority = _provider()
@@ -1267,12 +1279,6 @@ def _run_review_integration(
         return {call.call_id: "proceed" for call in batch}
 
     db = AgentRunsDB(db_path, client_id="canvas-tool-review")
-    real_create_run = db.create_run
-
-    def create_run(**kwargs):
-        return real_create_run(**kwargs, run_id=SCOPE.run_id)
-
-    db.create_run = create_run  # type: ignore[method-assign]
     service = AgentService(
         db,
         registry,
@@ -1302,6 +1308,7 @@ def _run_review_integration(
                 log_active=False,
                 system_prompt="system",
             ),
+            requested_run_id=SCOPE.run_id,
         )
         assert outcome.status == "done"
         durable = db.get_run(run_id)

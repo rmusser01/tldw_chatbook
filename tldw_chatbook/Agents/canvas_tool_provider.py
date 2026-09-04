@@ -273,6 +273,23 @@ class CanvasToolProvider:
         reference = self._authorities.get(id(authority))
         return reference is not None and reference() is authority
 
+    def lifecycle_coordinator(self, authority: object) -> CanvasToolCoordinator | None:
+        """Return the coordinator only to this provider's exact live authority."""
+
+        if not self.authenticates_registration_authority(authority):
+            return None
+        return self._coordinator
+
+    def lifecycle_binding(
+        self, authority: object
+    ) -> tuple[CanvasToolCoordinator, str] | None:
+        """Return the exact coordinator/run pair to authenticated bridge code."""
+
+        coordinator = self.lifecycle_coordinator(authority)
+        if coordinator is None or not self._enabled or not self.scope_is_current():
+            return None
+        return coordinator, self._scope.run_id
+
     def scope_is_current(self) -> bool:
         """Fail closed on coordinator errors or a stale session/run binding."""
 

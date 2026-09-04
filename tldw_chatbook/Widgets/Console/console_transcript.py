@@ -214,6 +214,39 @@ class ConsoleMemoryBannerPresentation:
             raise ValueError("prefix memory banner cannot carry a start identity")
 
 
+@dataclass(frozen=True, slots=True)
+class ConsoleCanvasCardPresentation:
+    """Minimal metadata-only Canvas row; interactive browser UX lands in Task 4.2."""
+
+    canvas_id: str
+    revision_id: str | None
+    label: str
+    digest: str
+    reopenable: bool
+    error_code: str | None
+
+
+def canvas_card_presentations(
+    message: ConsoleChatMessage,
+) -> tuple[ConsoleCanvasCardPresentation, ...]:
+    """Project validated Canvas metadata without ever accepting source bytes."""
+
+    metadata = message.metadata
+    if metadata is None:
+        return ()
+    return tuple(
+        ConsoleCanvasCardPresentation(
+            canvas_id=card.canvas_id,
+            revision_id=card.revision_id,
+            label=f"{card.title} · revision {card.sequence} · {card.status}",
+            digest=card.digest,
+            reopenable=card.reopenable,
+            error_code=card.error_code,
+        )
+        for card in metadata.canvas_cards
+    )
+
+
 def derive_console_memory_banner_presentation(
     effective: EffectiveMemoryResult,
     active_messages: Iterable[ConsoleChatMessage],
@@ -5204,6 +5237,10 @@ class ConsoleTranscript(VerticalScroll):
                     _append_status_and_actions(activity, activity_body)
             body = _message_body(message, presentation)
             lines.append(body)
+            lines.extend(
+                f"Canvas · {card.label}"
+                for card in canvas_card_presentations(message)
+            )
             _append_status_and_actions(message, body)
         if self._messages:
             lines.append(rule)
@@ -6430,6 +6467,16 @@ class ConsoleTranscript(VerticalScroll):
                     selected=selected,
                 )
             )
+            for index, card in enumerate(canvas_card_presentations(message)):
+                rows.append(
+                    _TranscriptRow(
+                        key=f"canvas-card:{message.id}:{index}",
+                        kind="canvas-card",
+                        signature=("canvas-card", message.id, card),
+                        message=message,
+                        renderable=f"Canvas · {card.label}",
+                    )
+                )
             if (
                 message.id in self._expanded_tool_output_ids
                 and message.tool_diff is not None
@@ -6990,6 +7037,12 @@ class ConsoleTranscript(VerticalScroll):
             return self._build_assistant_turn_widget(row)
         if row.kind == "message" and row.message is not None:
             return self._build_message_widget(row.message, selected=row.selected)
+        if row.kind == "canvas-card" and row.message is not None:
+            return Static(
+                row.renderable,
+                id=self._row_widget_id(row),
+                classes="console-transcript-canvas-card",
+            )
         if (
             row.kind == "diff"
             and row.message is not None

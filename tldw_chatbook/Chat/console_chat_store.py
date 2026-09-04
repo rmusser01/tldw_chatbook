@@ -1613,6 +1613,7 @@ class ConsoleChatStore:
         trace_projection: ConsoleTraceProjection | None = None,
         settle_provider_traces_off_thread: bool = False,
         canvas_promotion_participant: ConsoleCanvasPromotionParticipant | None = None,
+        canvas_turn_controller: Any | None = None,
     ) -> None:
         """Initialize the Console chat store.
 
@@ -1650,9 +1651,12 @@ class ConsoleChatStore:
                 the app-owned store's single worker instead of the UI thread.
             canvas_promotion_participant: Optional process-local Canvas staging
                 owner used for atomic temporary-conversation promotion.
+            canvas_turn_controller: Optional run-owned Canvas finalizer whose
+                source-private contribution joins assistant settlement.
         """
         self.persistence = persistence
         self.canvas_promotion_participant = canvas_promotion_participant
+        self.canvas_turn_controller = canvas_turn_controller
         self.trace_projection = trace_projection
         self._provider_trace_settlements: dict[str, dict[str, object]] = {}
         self._provider_trace_settlement_owned_call_ids: set[str] = set()
@@ -2147,6 +2151,12 @@ class ConsoleChatStore:
         )
         if ephemeral and self.canvas_promotion_participant is not None:
             self.canvas_promotion_participant.activate_session(session.id)
+        if (
+            ephemeral
+            and self.canvas_turn_controller is not None
+            and self.canvas_turn_controller is not self.canvas_promotion_participant
+        ):
+            self.canvas_turn_controller.activate_session(session.id)
         self._record_console_settings_binding_revision(
             session.id,
             session.conversation_binding_revision,
@@ -3341,6 +3351,7 @@ class ConsoleChatStore:
         metadata_json: str | None = None,
         provider_continuation_json: str | None = None,
         provider_continuation: ProviderContinuationCheckpoint | None = None,
+        contributions: Sequence[ConsolePromotionTransactionContribution] = (),
     ) -> bool:
         """Settle one claimed durable or ephemeral owner without a second write."""
 
@@ -3353,6 +3364,7 @@ class ConsoleChatStore:
                 metadata_json=metadata_json,
                 provider_continuation_json=provider_continuation_json,
                 provider_continuation=provider_continuation,
+                contributions=contributions,
             )
 
     def _settle_dispatch_recovery(
@@ -3365,6 +3377,7 @@ class ConsoleChatStore:
         metadata_json: str | None = None,
         provider_continuation_json: str | None = None,
         provider_continuation: ProviderContinuationCheckpoint | None = None,
+        contributions: Sequence[ConsolePromotionTransactionContribution] = (),
     ) -> bool:
         """Settle dispatch state while holding its generation owner."""
 
@@ -3421,6 +3434,7 @@ class ConsoleChatStore:
                             if message is not None
                             else None
                         ),
+                        contributions=tuple(contributions),
                     )
                 )
             except Exception:
@@ -3432,6 +3446,10 @@ class ConsoleChatStore:
             message.content = content
             message.status = terminal_state
             message.assistant_generation_state = terminal_state
+            if metadata_json is not None and message.video_metadata is None:
+                restored_metadata = MessageMetadata.from_json(metadata_json)
+                if restored_metadata is not None:
+                    message.metadata = restored_metadata
             message.provider_continuation = provider_continuation
             message.provider_continuation_message_version = committed_message_version
             message.provider_continuation_actions_enabled = False
@@ -3490,16 +3508,50 @@ class ConsoleChatStore:
             metadata_json = message.video_metadata.to_json()
         elif message.metadata is not None and not message.metadata.is_empty:
             metadata_json = message.metadata.to_json()
+        canvas_settlement = None
+        canvas_contributions: tuple[ConsolePromotionTransactionContribution, ...] = ()
+        canvas_controller = self.canvas_turn_controller
+        if canvas_controller is not None:
+            canvas_settlement = canvas_controller.settlement_for_assistant(message.id)
+            if canvas_settlement is not None:
+                try:
+                    existing = json.loads(metadata_json) if metadata_json else {}
+                    canvas_payload = json.loads(canvas_settlement.metadata_json)
+                    if type(existing) is not dict or type(canvas_payload) is not dict:
+                        raise ValueError("invalid Canvas card metadata")
+                    existing.update(canvas_payload)
+                    metadata_json = json.dumps(
+                        existing,
+                        ensure_ascii=False,
+                        allow_nan=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    if (
+                        terminal_state == "complete"
+                        and canvas_settlement.contribution is not None
+                    ):
+                        canvas_contributions = (canvas_settlement.contribution,)
+                except Exception:
+                    canvas_controller.abort_settlement(
+                        canvas_settlement.run_id, "metadata_write_failed"
+                    )
+                    raise ConsoleDispatchSettlementError(
+                        "Canvas settlement metadata is invalid."
+                    ) from None
         if not self.settle_dispatch_recovery(
             session_id,
             assistant_message_id=message.id,
             terminal_state=terminal_state,
             content=message.content,
             metadata_json=metadata_json,
+            contributions=canvas_contributions,
         ):
             raise ConsoleDispatchSettlementError(
                 "Durable dispatch terminal settlement failed."
             )
+        if canvas_settlement is not None and terminal_state == "complete":
+            canvas_controller.confirm_settlement(canvas_settlement.run_id)
         return True
 
     def _hydrate_provider_continuations_from_persistence(
@@ -4317,6 +4369,11 @@ class ConsoleChatStore:
 
         if self.canvas_promotion_participant is not None:
             self.canvas_promotion_participant.discard_session(session_id)
+        if (
+            self.canvas_turn_controller is not None
+            and self.canvas_turn_controller is not self.canvas_promotion_participant
+        ):
+            self.canvas_turn_controller.discard_session(session_id)
 
         # Purge EVERY message the session owns, not just the active-path view:
         # off-path tree nodes and dropped display-only TOOL markers both live in
@@ -9807,6 +9864,11 @@ class ConsoleChatStore:
                 self.library_policy_coordinator.unregister_holder(replaced_session_id)
         if self.canvas_promotion_participant is not None:
             self.canvas_promotion_participant.discard_all()
+        if (
+            self.canvas_turn_controller is not None
+            and self.canvas_turn_controller is not self.canvas_promotion_participant
+        ):
+            self.canvas_turn_controller.discard_all()
         self._sessions.clear()
         self._messages_by_session.clear()
         self._message_session_index.clear()
@@ -9872,6 +9934,12 @@ class ConsoleChatStore:
                 self.canvas_promotion_participant.activate_session(
                     restored_session.id
                 )
+            if (
+                restored_session.ephemeral
+                and self.canvas_turn_controller is not None
+                and self.canvas_turn_controller is not self.canvas_promotion_participant
+            ):
+                self.canvas_turn_controller.activate_session(restored_session.id)
             self._sessions[session.id] = restored_session
             self._seed_console_settings_owned_bases(restored_session)
             if self.library_policy_coordinator is not None:
@@ -9916,6 +9984,11 @@ class ConsoleChatStore:
 
         if self.canvas_promotion_participant is not None:
             self.canvas_promotion_participant.close_runtime()
+        if (
+            self.canvas_turn_controller is not None
+            and self.canvas_turn_controller is not self.canvas_promotion_participant
+        ):
+            self.canvas_turn_controller.close_runtime()
 
         with self._fence_provider_trace_settlement_registrations(
             (),

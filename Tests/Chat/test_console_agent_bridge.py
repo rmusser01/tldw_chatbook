@@ -136,12 +136,14 @@ from tldw_chatbook.Agents.agent_models import (
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_service import AgentService
+from tldw_chatbook.Agents.canvas_tool_provider import CanvasToolProvider
 from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
 from tldw_chatbook.Agents.run_context import current_run_id
 from tldw_chatbook.Agents.tool_catalog import (
     SkillToolProvider,
     ToolCatalogRegistry,
 )
+from tldw_chatbook.Canvas.models import CanvasScope
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider, _default_specs
 from tldw_chatbook.Agents.project_instruction_resolver import ProjectInstructionResolver
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
@@ -598,6 +600,69 @@ def _tool_messages(store, session_id: str) -> list[ConsoleChatMessage]:
         for message in store.messages_for_session(session_id)
         if message.role is ConsoleMessageRole.TOOL
     ]
+
+
+def test_canvas_lifecycle_finalizer_receives_actual_terminal_run_identity(
+    tmp_path,
+) -> None:
+    class LifecycleRecorder:
+        def __init__(self) -> None:
+            self.finished: list[tuple[str, str, str]] = []
+
+        def is_scope_current(self, _scope) -> bool:
+            return True
+
+        def list_canvases(self, _scope):
+            return ()
+
+        def read_canvas(self, _scope, _canvas_id):
+            raise AssertionError("not invoked")
+
+        def create_canvas(self, _scope, **_kwargs):
+            raise AssertionError("not invoked")
+
+        def update_canvas(self, _scope, **_kwargs):
+            raise AssertionError("not invoked")
+
+        def finish_assistant_run(
+            self,
+            assistant_message_id: str,
+            *,
+            actual_run_id: str,
+            terminal_status: str,
+        ) -> None:
+            self.finished.append(
+                (assistant_message_id, actual_run_id, terminal_status)
+            )
+
+    bridge, db, store, session, assistant_id = _bridge(tmp_path, [["done"]])
+    run_id = "canvas-run-1"
+    recorder = LifecycleRecorder()
+    provider = CanvasToolProvider(
+        recorder,
+        scope=CanvasScope(
+            session_id=session.id,
+            conversation_id="conv-1",
+            active_message_ids=("user-1",),
+            selected_canvas_id=None,
+            selected_revision_id=None,
+            run_id=run_id,
+        ),
+    )
+    authority = provider.issue_registration_authority()
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        assistant_id,
+        canvas_provider=provider,
+        canvas_authority=authority,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert recorder.finished == [(assistant_id, run_id, RUN_DONE)]
+    assert db.get_run(run_id) is not None
 
 
 def _resume_tool_messages(

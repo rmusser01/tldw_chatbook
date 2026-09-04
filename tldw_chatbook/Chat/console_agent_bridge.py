@@ -4848,6 +4848,22 @@ class ConsoleAgentBridge:
         profile_context_service: Any | None = None,
         personal_context_snapshot: ProfileContextSnapshot | None = None,
     ) -> tuple[str, RunOutcome]:
+        canvas_turn_controller = None
+        canvas_run_id = None
+        lifecycle_reader = getattr(canvas_provider, "lifecycle_binding", None)
+        if callable(lifecycle_reader):
+            try:
+                lifecycle_binding = lifecycle_reader(canvas_authority)
+                if (
+                    isinstance(lifecycle_binding, tuple)
+                    and len(lifecycle_binding) == 2
+                    and isinstance(lifecycle_binding[1], str)
+                    and lifecycle_binding[1]
+                ):
+                    canvas_turn_controller, canvas_run_id = lifecycle_binding
+            except Exception:
+                canvas_turn_controller = None
+                canvas_run_id = None
         if generation_token is None:
             generation_token = self._store.begin_generation_attempt(
                 assistant_message_id
@@ -6124,6 +6140,7 @@ class ConsoleAgentBridge:
                 continuation_owner_key=continuation_owner_key,
                 first_request_schema_plan=first_request_plan.schemas,
                 request_worktree_merge_confirm=request_worktree_merge_confirm,
+                requested_run_id=canvas_run_id,
             )
         finally:
             # PR3a-2 Task 4: this turn is over -- from here on a settling
@@ -6132,6 +6149,17 @@ class ConsoleAgentBridge:
             # `run_turn` raised, before any teardown below can block.
             with self._change_window_lock:
                 self._inflight_turn_message_ids.discard(assistant_message_id)
+            if canvas_turn_controller is not None:
+                try:
+                    canvas_turn_controller.finish_assistant_run(
+                        assistant_message_id,
+                        actual_run_id=(run_id if "run_id" in locals() else ""),
+                        terminal_status=(
+                            outcome.status if "outcome" in locals() else "error"
+                        ),
+                    )
+                except Exception:
+                    logger.warning("canvas run settlement failed closed")
             if managed_skill_promotion_gate is not None:
                 managed_skill_promotion_gate.unbind_reader()
             unbind_promotion_context = getattr(
