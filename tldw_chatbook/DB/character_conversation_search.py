@@ -845,8 +845,11 @@ class CharacterConversationSearchRepository:
     def _presentation_row(
         self, source: Any, *, selected_excerpt: str = ""
     ) -> CharacterConversationRow:
+        source_keys = source.keys()
         conversation_id = str(
-            source["conversation_id"] if "conversation_id" in source else source["id"]
+            source["conversation_id"]
+            if "conversation_id" in source_keys
+            else source["id"]
         )
         card_name = source["card_name"]
         card_deleted = source["card_deleted"]
