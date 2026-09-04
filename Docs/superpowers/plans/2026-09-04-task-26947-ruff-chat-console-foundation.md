@@ -15,6 +15,7 @@
 - The 73 paths in TASK-26947's Assigned Paths JSON are the exact file allowlist; do not format or change any unassigned Python path.
 - Normalize only ast.TypeIgnore.lineno when comparing AST dumps.
 - Preserve ordered comment tokens, inline directive anchors, standalone Ruff directive adjacency, and fmt-off/fmt-on enclosed-node intervals.
+- Compute each inline directive's significant-token position from its nearest containing AST statement and exclude only parenthesis pairs proven AST-neutral by an independent shadow parse/dump comparison.
 - Do not make handwritten production behavior changes.
 - Capture the untouched origin/dev focused-test baseline before formatting and require the post-format failure-key inventory to match it exactly.
 - Use the exact 55 assigned test modules owned by this batch. Do not run the full suite without user opt-in.
@@ -53,7 +54,8 @@
 - Produces: the deterministic Ruff output and a structural parity result.
 
 - [ ] Invoke Ruff 0.15.22 format once with all 73 paths supplied explicitly.
-- [ ] Compare the post-format AST/comment/directive/fmt-range evidence with /tmp/task26947_before.json and stop on any mismatch.
+- [ ] Correct the ephemeral guard's directive-position metric, restore the 73 assigned files to the immutable pre-format blobs, and recapture /tmp/task26947_before.json before rerunning Ruff.
+- [ ] Compare the post-format AST/comment/directive/fmt-range evidence with the corrected /tmp/task26947_before.json and stop on any mismatch.
 - [ ] Assert every changed Python path is in the 73-path allowlist and no assigned path was silently omitted.
 - [ ] Review the formatter diff for handwritten or behavioral changes.
 - [ ] Commit only the assigned Python paths changed by Ruff so Task 2's review package contains the formatter diff.
@@ -85,6 +87,8 @@
 
 - Modify: backlog/tasks/task-26947 - Clean Ruff formatter debt for ruff-chat-console-foundation.md.
 - Modify only if required by the diagnostic check: Docs/security/production-diagnostic-inventory.json.
+- Modify: Docs/superpowers/specs/2026-08-30-task-26000-ruff-formatter-debt-design.md.
+- Modify: backlog/docs/lessons-testing-evidence.md.
 
 **Interfaces:**
 
@@ -94,6 +98,7 @@
 - [ ] Confirm Task 2's formatter commit contains only assigned Python paths and any Task 3 generated-artifact commit contains only the required inventory refresh.
 - [ ] Request independent code review and address every Critical or Important finding.
 - [ ] Add exact drift, structural, Ruff, focused-test, governance, and generated-artifact results to Implementation Notes.
+- [ ] Clarify TASK-26000's directive-position definition and record the physical-line guard incident in the testing-evidence lessons so later formatter batches use the corrected metric.
 - [ ] Check every acceptance criterion, set TASK-26947 to Done, and commit the task/plan closeout.
 - [ ] Rebase onto latest origin/dev, rerun scope/reproduction/governance gates, publish a PR, address Qodo and CI findings, and merge only while strict-latest-base protection remains satisfied.
 
