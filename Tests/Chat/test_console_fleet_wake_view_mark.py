@@ -25,6 +25,7 @@ Pinned here, at the delivery commit (``_deliver``'s acceptance branch):
 - an unwired probe (controller doubles, the pre-screen rig) keeps the
   historical clear-on-delivery.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -57,9 +58,7 @@ async def _deliver_one(runs_db, app, session, gateway, controller):
         session.id, ConversationLocalMarksService.FLEET_UNSEEN
     )
     wake = controller.fleet_wake
-    wake.on_fleet_drained(
-        _drain(session.id, _survivor(run_id, session_id=session.id))
-    )
+    wake.on_fleet_drained(_drain(session.id, _survivor(run_id, session_id=session.id)))
     assert await _settle(lambda: gateway.payloads), "the wake never delivered"
     assert await _settle(lambda: not wake.has_pending(session.id))
     assert runs_db.get_run(run_id).get("wake_delivered_at"), (
@@ -72,13 +71,11 @@ async def test_a_wake_completing_off_view_leaves_the_mark_set(tmp_path):
     """The ruling's core requirement, RED against unmodified production:
     the delivery commit cleared the mark regardless of visibility, so an
     off-screen delivery left the user nothing."""
-    chacha, app, runs_db, store, session, gateway, bridge, controller = (
-        _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
     )
     try:
-        controller.wake_conversation_in_view = (
-            lambda conversation_id, session_id: False
-        )
+        controller.wake_conversation_in_view = lambda conversation_id, session_id: False
         revision_before = int(getattr(app, FLEET_UNSEEN_REVISION_ATTR, 0))
         await _deliver_one(runs_db, app, session, gateway, controller)
         assert _marked(app, session.id), (
@@ -87,8 +84,7 @@ async def test_a_wake_completing_off_view_leaves_the_mark_set(tmp_path):
             "ran and delivered while they were elsewhere"
         )
         assert int(getattr(app, FLEET_UNSEEN_REVISION_ATTR, 0)) > revision_before, (
-            "the off-view mark must bump the badge revision so screen "
-            "caches repaint"
+            "the off-view mark must bump the badge revision so screen caches repaint"
         )
     finally:
         chacha.close()
@@ -98,13 +94,11 @@ async def test_a_wake_completing_off_view_leaves_the_mark_set(tmp_path):
 async def test_a_wake_completing_in_view_still_clears_the_mark(tmp_path):
     """The preserved side: the user watched the wake land; nothing is
     unseen; the historical clear stands."""
-    chacha, app, runs_db, store, session, gateway, bridge, controller = (
-        _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
     )
     try:
-        controller.wake_conversation_in_view = (
-            lambda conversation_id, session_id: True
-        )
+        controller.wake_conversation_in_view = lambda conversation_id, session_id: True
         await _deliver_one(runs_db, app, session, gateway, controller)
         assert not _marked(app, session.id), (
             "a wake the user watched land is not unseen -- the delivery "
@@ -119,8 +113,8 @@ async def test_a_raising_view_probe_keeps_the_mark(tmp_path):
     """Uncertainty resolves toward the badge: a kept mark on a viewed
     conversation self-heals on the next displayed sync tick; a cleared
     mark on an unviewed delivery is the live silent-delivery bug."""
-    chacha, app, runs_db, store, session, gateway, bridge, controller = (
-        _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
     )
     try:
 
@@ -142,8 +136,8 @@ async def test_an_unwired_view_probe_keeps_the_historical_clear(tmp_path):
     """Controller doubles and the pre-screen rig have no view probe; they
     keep the pre-15971 clear-on-delivery (the screen always wires the
     probe in production)."""
-    chacha, app, runs_db, store, session, gateway, bridge, controller = (
-        _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
     )
     try:
         assert getattr(controller, "wake_conversation_in_view", None) is None

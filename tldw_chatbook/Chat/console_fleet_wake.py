@@ -148,9 +148,9 @@ WAKE_NOTICE_DISCLAIMER = (
 
 #: Closing line: invites action without granting any authority.
 WAKE_NOTICE_TRAILER = (
-    "You may act on these results now, or wait for the user's next "
-    "message."
+    "You may act on these results now, or wait for the user's next message."
 )
+
 
 def _fenced(text: str) -> str:
     """Fence ``text`` with more backticks than any run it contains, so a
@@ -164,8 +164,7 @@ def _truncated(text: str, cap: int) -> str:
     if cap <= 0 or len(text) <= cap:
         return text
     return (
-        text[:cap]
-        + "\n… (truncated to share the notice's result budget; the full "
+        text[:cap] + "\n… (truncated to share the notice's result budget; the full "
         "result is in the run log)"
     )
 
@@ -209,9 +208,7 @@ def compose_wake_notice(
             header += f" — task: {shortened}"
         result = row.get("result")
         body = (
-            str(result)
-            if result
-            else f"(no result recorded; the run ended '{status}')"
+            str(result) if result else f"(no result recorded; the run ended '{status}')"
         )
         headers.append(header)
         bodies.append(body)
@@ -364,9 +361,7 @@ class ConsoleFleetWakeCoordinator:
 
     # -- authority ------------------------------------------------------------
 
-    def authorizes(
-        self, authorization: Any, session_id: str
-    ) -> bool:
+    def authorizes(self, authorization: Any, session_id: str) -> bool:
         """Return whether ``authorization`` is this coordinator's live
         wake token for ``session_id``."""
         with self._registry_lock:
@@ -791,9 +786,7 @@ class ConsoleFleetWakeCoordinator:
         if not disposed:
             self.retry_soon()
 
-    def _conversation_in_view(
-        self, conversation_id: str, session_id: str
-    ) -> bool:
+    def _conversation_in_view(self, conversation_id: str, session_id: str) -> bool:
         """Whether the delivered conversation is actually being viewed.
 
         Consults the screen-wired ``wake_conversation_in_view`` probe
@@ -830,8 +823,7 @@ class ConsoleFleetWakeCoordinator:
             return bool(probe(conversation_id, session_id))
         except Exception as exc:  # noqa: BLE001 -- uncertainty keeps the badge
             logger.debug(
-                "wake view probe raised; keeping the unseen mark "
-                "(exception_type={})",
+                "wake view probe raised; keeping the unseen mark (exception_type={})",
                 type(exc).__name__,
             )
             return False
@@ -939,9 +931,7 @@ class ConsoleFleetWakeCoordinator:
             return None
         return getattr(bridge, "runs_db", None)
 
-    def _rows_for(
-        self, conversation_id: str, bucket: Mapping[str, str]
-    ) -> list[dict]:
+    def _rows_for(self, conversation_id: str, bucket: Mapping[str, str]) -> list[dict]:
         """Read the pending runs' rows; synthesize an honest stand-in for
         a row that cannot be read (a wiped runs DB must not strand the
         pending entry forever). A run the durable ledger already shows

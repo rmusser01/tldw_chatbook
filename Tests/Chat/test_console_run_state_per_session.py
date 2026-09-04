@@ -143,11 +143,11 @@ def test_workspace_probe_sees_background_session_captured_roots(
     assert not controller.run_active_for_workspace(str(root_b))
 
 
-def test_send_refusal_is_per_session_and_capped(controller_with_two_sessions, monkeypatch):
+def test_send_refusal_is_per_session_and_capped(
+    controller_with_two_sessions, monkeypatch
+):
     controller, session_a, session_b = controller_with_two_sessions
-    monkeypatch.setattr(
-        type(controller), "max_parallel_runs", property(lambda self: 1)
-    )
+    monkeypatch.setattr(type(controller), "max_parallel_runs", property(lambda self: 1))
     controller._set_run_state(
         ConsoleRunState(ConsoleRunStatus.STREAMING, "run A"), session_id=session_a
     )
@@ -166,13 +166,10 @@ def test_send_refusal_is_per_session_and_capped(controller_with_two_sessions, mo
 def test_cap_default_and_floor(controller_with_two_sessions, monkeypatch):
     controller, _, _ = controller_with_two_sessions
     import tldw_chatbook.Chat.console_chat_controller as ccc
-    monkeypatch.setattr(
-        ccc, "get_cli_setting", lambda *a, **k: 0, raising=False
-    )
+
+    monkeypatch.setattr(ccc, "get_cli_setting", lambda *a, **k: 0, raising=False)
     assert controller.max_parallel_runs == 1  # floor
-    monkeypatch.setattr(
-        ccc, "get_cli_setting", lambda *a, **k: None, raising=False
-    )
+    monkeypatch.setattr(ccc, "get_cli_setting", lambda *a, **k: None, raising=False)
     assert controller.max_parallel_runs == 3  # default
 
 
@@ -184,9 +181,7 @@ def test_lowering_cap_never_kills_running(controller_with_two_sessions, monkeypa
     controller._set_run_state(
         ConsoleRunState(ConsoleRunStatus.STREAMING, "B"), session_id=session_b
     )
-    monkeypatch.setattr(
-        type(controller), "max_parallel_runs", property(lambda self: 1)
-    )
+    monkeypatch.setattr(type(controller), "max_parallel_runs", property(lambda self: 1))
     # Both stay streaming; only NEW sends are refused.
     assert controller.run_state_for(session_a).status is ConsoleRunStatus.STREAMING
     assert controller.run_state_for(session_b).status is ConsoleRunStatus.STREAMING
@@ -207,9 +202,7 @@ def test_orphaned_closed_session_does_not_consume_cap_slot(
     every cap/fleet consumer must go through the live-filtered accessors.
     """
     controller, session_a, session_b = controller_with_two_sessions
-    monkeypatch.setattr(
-        type(controller), "max_parallel_runs", property(lambda self: 1)
-    )
+    monkeypatch.setattr(type(controller), "max_parallel_runs", property(lambda self: 1))
     controller._set_run_state(
         ConsoleRunState(ConsoleRunStatus.VALIDATING, "orphan"), session_id=session_a
     )
@@ -265,11 +258,15 @@ def test_cap_refusal_truncates_and_k_more_suffix():
 
     # Verify first 3 titles are present in order (they should be Alpha, Bravo, Charlie)
     titles_section = refusal[refusal.index("(") + 1 : refusal.index(")")]
-    assert "Alpha, Bravo, Charlie" in titles_section, f"Expected first 3 titles in '{titles_section}'"
+    assert "Alpha, Bravo, Charlie" in titles_section, (
+        f"Expected first 3 titles in '{titles_section}'"
+    )
 
     # Verify the "and K more" suffix is exact where K = 4 - 3
     expected_suffix = f" and {4 - CONSOLE_CAP_REFUSAL_TITLE_LIMIT} more"
-    assert expected_suffix in refusal, f"Should contain exact suffix '{expected_suffix}', got: {refusal}"
+    assert expected_suffix in refusal, (
+        f"Should contain exact suffix '{expected_suffix}', got: {refusal}"
+    )
     assert " and 1 more" in refusal
 
 
@@ -465,12 +462,12 @@ class TwoStreamGateway:
 
     async def resolve_for_send(self, selection):
         return provider_resolution(
-                   ready=True,
-                   provider="llama_cpp",
-                   model="test-model",
-                   base_url="http://127.0.0.1:9099",
-                   visible_copy="",
-               )
+            ready=True,
+            provider="llama_cpp",
+            model="test-model",
+            base_url="http://127.0.0.1:9099",
+            visible_copy="",
+        )
 
     @staticmethod
     def _key_for(messages: list[dict]) -> str:
@@ -655,7 +652,9 @@ async def test_submit_draft_closed_session_id_fails_closed_without_touching_acti
     result = await controller.submit_draft("hello", session_id=closed_session_id)
 
     assert result.accepted is True
-    assert result.visible_copy == "Console session closed before your message could send."
+    assert (
+        result.visible_copy == "Console session closed before your message could send."
+    )
     assert result.session_closed is True
     messages_b = store.messages_for_session(session_b.id)
     assert messages_b == []
