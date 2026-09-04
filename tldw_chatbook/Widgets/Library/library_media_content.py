@@ -342,6 +342,19 @@ class LibraryMediaContentSearchControls(Vertical):
         focus_on_mount: bool = False,
         **kwargs: Any,
     ) -> None:
+        """Build the in-item search bar.
+
+        Args:
+            is_markdown: Whether the searched body renders as Markdown (the
+                placeholder says search matches raw text).
+            query: The active query, or "" when the bar is empty.
+            matches: Line indexes that match ``query``.
+            match_index: Index into ``matches`` of the current match.
+            focus_on_mount: One-shot Find-gesture token (task-31269): take
+                focus into the Input after this mount; never set for an
+                item change, mode flip, or match navigation remount.
+            **kwargs: Passed to ``Vertical``.
+        """
         super().__init__(**kwargs)
         self.is_markdown = is_markdown
         self.query = query
