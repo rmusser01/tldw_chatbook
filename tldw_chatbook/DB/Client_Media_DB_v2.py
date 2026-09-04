@@ -2505,8 +2505,12 @@ class MediaDatabase:
                 answer it -- it is NOT turned into "no rows".
             search_fields (Optional[List[str]]): A list of fields to apply the
                 `search_query` against. Valid fields: 'title', 'content' (FTS),
-                'author', 'type' (LIKE). Defaults to ['title', 'content'] if
-                `search_query` is provided.
+                'author', 'type' (LIKE), 'keywords' (LIKE over the media's
+                active keywords, OR-ed with the other legs -- TASK-31274; the
+                FTS leg then matches through an id subquery rather than the
+                joined MATCH, so relevance sorting is unavailable while it is
+                requested). Defaults to ['title', 'content'] if `search_query`
+                is provided.
             media_types (Optional[List[str]]): A list of media type strings
                 (e.g., ['video', 'pdf']) to filter results. Only items matching
                 one of these types will be returned.
@@ -2607,10 +2611,16 @@ class MediaDatabase:
         elif not search_fields:  # Ensure search_fields is a list even if empty
             search_fields = []
 
-        valid_text_search_fields = {"title", "content", "author", "type"}
+        valid_text_search_fields = {"title", "content", "author", "type", "keywords"}
         sanitized_text_search_fields = [
             f for f in search_fields if f in valid_text_search_fields
         ]
+        # TASK-31274: 'keywords' is a substring match over the media's active
+        # keywords, OR-ed with the title/content/author/type legs (a tag the
+        # user filed items under is not in the title or the body, so an AND
+        # would never fire). It is NOT the `must_have_keywords` filter above,
+        # which is an exact-match AND over every listed keyword.
+        keyword_field_active = "keywords" in sanitized_text_search_fields
 
         # Define base SELECT, FROM clauses
         broad_select_parts = [
@@ -2780,6 +2790,10 @@ class MediaDatabase:
             # LIKE search conditions
             like_conditions = []
             like_params = []
+            # TASK-31274: set only when the keyword leg needs the FTS match as
+            # an OR-able branch instead of the joined MATCH condition.
+            fts_or_branch: Optional[str] = None
+            fts_or_param: Optional[str] = None
 
             # FTS on 'title', 'content'
             if any(f in sanitized_text_search_fields for f in ["title", "content"]):
@@ -2836,7 +2850,20 @@ class MediaDatabase:
 
                 # Combine all FTS query parts with OR
                 combined_fts_query = " OR ".join(fts_query_parts)
-                if combined_fts_query:
+                if combined_fts_query and keyword_field_active:
+                    # TASK-31274: FTS5 raises "unable to use function MATCH in
+                    # the requested context" when a joined MATCH sits inside an
+                    # OR, so the keyword leg cannot be OR-ed against the joined
+                    # form. Spelled as an uncorrelated id subquery it can be --
+                    # the same shape `search_library_media_page` already uses.
+                    # No `fts.rank` is available this way, so relevance sorting
+                    # falls back to the default order; the Library browse always
+                    # passes an explicit date/title sort.
+                    fts_or_branch = (
+                        "m.id IN (SELECT rowid FROM media_fts WHERE media_fts MATCH ?)"
+                    )
+                    fts_or_param = combined_fts_query
+                elif combined_fts_query:
                     fts_search_active = True
                     if not any(
                         "media_fts fts" in j_item for j_item in joins
@@ -2934,7 +2961,35 @@ class MediaDatabase:
                     like_conditions.append(f"({' OR '.join(like_parts)})")
 
             # Add LIKE conditions to the main conditions list
-            if like_conditions:
+            if keyword_field_active:
+                # TASK-31274: keep the existing title/content legs exactly as
+                # they are (FTS AND LIKE) and OR the keyword leg beside them,
+                # so this only ADDS keyword hits. Params are extended here, in
+                # branch order, because the FTS param is no longer appended
+                # where its condition used to be.
+                text_and_parts = []
+                text_and_params: List[Any] = []
+                if fts_or_branch is not None:
+                    text_and_parts.append(fts_or_branch)
+                    text_and_params.append(fts_or_param)
+                if like_conditions:
+                    text_and_parts.append(f"({' OR '.join(like_conditions)})")
+                    text_and_params.extend(like_params)
+                branches = []
+                branch_params: List[Any] = []
+                if text_and_parts:
+                    branches.append(f"({' AND '.join(text_and_parts)})")
+                    branch_params.extend(text_and_params)
+                branches.append(
+                    "EXISTS (SELECT 1 FROM MediaKeywords mk_q "
+                    "JOIN Keywords k_q ON mk_q.keyword_id = k_q.id "
+                    "WHERE mk_q.media_id = m.id AND k_q.deleted = 0 "
+                    "AND k_q.keyword LIKE ? ESCAPE '\\')"
+                )
+                branch_params.append(f"%{self._escape_library_like(search_query)}%")
+                conditions.append(f"({' OR '.join(branches)})")
+                params.extend(branch_params)
+            elif like_conditions:
                 conditions.append(f"({' OR '.join(like_conditions)})")
                 params.extend(like_params)
 

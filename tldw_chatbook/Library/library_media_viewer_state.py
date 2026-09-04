@@ -20,7 +20,14 @@ _TYPE_KEYS = ("type", "media_type")
 # "obsidian_note" -- neither type alone proves the content is markdown, so
 # LIB-13's "Rendered by default" decision also requires a content sniff
 # (``looks_like_markdown_content``) before defaulting to the rendered view.
-_MARKDOWN_MEDIA_TYPES = frozenset({"plaintext", "markdown", "obsidian_note"})
+# task-31277 (critique #4 P2, AC#5): video/audio transcripts join the list.
+# Ingestion writes sectioned transcripts with real `## ...` headings, and
+# gating the sniff on the type alone painted those hashes literally in the
+# Reader. The content sniff stays the second gate, so an ordinary transcript
+# still defaults to Raw.
+_MARKDOWN_MEDIA_TYPES = frozenset(
+    {"plaintext", "markdown", "obsidian_note", "video", "audio"}
+)
 _ATX_HEADING_RE = re.compile(r"^#{1,6}\s+\S")
 _TABLE_SEPARATOR_ROW_RE = re.compile(r"^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?$")
 

@@ -192,14 +192,23 @@ $ds-library-source-browser-width: 31;
     color: $ds-text-primary;
 }
 
+/* task-31276: no focus outline here. The grip is 5 columns wide and as
+   TALL AS THE SHELL, so an outline can only ever paint its top and bottom
+   rows -- and the top row sits on the Reader's identity line, where a
+   five-cell rule reads as a rendering artifact at the pane join, not as
+   focus (live: `┐─────Local Media item`, 14 captures -- and it persists,
+   because focus lands here after ANY Reader recompose: Escape out of the
+   Find bar, a mode-tab click, More). Fourth widget bitten by an outline
+   painting over content rather than around it, after TASK-1160
+   (DataTable), TASK-2300 (SelectOverlay) and task-31221 (the media type
+   chooser). Focus stays visible the sanctioned way: the arrow glyph
+   recolours to the accent and goes bold. */
 .library-adaptive-reader-shell > .library-adaptive-reader-pane-grip:focus {
     background: $ds-surface-raised;
     color: $ds-action-focus;
     text-style: bold;
     tint: transparent;
     outline: none;
-    outline-top: solid $ds-action-focus;
-    outline-bottom: solid $ds-action-focus;
 }
 
 #library-collections-reader-shell #library-canvas {
@@ -2258,26 +2267,18 @@ with stray left-edge border fragments), and padding 0 1 so the full
     width: 100%;
     text-style: bold;
     color: $ds-text-primary;
-    margin: 0 0 1 0;
+    /* task-31277 (critique #4 P2): no bottom margin. It bought separation
+       from a byline row that is now composed only when the item HAS an
+       author or URL, so on every other item it paid one blank row of the
+       reading surface for nothing -- and a byline reads better hugging
+       the title it belongs to anyway. */
+    margin: 0;
 }
 
 #library-media-viewer-meta {
     width: 100%;
     color: $ds-text-muted;
     margin: 0 0 1 0;
-}
-
-/* Section headers: bold + a thin top rule so Content / Analysis / Highlights
-   read as real section boundaries the eye can find without reading. */
-#library-media-viewer-content-title,
-#library-media-viewer-analysis-title,
-#library-media-viewer-highlights-title {
-    width: 100%;
-    text-style: bold;
-    color: $ds-text-primary;
-    border-top: solid $ds-grid-line;
-    padding: 1 0 0 0;
-    margin: 1 0 1 0;
 }
 
 #library-media-content-search {
@@ -2385,6 +2386,16 @@ with stray left-edge border fragments), and padding 0 1 so the full
     height: auto;
 }
 
+/* task-31276: a bare Horizontal defaults to height:1fr, so this one-row
+   Rendered|Raw toggle claimed the reader's whole remaining height (12 rows
+   at 80x24, 18 once the Find bar mounted) and pushed the reading surface --
+   and, once task-15774's dock was retired, the Find bar's match count and
+   Prev/Next -- below the fold. The same unstyled-1fr-wrapper trap task-31222
+   fixed one level up on #library-media-reader-mode-read. */
+#library-media-content-mode-strip {
+    height: auto;
+}
+
 #library-media-viewer-content {
     /* task-31237 (evolves task-31222's 75vh cap into a true fill): the
        content box takes exactly the pane's remaining height -- 75vh could
@@ -2401,6 +2412,15 @@ with stray left-edge border fragments), and padding 0 1 so the full
     margin: 0 0 1 0;
     border: solid $ds-grid-line;
     padding: 0 1;
+}
+
+/* task-31277 (critique #4 P2, AC#4): the reading measure. The bodies used
+   the whole pane, so prose ran ~150 cells at 235 columns against DESIGN.md's
+   65-75. The cap is on the TEXT bodies only -- #library-media-viewer-content
+   keeps its full width so its border still spans the pane. */
+#library-media-viewer-content-text,
+#library-media-viewer-content-markdown {
+    max-width: 92;
 }
 
 /* task-31272 (critique #4, B cap_57): F6's first Reader stop IS this box
@@ -2426,7 +2446,9 @@ with stray left-edge border fragments), and padding 0 1 so the full
     /* task-22500: the widget sets its own height from the wrap index,
        bounded by the room its parent actually has (the parent's max-height
        is an OUTER bound, so its border rows are not available to us);
-       width must fill so the index is built at the real render width. */
+       width must fill so the index is built at the real render width
+       (task-31277 caps that width; the index is rebuilt from the widget's
+       own scrollable content region, so the cap is what it indexes at). */
     width: 100%;
     /* The reader wraps, so horizontal scrolling has nothing to reach. A
        horizontal scrollbar here would also shrink the render width below

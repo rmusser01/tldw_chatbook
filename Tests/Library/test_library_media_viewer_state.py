@@ -759,18 +759,23 @@ def test_build_state_obsidian_note_with_heading_is_markdown():
 
 
 def test_build_state_non_markdown_type_never_flagged_even_with_heading_syntax():
-    """A video/pdf/audio item whose transcript happens to contain a line
+    """A type outside the allowlist whose body happens to contain a line
     starting with ``#`` (e.g. a hashtag) must never default to Rendered --
-    the media-type allowlist gates the content sniff."""
+    the media-type allowlist gates the content sniff.
+
+    task-31277 moved ``video``/``audio`` INTO the allowlist (sectioned
+    transcripts painted their ``##`` headings literally), so this pins the
+    gate on a type that is still outside it.
+    """
     state = build_library_media_viewer_state(
         {
             "id": "m1",
-            "title": "Interview",
-            "type": "audio",
-            "content": "# trending topic mentioned in the interview",
+            "title": "Quarterly Report",
+            "type": "pdf",
+            "content": "# trending topic mentioned in the report",
         }
     )
-    assert state.media_type == "audio"
+    assert state.media_type == "pdf"
     assert state.is_markdown is False
 
 
@@ -785,3 +790,44 @@ def test_empty_state_is_markdown_false_and_media_type_empty():
     state = build_library_media_viewer_state(None)
     assert state.is_markdown is False
     assert state.media_type == ""
+
+
+def test_build_state_video_transcript_with_headings_is_markdown():
+    """task-31277 AC#5: a transcript sectioned with `## ...` headings must
+    default to Rendered -- painting the hashes literally is the bug."""
+    state = build_library_media_viewer_state(
+        {
+            "id": "m1",
+            "title": "Product Demo",
+            "type": "video",
+            "content": "## Section 1\n\nThe host opens the demo.",
+        }
+    )
+    assert state.media_type == "video"
+    assert state.is_markdown is True
+
+
+def test_build_state_audio_transcript_with_headings_is_markdown():
+    state = build_library_media_viewer_state(
+        {
+            "id": "m1",
+            "title": "Interview",
+            "type": "audio",
+            "content": "## Part one\n\nThe interview opens.",
+        }
+    )
+    assert state.is_markdown is True
+
+
+def test_build_state_video_transcript_without_markdown_syntax_stays_raw():
+    """The content sniff remains the second gate: an ordinary transcript
+    has no markdown syntax and must still default to Raw."""
+    state = build_library_media_viewer_state(
+        {
+            "id": "m1",
+            "title": "Product Demo",
+            "type": "video",
+            "content": "The host opens the demo.\nThe dashboard appears.",
+        }
+    )
+    assert state.is_markdown is False

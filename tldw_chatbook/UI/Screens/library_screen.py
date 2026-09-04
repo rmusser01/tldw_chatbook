@@ -15583,10 +15583,16 @@ class LibraryScreen(BaseAppScreen):
         committed: bool = False,
         remove_ids: tuple[str, ...] = (),
         upsert_items: tuple[Mapping[str, Any], ...] = (),
-        refresh_normal_media: bool = True,
-        stale_normal_media: bool = False,
     ) -> None:
-        """Release the write interlock and refresh its full applied scope."""
+        """Release the write interlock and refresh its full applied scope.
+
+        task-31275: every committed Media write completes the SAME way,
+        Trash-surface Restore and permanent delete included. The
+        honest-stale gate (``Media changed; retry to load a current
+        page.``) exists for changes the app did NOT make; leaving a
+        mutation the app performed itself fenced-and-stale demanded a
+        manual Retry for a change the screen already knew about.
+        """
         scope = self._library_media_mutation_scope
         has_authority = (
             self._library_media_mutation_authority
@@ -15600,15 +15606,10 @@ class LibraryScreen(BaseAppScreen):
                 self._sync_library_media_browse_state(None)
             return
         controller = self._library_media_browse_controller
-        if stale_normal_media:
-            controller.mark_stale_after_trash_restore()
-        elif refresh_normal_media and (committed or remove_ids or upsert_items):
-            controller.reconcile_committed_mutation(
-                remove_ids=remove_ids,
-                upsert_items=upsert_items,
-            )
-        if not refresh_normal_media:
-            return
+        controller.reconcile_committed_mutation(
+            remove_ids=remove_ids,
+            upsert_items=upsert_items,
+        )
         refresh_scope = scope or controller.mutation_refresh_scope
         if (
             not has_authority
@@ -25228,11 +25229,11 @@ class LibraryScreen(BaseAppScreen):
                 claim, notice
             )
         finally:
-            self._complete_library_media_mutation(
-                committed=committed,
-                refresh_normal_media=False,
-                stale_normal_media=False,
-            )
+            # task-31275: the permanently deleted row was already out of the
+            # normal Media page, but ``_begin_library_media_mutation`` fenced
+            # that page AND its facets -- completing normally is what lifts
+            # the fence, so returning to Media needs no manual Retry.
+            self._complete_library_media_mutation(committed=committed)
             if failure_copy is not None:
                 accepted = (
                     self._library_media_trash_browse_controller.finish_mutation_failure(
@@ -25311,6 +25312,7 @@ class LibraryScreen(BaseAppScreen):
         """
         target = claim.target
         committed = False
+        restored_items: tuple[Mapping[str, Any], ...] = ()
         failure_copy: str | None = None
         try:
             service = getattr(self.app_instance, "media_reading_scope_service", None)
@@ -25350,6 +25352,15 @@ class LibraryScreen(BaseAppScreen):
             if not committed:
                 return
 
+            # task-31275: the same bounded summary the bulk-delete Undo path
+            # hands back, so the fenced page reconciles its OWN restore
+            # instead of demanding a manual Retry on return to Media.
+            restored_items = (
+                self._library_media_mutation_summary(
+                    f"local:media:{target.backing_media_id}", restored_record
+                ),
+            )
+
             existing_ids = {
                 self._source_record_id(record)
                 for record in self._local_source_records.get("media", ())
@@ -25372,8 +25383,7 @@ class LibraryScreen(BaseAppScreen):
         finally:
             self._complete_library_media_mutation(
                 committed=committed,
-                refresh_normal_media=False,
-                stale_normal_media=committed,
+                upsert_items=restored_items,
             )
             if failure_copy is not None:
                 accepted = (

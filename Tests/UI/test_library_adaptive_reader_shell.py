@@ -567,6 +567,11 @@ def test_shared_tcss_owns_the_calm_visual_contract_for_every_reader():
         ".library-adaptive-reader-shell > .library-adaptive-reader-pane-grip:focus {"
         in source
     )
-    assert "outline-top: solid $ds-action-focus;" in source
-    assert "outline-bottom: solid $ds-action-focus;" in source
+    # task-31276: the focused grip carries NO outline on any edge. The grip is
+    # as tall as the shell, so "endcaps" land on the reader's first and last
+    # content rows -- the top one abutted the Reader identity line and read as
+    # a rendering artifact at the pane join (`┐─────Local Media item`, critique
+    # #4 P2), not as focus. Focus is the accent recolour on the arrow glyph.
+    assert "outline-top: solid $ds-action-focus;" not in source
+    assert "outline-bottom: solid $ds-action-focus;" not in source
     assert "#library-media-reader-shell > .library-media-pane-grip" not in source

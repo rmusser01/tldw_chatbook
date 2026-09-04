@@ -209,13 +209,16 @@ class LibraryMediaViewer(Vertical):
         )
         banner.display = self.loading
         yield banner
-        yield Static(
-            "Server item · not in local Media list"
-            if self.external_detail
-            else "Local Media item",
-            id="library-media-reader-identity",
-            markup=False,
-        )
+        if self.external_detail:
+            # task-31277 (critique #4 P2): only a SERVER item needs an
+            # identity line. "Local Media item" restated what the Media
+            # list beside it already said, at the cost of the top row of
+            # the reading surface on every local open.
+            yield Static(
+                "Server item · not in local Media list",
+                id="library-media-reader-identity",
+                markup=False,
+            )
         if self.review_banner:
             # task-30045 (critique P2): the active review set is a workflow
             # object -- its name, live progress, and the loaded item's own
@@ -234,20 +237,23 @@ class LibraryMediaViewer(Vertical):
             markup=False,
         )
         if not self.editing:
-            yield Static(
-                next(
-                    (line.removeprefix("Author: ") for line in self.viewer.metadata_lines
-                     if line.startswith("Author: ")),
-                    "",
-                )
-                or next(
-                    (line.removeprefix("URL: ") for line in self.viewer.metadata_lines
-                     if line.startswith("URL: ")),
-                    "",
-                ),
-                id="library-media-reader-byline",
-                markup=False,
+            byline = next(
+                (line.removeprefix("Author: ") for line in self.viewer.metadata_lines
+                 if line.startswith("Author: ")),
+                "",
+            ) or next(
+                (line.removeprefix("URL: ") for line in self.viewer.metadata_lines
+                 if line.startswith("URL: ")),
+                "",
             )
+            # task-31277: an item with neither an author nor a URL spent a
+            # row of the Reader header painting nothing at all.
+            if byline:
+                yield Static(
+                    byline,
+                    id="library-media-reader-byline",
+                    markup=False,
+                )
         yield from self._compose_primary_toolbar()
         yield from self._compose_mode_toolbar()
 
@@ -336,8 +342,11 @@ class LibraryMediaViewer(Vertical):
     def _compose_active_body(self) -> ComposeResult:
         """Compose exactly the selected Reader body; never mount hidden modes."""
         if self.external_detail or self.reader_mode == "read":
+            # task-31277 (critique #4 P2, AC#3): no section header here --
+            # the mode row directly above already reads "Read (selected)",
+            # so the header spent a row of the reading surface saying that
+            # word twice. Analysis and Highlights lost theirs the same way.
             with Vertical(id="library-media-reader-mode-read"):
-                yield Static("Read", classes="destination-section")
                 if self.image_preview is not None and not self.image_preview_hidden:
                     with Vertical(id="library-media-image-preview"):
                         yield self.image_preview
@@ -361,9 +370,9 @@ class LibraryMediaViewer(Vertical):
                     )
                 yield from self._compose_content_mode_toggle()
             # Keep the search controls and content body as direct children of
-            # the scrolling Reader. Textual docks relative to the immediate
-            # container, so nesting these under the mode marker pins an active
-            # Find bar below the Reader header instead of at the viewport top.
+            # the Reader, siblings of the mode marker -- the mode row is the
+            # Find bar's anchor (task-31276 retired the dock that moved an
+            # active bar to the viewport top).
             # task-31237: the Find bar is collapsed until the Find action
             # opens it (or a query is applied); a permanently open
             # "Search content…" input duplicated Find and spent 3 rows on
@@ -400,7 +409,6 @@ class LibraryMediaViewer(Vertical):
                 yield from self._compose_highlights()
             return
         with Vertical(id="library-media-reader-mode-info"):
-            yield Static("Info", classes="destination-section")
             if self.editing:
                 yield from self._compose_edit_form()
             else:
@@ -630,11 +638,6 @@ class LibraryMediaViewer(Vertical):
         Returns:
             ComposeResult for the Analysis section.
         """
-        yield Static(
-            "Analysis",
-            id="library-media-viewer-analysis-title",
-            classes="destination-section",
-        )
         if self.editing_analysis:
             yield from self._compose_analysis_edit_form()
             return
@@ -831,11 +834,6 @@ class LibraryMediaViewer(Vertical):
         Returns:
             ComposeResult for the highlights section.
         """
-        yield Static(
-            "Highlights",
-            id="library-media-viewer-highlights-title",
-            classes="destination-section",
-        )
         if not self.highlights:
             yield Static(
                 "No highlights yet.",

@@ -86,6 +86,9 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
         self.styles.height = "100%"
         self.styles.min_height = 0
         self.styles.overflow = ("hidden", "hidden")
+        # Measured row-list cap (task-28015); see ``_cap_trash_list``. Kept on
+        # the instance so a recompose re-applies it without a blank frame.
+        self._list_cap: int | None = None
 
     def _set_presentation(
         self,
@@ -162,16 +165,58 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
         self.refresh(recompose=True)
 
     def on_mount(self) -> None:
-        """Measure compact status overflow after the first layout."""
-        self.call_after_refresh(self._update_status_fold)
+        """Measure the list cap and status overflow after the first layout."""
+        self.call_after_refresh(self._measure_after_layout)
 
     def on_resize(self) -> None:
-        """Re-evaluate status wrapping against the current Items width."""
-        self.call_after_refresh(self._update_status_fold)
+        """Re-measure against the current Items allocation."""
+        self.call_after_refresh(self._measure_after_layout)
 
     def _after_recompose(self) -> None:
-        """Measure the newly mounted status without delaying focus wiring."""
-        self.call_after_refresh(self._update_status_fold)
+        """Re-measure the newly mounted children without delaying focus."""
+        self.call_after_refresh(self._measure_after_layout)
+
+    def _measure_after_layout(self) -> None:
+        """Post-layout measurements: the row-list cap, then the status fold."""
+        self._cap_trash_list()
+        self._update_status_fold()
+
+    def _cap_trash_list(self) -> None:
+        """Bound the auto-height row list to the space its siblings leave.
+
+        task-28015: the list was ``height: 1fr``, so a one-item Trash held
+        ~36 blank rows between the row and the Restore action docked at the
+        panel bottom. Auto height puts Restore back beside the item, but
+        Textual has no "auto up to the remaining space" scalar -- a
+        ``max-height`` of ``1fr``/``100%`` resolves against the CONTAINER,
+        not the remainder, which would let a full page push the pager and
+        the actions off the terminal again (the reachability contract
+        ``_assert_trash_rows_and_restore_reachable`` pins). So the cap is
+        measured from the laid-out siblings and re-applied on resize and
+        after every recompose; the list scrolls its own overflow as before.
+        """
+        try:
+            trash_list = self.query_one("#library-media-trash-list", VerticalScroll)
+        except Exception:
+            return
+        available = self.content_size.height
+        if available < 1:
+            return
+        above = trash_list.region.y - self.content_region.y
+        below = max(
+            (
+                child.region.bottom
+                for child in self.children
+                if child.display and child.region.y >= trash_list.region.bottom
+            ),
+            default=trash_list.region.bottom,
+        ) - trash_list.region.bottom
+        # Floor: never collapse the list to nothing when the chrome alone
+        # fills the pane -- one row of items stays visible and scrollable.
+        cap = max(2, available - above - below)
+        if cap != self._list_cap:
+            self._list_cap = cap
+            trash_list.styles.max_height = cap
 
     def _update_status_fold(self) -> None:
         """Expose a fold row only when the status needs more than two rows."""
@@ -185,7 +230,16 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
         width = status.content_size.width or status.region.width
         if width < 1:
             return
-        fold.display = status.visual.get_height(status.styles, width) > 2
+        folded = status.visual.get_height(status.styles, width) > 2
+        if folded == fold.display:
+            return
+        fold.display = folded
+        # The fold owns a row ABOVE the list, and `compose` always mounts it
+        # hidden -- so the cap measured a moment ago is one row too generous
+        # and the actions toolbar would land past the pane's hidden overflow
+        # (task-28015 review). A display flip fires neither `on_resize` nor
+        # `_after_recompose`, so re-measure explicitly.
+        self.call_after_refresh(self._cap_trash_list)
 
     def compose(self) -> ComposeResult:
         """Render the heading, status/notice lines, trash rows, and Restore.
@@ -207,14 +261,20 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
             )
             back.disabled = self.commit_pending
             back.tooltip = "Finishing this action…" if self.commit_pending else None
+            # task-28015: Textual Button's 16-cell min-width floor left the
+            # ~38-column Items pane too little for the count, which painted
+            # as "Local Trash · 1 i". Same escape the pager buttons below
+            # already take; the label keeps its own content width.
+            back.styles.min_width = 0
             yield back
+            count = self.pager.title_count if self.pager is not None else None
             title = (
                 "Local Trash"
-                if self.pager is None or self.pager.title_count is None
+                if count is None
                 else (
-                    f"Local Trash · {self.pager.title_count} matching"
+                    f"Local Trash · {count} matching"
                     if self.applied_scope_label
-                    else f"Local Trash · {self.pager.title_count} items"
+                    else f"Local Trash · {count} {'item' if count == 1 else 'items'}"
                 )
             )
             yield Static(
@@ -353,13 +413,17 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
         # PR-1505 review (the L3a clipping lesson -- a plain auto-height
         # Vertical clips content past the fold, and a 200-item trash page
         # pushed the Restore toolbar ~100 rows off a 24-row terminal): the
-        # list owns the remaining height between the heading/status above
-        # and the Restore toolbar below, and scrolls its own overflow --
-        # the same geometry `#library-media-list` gets from the stylesheet
-        # in the wide split. Inline like the rest of this widget's
-        # geometry; min_height 0 so the 1fr can actually shrink.
-        trash_list.styles.height = "1fr"
+        # list owns the height between the heading/status above and the
+        # Restore toolbar below, and scrolls its own overflow. task-28015
+        # keeps that ceiling but drops the floor: auto height so a short
+        # page ends where its rows end and Restore stays beside the item,
+        # with the ceiling measured by `_cap_trash_list` (Textual cannot
+        # express "auto up to the remaining space" in CSS). Inline like the
+        # rest of this widget's geometry; min_height 0 so it can shrink.
+        trash_list.styles.height = "auto"
         trash_list.styles.min_height = 0
+        if self._list_cap is not None:
+            trash_list.styles.max_height = self._list_cap
         trash_list.styles.overflow_y = "auto"
         trash_list.styles.overflow_x = "hidden"
         with trash_list:
