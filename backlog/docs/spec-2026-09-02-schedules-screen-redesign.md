@@ -1,7 +1,16 @@
 # Spec: Schedules screen redesign — unified list + inspector-style detail pane
 
-Status: Draft (user-approved design 2026-09-02; implementation queued
-behind the schedules-handoff program's PR-5/PR-6)
+Status: **Delivered** 2026-09-04 — PRs #2343 (PR-1, detail-pane
+regrammar), #2354 (PR-2, unified list + filter chips + rail), #2371 (PR-3,
+in-pane editing + owner-row transfer) and #2389 (PR-4, single-surface
+workbench), all merged to dev; dev tip `b7f8efde73` is the final merge.
+Delivery note: shipped as specified — the tab IA is retired and the
+workbench is one surface (list + inspector detail + rail), with results,
+conflicts and run history reached as pushed views rather than tabs, and an
+80x24 responsive floor that pushes the same detail pane full-screen. The
+body below is the approved design and is left intact as the record of what
+was decided; ADR-116 records the inspector-editing decision and ADR-112
+the per-task ownership transfer.
 Reference visuals: two ChatGPT scheduled-tasks screenshots (user-provided
 2026-09-02) — filter-chip rail + grouped key-value detail pane with
 in-place dropdown editing.

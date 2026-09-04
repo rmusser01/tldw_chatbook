@@ -11143,3 +11143,77 @@ contract, not a comparison against old ordinal data: recapture the structural
 baseline before reformatting. Fail closed for ambiguous exception headers, never
 discard tuple commas or semantic grouping, and keep the ordinary nearest-statement
 or decorator boundary for every non-header directive.
+
+---
+
+## A green count from a partial glob is not a green gate — paste the exact tail, and reviewers re-run it themselves
+
+**Incident.** Schedules redesign PR-4, Task 3 (2026-09-04). The task report claimed
+the suite gate was met and quoted a passing count ("292 passed"). The number was
+real, but it came from a **partial glob** over the test files the task had touched —
+not from the gate the plan specified. Two pinned tests outside that glob were red at
+the same moment. Nothing in the report was fabricated; the run simply did not cover
+what the claim covered, and a summarised count carries no evidence of its own scope.
+
+It was caught only because the reviewer re-ran the gate independently instead of
+reading the report's claim. Had the reviewer trusted the number, a red branch would
+have gone up as green — and the two failures were in exactly the pinned tests a
+reviewer would assume the implementer had run.
+
+This is the same failure shape as `A failure list from a suite you have never run
+clean attributes nothing` (above), inverted: there, an unrun suite was used to
+attribute failures; here, a partially-run suite was used to deny them.
+
+**What to do.**
+
+- **Paste the exact tail lines from the FINAL run**, including the invocation that
+  produced them. `pytest ... -q` plus its `N passed, M failed` line is evidence; a
+  count retyped into prose is a claim. The invocation is the load-bearing half —
+  it is what makes the scope auditable.
+- **Never quote a count from a run that is not the gate.** A scoped run while
+  iterating is fine and normal; it just is not the thing you report as the gate.
+- **Reviewers re-run the gates.** Do not adjudicate a green claim from the report.
+  The re-run costs minutes; this one caught a red branch, and it is the only step
+  in the loop that is independent of the implementer's own scoping mistake.
+- If the gate is expensive, that is an argument for naming it precisely in the plan,
+  not for approximating it with a glob.
+
+---
+
+## An assertion that reads back the value the code just wrote confirms nothing — assert on PAINTED output
+
+**Incident (round 1).** Schedules-handoff PR-6, live task 6 (2026-09-02). The Results
+tab's unread badge never rendered. `pane.label = f"Results ({n})"` on a `TabPane` sets
+an **inert attribute** — Textual 8.2.8 stores the title in `_title`, and `TabPane` has
+no `label` reactive at all, so the assignment did nothing to the UI. The regression
+test (`Tests/UI/test_schedules_results_tab.py:408`) passed the entire time, because it
+asserted on `pane.label` — reading back the attribute the code had just set. A test
+shaped that way passes for **any** write to any attribute name; it cannot fail while
+the assignment executes. The badge had also been broken in the Conflicts tab before
+PR-6 copied the pattern, so a green test had been guarding a dead feature for months.
+
+**Incident (round 2), same programme.** The Automations table silently ate its
+`[<server id>]` owner prefix: `DataTable` cells go through
+`rich.text.Text.from_markup`, whose lowercase-tag regex matches `[http://…]`. Here too
+`table.get_cell_at()` returns the **stored** value and passes regardless of whether the
+content survives rendering. The fix migrated the assertions to
+`Tests/UI/schedules_test_helpers.py::rendered_row_cells`, which routes the stored row
+through the widget's own `_get_row_renderables` -> `default_cell_formatter` — the exact
+path where a bracket token is eaten.
+
+**The tell.** Ask of every assertion: *what code path must break for this to fail?* If
+the answer is "the assignment statement two lines above in the production code", the
+test is a self-confirmer. Both of these were written in good faith by someone who had
+just watched the feature not work, and both passed on the broken build.
+
+**What to do.**
+
+- When the point of a test is that something **renders**, assert on the rendered
+  artifact: painted cells (`rendered_row_cells`), compositor strips, `render_line`,
+  `region.width > 0`. Not the stored value, not the attribute you assigned.
+- Treat "framework attribute assignment" as an unverified hypothesis until a painted
+  assertion confirms it. `widget.foo = x` on a non-reactive attribute is a silent
+  no-op in Textual, and the read-back is indistinguishable from success.
+- When a live run finds a feature dead that a green test covers, **read that test
+  first**. It is more often a self-confirmer than a coverage gap, and fixing the
+  feature without fixing the test leaves the next regression unguarded.

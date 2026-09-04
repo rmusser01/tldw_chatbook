@@ -462,3 +462,127 @@ raised out of `pilot.app.workers.wait_for_complete()`.
 When every dispatch must actually land, that is the wrong primitive: hold an
 `asyncio.Lock` keyed by whatever must serialize, and leave the worker non-exclusive.
 The group name is then only a label for observability.
+
+---
+
+## A `Select` posts `Changed` the moment it MOUNTS with a value preselected — a close-on-first-Changed handler self-destructs
+
+**Schedules redesign PR-3, final review M8/F8 (2026-09-03), re-probed on Textual 8.2.8.**
+The detail panes' in-place row editors mount a `Select` with the row's current value
+preselected. `Select.value` is `var(NULL, init=False)`, so `_on_mount`'s
+`_init_selected_option` assignment is a **real** change from `NULL` — and `_watch_value`
+turns it into a posted `Changed`. The handler therefore fires with the current value
+before the user has touched anything.
+
+The consequence bit twice. A handler written as "on Changed, commit and close the editor"
+closes the dropdown the instant it opens, so the control is unusable; a review ruling that
+prescribed exactly that (make a same-owner pick call `end_edit`) had to be adjudicated
+**not implementable** for this reason. The docstring at `task_detail.py:1271` records the
+probe.
+
+The mirror fact matters as much: a genuine re-pick of the **same** option posts *nothing*,
+because `Select._update_selection` assigns only `if value != self.value`. So the
+"unchanged value" branch is reachable ONLY from the synthetic mount event.
+
+**What to do.** A `Changed` handler on a preselected `Select` cannot distinguish the mount
+echo from a real commit by the event alone — compare against the **stored** value and
+no-op when they match (`task_detail.py:1200`, `definition_detail.py:1391`). Never close,
+persist, or navigate on the first `Changed` after `begin_edit`/mount.
+
+---
+
+## `DataTable.clear()` posts a `RowHighlighted` for row 0 before the rows come back
+
+**Schedules redesign PR-4, final review F12.** Every table re-render clobbered the
+selection: `clear()` posts a `RowHighlighted` for row 0 *before* the new rows are added, so
+the handler re-rendered row 0's detail (overwriting `_selected_row_id` on the way) and only
+then did the cursor restore win it back. `move_cursor` back to the restored row then posts
+a **second** echo — for a row the render had already fed the detail pane directly.
+
+Both are echoes of the render's own work, not user intent, and both are *stale by the time
+they are processed*: the table's live cursor has already moved on.
+
+**What to do.** Guard a `RowHighlighted` handler with two checks (`schedules_workbench.py:1598`):
+
+```python
+if event.cursor_row != event.data_table.cursor_row:
+    return          # the event is stale — the live cursor moved on
+if self._visible_rows[event.cursor_row].row_id == self._selected_row_id:
+    return          # already rendered; a refresh's direct feed did it
+```
+
+The first is the general rule for any `DataTable` message: **the index in the event is a
+snapshot, the table is the authority.** The second is the unchanged-selection discipline
+that makes a re-feed idempotent.
+
+---
+
+## Never carry a row INDEX across an `await` — capture the row's IDENTITY
+
+**Three separate occurrences across the schedules handoff and redesign programmes.** Same
+class each time: an index that was correct when it was read, resolved against a list that
+had changed by the time it was used.
+
+1. **The worst one (PR-4 fix wave F2).** The narrow-width pushed detail pane was fed by
+   index. A background refresh that dropped the open row fell through `_render_table`'s
+   `target_index = 0` and re-fed the overlay with a **different row's data while its header
+   still named the original** — a full-screen pane whose Delete button targeted the wrong
+   reminder. Fixed by pinning the pushed pane to `_pushed_row_id` (`UnifiedRow.row_id`),
+   feeding it only for that identity, and auto-popping with a notice when the row leaves
+   the queue (keyed off what EXISTS, never off what the current filter SHOWS — a filter
+   narrowing must not close an open pane).
+2. **Audit-view highlight race (task-18940 slice 4).** The run-history pane loads a
+   definition's server audit trail on highlight. Two quick highlights raced; the guard is
+   that a newer highlight wins, keyed on the definition id the load was started for.
+3. **The `RowHighlighted` echoes above** — the same bug in message form.
+
+**What to do.** The moment a handler contains an `await`, treat every index it holds as
+expired. Capture the row's stable id before the await and re-resolve after it; when a
+worker's result comes back, check the id it was started for against the current selection
+before painting anything. `exclusive=True` is not a substitute — see the `run_worker`
+entry above for why cancellation is a different primitive from serialization.
+
+---
+
+## A geometry or `.display` test without `CSS_PATH = BUNDLED_STYLESHEET` measures nothing
+
+**Schedules redesign PR-1 task 3 and PR-4 task 6.** Width-driven behaviour in this app
+lives in app-tier rules (`css/features/_scheduling.tcss`, reached through the bundle).
+`ConsolidatedCSSApp` loads the per-screen sheets but **not** the app bundle, so in a bare
+harness every `.compact` rule is simply absent — a test asserting that a pane hides below
+84 columns passes or fails for reasons unrelated to the rule it claims to cover.
+
+`Tests/UI/test_schedules_responsive_floor.py` says it outright: without the app tier
+"every `.compact` rule is absent and the geometry claims measure nothing."
+
+**What to do.** Any test asserting on `region`, `.display`, or a width breakpoint sets
+`CSS_PATH = BUNDLED_STYLESHEET` (see `Tests/UI/consolidated_css.py`). A test that
+deliberately runs *without* it — forcing `.display` directly to isolate a non-CSS claim —
+must say so in its docstring, as `test_schedules_keyboard_map.py:115` does. And remember
+the sibling trap from the paint-over hunt: widget-tier CSS (`BUNDLED_CSS`/`DEFAULT_CSS`)
+loses to app-tier rules regardless of specificity.
+
+---
+
+## Target CSS by CLASS on the subject — never an ancestor-scoped bare type
+
+**TASK-25810's ratchet, enforced at `Tests/Performance/test_textual_css_fastpath.py`.**
+Textual indexes each rule under its **rightmost** selector only. So `#panel Button` is a
+candidate for **every** `Button` in the app — all ~110 of them — and each pays a full
+selector evaluation before the ancestor filter rejects it. Measured 2026-08-30: rules of
+this shape were **93% of all per-node candidate work** on a 502-node Console.
+
+`MAX_ANCESTOR_SCOPED_BARE_TYPE_RULES` is a ratchet under ADR-097's discipline: pinned at
+274 (measured 264 + 10 slack), and **never raised**. On a breach the fix is to re-key the
+new rule — give its subject a class carried only by the intended widgets,
+`#panel Button` -> `Button.panel-action` — not to widen the budget. When re-keying work
+lands, the constant is LOWERED so the freed headroom is banked.
+
+The same discipline governs the boot-parsed CSS byte budget (`MAX_BOOT_PARSED_CSS_BYTES`),
+whose comment records the reason both are ratchets rather than limits: *"the CSS byte
+budget's history is three cycles of silent regrowth."*
+
+**What to do.** Write `Widget.purpose-class`, not `#container Widget`. Check both ratchets
+before opening a PR that adds CSS, and attribute any growth to the segment that caused it —
+the failure message names segments and sources precisely so that attribution is not
+guesswork.
