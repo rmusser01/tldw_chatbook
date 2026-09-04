@@ -1533,7 +1533,6 @@ def format_todo_marker(tasks: list[dict[str, object]]) -> str:
     return "\n".join([header, *lines])
 
 
-
 def format_question_marker(
     asked_by: str, questions: list[dict[str, Any]], result: dict[str, Any]
 ) -> str:
@@ -1579,6 +1578,7 @@ def format_question_marker(
             )
         lines.append(f"  {label} → {outcome}")
     return "\n".join(lines)
+
 
 TRANSCRIPT_START_MARKER_ANCHOR = ""
 
