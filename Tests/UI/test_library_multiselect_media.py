@@ -86,6 +86,8 @@ def _media_fake(
 ):
     notified = []
     fake = SimpleNamespace(
+        # task-31273: an explicit row open cancels a pending auto-resume.
+        _cancel_pending_review_set_resume=lambda: None,
         _library_media_select_mode=select_mode,
         _library_media_row_selection=RowSelection("media"),
         _library_media_confirming_bulk_delete=confirming_bulk_delete,

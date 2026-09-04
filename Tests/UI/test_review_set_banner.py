@@ -151,3 +151,19 @@ def test_banner_omits_item_state_for_a_tombstoned_loaded_item(tmp_path):
 
     assert banner is not None and "All media" in banner
     assert "✓ reviewed" not in banner and "not yet" not in banner
+
+
+def test_banner_names_an_off_set_item_honestly(tmp_path):
+    """task-31273 (user ruling): an explicit open of an item outside the
+    active set keeps the set's banner but says the item is not in it, so
+    the status line never claims a state the walk cannot honour."""
+    service = _service(tmp_path)
+    service.create_review_set(
+        "All media", origin="browse", items=[(10, "A"), (11, "B")]
+    )
+    banner = LibraryScreen._active_review_set_banner(
+        _banner_fake(service, loaded=99)
+    )
+    assert banner == (
+        "Reviewing: All media — 1 of 2 · 0 reviewed · this item is not in the set"
+    )

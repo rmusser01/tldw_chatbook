@@ -2148,6 +2148,24 @@ with stray left-edge border fragments), and padding 0 1 so the full
     margin: 0 0 1 0;
 }
 
+/* task-31270 (critique #4 P1): the delete / dismiss receipts are two rows
+   (copy, then Undo · Dismiss) at full width. A single content-width
+   Horizontal clipped Undo to "Und" at the Items pane's real width (live
+   2026-09-04) -- the one recovery control was unreadable exactly where it
+   renders. Same multi-row grammar as the toolbars (task-30043). */
+#library-media-canvas .library-media-receipt {
+    width: 100%;
+    height: auto;
+}
+#library-media-canvas .library-media-receipt > .library-media-receipt-copy {
+    width: 100%;
+    height: auto;
+}
+#library-media-canvas .library-media-receipt > .library-media-receipt-actions {
+    width: 100%;
+    height: auto;
+}
+
 /* task-14900: Media list|preview side by side above the screen's one
    measured width regime. The workbench Horizontal (Collections'
    `#library-collections-workbench` grammar) splits its panes 1fr|1fr by

@@ -166,6 +166,20 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         width: auto;
         min-width: 0;
     }
+    /* task-31270: receipts are two rows, full width; the copy wraps and the
+     * action row keeps content-width buttons so Undo/Dismiss always paint. */
+    .library-media-receipt {
+        width: 100%;
+        height: auto;
+    }
+    .library-media-receipt > .library-media-receipt-copy {
+        width: 100%;
+        height: auto;
+    }
+    .library-media-receipt > .library-media-receipt-actions {
+        width: 100%;
+        height: auto;
+    }
     """
 
     def __init__(
@@ -815,34 +829,44 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         receipt_count = getattr(self.canvas, "delete_receipt_count", 0)
         if receipt_count:
             receipt_word = "item" if receipt_count == 1 else "items"
-            receipt_row = Horizontal(
-                classes="ds-toolbar", id="library-media-bulk-delete-receipt"
+            # task-31270 (critique #4 P1): two rows -- copy, then actions --
+            # at full width. A single content-width Horizontal clipped Undo
+            # to "Und" at the Items pane's real width; same multi-row
+            # grammar as the toolbars (task-30043).
+            receipt = Vertical(
+                id="library-media-bulk-delete-receipt",
+                classes="library-media-receipt",
             )
-            receipt_row.styles.height = "auto"
-            with receipt_row:
+            receipt.styles.height = "auto"
+            with receipt:
                 yield Static(
                     # task-4025 (ADR-055 Pattern A): the receipt names the
                     # durable path too -- "· in Trash" points at the Trash
                     # view that outlives this receipt's Undo/Dismiss.
                     f"✓ deleted · {receipt_count} {receipt_word} · in Trash",
                     id="library-media-bulk-delete-receipt-copy",
-                    classes="library-toolbar-count",
+                    classes="library-toolbar-count library-media-receipt-copy",
                     markup=False,
                 )
-                undo = Button(
-                    "Undo",
-                    id="library-media-bulk-delete-undo",
-                    classes="library-canvas-action",
-                    compact=True,
+                actions = Horizontal(
+                    classes="ds-toolbar library-media-receipt-actions"
                 )
-                yield self._gate_stale_action(undo, "Undo")
-                dismiss = Button(
-                    "Dismiss",
-                    id="library-media-bulk-delete-receipt-dismiss",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                yield self._gate_mutation_action(dismiss, "Dismiss")
+                actions.styles.height = "auto"
+                with actions:
+                    undo = Button(
+                        "Undo",
+                        id="library-media-bulk-delete-undo",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    yield self._gate_stale_action(undo, "Undo")
+                    dismiss = Button(
+                        "Dismiss",
+                        id="library-media-bulk-delete-receipt-dismiss",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    yield self._gate_mutation_action(dismiss, "Dismiss")
 
         # task-31236: a dismissed review set's undo receipt -- the same
         # grammar as the bulk-delete receipt above, because a one-click
@@ -852,31 +876,37 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             self.canvas, "review_dismiss_receipt_name", ""
         )
         if dismissed_set_name:
-            dismiss_receipt_row = Horizontal(
-                classes="ds-toolbar", id="library-media-review-dismiss-receipt"
+            dismiss_receipt = Vertical(
+                id="library-media-review-dismiss-receipt",
+                classes="library-media-receipt",
             )
-            dismiss_receipt_row.styles.height = "auto"
-            with dismiss_receipt_row:
+            dismiss_receipt.styles.height = "auto"
+            with dismiss_receipt:
                 yield Static(
                     f"✓ dismissed · {dismissed_set_name}",
                     id="library-media-review-dismiss-receipt-copy",
-                    classes="library-toolbar-count",
+                    classes="library-toolbar-count library-media-receipt-copy",
                     markup=False,
                 )
-                undo_set = Button(
-                    "Undo",
-                    id="library-media-review-dismiss-undo",
-                    classes="library-canvas-action",
-                    compact=True,
+                set_actions = Horizontal(
+                    classes="ds-toolbar library-media-receipt-actions"
                 )
-                yield self._gate_stale_action(undo_set, "Undo")
-                close_receipt = Button(
-                    "Dismiss",
-                    id="library-media-review-dismiss-receipt-close",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                yield self._gate_mutation_action(close_receipt, "Dismiss")
+                set_actions.styles.height = "auto"
+                with set_actions:
+                    undo_set = Button(
+                        "Undo",
+                        id="library-media-review-dismiss-undo",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    yield self._gate_stale_action(undo_set, "Undo")
+                    close_receipt = Button(
+                        "Dismiss",
+                        id="library-media-review-dismiss-receipt-close",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    yield self._gate_mutation_action(close_receipt, "Dismiss")
 
         status_text = (
             self.pager.status_copy

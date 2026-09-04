@@ -2852,6 +2852,20 @@
         width: auto;
         min-width: 0;
     }
+    /* task-31270: receipts are two rows, full width; the copy wraps and the
+     * action row keeps content-width buttons so Undo/Dismiss always paint. */
+    LibraryMediaCanvas .library-media-receipt {
+        width: 100%;
+        height: auto;
+    }
+    LibraryMediaCanvas .library-media-receipt > .library-media-receipt-copy {
+        width: 100%;
+        height: auto;
+    }
+    LibraryMediaCanvas .library-media-receipt > .library-media-receipt-actions {
+        width: 100%;
+        height: auto;
+    }
 
 
 /* ===== WIDGET: LibraryNoteFolderNameDialog (Widgets/Library/library_note_folder_dialog.py) ===== */

@@ -10647,6 +10647,18 @@ async def _open_media_viewer(screen, pilot):
     await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
 
 
+async def _open_media_find(screen, pilot):
+    """Press Find and return the mounted content search Input.
+
+    task-31237 collapsed the bar until the Find action opens it; task-31269
+    made Find open the bar for whichever tab is being read, so this works
+    on Read and on Analysis alike. A no-op when the bar is already open.
+    """
+    if not screen.query("#library-media-content-search"):
+        screen.query_one("#library-media-reader-find", Button).press()
+    return await _wait_for_selector(screen, pilot, "#library-media-content-search")
+
+
 @pytest.mark.asyncio
 async def test_library_media_sort_chooser_applies_the_selected_order():
     """task-28013: the media sort chooser re-fetches page one under the new order."""
@@ -11049,7 +11061,7 @@ async def test_library_shell_media_viewer_inplace_search_applies_only_on_enter()
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _open_media_viewer(screen, pilot)
-        search_input = screen.query_one("#library-media-content-search", Input)
+        search_input = await _open_media_find(screen, pilot)
 
         search_input.value = "setup"
         await pilot.pause()
@@ -11584,6 +11596,7 @@ async def test_library_shell_media_viewer_search_chrome_undocks_when_inactive():
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _open_media_viewer(screen, pilot)
+        await _open_media_find(screen, pilot)
         controls = screen.query_one(
             "#library-media-content-search-controls",
             LibraryMediaContentSearchControls,
@@ -11705,8 +11718,8 @@ async def test_library_shell_media_viewer_inplace_search_chrome_paints_above_con
         assert heading_row >= body.region.y
         assert body.styles.min_height is not None
         assert body.styles.min_height.value == 3
-        assert body.styles.max_height is not None
-        assert body.styles.max_height.value == 18
+        # task-31237: the 18-row cap is gone -- the box fills the pane (1fr).
+        assert body.styles.max_height is None
 
         parse_count_before_navigation = len(markdown_updates)
         next_button.focus()
@@ -33806,7 +33819,9 @@ async def test_library_media_analysis_tab_is_searchable():
         # Wait for the analysis tab to settle (its Edit action is the stable
         # signal the existing analysis tests use) before searching.
         await _wait_for_selector(screen, pilot, "#library-media-analysis-edit")
-        search = screen.query_one("#library-media-content-search", Input)
+        # task-31269: the Analysis bar is collapsed until Find opens it, in place.
+        search = await _open_media_find(screen, pilot)
+        assert screen._library_media_reader_session.mode == "analysis"
 
         search.value = "budget"
         search.focus()
@@ -33846,9 +33861,8 @@ async def test_library_media_switching_tabs_clears_the_search():
         await _wait_for_selector(screen, pilot, "#library-media-row-1")
         screen.query_one("#library-media-row-1").press()
         # Read tab: search the transcript.
-        search = await _wait_for_selector(
-            screen, pilot, "#library-media-content-search"
-        )
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
+        search = await _open_media_find(screen, pilot)
         search.value = "roadmap"
         search.focus()
         await pilot.pause()

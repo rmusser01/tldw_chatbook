@@ -1449,11 +1449,11 @@ async def test_capture_outside_read_never_persists_the_analysis_body_offset():
     assert fake._library_media_read_scroll_by_id == {}
 
 
-def test_find_from_analysis_clears_the_search_before_reading_the_transcript():
-    """task-28026: the always-visible Find action switches Analysis->Read, so
-    it must drop the analysis query/index/memo the same way the mode buttons
-    do -- otherwise a stale, possibly out-of-range match index scans the
-    transcript."""
+def test_find_from_analysis_opens_the_bar_on_the_analysis_tab():
+    """task-31269: Find searches the tab you are reading. On the Analysis
+    tab it opens the analysis bar in place (task-28026's Analysis->Read
+    jump is retired) and hands the viewer a one-shot focus token; the
+    query is untouched because the mode did not change."""
     session = set_mode(
         LibraryMediaReaderSessionState(
             selected_id="local:media:1",
@@ -1470,6 +1470,13 @@ def test_find_from_analysis_clears_the_search_before_reading_the_transcript():
         _library_media_content_query="needle",
         _library_media_content_match_index=5,
         _library_media_content_match_memo=(object(), "needle", (1, 2, 3), "analysis"),
+        _library_media_find_open=False,
+        _library_media_find_focus_pending=False,
+        _library_media_generating_analysis=False,
+        _library_media_editing_analysis=False,
+        _library_media_detail={
+            "versions": [{"version_number": 1, "analysis_content": "needle text"}]
+        },
         _sync_library_media_viewer_or_recompose=lambda: None,
         call_after_refresh=lambda *a, **k: None,
         _focus_library_media_content_search_input=lambda: None,
@@ -1477,19 +1484,20 @@ def test_find_from_analysis_clears_the_search_before_reading_the_transcript():
     fake._reset_library_media_search_on_mode_change = MethodType(
         LibraryScreen._reset_library_media_search_on_mode_change, fake
     )
-    # task-31237: the reset seam routes through the shared find-close helper.
     fake._close_library_media_find = MethodType(
         LibraryScreen._close_library_media_find, fake
     )
-
+    # Qodo on #2378: the handler refuses when the tab has nothing to search.
+    fake._library_media_find_unavailable_reason = MethodType(
+        LibraryScreen._library_media_find_unavailable_reason, fake
+    )
     LibraryScreen.handle_library_media_reader_find(
         fake, SimpleNamespace(stop=lambda: None)
     )
-
-    assert fake._library_media_reader_session.mode == "read"
-    assert fake._library_media_content_query == ""
-    assert fake._library_media_content_match_index == 0
-    assert fake._library_media_content_match_memo is None
+    assert fake._library_media_reader_session.mode == "analysis"
+    assert fake._library_media_find_open is True
+    assert fake._library_media_find_focus_pending is True
+    assert fake._library_media_content_query == "needle"
 
 
 def test_media_content_matches_scopes_corpus_to_the_active_reader_mode():

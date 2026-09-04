@@ -164,6 +164,10 @@ from ...Library.library_ingest_state import (
     library_ingest_retry_label,
     parse_keywords,
 )
+from ...Library.library_media_viewer_state import (
+    analysis_find_unavailable_reason,
+    detail_analysis_text,
+)
 from ...Library.library_media_state import (
     LibraryMediaCanvasState,
     LibraryMediaTrashState,
@@ -721,6 +725,9 @@ def _library_ingest_options_for(owner: Any) -> dict[str, Any]:
 # than moved: it is new screen code, not part of the extracted support layer.)
 _MEDIA_SELECT_MODE_KEY = "s"
 _MEDIA_ROW_SELECT_KEY = "space"
+#: Qodo on #2378: one name for the review-set auto-resume worker group, shared
+#: by registration (_maybe_auto_resume_review_set) and cancellation.
+_REVIEW_SET_RESUME_WORKER_GROUP = "library_review_set_resume"
 #
 # _INGEST_OPTIONS_CACHE_ATTR, _read_library_ingest_options_from_config, and
 # _library_ingest_options_for (just above) STAY here rather than moving to
@@ -2660,6 +2667,10 @@ class LibraryScreen(BaseAppScreen):
         # action opens it -- a permanently open "Search content…" input
         # duplicated the Find button and spent 3 rows on every fresh item.
         self._library_media_find_open: bool = False
+        # task-31269: one-shot Find-gesture token; spent by the next viewer
+        # build/sync so an item change can never move focus into the
+        # search Input.
+        self._library_media_find_focus_pending: bool = False
         # task-22209: in-content match list for the open item, memoized on
         # (detail object identity, query). Both the query submit and every
         # Prev/Next click need it, and deriving it costs a full content
@@ -24113,6 +24124,8 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_row_selection.toggle(media_id)
             _apply_library_row_toggle(self, "media", event.button, media_id)
             return
+        # task-31273: an explicit row open wins over a pending auto-resume.
+        self._cancel_pending_review_set_resume()
         self._open_library_media_viewer(media_id)
 
     @on(Button.Pressed, "#library-media-select-toggle")
@@ -38961,6 +38974,10 @@ class LibraryScreen(BaseAppScreen):
                 item_state = (
                     " · ✓ reviewed" if current.done else " · not yet reviewed"
                 )
+            elif loaded is not None and current is None:
+                # task-31273: an explicit open outside the set keeps the
+                # set's banner but never claims a state for this item.
+                item_state = " · this item is not in the set"
             return f"Reviewing: {review_set.name} — {progress}{item_state}"
         except Exception:
             logger.opt(exception=True).warning(
@@ -39626,6 +39643,15 @@ class LibraryScreen(BaseAppScreen):
 
     # -- auto-resume on media entry (task-28245) ------------------------------
 
+    def _cancel_pending_review_set_resume(self) -> None:
+        """Drop an in-flight auto-resume when the user opens something explicitly.
+
+        task-31273 (user ruling at the critique #4 close): an explicit open --
+        a row press, a deep link, open-by-id -- wins over the entry-time
+        auto-resume; plain rail entry with no target still resumes.
+        """
+        self.workers.cancel_group(self, _REVIEW_SET_RESUME_WORKER_GROUP)
+
     def _maybe_auto_resume_review_set(self) -> None:
         """Kick the once-per-set auto-resume of an active review set.
 
@@ -39641,7 +39667,7 @@ class LibraryScreen(BaseAppScreen):
         """
         self.run_worker(
             self._auto_resume_review_set_worker(),
-            group="library_review_set_resume",
+            group=_REVIEW_SET_RESUME_WORKER_GROUP,
             exclusive=True,
             exit_on_error=False,
         )
@@ -40479,6 +40505,7 @@ class LibraryScreen(BaseAppScreen):
             content_match_index=self._library_media_content_match_index,
             content_mode=self._library_media_content_mode,
             find_open=self._library_media_find_open,
+            find_focus_pending=self._consume_library_media_find_focus(),
             loading=(
                 self._library_media_reader_session.pending_request is not None
                 and self._library_media_reader_session.error is None
@@ -40723,6 +40750,7 @@ class LibraryScreen(BaseAppScreen):
             and viewer.content_match_index == self._library_media_content_match_index
             and viewer.content_mode == self._library_media_content_mode
             and viewer.find_open == self._library_media_find_open
+            and not self._library_media_find_focus_pending
             and viewer.error_message == (self._library_media_reader_session.error or "")
             and viewer.reader_mode == self._library_media_reader_session.mode
             and viewer.more_open == self._library_media_reader_session.more_open
@@ -40768,6 +40796,7 @@ class LibraryScreen(BaseAppScreen):
             viewer.content_match_index = self._library_media_content_match_index
             viewer.content_mode = self._library_media_content_mode
             viewer.find_open = self._library_media_find_open
+            viewer.find_focus_pending = self._consume_library_media_find_focus()
             viewer.loading = loading
             viewer.loading_message = loading_message
             viewer.error_message = self._library_media_reader_session.error or ""
@@ -41060,24 +41089,55 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_content_query = ""
         self._library_media_content_match_index = 0
 
+    def _library_media_find_unavailable_reason(self) -> str:
+        """Why Find cannot open on the current Reader tab, or "" (Qodo on #2378)."""
+        detail = self._library_media_detail
+        analysis = detail_analysis_text(detail) if isinstance(detail, Mapping) else ""
+        return analysis_find_unavailable_reason(
+            mode=self._library_media_reader_session.mode,
+            analysis=analysis,
+            generating=self._library_media_generating_analysis,
+            editing=self._library_media_editing_analysis,
+        )
+
+    def _consume_library_media_find_focus(self) -> bool:
+        """Return and clear the one-shot Find-gesture focus token (task-31269)."""
+        pending = self._library_media_find_focus_pending
+        self._library_media_find_focus_pending = False
+        return pending
+
     @on(Button.Pressed, "#library-media-reader-find")
     def handle_library_media_reader_find(self, event: Button.Pressed) -> None:
-        """Take Find to the loaded item's content body.
+        """Open (or close) the Find bar for the tab being read.
 
         Args:
             event: The Find button press.
         """
         event.stop()
-        # task-28026: Find is a real Analysis->Read transition too, so it
-        # clears any active analysis search before focusing the transcript
-        # find bar -- the same reset the Reader mode buttons apply.
-        self._reset_library_media_search_on_mode_change("read")
-        # task-31237: the bar is collapsed until this gesture opens it
-        # (AFTER the reset above, which closes it as part of the mode seam).
-        self._library_media_find_open = True
-        self._library_media_reader_session = set_mode(
-            self._library_media_reader_session, "read"
+        if self._library_media_find_open:
+            # task-31269 AC4: Find is a toggle -- a second press closes the
+            # bar (live: it did nothing while the bar was open).
+            self._close_library_media_find()
+            self._sync_library_media_viewer_or_recompose()
+            return
+        reason = self._library_media_find_unavailable_reason()
+        if reason:
+            # Qodo on #2378: nothing to mount on this tab -- never arm
+            # find_open silently (the button is already disabled with the
+            # same reason; this guards the action path).
+            self.notify(reason, severity="warning")
+            return
+        # task-31269: Find searches the tab you are reading. The Analysis
+        # tab's bar is gated exactly like Read's now, so Find no longer
+        # jumps Analysis -> Read (task-28026's transition predates the
+        # collapsed bar). A same-mode reset is a no-op by design.
+        self._reset_library_media_search_on_mode_change(
+            self._library_media_reader_session.mode
         )
+        # task-31237: the bar is collapsed until this gesture opens it; the
+        # token below is what lets its mount take focus -- once.
+        self._library_media_find_open = True
+        self._library_media_find_focus_pending = True
         self._sync_library_media_viewer_or_recompose()
         self.call_after_refresh(self._focus_library_media_content_search_input)
 
@@ -42300,6 +42360,7 @@ class LibraryScreen(BaseAppScreen):
                 )
             self._selected_media_id = record_id
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+            self._cancel_pending_review_set_resume()
             self._library_media_view = "viewer"
             reader_identity = self._library_media_reader_identity(record_id)
             if reader_identity is not None:

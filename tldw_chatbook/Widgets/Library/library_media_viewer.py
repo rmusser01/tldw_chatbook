@@ -12,7 +12,9 @@ from textual.css.query import NoMatches, QueryError
 from textual.widget import Widget
 from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
+from tldw_chatbook.Library.library_shell_state import library_disabled_action_label
 from tldw_chatbook.Library.library_media_viewer_state import (
+    analysis_find_unavailable_reason,
     LibraryMediaHighlightRow,
     LibraryMediaViewerState,
     find_content_matches,
@@ -82,6 +84,7 @@ class LibraryMediaViewer(Vertical):
         content_match_index: int = 0,
         content_mode: str = "raw",
         find_open: bool = False,
+        find_focus_pending: bool = False,
         loading: bool = False,
         loading_message: str = "Loading media…",
         error_message: str = "",
@@ -101,6 +104,9 @@ class LibraryMediaViewer(Vertical):
 
         Args:
             viewer: Pure display state for the loaded item.
+            find_focus_pending: One-shot token from the Find gesture; the
+                bar it mounts takes focus, then the token is spent here so
+                later syncs never re-take focus (task-31269).
             find_open: Whether the content Find bar renders (task-31237:
                 collapsed until the Find action opens it -- a permanently
                 open input duplicated Find and spent 3 rows per item).
@@ -120,6 +126,7 @@ class LibraryMediaViewer(Vertical):
         self.content_match_index = content_match_index
         self.content_mode = content_mode
         self.find_open = find_open
+        self.find_focus_pending = find_focus_pending
         self.loading = loading
         self.loading_message = loading_message
         self.error_message = error_message
@@ -264,7 +271,23 @@ class LibraryMediaViewer(Vertical):
     def _compose_primary_toolbar(self) -> ComposeResult:
         """Render the always-reachable Reader actions."""
         with Horizontal(classes="ds-toolbar", id="library-media-reader-primary-toolbar"):
-            yield Button("Find", id="library-media-reader-find", compact=True)
+            # Qodo on #2378: an Analysis tab with nothing to search has no
+            # bar to mount -- say why Find is off instead of toggling silently.
+            find_reason = analysis_find_unavailable_reason(
+                mode=self.reader_mode,
+                analysis=self.viewer.analysis,
+                generating=self.generating_analysis,
+                editing=self.editing_analysis,
+            )
+            find = Button(
+                library_disabled_action_label("Find", bool(find_reason)),
+                id="library-media-reader-find",
+                compact=True,
+            )
+            if find_reason:
+                find.disabled = True
+                find.tooltip = find_reason
+            yield find
             if not self.external_detail:
                 yield Button(
                     "Remove later" if self.viewer.read_later else "Read later",
@@ -346,8 +369,11 @@ class LibraryMediaViewer(Vertical):
                     query=self.content_query,
                     matches=matches,
                     match_index=self.content_match_index,
+                    focus_on_mount=self.find_focus_pending,
                     id="library-media-content-search-controls",
                 )
+                # task-31269: the gesture token is spent on this mount.
+                self.find_focus_pending = False
             yield LibraryMediaContentBody(
                 content=self.viewer.content,
                 is_markdown=self.viewer.is_markdown,
@@ -625,13 +651,19 @@ class LibraryMediaViewer(Vertical):
             # match count, Prev/Next, and Enter-advance all follow the
             # active tab. Analysis is plain text -> raw mode, not Markdown.
             matches = find_content_matches(self.viewer.analysis, self.content_query)
-            yield LibraryMediaContentSearchControls(
-                is_markdown=False,
-                query=self.content_query,
-                matches=matches,
-                match_index=self.content_match_index,
-                id="library-media-content-search-controls",
-            )
+            # task-31269: like Read, the bar is collapsed until Find opens
+            # it -- an always-mounted bar stole focus on every item load and
+            # swallowed the walk keys (critique #4 P0).
+            if self.find_open or self.content_query:
+                yield LibraryMediaContentSearchControls(
+                    is_markdown=False,
+                    query=self.content_query,
+                    matches=matches,
+                    match_index=self.content_match_index,
+                    focus_on_mount=self.find_focus_pending,
+                    id="library-media-content-search-controls",
+                )
+                self.find_focus_pending = False
             yield LibraryMediaContentBody(
                 content=self.viewer.analysis,
                 is_markdown=False,
