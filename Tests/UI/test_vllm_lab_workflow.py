@@ -1,16 +1,39 @@
 from __future__ import annotations
 
-import pytest
-from textual.app import App, ComposeResult
-from textual.widgets import Button, Collapsible, Input, Label, TextArea
+import threading
+from dataclasses import replace
+from pathlib import Path
 
+import pytest
+from textual import on
+from textual.app import App, ComposeResult
+from textual.widgets import Button, Collapsible, Input, Label, Select, TextArea
+
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
+from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
+    ServerLaunchClaim,
+    clear_server_process,
+    current_server_claim,
+    publish_server_process,
+    release_server_claim,
+    reserve_server_launch,
+    server_lifecycle_snapshot,
+)
+from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
+    stop_server_process as real_stop_server_process,
+)
 from tldw_chatbook.UI.LLM_Management.vllm_connection import (
     VllmActivityEvent,
     VllmConnectionOwner,
     VllmProbeResult,
 )
-from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
+from tldw_chatbook.UI.LLM_Management.vllm_profiles import (
+    VllmProfileDocumentV1,
+    VllmProfileRepository,
+    draft_from_profile,
+    profile_from_draft,
+)
 from tldw_chatbook.UI.LLM_Management.vllm_setup import (
     VllmConnectionTarget,
     VllmIssue,
@@ -19,19 +42,13 @@ from tldw_chatbook.UI.LLM_Management.vllm_setup import (
     VllmModelSource,
     VllmPreflightResult,
     VllmReadinessState,
+    launch_snapshot_from_draft,
+    semantic_fingerprint,
 )
 from tldw_chatbook.UI.LLM_Management.vllm_setup_view import VllmSetupView
+from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
-from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
-    ServerLaunchClaim,
-    clear_server_process,
-    publish_server_process,
-    release_server_claim,
-    reserve_server_launch,
-)
-from Tests.UI.app_factory import _build_test_app
-
 
 pytestmark = pytest.mark.asyncio
 
@@ -47,8 +64,20 @@ def _no_splash(monkeypatch):
 
 
 class _VllmHost(App[None]):
+    def __init__(self) -> None:
+        super().__init__()
+        self.profile_events = []
+
     def compose(self) -> ComposeResult:
         yield VllmSetupView(id="vllm-setup")
+
+    @on(VllmSetupView.CreateProfileRequested)
+    @on(VllmSetupView.SaveProfileRequested)
+    @on(VllmSetupView.RenameProfileRequested)
+    @on(VllmSetupView.DuplicateProfileRequested)
+    @on(VllmSetupView.DeleteProfileRequested)
+    def _capture_profile_event(self, event) -> None:
+        self.profile_events.append(event)
 
 
 class _RunningProcess:
@@ -84,6 +113,310 @@ async def test_initial_vllm_setup_is_guided_and_blocks_start():
         assert app.query_one("#vllm-start-button", Button).disabled
         assert "GGUF" not in copy
         assert "checkpoint" not in copy.lower()
+
+
+async def test_current_server_is_separate_from_modified_next_restart_without_path_leak():
+    app = _VllmHost()
+    async with app.run_test(size=(120, 40)):
+        view = app.query_one(VllmSetupView)
+        current = VllmLaunchDraft(
+            mode=VllmMode.LOCAL,
+            python_environment="/private/PATH_CANARY/bin/python",
+            model_source=VllmModelSource.LOCAL_DIRECTORY,
+            model_value="/private/MODEL_CANARY",
+            raw_arguments="--adapter COMMAND_CANARY",
+        )
+        profile = profile_from_draft("Local GPU", current)
+        document = VllmProfileDocumentV1(1, 3, profile.profile_id, (profile,))
+        draft = replace(
+            draft_from_profile(profile, raw_arguments="--other-launch-value"),
+            model_value="/private/NEXT_MODEL_CANARY",
+            port=8001,
+        )
+        preflight = VllmPreflightResult(
+            generation=8,
+            fingerprint=semantic_fingerprint(draft),
+            issues=(),
+            cli_path=Path("/safe/vllm"),
+        )
+        snapshot = launch_snapshot_from_draft(
+            current,
+            generation=7,
+            profile_id=profile.profile_id,
+            profile_name=profile.name,
+        )
+
+        view.apply_state(
+            draft=draft,
+            state=VllmReadinessState.READY_TO_START,
+            preflight=preflight,
+            current_launch_snapshot=snapshot,
+            profiles=document,
+            runtime_active=True,
+        )
+
+        current_copy = str(
+            app.query_one("#vllm-current-server-summary", Label).renderable
+        )
+        next_copy = str(app.query_one("#vllm-next-restart-state", Label).renderable)
+        changed_copy = str(
+            app.query_one("#vllm-next-restart-changes", Label).renderable
+        )
+        assert "Current server" in current_copy
+        assert "Local GPU" in current_copy
+        assert "Modified for next restart" in next_copy
+        assert changed_copy == "Changed: Model · Port · Advanced arguments"
+        assert not app.query_one("#vllm-restart-button", Button).disabled
+        safe_projection = f"{current_copy} {next_copy} {changed_copy}"
+        assert not any(
+            canary in safe_projection
+            for canary in (
+                "PATH_CANARY",
+                "MODEL_CANARY",
+                "NEXT_MODEL_CANARY",
+                "COMMAND_CANARY",
+            )
+        )
+
+
+async def test_profile_buttons_post_exact_actions_and_raw_arguments_are_launch_only():
+    app = _VllmHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        view = app.query_one(VllmSetupView)
+        profile = profile_from_draft("GPU 0", view.draft)
+        document = VllmProfileDocumentV1(1, 1, profile.profile_id, (profile,))
+        view.apply_state(
+            draft=draft_from_profile(profile, raw_arguments="--launch-only"),
+            state=VllmReadinessState.NOT_CONFIGURED,
+            preflight=None,
+            profiles=document,
+        )
+        assert app.query_one("#vllm-profile-select", Select).value == profile.profile_id
+        assert "Launch only · not saved in profiles." in " ".join(
+            str(label.renderable) for label in view.query(Label)
+        )
+
+        app.query_one("#vllm-profile-name", Input).value = "Renamed GPU"
+        for selector in (
+            "#vllm-profile-create-button",
+            "#vllm-profile-save-button",
+            "#vllm-profile-rename-button",
+            "#vllm-profile-duplicate-button",
+            "#vllm-profile-delete-button",
+        ):
+            await pilot.click(selector)
+            await pilot.pause()
+
+        assert [type(message) for message in app.profile_events] == [
+            VllmSetupView.CreateProfileRequested,
+            VllmSetupView.SaveProfileRequested,
+            VllmSetupView.RenameProfileRequested,
+            VllmSetupView.DuplicateProfileRequested,
+            VllmSetupView.DeleteProfileRequested,
+        ]
+
+
+async def test_profile_repository_io_is_threaded_and_selected_profile_restores(
+    monkeypatch, tmp_path: Path
+):
+    path = tmp_path / "vllm_launch_profiles.json"
+    repo = VllmProfileRepository(path)
+    first = repo.save(
+        profile_from_draft(
+            "First",
+            VllmLaunchDraft(
+                mode=VllmMode.LOCAL,
+                python_environment="python",
+                model_source=VllmModelSource.HUGGING_FACE,
+                model_value="org/first",
+            ),
+        ),
+        expected_revision=0,
+    )
+    second = repo.save(
+        profile_from_draft(
+            "Second",
+            replace(draft_from_profile(first.profile), model_value="org/second"),
+        ),
+        expected_revision=first.document.revision,
+    )
+    repo.select(first.profile.profile_id, expected_revision=second.document.revision)
+    caller_thread = threading.get_ident()
+    io_threads = []
+    real_load = repo.load
+
+    def observed_load():
+        io_threads.append(threading.get_ident())
+        return real_load()
+
+    monkeypatch.setattr(repo, "load", observed_load)
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+        screen._vllm_profile_repository = repo
+        await screen._load_vllm_profiles()
+
+        assert io_threads and all(thread != caller_thread for thread in io_threads)
+        assert screen._vllm_profiles.selected_profile_id == first.profile.profile_id
+        assert screen._vllm_draft.model_value == "org/first"
+        assert view.query_one("#vllm-profile-select", Select).value == (
+            first.profile.profile_id
+        )
+        assert current_server_claim(app, "vllm") is None
+
+
+async def test_restart_proves_old_process_dead_and_released_before_new_generation(
+    monkeypatch,
+):
+    app = _build_test_app()
+    process = _RunningProcess()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, _ = await _mount_vllm_screen(app, pilot)
+        current = VllmLaunchDraft(
+            mode=VllmMode.LOCAL,
+            python_environment="python",
+            model_source=VllmModelSource.HUGGING_FACE,
+            model_value="org/current",
+        )
+        old_token = screen._vllm_owner.begin(current, runtime_owner="chatbook")
+        old_claim = reserve_server_launch(app, "vllm", authority="chatbook-vllm")
+        assert old_claim is not None
+        assert screen._vllm_owner.bind_launch_claim(old_token, old_claim)
+        assert publish_server_process(app, "vllm", old_claim, process)
+        assert screen._vllm_owner.settle(old_token, _ready_result(old_token))
+
+        draft = replace(
+            current,
+            model_source=VllmModelSource.LOCAL_DIRECTORY,
+            model_value="/private/NEXT_MODEL_CANARY",
+            port=8001,
+        )
+        token = screen._vllm_owner.begin(draft, runtime_owner="chatbook")
+        preflight = VllmPreflightResult(
+            generation=token.generation,
+            fingerprint=token.fingerprint,
+            issues=(),
+            cli_path=Path("/safe/vllm"),
+        )
+        screen._vllm_draft = draft
+        screen._vllm_preflight = preflight
+        screen._settle_vllm_state(
+            token,
+            VllmReadinessState.READY_TO_START,
+            activity_code="checking",
+        )
+
+        confirmations = []
+
+        def capture_confirmation(dialog, callback):
+            confirmations.append((dialog, callback))
+
+        monkeypatch.setattr(app, "push_screen", capture_confirmation)
+        screen._on_vllm_restart_requested(
+            VllmSetupView.RestartRequested(
+                draft,
+                ("Model source", "Model", "Port"),
+            )
+        )
+        assert len(confirmations) == 1
+        assert confirmations[0][0].message == (
+            "Restart vLLM with changes to: Model source, Model, Port?"
+        )
+        assert "NEXT_MODEL_CANARY" not in confirmations[0][0].message
+
+        order = []
+
+        async def observed_stop(*args, **kwargs):
+            order.append("stop")
+            return await real_stop_server_process(*args, **kwargs)
+
+        real_reserve = reserve_server_launch
+
+        def observed_reserve(*args, **kwargs):
+            assert process.poll() is not None
+            assert server_lifecycle_snapshot(app, "vllm") == (None, None)
+            order.append("reserve")
+            return real_reserve(*args, **kwargs)
+
+        def observed_launch(*args, **kwargs):
+            order.append("launch")
+
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Screens.llm_screen.stop_server_process", observed_stop
+        )
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Screens.llm_screen.reserve_server_launch",
+            observed_reserve,
+        )
+        monkeypatch.setattr(screen, "_start_vllm_process_workers", observed_launch)
+
+        assert await screen._restart_vllm_with_draft(draft)
+
+        new_claim, new_process = server_lifecycle_snapshot(app, "vllm")
+        assert new_claim is not None and new_claim is not old_claim
+        assert new_process is None
+        assert screen._vllm_owner.owns_launch_claim(new_claim)
+        assert screen._vllm_owner.snapshot().generation > token.generation
+        assert order == ["stop", "reserve", "launch"]
+
+
+async def test_restart_termination_failure_keeps_old_snapshot_and_never_reserves(
+    monkeypatch,
+):
+    app = _build_test_app()
+    process = _RunningProcess()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, _ = await _mount_vllm_screen(app, pilot)
+        current = VllmLaunchDraft(
+            mode=VllmMode.LOCAL,
+            python_environment="python",
+            model_source=VllmModelSource.HUGGING_FACE,
+            model_value="org/current",
+        )
+        old_token = screen._vllm_owner.begin(current, runtime_owner="chatbook")
+        old_claim = reserve_server_launch(app, "vllm", authority="chatbook-vllm")
+        assert old_claim is not None
+        assert screen._vllm_owner.bind_launch_claim(old_token, old_claim)
+        old_snapshot = screen._vllm_owner.bound_launch_snapshot(old_claim)
+        assert old_snapshot is not None
+        assert publish_server_process(app, "vllm", old_claim, process)
+
+        draft = replace(current, model_value="/private/NEXT_MODEL_CANARY")
+        token = screen._vllm_owner.begin(draft, runtime_owner="chatbook")
+        screen._vllm_draft = draft
+        screen._vllm_preflight = VllmPreflightResult(
+            generation=token.generation,
+            fingerprint=token.fingerprint,
+            issues=(),
+            cli_path=Path("/safe/vllm"),
+        )
+        screen._settle_vllm_state(
+            token,
+            VllmReadinessState.READY_TO_START,
+            activity_code="checking",
+        )
+        reserve_calls = []
+
+        async def stubborn_stop(*args, **kwargs):
+            return False
+
+        def forbidden_reserve(*args, **kwargs):
+            reserve_calls.append(True)
+            raise AssertionError("restart reserved a second process")
+
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Screens.llm_screen.stop_server_process", stubborn_stop
+        )
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Screens.llm_screen.reserve_server_launch",
+            forbidden_reserve,
+        )
+
+        assert not await screen._restart_vllm_with_draft(draft)
+        assert reserve_calls == []
+        assert server_lifecycle_snapshot(app, "vllm") == (old_claim, process)
+        assert screen._vllm_owner.bound_launch_snapshot(old_claim) == old_snapshot
+        assert screen._vllm_owner.snapshot().state is VllmReadinessState.NEEDS_ATTENTION
 
 
 async def test_source_specific_controls_and_mode_drafts_are_preserved():
@@ -449,14 +782,14 @@ async def test_preflight_issue_settles_owner_view_and_recovery(monkeypatch):
 async def test_vllm_handoff_intents_are_secret_free_exact_and_strict():
     """A looser value type or copied extras would cross the screen boundary."""
 
-    from tldw_chatbook.UI.Navigation.vllm_handoff import (
-        VllmConsoleIntent,
-        VllmDefaultIntent,
-    )
     from tldw_chatbook.UI.Navigation.pending_handoff_store import (
         HandoffChannel,
         HandoffValueError,
         PendingHandoffStore,
+    )
+    from tldw_chatbook.UI.Navigation.vllm_handoff import (
+        VllmConsoleIntent,
+        VllmDefaultIntent,
     )
 
     target = VllmConnectionTarget(

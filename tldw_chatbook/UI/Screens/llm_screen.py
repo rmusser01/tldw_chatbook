@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
-from functools import partial
-from pathlib import Path
 import subprocess
 import threading
 import time
 from collections.abc import Callable
+from datetime import datetime
+from functools import partial
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
@@ -21,17 +21,31 @@ from textual.widgets import Button, Static
 from textual.worker import Worker, get_current_worker
 
 from ...Constants import TAB_CHAT, TAB_SETTINGS
-from ...Local_Ingestion.parakeet_v2_artifact import parakeet_reference
-from ...Model_Artifacts.remote_huggingface import (
-    RemoteGGUFCandidate,
-    ResolvedRemoteCatalog,
+from ...Event_Handlers.LLM_Management_Events.server_lifecycle import (
+    ServerLaunchClaim,
+    current_server_claim,
+    process_is_running,
+    release_server_claim,
+    reserve_server_launch,
+    run_server_subprocess,
+    server_lifecycle_snapshot,
+    stop_server_process,
 )
+from ...Local_Ingestion.parakeet_v2_artifact import parakeet_reference
 from ...Model_Artifacts.machine_memory import (
     MachineMemorySnapshot,
     ProbeReason,
     SystemMemoryState,
 )
+from ...Model_Artifacts.remote_huggingface import (
+    RemoteGGUFCandidate,
+    ResolvedRemoteCatalog,
+)
 from ...Model_Artifacts.service import ArtifactRef, ModelArtifactService
+from ...STT.parakeet_external import (
+    ExternalParakeetVerificationError,
+    format_external_parakeet_recovery,
+)
 from ...STT.parakeet_sources import (
     ManagedCopyConsent,
     ManagedCopyPlan,
@@ -40,10 +54,6 @@ from ...STT.parakeet_sources import (
     ParakeetSourceKey,
     PreparedExternalSelection,
 )
-from ...STT.parakeet_external import (
-    ExternalParakeetVerificationError,
-    format_external_parakeet_recovery,
-)
 from ...Third_Party.textual_fspicker import SelectDirectory
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.ModelArtifacts import (
@@ -51,24 +61,6 @@ from ...Widgets.ModelArtifacts import (
     InstallStatusChanged,
     ManagedGGUFRuntimeChoiceModal,
     ModelInstallModal,
-)
-from ..Navigation.audio_cpp_model_handoff import (
-    AudioCppModelInstallOperation,
-    AudioCppModelInstallOwner,
-    AudioCppModelLibraryRequest,
-    AudioCppModelLibraryResult,
-)
-from ..Navigation.pending_handoff_store import (
-    HandoffChannel,
-    HandoffClaim,
-    HandoffValueError,
-    PendingHandoffStore,
-)
-from ..Navigation.main_navigation import NavigateToScreen
-from ..Navigation.vllm_handoff import (
-    VllmConsoleIntent,
-    VllmDefaultIntent,
-    owner_has_current_intent,
 )
 from ..Lab_Modules.lab_server_status import (
     LAB_SERVER_SOURCES,
@@ -79,7 +71,6 @@ from ..Lab_Modules.lab_server_status import (
     servers_chip_text,
 )
 from ..Lab_Modules.lab_workbench import LAB_RAIL_ROW_CLASS
-from ..LLM_Management_Window import LLMManagementWindow
 from ..LLM_Management.vllm_connection import (
     VllmActivityEvent,
     VllmConnectionOwner,
@@ -87,6 +78,19 @@ from ..LLM_Management.vllm_connection import (
     VllmProbeRequest,
     VllmProbeResult,
     probe_vllm_target,
+)
+from ..LLM_Management.vllm_profiles import (
+    VllmLaunchProfileV1,
+    VllmProfileConflict,
+    VllmProfileCorrupt,
+    VllmProfileDocumentV1,
+    VllmProfileFutureVersion,
+    VllmProfileMutation,
+    VllmProfileRepository,
+    VllmProfileValidationError,
+    default_vllm_profile,
+    draft_from_profile,
+    profile_from_draft,
 )
 from ..LLM_Management.vllm_setup import (
     SERVED_MODEL_NAME,
@@ -97,19 +101,29 @@ from ..LLM_Management.vllm_setup import (
     VllmPreflightResult,
     VllmReadinessState,
     build_vllm_command,
+    changed_launch_field_labels,
     run_vllm_preflight,
     semantic_fingerprint,
 )
 from ..LLM_Management.vllm_setup_view import VllmSetupView
-from ...Event_Handlers.LLM_Management_Events.server_lifecycle import (
-    ServerLaunchClaim,
-    current_server_claim,
-    process_is_running,
-    release_server_claim,
-    reserve_server_launch,
-    run_server_subprocess,
-    server_lifecycle_snapshot,
-    stop_server_process,
+from ..LLM_Management_Window import LLMManagementWindow
+from ..Navigation.audio_cpp_model_handoff import (
+    AudioCppModelInstallOperation,
+    AudioCppModelInstallOwner,
+    AudioCppModelLibraryRequest,
+    AudioCppModelLibraryResult,
+)
+from ..Navigation.main_navigation import NavigateToScreen
+from ..Navigation.pending_handoff_store import (
+    HandoffChannel,
+    HandoffClaim,
+    HandoffValueError,
+    PendingHandoffStore,
+)
+from ..Navigation.vllm_handoff import (
+    VllmConsoleIntent,
+    VllmDefaultIntent,
+    owner_has_current_intent,
 )
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from .lab_frame import LabInspectorRow, LabScreen, LabStatusChip
@@ -270,6 +284,16 @@ class LLMScreen(LabScreen):
             model_source=VllmModelSource.HUGGING_FACE,
             model_value="",
         )
+        initial_vllm_profile = default_vllm_profile()
+        self._vllm_profiles = VllmProfileDocumentV1(
+            1,
+            0,
+            initial_vllm_profile.profile_id,
+            (initial_vllm_profile,),
+        )
+        self._vllm_profile_repository = VllmProfileRepository()
+        self._vllm_profiles_loaded = False
+        self._vllm_profile_worker: Worker | None = None
         self._vllm_preflight: VllmPreflightResult | None = None
         self._vllm_preflight_worker: Worker | None = None
         self._vllm_probe_worker: Worker | None = None
@@ -2515,6 +2539,11 @@ class LLMScreen(LabScreen):
         )
         if runtime_active:
             self._vllm_claim = claim
+        current_launch_snapshot = (
+            self._vllm_owner.bound_launch_snapshot(claim)
+            if claim is not None and self._vllm_owner.owns_launch_claim(claim)
+            else None
+        )
         state = snapshot.state
         preflight = self._vllm_preflight
         if (
@@ -2530,6 +2559,8 @@ class LLMScreen(LabScreen):
             state=state,
             preflight=preflight,
             connection=snapshot,
+            current_launch_snapshot=current_launch_snapshot,
+            profiles=self._vllm_profiles,
             runtime_active=runtime_active,
         )
         if not focus:
@@ -2545,6 +2576,177 @@ class LLMScreen(LabScreen):
                 view.query_one(focus_id, Button).focus()
             except Exception:
                 pass
+
+    def _selected_vllm_profile(self) -> VllmLaunchProfileV1:
+        return next(
+            profile
+            for profile in self._vllm_profiles.profiles
+            if profile.profile_id == self._vllm_profiles.selected_profile_id
+        )
+
+    def _accept_vllm_profiles(self, document: VllmProfileDocumentV1) -> None:
+        """Hydrate selected structured fields while retaining launch-only arguments."""
+
+        previous_fingerprint = semantic_fingerprint(self._vllm_draft)
+        self._vllm_profiles = document
+        selected = self._selected_vllm_profile()
+        self._vllm_draft = draft_from_profile(
+            selected,
+            raw_arguments=self._vllm_draft.raw_arguments,
+        )
+        self._vllm_preflight = None
+        self._vllm_profiles_loaded = True
+        if semantic_fingerprint(self._vllm_draft) != previous_fingerprint:
+            self._vllm_owner.invalidate("target_changed")
+            self._cancel_vllm_workers()
+        self._apply_vllm_view_state(focus=False)
+
+    async def _load_vllm_profiles(self) -> None:
+        """Load device-local profile state away from Textual's event loop."""
+
+        try:
+            document = await asyncio.to_thread(self._vllm_profile_repository.load)
+        except (VllmProfileCorrupt, VllmProfileFutureVersion, OSError):
+            self.notify(
+                "vLLM profiles could not be read safely.",
+                severity="error",
+            )
+            return
+        if self.is_attached:
+            self._accept_vllm_profiles(document)
+
+    async def _run_vllm_profile_mutation(
+        self, operation: Callable[[], VllmProfileMutation]
+    ) -> None:
+        """Run one CAS mutation in a thread and apply only its validated result."""
+
+        try:
+            receipt = await asyncio.to_thread(operation)
+        except (
+            VllmProfileConflict,
+            VllmProfileCorrupt,
+            VllmProfileFutureVersion,
+            VllmProfileValidationError,
+            OSError,
+        ):
+            self.notify(
+                "vLLM profile change was not saved; reload profiles and retry.",
+                severity="error",
+            )
+            return
+        if self.is_attached:
+            self._accept_vllm_profiles(receipt.document)
+
+    def _start_vllm_profile_mutation(
+        self, operation: Callable[[], VllmProfileMutation]
+    ) -> None:
+        self._vllm_profile_worker = self.run_worker(
+            self._run_vllm_profile_mutation(operation),
+            group="vllm_profiles",
+            description="Updating vLLM launch profiles",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    @on(VllmSetupView.ProfileSelected)
+    def _on_vllm_profile_selected(self, event: VllmSetupView.ProfileSelected) -> None:
+        event.stop()
+        revision = self._vllm_profiles.revision
+        self._start_vllm_profile_mutation(
+            partial(
+                self._vllm_profile_repository.select,
+                event.profile_id,
+                expected_revision=revision,
+            )
+        )
+
+    @on(VllmSetupView.CreateProfileRequested)
+    def _on_vllm_create_profile(
+        self, event: VllmSetupView.CreateProfileRequested
+    ) -> None:
+        event.stop()
+        try:
+            profile = profile_from_draft(event.name, event.draft)
+        except VllmProfileValidationError:
+            self.notify("Choose a valid unique profile name.", severity="error")
+            return
+        self._start_vllm_profile_mutation(
+            partial(
+                self._vllm_profile_repository.save,
+                profile,
+                expected_revision=self._vllm_profiles.revision,
+            )
+        )
+
+    @on(VllmSetupView.SaveProfileRequested)
+    def _on_vllm_save_profile(self, event: VllmSetupView.SaveProfileRequested) -> None:
+        event.stop()
+        selected = next(
+            (
+                profile
+                for profile in self._vllm_profiles.profiles
+                if profile.profile_id == event.profile_id
+            ),
+            None,
+        )
+        if selected is None:
+            return
+        try:
+            profile = profile_from_draft(
+                selected.name,
+                event.draft,
+                profile_id=selected.profile_id,
+            )
+        except VllmProfileValidationError:
+            self.notify("Profile fields need repair before saving.", severity="error")
+            return
+        self._start_vllm_profile_mutation(
+            partial(
+                self._vllm_profile_repository.save,
+                profile,
+                expected_revision=self._vllm_profiles.revision,
+            )
+        )
+
+    @on(VllmSetupView.RenameProfileRequested)
+    def _on_vllm_rename_profile(
+        self, event: VllmSetupView.RenameProfileRequested
+    ) -> None:
+        event.stop()
+        self._start_vllm_profile_mutation(
+            partial(
+                self._vllm_profile_repository.rename,
+                event.profile_id,
+                event.name,
+                expected_revision=self._vllm_profiles.revision,
+            )
+        )
+
+    @on(VllmSetupView.DuplicateProfileRequested)
+    def _on_vllm_duplicate_profile(
+        self, event: VllmSetupView.DuplicateProfileRequested
+    ) -> None:
+        event.stop()
+        self._start_vllm_profile_mutation(
+            partial(
+                self._vllm_profile_repository.duplicate,
+                event.profile_id,
+                expected_revision=self._vllm_profiles.revision,
+            )
+        )
+
+    @on(VllmSetupView.DeleteProfileRequested)
+    def _on_vllm_delete_profile(
+        self, event: VllmSetupView.DeleteProfileRequested
+    ) -> None:
+        event.stop()
+        self._start_vllm_profile_mutation(
+            partial(
+                self._vllm_profile_repository.delete,
+                event.profile_id,
+                expected_revision=self._vllm_profiles.revision,
+            )
+        )
 
     @on(VllmSetupView.DraftChanged)
     def _on_vllm_draft_changed(self, event: VllmSetupView.DraftChanged) -> None:
@@ -2638,7 +2840,13 @@ class LLMScreen(LabScreen):
         self._vllm_draft = event.draft
         self._vllm_preflight = None
         runtime_owner = "chatbook" if event.draft.mode is VllmMode.LOCAL else "external"
-        token = self._vllm_owner.begin(event.draft, runtime_owner=runtime_owner)
+        selected = self._selected_vllm_profile()
+        token = self._vllm_owner.begin(
+            event.draft,
+            runtime_owner=runtime_owner,
+            profile_id=(selected.profile_id if runtime_owner == "chatbook" else None),
+            profile_name=selected.name,
+        )
         self._apply_vllm_view_state(focus=False)
         self._vllm_preflight_worker = self.run_worker(
             self._run_vllm_preflight_generation(token, event.draft),
@@ -2733,6 +2941,17 @@ class LLMScreen(LabScreen):
             activity_code="launch_reserved",
         )
         self._apply_vllm_view_state(focus=True)
+        self._start_vllm_process_workers(command, claim, token, event.draft)
+
+    def _start_vllm_process_workers(
+        self,
+        command: tuple[str, ...],
+        claim: ServerLaunchClaim,
+        token: VllmOperationToken,
+        draft: VllmLaunchDraft,
+    ) -> None:
+        """Start process and readiness workers for one already-bound generation."""
+
         self._vllm_server_worker = self.run_worker(
             partial(self._run_vllm_server, tuple(command), claim, token),
             group="vllm_server",
@@ -2741,7 +2960,169 @@ class LLMScreen(LabScreen):
             thread=True,
             exit_on_error=False,
         )
-        self._start_vllm_probe(token, event.draft, claim=claim)
+        self._start_vllm_probe(token, draft, claim=claim)
+
+    def _current_vllm_restart_candidate(
+        self, draft: VllmLaunchDraft
+    ) -> tuple[
+        tuple[str, ...],
+        VllmOperationToken,
+        ServerLaunchClaim,
+        object,
+        tuple[str, ...],
+    ] | None:
+        """Return a fully current safe restart candidate or fail closed."""
+
+        claim, process = server_lifecycle_snapshot(self.app_instance, "vllm")
+        owner_snapshot = self._vllm_owner.snapshot()
+        token = owner_snapshot.current_token
+        preflight = self._vllm_preflight
+        if (
+            claim is None
+            or process is None
+            or not process_is_running(process)
+            or not self._vllm_owner.owns_launch_claim(claim)
+            or token is None
+            or token.runtime_owner != "chatbook"
+            or owner_snapshot.state is not VllmReadinessState.READY_TO_START
+            or not isinstance(preflight, VllmPreflightResult)
+            or preflight.issues
+            or preflight.generation != token.generation
+            or preflight.fingerprint != semantic_fingerprint(draft)
+        ):
+            return None
+        launch_snapshot = self._vllm_owner.bound_launch_snapshot(claim)
+        if launch_snapshot is None:
+            return None
+        changed_fields = changed_launch_field_labels(launch_snapshot, draft)
+        if not changed_fields:
+            return None
+        try:
+            command = build_vllm_command(
+                draft,
+                preflight,
+                current_generation=token.generation,
+            )
+        except ValueError:
+            return None
+        return command, token, claim, process, changed_fields
+
+    @on(VllmSetupView.RestartRequested)
+    def _on_vllm_restart_requested(
+        self, event: VllmSetupView.RestartRequested
+    ) -> None:
+        """Confirm one current restart using allowlisted labels only."""
+
+        event.stop()
+        candidate = self._current_vllm_restart_candidate(event.draft)
+        if candidate is None:
+            self._apply_vllm_view_state(focus=True)
+            return
+        changed_fields = candidate[-1]
+        if event.changed_fields != changed_fields:
+            return
+        message = "Restart vLLM with changes to: " + ", ".join(changed_fields) + "?"
+        self.app.push_screen(
+            ConfirmationDialog(
+                title="Restart with draft?",
+                message=message,
+                confirm_label="Restart",
+                cancel_label="Cancel",
+            ),
+            lambda confirmed: self._confirm_vllm_restart(
+                bool(confirmed), event.draft
+            ),
+        )
+
+    def _confirm_vllm_restart(
+        self, confirmed: bool, draft: VllmLaunchDraft
+    ) -> None:
+        if not confirmed:
+            return
+        self.run_worker(
+            self._restart_vllm_with_draft(draft),
+            group="vllm_restart",
+            description="Restarting vLLM with next configuration",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _restart_vllm_with_draft(self, draft: VllmLaunchDraft) -> bool:
+        """Settle the exact old claim before reserving one new generation."""
+
+        candidate = self._current_vllm_restart_candidate(draft)
+        if candidate is None:
+            self._apply_vllm_view_state(focus=True)
+            return False
+        command, token, old_claim, old_process, _ = candidate
+        self._settle_vllm_state(
+            token,
+            VllmReadinessState.STOPPING,
+            activity_code="stopping",
+        )
+        self._apply_vllm_view_state(focus=False)
+        stopped = await stop_server_process(
+            self.app_instance,
+            "vllm",
+            "vLLM server",
+            expected_claim=old_claim,
+        )
+        remaining_claim, remaining_process = server_lifecycle_snapshot(
+            self.app_instance, "vllm"
+        )
+        old_dead = not process_is_running(old_process)
+        old_released = remaining_claim is None and remaining_process is None
+        if not stopped or not old_dead or not old_released:
+            if self._vllm_owner.snapshot().current_token == token:
+                self._settle_vllm_state(
+                    token,
+                    VllmReadinessState.NEEDS_ATTENTION,
+                    activity_code="launch_failed",
+                    issue=VllmIssue("launch_failed", "process"),
+                )
+            self._apply_vllm_view_state(focus=True)
+            return False
+        self._vllm_owner.release_launch_claim(old_claim)
+        self._vllm_claim = None
+        if (
+            self._vllm_owner.snapshot().current_token != token
+            or semantic_fingerprint(self._vllm_draft) != token.fingerprint
+            or semantic_fingerprint(draft) != token.fingerprint
+        ):
+            self._apply_vllm_view_state(focus=True)
+            return False
+        selected = self._selected_vllm_profile()
+        new_token = self._vllm_owner.begin(
+            draft,
+            runtime_owner="chatbook",
+            profile_id=selected.profile_id,
+            profile_name=selected.name,
+        )
+        new_claim = reserve_server_launch(
+            self.app_instance, "vllm", authority=SERVED_MODEL_NAME
+        )
+        if new_claim is None or not self._vllm_owner.bind_launch_claim(
+            new_token, new_claim
+        ):
+            if new_claim is not None:
+                release_server_claim(self.app_instance, "vllm", new_claim)
+            self._settle_vllm_state(
+                new_token,
+                VllmReadinessState.NEEDS_ATTENTION,
+                activity_code="claim_unavailable",
+                issue=VllmIssue("claim_unavailable", "process"),
+            )
+            self._apply_vllm_view_state(focus=True)
+            return False
+        self._vllm_claim = new_claim
+        self._settle_vllm_state(
+            new_token,
+            VllmReadinessState.LAUNCHING,
+            activity_code="launch_reserved",
+        )
+        self._apply_vllm_view_state(focus=True)
+        self._start_vllm_process_workers(command, new_claim, new_token, draft)
+        return True
 
     def _run_vllm_server(
         self,
@@ -2986,7 +3367,13 @@ class LLMScreen(LabScreen):
         runtime_owner = (
             "chatbook" if self._vllm_draft.mode is VllmMode.LOCAL else "external"
         )
-        token = self._vllm_owner.begin(self._vllm_draft, runtime_owner=runtime_owner)
+        selected = self._selected_vllm_profile()
+        token = self._vllm_owner.begin(
+            self._vllm_draft,
+            runtime_owner=runtime_owner,
+            profile_id=(selected.profile_id if runtime_owner == "chatbook" else None),
+            profile_name=selected.name,
+        )
         if runtime_owner == "chatbook":
             self._vllm_preflight = None
             self._vllm_preflight_worker = self.run_worker(
@@ -3860,6 +4247,17 @@ class LLMScreen(LabScreen):
         # queries for them.
         if self._model_install_presentation_pending():
             self.call_after_refresh(self._hydrate_model_install_progress)
+        if not self._vllm_profiles_loaded and (
+            self._vllm_profile_worker is None
+            or self._vllm_profile_worker.is_finished
+        ):
+            self._vllm_profile_worker = self.run_worker(
+                self._load_vllm_profiles(),
+                group="vllm_profiles",
+                description="Loading vLLM launch profiles",
+                exclusive=True,
+                exit_on_error=False,
+            )
         self.call_after_refresh(self._apply_vllm_view_state)
 
     @on(LLMManagementWindow.DeferredViewsMounted)

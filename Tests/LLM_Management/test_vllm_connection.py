@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import replace
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
-from threading import Event, Thread
 import time
+from dataclasses import FrozenInstanceError, replace
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Event, Thread
 
 import pytest
 
+from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
+    ServerLaunchClaim,
+)
 from tldw_chatbook.UI.LLM_Management.vllm_connection import (
     VllmActivityEvent,
     VllmConnectionOwner,
@@ -23,11 +26,9 @@ from tldw_chatbook.UI.LLM_Management.vllm_setup import (
     VllmMode,
     VllmModelSource,
     VllmReadinessState,
+    changed_launch_field_labels,
+    launch_snapshot_from_draft,
 )
-from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
-    ServerLaunchClaim,
-)
-
 
 pytestmark = pytest.mark.loopback_network
 
@@ -224,6 +225,47 @@ def test_cancelled_live_claim_cannot_begin_retry_generation():
     claim.cancel_event.set()
 
     assert owner.begin_claim_retry(claim) is None
+
+
+def test_launch_snapshot_is_immutable_exact_and_changed_labels_are_allowlisted():
+    """A restart comparison must retain launch truth without copying values."""
+
+    draft = local_draft(
+        python_environment="/private/PATH_CANARY/bin/python",
+        model_source=VllmModelSource.LOCAL_DIRECTORY,
+        model_value="/private/MODEL_CANARY",
+        raw_arguments="--adapter COMMAND_CANARY",
+    )
+    snapshot = launch_snapshot_from_draft(
+        draft,
+        generation=4,
+        profile_id="d34adf77-02ce-4a28-8bcd-85c66bb193ec",
+        profile_name="Local GPU",
+    )
+
+    assert snapshot.generation == 4
+    assert snapshot.profile_id == "d34adf77-02ce-4a28-8bcd-85c66bb193ec"
+    assert snapshot.environment_display == "/private/PATH_CANARY/bin/python"
+    assert snapshot.model_source_kind is VllmModelSource.LOCAL_DIRECTORY
+    assert snapshot.model_source_display == "/private/MODEL_CANARY"
+    assert snapshot.redacted_argument_summary == "Custom launch arguments"
+    with pytest.raises(FrozenInstanceError):
+        snapshot.port = 9000  # type: ignore[misc]
+
+    changed = changed_launch_field_labels(
+        snapshot,
+        replace(
+            draft,
+            model_value="/private/OTHER_MODEL_CANARY",
+            port=8001,
+            raw_arguments="--other-secret-shaped-value",
+        ),
+    )
+    assert changed == ("Model", "Port", "Advanced arguments")
+    rendered = repr(changed)
+    assert "PATH_CANARY" not in rendered
+    assert "MODEL_CANARY" not in rendered
+    assert "COMMAND_CANARY" not in rendered
 
 
 def test_ready_result_requires_a_target():

@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field, replace
 import json
 import math
 import os
 import re
-from threading import RLock
 import time
-from typing import Callable, Literal
 import unicodedata
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
+from threading import RLock
+from typing import Literal
 
 import httpx
 
@@ -24,10 +25,9 @@ from .vllm_setup import (
     VllmLaunchDraft,
     VllmLaunchSnapshot,
     VllmReadinessState,
-    client_api_url,
+    launch_snapshot_from_draft,
     semantic_fingerprint,
 )
-
 
 RuntimeOwner = Literal["chatbook", "external"]
 CredentialSource = Literal["none", "configured", "environment"]
@@ -300,7 +300,12 @@ class VllmConnectionOwner:
         )
 
     def begin(
-        self, draft: VllmLaunchDraft, *, runtime_owner: RuntimeOwner
+        self,
+        draft: VllmLaunchDraft,
+        *,
+        runtime_owner: RuntimeOwner,
+        profile_id: str | None = None,
+        profile_name: str = "Chatbook-managed vLLM",
     ) -> VllmOperationToken:
         """Begin a new generation and discard all prior readiness evidence."""
 
@@ -312,12 +317,11 @@ class VllmConnectionOwner:
             token = VllmOperationToken(self._generation, fingerprint, runtime_owner)
             launch_snapshot = None
             if runtime_owner == "chatbook":
-                launch_snapshot = VllmLaunchSnapshot(
+                launch_snapshot = launch_snapshot_from_draft(
+                    draft,
                     generation=token.generation,
-                    fingerprint=fingerprint,
-                    client_api_url=client_api_url(draft.bind_address, draft.port),
-                    served_model=SERVED_MODEL_NAME,
-                    display_profile_name="Chatbook-managed vLLM",
+                    profile_id=profile_id,
+                    profile_name=profile_name,
                 )
             self._snapshot = VllmConnectionSnapshot(
                 current_token=token,

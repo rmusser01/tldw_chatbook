@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
-from enum import StrEnum
 import hashlib
 import ipaddress
 import os
-from pathlib import Path
 import re
 import select
 import shlex
@@ -15,11 +12,14 @@ import shutil
 import socket
 import subprocess
 import time
-from typing import Callable, Literal
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
+from enum import StrEnum
+from pathlib import Path
+from typing import Literal
 from urllib.parse import urlparse
 
 from tldw_chatbook.Utils.path_validation import validate_path_simple
-
 
 SERVED_MODEL_NAME = "chatbook-vllm"
 _HF_REPOSITORY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -91,6 +91,15 @@ class VllmPreflightResult:
 @dataclass(frozen=True, slots=True)
 class VllmLaunchSnapshot:
     generation: int
+    profile_id: str | None
+    environment_display: str = field(repr=False)
+    model_source_kind: VllmModelSource
+    model_source_display: str = field(repr=False)
+    bind_address: str
+    port: int
+    structured_options: tuple[tuple[str, object], ...]
+    redacted_argument_summary: str
+    raw_arguments_fingerprint: str
     fingerprint: str
     client_api_url: str
     served_model: str
@@ -107,12 +116,101 @@ class VllmConnectionTarget:
     credential_source: Literal["none", "configured", "environment"]
 
 
+_CHANGED_FIELD_ORDER: tuple[tuple[str, str], ...] = (
+    ("python_environment", "Python environment"),
+    ("model_source", "Model source"),
+    ("model_value", "Model"),
+    ("bind_address", "Bind address"),
+    ("port", "Port"),
+    ("dtype", "dtype"),
+    ("tensor_parallel_size", "Tensor parallel size"),
+    ("maximum_model_length", "Maximum model length"),
+    ("gpu_memory_utilization", "GPU memory utilization"),
+    ("trust_remote_code", "Trust remote code"),
+)
+
+
+def _effective_dtype(value: str) -> str:
+    return value or "auto"
+
+
+def _raw_arguments_fingerprint(raw_arguments: str) -> str:
+    return hashlib.sha256(raw_arguments.encode("utf-8")).hexdigest()
+
+
+def launch_snapshot_from_draft(
+    draft: VllmLaunchDraft,
+    *,
+    generation: int,
+    profile_id: str | None = None,
+    profile_name: str = "Chatbook-managed vLLM",
+) -> VllmLaunchSnapshot:
+    """Capture immutable launch truth before reserving its exact process claim."""
+
+    structured_options: tuple[tuple[str, object], ...] = (
+        ("dtype", _effective_dtype(draft.dtype)),
+        ("tensor_parallel_size", draft.tensor_parallel_size),
+        ("maximum_model_length", draft.maximum_model_length),
+        ("gpu_memory_utilization", draft.gpu_memory_utilization),
+        ("trust_remote_code", draft.trust_remote_code),
+    )
+    return VllmLaunchSnapshot(
+        generation=generation,
+        profile_id=profile_id,
+        environment_display=draft.python_environment,
+        model_source_kind=draft.model_source,
+        model_source_display=draft.model_value,
+        bind_address=draft.bind_address,
+        port=draft.port,
+        structured_options=structured_options,
+        redacted_argument_summary=(
+            "Custom launch arguments" if draft.raw_arguments.strip() else "None"
+        ),
+        raw_arguments_fingerprint=_raw_arguments_fingerprint(draft.raw_arguments),
+        fingerprint=semantic_fingerprint(draft),
+        client_api_url=client_api_url(draft.bind_address, draft.port),
+        served_model=SERVED_MODEL_NAME,
+        display_profile_name=profile_name,
+    )
+
+
+def changed_launch_field_labels(
+    snapshot: VllmLaunchSnapshot, draft: VllmLaunchDraft
+) -> tuple[str, ...]:
+    """Return allowlisted labels for restart changes, never their values."""
+
+    snapshot_values: dict[str, object] = {
+        "python_environment": snapshot.environment_display,
+        "model_source": snapshot.model_source_kind,
+        "model_value": snapshot.model_source_display,
+        "bind_address": snapshot.bind_address,
+        "port": snapshot.port,
+        **dict(snapshot.structured_options),
+    }
+    labels = [
+        label
+        for field_name, label in _CHANGED_FIELD_ORDER
+        if snapshot_values[field_name]
+        != (
+            _effective_dtype(draft.dtype)
+            if field_name == "dtype"
+            else getattr(draft, field_name)
+        )
+    ]
+    if snapshot.raw_arguments_fingerprint != _raw_arguments_fingerprint(
+        draft.raw_arguments
+    ):
+        labels.append("Advanced arguments")
+    return tuple(labels)
+
+
 def semantic_fingerprint(draft: VllmLaunchDraft) -> str:
     """Return a stable identity for every behaviorally relevant launch field."""
 
     values = asdict(draft)
     values["mode"] = draft.mode.value
     values["model_source"] = draft.model_source.value
+    values["dtype"] = _effective_dtype(draft.dtype)
     encoded = repr(tuple(sorted(values.items()))).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 

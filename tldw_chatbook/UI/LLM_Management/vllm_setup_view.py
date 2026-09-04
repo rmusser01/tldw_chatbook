@@ -8,22 +8,36 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.message import Message
-from textual.widgets import Button, Collapsible, Input, Label, TextArea
+from textual.widgets import Button, Collapsible, Input, Label, Select, TextArea
 
 from .vllm_connection import VllmConnectionSnapshot
-
+from .vllm_profiles import (
+    VllmProfileDocumentV1,
+    default_vllm_profile,
+)
 from .vllm_setup import (
     VllmLaunchDraft,
+    VllmLaunchSnapshot,
     VllmMode,
     VllmModelSource,
     VllmPreflightResult,
     VllmReadinessState,
+    changed_launch_field_labels,
     semantic_fingerprint,
 )
 
 
 class VllmSetupView(VerticalScroll):
     """Collect a vLLM draft and render only current preflight evidence."""
+
+    DEFAULT_CSS = """
+    VllmSetupView > #vllm-local-setup,
+    VllmSetupView > #vllm-existing-setup,
+    VllmSetupView > #vllm-current-server,
+    VllmSetupView > #vllm-next-restart {
+        height: auto;
+    }
+    """
 
     class CheckRequested(Message):
         def __init__(self, draft: VllmLaunchDraft) -> None:
@@ -47,6 +61,47 @@ class VllmSetupView(VerticalScroll):
     class MakeDefaultRequested(Message):
         """Request Settings prefill for the current verified target."""
 
+    class RestartRequested(Message):
+        def __init__(
+            self, draft: VllmLaunchDraft, changed_fields: tuple[str, ...]
+        ) -> None:
+            super().__init__()
+            self.draft = draft
+            self.changed_fields = changed_fields
+
+    class ProfileSelected(Message):
+        def __init__(self, profile_id: str) -> None:
+            super().__init__()
+            self.profile_id = profile_id
+
+    class CreateProfileRequested(Message):
+        def __init__(self, name: str, draft: VllmLaunchDraft) -> None:
+            super().__init__()
+            self.name = name
+            self.draft = draft
+
+    class SaveProfileRequested(Message):
+        def __init__(self, profile_id: str, draft: VllmLaunchDraft) -> None:
+            super().__init__()
+            self.profile_id = profile_id
+            self.draft = draft
+
+    class RenameProfileRequested(Message):
+        def __init__(self, profile_id: str, name: str) -> None:
+            super().__init__()
+            self.profile_id = profile_id
+            self.name = name
+
+    class DuplicateProfileRequested(Message):
+        def __init__(self, profile_id: str) -> None:
+            super().__init__()
+            self.profile_id = profile_id
+
+    class DeleteProfileRequested(Message):
+        def __init__(self, profile_id: str) -> None:
+            super().__init__()
+            self.profile_id = profile_id
+
     class LocalDirectoryBrowseRequested(Message):
         """Request a local model-directory picker without exposing a path globally."""
 
@@ -67,6 +122,11 @@ class VllmSetupView(VerticalScroll):
         self._state = VllmReadinessState.NOT_CONFIGURED
         self._preflight: VllmPreflightResult | None = None
         self._connection: VllmConnectionSnapshot | None = None
+        initial_profile = default_vllm_profile()
+        self._profiles = VllmProfileDocumentV1(
+            1, 0, initial_profile.profile_id, (initial_profile,)
+        )
+        self._current_launch_snapshot: VllmLaunchSnapshot | None = None
         self._runtime_active = False
         self._rendering = False
 
@@ -84,6 +144,28 @@ class VllmSetupView(VerticalScroll):
             )
         yield Label("Launch mode", classes="section_label")
         yield Label("", id="vllm-mode-summary")
+        yield Label("Profile", classes="section_label")
+        yield Select(
+            [(profile.name, profile.profile_id) for profile in self._profiles.profiles],
+            value=self._profiles.selected_profile_id,
+            allow_blank=False,
+            id="vllm-profile-select",
+        )
+        yield Input(
+            value=next(
+                profile.name
+                for profile in self._profiles.profiles
+                if profile.profile_id == self._profiles.selected_profile_id
+            ),
+            id="vllm-profile-name",
+            placeholder="Profile name",
+        )
+        with Horizontal(classes="vllm-profile-actions"):
+            yield Button("New profile", id="vllm-profile-create-button")
+            yield Button("Save changes", id="vllm-profile-save-button")
+            yield Button("Rename", id="vllm-profile-rename-button")
+            yield Button("Duplicate", id="vllm-profile-duplicate-button")
+            yield Button("Delete", id="vllm-profile-delete-button")
         with Container(id="vllm-local-setup"):
             yield Label("Python environment", classes="inline-label")
             yield Input(
@@ -127,11 +209,21 @@ class VllmSetupView(VerticalScroll):
                 placeholder="http://127.0.0.1:8000/v1",
             )
         yield Label("", id="vllm-start-blocker", classes="prereq-hint")
+        with Container(id="vllm-current-server"):
+            yield Label("Current server", classes="section-title")
+            yield Label("", id="vllm-current-server-summary")
+        with Container(id="vllm-next-restart"):
+            yield Label("Next restart configuration", classes="section-title")
+            yield Label("", id="vllm-next-restart-state")
+            yield Label("", id="vllm-next-restart-changes")
         with Horizontal(classes="vllm-action-bar"):
             yield Button("Check setup", id="vllm-check-setup-button")
             yield Button("Start", id="vllm-start-button", disabled=True)
             yield Button("Stop", id="vllm-stop-button", disabled=True)
             yield Button("Retry check", id="vllm-retry-button", disabled=True)
+            yield Button(
+                "Restart with draft", id="vllm-restart-button", disabled=True
+            )
         yield Label("No activity yet.", id="vllm-activity-summary")
         with Collapsible(
             title="Activity details", id="vllm-activity-details", collapsed=True
@@ -153,6 +245,10 @@ class VllmSetupView(VerticalScroll):
             id="vllm-console-scope-copy",
         )
         yield Label("Advanced options", classes="section_label")
+        yield Label(
+            "Launch only · not saved in profiles.",
+            id="vllm-raw-arguments-scope",
+        )
         yield TextArea(id="vllm-raw-arguments", classes="additional_args_textarea")
 
     def apply_state(
@@ -162,12 +258,17 @@ class VllmSetupView(VerticalScroll):
         state: VllmReadinessState,
         preflight: VllmPreflightResult | None,
         connection: VllmConnectionSnapshot | None = None,
+        current_launch_snapshot: VllmLaunchSnapshot | None = None,
+        profiles: VllmProfileDocumentV1 | None = None,
         runtime_active: bool | None = None,
     ) -> None:
         self._draft = draft
         self._state = state
         self._preflight = preflight
         self._connection = connection
+        self._current_launch_snapshot = current_launch_snapshot
+        if profiles is not None:
+            self._profiles = profiles
         if runtime_active is not None:
             self._runtime_active = runtime_active
         if self.is_mounted:
@@ -264,6 +365,25 @@ class VllmSetupView(VerticalScroll):
                 "#vllm-port": str(self._draft.port),
                 "#vllm-existing-server-url": self._draft.existing_server_url,
             }
+            profile_select = self.query_one("#vllm-profile-select", Select)
+            profile_select.set_options(
+                [
+                    (profile.name, profile.profile_id)
+                    for profile in self._profiles.profiles
+                ]
+            )
+            if profile_select.value != self._profiles.selected_profile_id:
+                with profile_select.prevent(Select.Changed):
+                    profile_select.value = self._profiles.selected_profile_id
+            selected_profile = next(
+                profile
+                for profile in self._profiles.profiles
+                if profile.profile_id == self._profiles.selected_profile_id
+            )
+            profile_name = self.query_one("#vllm-profile-name", Input)
+            if profile_name.value != selected_profile.name:
+                with profile_name.prevent(Input.Changed):
+                    profile_name.value = selected_profile.name
             for selector, value in projected_inputs.items():
                 input_widget = self.query_one(selector, Input)
                 if input_widget.value != value:
@@ -282,9 +402,10 @@ class VllmSetupView(VerticalScroll):
             start = self.query_one("#vllm-start-button", Button)
             stop = self.query_one("#vllm-stop-button", Button)
             retry = self.query_one("#vllm-retry-button", Button)
+            restart = self.query_one("#vllm-restart-button", Button)
             use_in_console = self.query_one("#vllm-use-in-console-button", Button)
             make_default = self.query_one("#vllm-make-default-button", Button)
-            start.disabled = not (local and is_current_success)
+            start.disabled = not (local and is_current_success and not self._runtime_active)
             stop.disabled = not self._runtime_active
             retry.disabled = self._state is not VllmReadinessState.NEEDS_ATTENTION
             target = self._connection.target if self._connection is not None else None
@@ -303,6 +424,33 @@ class VllmSetupView(VerticalScroll):
             )
             use_in_console.disabled = not current_target
             make_default.disabled = not current_target
+            current_snapshot = self._current_launch_snapshot
+            current_container = self.query_one("#vllm-current-server", Container)
+            next_container = self.query_one("#vllm-next-restart", Container)
+            show_current = self._runtime_active and current_snapshot is not None
+            current_container.display = show_current
+            next_container.display = show_current
+            changed_fields: tuple[str, ...] = ()
+            if current_snapshot is not None:
+                changed_fields = changed_launch_field_labels(
+                    current_snapshot, self._draft
+                )
+                self.query_one("#vllm-current-server-summary", Label).update(
+                    "Current server · "
+                    f"{current_snapshot.client_api_url} · "
+                    f"{current_snapshot.served_model} · "
+                    f"{current_snapshot.display_profile_name}"
+                )
+            dirty = bool(changed_fields)
+            self.query_one("#vllm-next-restart-state", Label).update(
+                "Modified for next restart" if dirty else "Matches current server"
+            )
+            self.query_one("#vllm-next-restart-changes", Label).update(
+                "Changed: " + " · ".join(changed_fields) if dirty else "No changes"
+            )
+            restart.disabled = not (
+                show_current and dirty and local and is_current_success
+            )
             self._render_readiness()
             blocker = self.query_one("#vllm-start-blocker", Label)
             if self._preflight and self._preflight.issues:
@@ -419,6 +567,12 @@ class VllmSetupView(VerticalScroll):
             return
         self._change_draft(raw_arguments=event.text_area.text)
 
+    @on(Select.Changed, "#vllm-profile-select")
+    def _on_profile_selected(self, event: Select.Changed) -> None:
+        if self._rendering or not isinstance(event.value, str):
+            return
+        self.post_message(self.ProfileSelected(event.value))
+
     @on(Button.Pressed)
     def _on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -441,7 +595,42 @@ class VllmSetupView(VerticalScroll):
                 self.post_message(self.StopRequested())
             case "vllm-retry-button":
                 self.post_message(self.RetryRequested())
+            case "vllm-restart-button":
+                snapshot = self._current_launch_snapshot
+                if snapshot is not None:
+                    self.post_message(
+                        self.RestartRequested(
+                            self._draft,
+                            changed_launch_field_labels(snapshot, self._draft),
+                        )
+                    )
             case "vllm-use-in-console-button":
                 self.post_message(self.UseInConsoleRequested())
             case "vllm-make-default-button":
                 self.post_message(self.MakeDefaultRequested())
+            case "vllm-profile-create-button":
+                name = self.query_one("#vllm-profile-name", Input).value
+                self.post_message(self.CreateProfileRequested(name, self._draft))
+            case "vllm-profile-save-button":
+                self.post_message(
+                    self.SaveProfileRequested(
+                        self._profiles.selected_profile_id, self._draft
+                    )
+                )
+            case "vllm-profile-rename-button":
+                name = self.query_one("#vllm-profile-name", Input).value
+                self.post_message(
+                    self.RenameProfileRequested(
+                        self._profiles.selected_profile_id, name
+                    )
+                )
+            case "vllm-profile-duplicate-button":
+                self.post_message(
+                    self.DuplicateProfileRequested(
+                        self._profiles.selected_profile_id
+                    )
+                )
+            case "vllm-profile-delete-button":
+                self.post_message(
+                    self.DeleteProfileRequested(self._profiles.selected_profile_id)
+                )
