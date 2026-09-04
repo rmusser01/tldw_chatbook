@@ -521,9 +521,16 @@ class StaticLibraryMediaScopeService(_LegacyStaticLibraryMediaScopeService):
         rows = list(self.media_items)
         query = str(kwargs.get("query") or "").casefold()
         if query:
-            rows = [
-                row for row in rows if query in str(row.get("title") or "").casefold()
-            ]
+            # Mirrors LIBRARY_BROWSE_SEARCH_FIELDS in
+            # tldw_chatbook/Media/media_reading_scope_service.py (task-31274):
+            # the real browse filter matches title, content AND keywords, so a
+            # title-only fake would hide a keyword miss instead of catching it.
+            def _matches(row):
+                haystacks = [str(row.get("title") or ""), str(row.get("content") or "")]
+                haystacks.extend(str(word) for word in row.get("keywords") or ())
+                return any(query in text.casefold() for text in haystacks)
+
+            rows = [row for row in rows if _matches(row)]
         media_types = kwargs.get("media_types")
         if isinstance(media_types, list):
             rows = [row for row in rows if row.get("type") in media_types]

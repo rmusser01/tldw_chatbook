@@ -485,7 +485,12 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         with filter_row:
             yield Input(
                 value=self.canvas.query,
-                placeholder="Filter media",
+                # task-31274: say that keywords match too. Kept to 14 cells
+                # because Textual word-wraps the placeholder and paints only
+                # its first line: at the default 38-col Items pane "Filter by
+                # title, content or keyword…" rendered as "Filter by" (live,
+                # 235x52). The empty state names the full field set.
+                placeholder="Title/keyword…",
                 id="library-media-filter",
             )
             clear_filter = Button(

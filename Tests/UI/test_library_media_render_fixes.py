@@ -19,7 +19,7 @@ the chooser bug needs the screen's focus-on-open):
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Button, Input, OptionList
+from textual.widgets import Button, Input, OptionList, Static
 
 from tldw_chatbook.Library.library_media_reader_state import set_mode
 from tldw_chatbook.UI.Screens.library_screen import _sync_library_canvas
@@ -677,3 +677,96 @@ async def test_video_transcript_headings_render_instead_of_painting_hashes():
         )
         assert "Section 1" in painted, painted
         assert "##" not in painted, painted
+
+
+def _keyword_media_items() -> list[dict[str, object]]:
+    """Rows whose keyword appears in NO title and NO body (task-31274)."""
+    return [
+        {
+            "id": "media-1",
+            "title": "Opening remarks",
+            "type": "article",
+            "last_modified": "2026-07-06T08:00:00Z",
+            "keywords": ["day2"],
+            "content": "Transcript of the opening remarks session.",
+            "version": 1,
+        },
+        {
+            "id": "media-2",
+            "title": "Closing remarks",
+            "type": "article",
+            "last_modified": "2026-07-06T10:00:00Z",
+            "keywords": ["day3"],
+            "content": "Transcript of the closing remarks session.",
+            "version": 1,
+        },
+    ]
+
+
+async def _apply_media_filter(screen, pilot, query: str) -> None:
+    """Type into the Items filter and wait for the browse scope to apply."""
+    screen.query_one("#library-media-filter", Input).value = query
+    await _wait_for_condition(
+        pilot,
+        lambda: (
+            screen._library_media_browse_controller.applied_scope is not None
+            and screen._library_media_browse_controller.applied_scope.query == query
+        ),
+        message=f"The media filter never applied query {query!r}.",
+    )
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_media_filter_matches_a_keyword_absent_from_title_and_body():
+    """task-31274: a keyword-tagged row is found by its keyword alone.
+
+    ``day2`` is a keyword on exactly one seeded row and appears in no title
+    and no body, so a hit is provably keyword-driven.
+    """
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_keyword_media_items())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _apply_media_filter(screen, pilot, "day2")
+
+        titles = [row.title for row in screen._build_library_media_state().rows]
+        assert titles == ["Opening remarks"], titles
+        painted = _painted(host, screen.query_one("#library-media-list").region)
+        assert "Opening remarks" in painted, painted
+        assert "Closing remarks" not in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_media_filter_miss_names_the_fields_it_searched():
+    """task-31274 AC#3: the empty state says what the filter searched."""
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_keyword_media_items())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _apply_media_filter(screen, pilot, "zz")
+
+        status = screen.query_one("#library-media-status", Static)
+        assert str(status.renderable) == (
+            "No media matched “zz” in titles, content or keywords."
+        )
+        assert not screen.query_one(
+            "#library-media-filter-clear", Button
+        ).disabled
+
+
+@pytest.mark.asyncio
+async def test_media_filter_placeholder_names_the_fields_it_searches():
+    """task-31274 AC#2: the input says keywords are matched too."""
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_keyword_media_items())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        placeholder = screen.query_one("#library-media-filter", Input).placeholder
+        # Short on purpose: Textual paints only the first wrapped line of a
+        # placeholder, and the default Items pane fits ~15 cells (task-31274).
+        assert placeholder == "Title/keyword…"
+        assert len(placeholder) <= 15

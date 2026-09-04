@@ -37,8 +37,8 @@ Narrow
 Media has three stable roles:
 
 - **Library** — the normal Library navigation rail.
-- **Items** — a local-only list with **Filter media**, type selection,
-  paging, bulk actions, and balanced two-line rows.
+- **Items** — a local-only list with a **Title/keyword…** filter, type
+  selection, paging, bulk actions, and balanced two-line rows.
 - **Reader** — a permanent reading surface. Selecting another row updates
   Reader in place; the Items list is not replaced.
 
@@ -142,7 +142,7 @@ and Trash ▸ "Delete permanently", each followed by "‹ Media", live in tmux
 
 | Control | What it does |
 |---|---|
-| "Filter media" / "Clear filter" | Searches the complete local Media source before paging; it is separate from Find in item. Clearing restores the unfiltered selection when it is still available. |
+| "Title/keyword…" / "Clear filter" | Searches the complete local Media source before paging — titles, item text, and the keywords an item is tagged with, so a tag you filed items under finds them even when it appears in no title. It is separate from Find in item, and "Review these" pins exactly what it returned. Clearing restores the unfiltered selection when it is still available. |
 | "type: All types" | Opens one bounded keyboard list containing the complete type set, with ✓ on the active choice. "All types" means no filter; a stored type literally named "All" remains a separate selectable value. Press Escape (or pick the current choice) to cancel. |
 | "sort: Newest" | Opens the same kind of bounded keyboard list with all four orders (Newest, Oldest, Title A-Z, Title Z-A) fully visible and ✓ on the active one. Escape cancels. |
 | "Previous" / "Next" | Moves through exact 20-item pages after the active query, type, and sort are applied. The final page may contain fewer rows; disabled buttons explain why they cannot move. With only one page, the controls do not render at all — just the item range. |
@@ -153,8 +153,14 @@ and Trash ▸ "Delete permanently", each followed by "‹ Media", live in tmux
 | Library / Items grip | Collapses or expands that pane and remembers the manual choice. Responsive collapses caused by terminal width are not saved. |
 
 Empty states: with nothing imported, "No media in your Library yet. Import
-something to see it here."; with a filter that matches nothing, "No media
-of type 'pdf'."
+something to see it here."; with a type that matches nothing, "No media
+of type 'pdf'."; with a filter query that matches nothing, "No media matched
+“day2” in titles, content or keywords." beside a live "Clear filter".
+
+*Verified against fix/media-wave4-c — 2026-09-04 (task-31274: three seeded
+articles tagged `day2` — a keyword in no title and no body — filtered live in
+tmux 235x52 to "Media (3)", "Review these" over that filter opened "Search:
+\"day2\" — 1 of 3", and "zz" produced the field-naming miss copy).*
 
 The pager reports the exact visible range, total, and page. Changing page or
 type clears current-page selection with a visible "Selection cleared."

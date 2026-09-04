@@ -1011,7 +1011,12 @@ def build_library_media_browse_state(
     empty_copy = ""
     if not rows:
         if result.scope.query:
-            empty_copy = f"No media matched ‘{result.scope.query}’."
+            # task-31274: name the fields the filter actually searched
+            # (LIBRARY_BROWSE_SEARCH_FIELDS in media_reading_scope_service).
+            empty_copy = (
+                f"No media matched “{result.scope.query}” "
+                "in titles, content or keywords."
+            )
         elif result.scope.media_type is not None:
             empty_copy = f"No media of type '{result.scope.media_type}'."
         else:
