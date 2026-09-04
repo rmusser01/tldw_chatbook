@@ -9,10 +9,12 @@ import ipaddress
 import os
 from pathlib import Path
 import re
+import select
 import shlex
 import shutil
 import socket
 import subprocess
+import time
 from typing import Callable, Literal
 from urllib.parse import urlparse
 
@@ -25,6 +27,8 @@ _MANAGED_OR_SECRET_FLAGS = frozenset(
     {"--host", "--port", "--model", "--served-model-name", "--api-key", "--hf-token"}
 )
 _MAX_PROBE_OUTPUT_BYTES = 256
+_PROBE_TIMEOUT_SECONDS = 5.0
+_PROBE_REAP_TIMEOUT_SECONDS = 0.25
 _VERSION_OUTPUT = re.compile(r"^[A-Za-z][A-Za-z0-9 ._+\-]{0,120}$")
 
 
@@ -198,8 +202,73 @@ def _classify_probe_version(output: object) -> str | None:
     return text
 
 
+def _terminate_and_reap_probe(process: subprocess.Popen[bytes]) -> None:
+    """Terminate a probe and deterministically reap it without leaking a child."""
+
+    if process.poll() is not None:
+        return
+    try:
+        process.terminate()
+        process.wait(timeout=_PROBE_REAP_TIMEOUT_SECONDS)
+        return
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        process.kill()
+        process.wait(timeout=_PROBE_REAP_TIMEOUT_SECONDS)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def _run_default_probe(argv: list[str]) -> tuple[bool, str | None]:
+    """Stream default subprocess output through a strict byte ceiling."""
+
+    try:
+        process = subprocess.Popen(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return False, None
+    assert process.stdout is not None
+    output = bytearray()
+    deadline = time.monotonic() + _PROBE_TIMEOUT_SECONDS
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                _terminate_and_reap_probe(process)
+                return False, None
+            readable, _, _ = select.select([process.stdout], [], [], remaining)
+            if not readable:
+                _terminate_and_reap_probe(process)
+                return False, None
+            chunk = os.read(process.stdout.fileno(), _MAX_PROBE_OUTPUT_BYTES - len(output) + 1)
+            if not chunk:
+                break
+            output.extend(chunk)
+            if len(output) > _MAX_PROBE_OUTPUT_BYTES:
+                _terminate_and_reap_probe(process)
+                return False, None
+        try:
+            returncode = process.wait(timeout=max(0.0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            _terminate_and_reap_probe(process)
+            return False, None
+        if returncode != 0:
+            return False, None
+        return True, _classify_probe_version(output.decode("utf-8", errors="replace"))
+    finally:
+        process.stdout.close()
+        _terminate_and_reap_probe(process)
+
+
 def _run_probe(run: Callable[..., object], argv: list[str]) -> tuple[bool, str | None]:
     """Run one bounded probe and retain only a classified version string."""
+
+    if run is subprocess.run:
+        return _run_default_probe(argv)
 
     try:
         completed = run(

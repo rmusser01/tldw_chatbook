@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import os
 from pathlib import Path
+import subprocess
+import time
 
 import pytest
 
@@ -20,6 +23,7 @@ from tldw_chatbook.UI.LLM_Management.vllm_setup import (
     semantic_fingerprint,
     validate_raw_arguments,
 )
+from tldw_chatbook.UI.LLM_Management import vllm_setup
 from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedSelectDirectory
 from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 
@@ -84,6 +88,31 @@ def test_preflight_rejects_oversize_or_unclassified_probe_output(tmp_path):
     assert result.python_version is None
     assert result.vllm_version is None
     assert all("CANARY_SECRET" not in issue.detail for issue in result.issues)
+
+
+def test_default_probe_kills_and_reaps_child_at_output_byte_ceiling(tmp_path):
+    pid_path = tmp_path / "noisy-child.pid"
+    executable = tmp_path / "noisy-probe.py"
+    executable.write_text(
+        "#!" + os.sys.executable + "\n"
+        "import os, sys\n"
+        f"open({str(pid_path)!r}, 'w').write(str(os.getpid()))\n"
+        "while True:\n"
+        "    sys.stdout.buffer.write(b'X' * 64)\n"
+        "    sys.stdout.buffer.flush()\n"
+    )
+    executable.chmod(0o755)
+
+    started = time.monotonic()
+    succeeded, version = vllm_setup._run_probe(subprocess.run, [str(executable)])
+    elapsed = time.monotonic() - started
+
+    assert succeeded is False
+    assert version is None
+    assert elapsed < 2
+    pid = int(pid_path.read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
 
 
 def test_bare_python_requires_sibling_vllm_not_path_lookup(tmp_path):
