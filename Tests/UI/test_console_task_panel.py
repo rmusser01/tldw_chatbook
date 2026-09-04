@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import ComposeResult
+from textual.containers import Vertical
 from textual.widgets import Static
 
 from Tests.Chat.test_console_runtime_lifetime import _runtime_with, _View
@@ -21,6 +22,8 @@ from Tests.Chat.test_console_runtime_lifetime import _runtime_with, _View
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from tldw_chatbook.Widgets.Console.console_task_panel import (
     ConsoleTaskPanel,
     render_task_lines,
@@ -104,6 +107,49 @@ async def test_panel_hidden_until_tasks_arrive_then_hidden_again_when_cleared():
         panel.set_tasks("s1", [])
         await pilot.pause()
         assert panel.display is False
+
+
+@pytest.mark.asyncio
+async def test_snapshot_given_before_mount_is_painted_on_mount():
+    """The screen mounts the panel lazily on the first non-empty snapshot and
+    hands it the tasks in the same breath, before its children exist."""
+    app = ConsolidatedCSSApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        panel = ConsoleTaskPanel(id="console-task-panel")
+        panel.set_tasks("s1", _tasks())
+        await app.mount(panel)
+        await pilot.pause()
+        assert panel.display is True
+        assert _rows(panel) == [
+            "[x] Read the schema",
+            "[~] Writing the migration",
+            "[ ] Run the DB tests",
+        ]
+
+
+class _SurfaceHarness(ConsolidatedCSSApp):
+    """A stand-in for the Console session surface's card slot."""
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="surface"):
+            yield Static("title", id="title")
+            yield ChatTaskCards(id="console-task-surface")
+            yield Static("transcript", id="transcript")
+
+
+@pytest.mark.asyncio
+async def test_screen_mounts_the_panel_lazily_right_after_the_task_cards():
+    """ADR-097: the panel module stays off the boot path until first use, so
+    the screen mounts it on demand -- and it must land in the card slot."""
+    app = _SurfaceHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        panel = ChatScreen._mount_console_task_panel(app)
+        await pilot.pause()
+        assert panel is not None and panel.is_mounted
+        order = [child.id for child in app.query_one("#surface").children]
+        assert order == ["title", "console-task-surface", "console-task-panel", "transcript"]
 
 
 @pytest.mark.asyncio

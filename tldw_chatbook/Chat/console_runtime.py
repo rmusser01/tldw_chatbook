@@ -1571,15 +1571,8 @@ class ConsoleRuntime:
         controller = self._chat_controller
         store = self._chat_store
         remount = getattr(controller, "_remount_task_panel", None)
-        if store is None or not callable(remount):
-            return
-        try:
+        if store is not None and callable(remount):
             remount(store.active_session_id)
-        except Exception as exc:  # noqa: BLE001 - a UI re-derive must not break attach
-            logger.warning(
-                "Task-panel remount raised at attach (exception_type={})",
-                type(exc).__name__,
-            )
 
     def detach_view(self, view: Any | None = None) -> bool:
         """Clear every screen-owned slot; the runtime itself survives.

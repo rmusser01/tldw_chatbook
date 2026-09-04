@@ -15,6 +15,7 @@ from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
+from textual.css.query import QueryError
 from textual.widgets import Static
 
 from tldw_chatbook.Chat.console_agent_bridge import _sanitize_task_marker_label
@@ -158,15 +159,20 @@ class ConsoleTaskPanel(Vertical):
             self._repaint()
 
     def _repaint(self) -> None:
-        if not self.is_mounted:
+        try:
+            header_widget = self.query_one("#console-task-panel-header", Static)
+            body = self.query_one("#console-task-panel-body", VerticalScroll)
+            rows_widget = self.query_one("#console-task-panel-rows", Static)
+        except QueryError:
+            # Not composed yet (a snapshot handed over before mount); `on_mount`
+            # repaints from the retained `_tasks`.
             return
         header, rows = render_task_lines(self._tasks, collapsed=self.collapsed)
-        self.query_one("#console-task-panel-header", Static).update(Text(header))
-        body = self.query_one("#console-task-panel-body", VerticalScroll)
+        header_widget.update(Text(header))
         body.display = not self.collapsed
         text = Text()
         for index, (status, line) in enumerate(rows):
             if index:
                 text.append("\n")
             text.append(line, style=_STATUS_STYLE.get(status, ""))
-        self.query_one("#console-task-panel-rows", Static).update(text)
+        rows_widget.update(text)

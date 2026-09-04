@@ -20723,21 +20723,46 @@ class ChatScreen(BaseAppScreen):
         session's ``todo_*`` calls must not repaint the panel the user is
         looking at; ``switch_session`` re-derives it on arrival (AC-B5).
 
+        The panel is NOT part of the session surface's ``compose``: the
+        Console surface composes during boot, and ADR-097's module census
+        ratchet counts every module resident at UI-ready. The first
+        non-empty snapshot mounts it after the task cards, so nothing about
+        the panel loads until an agent actually keeps a list.
+
         Args:
             session_id: The session the snapshot belongs to.
             tasks: That session's full task list; empty hides the panel.
         """
-        # Local import: keeps the panel module off the boot path (ADR-097).
-        from ...Widgets.Console.console_task_panel import ConsoleTaskPanel
-
         controller = self._console_chat_controller
         if controller is None or controller.store.active_session_id != session_id:
             return
         try:
-            panel = self.query_one("#console-task-panel", ConsoleTaskPanel)
+            panel = self.query_one("#console-task-panel")
         except QueryError:
-            return
+            if not tasks:
+                return
+            panel = self._mount_console_task_panel()
+            if panel is None:
+                return
         panel.set_tasks(session_id, tasks)
+
+    def _mount_console_task_panel(self):
+        """Mount the task panel right after the Console task cards.
+
+        Returns:
+            The new ``ConsoleTaskPanel``, or None when the Console surface is
+            not composed (no ``#console-task-surface`` to anchor to).
+        """
+        # Local import by design -- see `_set_console_task_panel`.
+        from ...Widgets.Console.console_task_panel import ConsoleTaskPanel
+
+        try:
+            cards = self.query_one("#console-task-surface", ChatTaskCards)
+        except QueryError:
+            return None
+        panel = ConsoleTaskPanel(id="console-task-panel")
+        cards.parent.mount(panel, after=cards)
+        return panel
 
     def _park_console_approval(self, session_id: str) -> None:
         """PA-T9 (parked background approvals): badge a NON-viewed session's
