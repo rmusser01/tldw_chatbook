@@ -509,3 +509,37 @@ async def test_settings_theme_editor_new_confirms_before_discarding_edits(tmp_pa
         assert editor.current_theme_name == "new_theme"
         message = app.notify.call_args.args[0]
         assert message == "Creating new theme"
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_name_box_drives_apply_save_reset_delete(tmp_path):
+    """TASK-31251: New -> rename -> Apply/Save/Reset/Delete all use the typed name."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app_with_real_screens(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.on_new_theme()
+        await pilot.pause()
+        name_input = editor.query_one("#settings-theme-name", Input)
+        name_input.value = "ocean"
+        await pilot.pause()
+        assert editor.current_theme_name == "ocean"
+
+        editor.on_apply_theme()
+        await pilot.pause()
+        assert app.notify.call_args.args[0] == "Theme 'ocean' applied"
+
+        editor.on_save_theme()
+        await pilot.pause()
+        assert (tmp_path / "ocean.toml").exists()
+        assert editor.current_theme_name == "ocean"
+
+        editor.on_reset_theme()
+        await pilot.pause()
+        assert name_input.value == "ocean"
+
+        editor.on_delete_theme()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmationDialog)
+        assert "ocean" in app.screen.message

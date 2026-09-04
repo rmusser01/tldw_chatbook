@@ -470,6 +470,19 @@ class SettingsThemeEditor(Vertical):
                     event.input.add_class("invalid-color")
                     self._update_color_swatch(color_name, "#000000")
 
+    @on(Input.Changed, "#settings-theme-name")
+    def on_theme_name_changed(self, event: Input.Changed) -> None:
+        """Keep current_theme_name in step with the Name box (TASK-31251).
+
+        Apply, Export, Reset and Delete all read ``current_theme_name``;
+        without this they acted on the name from the last load. Programmatic
+        loads set the box to the name already held, so the equality guard
+        makes those echoes no-ops.
+        """
+        name = event.value.strip()
+        if name and name != self.current_theme_name:
+            self.current_theme_name = name
+
     @on(Checkbox.Changed, "#settings-theme-dark-mode")
     def on_dark_mode_changed(self, event: Checkbox.Changed) -> None:
         """Handle dark mode checkbox changes."""
@@ -577,9 +590,23 @@ class SettingsThemeEditor(Vertical):
         user_theme_path = self.custom_themes_path / f"{self.current_theme_name}.toml"
         if user_theme_path.exists():
             self.load_user_theme(self.current_theme_name)
-        else:
+        elif self._is_catalog_theme(self.current_theme_name):
             self.load_theme(self.current_theme_name)
+        else:
+            # TASK-31251: a renamed, never-saved theme has nothing to go back
+            # to; say so instead of claiming a reset happened.
+            self.app.notify(
+                f"No saved version of '{self.current_theme_name}' to reset to",
+                severity="warning",
+            )
+            return
         self.app.notify("Theme reset to original values", severity="information")
+
+    def _is_catalog_theme(self, name: str) -> bool:
+        """True for Textual built-ins and shipped ALL_THEMES names."""
+        return name in ("textual-dark", "textual-light") or any(
+            getattr(theme, "name", None) == name for theme in ALL_THEMES
+        )
 
     @on(Button.Pressed, "#settings-theme-new")
     def on_new_theme(self) -> None:
