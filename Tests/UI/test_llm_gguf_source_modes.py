@@ -1244,8 +1244,11 @@ async def test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable(
         window.active_view = "vllm"
         await _settle_pilot_until(
             pilot,
-            lambda: len(window.query("#vllm-hf-model")) == 1,
-            message="vLLM pane did not populate on first selection",
+            lambda: (
+                len(window.query("#vllm-hf-model")) == 1
+                and not window.query_one("#vllm-profile-select", Select).disabled
+            ),
+            message="vLLM pane did not finish profile hydration",
         )
         vllm = window.query_one("#vllm-hf-model", Input)
         window.active_view = "mlx-lm"
@@ -1255,7 +1258,10 @@ async def test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable(
             message="MLX pane did not populate on first selection",
         )
         mlx = window.query_one("#mlx-model-path", Input)
-        vllm.value, mlx.value = "org/vllm", "org/mlx"
+        vllm.value = "org/vllm"
+        await pilot.pause()
+        mlx.value = "org/mlx"
+        await pilot.pause()
         window.active_view = "llama-cpp"
         await pilot.pause()
         mode.value = "managed"
@@ -1311,6 +1317,11 @@ async def test_supported_width_keyboard_reaches_each_provider_source_and_actions
         executable = tmp_path / f"{provider}-server"
         executable.touch()
         window.query_one(f"#{provider}-exec-path", Input).value = str(executable)
+        await _settle_pilot_until(
+            pilot,
+            lambda: _select_values(managed) == (REF_A,) and not managed.disabled,
+            message=f"{provider} managed inventory did not settle",
+        )
 
         mode.scroll_visible(animate=False)
         mode.focus()
@@ -1332,11 +1343,15 @@ async def test_supported_width_keyboard_reaches_each_provider_source_and_actions
         overlay_svg = app.export_screenshot(simplify=True)
         assert "Managed" in overlay_svg and "GGUF" in overlay_svg
         assert "External" in overlay_svg
-        if provider == "llamacpp":
-            await pilot.press("up")
-        else:
+        await pilot.press("home")
+        if provider == "llamafile":
             await pilot.press("down")
-        await pilot.pause()
+        target_index = 0 if provider == "llamacpp" else 1
+        await _settle_pilot_until(
+            pilot,
+            lambda: overlay.highlighted == target_index,
+            message=f"{provider} managed option did not receive keyboard highlight",
+        )
         await pilot.press("enter")
         await _settle_pilot_until(
             pilot,
