@@ -763,6 +763,226 @@ class CanvasRepository:
             revisions_imported=len(batch.revisions),
         )
 
+    @classmethod
+    def append_batch_in_transaction(
+        cls,
+        cursor: sqlite3.Cursor,
+        batch: CanvasImportBatch,
+        *,
+        anchor_message_id: str,
+        require_active_path: bool = True,
+        limits: CanvasRepositoryLimits | None = None,
+    ) -> CanvasImportResult:
+        """Validate and append a partial graph inside a caller-owned transaction.
+
+        Unlike :meth:`import_batch`, documents may be omitted for updates to an
+        existing Canvas.  The assistant anchor is already written by the caller;
+        its durable active path is re-derived under the same SQLite write lock.
+        """
+
+        if not cursor.connection.in_transaction:
+            raise CanvasRepositoryError("transaction_ownership_required")
+        if not isinstance(batch, CanvasImportBatch):
+            raise CanvasValidationError("invalid_import_batch")
+        repository = object.__new__(cls)
+        repository._limits = limits or CanvasRepositoryLimits()
+        conversation_id = _validated_owner_id(batch.conversation_id)
+        repository._require_active_owner(cursor, conversation_id)
+        repository._validate_append_batch(
+            cursor,
+            batch,
+            anchor_message_id=anchor_message_id,
+            require_active_path=require_active_path,
+        )
+        for document in batch.documents:
+            cursor.execute(
+                "INSERT INTO canvas_documents "
+                "(id, conversation_id, created_at, deleted, deleted_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    document.canvas_id,
+                    document.conversation_id,
+                    document.created_at,
+                    int(document.deleted_at is not None),
+                    document.deleted_at,
+                ),
+            )
+        for revision in sorted(
+            batch.revisions, key=lambda item: (item.canvas_id, item.sequence)
+        ):
+            cursor.execute(
+                _INSERT_REVISION_SQL,
+                (
+                    revision.revision_id,
+                    revision.canvas_id,
+                    revision.parent_revision_id,
+                    revision.sequence,
+                    revision.title,
+                    revision.runtime_profile,
+                    revision.source,
+                    revision.content_sha256,
+                    revision.source_bytes,
+                    revision.actor_kind,
+                    revision.origin_message_id,
+                    revision.origin_turn_id,
+                    revision.created_at,
+                    revision.deleted_at,
+                ),
+            )
+        return CanvasImportResult(
+            conversation_id=conversation_id,
+            canvases_imported=len(batch.documents),
+            revisions_imported=len(batch.revisions),
+        )
+
+    def _validate_append_batch(
+        self,
+        cursor: sqlite3.Cursor,
+        batch: CanvasImportBatch,
+        *,
+        anchor_message_id: str,
+        require_active_path: bool,
+    ) -> None:
+        if type(batch.documents) is not tuple or type(batch.revisions) is not tuple:
+            raise CanvasValidationError("invalid_import_batch")
+        if not batch.revisions:
+            raise CanvasValidationError("invalid_import_revisions")
+        anchor_message_id = _validated_opaque_id(
+            anchor_message_id, "origin_message_id", 256
+        )
+        path: list[str] = []
+        seen: set[str] = set()
+        current: str | None = anchor_message_id
+        while current is not None:
+            if current in seen:
+                raise CanvasValidationError("invalid_active_path")
+            seen.add(current)
+            row = cursor.execute(
+                "SELECT parent_message_id, conversation_id, deleted FROM messages "
+                "WHERE id = ?",
+                (current,),
+            ).fetchone()
+            if row is None or str(row[1]) != batch.conversation_id or int(row[2]):
+                raise CanvasValidationError("invalid_active_path")
+            path.append(current)
+            if len(path) > MAX_CANVAS_DURABLE_ACTIVE_PATH_MESSAGES:
+                raise CanvasValidationError("invalid_active_path")
+            current = str(row[0]) if row[0] is not None else None
+        reachable = set(path)
+
+        new_documents: set[str] = set()
+        for document in batch.documents:
+            if not isinstance(document, CanvasImportDocument):
+                raise CanvasValidationError("invalid_import_document")
+            canvas_id = _validated_uuid(document.canvas_id, "canvas_id")
+            if canvas_id in new_documents:
+                raise CanvasValidationError("duplicate_import_identity")
+            if document.conversation_id != batch.conversation_id:
+                raise CanvasValidationError("document_owner_mismatch")
+            _validated_timestamp(document.created_at, "created_at")
+            if document.deleted_at is not None:
+                raise CanvasValidationError("invalid_import_document")
+            new_documents.add(canvas_id)
+        count = int(
+            cursor.execute(
+                "SELECT COUNT(*) FROM canvas_documents WHERE conversation_id = ?",
+                (batch.conversation_id,),
+            ).fetchone()[0]
+        )
+        if count + len(new_documents) > self._limits.max_canvases_per_conversation:
+            raise CanvasQuotaError("canvas_count")
+
+        revision_ids: set[str] = set()
+        batch_rows: dict[str, CanvasImportRevision] = {}
+        per_canvas: dict[str, list[CanvasImportRevision]] = {}
+        added_bytes = 0
+        for revision in batch.revisions:
+            if not isinstance(revision, CanvasImportRevision):
+                raise CanvasValidationError("invalid_import_revision")
+            revision_id = _validated_uuid(revision.revision_id, "revision_id")
+            if revision_id in revision_ids or revision_id in new_documents:
+                raise CanvasValidationError("duplicate_import_identity")
+            if type(revision.sequence) is not int or revision.sequence <= 0:
+                raise CanvasValidationError("invalid_revision_sequence")
+            if revision.parent_revision_id is not None:
+                _validated_uuid(revision.parent_revision_id, "parent_revision_id")
+            if revision.deleted_at is not None:
+                raise CanvasValidationError("invalid_import_revision")
+            if require_active_path and revision.origin_message_id not in reachable:
+                raise CanvasValidationError("origin_owner_mismatch")
+            self._require_origin_owner(
+                cursor, batch.conversation_id, revision.origin_message_id
+            )
+            if revision.canvas_id not in new_documents:
+                self._require_active_document(
+                    cursor, batch.conversation_id, revision.canvas_id
+                )
+            values = self._validated_revision_values(
+                title=revision.title,
+                source=revision.source,
+                runtime_profile=revision.runtime_profile,
+                actor_kind=revision.actor_kind,
+                origin_message_id=revision.origin_message_id,
+                origin_turn_id=revision.origin_turn_id,
+            )
+            if (
+                revision.content_sha256 != values.content_sha256
+                or revision.source_bytes != values.source_bytes
+            ):
+                raise CanvasValidationError("digest_mismatch")
+            _validated_timestamp(revision.created_at, "created_at")
+            revision_ids.add(revision_id)
+            batch_rows[revision_id] = revision
+            per_canvas.setdefault(revision.canvas_id, []).append(revision)
+            added_bytes += revision.source_bytes
+
+        if new_documents - per_canvas.keys():
+            raise CanvasValidationError("canvas_without_revision")
+
+        self._require_ids_available(cursor, tuple(new_documents), tuple(revision_ids))
+        self._require_conversation_source_capacity(
+            cursor, batch.conversation_id, added_bytes
+        )
+        for canvas_id, revisions in per_canvas.items():
+            existing_count = int(
+                cursor.execute(
+                    "SELECT COUNT(*) FROM canvas_revisions WHERE canvas_id = ?",
+                    (canvas_id,),
+                ).fetchone()[0]
+            )
+            if existing_count + len(revisions) > self._limits.max_revisions_per_canvas:
+                raise CanvasQuotaError("revision_count")
+            expected_sequence = existing_count + 1
+            for revision in sorted(revisions, key=lambda item: item.sequence):
+                if revision.sequence != expected_sequence:
+                    raise CanvasValidationError("invalid_revision_sequence")
+                if revision.parent_revision_id is None:
+                    if canvas_id not in new_documents or revision.sequence != 1:
+                        raise CanvasValidationError("invalid_root_parent")
+                    expected_sequence += 1
+                    continue
+                parent = batch_rows.get(revision.parent_revision_id)
+                if parent is None:
+                    row = cursor.execute(
+                        "SELECT sequence, canvas_id, origin_message_id FROM canvas_revisions "
+                        "WHERE id = ? AND deleted_at IS NULL",
+                        (revision.parent_revision_id,),
+                    ).fetchone()
+                    if (
+                        row is None
+                        or str(row[1]) != canvas_id
+                        or (require_active_path and str(row[2]) not in reachable)
+                    ):
+                        raise CanvasValidationError("parent_owner_mismatch")
+                    parent_sequence = int(row[0])
+                else:
+                    if parent.canvas_id != canvas_id:
+                        raise CanvasValidationError("parent_owner_mismatch")
+                    parent_sequence = parent.sequence
+                if parent_sequence >= revision.sequence:
+                    raise CanvasValidationError("parent_owner_mismatch")
+                expected_sequence += 1
+
     def _validated_revision_values(
         self,
         *,

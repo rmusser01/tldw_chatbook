@@ -12748,6 +12748,7 @@ UPDATE db_schema_version
             and not msg_data.get("image_data")
             and provider_continuation_json is None
             and thinking_blocks_json is None
+            and not msg_data.get("metadata_json")
             and normalized_generation_state is None
         ):
             raise InputError(

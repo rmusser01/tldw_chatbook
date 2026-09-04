@@ -24,7 +24,8 @@ from __future__ import annotations
 import json
 import math
 import re
-from dataclasses import asdict, dataclass
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 #: Closed vocabulary for ``MessageMetadata.transcript_status``.
@@ -355,6 +356,23 @@ class MessageMetadata:
             A stable (key-sorted) JSON object string.
         """
         return json.dumps(asdict(self), sort_keys=True)
+
+    def remap_canvas_origins(self, message_ids: Mapping[str, str]) -> "MessageMetadata":
+        """Return metadata with only Canvas card message origins remapped."""
+
+        cards = tuple(
+            replace(
+                card,
+                origin=replace(
+                    card.origin,
+                    message_id=message_ids.get(
+                        card.origin.message_id, card.origin.message_id
+                    ),
+                ),
+            )
+            for card in self.canvas_cards
+        )
+        return replace(self, canvas_cards=cards)
 
     @classmethod
     def from_json(cls, raw: str | None) -> "MessageMetadata | None":

@@ -22,6 +22,11 @@ from tldw_chatbook.Canvas.models import (
     CanvasRevisionInfo,
     CanvasScope,
 )
+from tldw_chatbook.Canvas.repository import (
+    CanvasImportBatch,
+    CanvasImportDocument,
+    CanvasImportRevision,
+)
 from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsoleExactNativeIdTransactionContribution,
     ConsoleTransactionWriter,
@@ -52,6 +57,14 @@ class CanvasSessionOwner:
     _nonce: object = field(default_factory=object, repr=False, compare=False)
 
 
+@dataclass(frozen=True, slots=True, eq=False)
+class CanvasRunOwner:
+    """Opaque process-only identity for one exact registered run stage."""
+
+    run_id: str
+    _nonce: object = field(default_factory=object, repr=False, compare=False)
+
+
 @dataclass(frozen=True, slots=True)
 class _StagedRevision:
     info: CanvasRevisionInfo
@@ -66,6 +79,7 @@ class CanvasTurnContribution(ConsoleExactNativeIdTransactionContribution):
 
     assistant_message_id: str
     revisions: tuple[_StagedRevision, ...] = field(repr=False)
+    require_active_path: bool = field(default=True, repr=False)
 
     @property
     def revision_count(self) -> int:
@@ -106,42 +120,53 @@ class CanvasTurnContribution(ConsoleExactNativeIdTransactionContribution):
         conversation_id: str,
         native_message_ids: Mapping[str, str],
     ) -> None:
-        """Insert the staged graph without opening or committing a transaction."""
+        """Append through Canvas' canonical transaction-aware repository API."""
 
+        documents: list[CanvasImportDocument] = []
+        revisions: list[CanvasImportRevision] = []
         for row in self.revisions:
             origin_id = native_message_ids.get(row.info.origin.message_id)
             if not isinstance(origin_id, str) or not origin_id:
                 raise RuntimeError("canvas_origin_mapping_missing")
             if row.creates_document:
-                writer.execute(
-                    "INSERT INTO canvas_documents("
-                    "id, conversation_id, created_at, deleted, deleted_at"
-                    ") VALUES (?, ?, ?, ?, ?)",
-                    (row.info.canvas_id, conversation_id, row.created_at, 0, None),
+                documents.append(
+                    CanvasImportDocument(
+                        canvas_id=row.info.canvas_id,
+                        conversation_id=conversation_id,
+                        created_at=row.created_at,
+                    )
                 )
-            writer.execute(
-                "INSERT INTO canvas_revisions("
-                "id, canvas_id, parent_revision_id, sequence, title, "
-                "runtime_profile, html, content_sha256, html_bytes, actor_kind, "
-                "origin_message_id, origin_turn_id, created_at, deleted_at"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    row.info.revision_id,
-                    row.info.canvas_id,
-                    row.info.parent_revision_id,
-                    row.info.sequence,
-                    row.info.title,
-                    row.info.runtime_profile,
-                    row.source,
-                    row.info.content_sha256,
-                    row.info.source_bytes,
-                    "assistant",
-                    origin_id,
-                    row.info.origin.run_id,
-                    row.created_at,
-                    None,
-                ),
+            revisions.append(
+                CanvasImportRevision(
+                    revision_id=row.info.revision_id,
+                    canvas_id=row.info.canvas_id,
+                    parent_revision_id=row.info.parent_revision_id,
+                    sequence=row.info.sequence,
+                    title=row.info.title,
+                    runtime_profile=row.info.runtime_profile,
+                    source=row.source,
+                    content_sha256=row.info.content_sha256,
+                    source_bytes=row.info.source_bytes,
+                    actor_kind="assistant",
+                    origin_message_id=origin_id,
+                    origin_turn_id=row.info.origin.run_id,
+                    created_at=row.created_at,
+                )
             )
+        anchor_id = native_message_ids.get(self.assistant_message_id)
+        if not isinstance(anchor_id, str) or not anchor_id:
+            # Promotion aggregates many assistant origins; use the last mapped
+            # revision origin only as a transaction anchor for path validation.
+            anchor_id = revisions[-1].origin_message_id
+        writer.append_canvas_batch(
+            CanvasImportBatch(
+                conversation_id=conversation_id,
+                documents=tuple(documents),
+                revisions=tuple(revisions),
+            ),
+            anchor_message_id=anchor_id,
+            require_active_path=self.require_active_path,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,6 +207,7 @@ class CanvasRunSettlement:
     state: CanvasRunState
     cards: tuple[CanvasCardMetadata, ...]
     contribution: CanvasTurnContribution | None = field(repr=False)
+    _run_owner: CanvasRunOwner = field(repr=False, compare=False)
 
     @property
     def metadata_json(self) -> str:
@@ -199,14 +225,61 @@ class _RunStage:
     scope: CanvasScope
     assistant_message_id: str
     temporary: bool
+    owner: CanvasSessionOwner | None
+    run_owner: CanvasRunOwner
     state: CanvasRunState = CanvasRunState.OPEN
     revisions: list[_StagedRevision] = field(default_factory=list)
     by_revision_id: dict[str, _StagedRevision] = field(default_factory=dict)
     latest_by_canvas_id: dict[str, _StagedRevision] = field(default_factory=dict)
-    replays: dict[tuple[str, str], tuple[str, CanvasMutationResult]] = field(
-        default_factory=dict
-    )
+    replays: dict[
+        tuple[str, str], tuple[str, CanvasMutationResult | CanvasConflictResult]
+    ] = field(default_factory=dict)
     settlement: CanvasRunSettlement | None = None
+
+
+class CanvasRunCoordinator:
+    """Coordinator view permanently fenced to one opaque run owner."""
+
+    __slots__ = ("_run_owner", "controller")
+
+    def __init__(self, controller: ConsoleCanvasController, owner: CanvasRunOwner):
+        self.controller = controller
+        self._run_owner = owner
+
+    def is_scope_current(self, scope: CanvasScope) -> bool:
+        return self.controller.is_scope_current(scope, _run_owner=self._run_owner)
+
+    def list_canvases(self, scope: CanvasScope) -> tuple[CanvasListItem, ...]:
+        return self.controller.list_canvases(scope, _run_owner=self._run_owner)
+
+    def read_canvas(self, scope: CanvasScope, canvas_id: str) -> CanvasReadResult:
+        return self.controller.read_canvas(scope, canvas_id, _run_owner=self._run_owner)
+
+    def create_canvas(self, scope: CanvasScope, **kwargs: Any) -> CanvasMutationResult:
+        return self.controller.create_canvas(
+            scope, _run_owner=self._run_owner, **kwargs
+        )
+
+    def update_canvas(
+        self, scope: CanvasScope, **kwargs: Any
+    ) -> CanvasMutationResult | CanvasConflictResult:
+        return self.controller.update_canvas(
+            scope, _run_owner=self._run_owner, **kwargs
+        )
+
+    def finish_assistant_run(
+        self,
+        assistant_message_id: str,
+        *,
+        actual_run_id: str,
+        terminal_status: str,
+    ) -> CanvasRunSettlement | None:
+        return self.controller.finish_assistant_run(
+            assistant_message_id,
+            actual_run_id=actual_run_id,
+            terminal_status=terminal_status,
+            _run_owner=self._run_owner,
+        )
 
 
 class ConsoleCanvasController:
@@ -231,11 +304,12 @@ class ConsoleCanvasController:
         with self._lock:
             if self._closed:
                 raise RuntimeError("canvas_runtime_closed")
+            if session_id in self._promotion_leases:
+                raise RuntimeError("canvas_promotion_in_flight")
             incarnation = self._session_incarnations.get(session_id, 0) + 1
             owner = CanvasSessionOwner(session_id, incarnation)
             self._session_incarnations[session_id] = incarnation
             self._session_owners[session_id] = owner
-            self._promotion_leases.pop(session_id, None)
             for run_id, stage in tuple(self._runs.items()):
                 if stage.scope.session_id == session_id:
                     self._assistant_runs.pop(stage.assistant_message_id, None)
@@ -251,7 +325,7 @@ class ConsoleCanvasController:
         *,
         assistant_message_id: str,
         temporary: bool,
-    ) -> None:
+    ) -> CanvasRunCoordinator:
         """Register exact server-owned scope before any tool is advertised."""
 
         if not isinstance(scope, CanvasScope):
@@ -263,6 +337,8 @@ class ConsoleCanvasController:
                 raise RuntimeError("canvas_runtime_closed")
             if temporary and scope.session_id not in self._session_owners:
                 raise RuntimeError("canvas_session_not_active")
+            if temporary and scope.session_id in self._promotion_leases:
+                raise RuntimeError("canvas_promotion_in_flight")
             current = self._runs.get(scope.run_id)
             if current is not None:
                 if (
@@ -271,48 +347,69 @@ class ConsoleCanvasController:
                     or current.temporary != temporary
                 ):
                     raise RuntimeError("canvas_run_owner_changed")
-                return
+                return CanvasRunCoordinator(self, current.run_owner)
             if assistant_message_id in self._assistant_runs:
                 raise RuntimeError("canvas_assistant_owner_already_registered")
+            run_owner = CanvasRunOwner(scope.run_id)
             self._runs[scope.run_id] = _RunStage(
                 scope=scope,
                 assistant_message_id=assistant_message_id,
                 temporary=temporary,
+                owner=self._session_owners.get(scope.session_id) if temporary else None,
+                run_owner=run_owner,
             )
             self._assistant_runs[assistant_message_id] = scope.run_id
+            return CanvasRunCoordinator(self, run_owner)
 
-    def is_scope_current(self, scope: CanvasScope) -> bool:
+    def is_scope_current(
+        self, scope: CanvasScope, *, _run_owner: CanvasRunOwner | None = None
+    ) -> bool:
         with self._lock:
             stage = self._runs.get(scope.run_id)
             return bool(
                 not self._closed
                 and stage is not None
                 and stage.state is CanvasRunState.OPEN
+                and (_run_owner is None or stage.run_owner is _run_owner)
+                and self._stage_owner_current(stage)
                 and self._same_authority(stage.scope, scope)
             )
 
-    def list_canvases(self, scope: CanvasScope) -> tuple[CanvasListItem, ...]:
+    def list_canvases(
+        self, scope: CanvasScope, *, _run_owner: CanvasRunOwner | None = None
+    ) -> tuple[CanvasListItem, ...]:
         with self._lock:
-            stage = self._require_open(scope)
+            stage = self._require_open(scope, _run_owner)
             committed = self._service_call("list_canvases", scope, default=())
             items = {item.canvas_id: item for item in committed}
             if stage.temporary:
-                for canvas_id, row in self._temporary_latest_rows(
-                    scope.session_id
-                ).items():
-                    items[canvas_id] = self._list_item(row.info, scope)
+                for canvas_id, row in self._temporary_latest_rows(scope).items():
+                    item = self._list_item(row.info, scope)
+                    if (
+                        item.is_selected
+                        and row.info.sequence
+                        < self._temporary_max_sequence(scope, canvas_id)
+                    ):
+                        item = replace(item, is_historical_selection=True)
+                    items[canvas_id] = item
             for canvas_id, row in stage.latest_by_canvas_id.items():
                 items[canvas_id] = self._list_item(row.info, scope)
             return tuple(items[key] for key in sorted(items))
 
-    def read_canvas(self, scope: CanvasScope, canvas_id: str) -> CanvasReadResult:
+    def read_canvas(
+        self,
+        scope: CanvasScope,
+        canvas_id: str,
+        *,
+        _run_owner: CanvasRunOwner | None = None,
+    ) -> CanvasReadResult:
         with self._lock:
-            stage = self._require_open(scope)
+            stage = self._require_open(scope, _run_owner)
             row = stage.latest_by_canvas_id.get(canvas_id)
             if row is not None:
                 return CanvasReadResult(revision=row.info, source=row.source)
             if stage.temporary:
-                row = self._temporary_latest_rows(scope.session_id).get(canvas_id)
+                row = self._temporary_latest_rows(scope).get(canvas_id)
                 if row is not None:
                     return CanvasReadResult(revision=row.info, source=row.source)
             return self._service_call("read_canvas", scope, canvas_id)
@@ -324,9 +421,10 @@ class ConsoleCanvasController:
         tool_call_id: str,
         title: str,
         html: str,
+        _run_owner: CanvasRunOwner | None = None,
     ) -> CanvasMutationResult:
         with self._lock:
-            stage = self._require_scope(scope)
+            stage = self._require_scope(scope, _run_owner)
             request_digest = sha256_utf8(f"create\0{title}\0{html}")
             replay = self._replay(stage, tool_call_id, request_digest)
             if replay is not None:
@@ -359,9 +457,10 @@ class ConsoleCanvasController:
         canvas_id: str,
         expected_parent_revision_id: str,
         html: str,
+        _run_owner: CanvasRunOwner | None = None,
     ) -> CanvasMutationResult | CanvasConflictResult:
         with self._lock:
-            stage = self._require_scope(scope)
+            stage = self._require_scope(scope, _run_owner)
             request_digest = sha256_utf8(
                 f"update\0{canvas_id}\0{expected_parent_revision_id}\0{html}"
             )
@@ -373,25 +472,41 @@ class ConsoleCanvasController:
             latest = stage.latest_by_canvas_id.get(canvas_id)
             if latest is not None:
                 if latest.info.revision_id != expected_parent_revision_id:
-                    return self._conflict(latest.info, "ambiguous_ancestry")
+                    return self._cache_conflict(
+                        stage,
+                        tool_call_id,
+                        request_digest,
+                        latest.info,
+                        "ambiguous_ancestry",
+                    )
                 parent = latest.info
             elif (
-                stage.temporary
-                and (
-                    latest := self._temporary_latest_rows(scope.session_id).get(
-                        canvas_id
-                    )
+                other := self._other_uncommitted_latest(stage, canvas_id)
+            ) is not None:
+                return self._cache_conflict(
+                    stage,
+                    tool_call_id,
+                    request_digest,
+                    other.info,
+                    "ambiguous_ancestry",
                 )
+            elif (
+                stage.temporary
+                and (latest := self._temporary_latest_rows(scope).get(canvas_id))
                 is not None
             ):
                 if latest.info.revision_id != expected_parent_revision_id:
-                    return self._conflict(latest.info, "stale_parent")
+                    return self._cache_conflict(
+                        stage, tool_call_id, request_digest, latest.info, "stale_parent"
+                    )
                 parent = latest.info
             else:
                 read = self._service_call("read_canvas", scope, canvas_id)
                 parent = read.revision
                 if parent.revision_id != expected_parent_revision_id:
-                    return self._conflict(parent, "stale_parent")
+                    return self._cache_conflict(
+                        stage, tool_call_id, request_digest, parent, "stale_parent"
+                    )
             plan = compile_canvas_document(html)
             info = CanvasRevisionInfo(
                 canvas_id=canvas_id,
@@ -401,7 +516,7 @@ class ConsoleCanvasController:
                 runtime_profile=parent.runtime_profile,
                 content_sha256=plan.source_identity.sha256,
                 source_bytes=plan.source_identity.source_bytes,
-                sequence=parent.sequence + 1,
+                sequence=self._next_sequence(stage, canvas_id, parent),
                 origin=CanvasOrigin(stage.assistant_message_id, scope.run_id),
             )
             result = CanvasMutationResult(info, plan.compatibility_issues)
@@ -423,6 +538,10 @@ class ConsoleCanvasController:
                 return None
             if stage.settlement is not None:
                 return stage.settlement
+            if not self._stage_owner_current(stage) or (
+                stage.temporary and stage.scope.session_id in self._promotion_leases
+            ):
+                return None
             success = terminal_status == "done"
             state = CanvasRunState.READY if success else CanvasRunState.DISCARDED
             success_status = "temporary" if stage.temporary else "updated"
@@ -447,7 +566,12 @@ class ConsoleCanvasController:
                 stage.latest_by_canvas_id.clear()
                 stage.revisions.clear()
             stage.settlement = CanvasRunSettlement(
-                run_id, stage.assistant_message_id, state, cards, contribution
+                run_id,
+                stage.assistant_message_id,
+                state,
+                cards,
+                contribution,
+                stage.run_owner,
             )
             if not success:
                 self._prune_closed_stages()
@@ -459,12 +583,20 @@ class ConsoleCanvasController:
         *,
         actual_run_id: str,
         terminal_status: str,
+        _run_owner: CanvasRunOwner | None = None,
     ) -> CanvasRunSettlement | None:
         """Settle the registered assistant only when the Agent run ID agrees."""
 
         with self._lock:
             registered_run_id = self._assistant_runs.get(assistant_message_id)
             if registered_run_id is None:
+                return None
+            stage = self._runs.get(registered_run_id)
+            if (
+                stage is None
+                or (_run_owner is not None and stage.run_owner is not _run_owner)
+                or not self._stage_owner_current(stage)
+            ):
                 return None
             if registered_run_id != actual_run_id:
                 self.abort_settlement(registered_run_id, "run_identity_changed")
@@ -497,7 +629,14 @@ class ConsoleCanvasController:
     def confirm_settlement(self, run_id: str) -> bool:
         with self._lock:
             stage = self._runs.get(run_id)
-            if stage is None or stage.state is not CanvasRunState.READY:
+            if (
+                stage is None
+                or stage.state is not CanvasRunState.READY
+                or not self._stage_owner_current(stage)
+                or (
+                    stage.temporary and stage.scope.session_id in self._promotion_leases
+                )
+            ):
                 return False
             stage.state = CanvasRunState.COMMITTED
             assert stage.settlement is not None
@@ -507,6 +646,7 @@ class ConsoleCanvasController:
                 CanvasRunState.COMMITTED,
                 stage.settlement.cards,
                 None,
+                stage.run_owner,
             )
             if stage.temporary:
                 self._session_generations[stage.scope.session_id] = (
@@ -522,10 +662,14 @@ class ConsoleCanvasController:
     def abort_settlement(self, run_id: str, error_code: str = "commit_failed") -> bool:
         with self._lock:
             stage = self._runs.get(run_id)
-            if stage is None or stage.state not in {
-                CanvasRunState.OPEN,
-                CanvasRunState.READY,
-            }:
+            if (
+                stage is None
+                or stage.state not in {CanvasRunState.OPEN, CanvasRunState.READY}
+                or not self._stage_owner_current(stage)
+                or (
+                    stage.temporary and stage.scope.session_id in self._promotion_leases
+                )
+            ):
                 return False
             rows = tuple(stage.revisions)
             cards = tuple(
@@ -545,12 +689,45 @@ class ConsoleCanvasController:
                 CanvasRunState.DISCARDED,
                 cards,
                 None,
+                stage.run_owner,
             )
             self._prune_closed_stages()
             return True
 
+    def confirm_exact_settlement(self, settlement: CanvasRunSettlement) -> bool:
+        """Commit only the stage represented by this immutable settlement."""
+
+        with self._lock:
+            stage = self._runs.get(settlement.run_id)
+            if stage is None or stage.run_owner is not settlement._run_owner:
+                return False
+            if stage.state is CanvasRunState.COMMITTED:
+                return True
+            if stage.settlement is not settlement:
+                return False
+            return self.confirm_settlement(settlement.run_id)
+
+    def abort_exact_settlement(
+        self,
+        settlement: CanvasRunSettlement,
+        error_code: str = "commit_failed",
+    ) -> bool:
+        """Discard only the stage represented by this immutable settlement."""
+
+        with self._lock:
+            stage = self._runs.get(settlement.run_id)
+            if (
+                stage is None
+                or stage.run_owner is not settlement._run_owner
+                or stage.settlement is not settlement
+            ):
+                return False
+            return self.abort_settlement(settlement.run_id, error_code)
+
     def discard_session(self, session_id: str) -> None:
         with self._lock:
+            if session_id in self._promotion_leases:
+                return
             for run_id, stage in tuple(self._runs.items()):
                 if stage.scope.session_id != session_id:
                     continue
@@ -565,13 +742,19 @@ class ConsoleCanvasController:
     def discard_all(self) -> None:
         with self._lock:
             for run_id, stage in tuple(self._runs.items()):
+                if stage.scope.session_id in self._promotion_leases:
+                    continue
                 if stage.state in {CanvasRunState.OPEN, CanvasRunState.READY}:
                     self.abort_settlement(run_id, "state_replaced")
                 elif stage.state is CanvasRunState.COMMITTED and stage.temporary:
                     self._assistant_runs.pop(stage.assistant_message_id, None)
                     self._runs.pop(run_id, None)
-            self._session_owners.clear()
-            self._promotion_leases.clear()
+            leased_sessions = set(self._promotion_leases)
+            self._session_owners = {
+                session_id: owner
+                for session_id, owner in self._session_owners.items()
+                if session_id in leased_sessions
+            }
 
     def promotion_contribution(
         self, session_id: str
@@ -583,7 +766,9 @@ class ConsoleCanvasController:
             session_stages = tuple(
                 stage
                 for stage in self._runs.values()
-                if stage.scope.session_id == session_id and stage.temporary
+                if stage.scope.session_id == session_id
+                and stage.temporary
+                and stage.owner is owner
             )
             if any(
                 stage.state in {CanvasRunState.OPEN, CanvasRunState.READY}
@@ -606,7 +791,9 @@ class ConsoleCanvasController:
                 session_id=session_id,
                 generation=self._session_generations.get(session_id, 0),
                 run_ids=tuple(stage.scope.run_id for stage in stages),
-                turn=CanvasTurnContribution("promotion", revisions),
+                turn=CanvasTurnContribution(
+                    "promotion", revisions, require_active_path=False
+                ),
                 _owner=owner,
                 _lease=lease,
             )
@@ -617,10 +804,12 @@ class ConsoleCanvasController:
         with self._lock:
             if not self._promotion_matches(session_id, contribution):
                 return False
-            for run_id, stage in tuple(self._runs.items()):
-                if stage.scope.session_id != session_id or not stage.temporary:
-                    continue
-                self._runs.pop(run_id, None)
+            for run_id in contribution.run_ids:
+                stage = self._runs.get(run_id)
+                if stage is None or stage.owner is not contribution._owner:
+                    return False
+            for run_id in contribution.run_ids:
+                stage = self._runs.pop(run_id)
                 self._assistant_runs.pop(stage.assistant_message_id, None)
             self._promotion_leases.pop(session_id, None)
             self._session_owners.pop(session_id, None)
@@ -633,6 +822,12 @@ class ConsoleCanvasController:
             if not self._promotion_matches(session_id, contribution):
                 return False
             self._promotion_leases.pop(session_id, None)
+            if self._closed:
+                for run_id in contribution.run_ids:
+                    stage = self._runs.pop(run_id, None)
+                    if stage is not None:
+                        self._assistant_runs.pop(stage.assistant_message_id, None)
+                self._session_owners.pop(session_id, None)
             return True
 
     def retire_contribution(
@@ -649,18 +844,34 @@ class ConsoleCanvasController:
             and self._session_owners.get(session_id) is contribution._owner
             and self._promotion_leases.get(session_id) is contribution._lease
             and self._session_generations.get(session_id, 0) == contribution.generation
+            and tuple(
+                run_id
+                for run_id, stage in self._runs.items()
+                if stage.scope.session_id == session_id
+                and stage.temporary
+                and stage.owner is contribution._owner
+                and stage.state is CanvasRunState.COMMITTED
+                and stage.revisions
+            )
+            == contribution.run_ids
         )
 
     def close_runtime(self) -> None:
         with self._lock:
             for run_id, stage in tuple(self._runs.items()):
+                if stage.scope.session_id in self._promotion_leases:
+                    continue
                 self.abort_settlement(run_id, "runtime_closed")
                 if stage.state is CanvasRunState.COMMITTED and stage.temporary:
                     self._assistant_runs.pop(stage.assistant_message_id, None)
                     self._runs.pop(run_id, None)
             self._closed = True
-            self._session_owners.clear()
-            self._promotion_leases.clear()
+            leased_sessions = set(self._promotion_leases)
+            self._session_owners = {
+                session_id: owner
+                for session_id, owner in self._session_owners.items()
+                if session_id in leased_sessions
+            }
 
     def run_revision_count(self, run_id: str) -> int:
         with self._lock:
@@ -688,16 +899,23 @@ class ConsoleCanvasController:
             right.run_id,
         )
 
-    def _require_open(self, scope: CanvasScope) -> _RunStage:
-        if not self.is_scope_current(scope):
+    def _require_open(
+        self, scope: CanvasScope, run_owner: CanvasRunOwner | None = None
+    ) -> _RunStage:
+        if not self.is_scope_current(scope, _run_owner=run_owner):
             raise RuntimeError("canvas_scope_unavailable")
         return self._runs[scope.run_id]
 
-    def _require_scope(self, scope: CanvasScope) -> _RunStage:
+    def _require_scope(
+        self, scope: CanvasScope, run_owner: CanvasRunOwner | None = None
+    ) -> _RunStage:
         stage = self._runs.get(scope.run_id)
         if (
             self._closed
             or stage is None
+            or (run_owner is not None and stage.run_owner is not run_owner)
+            or not self._stage_owner_current(stage)
+            or (stage.temporary and stage.scope.session_id in self._promotion_leases)
             or not self._same_authority(stage.scope, scope)
         ):
             raise RuntimeError("canvas_scope_unavailable")
@@ -712,7 +930,7 @@ class ConsoleCanvasController:
     @staticmethod
     def _replay(
         stage: _RunStage, tool_call_id: str, request_digest: str
-    ) -> CanvasMutationResult | None:
+    ) -> CanvasMutationResult | CanvasConflictResult | None:
         prior = stage.replays.get((stage.scope.run_id, tool_call_id))
         if prior is None:
             return None
@@ -728,20 +946,133 @@ class ConsoleCanvasController:
             raise RuntimeError("canvas_base_unavailable")
         return method(*args)
 
-    def _temporary_latest_rows(self, session_id: str) -> dict[str, _StagedRevision]:
+    def _temporary_latest_rows(self, scope: CanvasScope) -> dict[str, _StagedRevision]:
         latest: dict[str, _StagedRevision] = {}
+        path_positions = {
+            message_id: index
+            for index, message_id in enumerate(scope.active_message_ids)
+        }
         for stage in self._runs.values():
             if (
-                stage.scope.session_id != session_id
+                stage.scope.session_id != scope.session_id
                 or not stage.temporary
                 or stage.state is not CanvasRunState.COMMITTED
+                or not self._stage_owner_current(stage)
             ):
                 continue
             for canvas_id, row in stage.latest_by_canvas_id.items():
+                if row.info.origin.message_id not in path_positions:
+                    continue
                 current = latest.get(canvas_id)
-                if current is None or row.info.sequence > current.info.sequence:
+                if current is None or (
+                    path_positions[row.info.origin.message_id],
+                    row.info.sequence,
+                ) > (
+                    path_positions[current.info.origin.message_id],
+                    current.info.sequence,
+                ):
                     latest[canvas_id] = row
+        if scope.selected_canvas_id and scope.selected_revision_id:
+            for stage in self._runs.values():
+                row = stage.by_revision_id.get(scope.selected_revision_id)
+                if (
+                    row is not None
+                    and row.info.canvas_id == scope.selected_canvas_id
+                    and row.info.origin.message_id in path_positions
+                    and stage.temporary
+                    and stage.state is CanvasRunState.COMMITTED
+                    and self._stage_owner_current(stage)
+                ):
+                    latest[row.info.canvas_id] = row
+                    break
         return latest
+
+    def _stage_owner_current(self, stage: _RunStage) -> bool:
+        return not stage.temporary or (
+            stage.owner is not None
+            and self._session_owners.get(stage.scope.session_id) is stage.owner
+        )
+
+    def _temporary_max_sequence(self, scope: CanvasScope, canvas_id: str) -> int:
+        path = set(scope.active_message_ids)
+        return max(
+            (
+                row.info.sequence
+                for stage in self._runs.values()
+                if stage.scope.session_id == scope.session_id
+                and stage.temporary
+                and stage.state is CanvasRunState.COMMITTED
+                and self._stage_owner_current(stage)
+                for row in stage.revisions
+                if row.info.canvas_id == canvas_id
+                and row.info.origin.message_id in path
+            ),
+            default=0,
+        )
+
+    def _other_uncommitted_latest(
+        self, stage: _RunStage, canvas_id: str
+    ) -> _StagedRevision | None:
+        for other in self._runs.values():
+            if (
+                other is not stage
+                and other.scope.session_id == stage.scope.session_id
+                and other.scope.conversation_id == stage.scope.conversation_id
+                and other.state in {CanvasRunState.OPEN, CanvasRunState.READY}
+                and self._stage_owner_current(other)
+                and canvas_id in other.latest_by_canvas_id
+            ):
+                return other.latest_by_canvas_id[canvas_id]
+        return None
+
+    def _next_sequence(
+        self, stage: _RunStage, canvas_id: str, parent: CanvasRevisionInfo
+    ) -> int:
+        maximum = parent.sequence
+        for candidate in stage.revisions:
+            if candidate.info.canvas_id == canvas_id:
+                maximum = max(maximum, candidate.info.sequence)
+        if stage.temporary:
+            for candidate_stage in self._runs.values():
+                if (
+                    candidate_stage.scope.session_id == stage.scope.session_id
+                    and candidate_stage.temporary
+                    and candidate_stage.state is CanvasRunState.COMMITTED
+                    and self._stage_owner_current(candidate_stage)
+                ):
+                    maximum = max(
+                        maximum,
+                        *(
+                            row.info.sequence
+                            for row in candidate_stage.revisions
+                            if row.info.canvas_id == canvas_id
+                        ),
+                    )
+        else:
+            next_sequence = self._service_call(
+                "next_revision_sequence", stage.scope, canvas_id, default=0
+            )
+            if type(next_sequence) is int and next_sequence > 0:
+                maximum = max(maximum, next_sequence - 1)
+            unselected = replace(
+                stage.scope, selected_canvas_id=None, selected_revision_id=None
+            )
+            for item in self._service_call("list_canvases", unselected, default=()):
+                if item.canvas_id == canvas_id:
+                    maximum = max(maximum, item.sequence)
+        return maximum + 1
+
+    def _cache_conflict(
+        self,
+        stage: _RunStage,
+        tool_call_id: str,
+        request_digest: str,
+        info: CanvasRevisionInfo,
+        code: str,
+    ) -> CanvasConflictResult:
+        result = self._conflict(info, code)
+        stage.replays[(stage.scope.run_id, tool_call_id)] = (request_digest, result)
+        return result
 
     def _prune_closed_stages(self) -> None:
         closed = [
@@ -802,6 +1133,8 @@ class ConsoleCanvasController:
 
 __all__ = [
     "CanvasCardMetadata",
+    "CanvasRunCoordinator",
+    "CanvasRunOwner",
     "CanvasRunSettlement",
     "CanvasRunState",
     "CanvasSessionOwner",

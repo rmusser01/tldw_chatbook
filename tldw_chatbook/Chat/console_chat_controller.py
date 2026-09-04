@@ -22199,6 +22199,38 @@ class ConsoleChatController:
                 current_user_message=trusted_profile_user_message,
                 kill_switch=(self._console_tool_kill_switch_reader() or (lambda: False)),
             )
+        canvas_provider = None
+        canvas_authority = None
+        canvas_controller = getattr(self.store, "canvas_turn_controller", None)
+        if canvas_controller is not None and session is not None:
+            from tldw_chatbook.Agents.canvas_tool_provider import CanvasToolProvider
+            from tldw_chatbook.Canvas.models import CanvasScope
+
+            native_path = self.store.active_path_message_ids(session_id)
+            active_path: list[str] = []
+            for native_id in native_path:
+                try:
+                    path_message = self.store.get_message(native_id)
+                except KeyError:
+                    active_path = []
+                    break
+                active_path.append(path_message.persisted_message_id or path_message.id)
+            canvas_run_id = str(uuid4())
+            canvas_scope = CanvasScope(
+                session_id=session_id,
+                conversation_id=conversation_id,
+                active_message_ids=tuple(active_path),
+                selected_canvas_id=None,
+                selected_revision_id=None,
+                run_id=canvas_run_id,
+            )
+            canvas_run = canvas_controller.register_run(
+                canvas_scope,
+                assistant_message_id=assistant_message_id,
+                temporary=session.ephemeral,
+            )
+            canvas_provider = CanvasToolProvider(canvas_run, scope=canvas_scope)
+            canvas_authority = canvas_provider.issue_registration_authority()
         try:
             # run_reply returns (run_id, outcome): run_id lets us write the
             # produced reply's PERSISTED id back onto the run after
@@ -22247,6 +22279,8 @@ class ConsoleChatController:
                 # per-run call caps.
                 persona_policy_rules=turn_context.persona_policy_rules,
                 profile_provider=profile_provider,
+                canvas_provider=canvas_provider,
+                canvas_authority=canvas_authority,
                 native_tools_enabled=bool(
                     turn_context.tool_configuration.get(
                         "native_tool_calls_enabled", True

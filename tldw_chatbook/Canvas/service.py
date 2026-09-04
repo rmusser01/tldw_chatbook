@@ -162,6 +162,22 @@ class CanvasService:
             revision=self._revision_info(exact), source=exact.source
         )
 
+    def next_revision_sequence(self, scope: CanvasScope, canvas_id: str) -> int:
+        """Return the next owner-global sequence after proving Canvas reachability."""
+
+        verified = self._validate_scope(scope)
+        canvas_id = self._validate_uuid_argument(canvas_id, "invalid_canvas_id")
+        metadata = self._list_metadata(scope.conversation_id)
+        self._resolve_canvas(verified, metadata, canvas_id)
+        return (
+            max(
+                revision.sequence
+                for revision in metadata
+                if revision.canvas_id == canvas_id
+            )
+            + 1
+        )
+
     def create_canvas(
         self,
         scope: CanvasScope,

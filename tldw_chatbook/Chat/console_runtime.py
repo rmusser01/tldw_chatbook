@@ -725,6 +725,7 @@ class ConsoleRuntime:
         self._activity_hydration_task: asyncio.Task[int] | None = None
         self._change_review_coordinator: Any | None = None
         self._chat_controller: Any | None = None
+        self._canvas_controller: Any | None = None
         self._legacy_trace_maintenance_task: asyncio.Task[None] | None = None
         # One app-wide mutation lane for exact persisted-conversation opens.
         # Individual ChatScreen workspaces are disposable views over this
@@ -835,6 +836,12 @@ class ConsoleRuntime:
     def change_review_coordinator(self) -> Any | None:
         """The built app-owned Change Review coordinator, if available."""
         return self._change_review_coordinator
+
+    @property
+    def canvas_controller(self) -> Any | None:
+        """The single process-runtime Canvas lifecycle owner."""
+
+        return self._canvas_controller
 
     # -- handle writes (the screen's properties, and 59 test sites) --------
 
@@ -955,6 +962,17 @@ class ConsoleRuntime:
                 )
         else:
             legacy_normalization_enabled = False
+        if db is not None:
+            from tldw_chatbook.Canvas.service import CanvasService
+            from tldw_chatbook.Chat.console_canvas_controller import (
+                ConsoleCanvasController,
+            )
+            from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+            if isinstance(db, CharactersRAGDB):
+                self._canvas_controller = ConsoleCanvasController(
+                    durable_service=CanvasService(db)
+                )
         self._chat_store = ConsoleChatStore(
             persistence=persistence,
             settle_provider_traces_off_thread=True,
@@ -990,6 +1008,8 @@ class ConsoleRuntime:
             thinking_history_policy_default_provider=lambda: (
                 _current_thinking_history_policy_default(self._app)
             ),
+            canvas_promotion_participant=self._canvas_controller,
+            canvas_turn_controller=self._canvas_controller,
         )
         if db is not None and legacy_normalization_enabled:
             self._schedule_legacy_trace_maintenance(db, get_legacy_normalizer)

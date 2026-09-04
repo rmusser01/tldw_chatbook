@@ -3352,6 +3352,7 @@ class ConsoleChatStore:
         provider_continuation_json: str | None = None,
         provider_continuation: ProviderContinuationCheckpoint | None = None,
         contributions: Sequence[ConsolePromotionTransactionContribution] = (),
+        on_durable_commit: Callable[[], object] | None = None,
     ) -> bool:
         """Settle one claimed durable or ephemeral owner without a second write."""
 
@@ -3365,6 +3366,7 @@ class ConsoleChatStore:
                 provider_continuation_json=provider_continuation_json,
                 provider_continuation=provider_continuation,
                 contributions=contributions,
+                on_durable_commit=on_durable_commit,
             )
 
     def _settle_dispatch_recovery(
@@ -3378,6 +3380,7 @@ class ConsoleChatStore:
         provider_continuation_json: str | None = None,
         provider_continuation: ProviderContinuationCheckpoint | None = None,
         contributions: Sequence[ConsolePromotionTransactionContribution] = (),
+        on_durable_commit: Callable[[], object] | None = None,
     ) -> bool:
         """Settle dispatch state while holding its generation owner."""
 
@@ -3442,6 +3445,8 @@ class ConsoleChatStore:
             if result.status is not ConsoleDispatchResultStatus.COMMITTED:
                 return False
             committed_message_version = result.committed_message_version
+            if on_durable_commit is not None:
+                on_durable_commit()
         if message is not None:
             message.content = content
             message.status = terminal_state
@@ -3533,8 +3538,8 @@ class ConsoleChatStore:
                     ):
                         canvas_contributions = (canvas_settlement.contribution,)
                 except Exception:
-                    canvas_controller.abort_settlement(
-                        canvas_settlement.run_id, "metadata_write_failed"
+                    canvas_controller.abort_exact_settlement(
+                        canvas_settlement, "metadata_write_failed"
                     )
                     raise ConsoleDispatchSettlementError(
                         "Canvas settlement metadata is invalid."
@@ -3546,12 +3551,25 @@ class ConsoleChatStore:
             content=message.content,
             metadata_json=metadata_json,
             contributions=canvas_contributions,
+            on_durable_commit=(
+                lambda: canvas_controller.confirm_exact_settlement(canvas_settlement)
+                if canvas_settlement is not None and terminal_state == "complete"
+                else None
+            ),
         ):
             raise ConsoleDispatchSettlementError(
                 "Durable dispatch terminal settlement failed."
             )
-        if canvas_settlement is not None and terminal_state == "complete":
-            canvas_controller.confirm_settlement(canvas_settlement.run_id)
+        if (
+            canvas_settlement is not None
+            and terminal_state == "complete"
+            and recovery.kind
+            in {
+                ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED,
+                ConsoleDispatchRecoveryKind.EPHEMERAL_DISPATCH_STARTED,
+            }
+        ):
+            canvas_controller.confirm_exact_settlement(canvas_settlement)
         return True
 
     def _hydrate_provider_continuations_from_persistence(
@@ -16825,6 +16843,10 @@ class ConsoleChatStore:
                 ),
                 "feedback": message.feedback,
             }
+            if message.role is ConsoleMessageRole.ASSISTANT:
+                create_kwargs["assistant_generation_state"] = (
+                    message.assistant_generation_state
+                )
             if message.attachments:
                 create_kwargs["attachments"] = [
                     {
@@ -16874,7 +16896,9 @@ class ConsoleChatStore:
                     raise ValueError("Console message metadata shape is invalid.")
                 create_kwargs["metadata_json"] = fork_metadata_json
             elif message.metadata is not None and not message.metadata.is_empty:
-                create_kwargs["metadata_json"] = message.metadata.to_json()
+                create_kwargs["metadata_json"] = message.metadata.remap_canvas_origins(
+                    staged_message_ids
+                ).to_json()
             prepared_messages.append(
                 {"native_id": message.id, "create_kwargs": create_kwargs}
             )

@@ -5416,6 +5416,67 @@ async def test_prefilled_send_bypasses_agent_loop():
     assert gateway.messages_seen[-1] == {"role": "assistant", "content": "PRE"}
 
 
+@pytest.mark.asyncio
+async def test_real_agent_composition_advertises_and_invokes_shared_canvas_owner(
+    tmp_path,
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_models import RUN_DONE, RunOutcome
+    from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "production-canvas.sqlite", "production-canvas")
+    runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=db))
+    store = runtime.ensure_chat_store()
+    canvas = runtime.canvas_controller
+    assert canvas is not None
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=RecordingStreamingGateway(),
+        agent_runtime_enabled=True,
+    )
+    seen = {}
+
+    def run_reply(**kwargs):
+        provider = kwargs["canvas_provider"]
+        authority = kwargs["canvas_authority"]
+        coordinator, run_id = provider.lifecycle_binding(authority)
+        assert coordinator.controller is canvas
+        assert {entry.name for entry in provider.list_catalog()} == {
+            "canvas_list",
+            "canvas_read",
+            "canvas_create",
+            "canvas_update",
+        }
+        with use_run_id(run_id), use_tool_call_id("production-call"):
+            seen["result"] = provider.invoke(
+                "canvas:canvas_create",
+                {"title": "Runtime", "html": "<p>runtime source</p>"},
+            )
+        coordinator.finish_assistant_run(
+            kwargs["assistant_message_id"],
+            actual_run_id=run_id,
+            terminal_status=RUN_DONE,
+        )
+        return run_id, RunOutcome(status=RUN_DONE, steps=[], final_text="")
+
+    try:
+        controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
+        session = _arm_session(store)
+
+        result = await controller.submit_draft("make a canvas")
+
+        assert result.accepted
+        assert seen["result"].ok is True
+        assistant = store.messages_for_session(session.id)[-1]
+        assert canvas.settlement_for_assistant(assistant.id).state.value == "committed"
+    finally:
+        await runtime.dispose()
+        db.close_connection()
+
+
 class _SpyAgentBridge:
     """Records calls and refuses to be used -- for asserting the agent
     bridge is never invoked on a character session's send (task-427)."""

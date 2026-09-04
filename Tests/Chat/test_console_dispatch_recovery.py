@@ -1119,7 +1119,6 @@ def test_store_confirms_canvas_stage_only_after_terminal_transaction(
     store.canvas_turn_controller = canvas
     assistant.status = "streaming"
     assistant.assistant_generation_state = "streaming"
-
     completed = store.mark_message_complete(assistant.id)
 
     assert completed.status == "complete"
@@ -1229,6 +1228,26 @@ def test_post_commit_dispatch_owner_change_reconciles_terminal_message(
     assistant.content = "settled despite sidecar"
     assistant.status = "streaming"
     assistant.assistant_generation_state = "streaming"
+    canvas = ConsoleCanvasController()
+    canvas_scope = CanvasScope(
+        session_id=session_id,
+        conversation_id=conversation_id,
+        active_message_ids=("user-1",),
+        selected_canvas_id=None,
+        selected_revision_id=None,
+        run_id="postcommit-canvas-run",
+    )
+    canvas.register_run(
+        canvas_scope, assistant_message_id=assistant.id, temporary=False
+    )
+    created = canvas.create_canvas(
+        canvas_scope,
+        tool_call_id="postcommit-canvas-call",
+        title="Postcommit",
+        html="<p>postcommit private source</p>",
+    )
+    canvas.finish_run("postcommit-canvas-run", "done")
+    store.canvas_turn_controller = canvas
     persisted_repository = store.persistence.console_dispatch_repository
     original = persisted_repository.settle_with_assistant
 
@@ -1249,6 +1268,11 @@ def test_post_commit_dispatch_owner_change_reconciles_terminal_message(
     current = store.get_message(assistant.id)
     assert row["content"] == current.content == "settled despite sidecar"
     assert row["assistant_generation_state"] == "complete"
+    assert canvas.settlement_for_assistant(assistant.id).state.value == "committed"
+    assert db.get_connection().execute(
+        "SELECT COUNT(*) FROM canvas_revisions WHERE id = ?",
+        (created.revision.revision_id,),
+    ).fetchone()[0] == 1
     assert current.status == current.assistant_generation_state == "complete"
     assert current.provider_continuation_message_version == row["version"] == 3
     assert store.dispatch_recovery_for_session(session_id) is None

@@ -110,6 +110,52 @@ def _sha256(source: str) -> str:
     return hashlib.sha256(source.encode("utf-8")).hexdigest()
 
 
+def _turn_batch(
+    conversation_id: str,
+    message_id: str,
+    *,
+    canvas_id: str,
+    revision_id: str,
+    source: str,
+    sequence: int,
+    parent_revision_id: str | None,
+) -> CanvasImportBatch:
+    """Build one exact assistant-turn batch for the transaction-aware seam."""
+
+    created_at = "2026-09-04T00:00:00+00:00"
+    return CanvasImportBatch(
+        conversation_id=conversation_id,
+        documents=(
+            (
+                CanvasImportDocument(
+                    canvas_id=canvas_id,
+                    conversation_id=conversation_id,
+                    created_at=created_at,
+                ),
+            )
+            if parent_revision_id is None
+            else ()
+        ),
+        revisions=(
+            CanvasImportRevision(
+                revision_id=revision_id,
+                canvas_id=canvas_id,
+                parent_revision_id=parent_revision_id,
+                sequence=sequence,
+                title="Turn batch",
+                runtime_profile="canvas-v1",
+                source=source,
+                content_sha256=_sha256(source),
+                source_bytes=len(source.encode("utf-8")),
+                actor_kind="assistant",
+                origin_message_id=message_id,
+                origin_turn_id="turn-batch",
+                created_at=created_at,
+            ),
+        ),
+    )
+
+
 _RAW_REVISION_INSERT_SQL = (
     "INSERT INTO canvas_revisions "
     "(id, canvas_id, parent_revision_id, sequence, title, runtime_profile, "
@@ -787,6 +833,217 @@ def test_repository_quotas_are_injectable_and_refusals_do_not_prune(db) -> None:
             origin_turn_id="turn-large",
         )
     assert per_revision.value.code == "revision_source_bytes"
+
+
+@pytest.mark.parametrize(
+    ("limits", "new_canvas", "source", "expected_code"),
+    (
+        (
+            CanvasRepositoryLimits(max_canvases_per_conversation=1),
+            True,
+            "x",
+            "canvas_count",
+        ),
+        (
+            CanvasRepositoryLimits(max_revisions_per_canvas=1),
+            False,
+            "x",
+            "revision_count",
+        ),
+        (
+            CanvasRepositoryLimits(
+                max_revisions_per_canvas=2,
+                max_source_bytes_per_conversation=8,
+            ),
+            False,
+            "12345",
+            "conversation_source_bytes",
+        ),
+    ),
+)
+def test_transaction_append_counts_existing_rows_before_any_write(
+    db, limits, new_canvas, source, expected_code
+) -> None:
+    conversation_id, message_id = _owner(db)
+    repository = CanvasRepository(db)
+    root = _create(repository, conversation_id, message_id, source="1234")
+    canvas_id = str(uuid4()) if new_canvas else root.identity.canvas_id
+    batch = _turn_batch(
+        conversation_id,
+        message_id,
+        canvas_id=canvas_id,
+        revision_id=str(uuid4()),
+        source=source,
+        sequence=1 if new_canvas else 2,
+        parent_revision_id=None if new_canvas else root.revision.revision_id,
+    )
+
+    with (
+        pytest.raises(CanvasQuotaError) as refused,
+        db.transaction(immediate=True) as cursor,
+    ):
+        CanvasRepository.append_batch_in_transaction(
+            cursor,
+            batch,
+            anchor_message_id=message_id,
+            limits=limits,
+        )
+
+    assert refused.value.code == expected_code
+    assert len(repository.list_identities(conversation_id)) == 1
+    assert len(repository.list_revision_metadata(conversation_id)) == 1
+
+
+def test_transaction_append_rejects_off_path_parent_and_invalid_anchor(db) -> None:
+    conversation_id, root_message_id = _owner(db)
+    left_message_id = _message(
+        db, conversation_id, "left", parent_message_id=root_message_id
+    )
+    right_message_id = _message(
+        db, conversation_id, "right", parent_message_id=root_message_id
+    )
+    repository = CanvasRepository(db)
+    root = _create(repository, conversation_id, left_message_id)
+    batch = _turn_batch(
+        conversation_id,
+        right_message_id,
+        canvas_id=root.identity.canvas_id,
+        revision_id=str(uuid4()),
+        source="<main>right</main>",
+        sequence=2,
+        parent_revision_id=root.revision.revision_id,
+    )
+
+    with (
+        pytest.raises(CanvasValidationError) as off_path,
+        db.transaction(immediate=True) as cursor,
+    ):
+        CanvasRepository.append_batch_in_transaction(
+            cursor, batch, anchor_message_id=right_message_id
+        )
+    with (
+        pytest.raises(CanvasValidationError) as invalid_anchor,
+        db.transaction(immediate=True) as cursor,
+    ):
+        CanvasRepository.append_batch_in_transaction(
+            cursor, batch, anchor_message_id="missing-message"
+        )
+
+    assert off_path.value.code == "parent_owner_mismatch"
+    assert invalid_anchor.value.code == "invalid_active_path"
+    assert len(repository.list_revision_metadata(conversation_id)) == 1
+
+
+def test_transaction_append_serializes_duplicate_sequences_across_connections(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "canvas-turn-race.sqlite"
+    first_db = CharactersRAGDB(database_path, client_id="canvas-turn-race")
+    second_db = CharactersRAGDB(database_path, client_id="canvas-turn-race")
+    try:
+        conversation_id, message_id = _owner(first_db)
+        root = _create(CanvasRepository(first_db), conversation_id, message_id)
+
+        def append(database: CharactersRAGDB, title: str) -> str:
+            batch = _turn_batch(
+                conversation_id,
+                message_id,
+                canvas_id=root.identity.canvas_id,
+                revision_id=str(uuid4()),
+                source=f"<main>{title}</main>",
+                sequence=2,
+                parent_revision_id=root.revision.revision_id,
+            )
+            try:
+                with database.transaction(immediate=True) as cursor:
+                    CanvasRepository.append_batch_in_transaction(
+                        cursor, batch, anchor_message_id=message_id
+                    )
+            except CanvasValidationError as exc:
+                return exc.code
+            return "committed"
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            left = executor.submit(append, first_db, "left")
+            right = executor.submit(append, second_db, "right")
+            outcomes = {left.result(timeout=10), right.result(timeout=10)}
+
+        assert outcomes == {"committed", "invalid_revision_sequence"}
+        assert (
+            len(CanvasRepository(first_db).list_revision_metadata(conversation_id)) == 2
+        )
+    finally:
+        first_db.close_connection()
+        second_db.close_connection()
+
+
+def test_transaction_append_failure_rolls_back_caller_and_canvas_writes(db) -> None:
+    conversation_id, message_id = _owner(db)
+    canvas_id = str(uuid4())
+    first_revision_id = str(uuid4())
+    created_at = "2026-09-04T00:00:00+00:00"
+    first = _turn_batch(
+        conversation_id,
+        message_id,
+        canvas_id=canvas_id,
+        revision_id=first_revision_id,
+        source="one",
+        sequence=1,
+        parent_revision_id=None,
+    )
+    second_source = "two"
+    batch = CanvasImportBatch(
+        conversation_id=conversation_id,
+        documents=first.documents,
+        revisions=first.revisions
+        + (
+            CanvasImportRevision(
+                revision_id=str(uuid4()),
+                canvas_id=canvas_id,
+                parent_revision_id=first_revision_id,
+                sequence=2,
+                title="Turn batch",
+                runtime_profile="canvas-v1",
+                source=second_source,
+                content_sha256=_sha256(second_source),
+                source_bytes=len(second_source),
+                actor_kind="assistant",
+                origin_message_id=message_id,
+                origin_turn_id="turn-batch",
+                created_at=created_at,
+            ),
+        ),
+    )
+    connection = db.get_connection()
+    connection.execute(
+        "CREATE TRIGGER fail_canvas_turn_second BEFORE INSERT ON canvas_revisions "
+        "WHEN NEW.sequence = 2 BEGIN SELECT RAISE(ABORT, 'injected turn failure'); END"
+    )
+
+    with (
+        pytest.raises(sqlite3.IntegrityError),
+        db.transaction(immediate=True) as cursor,
+    ):
+        cursor.execute(
+            "UPDATE conversations SET title = 'must roll back' WHERE id = ?",
+            (conversation_id,),
+        )
+        CanvasRepository.append_batch_in_transaction(
+            cursor, batch, anchor_message_id=message_id
+        )
+
+    assert (
+        connection.execute(
+            "SELECT title FROM conversations WHERE id = ?", (conversation_id,)
+        ).fetchone()[0]
+        == "owner"
+    )
+    assert (
+        connection.execute("SELECT COUNT(*) FROM canvas_documents").fetchone()[0] == 0
+    )
+    assert (
+        connection.execute("SELECT COUNT(*) FROM canvas_revisions").fetchone()[0] == 0
+    )
 
 
 def test_soft_delete_restore_hints_owner_lifecycle_and_no_canvas_sync_rows(db) -> None:

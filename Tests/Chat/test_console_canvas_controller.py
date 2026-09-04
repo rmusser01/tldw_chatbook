@@ -337,6 +337,7 @@ def test_next_temporary_run_reads_and_extends_committed_session_history() -> Non
 
     second_scope = _scope(
         run_id="run-2",
+        active_message_ids=("user-1", ASSISTANT_ID, "user-2"),
         selected_canvas_id=created.revision.canvas_id,
         selected_revision_id=created.revision.revision_id,
     )
@@ -367,3 +368,368 @@ def test_temporary_promotion_refuses_an_unsettled_run() -> None:
 
     with pytest.raises(RuntimeError, match="canvas_turns_not_settled"):
         controller.promotion_contribution(SESSION_ID)
+
+
+def test_conflict_replay_is_stable_after_later_updates() -> None:
+    controller = _controller()
+    created = controller.create_canvas(
+        _scope(), tool_call_id="create", title="Draft", html="<p>one</p>"
+    )
+    selected = replace(
+        _scope(),
+        selected_canvas_id=created.revision.canvas_id,
+        selected_revision_id=created.revision.revision_id,
+    )
+    first = controller.update_canvas(
+        selected,
+        tool_call_id="update",
+        canvas_id=created.revision.canvas_id,
+        expected_parent_revision_id=created.revision.revision_id,
+        html="<p>two</p>",
+    )
+    conflict = controller.update_canvas(
+        selected,
+        tool_call_id="conflict",
+        canvas_id=created.revision.canvas_id,
+        expected_parent_revision_id=created.revision.revision_id,
+        html="<p>parallel</p>",
+    )
+    controller.update_canvas(
+        replace(selected, selected_revision_id=first.revision.revision_id),
+        tool_call_id="later",
+        canvas_id=created.revision.canvas_id,
+        expected_parent_revision_id=first.revision.revision_id,
+        html="<p>three</p>",
+    )
+
+    assert (
+        controller.update_canvas(
+            selected,
+            tool_call_id="conflict",
+            canvas_id=created.revision.canvas_id,
+            expected_parent_revision_id=created.revision.revision_id,
+            html="<p>parallel</p>",
+        )
+        is conflict
+    )
+
+
+def test_promotion_lease_blocks_stage_after_snapshot() -> None:
+    controller = ConsoleCanvasController()
+    controller.activate_session(SESSION_ID)
+    controller.register_run(_scope(), assistant_message_id=ASSISTANT_ID, temporary=True)
+    controller.create_canvas(
+        _scope(), tool_call_id="create", title="Temporary", html="<p>x</p>"
+    )
+    controller.finish_run(RUN_ID, "done")
+    controller.confirm_settlement(RUN_ID)
+    contribution = controller.promotion_contribution(SESSION_ID)
+
+    with pytest.raises(RuntimeError, match="canvas_promotion_in_flight"):
+        controller.register_run(
+            _scope(run_id="run-after-snapshot"),
+            assistant_message_id="assistant-after-snapshot",
+            temporary=True,
+        )
+    with pytest.raises(RuntimeError, match="canvas_promotion_in_flight"):
+        controller.activate_session(SESSION_ID)
+    with pytest.raises(RuntimeError, match="canvas_scope_unavailable"):
+        controller.create_canvas(
+            _scope(), tool_call_id="create", title="Temporary", html="<p>x</p>"
+        )
+    controller.discard_session(SESSION_ID)
+    assert contribution is not None
+    assert controller.abort_contribution(SESSION_ID, contribution) is True
+
+
+def test_late_bound_handle_is_inert_after_same_id_session_reactivation() -> None:
+    controller = ConsoleCanvasController()
+    controller.activate_session(SESSION_ID)
+    old = controller.register_run(
+        _scope(), assistant_message_id=ASSISTANT_ID, temporary=True
+    )
+    controller.activate_session(SESSION_ID)
+    new = controller.register_run(
+        _scope(), assistant_message_id=ASSISTANT_ID, temporary=True
+    )
+
+    assert (
+        old.finish_assistant_run(
+            ASSISTANT_ID, actual_run_id=RUN_ID, terminal_status="error"
+        )
+        is None
+    )
+    with pytest.raises(RuntimeError, match="canvas_scope_unavailable"):
+        old.create_canvas(
+            _scope(), tool_call_id="late", title="Late", html="<p>late</p>"
+        )
+    assert new.is_scope_current(_scope()) is True
+
+
+def test_temporary_history_is_branch_scoped_and_honors_selected_revision() -> None:
+    controller = ConsoleCanvasController()
+    controller.activate_session(SESSION_ID)
+    first_scope = _scope(active_message_ids=("root", "assistant-a"))
+    controller.register_run(
+        first_scope, assistant_message_id="assistant-a", temporary=True
+    )
+    created = controller.create_canvas(
+        first_scope, tool_call_id="create", title="Branch", html="<p>one</p>"
+    )
+    controller.finish_run(RUN_ID, "done")
+    controller.confirm_settlement(RUN_ID)
+
+    sibling_scope = _scope(
+        run_id="run-b",
+        active_message_ids=("root", "assistant-b"),
+        selected_canvas_id=created.revision.canvas_id,
+        selected_revision_id=created.revision.revision_id,
+    )
+    controller.register_run(
+        sibling_scope, assistant_message_id="assistant-b", temporary=True
+    )
+    assert controller.list_canvases(sibling_scope) == ()
+    with pytest.raises(RuntimeError, match="canvas_base_unavailable"):
+        controller.read_canvas(sibling_scope, created.revision.canvas_id)
+
+    descendant_scope = replace(
+        sibling_scope,
+        run_id="run-c",
+        active_message_ids=("root", "assistant-a", "user-c", "assistant-c"),
+    )
+    controller.register_run(
+        descendant_scope, assistant_message_id="assistant-c", temporary=True
+    )
+    assert (
+        controller.read_canvas(descendant_scope, created.revision.canvas_id).source
+        == "<p>one</p>"
+    )
+
+
+def test_temporary_branch_switching_resolves_each_reachable_head() -> None:
+    controller = ConsoleCanvasController()
+    controller.activate_session(SESSION_ID)
+    root_scope = _scope(active_message_ids=("root", "assistant-root"))
+    controller.register_run(
+        root_scope, assistant_message_id="assistant-root", temporary=True
+    )
+    root = controller.create_canvas(
+        root_scope, tool_call_id="root", title="Branches", html="<p>root</p>"
+    )
+    controller.finish_run(RUN_ID, "done")
+    controller.confirm_settlement(RUN_ID)
+
+    def commit_branch(run_id: str, assistant_id: str, source: str):
+        scope = _scope(
+            run_id=run_id,
+            active_message_ids=("root", "assistant-root", assistant_id),
+            selected_canvas_id=root.revision.canvas_id,
+            selected_revision_id=root.revision.revision_id,
+        )
+        controller.register_run(
+            scope, assistant_message_id=assistant_id, temporary=True
+        )
+        result = controller.update_canvas(
+            scope,
+            tool_call_id=f"update-{run_id}",
+            canvas_id=root.revision.canvas_id,
+            expected_parent_revision_id=root.revision.revision_id,
+            html=source,
+        )
+        controller.finish_run(run_id, "done")
+        controller.confirm_settlement(run_id)
+        return result
+
+    left = commit_branch("run-left", "assistant-left", "<p>left</p>")
+    right = commit_branch("run-right", "assistant-right", "<p>right</p>")
+    left_view = _scope(
+        run_id="view-left",
+        active_message_ids=("root", "assistant-root", "assistant-left", "view-left"),
+    )
+    right_view = _scope(
+        run_id="view-right",
+        active_message_ids=("root", "assistant-root", "assistant-right", "view-right"),
+    )
+    controller.register_run(left_view, assistant_message_id="view-left", temporary=True)
+    controller.register_run(
+        right_view, assistant_message_id="view-right", temporary=True
+    )
+
+    assert (
+        controller.read_canvas(left_view, root.revision.canvas_id).source
+        == "<p>left</p>"
+    )
+    assert (
+        controller.read_canvas(right_view, root.revision.canvas_id).source
+        == "<p>right</p>"
+    )
+    assert left.revision.parent_revision_id == root.revision.revision_id
+    assert right.revision.parent_revision_id == root.revision.revision_id
+
+
+def test_two_open_runs_cannot_mutate_the_same_durable_parent() -> None:
+    controller = _controller()
+    created = controller.create_canvas(
+        _scope(), tool_call_id="create", title="Draft", html="<p>one</p>"
+    )
+    first_scope = replace(
+        _scope(),
+        selected_canvas_id=created.revision.canvas_id,
+        selected_revision_id=created.revision.revision_id,
+    )
+    second_scope = replace(first_scope, run_id="run-second")
+    controller.register_run(
+        second_scope, assistant_message_id="assistant-second", temporary=False
+    )
+    first = controller.update_canvas(
+        first_scope,
+        tool_call_id="first",
+        canvas_id=created.revision.canvas_id,
+        expected_parent_revision_id=created.revision.revision_id,
+        html="<p>first</p>",
+    )
+    conflict = controller.update_canvas(
+        second_scope,
+        tool_call_id="second",
+        canvas_id=created.revision.canvas_id,
+        expected_parent_revision_id=created.revision.revision_id,
+        html="<p>second</p>",
+    )
+
+    assert first.revision.parent_revision_id == created.revision.revision_id
+    assert conflict.code == "ambiguous_ancestry"
+    assert controller.run_revision_count("run-second") == 0
+
+
+def test_durable_historical_branch_uses_owner_global_next_sequence(tmp_path) -> None:
+    from tldw_chatbook.Canvas.repository import CanvasRepository
+    from tldw_chatbook.Canvas.service import CanvasService
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "canvas-controller-branch.sqlite", "branch")
+    try:
+        conversation_id = db.add_conversation({"title": "Branch"})
+        root_message_id = db.add_message(
+            {
+                "conversation_id": conversation_id,
+                "sender": "assistant",
+                "role": "assistant",
+                "content": "root",
+            }
+        )
+        leaf_message_id = db.add_message(
+            {
+                "conversation_id": conversation_id,
+                "parent_message_id": root_message_id,
+                "sender": "assistant",
+                "role": "assistant",
+                "content": "leaf",
+            }
+        )
+        assert conversation_id and root_message_id and leaf_message_id
+        repository = CanvasRepository(db)
+        root = repository.create_canvas(
+            conversation_id,
+            title="Durable branch",
+            source="<p>root</p>",
+            runtime_profile="canvas-v1",
+            actor_kind="assistant",
+            origin_message_id=root_message_id,
+            origin_turn_id="root-run",
+        )
+        repository.append_revision(
+            conversation_id,
+            root.identity.canvas_id,
+            parent_revision_id=root.revision.revision_id,
+            title="Durable branch",
+            source="<p>newer</p>",
+            runtime_profile="canvas-v1",
+            actor_kind="assistant",
+            origin_message_id=leaf_message_id,
+            origin_turn_id="newer-run",
+        )
+        scope = CanvasScope(
+            session_id="durable-session",
+            conversation_id=conversation_id,
+            active_message_ids=(root_message_id, leaf_message_id),
+            selected_canvas_id=root.identity.canvas_id,
+            selected_revision_id=root.revision.revision_id,
+            run_id="historical-run",
+        )
+        controller = ConsoleCanvasController(durable_service=CanvasService(db))
+        controller.register_run(
+            scope, assistant_message_id=leaf_message_id, temporary=False
+        )
+
+        branch = controller.update_canvas(
+            scope,
+            tool_call_id="historical-update",
+            canvas_id=root.identity.canvas_id,
+            expected_parent_revision_id=root.revision.revision_id,
+            html="<p>branch</p>",
+        )
+
+        assert branch.revision.parent_revision_id == root.revision.revision_id
+        assert branch.revision.sequence == 3
+    finally:
+        db.close_connection()
+
+
+def test_promotion_remaps_card_and_revision_origins_together(tmp_path) -> None:
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "canvas-origin-remap.sqlite", "canvas-origin")
+    controller = ConsoleCanvasController()
+    store = ConsoleChatStore(
+        persistence=ChatPersistenceService(db),
+        canvas_promotion_participant=controller,
+        canvas_turn_controller=controller,
+    )
+    try:
+        session = store.create_session(ephemeral=True)
+        assistant = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+        )
+        scope = _scope(
+            session_id=session.id,
+            conversation_id=session.id,
+            active_message_ids=(assistant.id,),
+        )
+        controller.register_run(
+            scope, assistant_message_id=assistant.id, temporary=True
+        )
+        created = controller.create_canvas(
+            scope,
+            tool_call_id="origin-remap",
+            title="Remap",
+            html="<p>private origin source</p>",
+        )
+        settlement = controller.finish_run(RUN_ID, "done")
+        live_assistant = store._message_or_raise(assistant.id)
+        live_assistant.metadata = MessageMetadata.from_json(settlement.metadata_json)
+        live_assistant.status = "complete"
+        live_assistant.assistant_generation_state = "complete"
+        controller.confirm_exact_settlement(settlement)
+
+        conversation_id = store.promote_ephemeral_session(session.id)
+        durable_id = store._message_or_raise(assistant.id).persisted_message_id
+        assert durable_id is not None
+        raw = db.get_message_by_id(durable_id)["metadata_json"]
+        hydrated = MessageMetadata.from_json(raw)
+        revision_origin = (
+            db.get_connection()
+            .execute(
+                "SELECT origin_message_id FROM canvas_revisions WHERE id = ?",
+                (created.revision.revision_id,),
+            )
+            .fetchone()[0]
+        )
+
+        assert conversation_id is not None
+        assert hydrated.canvas_cards[0].origin.message_id == durable_id
+        assert revision_origin == durable_id
+        assert "private origin source" not in raw
+    finally:
+        db.close_connection()
