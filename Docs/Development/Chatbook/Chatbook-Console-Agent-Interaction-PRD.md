@@ -59,7 +59,7 @@ Neither queues questions deep; both handle depth by batching several questions i
 
 ## Assumptions & Dependencies
 
-- ADR-067 (accepted 2026-08-15): blocking human prompts wait **indefinitely by default** (`0` = no deadline), and the per-tool-call clock (`RunBudget.max_tool_call_seconds`, 300s at defaults) **pauses while a human decision is pending** via `use_human_input_wait`. A question is a human prompt and inherits both.
+- ADR-067 (accepted 2026-08-15): blocking human prompts wait **indefinitely by default** (`0` = no deadline), and the per-tool-call clock (`RunBudget.max_tool_call_seconds`, 300s at engine defaults; Console's effective ceiling is `DEFAULT_CONSOLE_MAX_TOOL_CALL_SECONDS = 3600` in `console_agent_bridge.py`) **pauses while a human decision is pending** via `use_human_input_wait`. A question is a human prompt and inherits both.
 - PR #1836's round-keyed FIFO is **per kind**: approvals, skill-install, and skill-script each have their own registry, payload map, and card, so two different kinds can already be mounted side by side. Questions get their own kind with the same semantics. Ordering *across* kinds is not provided today and is not claimed here (A10).
 - The Console composer stays live during approvals today (`_console_send_blocked_reason` gates only on readiness, attachments, and empty RAG launches). A8 preserves that.
 

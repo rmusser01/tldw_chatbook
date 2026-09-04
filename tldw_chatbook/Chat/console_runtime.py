@@ -642,6 +642,14 @@ CONSOLE_VIEW_HOOK_SLOTS: tuple[ConsoleViewHookSlot, ...] = (
         "so the next attach re-derives the panel from it.",
     ),
     ConsoleViewHookSlot(
+        "set_pending_question",
+        "controller",
+        why="`request_user_questions` returns `{answered: False, reason: "
+        "'cancelled'}` when it is None, and `_ask_user_wiring` registers no "
+        "tool at all without it -- a viewless run cannot be asked, which is "
+        "PRD A10's headless posture.",
+    ),
+    ConsoleViewHookSlot(
         "wake_user_priority_probe",
         "controller",
         viewless_user_priority_probe,
