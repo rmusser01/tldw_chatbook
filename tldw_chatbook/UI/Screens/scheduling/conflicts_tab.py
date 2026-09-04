@@ -1,4 +1,12 @@
-"""Conflicts tab for the Schedules workbench."""
+"""Sync-conflicts view for the Schedules workbench.
+
+The module keeps its `conflicts_tab` name (redesign PR-4 task 5's own
+judgment: renaming the file buys nothing but churn), but the TAB it was
+built for is retired. `ConflictsTab` is now mounted only as a fresh
+instance inside a pushed `WorkbenchHostScreen`, opened from the status
+strip's Conflicts badge (task 1) -- so it self-populates from
+`initial_conflicts` rather than being driven by an owner screen.
+"""
 
 from __future__ import annotations
 
@@ -73,12 +81,12 @@ class ConflictsTab(Vertical):
         Args:
             sync_engine: Engine providing ``resolve_conflict(conflict_id, resolution)``.
             initial_conflicts: When given, ``populate()``s the table with
-                these on mount. The still-live Conflicts TAB instance stays
-                externally driven (the workbench calls ``.populate()``
-                itself after its own ``get_conflicts`` read); a standalone
-                pushed instance (redesign PR-4, Task 1's conflicts-badge
-                overlay, via ``WorkbenchHostScreen``) has no such external
-                driver, so it self-populates instead.
+                these on mount. A pushed instance (redesign PR-4, Task
+                1's conflicts-badge overlay, via ``WorkbenchHostScreen``)
+                has no external ``.populate()`` driver the way the
+                retired mounted tab instance did, so it self-populates
+                instead. Still optional: ``populate()`` remains callable
+                from outside.
             **kwargs: Passed to the parent widget.
         """
         super().__init__(**kwargs)

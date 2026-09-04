@@ -2063,11 +2063,6 @@
         height: auto;
     }
 
-    TaskDetail .scheduling-detail-managed {
-        color: $text-muted;
-        height: auto;
-        margin-top: 1;
-    }
 
 
 /* ===== WIDGET: TrajectoryScreen (UI/Screens/trajectory_screen.py) ===== */

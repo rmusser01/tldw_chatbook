@@ -13674,10 +13674,6 @@ Button.error:hover {
     min-height: 0;
 }
 
-#scheduling-tabs {
-    height: 1fr;
-}
-
 /* redesign PR-2, Task 3: the bottom status strip (plan ruling 4) -- shared
  * across every tab (not Queue-specific), hosting the existing
  * SyncStatusWidget (owner indicator + sync health) and a conflicts badge
@@ -13726,55 +13722,11 @@ SchedulesWorkbench TabbedContent TabPane {
     height: 1fr;
 }
 
-/* Automations tab (ADR-077): definitions list on the left, the selected
- * definition's durable run history on the right -- the same list|detail
- * idiom as the Queue tab's three panes. */
-#scheduling-automations-split {
-    layout: horizontal;
-    height: 1fr;
-    min-height: 0;
-}
-
-#scheduling-automations-pane {
-    width: 1fr;
-    min-width: 30;
-    height: 1fr;
-    min-height: 0;
-    padding: 1;
-    border: solid $ds-grid-line;
-}
-
-#scheduling-automation-history-pane {
-    width: 1fr;
-    min-width: 30;
-    height: 1fr;
-    min-height: 0;
-    padding: 1;
-    border: solid $ds-grid-line;
-}
-
-/* schedules-redesign PR-1, Task 4: the Automations tab's third pane --
- * the definitions detail widget (DefinitionDetail), the same list|detail|
- * inspector idiom as the Queue tab's three panes above.
- *
- * min-width 22, not 30 (final review F5): the three panes' min-widths must
- * SUM to no more than the narrowest width at which all three are still
- * shown -- 84, the same `hide_detail` threshold the Queue tab's own detail
- * pane uses. At 30+30+30 = 90 the 84-89 band could not satisfy that, and
- * Textual's fr layout then gave EVERY pane the full container width,
- * laying the detail and history panes out entirely off-screen; the split
- * has overflow: hidden, so not even a scrollbar hinted at it. 30+30+22 =
- * 82 fits 84 with slack. This floor only ever binds inside that band -- at
- * any wider width the 1fr share is larger anyway. */
-#scheduling-automations-detail-pane {
-    width: 1fr;
-    min-width: 22;
-    height: 1fr;
-    min-height: 0;
-    padding: 1;
-    border: solid $ds-grid-line;
-}
-
+/* redesign PR-4, task 5: the Automations tab's own three-pane split
+ * (#scheduling-automations-split / -pane / -detail-pane / -history-pane)
+ * is retired with the tab. The ids below that still start with
+ * `#scheduling-automation-detail-` are DefinitionDetail's own CHILD ids,
+ * not that pane's -- they follow the widget wherever it is mounted. */
 #scheduling-automation-detail-empty-state {
     color: $text-muted;
     text-align: center;
@@ -13791,19 +13743,6 @@ SchedulesWorkbench TabbedContent TabPane {
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
     color: $text;
-}
-
-#scheduling-automations-table {
-    height: 1fr;
-}
-
-#scheduling-automation-history-table {
-    height: 1fr;
-}
-
-#scheduling-automations-notice,
-#scheduling-automation-history-notice {
-    color: $text-muted;
 }
 
 #scheduling-queue-filter {
@@ -13905,21 +13844,6 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     margin-left: 1;
 }
 
-/* Automations tab header (task-5): same title+button row shape as the
- * Queue pane's #scheduling-list-header above. */
-#scheduling-automations-header {
-    height: auto;
-}
-
-#scheduling-automations-header #scheduling-automations-title {
-    width: 1fr;
-}
-
-#scheduling-new-automation {
-    width: auto;
-    min-width: 9;
-}
-
 /* Empty state */
 #scheduling-task-detail-empty-state {
     color: $text-muted;
@@ -13969,7 +13893,6 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     margin: 0 1 0 0;
 }
 
-#scheduling-automation-detail .follow-why,
 #scheduling-queue-definition-detail .follow-why {
     color: $text-muted;
     height: auto;

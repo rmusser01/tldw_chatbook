@@ -1,10 +1,21 @@
-"""Automations tab behavior on the Schedules workbench (task-18940 slice 2).
+"""Automation-definition behavior on the Schedules workbench (task-18940
+slice 2).
 
-The tab surfaces both the server's automation definitions (ADR-077, ``r``
-dispatches through the server control plane) and, since task-5's fix
-round, this device's own local-owned `recurring_question` definitions
-(``r`` routes those through `SchedulingService.run_automation_now`
-instead -- never the server client, and never both).
+Definitions come from two halves -- the server's (ADR-077, dispatched
+through the server control plane) and this device's own local-owned
+`recurring_question` rows (dispatched through `SchedulingService.run_
+automation_now`; never the server client, and never both).
+
+redesign PR-4 task 5 (the retirement): the file keeps its `automations_
+tab` name -- the same judgment the plan applied to `results_tab.py`/
+`conflicts_tab.py`, renaming buys churn, not clarity -- but the TAB it
+was written against is gone. Its listing, its per-definition detail pane
+and its run-now/edit actions all relocated onto the unified queue
+(`#scheduling-task-table` + `#scheduling-queue-definition-detail`), and
+its audit-trail pane relocated to the pushed `DefinitionAuditView`
+(task 3). Every test below is re-pointed at whichever of those now owns
+the behaviour, with the exceptions individually cited where a surface
+(and its behaviour) genuinely went away rather than moved.
 """
 
 import asyncio
@@ -12,7 +23,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from textual.widgets import Button, DataTable, Input, Select, Static, TabbedContent
+from textual.widgets import Button, DataTable, Input, Select, Static
 
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from Tests.UI.schedules_test_helpers import (
@@ -184,34 +195,91 @@ class LocalOnlyTestApp(ConsolidatedCSSApp):
     scheduling_service = None
 
 
-async def _mounted_workbench(app):
-    """Run the app and return (pilot context, screen) with the workbench up."""
-    return app
+# -- queue-list readers (redesign PR-4 task 5) -------------------------------
+#
+# The retired Automations table was a flat, definitions-only listing whose
+# row order matched the loader's own merge order, so tests indexed it
+# directly. The unified queue mixes reminders in and SORTS (`sort_rows`),
+# so a definition is found by id, never by a hard-coded position. Its
+# columns are (glyph, Title, Details), so the Name cell the old table put
+# at index 0 is index 1 here.
+
+
+def _queue_table(workbench) -> DataTable:
+    return workbench.query_one("#scheduling-task-table", DataTable)
+
+
+def _queue_titles(workbench) -> list[str]:
+    table = _queue_table(workbench)
+    return [rendered_row_cells(table, i)[1] for i in range(table.row_count)]
+
+
+def _queue_definitions(workbench) -> list[dict]:
+    return [
+        row.source_row for row in workbench._visible_rows if row.kind == "definition"
+    ]
+
+
+def _queue_row_index(workbench, definition_id: str) -> int:
+    return next(
+        index
+        for index, row in enumerate(workbench._visible_rows)
+        if row.kind == "definition"
+        and str(row.source_row.get("id")) == definition_id
+    )
+
+
+async def _select_queue_definition(pilot, workbench, definition_id: str):
+    """Put the queue cursor on `definition_id` and let its detail load."""
+    table = _queue_table(workbench)
+    table.cursor_coordinate = (_queue_row_index(workbench, definition_id), 0)
+    await pilot.pause()
+    await pilot.app.workers.wait_for_complete()
+    await pilot.pause()
+    return workbench.query_one(
+        "#scheduling-queue-definition-detail", DefinitionDetail
+    )
+
+
+async def _settled_workbench(pilot):
+    """Push the workbench and let its mount-time loads finish."""
+    await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+    await pilot.pause()
+    await pilot.app.workers.wait_for_complete()
+    await pilot.pause()
+    return pilot.app.screen
 
 
 @pytest.mark.asyncio
-async def test_automations_tab_loads_server_definitions():
+async def test_server_definitions_load_into_the_queue():
+    """redesign PR-4 task 5: the server fetch lands in the unified queue.
+
+    Two things changed with the retirement. The fetch count drops 2 -> 1:
+    PR-2 noted that `load_tasks` had started fetching both definition
+    halves ALONGSIDE the tab's own loader, on its own cadence -- with the
+    tab's loader deleted, one fetch per mount is all that is left. And
+    the selection the run-now/edit actions read is the unified row's
+    (`_selected_row_id`), not the retired table's `_selected_automation_
+    id`.
+
+    The pane notice this used to assert ("2 automations on the server")
+    is DELETED with `_automations_notice_text`: the queue's own notice
+    (`#scheduling-pane-notice`) reports hidden panes/marks/glyphs, not a
+    per-owner definition census, and inventing one here would be new
+    copy, not a relocation.
+    """
     server_client = AutomationsServerClient()
     app = AutomationsTestApp(AutomationsMockService(server_client))
     async with app.run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
-        table = workbench.query_one("#scheduling-automations-table", DataTable)
-        notice = workbench.query_one("#scheduling-automations-notice")
+        workbench = await _settled_workbench(pilot)
 
-        # redesign PR-2, Task 2: `load_tasks` (the Queue tab's own unified
-        # loader) now ALSO fetches both definition halves on every mount
-        # (its own separate cadence, per the brief -- not a shared cache
-        # with this tab's `load_automations`), so the server fetch is
-        # awaited twice, not once, at mount.
-        assert server_client.list_automation_definitions.await_count == 2
-        assert table.row_count == 2
-        assert "2 automations on the server" in str(notice.content)
-        # Highlighting a row records the selection Run-now will act on.
-        table.cursor_coordinate = (0, 0)
-        await pilot.pause()
-        assert workbench._selected_automation_id == "def-1"
+        assert server_client.list_automation_definitions.await_count == 1
+        assert _queue_table(workbench).row_count == 2
+
+        # Highlighting a row records the selection the actions act on.
+        await _select_queue_definition(pilot, workbench, "def-1")
+        assert workbench._selected_row_id == "definition:def-1"
+        assert workbench._selected_queue_definition()["id"] == "def-1"
 
 
 @pytest.mark.asyncio
@@ -226,17 +294,15 @@ async def test_server_rows_are_rebound_to_the_connection_owner_scope():
     server_client = AutomationsServerClient()
     app = AutomationsTestApp(AutomationsMockService(server_client))
     async with app.run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
+        workbench = await _settled_workbench(pilot)
 
-        assert [row["owner_id"] for row in workbench._automations] == [
-            "server:server-1",
-            "server:server-1",
+        assert [
+            row["owner_id"] for row in _queue_definitions(workbench)
+        ] == ["server:server-1", "server:server-1"]
+
+        first_cell = _queue_titles(workbench)[
+            _queue_row_index(workbench, "def-1")
         ]
-
-        table = workbench.query_one("#scheduling-automations-table", DataTable)
-        first_cell = rendered_row_cells(table, 0)[0]
         assert first_cell == "[server-1] Morning brief"
         assert "This device" not in first_cell
 
@@ -286,75 +352,68 @@ async def test_owner_prefix_and_bracket_name_render_literally():
     app.runtime_policy = SimpleNamespace(
         state=SimpleNamespace(active_server_id="http://127.0.0.1:8020")
     )
-    async with app.run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        table = pilot.app.screen.query_one(
-            "#scheduling-automations-table", DataTable
+    async with app.run_test(size=(200, 50)) as pilot:
+        workbench = await _settled_workbench(pilot)
+
+        assert _queue_titles(workbench) == [
+            "[http://127.0.0.1:8020] Nightly [bold] digest"
+        ]
+        # redesign PR-4 task 5: the retired table's Model COLUMN carried
+        # server-derived text too, and its escaping had to be pinned for
+        # the same reason. That reading now lives on the definition pane's
+        # Model row, so the second half of this claim follows it there
+        # rather than being dropped.
+        detail = await _select_queue_definition(pilot, workbench, "def-1")
+        assert (
+            _detail_text(detail, "scheduling-automation-detail-model")
+            == "custom-openai-api/[deprecated] Qwen2.5"
         )
 
-        cells = rendered_row_cells(table, 0)
-        assert cells[0] == "[http://127.0.0.1:8020] Nightly [bold] digest"
-        # The Model column carries server-derived text too.
-        assert cells[4] == "custom-openai-api/[deprecated] Qwen2.5"
+
+# redesign PR-4 task 5, two DELETIONS in this block, each because the
+# surface under test is gone rather than moved:
+#
+# `test_automations_tab_shows_notice_without_server` pinned the retired
+# pane notice's no-server wording ("Server automations need a connected
+# server"), composed by `_automations_notice_text`. Both are deleted --
+# the queue's own `#scheduling-pane-notice` is about hidden panes, marks
+# and the glyph legend, and giving it a definitions census would be new
+# copy rather than a relocation. The behaviour that mattered underneath
+# (no server -> no server rows, local rows still listed) is still pinned
+# by `test_local_automation_appears_with_recomputed_health` below, which
+# runs with `notifications_service=None`.
+#
+# `test_run_now_on_automations_tab_dispatches_server_side` pinned `r` on
+# the Automations tab dispatching server-side. Its claim is now covered
+# verbatim by `test_run_now_on_queue_tab_routes_a_definition_row_to_its_
+# owner` below -- same fixture, same `def-1`, same
+# `run_automation_definition_now` assertion, reached through the surface
+# that survived. Keeping both would be one test twice.
 
 
 @pytest.mark.asyncio
-async def test_automations_tab_shows_notice_without_server():
-    app = LocalOnlyTestApp()
-    async with app.run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
-        notice = workbench.query_one("#scheduling-automations-notice")
-        table = workbench.query_one("#scheduling-automations-table", DataTable)
-        assert table.row_count == 0
-        assert "need a connected server" in str(notice.content)
-
-
-@pytest.mark.asyncio
-async def test_run_now_on_automations_tab_dispatches_server_side():
-    server_client = AutomationsServerClient()
-    app = AutomationsTestApp(AutomationsMockService(server_client))
-    async with app.run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
-        table = workbench.query_one("#scheduling-automations-table", DataTable)
-        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
-        tabs.active = "scheduling-automations-tab"
-        table.cursor_coordinate = (0, 0)
-        await pilot.pause()
-
-        workbench.action_run_task_now()
-        await pilot.pause()
-
-        server_client.run_automation_definition_now.assert_awaited_once_with("def-1")
-
-
-@pytest.mark.asyncio
-async def test_run_now_refusal_surfaces_without_raising():
+async def test_server_run_now_refusal_surfaces_without_raising():
+    """A `ServerClientValidationError` refusal is surfaced, not raised out
+    of the action. (redesign PR-4 task 5: driven from the queue row --
+    the Automations tab's own selection state is retired, so the
+    still-selected assertion reads the unified row id.)"""
     server_client = AutomationsServerClient()
     server_client.run_automation_definition_now = AsyncMock(
         side_effect=ServerClientValidationError("definition_paused")
     )
     app = AutomationsTestApp(AutomationsMockService(server_client))
     async with app.run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
-        table = workbench.query_one("#scheduling-automations-table", DataTable)
-        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
-        tabs.active = "scheduling-automations-tab"
-        table.cursor_coordinate = (0, 0)
-        await pilot.pause()
+        workbench = await _settled_workbench(pilot)
+        await _select_queue_definition(pilot, workbench, "def-1")
 
         workbench.action_run_task_now()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
         server_client.run_automation_definition_now.assert_awaited_once()
         # The refusal path must not raise out of the action handler.
-        assert workbench._selected_automation_id == "def-1"
+        assert workbench._selected_row_id == "definition:def-1"
 
 
 @pytest.mark.asyncio
@@ -381,101 +440,113 @@ async def test_run_now_on_queue_tab_routes_a_definition_row_to_its_owner():
         server_client.run_automation_definition_now.assert_awaited_once_with("def-1")
 
 
-@pytest.mark.asyncio
-async def test_selecting_a_definition_loads_its_audit_trail():
-    server_client = AutomationsServerClient()
-    app = AutomationsTestApp(AutomationsMockService(server_client))
-    async with app.run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
-        table = workbench.query_one("#scheduling-automations-table", DataTable)
-        history = workbench.query_one(
-            "#scheduling-automation-history-table", DataTable
-        )
-        notice = workbench.query_one("#scheduling-automation-history-notice")
-        title = workbench.query_one("#scheduling-automation-history-title")
+# redesign PR-4 task 5: the audit trail's three states move from the
+# retired Automations-tab third pane (a DataTable + notice + title that
+# reloaded on every row selection) to the pushed `DefinitionAuditView`
+# (task 3), which fetches once on mount. The states themselves --
+# events + count line, an honest empty state, and the no-server refusal
+# -- are unchanged: both surfaces always shared `fetch_definition_audit`
+# and `audit_notice_text`. The three tests below carry them over.
+#
+# `test_successful_run_now_refreshes_the_audit_trail` is DELETED, not
+# carried over: it pinned the server run-now's immediate + 5s-delayed
+# re-fetch INTO the always-mounted history pane, and that pane is what
+# made the re-fetch necessary. A pushed view fetches on mount, so it can
+# never be showing a trail that a just-dispatched run has outdated --
+# there is nothing left to poke, and the workbench no longer calls the
+# audit seam at all outside a push. What the run-now path does now
+# instead (refresh the definitions) is pinned by
+# `test_server_run_now_marks_definitions_stale` in
+# `test_schedules_unified_list.py`.
 
-        table.cursor_coordinate = (0, 0)
-        await pilot.pause()
+
+async def _push_audit_view(pilot, service, definition):
+    """Push a `DefinitionAuditView` the way `_push_definition_audit_
+    overlay` does, and let its on-mount fetch finish."""
+    await pilot.app.push_screen(
+        WorkbenchHostScreen(
+            lambda: DefinitionAuditView(service, dict(definition)),
+            title="Run history",
+        )
+    )
+    await pilot.pause()
+    await pilot.app.workers.wait_for_complete()
+    await pilot.pause()
+    return pilot.app.screen.query_one(DefinitionAuditView)
+
+
+@pytest.mark.asyncio
+async def test_audit_view_lists_the_events_and_counts_them():
+    server_client = AutomationsServerClient()
+    service = AutomationsMockService(server_client)
+    app = AutomationsTestApp(service)
+    async with app.run_test() as pilot:
+        await _settled_workbench(pilot)
+        server_client.list_automation_definition_audit.reset_mock()
+
+        overlay = await _push_audit_view(
+            pilot,
+            service,
+            {"id": "def-1", "name": "Morning brief", "owner_id": "server:server-1"},
+        )
 
         server_client.list_automation_definition_audit.assert_awaited_once_with(
             "def-1"
         )
-        assert history.row_count == 2
-        assert "Run history — Morning brief" in str(title.content)
+        table = overlay.query_one("#scheduling-audit-view-table", DataTable)
+        notice = overlay.query_one("#scheduling-audit-view-notice")
+        assert table.row_count == 2
         assert "2 events" in str(notice.content)
 
 
 @pytest.mark.asyncio
-async def test_audit_trail_shows_empty_state_without_events():
+async def test_audit_view_shows_empty_state_without_events():
     server_client = AutomationsServerClient()
     server_client.list_automation_definition_audit = AsyncMock(
         return_value={"items": [], "total": 0}
     )
-    app = AutomationsTestApp(AutomationsMockService(server_client))
+    service = AutomationsMockService(server_client)
+    app = AutomationsTestApp(service)
     async with app.run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
-        table = workbench.query_one("#scheduling-automations-table", DataTable)
-        history = workbench.query_one(
-            "#scheduling-automation-history-table", DataTable
+        await _settled_workbench(pilot)
+
+        overlay = await _push_audit_view(
+            pilot,
+            service,
+            {"id": "def-2", "name": "Paused one", "owner_id": "server:server-1"},
         )
-        notice = workbench.query_one("#scheduling-automation-history-notice")
 
-        table.cursor_coordinate = (1, 0)
-        await pilot.pause()
-
-        assert history.row_count == 0
+        table = overlay.query_one("#scheduling-audit-view-table", DataTable)
+        notice = overlay.query_one("#scheduling-audit-view-notice")
+        assert table.row_count == 0
         assert "No recorded events" in str(notice.content)
 
 
 @pytest.mark.asyncio
-async def test_audit_trail_without_server_shows_notice():
+async def test_audit_view_without_server_shows_notice():
     app = LocalOnlyTestApp()
     async with app.run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
-        history = workbench.query_one(
-            "#scheduling-automation-history-table", DataTable
+        overlay = await _push_audit_view(
+            pilot,
+            None,
+            {"id": "def-1", "name": "Morning brief", "owner_id": "server:server-1"},
         )
-        notice = workbench.query_one("#scheduling-automation-history-notice")
 
-        assert history.row_count == 0
+        table = overlay.query_one("#scheduling-audit-view-table", DataTable)
+        notice = overlay.query_one("#scheduling-audit-view-notice")
+        assert table.row_count == 0
         assert "needs a connected server" in str(notice.content)
 
 
-@pytest.mark.asyncio
-async def test_successful_run_now_refreshes_the_audit_trail():
-    server_client = AutomationsServerClient()
-    app = AutomationsTestApp(AutomationsMockService(server_client))
-    async with app.run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
-        table = workbench.query_one("#scheduling-automations-table", DataTable)
-        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
-        tabs.active = "scheduling-automations-tab"
-        table.cursor_coordinate = (0, 0)
-        await pilot.pause()
-        assert server_client.list_automation_definition_audit.await_count == 1
-
-        workbench.action_run_task_now()
-        await pilot.pause()
-        await pilot.pause()
-
-        # Selection load + post-dispatch refresh.
-        assert server_client.list_automation_definition_audit.await_count == 2
-        assert (
-            server_client.list_automation_definition_audit.await_args.args[-1]
-            == "def-1"
-        )
-
-
 def test_execution_target_label_matrix():
-    from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
+    # redesign PR-4 task 5: imported from `definition_detail`, this
+    # helper's real home. `schedules_workbench` used to re-export it
+    # purely so this test's original import kept working, and that
+    # re-export was the last consumer of the name there once the retired
+    # Automations table (its only real caller) went -- so the import
+    # moves and the re-export is deleted rather than kept alive with a
+    # `noqa`.
+    from tldw_chatbook.UI.Screens.scheduling.definition_detail import (
         automation_execution_target_label,
     )
 
@@ -497,47 +568,18 @@ def test_execution_target_label_matrix():
     assert automation_execution_target_label({"input": "redacted"}) == "auto"
 
 
-@pytest.mark.asyncio
-async def test_definitions_table_shows_the_model_column():
-    server_client = AutomationsServerClient()
-    server_client.list_automation_definitions = AsyncMock(
-        return_value={
-            "items": [
-                {
-                    "id": "def-1",
-                    "name": "Pinned",
-                    "family": "recurring_question",
-                    "lifecycle": "configured",
-                    "health": "ready",
-                    "input": {"provider": "anthropic", "model": "claude-x"},
-                },
-                {
-                    "id": "def-2",
-                    "name": "Default",
-                    "family": "recurring_question",
-                    "lifecycle": "configured",
-                    "health": "ready",
-                },
-            ],
-            "total": 2,
-        }
-    )
-    app = AutomationsTestApp(AutomationsMockService(server_client))
-    async with app.run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
-        table = workbench.query_one("#scheduling-automations-table", DataTable)
-
-        assert [c.label.plain for c in table.columns.values()] == [
-            "Name",
-            "Family",
-            "Lifecycle",
-            "Health",
-            "Model",
-        ]
-        assert rendered_row_cells(table, 0)[4] == "anthropic/claude-x"
-        assert rendered_row_cells(table, 1)[4] == "auto"
+# redesign PR-4 task 5: `test_definitions_table_shows_the_model_column`
+# is DELETED. It pinned the retired table's five-column shape
+# (Name/Family/Lifecycle/Health/Model) and the Model cell's
+# provider/model vs "auto" rendering. The unified queue is deliberately
+# (glyph, Title, Details) -- PR-2 spec S4, "a single primitive's column
+# set no longer fits a mixed reminder+definition list" -- so the columns
+# themselves have no successor to assert. The READING survives in two
+# places that already cover it: `automation_execution_target_label`'s own
+# matrix (`test_execution_target_label_matrix` above, including the
+# "auto" fallback) and the definition pane's Model row (asserted by
+# `test_selecting_a_local_definition_paints_its_details_and_counts` and
+# `test_owner_prefix_and_bracket_name_render_literally`).
 
 
 # --- task-5 fix round: merged local + server listing ------------------------
@@ -552,18 +594,19 @@ async def test_local_automation_appears_with_recomputed_health():
     service = AutomationsMockService(server_client, local_definitions=[_local_definition()])
     app = AutomationsTestApp(service)
     async with app.run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
-        table = workbench.query_one("#scheduling-automations-table", DataTable)
-        notice = workbench.query_one("#scheduling-automations-notice")
+        workbench = await _settled_workbench(pilot)
 
-        assert table.row_count == 1
-        assert rendered_row_cells(table, 0)[0] == "[This device] Local digest"
-        # No `library_rag_search_service` on the bare test app -> capability_unavailable,
-        # NOT the DB row's stored "execution_unavailable" placeholder.
-        assert rendered_row_cells(table, 0)[3] == "capability_unavailable"
-        assert "1 on this device" in str(notice.content)
+        assert _queue_titles(workbench) == ["[This device] Local digest"]
+        # No `library_rag_search_service` on the bare test app ->
+        # capability_unavailable, NOT the DB row's stored
+        # "execution_unavailable" placeholder. redesign PR-4 task 5: the
+        # retired table had a Health COLUMN to read this from; the queue
+        # does not, so the recomputed value is read off the row the queue
+        # actually built (`_device_only_automations` stamps it, and that
+        # stamping is what this test is about).
+        assert _queue_definitions(workbench)[0]["health"] == (
+            "capability_unavailable"
+        )
 
 
 @pytest.mark.asyncio
@@ -574,16 +617,18 @@ async def test_merged_list_shows_both_local_and_server_rows_with_owner_prefix():
     )
     app = AutomationsTestApp(service)
     async with app.run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
-        table = workbench.query_one("#scheduling-automations-table", DataTable)
+        workbench = await _settled_workbench(pilot)
 
-        assert table.row_count == 3
-        names = [rendered_row_cells(table, i)[0] for i in range(3)]
-        assert names[0] == "[This device] Local one"
-        assert names[1] == "[server-1] Morning brief"
-        assert names[2] == "[server-1] Paused one"
+        # redesign PR-4 task 5: the queue SORTS its rows (`sort_rows`)
+        # rather than preserving the loader's merge order, so the merge is
+        # asserted as a set of painted titles rather than by position.
+        assert sorted(_queue_titles(workbench)) == sorted(
+            [
+                "[This device] Local one",
+                "[server-1] Morning brief",
+                "[server-1] Paused one",
+            ]
+        )
 
 
 @pytest.mark.asyncio
@@ -602,16 +647,18 @@ async def test_offline_server_owned_row_is_listed_as_pending_sync():
     service = AutomationsMockService(server_client, local_definitions=[pending_row])
     app = AutomationsTestApp(service)
     async with app.run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
-        table = workbench.query_one("#scheduling-automations-table", DataTable)
+        workbench = await _settled_workbench(pilot)
 
-        names = [rendered_row_cells(table, i)[0] for i in range(table.row_count)]
-        assert names[0] == "[server-1 · pending sync] Queued digest"
+        assert "[server-1 · pending sync] Queued digest" in _queue_titles(
+            workbench
+        )
         # Its `id` is the LOCAL one; editing must not treat it as a server
         # id and mirror it back as a second row.
-        listed = workbench._automations[0]
+        listed = next(
+            row
+            for row in _queue_definitions(workbench)
+            if row["id"] == "local-def-pending"
+        )
         assert (
             await workbench._resolve_local_definition_id(service, listed)
             == "local-def-pending"
@@ -626,19 +673,13 @@ async def test_run_now_routes_local_automation_through_the_service_seam():
     service = AutomationsMockService(server_client, local_definitions=[_local_definition()])
     app = AutomationsTestApp(service)
     async with app.run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
-        table = workbench.query_one("#scheduling-automations-table", DataTable)
-        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
-        tabs.active = "scheduling-automations-tab"
-        assert table.row_count == 3  # local row first, then the 2 server rows
-        table.cursor_coordinate = (0, 0)
-        await pilot.pause()
-        assert workbench._selected_automation_id == "local-def-1"
+        workbench = await _settled_workbench(pilot)
+        assert _queue_table(workbench).row_count == 3  # 1 local + 2 server
+        await _select_queue_definition(pilot, workbench, "local-def-1")
 
         workbench.action_run_task_now()
         await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
         service.run_automation_now.assert_awaited_once_with("local-def-1")
@@ -652,38 +693,32 @@ async def test_local_run_now_refusal_surfaces_without_raising():
     service.run_automation_now = AsyncMock(return_value=None)
     app = AutomationsTestApp(service)
     async with app.run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
-        table = workbench.query_one("#scheduling-automations-table", DataTable)
-        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
-        tabs.active = "scheduling-automations-tab"
-        table.cursor_coordinate = (0, 0)
-        await pilot.pause()
+        workbench = await _settled_workbench(pilot)
+        await _select_queue_definition(pilot, workbench, "local-def-1")
 
         workbench.action_run_task_now()
         await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
         service.run_automation_now.assert_awaited_once()
-        assert workbench._selected_automation_id == "local-def-1"
+        assert workbench._selected_row_id == "definition:local-def-1"
 
 
 @pytest.mark.asyncio
 async def test_local_automation_history_says_not_available_yet():
+    """Local dispatch keeps no durable audit trail, and the view says so
+    rather than showing an empty table. (redesign PR-4 task 5: read off
+    the pushed `DefinitionAuditView`, which owns this notice now.)"""
     server_client = MockServerClient(notifications_service=None)
     service = AutomationsMockService(server_client, local_definitions=[_local_definition()])
     app = AutomationsTestApp(service)
     async with app.run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
-        table = workbench.query_one("#scheduling-automations-table", DataTable)
-        notice = workbench.query_one("#scheduling-automation-history-notice")
+        await _settled_workbench(pilot)
 
-        table.cursor_coordinate = (0, 0)
-        await pilot.pause()
+        overlay = await _push_audit_view(pilot, service, _local_definition())
 
+        notice = overlay.query_one("#scheduling-audit-view-notice")
         assert "isn't available yet" in str(notice.content)
 
 
@@ -694,11 +729,8 @@ async def test_refresh_after_local_save_shows_the_new_row():
     service = AutomationsMockService(server_client, local_definitions=[])
     app = AutomationsTestApp(service)
     async with app.run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
-        table = workbench.query_one("#scheduling-automations-table", DataTable)
-        assert table.row_count == 0
+        workbench = await _settled_workbench(pilot)
+        assert _queue_table(workbench).row_count == 0
 
         # Simulate what save_definition("local") just wrote to the DB.
         service.db._automation_definitions.append(_local_definition(name="Just saved"))
@@ -709,10 +741,10 @@ async def test_refresh_after_local_save_shows_the_new_row():
             SimpleNamespace(status="saved", definition_id="local-def-1")
         )
         await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
-        assert table.row_count == 1
-        assert rendered_row_cells(table, 0)[0] == "[This device] Just saved"
+        assert _queue_titles(workbench) == ["[This device] Just saved"]
 
 
 # --- task-5 fix round: edit affordance ---------------------------------------
@@ -724,17 +756,12 @@ async def test_edit_action_opens_form_prefilled_for_a_local_row():
     service = AutomationsMockService(server_client, local_definitions=[_local_definition()])
     app = AutomationsTestApp(service)
     async with app.run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
-        table = workbench.query_one("#scheduling-automations-table", DataTable)
-        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
-        tabs.active = "scheduling-automations-tab"
-        table.cursor_coordinate = (0, 0)
-        await pilot.pause()
+        workbench = await _settled_workbench(pilot)
+        await _select_queue_definition(pilot, workbench, "local-def-1")
 
         workbench.action_edit_task()
         await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
         assert isinstance(pilot.app.screen, AutomationDefinitionForm)
@@ -767,14 +794,8 @@ async def test_edit_action_refuses_agent_task_rows():
     service = AutomationsMockService(server_client)
     app = AutomationsTestApp(service)
     async with app.run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
-        table = workbench.query_one("#scheduling-automations-table", DataTable)
-        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
-        tabs.active = "scheduling-automations-tab"
-        table.cursor_coordinate = (0, 0)
-        await pilot.pause()
+        workbench = await _settled_workbench(pilot)
+        await _select_queue_definition(pilot, workbench, "def-agent")
 
         workbench.action_edit_task()
         await pilot.pause()
@@ -793,19 +814,14 @@ async def test_edit_action_mirrors_a_server_only_row_on_demand():
     service = AutomationsMockService(server_client)  # no local rows yet
     app = AutomationsTestApp(service)
     async with app.run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
-        table = workbench.query_one("#scheduling-automations-table", DataTable)
-        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
-        tabs.active = "scheduling-automations-tab"
-        table.cursor_coordinate = (0, 0)  # def-1, "Morning brief"
-        await pilot.pause()
+        workbench = await _settled_workbench(pilot)
+        await _select_queue_definition(pilot, workbench, "def-1")
 
         assert service.db._automation_definitions == []
 
         workbench.action_edit_task()
         await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
         assert isinstance(pilot.app.screen, AutomationDefinitionForm)
@@ -1162,30 +1178,19 @@ async def test_selecting_a_local_definition_paints_its_details_and_counts():
             ],
         )
     )
-    # Wide terminal (task-4 fix round): an inactive `TabPane`'s content
-    # paints at a zero region -- `render_line(0)` legitimately blanks
-    # there (proven empty, not a stored-attribute false pass: `.content`
-    # still reads correctly, only the PAINT is absent -- see
-    # `test_detail_value_row.py`'s own painted-not-stored discipline), so
-    # this switches to the Automations tab before asserting, same as
-    # `test_run_now_on_automations_tab_dispatches_server_side` above.
+    # Wide terminal (task-4 fix round): a pane that paints at a zero
+    # region legitimately blanks `render_line(0)` (proven empty, not a
+    # stored-attribute false pass: `.content` still reads correctly, only
+    # the PAINT is absent -- see `test_detail_value_row.py`'s own
+    # painted-not-stored discipline). redesign PR-4 task 5: the tab
+    # activation that used to give the pane a region is retired; the
+    # queue's detail pane is on screen from mount, so selecting the row
+    # is enough.
     async with app.run_test(size=(200, 50)) as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
-        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
-        tabs.active = "scheduling-automations-tab"
-        table = workbench.query_one("#scheduling-automations-table", DataTable)
-        detail = workbench.query_one("#scheduling-automation-detail", DefinitionDetail)
-
-        row_index = next(
-            i
-            for i, row in enumerate(workbench._automations)
-            if row["id"] == "local-def-freq"
+        workbench = await _settled_workbench(pilot)
+        detail = await _select_queue_definition(
+            pilot, workbench, "local-def-freq"
         )
-        table.cursor_coordinate = (row_index, 0)
-        await pilot.pause()
-        await pilot.pause()
 
         assert _detail_text(detail, "scheduling-automation-detail-runs-on") == "This device"
         assert _detail_text(detail, "scheduling-automation-detail-model") == "openai/gpt-5"
@@ -1241,19 +1246,12 @@ async def test_selecting_a_server_definition_shows_its_server_owner_label():
         }
     )
     app = AutomationsTestApp(AutomationsMockService(server_client))
-    # Wide terminal + active tab -- see the local-definition test above.
+    # Wide terminal -- see the local-definition test above.
     async with app.run_test(size=(200, 50)) as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
-        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
-        tabs.active = "scheduling-automations-tab"
-        table = workbench.query_one("#scheduling-automations-table", DataTable)
-        detail = workbench.query_one("#scheduling-automation-detail", DefinitionDetail)
-
-        table.cursor_coordinate = (0, 0)
-        await pilot.pause()
-        await pilot.pause()
+        workbench = await _settled_workbench(pilot)
+        detail = await _select_queue_definition(
+            pilot, workbench, "def-server-freq"
+        )
 
         assert _detail_text(detail, "scheduling-automation-detail-runs-on") == "server-1"
         assert (
@@ -1456,7 +1454,9 @@ async def test_definition_detail_says_so_when_the_history_read_failed():
 @pytest.mark.asyncio
 async def test_a_failed_count_read_paints_the_error_not_zeros():
     """Same as above, driven through `SchedulesWorkbench`'s own read path
-    (the `except` branch of `_load_automation_detail`)."""
+    (the `except` branch of `_fetch_definition_detail_counts`, reached via
+    `_load_queue_definition_detail` -- redesign PR-4 task 5 retired the
+    Automations-tab loader that was the other caller)."""
     server_client = AutomationsServerClient()
     definition = _frequency_definition(id="local-def-freq")
     service = AutomationsMockService(server_client, local_definitions=[definition])
@@ -1467,22 +1467,10 @@ async def test_a_failed_count_read_paints_the_error_not_zeros():
     service.db.count_automation_runs = _boom
     app = AutomationsTestApp(service)
     async with app.run_test(size=(200, 50)) as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
-        workbench.query_one("#scheduling-tabs", TabbedContent).active = (
-            "scheduling-automations-tab"
+        workbench = await _settled_workbench(pilot)
+        detail = await _select_queue_definition(
+            pilot, workbench, "local-def-freq"
         )
-        detail = workbench.query_one("#scheduling-automation-detail", DefinitionDetail)
-        table = workbench.query_one("#scheduling-automations-table", DataTable)
-        row_index = next(
-            i
-            for i, row in enumerate(workbench._automations)
-            if row["id"] == "local-def-freq"
-        )
-        table.cursor_coordinate = (row_index, 0)
-        await pilot.pause()
-        await pilot.pause()
 
         history_group = detail.query_one("#scheduling-automation-detail-group-history")
         history_group.collapsed = False
@@ -1507,22 +1495,10 @@ async def test_editing_the_selected_definition_refreshes_the_detail_pane():
     service = AutomationsMockService(server_client, local_definitions=[definition])
     app = AutomationsTestApp(service)
     async with app.run_test(size=(200, 50)) as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
-        workbench.query_one("#scheduling-tabs", TabbedContent).active = (
-            "scheduling-automations-tab"
+        workbench = await _settled_workbench(pilot)
+        detail = await _select_queue_definition(
+            pilot, workbench, "local-def-freq"
         )
-        detail = workbench.query_one("#scheduling-automation-detail", DefinitionDetail)
-        table = workbench.query_one("#scheduling-automations-table", DataTable)
-        row_index = next(
-            i
-            for i, row in enumerate(workbench._automations)
-            if row["id"] == "local-def-freq"
-        )
-        table.cursor_coordinate = (row_index, 0)
-        await pilot.pause()
-        await pilot.pause()
         assert _detail_text(detail, "scheduling-automation-detail-model") == "openai/gpt-5"
 
         # Edit-and-save shape: the stored row changes, the id does not.
@@ -1531,8 +1507,15 @@ async def test_editing_the_selected_definition_refreshes_the_detail_pane():
             "provider": "anthropic",
             "model": "claude-x",
         }
-        await workbench.load_automations()
+        # redesign PR-4 task 5: `load_automations()` (the retired tab's
+        # own reloader) is deleted; the equivalent authoritative repaint
+        # is the queue's own detail re-feed, which is what every
+        # definition mutation path now calls after a successful save.
+        await workbench._repaint_queue_definition_detail(
+            service, "local-def-freq", service.db._automation_definitions[0]
+        )
         await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
         assert (
@@ -1541,52 +1524,16 @@ async def test_editing_the_selected_definition_refreshes_the_detail_pane():
         )
 
 
-@pytest.mark.asyncio
-async def test_automations_panes_stay_on_screen_across_the_detail_hide_boundary():
-    """Final review F5: three panes x min-width 30 could not fit the 84-89
-    band, and Textual's fr layout then laid the detail and history panes
-    out entirely off-screen (the split has `overflow: hidden`, so nothing
-    hinted at it).
-
-    84 is the width at which the detail pane is still shown -- the same
-    `hide_detail` threshold the Queue tab uses.
-    """
-
-    class _CssApp(AutomationsTestApp):
-        # The default harness does not load `_scheduling.tcss`, so
-        # geometry assertions there measure NOTHING (this exact trap made
-        # the reviewer's first probe read clean when it was not).
-        CSS_PATH = str(BUNDLED_STYLESHEET)
-
-    app = _CssApp(AutomationsMockService(AutomationsServerClient()))
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-        workbench = pilot.app.screen
-        workbench.query_one("#scheduling-tabs", TabbedContent).active = (
-            "scheduling-automations-tab"
-        )
-        await pilot.pause()
-
-        for width in (84, 90):
-            await pilot.resize_terminal(width, 40)
-            await pilot.pause()
-            await pilot.pause()
-            panes = [
-                workbench.query_one(f"#{pane_id}")
-                for pane_id in (
-                    "scheduling-automations-pane",
-                    "scheduling-automations-detail-pane",
-                    "scheduling-automation-history-pane",
-                )
-            ]
-            for pane in panes:
-                assert not pane.has_class("pane-hidden"), (width, pane.id)
-                assert pane.region.width > 0, (width, pane.id)
-                assert pane.region.right <= width, (
-                    f"W={width}: {pane.id} runs off-screen "
-                    f"(x={pane.region.x}, width={pane.region.width})"
-                )
+# redesign PR-4 task 5: `test_automations_panes_stay_on_screen_across_
+# the_detail_hide_boundary` is DELETED. It pinned final review F5 -- the
+# Automations tab's own THREE-pane split (list | definition detail | run
+# history) laying panes off-screen in the 84-89 band because 3 x
+# min-width 30 could not fit. All three panes are retired: the list
+# merged into the queue, the detail pane is the queue's own sibling, and
+# the history pane became the pushed `DefinitionAuditView`. The geometry
+# claim has no subject left here -- the queue's own three-pane fit at
+# that boundary is separately pinned (its `hide_detail`/`hide_inspector`
+# thresholds), and the responsive floor as a whole is Task 6's brief.
 
 
 # --- redesign PR-4, task 3: Queue definition-row actions + all-families

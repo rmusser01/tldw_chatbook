@@ -193,11 +193,17 @@ class _MixedService(MockSchedulingServiceMixin):
 
 @pytest.mark.asyncio
 async def test_definition_rows_are_not_markable():
-    """redesign PR-2, Task 2: definition rows expose no actions in this
-    PR (plan ruling 1) -- marking one must not-op, same as the
-    since-retired projection-row case this test used to cover (a
-    watchlist projection can no longer even enter the Queue list, spec
-    S2 locked decision 2)."""
+    """redesign PR-2, Task 2: marking is reminder-only (plan ruling 1) --
+    marking a definition row must no-op, same as the since-retired
+    projection-row case this test used to cover (a watchlist projection
+    can no longer even enter the Queue list, spec S2 locked decision 2).
+
+    redesign PR-4 task 5: the refusal copy no longer points at the
+    Automations tab, which is retired -- and by task 3 that pointer was
+    already wrong for the verbs definition rows DO have (run/edit/pause/
+    move/mark-read are routed by kind before this copy is reached). It
+    names the limit instead. The claim -- `x` refuses, and says so --
+    is unchanged."""
     app = _App(_MixedService())
     async with app.run_test(size=(160, 48)) as pilot:
         workbench = await _mounted(pilot)
@@ -214,7 +220,8 @@ async def test_definition_rows_are_not_markable():
         messages = [n.message for n in pilot.app._notifications]
         # Final review F8: a definition row IS selected, so the refusal
         # says where the action lives instead of "select a task first".
-        assert any("Automations tab" in m for m in messages), messages
+        assert any("Automations don't support mark" in m for m in messages), messages
+        assert not any("Automations tab" in m for m in messages), messages
 
 
 @pytest.mark.asyncio

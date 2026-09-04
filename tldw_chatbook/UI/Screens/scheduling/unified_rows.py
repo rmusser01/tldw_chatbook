@@ -681,22 +681,22 @@ def build_unified_rows(
             real `ReminderTask` rows -- briefing/watchlist projections
             stay out of the unified list per plan ruling 1).
         definitions: Local + server-mirrored definition rows of EVERY
-            family (PR-4 ruling 1 -- not just ``recurring_question``; the
-            existing Automations-tab merge precedent: `_load_local_
-            automations` + `_load_server_automations`).
+            family (PR-4 ruling 1 -- not just ``recurring_question``),
+            from `SchedulesWorkbench._load_queue_definitions`' local +
+            server merge.
         results: One all-owners `list_automation_results(owner_id=None)`
             listing, used only to derive `UnifiedRow.unread_count`.
         local_definitions: The FULL local definitions table
             (`list_automation_definitions(owner_id=None)`, the same input
-            the Results tab's own index uses), for result->definition
+            the results view's own index uses), for result->definition
             resolution ONLY -- never a source of rows. Final review F2:
             the display merge above deliberately EXCLUDES every local row
             that carries a ``server_id``, so a definition transferred to
             the server is a key in NEITHER of the merge's two id spaces;
             its pre-transfer, locally-produced results resolved to
             nothing and dropped out of the unread count, hiding the
-            rail's `Mark all read` button while the Results tab's badge
-            still counted them. Resolution indexes these rows AND the
+            rail's `Mark all read` button while the rail's `Results (N)`
+            badge still counted them. Resolution indexes these rows AND the
             display rows, since a server definition with no local mirror
             row is absent from the local table. Defaults to
             ``definitions`` -- every caller with no separate local

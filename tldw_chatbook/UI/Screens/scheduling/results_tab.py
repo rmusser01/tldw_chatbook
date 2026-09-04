@@ -1,11 +1,18 @@
-"""Results tab for the Schedules workbench (schedules-handoff PR-6 Task 3).
+"""Automation-results view for the Schedules workbench (schedules-handoff
+PR-6 Task 3).
+
+The module keeps its `results_tab` name (redesign PR-4 task 5's own
+judgment: renaming the file buys nothing but churn), but the TAB it was
+built for is retired -- `ResultsTab` is mounted only inside a pushed
+`ResultsHostScreen` now (task 2), reached from the rail's `Results (N)`
+button or a definition pane's unread row.
+
 
 Minimal-honest inbox (plan ruling 1): a `DataTable` of `automation_results`
 rows spanning every owner (Task 1's `list_automation_results(owner_id=None)`)
 plus a read-only detail pane. Row mutations (read/dismiss/mark-solved/mark
 all read) are keybindings owned by `SchedulesWorkbench` -- this widget is a
-pure renderer, the same split the Automations tab uses for its `m`/`M`/`y`/
-`k` actions (no per-row detail widget there either). Unlike `ConflictsTab`
+pure renderer. Unlike `ConflictsTab`
 (whose "Use server"/"Use local" buttons resolve locally, synchronously),
 the actions here (`SchedulingService.review_automation_result`/
 `resolve_definition`) are async server-aware calls, so they live on the
@@ -24,11 +31,11 @@ heading itself -- it is rendered through the same `Static.update(str)` ->
 `Content.from_markup` parser `escape_markup`'s own docstring warns about).
 (2) `review_selected_result`/`mark_selected_result_solved`/`mark_results_
 read` are the read/dismiss/mark-solved/mark-all-read orchestration,
-factored out of `SchedulesWorkbench`'s own tab-routed actions so BOTH the
-still-live Results TAB (tab-gated bindings, `SchedulesWorkbench`) and the
-pushed view's own binding surface (`ResultsHostScreen`, no tab to gate on
--- a pushed `Screen` never receives a screen-underneath's `BINDINGS`) call
-the exact same service orchestration instead of drifting apart. The
+factored out of `SchedulesWorkbench`'s own tab-routed actions so the tab
+and the pushed view could not drift apart. Task 5 then retired the tab
+and its copies of those actions, leaving `ResultsHostScreen` (a pushed
+`Screen` never receives a screen-underneath's `BINDINGS`, so it must own
+them) as the only caller of the first two. The
 synchronous "nothing selected"/eligibility gates stay in each CALLER,
 not in these helpers (`SchedulesWorkbench.action_mark_result_solved`'s
 existing tests pin those refusals firing WITHOUT a worker round-trip);
@@ -281,12 +288,12 @@ class ResultsTab(Vertical):
         Args:
             initial_results: When given, `populate()`s the table with
                 these on mount -- `ConflictsTab.initial_conflicts`'s own
-                idiom (task 1). The still-live Results TAB instance stays
-                externally driven (`SchedulesWorkbench._refresh_results_
-                tab` calls `.populate()` itself); a standalone pushed
-                instance (redesign PR-4, task 2's rail/definition-pane
-                overlays, via `WorkbenchHostScreen`/`ResultsHostScreen`)
-                has no such external driver, so it self-populates.
+                idiom (task 1). A pushed instance (redesign PR-4, task
+                2's rail/definition-pane overlays, via `ResultsHostScreen`)
+                has no external `.populate()` driver the way the retired
+                mounted tab instance did, so it self-populates. Still
+                optional: `populate()` remains callable from outside, and
+                `ResultsHostScreen` re-calls it after every mutation.
             initial_definitions_by_id: Paired with `initial_results` --
                 the mark-solved eligibility index (`solved_eligibility`).
             initial_total: Paired with `initial_results` -- the honest
@@ -419,8 +426,8 @@ class ResultsTab(Vertical):
         row_keys = [result["id"] for result in results]
         if previous_selection in row_keys:
             # Restoring the cursor fires RowHighlighted, which re-records
-            # the same id -- belt and braces, set both explicitly (matches
-            # the Automations tab's load_automations reconciliation).
+            # the same id -- belt and braces, set both explicitly (the
+            # same by-id reconciliation every table rebuild here uses).
             table.cursor_coordinate = (row_keys.index(previous_selection), 0)
             self._selected_result_id = previous_selection
             self._show_detail(self._results_by_id[previous_selection])
@@ -522,10 +529,11 @@ class ResultsTab(Vertical):
 
 # -- Shared read/dismiss/mark-solved/mark-all-read orchestration -----------
 #
-# redesign PR-4, task 2: factored out of `SchedulesWorkbench` so both the
-# still-live Results TAB (tab-gated bindings) and `ResultsHostScreen`
-# below (the pushed view's own binding surface) drive the exact same
-# service calls. `notify` is `Callable[[message, severity], None]` --
+# redesign PR-4, task 2: factored out of `SchedulesWorkbench` so the
+# Results tab and `ResultsHostScreen` below could not drift apart; task 5
+# retired the tab, so the host screen is now the only caller of the first
+# two (the workbench still calls `mark_results_read` for its rail-level
+# `Mark all read`). `notify` is `Callable[[message, severity], None]` --
 # the caller's own notification sink (`app_instance.notify`/`app.notify`,
 # same call shape, different attribute name depending on whether the
 # caller is a `BaseAppScreen` subclass or a plain `Screen`).

@@ -7,11 +7,11 @@ FRESH instance on every push. Two pushes -- sequential, or in principle
 started from two different callers -- therefore never share state through
 a widget still attached to the pane behind. No existing precedent for
 "push the same widget class as a fresh full-screen instance" existed in
-this codebase before this module (survey §2); the closest prior art is
-the Queue/Automations tabs' own sibling ``DefinitionDetail`` instances,
-which already establish that two independent instances of the same
-widget class, each self-syncing with no shared state, is architecturally
-normal here.
+this codebase before this module (survey §2); the closest prior art was
+the Queue/Automations tabs' own sibling ``DefinitionDetail`` instances
+(the Automations one retired in task 5), which already established that
+two independent instances of the same widget class, each self-syncing
+with no shared state, is architecturally normal here.
 """
 
 from __future__ import annotations

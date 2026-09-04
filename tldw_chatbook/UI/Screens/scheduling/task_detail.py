@@ -540,11 +540,6 @@ class TaskDetail(Vertical):
         height: auto;
     }
 
-    .scheduling-detail-managed {
-        color: $text-muted;
-        height: auto;
-        margin-top: 1;
-    }
     """
 
     def __init__(self, *args, **kwargs) -> None:
@@ -776,13 +771,6 @@ class TaskDetail(Vertical):
                 "No open incidents",
                 id="scheduling-task-detail-incidents",
                 classes="scheduling-detail-value",
-            )
-            # task-23106: rows managed by other systems say so, and where
-            # to edit them, instead of silently hiding the action row.
-            yield Static(
-                "",
-                id="scheduling-task-detail-managed",
-                classes="scheduling-detail-managed",
             )
         yield Horizontal(
             Button(
@@ -1378,11 +1366,6 @@ class TaskDetail(Vertical):
             missed_notice = self.query_one("#scheduling-task-detail-missed", Static)
             missed_notice.update("")
             missed_notice.display = False
-            managed_notice = self.query_one(
-                "#scheduling-task-detail-managed", Static
-            )
-            managed_notice.update("")
-            managed_notice.display = False
             self.query_one("#schedules-follow-in-console", Button).label = (
                 "Follow in Console"
             )
@@ -1437,15 +1420,20 @@ class TaskDetail(Vertical):
         # `#scheduling-transfer-why`'s content, so no explicit reset is
         # needed here either.
 
-        # task-23106: a row Schedules does not own says who owns it and
-        # where to edit it, instead of only hiding the action row.
-        managed_notice = self.query_one("#scheduling-task-detail-managed", Static)
-        if isinstance(task, ReminderTask):
-            managed_notice.update("")
-            managed_notice.display = False
-        else:
-            managed_notice.update(_managed_elsewhere_notice(task))
-            managed_notice.display = True
+        # redesign PR-4 task 5 (ruling 5): the task-23106 ownership line
+        # ("#scheduling-task-detail-managed") and its `else` branch are
+        # DELETED -- provably unreachable, not merely unused. `TaskDetail(`
+        # is constructed exactly once in the repo (schedules_workbench.py's
+        # detail pane) and fed only from `load_tasks`, which calls
+        # `list_tasks(owner_id=None, include_projections=False)` and then
+        # filters the result to `ReminderTask` anyway; `_update_detail_for_
+        # index` asserts the same before every call. So `task` here is
+        # never anything but a `ReminderTask`, the `else` never ran, and
+        # the empty Static it painted into was pure weight. The copy
+        # generator itself (`_managed_elsewhere_notice`) STAYS: the
+        # workbench's own edit/mark/enable action guards still call it,
+        # and `test_managed_elsewhere_notice_names_the_owning_screen`
+        # covers it directly.
 
         follow_button = self.query_one("#schedules-follow-in-console", Button)
         short_title = task.title if len(task.title) <= 24 else f"{task.title[:23]}…"
@@ -1701,8 +1689,8 @@ class TaskInspector(Vertical):
         """Update the conflict card for the current task state.
 
         Underlying status (review F5): a disabled task's conflict is
-        still a conflict -- the Conflicts tab lists it, so this card must
-        not claim "No conflict".
+        still a conflict -- the conflicts view lists it, so this card
+        must not claim "No conflict".
         """
         card = self.query_one("#scheduling-conflict-card", Vertical)
         text = self.query_one("#scheduling-conflict-text", Static)

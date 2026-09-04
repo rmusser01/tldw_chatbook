@@ -1,12 +1,14 @@
-"""Automations tab per-definition detail pane (schedules-redesign PR-1, Task 4).
+"""Per-definition detail pane (schedules-redesign PR-1, Task 4).
 
-The Automations tab's FIRST per-row detail widget -- until now the tab
-had no field-level rendering of a selected `automation_definition` at all
-(only the definitions `DataTable`'s five columns and the audit-trail
+Introduced as the Automations tab's FIRST per-row detail widget -- that
+tab had no field-level rendering of a selected `automation_definition` at
+all (only the definitions `DataTable`'s five columns and the audit-trail
 history pane; see `redesign-pr1-survey.md` section 1's "no per-row detail
-widget" finding). `DefinitionDetail` fills that gap using the same
-`DetailValueRow`/`DetailGroup` row grammar Task 3 used to regrammar the
-Queue tab's `TaskDetail` -- Details/Frequency/History groups. PR-1 shipped
+widget" finding). redesign PR-4 task 5 retired that tab; this pane lives
+on as the queue's definition-row detail, the sibling of `TaskDetail` in
+the same detail pane. It uses the same `DetailValueRow`/`DetailGroup` row
+grammar Task 3 used to regrammar `TaskDetail` -- Details/Frequency/
+History groups. PR-1 shipped
 every row read-only (`affordance` at its `False` default); schedules-
 redesign PR-3, task 4 wires in-pane editing onto the Details/Frequency
 rows (Model/Generation/Finding policy/Sources/Notifications editable,
@@ -513,7 +515,7 @@ def _definition_last_run_label(last_run: dict[str, Any] | None) -> str:
 
 
 class DefinitionDetail(Vertical):
-    """Automations tab (and Queue tab sibling) per-definition detail pane.
+    """Per-definition detail pane (the queue's definition-row detail).
 
     schedules-redesign PR-3, task 4 wires in-pane editing onto the
     Details/Frequency rows PR-1 left read-only, plus the header Pause/
