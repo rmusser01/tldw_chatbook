@@ -11,7 +11,11 @@ canvas cluster: list/browse paging+sort+filter, the inline Import row, the
 in-canvas skill detail/editor (open/save/delete/discard/conflict/dirty-
 tracking/tool-picker/mode toggles), and the trust panel (setup/unlock/
 review/approve/reset/script-grant). ``LibraryScreen`` keeps one-line
-delegators under every one of these original names. Two existing,
+delegators under 70 of these original names -- skills cleanup (task 3)
+deleted the other 16 as dead weight (zero external references beyond the
+controller's own internal calls); see ``_SKILLS_CLUSTER_SCREEN_DELEGATOR_
+PRUNED`` in ``Tests/Architecture/test_library_skills_wiring.py`` for the
+list. Two existing,
 already-extracted Skills modules -- ``library_skill_import_controller.py``
 (``LibrarySkillImportCoordinator``) and ``library_skills_browse_
 controller.py`` (``LibrarySkillsBrowseController``) -- are untouched;
@@ -23,7 +27,12 @@ every prior series uses for its own held-collaborator field.
 **Cluster derivation.** Wave-4 task 1's own census: an ``ast`` scan of
 ``LibraryScreen`` for method names containing ``"skill"`` (case-insensitive)
 finds **133 raw ``FunctionDef`` matches, 127 unique names** (the 6-match gap
-is three ``@property``/``@x.setter`` pairs, all thin projections onto
+is SIX ``@property``/``@x.setter`` pairs -- each pair's getter def + setter
+def = 2 raw matches but 1 unique name, so 6 names = 6 gap -- corrected here
+from an earlier "three pairs" arithmetic error task 2's own report and this
+docstring both originally carried despite listing all six names; task 2's
+post-landing review fix round caught and fixed the report copy (§12c) but
+missed this docstring copy, fixed now by task 3), all thin projections onto
 ``_library_skill_import_coordinator``). This task re-ran that census fresh
 at its own execution time (recipe's "never trust a carried-over count"
 rule, §6) and reconfirmed the identical 133/127. Reading every one of the

@@ -219,12 +219,11 @@ async def test_prompt_and_skill_row_handlers_route_to_their_canvas() -> None:
         return True
 
     skill_screen = SimpleNamespace(
+        _skills_state=SimpleNamespace(selected_skill_name="", view="list"),
         _flush_library_skill_save=permitted,
         _notify_skill_dirty_veto=Mock(),
         _reset_library_skill_editor_state=Mock(),
-        _selected_skill_name="",
         _library_selected_row_id="",
-        _library_skills_view="list",
         run_worker=Mock(),
     )
     skill_event = SimpleNamespace(
@@ -260,7 +259,7 @@ async def test_prompt_and_skill_row_handlers_route_to_their_canvas() -> None:
         await LibraryScreen.handle_library_prompt_row(prompt_screen, prompt_event)
 
     assert kinds == ["skills", "prompts"]
-    assert skill_screen._library_skills_view == "editor"
+    assert skill_screen._skills_state.view == "editor"
     assert prompt_screen._library_prompts_view == "editor"
 
 

@@ -1,36 +1,37 @@
 """Skills extraction series: state object and controller are screen-wired.
 
-Wave-4 Task 1 (state PR -- skills series 1/3) and Task 2 (controller PR --
-skills series 2/3; recipe: backlog/docs/library-decomposition-recipe.md;
-export/collections/search+RAG series precedent: Tests/Architecture/
-test_library_export_wiring.py / test_library_collections_wiring.py /
-test_library_search_rag_wiring.py, their controller-PR-era shape -- no
-delegator-pruning skip set yet, since that is Task 3 (cleanup)'s job for
-this series; the conversations exemplar's own
-test_library_conversations_wiring.py is the precedent for a state object
-whose fields split across multiple shim prefixes). Every field
-``LibrarySkillsState`` declares must have a matching generated property
-shim on ``LibraryScreen``, resolved via ``skill_state_shim_attr()`` -- the
-single-source, three-way prefix mapping (``_library_skill_`` default,
-``_library_skills_`` for the plural-named subset, bare ``_`` for the one
-unprefixed field, ``selected_skill_name``) documented in
-``library_skills_state.py``'s own module docstring. Unlike a looser "either
-prefix works" check, this test asserts the EXACT expected shim name per
-field, not just that some property exists somewhere.
+Wave-4 Task 1 (state PR -- skills series 1/3), Task 2 (controller PR --
+skills series 2/3), and Task 3 (cleanup PR -- skills series 3/3; recipe:
+backlog/docs/library-decomposition-recipe.md; export/collections/search+RAG
+series precedent: Tests/Architecture/test_library_export_wiring.py /
+test_library_collections_wiring.py / test_library_search_rag_wiring.py; the
+conversations exemplar's own test_library_conversations_wiring.py is the
+precedent for a state object whose fields split across multiple shim
+prefixes).
 
-Task 2 adds: every one of the 86 moved names is (a) a callable on
-``LibrarySkillsController`` and (b) a one-line screen delegator forwarding
-to the SAME-NAMED controller method (or, for the 1 staticmethod, to the
-module-level controller CLASS) -- mirroring
-``test_rag_search_controller_owns_its_cluster``/
-``test_screen_delegates_rag_search_handlers`` exactly, at their
-controller-PR-era (pre-cleanup) shape. See
-``library_skills_controller.py``'s own module docstring for the full
-86-of-127 derivation and the 41 exclusions (6 merely-delegate-to-existing-
-controller properties, 27 unbound-fake-self, 1 instance-attribute
-monkeypatch, 1 module-globals coupling, 6 bare-self-as-identity-
-argument hazard exclusions -- one found by static analysis, five found
-by the verification battery after a first draft moved them and broke
+Task 1's ``test_state_object_fields_match_the_shim_surface`` (every
+``LibrarySkillsState`` field <-> a matching generated property shim on
+``LibraryScreen``) is GONE as of Task 3: the screen's generated shim block
+was deleted wholesale in cleanup (``self._skills_state`` is a real
+``LibrarySkillsState`` instance now, not a shimmed screen attribute), so
+there is nothing left on ``LibraryScreen`` for that assertion to check --
+exactly the conversations exemplar's own Task 9 precedent and the export/
+collections/search+RAG series' own Task 4/Task 7/Task 4 precedent.
+``test_skills_controller_exposes_every_state_field`` below already covers
+the equivalent job on the controller side and needed no change.
+
+Task 2's full-cluster ownership/same-name-delegator-forwarding checks
+(``_SKILLS_CLUSTER_METHOD_NAMES``, 86 names) are unchanged in shape; Task 3
+adds the ``_SKILLS_CLUSTER_SCREEN_DELEGATOR_PRUNED`` skip/absence-assertion
+pair to ``test_screen_delegates_skills_handlers``, mirroring
+``_RAG_SEARCH_CLUSTER_SCREEN_DELEGATOR_PRUNED``/
+``_COLLECTIONS_CLUSTER_SCREEN_DELEGATOR_PRUNED`` in the search+RAG/
+collections wiring tests. See ``library_skills_controller.py``'s own module
+docstring for the full 86-of-127 derivation and the 41 exclusions (6
+merely-delegate-to-existing-controller properties, 27 unbound-fake-self, 1
+instance-attribute monkeypatch, 1 module-globals coupling, 6 bare-self-as-
+identity-argument hazard exclusions -- one found by static analysis, five
+found by the verification battery after a first draft moved them and broke
 real Pilot-driven / Tests/Skills tests).
 """
 from __future__ import annotations
@@ -47,21 +48,6 @@ from tldw_chatbook.UI.Library_Modules.library_skills_state import (
     LibrarySkillsState,
     skill_state_shim_attr,
 )
-
-
-@pytest.mark.unit
-def test_state_object_fields_match_the_shim_surface() -> None:
-    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
-
-    field_names = {f.name for f in dataclasses.fields(LibrarySkillsState)}
-    assert field_names, "state object is empty"
-    missing = []
-    for name in field_names:
-        shim_attr = skill_state_shim_attr(name)
-        shim = getattr(LibraryScreen, shim_attr, None)
-        if not isinstance(shim, property):
-            missing.append(shim_attr)
-    assert not missing, f"no screen shim property found for: {missing!r}"
 
 
 @pytest.mark.unit
@@ -221,6 +207,48 @@ _SKILLS_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
     }
 )
 
+#: Task 3 cleanup: these 16 names have ZERO references anywhere except their
+#: own one-line screen delegator (checked via a repo-wide census across
+#: `tldw_chatbook/` and `Tests/`, including `Tests/Live/` and `Tests/Skills/`)
+#: -- every call is either the controller's own internal `self.<name>()`
+#: (moved-body-internal) or this wiring test's own shape-check list; nothing
+#: outside the controller ever called `screen.<name>()`. Their screen
+#: delegators were deleted as dead weight; the names remain in
+#: `_SKILLS_CLUSTER_METHOD_NAMES` above (the controller still genuinely owns
+#: and uses each one) but are excluded from the delegation-forwarding check
+#: below, same shape as the search+RAG series' own
+#: `_RAG_SEARCH_CLUSTER_SCREEN_DELEGATOR_PRUNED` (12 names) and the
+#: collections series' own `_COLLECTIONS_CLUSTER_SCREEN_DELEGATOR_PRUNED`
+#: (14 names). This 16-of-86 prune fraction (~19%) sits below export's
+#: 1-of-22 (~5%) < skills' 16-of-86 (~19%) < search+RAG's 12-of-42 (~29%,
+#: raw fraction) < collections' 14-of-64 (~22%)/conversations' 18-of-61
+#: (~30%): of the 56 non-`@on`/non-staticmethod-external-caller candidates
+#: (55 plain + 1 staticmethod), 40 were kept for a genuine screen-resident
+#: caller (an excluded, still-screen-resident method calling `self.<name>()`
+#: -- e.g. `handle_library_skills_trust_action` calling
+#: `_begin_library_skill_trust_setup`) or a test that calls/patches the
+#: screen delegator directly, and 16 had none.
+_SKILLS_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
+    {
+        "_apply_library_skill_detail",
+        "_apply_library_skill_detail_failure",
+        "_bootstrap_library_skill_trust",
+        "_build_library_skill_tool_catalog",
+        "_claim_library_skill_detail_generation",
+        "_do_library_skill_trust_reset",
+        "_focus_library_skills_page_control",
+        "_library_skill_text_fields_match_state",
+        "_load_library_skill_script_grant",
+        "_mark_library_skill_dirty",
+        "_read_library_skill_editor_fields",
+        "_read_library_skill_live_name",
+        "_revoke_library_skill_script_grant",
+        "_setup_library_skill_trust",
+        "_sync_library_skill_description_hint",
+        "_update_library_skill_toggle_buttons",
+    }
+)
+
 
 @pytest.mark.unit
 def test_skills_cluster_method_names_are_genuinely_skill_named() -> None:
@@ -262,13 +290,25 @@ def test_screen_delegates_skills_handlers() -> None:
 
     Mirrors `test_screen_delegates_rag_search_handlers`: a same-name
     forwarding check, not a loose "the controller is referenced somewhere"
-    substring check. No delegators are pruned yet at this (controller-PR)
-    stage -- that is Task 3 (cleanup)'s job.
+    substring check.
+
+    Skips `_SKILLS_CLUSTER_SCREEN_DELEGATOR_PRUNED` (Task 3 deleted those 16
+    screen delegators as dead weight -- zero external references) and
+    instead asserts each such name is genuinely ABSENT from `LibraryScreen`,
+    so a future accidental re-add would fail loudly here rather than
+    silently reintroducing dead code.
     """
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
     not_delegators = []
     for name in _SKILLS_CLUSTER_METHOD_NAMES:
+        if name in _SKILLS_CLUSTER_SCREEN_DELEGATOR_PRUNED:
+            assert getattr(LibraryScreen, name, None) is None, (
+                f"{name!r} was pruned from the screen (task 3) but is back -- "
+                "either wire it as a delegator again or drop it from "
+                "_SKILLS_CLUSTER_SCREEN_DELEGATOR_PRUNED"
+            )
+            continue
         method = getattr(LibraryScreen, name, None)
         if method is None:
             not_delegators.append(f"{name!r} (missing entirely)")

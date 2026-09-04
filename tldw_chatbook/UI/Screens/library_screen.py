@@ -293,21 +293,11 @@ from ...Prompt_Management.prompt_batch_models import (
     PromptBatchTarget,
 )
 from ...Library.library_skills_state import (
-    DEFAULT_SKILL_BROWSE_PAGE_SIZE,
-    MAX_SKILL_BROWSE_PAGE,
     SkillBrowseResult,
     SkillBrowseScope,
-    SkillEditorState,
-    build_skill_editor_state,
     build_skills_list_state,
-    classify_skill_save_error,
     coerce_skill_editor_mode,
     coerce_skill_reader_mode,
-    compose_skill_markdown,
-    reconcile_skill_allowed_tools,
-    skill_allowed_tools_sequence,
-    skill_invocation_copy,
-    skill_review_identity_line,
 )
 from ...Prompt_Management.prompt_markdown_export import render_prompt_markdown
 from ...Prompt_Management.prompt_artifact_codec import deserialize_definition
@@ -481,24 +471,9 @@ from ...Widgets.Library import (
     PROMPT_DISCARD_TOOLTIP_DIRTY,
     LibraryStudyHandoffCanvas,
     LibraryStudyHandoffCanvasState,
-    SKILL_DISCARD_TOOLTIP_CLEAN,
-    SKILL_DISCARD_TOOLTIP_DIRTY,
     library_dim_label_text,
     library_rag_scope_shows_recovery,
-    next_skill_context,
-    skill_context_toggle_label,
-    skill_disable_model_label,
     skill_editor_warning_lines,
-    skill_script_grant_line,
-    skill_trust_approve_tooltip,
-    skill_trust_panel_remediation_copy,
-    skill_trust_review_enabled,
-    skill_trust_review_preview,
-    skill_trust_review_tooltip,
-    skill_trust_state_line,
-    skill_trust_unlock_enabled,
-    skill_trust_unlock_tooltip,
-    skill_user_invocable_label,
 )
 from ...Widgets.Library.library_file_notes_events import (
     FileNotesEditableOpened,
@@ -580,10 +555,7 @@ from ..Library_Modules.library_notes_work_session import (
 from ..Library_Modules.library_rag_search_controller import LibraryRagSearchController
 from ..Library_Modules.library_rag_search_state import LibraryRagSearchState
 from ..Library_Modules.library_skills_controller import LibrarySkillsController
-from ..Library_Modules.library_skills_state import (
-    LibrarySkillsState,
-    skill_state_shim_attr,
-)
+from ..Library_Modules.library_skills_state import LibrarySkillsState
 from ..Library_Modules.library_snapshot_cache import (
     clone_library_source_snapshot,
 )
@@ -591,7 +563,6 @@ from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
 from .model_browser_state import install_failure_message
-from .skills_screen import SkillTrustBootstrapModal, SkillTrustPassphraseModal
 from .study_scope_models import (
     MATERIAL_SOURCE_LIBRARY,
     MATERIAL_TITLE_LIBRARY_SOURCES,
@@ -2506,7 +2477,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_reader_preferences,
             self._library_file_notes_reader_preferences,
             self._library_prompts_reader_preferences,
-            self._library_skills_reader_preferences,
+            self._skills_state.reader_preferences,
         ) = self._load_library_reader_preference_snapshot()
         collections_capture_scope = getattr(
             self.app_instance,
@@ -2544,10 +2515,10 @@ class LibraryScreen(BaseAppScreen):
                 LIBRARY_PROMPTS_READER_PROFILE,
             )
         )
-        self._library_skills_reader_layout: AdaptiveReaderEffectiveLayout = (
+        self._skills_state.reader_layout: AdaptiveReaderEffectiveLayout = (
             resolve_adaptive_reader_layout(
                 0,
-                self._library_skills_reader_preferences,
+                self._skills_state.reader_preferences,
                 LIBRARY_SKILLS_READER_PROFILE,
             )
         )
@@ -2580,7 +2551,7 @@ class LibraryScreen(BaseAppScreen):
             "notes_items": self._library_notes_reader_preferences.items_open,
             "notes_file_items": self._library_file_notes_reader_preferences.items_open,
             "prompts_items": self._library_prompts_reader_preferences.items_open,
-            "skills_items": self._library_skills_reader_preferences.items_open,
+            "skills_items": self._skills_state.reader_preferences.items_open,
         }
         self._conversations_state.reader_persistence_locks = {
             "library": library_pane_persistence_lock,
@@ -2602,7 +2573,7 @@ class LibraryScreen(BaseAppScreen):
             "library": library_pane_persistence_lock,
             "items": asyncio.Lock(),
         }
-        self._library_skills_reader_persistence_locks = {
+        self._skills_state.reader_persistence_locks = {
             "library": library_pane_persistence_lock,
             "items": asyncio.Lock(),
         }
@@ -2971,7 +2942,7 @@ class LibraryScreen(BaseAppScreen):
             sync_view=lambda: self._sync_library_skills_browse_result,
             request_is_active=lambda: (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
-                and self._library_skills_view == "list"
+                and self._skills_state.view == "list"
             ),
         )
         self._library_media_browse_controller = LibraryMediaBrowseController(
@@ -3027,7 +2998,7 @@ class LibraryScreen(BaseAppScreen):
             if isinstance(library_config, Mapping)
             else None
         )
-        self._library_skill_editor_mode = coerce_skill_editor_mode(
+        self._skills_state.editor_mode = coerce_skill_editor_mode(
             library_config.get("skill_editor_mode")
             if isinstance(library_config, Mapping)
             else None
@@ -3084,7 +3055,7 @@ class LibraryScreen(BaseAppScreen):
         # Toolbar Import… state is projected from the app-owned coordinator.
         # A Library screen may be replaced while the accepted mutation keeps
         # running, so screen construction must never reset that shared receipt.
-        self._library_skill_reader_mode = coerce_skill_reader_mode(None)
+        self._skills_state.reader_mode = coerce_skill_reader_mode(None)
         self._selected_note_id: str = ""
         note_session_port = _LibraryDatabaseNoteSessionPort(
             run_service_call=self._run_library_service_call,
@@ -3652,7 +3623,7 @@ class LibraryScreen(BaseAppScreen):
                 (
                     "esc",
                     "close more actions"
-                    if self._library_skill_more_actions_open
+                    if self._skills_state.more_actions_open
                     else "back to skills list",
                 )
             )
@@ -5261,11 +5232,11 @@ class LibraryScreen(BaseAppScreen):
             or self._library_prompts_mutation_in_flight
             or self._library_prompt_dirty
             or self._library_prompt_conflict_snapshot is not None
-            or self._library_skill_mutation_in_flight
-            or self._library_skill_dirty
-            or self._library_skill_conflict
-            or self._library_skill_confirming_delete
-            or self._library_skill_more_actions_open
+            or self._skills_state.mutation_in_flight
+            or self._skills_state.dirty
+            or self._skills_state.conflict
+            or self._skills_state.confirming_delete
+            or self._skills_state.more_actions_open
             or self._export_state.running
             or self._library_ingest_start_consent is not None
             or self._library_media_confirming_bulk_delete
@@ -7138,7 +7109,7 @@ class LibraryScreen(BaseAppScreen):
             "notes": "_library_notes_reader_preferences",
             "notes_files": "_library_file_notes_reader_preferences",
             "prompts": "_library_prompts_reader_preferences",
-            "skills": "_library_skills_reader_preferences",
+            "skills": "_skills_state.reader_preferences",
         }
         attribute = attributes[destination]
         preferences = operator.attrgetter(attribute)(self)
@@ -7282,7 +7253,7 @@ class LibraryScreen(BaseAppScreen):
             "notes": "_library_notes_reader_preferences",
             "notes_files": "_library_file_notes_reader_preferences",
             "prompts": "_library_prompts_reader_preferences",
-            "skills": "_library_skills_reader_preferences",
+            "skills": "_skills_state.reader_preferences",
         }[destination]
         locks = {
             "media": self._library_media_reader_persistence_locks,
@@ -7291,7 +7262,7 @@ class LibraryScreen(BaseAppScreen):
             "notes": self._library_notes_reader_persistence_locks,
             "notes_files": self._library_file_notes_reader_persistence_locks,
             "prompts": self._library_prompts_reader_persistence_locks,
-            "skills": self._library_skills_reader_persistence_locks,
+            "skills": self._skills_state.reader_persistence_locks,
         }[destination]
         section = (
             "library.reader"
@@ -7611,7 +7582,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_reader_preferences,
             self._library_file_notes_reader_preferences,
             self._library_prompts_reader_preferences,
-            self._library_skills_reader_preferences,
+            self._skills_state.reader_preferences,
         ) = self._load_library_reader_preference_snapshot()
         current_values = {
             "library": self._library_reader_shared_preferences.library_open,
@@ -7621,7 +7592,7 @@ class LibraryScreen(BaseAppScreen):
             "notes_items": self._library_notes_reader_preferences.items_open,
             "notes_file_items": self._library_file_notes_reader_preferences.items_open,
             "prompts_items": self._library_prompts_reader_preferences.items_open,
-            "skills_items": self._library_skills_reader_preferences.items_open,
+            "skills_items": self._skills_state.reader_preferences.items_open,
         }
         persistence_authorities: tuple[
             tuple[
@@ -7889,7 +7860,7 @@ class LibraryScreen(BaseAppScreen):
             LIBRARY_ROW_BROWSE_SKILLS,
             LIBRARY_ROW_CREATE_SKILL,
         }:
-            layout = self._library_skills_reader_layout
+            layout = self._skills_state.reader_layout
             opening = not (
                 layout.library_open if event.pane == "library" else layout.items_open
             )
@@ -9386,7 +9357,7 @@ class LibraryScreen(BaseAppScreen):
             )
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
-            and self._library_skills_view == "list"
+            and self._skills_state.view == "list"
         ):
             # A restored Skills route may begin its exact page before mount,
             # when Textual cannot own a worker yet. Re-kick the retained scope
@@ -9821,7 +9792,7 @@ class LibraryScreen(BaseAppScreen):
                 "filter": skill_scope.query,
                 "page": skill_scope.page,
             }
-            source_list_adjusted = self._library_skills_view != "list"
+            source_list_adjusted = self._skills_state.view != "list"
         elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
             controller = self._library_collections_capture_controller
             applied = controller.state.applied_scope if controller is not None else None
@@ -10123,8 +10094,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_browse_controller.invalidate(restored_prompts_scope)
         restored_skills_scope = self._restore_library_skills_scope(state)
         self._library_skills_browse_controller.invalidate(restored_skills_scope)
-        self._library_skills_sort = restored_skills_scope.sort
-        self._library_skills_filter = restored_skills_scope.query
+        self._skills_state.sort = restored_skills_scope.sort
+        self._skills_state.filter = restored_skills_scope.query
         self._collections_state.requested_page = (
             self._restore_library_collections_page(state)
         )
@@ -10189,10 +10160,10 @@ class LibraryScreen(BaseAppScreen):
                     page=scope.get("page", 1),
                 )
                 self._library_skills_browse_controller.invalidate(receipt_skills_scope)
-                self._library_skills_sort = receipt_skills_scope.sort
-                self._library_skills_filter = receipt_skills_scope.query
-                self._library_skills_view = "list"
-                self._selected_skill_name = ""
+                self._skills_state.sort = receipt_skills_scope.sort
+                self._skills_state.filter = receipt_skills_scope.query
+                self._skills_state.view = "list"
+                self._skills_state.selected_skill_name = ""
             elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
                 self._collections_state.requested_page = scope.get("page", 1)
             elif row_id == LIBRARY_ROW_BROWSE_SEARCH:
@@ -10362,7 +10333,7 @@ class LibraryScreen(BaseAppScreen):
         if row_id in (LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT):
             return getattr(self, "_library_prompts_view", "list") == "list"
         if row_id in (LIBRARY_ROW_BROWSE_SKILLS, LIBRARY_ROW_CREATE_SKILL):
-            return getattr(self, "_library_skills_view", "list") == "list"
+            return getattr(self._skills_state, "view", "list") == "list"
         if row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
             return bool(self.query("#library-conversations-canvas"))
         return False
@@ -11386,11 +11357,11 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_view,
             self._library_media_view,
             self._library_prompts_view,
-            self._library_skills_view,
+            self._skills_state.view,
             self._selected_note_id,
             self._selected_media_id,
             self._selected_prompt_id,
-            self._selected_skill_name,
+            self._skills_state.selected_skill_name,
         )
 
     def _library_entry_canvas_host(self) -> Vertical | None:
@@ -14568,7 +14539,7 @@ class LibraryScreen(BaseAppScreen):
                     library=rail,
                     items=items_host,
                     work=work,
-                    layout=self._library_skills_reader_layout,
+                    layout=self._skills_state.reader_layout,
                     id_prefix="library-skills",
                     library_label="Library",
                     items_label="Skills",
@@ -14879,9 +14850,9 @@ class LibraryScreen(BaseAppScreen):
                         )
                     elif (
                         shell.canvas_kind == "skills"
-                        and self._library_skills_view == "editor"
+                        and self._skills_state.view == "editor"
                     ):
-                        if self._library_skill_editor_state is None:
+                        if self._skills_state.editor_state is None:
                             yield Static(
                                 "Loading skill…",
                                 id="library-skill-loading",
@@ -14889,7 +14860,7 @@ class LibraryScreen(BaseAppScreen):
                                 markup=False,
                             )
                         else:
-                            editor_state = self._library_skill_editor_state
+                            editor_state = self._skills_state.editor_state
                             yield LibrarySkillsListCanvas(
                                 mode="editor",
                                 editor_state=editor_state,
@@ -14900,21 +14871,21 @@ class LibraryScreen(BaseAppScreen):
                                         trust_blocked=editor_state.trust_blocked,
                                     )
                                 ),
-                                status=self._library_skill_status,
-                                conflict=self._library_skill_conflict,
-                                active_review=self._library_skill_active_review,
+                                status=self._skills_state.status,
+                                conflict=self._skills_state.conflict,
+                                active_review=self._skills_state.active_review,
                                 # Same source of truth ``_save_library_skill`` uses
                                 # for its own ``is_create`` -- an empty
-                                # ``_selected_skill_name`` means there is no
+                                # ``self._skills_state.selected_skill_name`` means there is no
                                 # existing skill on disk to rename, so the Name
                                 # Input stays editable. Reached both via a real
                                 # skill row (existing skill, name set) and via
                                 # the Create rail's "New skill" row
                                 # (``_enter_library_skill_create_editor`` leaves
-                                # ``_selected_skill_name`` empty).
-                                is_create=not self._selected_skill_name,
-                                dirty=self._library_skill_dirty,
-                                confirming_delete=self._library_skill_confirming_delete,
+                                # ``self._skills_state.selected_skill_name`` empty).
+                                is_create=not self._skills_state.selected_skill_name,
+                                dirty=self._skills_state.dirty,
+                                confirming_delete=self._skills_state.confirming_delete,
                                 scroll_to_actions=self._consume_library_skill_scroll_pending(),
                                 skill_path=self._library_skill_on_disk_path(),
                                 # Task 5: the editor's own trust panel renders a
@@ -14924,14 +14895,14 @@ class LibraryScreen(BaseAppScreen):
                                 # needs the same confirm-gate the list header
                                 # uses -- both share one screen-level flag/handler
                                 # set since only one view is ever mounted.
-                                confirming_reset=self._library_skill_trust_confirming_reset,
+                                confirming_reset=self._skills_state.trust_confirming_reset,
                                 id="library-skills-canvas",
                             )
                     elif shell.canvas_kind == "skills":
                         yield LibrarySkillsListCanvas(
                             self._build_library_skills_state(),
-                            sort_mode=self._library_skills_sort,
-                            filter_value=self._library_skills_filter,
+                            sort_mode=self._skills_state.sort,
+                            filter_value=self._skills_state.filter,
                             import_open=self._library_skills_import_open,
                             import_path=self._library_skills_import_path,
                             import_status=self._library_skills_import_status,
@@ -14949,10 +14920,10 @@ class LibraryScreen(BaseAppScreen):
                             # Task 5: the adaptive trust header + its
                             # confirm-gated standalone Reset action, computed
                             # off-thread (see ``_refresh_library_skills_trust_posture``).
-                            trust_posture=self._library_skills_trust_posture,
-                            confirming_reset=self._library_skill_trust_confirming_reset,
+                            trust_posture=self._skills_state.trust_posture,
+                            confirming_reset=self._skills_state.trust_confirming_reset,
                             sort_choices_visible=(
-                                self._library_skills_sort_choices_visible
+                                self._skills_state.sort_choices_visible
                             ),
                             id="library-skills-canvas",
                         )
@@ -18131,9 +18102,6 @@ class LibraryScreen(BaseAppScreen):
         )
         return values
 
-    def _build_library_skill_tool_catalog(self) -> tuple[str, ...]:
-        return self._skills_controller._build_library_skill_tool_catalog()
-
     def _library_skills_list_canvas_kwargs(self) -> dict[str, Any]:
         return self._skills_controller._library_skills_list_canvas_kwargs()
 
@@ -18497,7 +18465,7 @@ class LibraryScreen(BaseAppScreen):
             context_payload,
             query="",
             sort=controller.visible_result.scope.sort,
-            selected_name=self._selected_skill_name,
+            selected_name=self._skills_state.selected_skill_name,
         )
         return dataclasses.replace(
             state,
@@ -18520,7 +18488,7 @@ class LibraryScreen(BaseAppScreen):
         controller = self._library_skills_browse_controller
         token = controller.begin(scope)
         focused = getattr(self, "focused", None)
-        self._library_skills_filter_cursor_context = (
+        self._skills_state.filter_cursor_context = (
             (token, focused.cursor_position)
             if focus_identity == LIBRARY_SKILLS_FILTER_ID and isinstance(focused, Input)
             else None
@@ -18533,9 +18501,6 @@ class LibraryScreen(BaseAppScreen):
 
     def _sync_library_skills_browse_result(self, result: SkillBrowseResult, focus_identity: str | None) -> LibraryEntryReconcileResult:
         return self._skills_controller._sync_library_skills_browse_result(result, focus_identity)
-
-    def _focus_library_skills_page_control(self, invoked: str) -> None:
-        return self._skills_controller._focus_library_skills_page_control(invoked)
 
     def _refresh_library_skills_after_committed_mutation(self, *, scope: SkillBrowseScope | None = None) -> None:
         return self._skills_controller._refresh_library_skills_after_committed_mutation(scope=scope)
@@ -18565,14 +18530,14 @@ class LibraryScreen(BaseAppScreen):
         if not callable(posture_fn):
             should_repaint = (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
-                and self._library_skills_view == "list"
+                and self._skills_state.view == "list"
                 and (
-                    bool(self._library_skills_trust_posture)
+                    bool(self._skills_state.trust_posture)
                     or bool(self.query("#library-skills-trust-header"))
                 )
             )
             self.workers.cancel_group(self, "library_skills_trust_posture")
-            self._library_skills_trust_posture = ""
+            self._skills_state.trust_posture = ""
             if should_repaint:
                 _sync_library_canvas(
                     self,
@@ -22971,7 +22936,7 @@ class LibraryScreen(BaseAppScreen):
         ):
             self._library_collections_capture_controller.unmount()
         if row_id != LIBRARY_ROW_BROWSE_SKILLS:
-            self._library_skills_filter_cursor_context = None
+            self._skills_state.filter_cursor_context = None
             self._library_skills_browse_controller.invalidate()
         self._library_navigation_context_generation += 1
         if (
@@ -23061,7 +23026,7 @@ class LibraryScreen(BaseAppScreen):
         # (editor manifest_error panel or the list header) and then
         # switching rail rows away leaves it armed, and it can reappear
         # unprompted on a later, unrelated entry into the skills view.
-        self._library_skill_trust_confirming_reset = False
+        self._skills_state.trust_confirming_reset = False
         # (task-2043) The ingest form now PERSISTS across rail switches --
         # the old full reset discarded a typed path/metadata on every
         # switch, destructive for multi-batch workflows (round-2 critique).
@@ -23152,7 +23117,7 @@ class LibraryScreen(BaseAppScreen):
             self._apply_library_notes_stage_visibility()
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
-            and self._library_skills_view == "list"
+            and self._skills_state.view == "list"
         ):
             # The strict posture projection requires its retained owner to exist.
             self._refresh_library_skills_trust_posture()
@@ -25552,14 +25517,14 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the skills sort control.
         """
         event.stop()
-        self._library_skills_sort_choices_visible = (
-            not self._library_skills_sort_choices_visible
+        self._skills_state.sort_choices_visible = (
+            not self._skills_state.sort_choices_visible
         )
 
         def focus_open_strip() -> None:
             self._focus_library_choice_strip_active(
                 ".library-skills-sort-choice",
-                self._library_skills_sort,
+                self._skills_state.sort,
             )
 
         def focus_opener() -> None:
@@ -25570,7 +25535,7 @@ class LibraryScreen(BaseAppScreen):
             "skills",
             then=(
                 focus_open_strip
-                if self._library_skills_sort_choices_visible
+                if self._skills_state.sort_choices_visible
                 else focus_opener
             ),
         )
@@ -25586,9 +25551,9 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         requested = str(getattr(event.button, "choice_value", "") or "")
-        self._library_skills_sort_choices_visible = False
+        self._skills_state.sort_choices_visible = False
         if requested in _LIBRARY_SKILLS_SORT_MODES:
-            self._library_skills_sort = requested
+            self._skills_state.sort = requested
             scope = dataclasses.replace(
                 self._library_skills_browse_controller.mutation_refresh_scope,
                 sort=requested,
@@ -25611,12 +25576,12 @@ class LibraryScreen(BaseAppScreen):
             event: Input submission event emitted by the skills filter box.
         """
         event.stop()
-        self._library_skills_filter = self._safe_text(
+        self._skills_state.filter = self._safe_text(
             event.value, max_length=200
         ).strip()
         scope = dataclasses.replace(
             self._library_skills_browse_controller.mutation_refresh_scope,
-            query=self._library_skills_filter,
+            query=self._skills_state.filter,
             page=1,
         )
         self._request_library_skills_browse(
@@ -25823,10 +25788,10 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_skill_import_coordinator.dismiss()
         self._reset_library_skill_editor_state()
-        self._selected_skill_name = name
+        self._skills_state.selected_skill_name = name
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
-        self._library_skills_view = "editor"
-        self._library_skill_reader_mode = "trust"
+        self._skills_state.view = "editor"
+        self._skills_state.reader_mode = "trust"
         self.run_worker(
             self._refresh_library_skill_detail(name),
             exclusive=True,
@@ -25905,7 +25870,7 @@ class LibraryScreen(BaseAppScreen):
                 "An import is already in progress."
             )
             return
-        if self._library_skills_view != "list":
+        if self._skills_state.view != "list":
             return
         raw_path = self._library_skills_import_path.strip()
         if not raw_path:
@@ -25968,11 +25933,11 @@ class LibraryScreen(BaseAppScreen):
             or self.app.screen is not self
             or self._library_selected_row_id != LIBRARY_ROW_BROWSE_SKILLS
             or not snapshot.candidates
-            or self._library_skill_choice_presented_generation == snapshot.generation
+            or self._skills_state.choice_presented_generation == snapshot.generation
         ):
             return
         choice_generation = snapshot.generation
-        self._library_skill_choice_presented_generation = choice_generation
+        self._skills_state.choice_presented_generation = choice_generation
 
         def resolve(candidate: str | None) -> None:
             if (
@@ -26034,10 +25999,10 @@ class LibraryScreen(BaseAppScreen):
         skill_name = getattr(event.button, "skill_name", None)
         self._reset_library_skill_editor_state()
         if isinstance(skill_name, str):
-            self._selected_skill_name = skill_name
+            self._skills_state.selected_skill_name = skill_name
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
-        self._library_skills_view = "editor"
-        self._library_skill_reader_mode = "overview"
+        self._skills_state.view = "editor"
+        self._skills_state.reader_mode = "overview"
         if isinstance(skill_name, str):
             # Exclusive in its own group so rapidly switching rows cancels
             # the previous in-flight detail fetch instead of letting a
@@ -26050,23 +26015,14 @@ class LibraryScreen(BaseAppScreen):
             )
         _sync_library_canvas(self, "skills")
 
-    def _claim_library_skill_detail_generation(self) -> int:
-        return self._skills_controller._claim_library_skill_detail_generation()
-
     def _invalidate_library_skill_detail_generation(self) -> None:
         return self._skills_controller._invalidate_library_skill_detail_generation()
 
     def _library_skill_detail_request_is_current(self, *, skill_name: str, generation: int) -> bool:
         return self._skills_controller._library_skill_detail_request_is_current(skill_name=skill_name, generation=generation)
 
-    def _apply_library_skill_detail_failure(self, copy: str) -> None:
-        return self._skills_controller._apply_library_skill_detail_failure(copy)
-
     async def _refresh_library_skill_detail(self, skill_name: str, *, request_generation: int | None = None) -> None:
         return await self._skills_controller._refresh_library_skill_detail(skill_name, request_generation=request_generation)
-
-    def _apply_library_skill_detail(self, detail: Mapping[str, Any]) -> None:
-        return self._skills_controller._apply_library_skill_detail(detail)
 
     def _arm_library_skill_editor(self) -> None:
         return self._skills_controller._arm_library_skill_editor()
@@ -26081,42 +26037,33 @@ class LibraryScreen(BaseAppScreen):
         so every exit from the editor leaves save/conflict/trust-review
         tracking clean for the next skill.
         """
-        self._library_skills_view = "list"
-        self._library_skill_reader_mode = "overview"
+        self._skills_state.view = "list"
+        self._skills_state.reader_mode = "overview"
         self._invalidate_library_skill_detail_generation()
-        self._library_skill_detail = None
-        self._library_skill_original_name = ""
-        self._library_skill_editor_state = None
-        self._library_skill_dirty = False
-        self._library_skill_status = ""
-        self._library_skill_conflict = False
-        self._library_skill_active_review = None
-        self._library_skill_script_grant = False
-        self._library_skill_tool_filter = ""
-        self._library_skill_tool_captured = ()
-        self._library_skill_tool_picker_changed = False
-        self._library_skill_more_actions_open = False
-        self._library_skill_trust_details_open = False
-        self._library_skill_mutation_in_flight = False
-        self._library_skill_confirming_delete = False
-        self._library_skill_trust_confirming_reset = False
-        self._library_skill_scroll_pending = False
-        self._library_skill_editor_armed = False
+        self._skills_state.detail = None
+        self._skills_state.original_name = ""
+        self._skills_state.editor_state = None
+        self._skills_state.dirty = False
+        self._skills_state.status = ""
+        self._skills_state.conflict = False
+        self._skills_state.active_review = None
+        self._skills_state.script_grant = False
+        self._skills_state.tool_filter = ""
+        self._skills_state.tool_captured = ()
+        self._skills_state.tool_picker_changed = False
+        self._skills_state.more_actions_open = False
+        self._skills_state.trust_details_open = False
+        self._skills_state.mutation_in_flight = False
+        self._skills_state.confirming_delete = False
+        self._skills_state.trust_confirming_reset = False
+        self._skills_state.scroll_pending = False
+        self._skills_state.editor_armed = False
 
     def _consume_library_skill_scroll_pending(self) -> bool:
         return self._skills_controller._consume_library_skill_scroll_pending()
 
-    def _library_skill_text_fields_match_state(self) -> bool:
-        return self._skills_controller._library_skill_text_fields_match_state()
-
     def _library_skill_on_disk_path(self) -> str:
         return self._skills_controller._library_skill_on_disk_path()
-
-    def _mark_library_skill_dirty(self, *, force: bool = False) -> None:
-        return self._skills_controller._mark_library_skill_dirty(force=force)
-
-    def _read_library_skill_live_name(self) -> str:
-        return self._skills_controller._read_library_skill_live_name()
 
     def _update_library_skill_warnings_static(self, *, name: str | None = None) -> None:
         return self._skills_controller._update_library_skill_warnings_static(name=name)
@@ -26140,15 +26087,9 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_skill_description_changed(self, event: Input.Changed) -> None:
         return self._skills_controller.handle_library_skill_description_changed(event)
 
-    def _sync_library_skill_description_hint(self, live_value: str) -> None:
-        return self._skills_controller._sync_library_skill_description_hint(live_value)
-
     @on(TextArea.Changed, "#library-skill-body")
     def handle_library_skill_body_changed(self, event: TextArea.Changed) -> None:
         return self._skills_controller.handle_library_skill_body_changed(event)
-
-    def _update_library_skill_toggle_buttons(self) -> None:
-        return self._skills_controller._update_library_skill_toggle_buttons()
 
     @on(Button.Pressed, "#library-skill-editor-mode")
     async def handle_library_skill_editor_mode(self, event: Button.Pressed) -> None:
@@ -26202,9 +26143,6 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_skill_context_toggle(self, event: Button.Pressed) -> None:
         return self._skills_controller.handle_library_skill_context_toggle(event)
 
-    def _read_library_skill_editor_fields(self) -> tuple[str, str, str, str, str, str] | None:
-        return self._skills_controller._read_library_skill_editor_fields()
-
     @on(Button.Pressed, "#library-skill-save")
     def handle_library_skill_save(self, event: Button.Pressed) -> None:
         return self._skills_controller.handle_library_skill_save(event)
@@ -26214,7 +26152,7 @@ class LibraryScreen(BaseAppScreen):
         if not self._library_skill_save_available():
             return False
         self._snapshot_library_skill_live_fields()
-        self._library_skill_mutation_in_flight = True
+        self._skills_state.mutation_in_flight = True
         self._sync_library_skill_lifecycle_actions()
         self.run_worker(
             self._run_library_skill_save(),
@@ -26256,17 +26194,17 @@ class LibraryScreen(BaseAppScreen):
         return (
             self._library_selected_row_id
             in (LIBRARY_ROW_BROWSE_SKILLS, LIBRARY_ROW_CREATE_SKILL)
-            and self._library_skills_view == "editor"
+            and self._skills_state.view == "editor"
         )
 
     def _library_skill_save_available(self) -> bool:
         """Return whether the lifecycle currently exposes a Skill save."""
         return bool(
             self._library_skill_editor_active()
-            and (self._library_skill_dirty or not self._selected_skill_name)
-            and not self._library_skill_conflict
-            and not self._library_skill_confirming_delete
-            and not self._library_skill_mutation_in_flight
+            and (self._skills_state.dirty or not self._skills_state.selected_skill_name)
+            and not self._skills_state.conflict
+            and not self._skills_state.confirming_delete
+            and not self._skills_state.mutation_in_flight
         )
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
@@ -26690,9 +26628,9 @@ class LibraryScreen(BaseAppScreen):
         # not fire an action the visible chrome no longer offers (review
         # finding for the delete-confirm case).
         if (
-            self._library_skill_conflict
-            or self._library_skill_confirming_delete
-            or self._library_skill_mutation_in_flight
+            self._skills_state.conflict
+            or self._skills_state.confirming_delete
+            or self._skills_state.mutation_in_flight
         ):
             return
         self._begin_library_skill_save()
@@ -26701,8 +26639,8 @@ class LibraryScreen(BaseAppScreen):
         """Escape: leave the editor, honoring the unsaved-changes guard (task-424)."""
         if not self._library_skill_editor_active():
             return
-        if self._library_skill_more_actions_open:
-            self._library_skill_more_actions_open = False
+        if self._skills_state.more_actions_open:
+            self._skills_state.more_actions_open = False
             self._sync_library_skill_lifecycle_actions()
             try:
                 self.query_one("#library-skill-more-actions", Button).focus()
@@ -26868,10 +26806,10 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the editor's "Delete" action.
         """
         event.stop()
-        if self._library_skills_view != "editor" or not self._selected_skill_name:
+        if self._skills_state.view != "editor" or not self._skills_state.selected_skill_name:
             return
         self._snapshot_library_skill_live_fields()
-        self._library_skill_confirming_delete = True
+        self._skills_state.confirming_delete = True
         if self.is_mounted:
             self._sync_library_skill_lifecycle_actions()
             try:
@@ -26892,17 +26830,17 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         if (
-            self._library_skills_view != "editor"
-            or not self._selected_skill_name
-            or self._library_skill_mutation_in_flight
+            self._skills_state.view != "editor"
+            or not self._skills_state.selected_skill_name
+            or self._skills_state.mutation_in_flight
         ):
             return
-        self._library_skill_mutation_in_flight = True
+        self._skills_state.mutation_in_flight = True
         self._sync_library_skill_lifecycle_actions()
         self.run_worker(
             self._run_library_skill_delete(
-                self._selected_skill_name,
-                self._library_skill_detail_generation,
+                self._skills_state.selected_skill_name,
+                self._skills_state.detail_generation,
             ),
             exclusive=True,
             group="library_skill_delete",
@@ -26922,11 +26860,11 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         # Fields stay editable during the confirmation, so fold any edit
         # typed there back into state before the state-driven recompose --
-        # otherwise the recompose reverts it while _library_skill_dirty
+        # otherwise the recompose reverts it while self._skills_state.dirty
         # stays True, and a later Save would persist the reverted value
         # (review finding). Mirrors the arm path's snapshot.
         self._snapshot_library_skill_live_fields()
-        self._library_skill_confirming_delete = False
+        self._skills_state.confirming_delete = False
         if self.is_mounted:
             self._sync_library_skill_lifecycle_actions()
             try:
@@ -26999,9 +26937,6 @@ class LibraryScreen(BaseAppScreen):
     def _refresh_library_skill_script_grant(self) -> None:
         return self._skills_controller._refresh_library_skill_script_grant()
 
-    async def _load_library_skill_script_grant(self, name: str, generation: int, granted_fn) -> None:
-        return await self._skills_controller._load_library_skill_script_grant(name, generation, granted_fn)
-
     async def _request_library_skill_trust_bootstrap_passphrase(self) -> str | None:
         return await self._skills_controller._request_library_skill_trust_bootstrap_passphrase()
 
@@ -27037,9 +26972,6 @@ class LibraryScreen(BaseAppScreen):
     def _begin_library_skill_trust_setup(self) -> None:
         return self._skills_controller._begin_library_skill_trust_setup()
 
-    async def _setup_library_skill_trust(self) -> None:
-        return await self._skills_controller._setup_library_skill_trust()
-
     @on(Button.Pressed, "#library-skills-trust-reset")
     def handle_library_skills_trust_reset_request(self, event: Button.Pressed) -> None:
         """Arm the destructive Reset action's confirm gate (Task 5).
@@ -27053,7 +26985,7 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the Reset button.
         """
         event.stop()
-        self._library_skill_trust_confirming_reset = True
+        self._skills_state.trust_confirming_reset = True
         if self.is_mounted:
             _sync_library_canvas(self, "skills")
 
@@ -27064,9 +26996,6 @@ class LibraryScreen(BaseAppScreen):
     @on(Button.Pressed, "#library-skills-trust-reset-confirm")
     def handle_library_skills_trust_reset_confirm(self, event: Button.Pressed) -> None:
         return self._skills_controller.handle_library_skills_trust_reset_confirm(event)
-
-    async def _do_library_skill_trust_reset(self) -> None:
-        return await self._skills_controller._do_library_skill_trust_reset()
 
     def _open_first_blocked_skill(self) -> None:
         """Open the first trust-blocked skill's editor (header "review" action).
@@ -27090,9 +27019,6 @@ class LibraryScreen(BaseAppScreen):
     @on(Button.Pressed, "#library-skill-trust-setup")
     def handle_library_skill_trust_setup(self, event: Button.Pressed) -> None:
         return self._skills_controller.handle_library_skill_trust_setup(event)
-
-    async def _bootstrap_library_skill_trust(self) -> None:
-        return await self._skills_controller._bootstrap_library_skill_trust()
 
     @on(Button.Pressed, "#library-skill-trust-unlock")
     def handle_library_skill_trust_unlock(self, event: Button.Pressed) -> None:
@@ -27127,13 +27053,13 @@ class LibraryScreen(BaseAppScreen):
 
     async def _approve_library_skill_trust(self) -> None:
         if (
-            self._library_skills_view != "editor"
-            or self._library_skill_active_review is None
+            self._skills_state.view != "editor"
+            or self._skills_state.active_review is None
         ):
             return
-        name = self._selected_skill_name
-        generation = self._library_skill_detail_generation
-        review_id = self._library_skill_active_review.get("review_id")
+        name = self._skills_state.selected_skill_name
+        generation = self._skills_state.detail_generation
+        review_id = self._skills_state.active_review.get("review_id")
         if not review_id:
             return
         passphrase = await self._request_library_skill_trust_passphrase(
@@ -27177,7 +27103,7 @@ class LibraryScreen(BaseAppScreen):
                 skill_name=name,
                 generation=generation,
             ):
-                self._library_skill_active_review = None
+                self._skills_state.active_review = None
                 self._render_library_skill_trust_panel()
                 await self._refresh_library_skill_trust_status()
             return
@@ -27187,15 +27113,12 @@ class LibraryScreen(BaseAppScreen):
             generation=generation,
         ):
             return
-        self._library_skill_active_review = None
+        self._skills_state.active_review = None
         await self._refresh_library_skill_trust_status()
 
     @on(Button.Pressed, "#library-skill-script-grant-revoke")
     def handle_library_skill_script_grant_revoke(self, event: Button.Pressed) -> None:
         return self._skills_controller.handle_library_skill_script_grant_revoke(event)
-
-    async def _revoke_library_skill_script_grant(self) -> None:
-        return await self._skills_controller._revoke_library_skill_script_grant()
 
     @on(Button.Pressed, "#library-prompts-import")
     async def handle_library_prompts_import(self, event: Button.Pressed) -> None:
@@ -29712,13 +29635,13 @@ class LibraryScreen(BaseAppScreen):
             )
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
-            and self._library_skills_view == "list"
-            and self._library_skills_sort_choices_visible
+            and self._skills_state.view == "list"
+            and self._skills_state.sort_choices_visible
         ):
             return (
                 "sort",
                 "#library-skills-sort",
-                "_library_skills_sort_choices_visible",
+                "_skills_state.sort_choices_visible",
             )
         if (
             self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
@@ -29748,7 +29671,7 @@ class LibraryScreen(BaseAppScreen):
             "_library_media_type_choices_visible": "media",
             "_library_media_sort_choices_visible": "media",
             "_library_prompts_sort_choices_visible": "prompts",
-            "_library_skills_sort_choices_visible": "skills",
+            "_skills_state.sort_choices_visible": "skills",
             "_export_state.quality_choices_visible": "export",
         }[visibility_attr]
         _sync_library_canvas(
@@ -41220,28 +41143,13 @@ LibraryExportController._safe_text = staticmethod(LibraryScreen._safe_text)
 # task 3) for where the SAME shape now lives permanently, one layer down,
 # exactly mirroring the collections precedent immediately above.
 
-# --- BEGIN generated skills-state shims (delete wholesale at cleanup) ---
-# wave-4 task 1: keeps every original `_library_skill_<field>`/
-# `_library_skills_<field>`/`_selected_skill_name` name working as a
-# property over `self._skills_state`; attached programmatically so the
-# class body gains no FunctionDefs (the size ratchet counts those).
-# `skill_state_shim_attr` (imported from `library_skills_state` -- the
-# single authoritative home for the three-way prefix mapping, not a
-# second, independently-drifting copy here) resolves each field's real
-# original attribute name -- singular `_library_skill_` default, plural
-# `_library_skills_` for the subset named in `SKILLS_PLURAL_STATE_FIELDS`,
-# or the bare `_` prefix for the one name in `SKILL_UNPREFIXED_STATE_
-# FIELDS` (`selected_skill_name`).
-for _lss_field in dataclasses.fields(LibrarySkillsState):
-    setattr(
-        LibraryScreen,
-        skill_state_shim_attr(_lss_field.name),
-        property(
-            lambda self, _n=_lss_field.name: getattr(self._skills_state, _n),
-            lambda self, value, _n=_lss_field.name: setattr(
-                self._skills_state, _n, value
-            ),
-        ),
-    )
-del _lss_field
-# --- END generated skills-state shims ---
+# wave-4 task 3 (skills cleanup, skills series 3/3) deleted the generated
+# skills-state shim block that used to live here (wave-4 task 1): every
+# remaining screen-side `_library_skill_<field>`/`_library_skills_<field>`/
+# `_selected_skill_name` reference was retargeted to
+# `self._skills_state.<field>` and every test attribute path/dynamic-
+# dispatch string was retargeted to match, so nothing on `LibraryScreen`
+# needs the flat property names anymore -- see `LibrarySkillsController`'s
+# own generated shim loop (installed by task 2) for where the SAME shape
+# now lives permanently, one layer down, exactly mirroring the collections/
+# search+RAG precedents immediately above.

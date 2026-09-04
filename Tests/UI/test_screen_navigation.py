@@ -2472,7 +2472,7 @@ def test_register_footer_shortcuts_advertises_skill_editor_working_keys():
     app = _build_test_app()
     screen = LibraryScreen(app)
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
-    screen._library_skills_view = "editor"
+    screen._skills_state.view = "editor"
 
     screen._register_footer_shortcuts()
     _source, shortcuts = screen._footer_shortcut_registration
@@ -2482,7 +2482,7 @@ def test_register_footer_shortcuts_advertises_skill_editor_working_keys():
 
     # The plain skills LIST is unaffected -- it still advertises "focus
     # rail", never the editor's keys.
-    screen._library_skills_view = "list"
+    screen._skills_state.view = "list"
     screen._register_footer_shortcuts()
     _source, list_shortcuts = screen._footer_shortcut_registration
     assert "ctrl+s" not in dict(list_shortcuts)
@@ -2500,7 +2500,7 @@ def test_action_show_workbench_help_includes_skill_editor_keys(monkeypatch):
     app = _build_test_app()
     screen = LibraryScreen(app)
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
-    screen._library_skills_view = "editor"
+    screen._skills_state.view = "editor"
 
     pushed = []
 
@@ -2621,9 +2621,9 @@ def test_check_action_gates_list_focus_rail_to_showing_list():
     assert screen.check_action("library_list_focus_rail", ()) is False
 
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
-    screen._library_skills_view = "list"
+    screen._skills_state.view = "list"
     assert screen.check_action("library_list_focus_rail", ()) is True
-    screen._library_skills_view = "editor"
+    screen._skills_state.view = "editor"
     assert screen.check_action("library_list_focus_rail", ()) is False
 
     # A canvas outside the four list canvases (Search/RAG) -- inactive.

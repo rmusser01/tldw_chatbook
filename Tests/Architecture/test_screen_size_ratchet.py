@@ -360,7 +360,27 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # controller.py`'s own module docstring, exclusion 5). Methods
     # unchanged (pure move: 86 FunctionDefs out, 86 one-line delegators
     # in). 43179/1311 -> 41247/1311.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 41247, 1311),
+    #
+    # 2026-09-04, wave-4 task 3 (skills cleanup, series 3/3): the generated
+    # skills-state shim block deleted wholesale (36 fields' worth of
+    # `_library_skill_<field>`/`_library_skills_<field>`/
+    # `_selected_skill_name` properties); every remaining screen-side flat
+    # reference retargeted to `self._skills_state.<field>` (121 attribute
+    # accesses + 5 dotted-vs-flat dispatch-dict string values across the
+    # `__init__` entangled-field lines, the two reader-preference dispatcher
+    # methods, and the skills choice-strip helper); 16 of the 86 moved
+    # delegators pruned (zero external references beyond the controller's
+    # own internal calls -- see `_SKILLS_CLUSTER_SCREEN_DELEGATOR_PRUNED` in
+    # `Tests/Architecture/test_library_skills_wiring.py`); 16 FunctionDefs
+    # out (86 -> 70 remaining skills delegators), no replacement. 28 dead
+    # imports pruned in total: 1 (`skill_state_shim_attr`) from the shim
+    # deletion itself, plus 27 more left dead by task 2's own move (15
+    # skill-trust/tool-picker pure-function+constant names from
+    # `Widgets.Library`, 10 names from `Library.library_skills_state`, 2
+    # skill-trust modal classes from `.skills_screen` -- all three left for
+    # this cleanup PR, per the export/collections series' own Task 3/Task 4
+    # split). 41247/1311 -> 41155/1295.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 41155, 1295),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

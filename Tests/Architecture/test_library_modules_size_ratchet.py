@@ -200,7 +200,19 @@ _BUDGETS: dict[str, int] = {
     # the committed-mutation-refresh focus-restore path; fixed by adding
     # the `focused` framework-service property every sibling controller
     # already carries -- see the module's own docstring, exclusion 5).
-    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3131,
+    #
+    # 2026-09-04, wave-4 task 3 (skills cleanup, series 3/3): comment-only
+    # growth, no method body touched (86 movers unchanged -- cleanup prunes
+    # the SCREEN's delegators, not the controller's own methods, per the
+    # collections/search+RAG precedent). Two moved-docstring-adjacent module
+    # docstring corrections: the "6-match gap is three @property/@x.setter
+    # pairs" arithmetic error (should be SIX -- 2 raw defs - 1 unique name =
+    # 1 gap per name, 6 names = 6 gap; the same error task 2's own report
+    # caught and fixed in its own text (§12c) but missed here) and the
+    # "LibraryScreen keeps one-line delegators under every one of these
+    # original names" claim, now false for 16 of the 86 (this task's own
+    # screen-side prune) -- both fixed in this task, +9 lines. 3131 -> 3140.
+    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3140,
 }
 
 #: Loose on purpose (see `test_screen_size_ratchet.py`'s own 200-line

@@ -172,7 +172,7 @@ async def _open_skill_editor(
         "overview": "#library-skill-overview-region",
     }[mode]
     await _wait_for_selector(screen, pilot, target)
-    assert screen._library_skill_detail is not None
+    assert screen._skills_state.detail is not None
 
 
 async def _wait_for_skill_status(screen, pilot, *, attempts: int = 150) -> str:
@@ -217,7 +217,7 @@ async def test_open_skill_row_populates_editor_fields_and_save_bumps_version(tmp
         await _wait_for_library_shell(screen, pilot)
         await _open_skill_editor(screen, pilot, "summarize-notes")
 
-        assert screen._library_skills_view == "editor"
+        assert screen._skills_state.view == "editor"
         assert screen.query_one("#library-skill-name", Input).value == "summarize-notes"
         assert (
             screen.query_one("#library-skill-description", Input).value
@@ -237,8 +237,8 @@ async def test_open_skill_row_populates_editor_fields_and_save_bumps_version(tmp
 
         status_text = await _wait_for_skill_status(screen, pilot)
         assert status_text == "Saved."
-        assert screen._library_skill_dirty is False
-        assert screen._library_skill_editor_state.version == 2
+        assert screen._skills_state.dirty is False
+        assert screen._skills_state.editor_state.version == 2
 
         persisted = await local_service.get_skill("summarize-notes")
         assert persisted["version"] == 2
@@ -320,7 +320,7 @@ async def test_renaming_an_existing_skill_is_refused_and_never_corrupts_it(tmp_p
         persisted = await local_service.get_skill("draft-helper")
         assert persisted["name"] == "draft-helper"
         assert persisted["validation_status"] == "valid"
-        assert screen._library_skill_editor_state.name == "draft-helper"
+        assert screen._skills_state.editor_state.name == "draft-helper"
 
         with pytest.raises(Exception):
             await local_service.get_skill("calculator")
@@ -348,7 +348,7 @@ async def test_saving_a_trusted_skill_warns_and_requeues_needs_review(tmp_path):
         await _wait_for_library_shell(screen, pilot)
         await _open_skill_editor(screen, pilot, "reviewer")
 
-        assert screen._library_skill_editor_state.trust_status == "trusted"
+        assert screen._skills_state.editor_state.trust_status == "trusted"
         warnings_text = str(
             screen.query_one("#library-skill-warnings", Static).renderable
         )
@@ -362,7 +362,7 @@ async def test_saving_a_trusted_skill_warns_and_requeues_needs_review(tmp_path):
         )
         save = await _wait_for_display(screen, pilot, "#library-skill-save")
         assert isinstance(save, Button)
-        assert screen._library_skill_dirty is True
+        assert screen._skills_state.dirty is True
         save.press()
         await pilot.pause()
         status_text = await _wait_for_skill_status(screen, pilot)
@@ -404,7 +404,7 @@ async def test_trust_panel_review_then_approve_moves_skill_to_available(tmp_path
         await _wait_for_library_shell(screen, pilot)
         await _open_skill_editor(screen, pilot, "approver", mode="trust")
 
-        assert screen._library_skill_editor_state.trust_blocked is True
+        assert screen._skills_state.editor_state.trust_blocked is True
         review_files_before = str(
             screen.query_one("#library-skill-trust-review-files", Static).renderable
         )
@@ -413,7 +413,7 @@ async def test_trust_panel_review_then_approve_moves_skill_to_available(tmp_path
         screen.query_one("#library-skill-trust-review", Button).press()
         await pilot.pause()
         for _ in range(150):
-            if screen._library_skill_active_review is not None:
+            if screen._skills_state.active_review is not None:
                 break
             await pilot.pause(0.02)
 
@@ -426,12 +426,12 @@ async def test_trust_panel_review_then_approve_moves_skill_to_available(tmp_path
         screen.query_one("#library-skill-trust-approve", Button).press()
         await pilot.pause()
         for _ in range(150):
-            if screen._library_skill_active_review is None:
+            if screen._skills_state.active_review is None:
                 break
             await pilot.pause(0.02)
         await pilot.pause()
 
-        assert screen._library_skill_editor_state.trust_status == "trusted"
+        assert screen._skills_state.editor_state.trust_status == "trusted"
         context = await service.get_context(mode="local")
         available_names = [item["name"] for item in context["available_skills"]]
         assert "approver" in available_names
@@ -557,7 +557,7 @@ async def test_uninitialized_trust_shows_setup_state_and_bootstrap_enables_appro
         items = screen.query_one("#library-skills-canvas")
         work = screen.query_one("#library-skill-work-pane")
 
-        assert screen._library_skill_editor_state.trust_status == "trust_uninitialized"
+        assert screen._skills_state.editor_state.trust_status == "trust_uninitialized"
         assert not trust_service.trust_store.has_manifest()
         assert (
             str(screen.query_one("#library-skill-trust-state", Static).renderable)
@@ -574,7 +574,7 @@ async def test_uninitialized_trust_shows_setup_state_and_bootstrap_enables_appro
         screen.query_one("#library-skill-trust-setup", Button).press()
         await pilot.pause()
         for _ in range(150):
-            state = screen._library_skill_editor_state
+            state = screen._skills_state.editor_state
             if state is not None and state.trust_status != "trust_uninitialized":
                 break
             await pilot.pause(0.02)
@@ -584,7 +584,7 @@ async def test_uninitialized_trust_shows_setup_state_and_bootstrap_enables_appro
         # baseline -- the just-opened skill becomes trusted, the real
         # on-disk store is genuinely initialized, and the panel has
         # switched to the normal (non-setup) layout.
-        assert screen._library_skill_editor_state.trust_status == "trusted"
+        assert screen._skills_state.editor_state.trust_status == "trusted"
         assert trust_service.trust_store.has_manifest()
         assert screen.query_one("#library-skills-canvas") is items
         assert screen.query_one("#library-skill-work-pane") is work
@@ -611,7 +611,7 @@ async def test_uninitialized_trust_shows_setup_state_and_bootstrap_enables_appro
         screen.query_one("#library-skill-row-onboarding-check", Button).press()
         await pilot.pause()
         for _ in range(150):
-            state = screen._library_skill_editor_state
+            state = screen._skills_state.editor_state
             if state is not None and state.trust_blocked:
                 break
             await pilot.pause(0.02)
@@ -619,11 +619,11 @@ async def test_uninitialized_trust_shows_setup_state_and_bootstrap_enables_appro
         screen.query_one("#library-skill-mode-trust", Button).press()
         await _wait_for_selector(screen, pilot, "#library-skill-trust-region")
 
-        assert screen._library_skill_editor_state.trust_blocked is True
+        assert screen._skills_state.editor_state.trust_blocked is True
         screen.query_one("#library-skill-trust-review", Button).press()
         await pilot.pause()
         for _ in range(150):
-            if screen._library_skill_active_review is not None:
+            if screen._skills_state.active_review is not None:
                 break
             await pilot.pause(0.02)
 
@@ -631,12 +631,12 @@ async def test_uninitialized_trust_shows_setup_state_and_bootstrap_enables_appro
         screen.query_one("#library-skill-trust-approve", Button).press()
         await pilot.pause()
         for _ in range(150):
-            if screen._library_skill_active_review is None:
+            if screen._skills_state.active_review is None:
                 break
             await pilot.pause(0.02)
         await pilot.pause()
 
-        assert screen._library_skill_editor_state.trust_status == "trusted"
+        assert screen._skills_state.editor_state.trust_status == "trusted"
         context = await service.get_context(mode="local")
         available_names = [item["name"] for item in context["available_skills"]]
         assert "onboarding-check" in available_names
@@ -673,7 +673,7 @@ async def test_already_bootstrapped_store_never_shows_setup_state(tmp_path):
             screen, pilot, "already-bootstrapped", mode="trust"
         )
 
-        assert screen._library_skill_editor_state.trust_status != "trust_uninitialized"
+        assert screen._skills_state.editor_state.trust_status != "trust_uninitialized"
         assert len(screen.query("#library-skill-trust-setup")) == 0
         assert screen.query_one("#library-skill-trust-unlock", Button)
         assert screen.query_one("#library-skill-trust-review", Button)
@@ -800,17 +800,17 @@ async def test_delete_skill_returns_to_list_and_decrements_count(tmp_path):
             screen, pilot, "#library-skill-delete-confirm"
         )
         assert isinstance(confirm, Button)
-        assert screen._library_skill_confirming_delete is True
-        assert screen._library_skills_view == "editor"
+        assert screen._skills_state.confirming_delete is True
+        assert screen._skills_state.view == "editor"
         confirm.press()
         await pilot.pause()
         for _ in range(150):
-            if screen._library_skills_view == "list":
+            if screen._skills_state.view == "list":
                 break
             await pilot.pause(0.02)
         await pilot.pause()
 
-        assert screen._library_skills_view == "list"
+        assert screen._skills_state.view == "list"
         rail_label = ""
         for _ in range(150):
             rail_label = str(screen.query_one("#library-row-browse-skills").label)
@@ -850,12 +850,12 @@ async def test_flush_pending_work_vetoes_dirty_skill_editor(tmp_path):
             "#library-skill-description", Input
         ).value = "Changed mid switch"
         await pilot.pause()
-        assert screen._library_skill_dirty is True
+        assert screen._skills_state.dirty is True
 
         allowed = await screen.flush_pending_work()
 
         assert allowed is False
-        assert screen._library_skill_dirty is True
+        assert screen._skills_state.dirty is True
 
 
 @pytest.mark.asyncio
@@ -890,8 +890,8 @@ async def test_skill_editor_opens_under_real_runtime_policy_enforcer(tmp_path):
         await _wait_for_library_shell(screen, pilot)
         await _open_skill_editor(screen, pilot, "policy-check")
 
-        assert screen._library_skills_view == "editor"
-        assert screen._library_skill_detail is not None
+        assert screen._skills_state.view == "editor"
+        assert screen._skills_state.detail is not None
         assert screen.query_one("#library-skill-name", Input).value == "policy-check"
 
         # Save/Delete also route through the same enforcer -- exercise both
@@ -915,14 +915,14 @@ async def test_skill_editor_opens_under_real_runtime_policy_enforcer(tmp_path):
             screen, pilot, "#library-skill-delete-confirm"
         )
         assert isinstance(confirm, Button)
-        assert screen._library_skill_confirming_delete is True
+        assert screen._skills_state.confirming_delete is True
         confirm.press()
         await pilot.pause()
         for _ in range(150):
-            if screen._library_skills_view == "list":
+            if screen._skills_state.view == "list":
                 break
             await pilot.pause(0.02)
-        assert screen._library_skills_view == "list"
+        assert screen._skills_state.view == "list"
 
 
 # ---------------------------------------------------------------------------
@@ -938,7 +938,7 @@ async def test_skill_editor_opens_under_real_runtime_policy_enforcer(tmp_path):
 async def test_library_shell_create_skill_row_opens_blank_editor(tmp_path):
     """The Create rail's "New skill" row opens the in-canvas editor on a
     blank, not-yet-saved record -- empty fields, Name Input editable (no
-    rename hint), ``_selected_skill_name`` empty. Mirrors
+    rename hint), ``_skills_state.selected_skill_name`` empty. Mirrors
     ``test_library_shell_create_prompt_row_opens_blank_editor``."""
     local_service, service = _real_skills_scope_service(tmp_path)
     app = _build_test_app()
@@ -953,8 +953,8 @@ async def test_library_shell_create_skill_row_opens_blank_editor(tmp_path):
         screen.query_one(f"#library-row-{LIBRARY_ROW_CREATE_SKILL}").press()
         await _wait_for_selector(screen, pilot, "#library-skill-name")
 
-        assert screen._library_skills_view == "editor"
-        assert screen._selected_skill_name == ""
+        assert screen._skills_state.view == "editor"
+        assert screen._skills_state.selected_skill_name == ""
         name_input = screen.query_one("#library-skill-name", Input)
         assert name_input.value == ""
         assert name_input.disabled is False
@@ -1011,7 +1011,7 @@ async def test_library_shell_create_skill_save_creates_and_increments_count(tmp_
         assert status_text == (
             "Saved. Review trust before using this Skill with the agent."
         )
-        assert screen._selected_skill_name == "brand-new-skill"
+        assert screen._skills_state.selected_skill_name == "brand-new-skill"
 
         persisted = await local_service.get_skill("brand-new-skill")
         assert persisted["name"] == "brand-new-skill"
@@ -1059,7 +1059,7 @@ async def test_library_shell_create_skill_save_invalid_name_shows_classify_outco
             status_text
             == "Skill name must use lowercase letters, numbers, and hyphens."
         )
-        assert screen._selected_skill_name == ""
+        assert screen._skills_state.selected_skill_name == ""
 
         context = await service.get_context(mode="local")
         assert context["available_skills"] == []
@@ -1109,8 +1109,8 @@ async def test_library_shell_create_skill_save_arrives_needs_review_with_panel_p
             "Saved. Review trust before using this Skill with the agent."
         )
 
-        assert screen._library_skill_editor_state.trust_status == "quarantined_added"
-        assert screen._library_skill_editor_state.trust_blocked is True
+        assert screen._skills_state.editor_state.trust_status == "quarantined_added"
+        assert screen._skills_state.editor_state.trust_blocked is True
         screen.query_one("#library-skill-mode-trust", Button).press()
         await _wait_for_selector(screen, pilot, "#library-skill-trust-region")
         trust_state_text = str(
@@ -1163,7 +1163,7 @@ async def test_delete_cancel_preserves_edits_typed_during_confirm(tmp_path):
             screen, pilot, "#library-skill-delete-confirm"
         )
         assert isinstance(confirm, Button)
-        assert screen._library_skill_confirming_delete is True
+        assert screen._skills_state.confirming_delete is True
 
         screen.query_one(
             "#library-skill-description", Input
@@ -1174,12 +1174,12 @@ async def test_delete_cancel_preserves_edits_typed_during_confirm(tmp_path):
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_skill_confirming_delete is False
+        assert screen._skills_state.confirming_delete is False
         assert (
             screen.query_one("#library-skill-description", Input).value
             == "edited during confirm"
         )
-        assert screen._library_skill_editor_state.description == "edited during confirm"
+        assert screen._skills_state.editor_state.description == "edited during confirm"
 
 
 @pytest.mark.asyncio
@@ -1248,14 +1248,14 @@ async def test_derived_flag_cleared_when_snapshotting_populated_description(tmp_
             screen, pilot, "#library-skill-delete-confirm"
         )
         assert isinstance(confirm, Button)
-        assert screen._library_skill_confirming_delete is True
+        assert screen._skills_state.confirming_delete is True
 
         screen.query_one("#library-skill-description", Input).value = "typed desc"
         await pilot.pause()
         screen.query_one("#library-skill-delete-cancel", Button).press()
         await pilot.pause()
 
-        assert screen._library_skill_editor_state.description_derived is False
+        assert screen._skills_state.editor_state.description_derived is False
         hint = screen.query_one("#library-skill-description-hint", Static)
         assert hint.display is False
 
@@ -1359,7 +1359,7 @@ async def test_trust_reset_cancel_backs_out_without_touching_trust_state(tmp_pat
         assert isinstance(cancel_button, Button)
         cancel_button.press()
         await pilot.pause()
-        assert screen._library_skill_trust_confirming_reset is False
+        assert screen._skills_state.trust_confirming_reset is False
         assert not list(screen.query("#library-skills-trust-reset-cancel"))
         assert not list(screen.query("#library-skills-trust-reset-confirm"))
         # The standalone Reset button is still present -- Cancel only backs
@@ -1409,7 +1409,7 @@ async def test_trust_reset_confirm_wipes_trust_state(tmp_path):
             await pilot.pause(0.02)
         assert trust.trust_posture() == "needs_setup"
         await pilot.pause()
-        assert screen._library_skill_trust_confirming_reset is False
+        assert screen._skills_state.trust_confirming_reset is False
 
 
 @pytest.mark.asyncio
@@ -1439,7 +1439,7 @@ async def test_list_mode_unlock_refreshes_snapshot_not_just_posture(tmp_path):
         screen.query_one("#library-row-browse-skills").press()
         await pilot.pause()
         await pilot.pause()
-        assert screen._library_skills_view != "editor"
+        assert screen._skills_state.view != "editor"
 
         # Spy the snapshot refresh (a @work-decorated method the production
         # code calls bare) and drive a real, successful unlock.
