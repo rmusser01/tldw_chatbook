@@ -1,10 +1,11 @@
 ---
 id: TASK-26946
 title: Clean Ruff formatter debt for ruff-chat-console-fleet
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-31 18:31'
-updated_date: '2026-08-31 18:31'
+updated_date: '2026-09-03 21:30'
 labels:
   - maintenance
   - formatting
@@ -14,6 +15,7 @@ dependencies:
 references:
   - Docs/superpowers/specs/2026-08-30-task-26000-ruff-formatter-debt-design.md
   - Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json
+  - Docs/superpowers/plans/2026-09-03-task-26946-ruff-chat-console-fleet.md
 priority: medium
 ---
 
@@ -55,3 +57,18 @@ Clean the `ruff-chat-console-fleet` Ruff formatter batch at the owner boundary r
 - [ ] `git diff --check` and `Tests/CI/test_backlog_task_id_uniqueness.py` pass. <!-- TASK-26000-CONTRACT: governance -->
 - [ ] The diff contains no hand-written production behavior change. <!-- TASK-26000-CONTRACT: no-handwritten-behavior -->
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reconcile all ten TASK-26000 assigned paths against current origin/dev, record upstream lineage and the untouched focused-test baseline, and capture Python 3.12.11 AST/comment/directive evidence.
+2. Run Ruff 0.15.22 format with all ten paths supplied explicitly, reject any unassigned Python diff, and require the structural comparison to match.
+3. Run Ruff lint/format checks, the seven assigned Console fleet test modules, backlog task-ID uniqueness, and git diff --check; require the post-format focused result to introduce no failure beyond the untouched origin/dev baseline.
+4. Commit only formatter-owned Python changes, request independent review, then record exact evidence and close TASK-26946 in a task-only commit.
+
+ADR required: no
+ADR path: N/A
+Reason: Mechanical formatter cleanup under TASK-26000 introduces no architectural, persistence, security, dependency, or long-lived UX decision.
+
+Detailed plan: Docs/superpowers/plans/2026-09-03-task-26946-ruff-chat-console-fleet.md
+<!-- SECTION:PLAN:END -->
