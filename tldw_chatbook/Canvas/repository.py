@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal, TypeAlias
@@ -195,6 +197,16 @@ class CanvasRepository:
         if not isinstance(self._limits, CanvasRepositoryLimits):
             raise TypeError("limits must be CanvasRepositoryLimits")
 
+    @contextmanager
+    def _owned_immediate_transaction(self) -> Iterator[sqlite3.Cursor]:
+        """Own an immediate transaction or reject a pre-existing transaction."""
+
+        connection = self._db.get_connection()
+        if connection.in_transaction:
+            raise CanvasRepositoryError("transaction_ownership_required")
+        with self._db.transaction(immediate=True) as cursor:
+            yield cursor
+
     def create_canvas(
         self,
         conversation_id: str,
@@ -254,7 +266,7 @@ class CanvasRepository:
         )
 
         try:
-            with self._db.transaction(immediate=True) as cursor:
+            with self._owned_immediate_transaction() as cursor:
                 self._require_active_owner(cursor, conversation_id)
                 self._require_origin_owner(
                     cursor, conversation_id, values.origin_message_id
@@ -352,7 +364,7 @@ class CanvasRepository:
         )
 
         try:
-            with self._db.transaction(immediate=True) as cursor:
+            with self._owned_immediate_transaction() as cursor:
                 self._require_active_document(cursor, conversation_id, canvas_id)
                 self._require_origin_owner(
                     cursor, conversation_id, values.origin_message_id
@@ -547,7 +559,7 @@ class CanvasRepository:
         if canvas_id is not None:
             canvas_id = _validated_uuid(canvas_id, "canvas_id")
         try:
-            with self._db.transaction(immediate=True) as cursor:
+            with self._owned_immediate_transaction() as cursor:
                 self._require_active_owner(cursor, conversation_id)
                 if canvas_id is None:
                     cursor.execute(
@@ -598,7 +610,7 @@ class CanvasRepository:
 
         conversation_id = _validated_owner_id(conversation_id)
         try:
-            with self._db.transaction(immediate=True) as cursor:
+            with self._owned_immediate_transaction() as cursor:
                 owner = cursor.execute(
                     "SELECT 1 FROM conversations WHERE id = ?",
                     (conversation_id,),
@@ -673,7 +685,7 @@ class CanvasRepository:
             raise CanvasValidationError("invalid_import_batch")
         conversation_id = _validated_owner_id(batch.conversation_id)
         try:
-            with self._db.transaction(immediate=True) as cursor:
+            with self._owned_immediate_transaction() as cursor:
                 self._require_active_owner(cursor, conversation_id)
                 self._validate_import_batch(cursor, batch)
                 for document in batch.documents:
@@ -780,7 +792,7 @@ class CanvasRepository:
         conversation_id = _validated_owner_id(conversation_id)
         canvas_id = _validated_uuid(canvas_id, "canvas_id")
         try:
-            with self._db.transaction(immediate=True) as cursor:
+            with self._owned_immediate_transaction() as cursor:
                 self._require_active_owner(cursor, conversation_id)
                 row = cursor.execute(
                     "SELECT id, conversation_id, created_at, deleted, deleted_at "
@@ -1092,20 +1104,29 @@ def _children_before_parents(rows: list[sqlite3.Row]) -> tuple[str, ...]:
     state: dict[str, int] = {}
     ordered: list[str] = []
 
-    def visit(message_id: str) -> None:
-        marker = state.get(message_id, 0)
-        if marker == 1:
-            raise CanvasConflictError("message_graph_cycle")
-        if marker == 2:
-            return
-        state[message_id] = 1
-        for child_id in sorted(children[message_id]):
-            visit(child_id)
-        state[message_id] = 2
-        ordered.append(message_id)
-
-    for message_id in sorted(parents):
-        visit(message_id)
+    for start_id in sorted(parents):
+        if state.get(start_id) == 2:
+            continue
+        stack = [(start_id, False)]
+        while stack:
+            message_id, expanded = stack.pop()
+            marker = state.get(message_id, 0)
+            if expanded:
+                state[message_id] = 2
+                ordered.append(message_id)
+                continue
+            if marker == 1:
+                raise CanvasConflictError("message_graph_cycle")
+            if marker == 2:
+                continue
+            state[message_id] = 1
+            stack.append((message_id, True))
+            for child_id in sorted(children[message_id], reverse=True):
+                child_marker = state.get(child_id, 0)
+                if child_marker == 1:
+                    raise CanvasConflictError("message_graph_cycle")
+                if child_marker == 0:
+                    stack.append((child_id, False))
     return tuple(ordered)
 
 

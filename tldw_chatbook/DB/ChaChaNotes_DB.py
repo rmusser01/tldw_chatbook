@@ -115,6 +115,7 @@ _CONVERSATION_IDENTITY_TEXT_MAX_BYTES = 256
 _SQLITE_POSITIVE_INTEGER_MAX = (1 << 63) - 1
 _UNSET = object()
 _CANVAS_REVISION_DELETE_GUARD_FUNCTION = "canvas_revision_delete_authorized"
+_CANVAS_REVISION_PAYLOAD_VALIDATION_FUNCTION = "canvas_revision_payload_valid"
 _NOTES_ORGANIZATION_SYNC_ID_TABLES = (
     "keywords",
     "keyword_collections",
@@ -434,6 +435,29 @@ def _split_sql_statements(script: str) -> List[str]:
     if pending.strip():
         raise SchemaError("Migration script contains an incomplete SQL statement")
     return statements
+
+
+def _canvas_revision_payload_valid(
+    source_bytes: object,
+    content_sha256: object,
+    declared_bytes: object,
+) -> int:
+    """Validate one Canvas payload without exposing its source bytes."""
+
+    if (
+        type(source_bytes) is not bytes
+        or type(content_sha256) is not str
+        or type(declared_bytes) is not int
+    ):
+        return 0
+    try:
+        source_bytes.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return 0
+    return int(
+        declared_bytes == len(source_bytes)
+        and content_sha256 == hashlib.sha256(source_bytes).hexdigest()
+    )
 
 
 class _CanvasRevisionDeletionAuthorization:
@@ -3411,6 +3435,12 @@ UPDATE db_schema_version
                     conn.isolation_level = None
                     self._local.semantic_mutation_authorization = (
                         register_semantic_mutation_guard(conn)
+                    )
+                    conn.create_function(
+                        _CANVAS_REVISION_PAYLOAD_VALIDATION_FUNCTION,
+                        3,
+                        _canvas_revision_payload_valid,
+                        deterministic=True,
                     )
                     canvas_deletion_authorization = (
                         _CanvasRevisionDeletionAuthorization(conn)

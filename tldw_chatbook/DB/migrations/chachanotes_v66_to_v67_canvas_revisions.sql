@@ -55,6 +55,12 @@ CREATE TABLE canvas_revisions(
     CHECK(length(created_at) > 0),
   deleted_at TEXT DEFAULT NULL,
   CHECK(
+    typeof(html) = 'text'
+    AND canvas_revision_payload_valid(
+      CAST(html AS BLOB), content_sha256, html_bytes
+    ) = 1
+  ),
+  CHECK(
     (sequence = 1 AND parent_revision_id IS NULL)
     OR (sequence > 1 AND parent_revision_id IS NOT NULL)
   ),
@@ -104,6 +110,21 @@ WHEN NOT EXISTS (
    WHERE document.id = NEW.canvas_id
      AND message.conversation_id = document.conversation_id
 )
+BEGIN
+  SELECT RAISE(ABORT, 'canvas revision origin owner mismatch');
+END;
+
+CREATE TRIGGER canvas_origin_message_owner_guard
+BEFORE UPDATE OF conversation_id ON messages
+WHEN OLD.conversation_id IS NOT NEW.conversation_id
+  AND EXISTS (
+    SELECT 1
+      FROM canvas_revisions AS revision
+      JOIN canvas_documents AS document
+        ON document.id = revision.canvas_id
+     WHERE revision.origin_message_id = OLD.id
+       AND document.conversation_id IS NOT NEW.conversation_id
+  )
 BEGIN
   SELECT RAISE(ABORT, 'canvas revision origin owner mismatch');
 END;

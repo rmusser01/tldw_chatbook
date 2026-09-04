@@ -28,6 +28,7 @@ CANVAS_INDEXES = {
 }
 CANVAS_TRIGGERS = {
     "canvas_documents_ownership_immutable",
+    "canvas_origin_message_owner_guard",
     "canvas_revisions_no_delete",
     "canvas_revisions_no_update",
     "canvas_revisions_origin_owner_guard",
