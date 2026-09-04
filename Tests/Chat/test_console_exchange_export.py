@@ -23,6 +23,7 @@ from tldw_chatbook.Chat.console_exchange_export import (
     project_exchange_export,
 )
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+
 # The chat-leg surface under test imports the enum from the light leaf
 # (TASK-23020); its tests model the same seam.
 from tldw_chatbook.Chat.trace_export_profiles import TraceExportProfile
@@ -258,7 +259,7 @@ async def test_real_gateway_controller_store_sentinels_across_all_owners(
         },
         {
             "role": "user",
-            "content": f'{semantic["rag"]} {semantic["ordinary_secret"]}',
+            "content": f"{semantic['rag']} {semantic['ordinary_secret']}",
         },
         {
             "role": "tool",

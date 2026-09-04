@@ -37,6 +37,7 @@ from tldw_chatbook.Chat.console_command_grammar import (
     COMMAND_PREFIX,
     GENERATE_IMAGE_COMMAND_NAME,
 )
+
 if TYPE_CHECKING:
     from tldw_chatbook.Image_Generation.capabilities import ResolvedReferenceImage
     from tldw_chatbook.Media_Creation.generation_templates import GenerationTemplate
@@ -948,9 +949,7 @@ def prepare_generation_request(
     prompt = args.prompt.strip()
     if prompt:
         if style_template is not None:
-            composed, negative, params = compose_styled_request(
-                prompt, style_template
-            )
+            composed, negative, params = compose_styled_request(prompt, style_template)
             return PreparedGeneration(
                 prompt=composed,
                 negative_prompt=negative,

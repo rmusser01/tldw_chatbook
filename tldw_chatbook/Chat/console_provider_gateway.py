@@ -91,6 +91,7 @@ from tldw_chatbook.Chat.console_trace_models import TraceCallState
 from tldw_chatbook.Chat.console_trace_errors import (  # ADR-097 boot ratchet
     TraceCallPersistenceError,
 )
+
 # ADR-097 boot ratchet: console_trace_settlement (which pulls the semantic-
 # revision stack) is deferred; its two symbols load at their use sites.
 from tldw_chatbook.Chat.console_thinking_history import (
@@ -162,11 +163,15 @@ INVALID_LLAMACPP_BASE_URL_COPY = (
 UNSUPPORTED_PROVIDER_RESPONSE_COPY = "Provider returned an unsupported response shape."
 NO_PROVIDER_CONTENT_COPY = "Provider returned no assistant content."
 MAX_TRACE_RESPONSE_ITEMS = 1_024
+
+
 def _max_trace_accumulated_bytes() -> int:
     """ADR-097 boot ratchet: settlement's cap constant, read on first use."""
     from tldw_chatbook.Chat.console_trace_settlement import MAX_TRACE_RESPONSE_BYTES
 
     return MAX_TRACE_RESPONSE_BYTES - 262_144
+
+
 _UNSUPPORTED_RESPONSE = object()
 _EMPTY_RESPONSE = object()
 _CUSTOM_CREDENTIAL_DECISION_PROVIDERS = frozenset(
@@ -1138,8 +1143,7 @@ def _flight_capture(
         if (
             redaction.available
             and isinstance(projected, Mapping)
-            and set(projected)
-            == {"request", "response_content", "response_tool_calls"}
+            and set(projected) == {"request", "response_content", "response_tool_calls"}
         ):
             request = projected["request"]
             content = projected["response_content"]

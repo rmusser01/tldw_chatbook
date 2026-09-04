@@ -19,6 +19,7 @@ from tldw_chatbook.Chat.console_trace_redaction import (
     CREDENTIAL_SANITIZER_UNAVAILABLE,
     CredentialSanitizer,
 )
+
 # The profile vocabulary comes from the stdlib-only leaf, NEVER from
 # `Chat.trajectory_export`: this module is on the Chat first-paint leg at
 # module scope (console_exchange_export_dialog -> console_conversation_

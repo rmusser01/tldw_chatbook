@@ -45,7 +45,6 @@ import threading
 import pytest
 
 from Tests.Chat.test_console_fleet_wake import (
-    _RecordingWakeGateway,
     _controller_rig,
     _drain,
     _quiet,
@@ -105,9 +104,7 @@ async def _deliver_one(runs_db, app, session, gateway, controller):
         session.id, ConversationLocalMarksService.FLEET_UNSEEN
     )
     wake = controller.fleet_wake
-    wake.on_fleet_drained(
-        _drain(session.id, _survivor(run_id, session_id=session.id))
-    )
+    wake.on_fleet_drained(_drain(session.id, _survivor(run_id, session_id=session.id)))
     assert await _settle(lambda: gateway.payloads), "the wake never delivered"
     assert await _settle(lambda: not wake.has_pending(session.id))
     assert runs_db.get_run(run_id).get("wake_delivered_at"), (
@@ -550,9 +547,9 @@ async def test_a_runtime_that_never_had_a_view_answers_viewless(tmp_path):
             agent_runtime_enabled=False,
             global_user_display_name=lambda: "Ada",
         )
-        assert controller.fleet_wake._conversation_in_view(
-            session.id, session.id
-        ) is False, (
+        assert (
+            controller.fleet_wake._conversation_in_view(session.id, session.id) is False
+        ), (
             "a runtime built with no view reported the conversation as "
             "watched -- the ◈ mark would be cleared for a delivery nobody "
             "could have seen"

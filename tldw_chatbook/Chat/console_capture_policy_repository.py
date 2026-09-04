@@ -1,4 +1,5 @@
 """Device-local per-conversation Console trace privacy policy."""
+
 from __future__ import annotations
 
 import sqlite3
@@ -124,9 +125,7 @@ class ConsoleCapturePolicyRepository:
                     (conversation_id,),
                 ).fetchone()
                 capture_enabled = existing["capture_enabled"] if existing else None
-                pii_enabled = (
-                    existing["pii_redaction_enabled"] if existing else None
-                )
+                pii_enabled = existing["pii_redaction_enabled"] if existing else None
                 if detail is None and capture_enabled is None and pii_enabled is None:
                     deleted = cursor.execute(
                         "DELETE FROM console_conversation_capture_policy WHERE conversation_id = ?",
@@ -134,7 +133,8 @@ class ConsoleCapturePolicyRepository:
                     )
                     return CapturePolicyWriteResult(
                         CapturePolicyWriteStatus.DELETED
-                        if deleted.rowcount else CapturePolicyWriteStatus.UNCHANGED,
+                        if deleted.rowcount
+                        else CapturePolicyWriteStatus.UNCHANGED,
                         None,
                     )
                 self._upsert(
@@ -180,7 +180,10 @@ class ConsoleCapturePolicyRepository:
             return CapturePolicyWriteResult(CapturePolicyWriteStatus.UNAVAILABLE, None)
         if capture_enabled is not None and type(capture_enabled) is not bool:
             return CapturePolicyWriteResult(CapturePolicyWriteStatus.UNAVAILABLE, None)
-        if pii_redaction_enabled is not None and type(pii_redaction_enabled) is not bool:
+        if (
+            pii_redaction_enabled is not None
+            and type(pii_redaction_enabled) is not bool
+        ):
             return CapturePolicyWriteResult(CapturePolicyWriteStatus.UNAVAILABLE, None)
         try:
             with self.db.transaction(immediate=True) as cursor:
@@ -201,14 +204,19 @@ class ConsoleCapturePolicyRepository:
                     if existing and existing["capture_detail"] is not None
                     else None
                 )
-                if detail is None and capture_enabled is None and pii_redaction_enabled is None:
+                if (
+                    detail is None
+                    and capture_enabled is None
+                    and pii_redaction_enabled is None
+                ):
                     deleted = cursor.execute(
                         "DELETE FROM console_conversation_capture_policy WHERE conversation_id = ?",
                         (conversation_id,),
                     )
                     return CapturePolicyWriteResult(
                         CapturePolicyWriteStatus.DELETED
-                        if deleted.rowcount else CapturePolicyWriteStatus.UNCHANGED,
+                        if deleted.rowcount
+                        else CapturePolicyWriteStatus.UNCHANGED,
                         None,
                     )
                 self._upsert(
@@ -254,7 +262,9 @@ class ConsoleCapturePolicyRepository:
                 conversation_id,
                 detail.value if detail is not None else None,
                 int(capture_enabled) if capture_enabled is not None else None,
-                int(pii_redaction_enabled) if pii_redaction_enabled is not None else None,
+                int(pii_redaction_enabled)
+                if pii_redaction_enabled is not None
+                else None,
             ),
         )
 

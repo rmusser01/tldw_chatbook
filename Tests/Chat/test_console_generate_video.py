@@ -180,7 +180,9 @@ def _install_custom_workflow(
 
 
 def test_run_video_generation_saves_and_returns_metadata(tmp_path):
-    _register_fake(resolved_model="FakeH3", duration_seconds=6.0, width=1920, height=1080)
+    _register_fake(
+        resolved_model="FakeH3", duration_seconds=6.0, width=1920, height=1080
+    )
     store = VideoStore(root=tmp_path / "gv")
     meta, path = run_video_generation(
         backend="fakevid",
@@ -266,8 +268,11 @@ def test_run_video_generation_cancel_event_threaded_when_supported(tmp_path):
 
     event = threading.Event()
     run_video_generation(
-        backend="fakevid", prompt="p", message_id="m1",
-        cancel_event=event, video_store=VideoStore(root=tmp_path / "gv"),
+        backend="fakevid",
+        prompt="p",
+        message_id="m1",
+        cancel_event=event,
+        video_store=VideoStore(root=tmp_path / "gv"),
     )
     assert received == [event]
 
@@ -277,7 +282,9 @@ def test_run_video_generation_unknown_backend_raises(tmp_path):
 
     with pytest.raises(VideoGenerationError, match="not enabled/available"):
         run_video_generation(
-            backend="nope", prompt="p", message_id="m1",
+            backend="nope",
+            prompt="p",
+            message_id="m1",
             video_store=VideoStore(root=tmp_path / "gv"),
         )
 
@@ -289,7 +296,9 @@ def test_run_video_generation_invalid_request_never_writes(tmp_path):
     store = VideoStore(root=tmp_path / "gv")
     with pytest.raises(VideoGenerationError, match="Invalid video generation request"):
         run_video_generation(
-            backend="fakevid", prompt="p", message_id="m1",
+            backend="fakevid",
+            prompt="p",
+            message_id="m1",
             duration_seconds=999,  # over the configured cap
             video_store=store,
         )
@@ -826,9 +835,7 @@ def test_successful_settings_save_rebuilds_adapter_and_console_uses_same_instanc
 
     draft = VideoGenDraftValues(
         enabled_backends=["comfyui"],
-        backend_fields={
-            "comfyui": {"default_workflow": "new-workflow.json"}
-        },
+        backend_fields={"comfyui": {"default_workflow": "new-workflow.json"}},
     )
     settings_screen_module.SettingsScreen._settings_save_video_gen_worker.__wrapped__(
         fake_screen,
@@ -860,7 +867,9 @@ def test_successful_settings_save_rebuilds_adapter_and_console_uses_same_instanc
 
 
 @pytest.mark.asyncio
-async def test_chat_screen_dispatch_marks_template_negative_as_style_derived(monkeypatch):
+async def test_chat_screen_dispatch_marks_template_negative_as_style_derived(
+    monkeypatch,
+):
     from tldw_chatbook.UI.Console_Modules import video as video_controller_module
     from tldw_chatbook.Video_Generation import adapter_registry
     from tldw_chatbook.Video_Generation import video_templates
@@ -930,9 +939,11 @@ async def test_chat_screen_dispatch_marks_template_negative_as_style_derived(mon
         _sync_native_console_chat_ui=sync_ui,
     )
 
-    await video_controller_module.ConsoleVideoController._console_command_generate_video(
-        fake_screen,
-        SimpleNamespace(args="@cinematic base prompt"),
+    await (
+        video_controller_module.ConsoleVideoController._console_command_generate_video(
+            fake_screen,
+            SimpleNamespace(args="@cinematic base prompt"),
+        )
     )
 
     assert captured_dispatch["function"] is video_controller_module.run_video_generation

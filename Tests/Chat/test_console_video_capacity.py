@@ -85,7 +85,9 @@ async def test_over_capacity_modal_has_exact_choices_and_safe_size_copy() -> Non
         )
         copy = " ".join(
             _static_text(widget)
-            for widget in modal.query("#video-capacity-summary, #video-capacity-guidance")
+            for widget in modal.query(
+                "#video-capacity-summary, #video-capacity-guidance"
+            )
             if isinstance(widget, Static)
         )
         assert "3.5 MiB" in copy
@@ -463,7 +465,9 @@ class _OutcomeHarness:
         self.opened.append(path)
 
     async def _resolve_generated_video_outcome(self, *args, **kwargs):
-        return await ConsoleVideoController._resolve_generated_video_outcome(self, *args, **kwargs)
+        return await ConsoleVideoController._resolve_generated_video_outcome(
+            self, *args, **kwargs
+        )
 
     def _pending_console_video_artifacts(self):
         return ConsoleVideoController._pending_console_video_artifacts(self)
@@ -475,16 +479,24 @@ class _OutcomeHarness:
         return ConsoleVideoController._drain_pending_console_videos(self)
 
     def _retry_pending_console_video(self, artifact, **kwargs):
-        return ConsoleVideoController._retry_pending_console_video(self, artifact, **kwargs)
+        return ConsoleVideoController._retry_pending_console_video(
+            self, artifact, **kwargs
+        )
 
     async def _save_pending_console_video_external(self, artifact):
-        return await ConsoleVideoController._save_pending_console_video_external(self, artifact)
+        return await ConsoleVideoController._save_pending_console_video_external(
+            self, artifact
+        )
 
     def _begin_pending_console_video_operation(self, artifact):
-        return ConsoleVideoController._begin_pending_console_video_operation(self, artifact)
+        return ConsoleVideoController._begin_pending_console_video_operation(
+            self, artifact
+        )
 
     def _end_pending_console_video_operation(self, artifact):
-        return ConsoleVideoController._end_pending_console_video_operation(self, artifact)
+        return ConsoleVideoController._end_pending_console_video_operation(
+            self, artifact
+        )
 
     async def _run_pending_console_video_operation(
         self, artifact, function, *args, **kwargs
@@ -505,11 +517,11 @@ class _OutcomeHarness:
 
 
 @pytest.mark.asyncio
-async def test_normal_result_appends_and_syncs_through_shared_resolver(tmp_path: Path) -> None:
+async def test_normal_result_appends_and_syncs_through_shared_resolver(
+    tmp_path: Path,
+) -> None:
     harness = _OutcomeHarness(actions=[], video_store=object())
-    metadata = VideoGenerationMetadata(
-        name="ready", prompt="prompt", backend="comfyui"
-    )
+    metadata = VideoGenerationMetadata(name="ready", prompt="prompt", backend="comfyui")
 
     await harness._resolve_generated_video_outcome(
         (metadata, tmp_path / "ready.mp4"),
@@ -518,7 +530,10 @@ async def test_normal_result_appends_and_syncs_through_shared_resolver(tmp_path:
     )
 
     assert harness.appended == [
-        (("session",), {"video_metadata": metadata, "persist": True, "message_id": "message"})
+        (
+            ("session",),
+            {"video_metadata": metadata, "persist": True, "message_id": "message"},
+        )
     ]
     assert harness.sync_count == 1
 
@@ -582,8 +597,8 @@ async def test_initial_dispatch_resolves_pending_discard_and_clears_bookkeeping(
     )
     harness.chat_store.ensure_session = lambda **_kwargs: SimpleNamespace(id="session")
     harness._default_console_session_settings = lambda: object()
-    harness._append_native_console_system_message = (
-        lambda *_args, **_kwargs: _completed_async()
+    harness._append_native_console_system_message = lambda *_args, **_kwargs: (
+        _completed_async()
     )
     harness._console_composer_or_none = lambda: None
     harness._clear_console_composer_draft = lambda: None
@@ -604,9 +619,7 @@ async def test_initial_dispatch_resolves_pending_discard_and_clears_bookkeeping(
     monkeypatch.setattr(
         video_controller_module,
         "get_video_generation_config",
-        lambda: SimpleNamespace(
-            default_backend="comfyui", confirm_cost_estimate=False
-        ),
+        lambda: SimpleNamespace(default_backend="comfyui", confirm_cost_estimate=False),
     )
     monkeypatch.setattr(adapter_registry, "get_registry", lambda: Registry())
     monkeypatch.setattr("asyncio.to_thread", fake_to_thread)
@@ -636,7 +649,9 @@ async def test_over_capacity_keep_adopts_real_store_as_sole_file_and_then_append
     config = SimpleNamespace(max_store_mb=1, retention="ttl", retention_ttl_hours=24)
     store = VideoStore(root=tmp_path / "videos", config=config)
     old = store.save("old-message", "old", b"o" * (700 * 1024), extension="mp4")
-    second_old = store.save("second-old", "second", b"s" * (200 * 1024), extension="mp4")
+    second_old = store.save(
+        "second-old", "second", b"s" * (200 * 1024), extension="mp4"
+    )
     assert isinstance(old, Path)
     assert isinstance(second_old, Path)
     old_messages = [
@@ -659,7 +674,9 @@ async def test_over_capacity_keep_adopts_real_store_as_sole_file_and_then_append
         _ensure_console_video_store=lambda: store,
         _video_storage_message_id=ConsoleVideoController._video_storage_message_id,
     )
-    before_specs = ConsoleVideoController._build_video_card_specs(spec_owner, old_messages)
+    before_specs = ConsoleVideoController._build_video_card_specs(
+        spec_owner, old_messages
+    )
     assert {spec.status for spec in before_specs.values()} == {"ready"}
     payload = b"n" * (1024 * 1024 + 17)
     artifact = _artifact(payload, extension="webm")
@@ -676,7 +693,9 @@ async def test_over_capacity_keep_adopts_real_store_as_sole_file_and_then_append
     assert stored[0].path.suffix == ".webm"
     assert not old.exists()
     assert not second_old.exists()
-    after_specs = ConsoleVideoController._build_video_card_specs(spec_owner, old_messages)
+    after_specs = ConsoleVideoController._build_video_card_specs(
+        spec_owner, old_messages
+    )
     assert {spec.status for spec in after_specs.values()} == {"expired"}
     assert len(harness.appended) == 1
     assert harness.sync_count == 1
@@ -772,7 +791,9 @@ async def test_unmount_during_managed_resolve_persists_without_sync(
 
 
 @pytest.mark.asyncio
-async def test_store_failure_retry_uses_ordinary_save_not_adoption(tmp_path: Path) -> None:
+async def test_store_failure_retry_uses_ordinary_save_not_adoption(
+    tmp_path: Path,
+) -> None:
     artifact = _artifact(reason="store_failure", extension="webm")
 
     class RetryStore:
@@ -834,9 +855,7 @@ async def test_repeated_store_retry_failure_reoffers_without_losing_payload() ->
             raise VideoStoreSaveError("PRIVATE-PATH")
 
     store = BusyStore()
-    harness = _OutcomeHarness(
-        actions=["keep", "keep", "discard"], video_store=store
-    )
+    harness = _OutcomeHarness(actions=["keep", "keep", "discard"], video_store=store)
 
     await harness._resolve_generated_video_outcome(
         artifact, session_id="session", message_id=artifact.message_id
@@ -861,9 +880,7 @@ def test_external_new_target_commit_never_clobbers_concurrent_creator(
         return real_link(source, destination, **kwargs)
 
     monkeypatch.setattr(os, "link", racing_link)
-    monkeypatch.setattr(
-        os, "supports_dir_fd", set(os.supports_dir_fd) | {racing_link}
-    )
+    monkeypatch.setattr(os, "supports_dir_fd", set(os.supports_dir_fd) | {racing_link})
     monkeypatch.setattr(
         os,
         "supports_follow_symlinks",
@@ -886,7 +903,9 @@ def test_external_confirmed_replacement_writes_exact_bytes(tmp_path: Path) -> No
     target.write_bytes(b"old")
     identity = ConsoleVideoController._external_video_target_identity(target)
 
-    result = ConsoleVideoController._copy_pending_video_external(artifact, target, identity)
+    result = ConsoleVideoController._copy_pending_video_external(
+        artifact, target, identity
+    )
 
     assert result == "saved"
     assert target.read_bytes() == b"exact replacement"
@@ -903,7 +922,9 @@ def test_external_changed_confirmed_identity_requires_fresh_confirmation(
     identity = ConsoleVideoController._external_video_target_identity(target)
     target.write_bytes(b"changed after confirmation")
 
-    result = ConsoleVideoController._copy_pending_video_external(artifact, target, identity)
+    result = ConsoleVideoController._copy_pending_video_external(
+        artifact, target, identity
+    )
 
     assert result == "confirm"
     assert target.read_bytes() == b"changed after confirmation"
@@ -918,9 +939,7 @@ def test_external_commit_error_keeps_existing_destination_and_cleans_sibling(
     target.write_bytes(b"old")
     identity = ConsoleVideoController._external_video_target_identity(target)
 
-    def fail_replace(
-        _source, _target, *, src_dir_fd=None, dst_dir_fd=None
-    ):
+    def fail_replace(_source, _target, *, src_dir_fd=None, dst_dir_fd=None):
         raise OSError("commit failed")
 
     monkeypatch.setattr(os, "replace", fail_replace)
@@ -1091,7 +1110,9 @@ def test_external_first_stage_fstat_failure_closes_raw_fd_and_owned_sibling(
     confirmed_identity = None
     if existing_destination:
         target.write_bytes(original_destination)
-        confirmed_identity = ConsoleVideoController._external_video_target_identity(target)
+        confirmed_identity = ConsoleVideoController._external_video_target_identity(
+            target
+        )
     real_open = os.open
     real_close = os.close
     real_fstat = os.fstat
@@ -1162,7 +1183,9 @@ def test_external_partial_copy_failure_removes_owned_sibling(
     confirmed_identity = None
     if existing_destination:
         target.write_bytes(original_destination)
-        confirmed_identity = ConsoleVideoController._external_video_target_identity(target)
+        confirmed_identity = ConsoleVideoController._external_video_target_identity(
+            target
+        )
     logged: list[str] = []
 
     def fail_after_partial_copy(_source, destination, *_args, **_kwargs):
@@ -1203,7 +1226,9 @@ def test_external_post_write_fstat_failure_removes_owned_sibling(
     confirmed_identity = None
     if existing_destination:
         target.write_bytes(original_destination)
-        confirmed_identity = ConsoleVideoController._external_video_target_identity(target)
+        confirmed_identity = ConsoleVideoController._external_video_target_identity(
+            target
+        )
     real_open = os.open
     real_fstat = os.fstat
     staged_fds: list[int] = []
@@ -1278,7 +1303,9 @@ def test_external_parent_fd_close_failure_does_not_mask_saved_outcome(
     monkeypatch.setattr(os, "close", close_then_fail)
     sink_id = __import__("loguru").logger.add(logged.append, format="{message}")
     try:
-        result = ConsoleVideoController._copy_pending_video_external(artifact, target, None)
+        result = ConsoleVideoController._copy_pending_video_external(
+            artifact, target, None
+        )
     finally:
         __import__("loguru").logger.remove(sink_id)
 
@@ -1299,9 +1326,7 @@ async def test_unmount_immediately_before_external_commit_creates_no_path_or_car
 ) -> None:
     artifact = _artifact(b"external", message_id="active-external")
     target = tmp_path / "external.mp4"
-    harness = _OutcomeHarness(
-        actions=["save_external", target], video_store=object()
-    )
+    harness = _OutcomeHarness(actions=["save_external", target], video_store=object())
     original_check = ConsoleVideoController._external_video_precommit_check
 
     def drain_then_check(*args, **kwargs):
@@ -1352,9 +1377,7 @@ async def test_external_picker_normalizes_only_missing_or_exact_webm_suffix(
     artifact = _artifact(b"webm bytes", extension="webm")
     selected = tmp_path / selected_name
     expected = tmp_path / expected_name
-    harness = _OutcomeHarness(
-        actions=["save_external", selected], video_store=object()
-    )
+    harness = _OutcomeHarness(actions=["save_external", selected], video_store=object())
 
     await harness._resolve_generated_video_outcome(
         artifact, session_id="session", message_id=artifact.message_id
@@ -1389,7 +1412,9 @@ async def test_external_picker_reprompts_for_any_nonmatching_suffix(
     assert len(pickers) == 2
     assert not bad_target.exists()
     assert good_target.read_bytes() == b"webm bytes"
-    assert any("generated video format" in message for message, _ in harness.notifications)
+    assert any(
+        "generated video format" in message for message, _ in harness.notifications
+    )
 
 
 def test_external_copy_rejects_mismatched_suffix_before_any_filesystem_action(
@@ -1485,7 +1510,9 @@ async def test_external_picker_validates_path_before_target_inspection(
     )
 
     assert inspected == []
-    assert any("generated video format" in message for message, _ in harness.notifications)
+    assert any(
+        "generated video format" in message for message, _ in harness.notifications
+    )
     assert artifact.stream.closed
 
 
@@ -1493,9 +1520,7 @@ async def test_external_picker_validates_path_before_target_inspection(
 async def test_external_success_opens_file_and_appends_no_card(tmp_path: Path) -> None:
     artifact = _artifact(b"external")
     target = tmp_path / "chosen.mp4"
-    harness = _OutcomeHarness(
-        actions=["save_external", target], video_store=object()
-    )
+    harness = _OutcomeHarness(actions=["save_external", target], video_store=object())
 
     await harness._resolve_generated_video_outcome(
         artifact, session_id="session", message_id=artifact.message_id
@@ -1622,9 +1647,7 @@ async def test_managed_save_copy_failure_logs_and_notifies_without_private_detai
 
     class Harness:
         app_instance = SimpleNamespace(
-            notify=lambda text, *, severity=None: notifications.append(
-                (text, severity)
-            )
+            notify=lambda text, *, severity=None: notifications.append((text, severity))
         )
 
         @staticmethod
@@ -1645,7 +1668,9 @@ async def test_managed_save_copy_failure_logs_and_notifies_without_private_detai
     monkeypatch.setattr(asyncio, "to_thread", fail_copy_thread)
     sink_id = __import__("loguru").logger.add(logged.append, format="{message}")
     try:
-        await ConsoleVideoController._save_console_video_copy(Harness(), "managed-message")
+        await ConsoleVideoController._save_console_video_copy(
+            Harness(), "managed-message"
+        )
     finally:
         __import__("loguru").logger.remove(sink_id)
 
@@ -1690,9 +1715,7 @@ async def test_unmount_during_external_copy_failure_has_no_late_notification(
 ) -> None:
     artifact = _artifact(b"still available")
     target = tmp_path / "chosen.mp4"
-    harness = _OutcomeHarness(
-        actions=["save_external", target], video_store=object()
-    )
+    harness = _OutcomeHarness(actions=["save_external", target], video_store=object())
 
     def drain_then_fail(*_args, **_kwargs):
         harness._drain_pending_console_videos()
@@ -1743,9 +1766,7 @@ async def test_concurrent_external_creator_is_confirmed_and_never_overwritten(
         return real_link(source, destination, **kwargs)
 
     monkeypatch.setattr(os, "link", racing_link)
-    monkeypatch.setattr(
-        os, "supports_dir_fd", set(os.supports_dir_fd) | {racing_link}
-    )
+    monkeypatch.setattr(os, "supports_dir_fd", set(os.supports_dir_fd) | {racing_link})
     monkeypatch.setattr(
         os,
         "supports_follow_symlinks",
@@ -1826,9 +1847,7 @@ async def test_external_open_failure_keeps_saved_file_and_reports_sanitized_noti
 ) -> None:
     artifact = _artifact(b"saved bytes")
     target = tmp_path / "saved.mp4"
-    harness = _OutcomeHarness(
-        actions=["save_external", target], video_store=object()
-    )
+    harness = _OutcomeHarness(actions=["save_external", target], video_store=object())
 
     def fail_open(_path: Path) -> None:
         raise OSError("PRIVATE-PATH")
@@ -1841,8 +1860,10 @@ async def test_external_open_failure_keeps_saved_file_and_reports_sanitized_noti
 
     assert target.read_bytes() == b"saved bytes"
     assert harness.appended == []
-    assert any("saved" in message.lower() and "could not open" in message.lower()
-               for message, _ in harness.notifications)
+    assert any(
+        "saved" in message.lower() and "could not open" in message.lower()
+        for message, _ in harness.notifications
+    )
     assert all("PRIVATE-PATH" not in message for message, _ in harness.notifications)
 
 
@@ -1882,9 +1903,7 @@ async def test_late_picker_completion_after_drain_is_noop(tmp_path: Path) -> Non
         self._drain_pending_console_videos()
         return tmp_path / "late.mp4"
 
-    harness._wait_for_console_screen_result = MethodType(
-        draining_picker_wait, harness
-    )
+    harness._wait_for_console_screen_result = MethodType(draining_picker_wait, harness)
 
     await harness._resolve_generated_video_outcome(
         artifact, session_id="session", message_id=artifact.message_id
@@ -1983,9 +2002,7 @@ async def test_screen_wait_helper_uses_nonexclusive_nonfatal_worker() -> None:
 def test_unmount_drain_atomically_closes_every_pending_stream_once() -> None:
     first = _artifact(message_id="one")
     second = _artifact(message_id="two")
-    fake = SimpleNamespace(
-        _pending_video_artifacts={"one": first, "two": second}
-    )
+    fake = SimpleNamespace(_pending_video_artifacts={"one": first, "two": second})
     fake._pending_console_video_artifacts = lambda: fake._pending_video_artifacts
 
     ConsoleVideoController._drain_pending_console_videos(fake)
@@ -2158,9 +2175,7 @@ async def test_resolver_cancellation_waits_for_external_copy_before_closing_stre
     payload = b"cancelled external copy"
     artifact = _artifact(payload, message_id="cancel-external-copy")
     target = tmp_path / "cancelled-external.mp4"
-    harness = _OutcomeHarness(
-        actions=["save_external", target], video_store=object()
-    )
+    harness = _OutcomeHarness(actions=["save_external", target], video_store=object())
     copy_started = threading.Event()
     release_copy = threading.Event()
     copy_finished = threading.Event()
@@ -2301,8 +2316,8 @@ async def test_generation_cancellation_after_commit_persists_before_child_finish
     harness = _OutcomeHarness(actions=[], video_store=object())
     harness._console_videogen_inflight_sessions = lambda: inflight
     harness._console_videogen_cancel_events = lambda: adapter_cancels
-    harness._append_native_console_system_message = (
-        lambda *_args, **_kwargs: _completed_async()
+    harness._append_native_console_system_message = lambda *_args, **_kwargs: (
+        _completed_async()
     )
     harness.app_instance = SimpleNamespace(notify=lambda *_args, **_kwargs: None)
 
@@ -2341,9 +2356,7 @@ async def test_generation_cancellation_after_commit_persists_before_child_finish
     monkeypatch.setattr(
         video_controller_module,
         "get_video_generation_config",
-        lambda: SimpleNamespace(
-            default_backend="comfyui", confirm_cost_estimate=False
-        ),
+        lambda: SimpleNamespace(default_backend="comfyui", confirm_cost_estimate=False),
     )
     monkeypatch.setattr(adapter_registry, "get_registry", lambda: Registry())
     monkeypatch.setattr(
@@ -2358,7 +2371,9 @@ async def test_generation_cancellation_after_commit_persists_before_child_finish
         )
     else:
         operation = asyncio.create_task(
-            ConsoleVideoController._regenerate_console_video_message(harness, "old-message")
+            ConsoleVideoController._regenerate_console_video_message(
+                harness, "old-message"
+            )
         )
     while not commit_finished.is_set():
         await asyncio.sleep(0)
@@ -2410,8 +2425,8 @@ async def test_generation_cancellation_during_sync_does_not_wait_for_stale_ui(
     harness = _OutcomeHarness(actions=[], video_store=object())
     harness._console_videogen_inflight_sessions = lambda: inflight
     harness._console_videogen_cancel_events = lambda: adapter_cancels
-    harness._append_native_console_system_message = (
-        lambda *_args, **_kwargs: _completed_async()
+    harness._append_native_console_system_message = lambda *_args, **_kwargs: (
+        _completed_async()
     )
     harness.app_instance = SimpleNamespace(notify=lambda *_args, **_kwargs: None)
 
@@ -2453,9 +2468,7 @@ async def test_generation_cancellation_during_sync_does_not_wait_for_stale_ui(
     monkeypatch.setattr(
         video_controller_module,
         "get_video_generation_config",
-        lambda: SimpleNamespace(
-            default_backend="comfyui", confirm_cost_estimate=False
-        ),
+        lambda: SimpleNamespace(default_backend="comfyui", confirm_cost_estimate=False),
     )
     monkeypatch.setattr(adapter_registry, "get_registry", lambda: Registry())
     monkeypatch.setattr(
@@ -2470,7 +2483,9 @@ async def test_generation_cancellation_during_sync_does_not_wait_for_stale_ui(
         )
     else:
         operation = asyncio.create_task(
-            ConsoleVideoController._regenerate_console_video_message(harness, "old-message")
+            ConsoleVideoController._regenerate_console_video_message(
+                harness, "old-message"
+            )
         )
     await sync_started.wait()
 
@@ -2545,16 +2560,14 @@ async def test_initial_generation_cancellation_closes_late_pending_without_modal
     harness = _OutcomeHarness(actions=[], video_store=object())
     harness._console_videogen_inflight_sessions = lambda: inflight
     harness._console_videogen_cancel_events = lambda: adapter_cancels
-    harness._append_native_console_system_message = (
-        lambda *_args, **_kwargs: _completed_async()
+    harness._append_native_console_system_message = lambda *_args, **_kwargs: (
+        _completed_async()
     )
     harness.app_instance = SimpleNamespace(notify=lambda *_args, **_kwargs: None)
     harness.chat_store.workspace_context = SimpleNamespace(
         active_workspace_id="workspace"
     )
-    harness.chat_store.ensure_session = lambda **_kwargs: SimpleNamespace(
-        id="session"
-    )
+    harness.chat_store.ensure_session = lambda **_kwargs: SimpleNamespace(id="session")
     harness._default_console_session_settings = lambda: object()
     harness._console_composer_or_none = lambda: None
     harness._clear_console_composer_draft = lambda: None
@@ -2579,9 +2592,7 @@ async def test_initial_generation_cancellation_closes_late_pending_without_modal
     monkeypatch.setattr(
         video_controller_module,
         "get_video_generation_config",
-        lambda: SimpleNamespace(
-            default_backend="comfyui", confirm_cost_estimate=False
-        ),
+        lambda: SimpleNamespace(default_backend="comfyui", confirm_cost_estimate=False),
     )
     monkeypatch.setattr(adapter_registry, "get_registry", lambda: Registry())
     monkeypatch.setattr(
@@ -2836,12 +2847,14 @@ async def test_regenerate_normal_result_persists_then_syncs_through_shared_opera
     cancels: dict = {}
     harness._console_videogen_inflight_sessions = lambda: inflight
     harness._console_videogen_cancel_events = lambda: cancels
-    harness._append_native_console_system_message = (
-        lambda *_args, **_kwargs: _completed_async()
+    harness._append_native_console_system_message = lambda *_args, **_kwargs: (
+        _completed_async()
     )
     harness.app_instance = SimpleNamespace(notify=lambda *_args, **_kwargs: None)
 
-    await ConsoleVideoController._regenerate_console_video_message(harness, "old-message")
+    await ConsoleVideoController._regenerate_console_video_message(
+        harness, "old-message"
+    )
 
     assert len(harness.appended) == 1
     assert harness.appended[0][1]["video_metadata"] is generated_meta
@@ -2877,7 +2890,9 @@ async def test_regenerate_pending_discard_closes_stage_and_clears_bookkeeping(
 
     monkeypatch.setattr("asyncio.to_thread", fake_to_thread)
 
-    await ConsoleVideoController._regenerate_console_video_message(harness, "old-message")
+    await ConsoleVideoController._regenerate_console_video_message(
+        harness, "old-message"
+    )
 
     assert harness.appended == []
     assert artifact.stream.closed
@@ -2886,9 +2901,7 @@ async def test_regenerate_pending_discard_closes_stage_and_clears_bookkeeping(
 
 
 @pytest.mark.parametrize("caller", ["initial", "regenerate"])
-@pytest.mark.parametrize(
-    "ordering", ["cancel_wins", "commit_wins", "generation_fails"]
-)
+@pytest.mark.parametrize("ordering", ["cancel_wins", "commit_wins", "generation_fails"])
 @pytest.mark.asyncio
 async def test_generation_publication_gate_linearizes_teardown_for_both_callers(
     caller: str,
@@ -2913,8 +2926,8 @@ async def test_generation_publication_gate_linearizes_teardown_for_both_callers(
     harness = _OutcomeHarness(actions=[], video_store=object())
     harness._console_videogen_inflight_sessions = lambda: inflight
     harness._console_videogen_cancel_events = lambda: adapter_cancels
-    harness._append_native_console_system_message = (
-        lambda *_args, **_kwargs: _completed_async()
+    harness._append_native_console_system_message = lambda *_args, **_kwargs: (
+        _completed_async()
     )
     harness.app_instance = SimpleNamespace(notify=lambda *_args, **_kwargs: None)
 
@@ -2963,9 +2976,7 @@ async def test_generation_publication_gate_linearizes_teardown_for_both_callers(
     monkeypatch.setattr(
         video_controller_module,
         "get_video_generation_config",
-        lambda: SimpleNamespace(
-            default_backend="comfyui", confirm_cost_estimate=False
-        ),
+        lambda: SimpleNamespace(default_backend="comfyui", confirm_cost_estimate=False),
     )
     monkeypatch.setattr(adapter_registry, "get_registry", lambda: Registry())
     monkeypatch.setattr("asyncio.to_thread", fake_to_thread)
@@ -2975,7 +2986,9 @@ async def test_generation_publication_gate_linearizes_teardown_for_both_callers(
             harness, SimpleNamespace(args="generate me")
         )
     else:
-        await ConsoleVideoController._regenerate_console_video_message(harness, "old-message")
+        await ConsoleVideoController._regenerate_console_video_message(
+            harness, "old-message"
+        )
 
     assert len(captured_gates) == 1
     assert inflight == set()

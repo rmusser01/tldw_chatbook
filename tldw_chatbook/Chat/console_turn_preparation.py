@@ -465,8 +465,7 @@ def admit_promoted_temporary_capture(
         or not preparation.ephemeral
         or preparation.capture_mode is not ConsoleTraceCaptureMode.CAPTURE_ON
         or preparation.state is not ConsoleTurnPreparationState.PAUSED
-        or preparation.pause_kind
-        is not ConsolePreparationPauseKind.TEMPORARY_CAPTURE
+        or preparation.pause_kind is not ConsolePreparationPauseKind.TEMPORARY_CAPTURE
         or not isinstance(execution_context, ConsoleTurnExecutionContext)
         or execution_context.session_id != preparation.session_id
         or execution_context.configuration

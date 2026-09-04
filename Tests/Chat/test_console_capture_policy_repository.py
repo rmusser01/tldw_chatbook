@@ -1,4 +1,5 @@
 """Local per-conversation capture-detail repository contract."""
+
 from __future__ import annotations
 
 import pytest
@@ -26,7 +27,10 @@ def _conversation(db: CharactersRAGDB) -> str:
 def test_missing_row_means_inherit_and_replace_round_trips(db) -> None:
     conversation_id = _conversation(db)
     repository = ConsoleCapturePolicyRepository(db)
-    assert repository.read(conversation_id).status is repository_module.CapturePolicyReadStatus.ABSENT
+    assert (
+        repository.read(conversation_id).status
+        is repository_module.CapturePolicyReadStatus.ABSENT
+    )
     safe = repository.replace(conversation_id, CaptureDetail.SAFE)
     assert safe.status is CapturePolicyWriteStatus.STORED
     assert safe.policy is not None and safe.policy.detail is CaptureDetail.SAFE
@@ -41,9 +45,18 @@ def test_inherit_deletes_the_local_row(db) -> None:
     conversation_id = _conversation(db)
     repository = ConsoleCapturePolicyRepository(db)
     repository.replace(conversation_id, CaptureDetail.SAFE)
-    assert repository.replace(conversation_id, None).status is CapturePolicyWriteStatus.DELETED
-    assert repository.read(conversation_id).status is repository_module.CapturePolicyReadStatus.ABSENT
-    assert repository.replace(conversation_id, None).status is CapturePolicyWriteStatus.UNCHANGED
+    assert (
+        repository.replace(conversation_id, None).status
+        is CapturePolicyWriteStatus.DELETED
+    )
+    assert (
+        repository.read(conversation_id).status
+        is repository_module.CapturePolicyReadStatus.ABSENT
+    )
+    assert (
+        repository.replace(conversation_id, None).status
+        is CapturePolicyWriteStatus.UNCHANGED
+    )
 
 
 def test_sparse_capture_and_pii_overrides_preserve_legacy_provenance(db) -> None:
@@ -92,11 +105,19 @@ def test_new_privacy_only_row_does_not_invent_capture_detail(db) -> None:
 
 def test_missing_or_deleted_conversation_refuses_writes(db) -> None:
     repository = ConsoleCapturePolicyRepository(db)
-    assert repository.replace("missing", CaptureDetail.SAFE).status is CapturePolicyWriteStatus.MISSING_CONVERSATION
+    assert (
+        repository.replace("missing", CaptureDetail.SAFE).status
+        is CapturePolicyWriteStatus.MISSING_CONVERSATION
+    )
     conversation_id = _conversation(db)
     with db.transaction() as cursor:
-        cursor.execute("UPDATE conversations SET deleted = 1 WHERE id = ?", (conversation_id,))
-    assert repository.replace(conversation_id, CaptureDetail.SAFE).status is CapturePolicyWriteStatus.MISSING_CONVERSATION
+        cursor.execute(
+            "UPDATE conversations SET deleted = 1 WHERE id = ?", (conversation_id,)
+        )
+    assert (
+        repository.replace(conversation_id, CaptureDetail.SAFE).status
+        is CapturePolicyWriteStatus.MISSING_CONVERSATION
+    )
 
 
 def test_cascade_delete_corrupt_value_and_no_sync_delta_fail_closed(db) -> None:
@@ -115,13 +136,19 @@ def test_cascade_delete_corrupt_value_and_no_sync_delta_fail_closed(db) -> None:
         )
         cursor.execute("PRAGMA ignore_check_constraints = OFF")
     corrupt = repository.read(conversation_id)
-    assert corrupt.status is repository_module.CapturePolicyReadStatus.UNAVAILABLE_OR_CORRUPT
+    assert (
+        corrupt.status
+        is repository_module.CapturePolicyReadStatus.UNAVAILABLE_OR_CORRUPT
+    )
     assert corrupt.policy is None
     with db.transaction() as cursor:
         cursor.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
-        assert cursor.execute(
-            "SELECT COUNT(*) FROM console_conversation_capture_policy"
-        ).fetchone()[0] == 0
+        assert (
+            cursor.execute(
+                "SELECT COUNT(*) FROM console_conversation_capture_policy"
+            ).fetchone()[0]
+            == 0
+        )
 
 
 def test_schema_unavailable_is_not_reported_as_absent(db) -> None:
@@ -132,7 +159,10 @@ def test_schema_unavailable_is_not_reported_as_absent(db) -> None:
 
     result = repository.read(conversation_id)
 
-    assert result.status is repository_module.CapturePolicyReadStatus.UNAVAILABLE_OR_CORRUPT
+    assert (
+        result.status
+        is repository_module.CapturePolicyReadStatus.UNAVAILABLE_OR_CORRUPT
+    )
     assert result.policy is None
 
 
@@ -148,5 +178,8 @@ def test_read_uses_shared_transaction_boundary(db, monkeypatch) -> None:
 
     monkeypatch.setattr(db, "transaction", transaction)
 
-    assert repository.read(conversation_id).status is repository_module.CapturePolicyReadStatus.ABSENT
+    assert (
+        repository.read(conversation_id).status
+        is repository_module.CapturePolicyReadStatus.ABSENT
+    )
     assert calls == [False]

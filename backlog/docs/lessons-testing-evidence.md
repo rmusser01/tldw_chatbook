@@ -11120,3 +11120,26 @@ patch the symbol on the module that owns it. Do not use `raising=False` to make 
 missing consumer alias patchable. Pair the fake-driven test with one explicit,
 owned-loopback integration test so both isolation and the real call path remain
 observable.
+
+---
+
+## Formatter directive guards must follow logical owners, not physical lines
+
+**TASK-26947, 2026-09-04.** The first formatter structural guard measured an
+inline directive from the preceding physical `NEWLINE`, then from only an
+`ast.stmt` ancestor. Ruff split semicolon-separated siblings and added grouping
+parentheses, so the unchanged directive appeared to move even though its AST route,
+comment text, and association had not changed. A later `# noqa` on a same-line
+`ExceptHandler` header exposed the other hole: an `ExceptHandler` is not an
+`ast.stmt`, and falling back to the enclosing `try` would make unrelated suite
+tokens influence the header directive. Guard v3 fixed all three cases with
+logical-owner boundaries, full-module shadow parsing to exclude only independently
+proven AST-neutral parentheses, and a uniquely validated `except` clause through
+its unique depth-zero colon; its regression tests cover semicolon splitting,
+grouping parentheses, and header-versus-handler-body directives.
+
+**What to do.** Treat a directive-position metric change as a new baseline
+contract, not a comparison against old ordinal data: recapture the structural
+baseline before reformatting. Fail closed for ambiguous exception headers, never
+discard tuple commas or semantic grouping, and keep the ordinary nearest-statement
+or decorator boundary for every non-header directive.

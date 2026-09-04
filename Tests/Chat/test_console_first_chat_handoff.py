@@ -36,9 +36,7 @@ def test_fresh_session_no_eligible_binding_never_intercepts_send():
     state = ProjectInstructionControlState.new_session()
     assert state.project_instructions_enabled
     assert state.working_folder_binding_id is None
-    assert project_recovery_should_skip_send_interception(
-        "no_eligible_binding", state
-    )
+    assert project_recovery_should_skip_send_interception("no_eligible_binding", state)
 
 
 @pytest.mark.parametrize(
@@ -118,14 +116,9 @@ def test_no_unbounded_resolve_for_send_awaits_remain():
     bounded = next(
         n
         for n in ast.walk(tree)
-        if isinstance(n, ast.AsyncFunctionDef)
-        and n.name == "_resolve_for_send_bounded"
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "_resolve_for_send_bounded"
     )
-    allowed = {
-        n.lineno
-        for n in ast.walk(bounded)
-        if isinstance(n, ast.Await)
-    }
+    allowed = {n.lineno for n in ast.walk(bounded) if isinstance(n, ast.Await)}
     unbounded = sorted(set(offenders) - allowed)
     assert not unbounded, (
         "unbounded provider_gateway.resolve_for_send await(s) at line(s) "
