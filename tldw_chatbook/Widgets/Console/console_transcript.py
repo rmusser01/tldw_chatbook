@@ -27,12 +27,17 @@ from textual.message import Message
 from textual.message_pump import NoActiveAppError
 from textual.style import Style
 from textual.timer import Timer
-from textual.widget import Widget
 from textual.visual import VisualType
+from textual.widget import Widget
 from textual.widgets import Button, Markdown, Static
 from textual_diff_view import DiffView
 
+from tldw_chatbook.Chat.assistant_generation_state import (
+    render_exported_assistant_content,
+)
+from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_chat_models import (
+    FEEDBACK_ACTIVE_RUN_STATUSES,
     PROPRIETARY_THINKING_NOTICE,
     ConsoleActivityPresentation,
     ConsoleChatMessage,
@@ -40,7 +45,6 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleCitationPhase,
     ConsoleMessageRole,
     ConsoleThinkingActivityRef,
-    FEEDBACK_ACTIVE_RUN_STATUSES,
 )
 from tldw_chatbook.Chat.console_context_compaction import (
     EffectiveMemoryKind,
@@ -49,21 +53,6 @@ from tldw_chatbook.Chat.console_context_compaction import (
 from tldw_chatbook.Chat.console_context_repository import (
     MemoryCoverageKind,
     MemoryOriginKind,
-)
-from tldw_chatbook.Chat.assistant_generation_state import (
-    render_exported_assistant_content,
-)
-from tldw_chatbook.Chat.console_turn_grouping import (
-    ConsoleAssistantTurn,
-    ConsoleTranscriptUnit,
-    group_console_transcript_messages,
-    ordered_assistant_activities,
-    project_thinking_activities,
-)
-from tldw_chatbook.Chat.thinking_blocks import (
-    DisplayableThinkingBlock,
-    ProprietaryThinkingBlock,
-    ThinkingEnvelope,
 )
 from tldw_chatbook.Chat.console_image_view import (
     PIXELS_MAX_COLS,
@@ -79,7 +68,6 @@ from tldw_chatbook.Chat.console_message_actions import (
     action_row_guide,
     resolve_console_header_speech,
 )
-from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_QUIET_EMPTY_COPY,
     ConsoleSetupCardState,
@@ -90,18 +78,39 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsoleTranscriptStyle,
     resolve_console_message_presentation,
 )
+from tldw_chatbook.Chat.console_turn_grouping import (
+    ConsoleAssistantTurn,
+    ConsoleTranscriptUnit,
+    group_console_transcript_messages,
+    ordered_assistant_activities,
+    project_thinking_activities,
+)
+from tldw_chatbook.Chat.thinking_blocks import (
+    DisplayableThinkingBlock,
+    ProprietaryThinkingBlock,
+    ThinkingEnvelope,
+)
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
-from tldw_chatbook.Widgets.Console.console_generation_card import (
-    ConsoleGenerationCard,
-    ConsoleGenerationCardSpec,
-    generation_card_signature,
-)
 from tldw_chatbook.Widgets.Console.console_assistant_turn import (
     ConsoleActivityActivated,
     ConsoleActivityDisclosure,
     ConsoleAssistantTurnWidget,
     raw_cli_status_copy,
+)
+from tldw_chatbook.Widgets.Console.console_canvas_card import (
+    ConsoleCanvasCard,
+    ConsoleCanvasCardPresentation,
+    canvas_card_signature,
+)
+from tldw_chatbook.Widgets.Console.console_generation_card import (
+    ConsoleGenerationCard,
+    ConsoleGenerationCardSpec,
+    generation_card_signature,
+)
+from tldw_chatbook.Widgets.Console.console_message_more_menu import (
+    ConsoleMessageMoreMenu,
+    message_more_menus_on_screen,
 )
 from tldw_chatbook.Widgets.Console.console_selection import (
     SelectionManager,
@@ -117,15 +126,11 @@ from tldw_chatbook.Widgets.Console.console_selection import (
 )
 from tldw_chatbook.Widgets.Console.console_selection_menu import (
     ConsoleSelectionFeedbackRequested,
-    ConsoleSelectionNoteRequested,
     ConsoleSelectionMenu,
+    ConsoleSelectionNoteRequested,
     ConsoleSelectionQuoteRequested,
     ConsoleSideChatRequested,
     selection_menus_on_screen,
-)
-from tldw_chatbook.Widgets.Console.console_message_more_menu import (
-    ConsoleMessageMoreMenu,
-    message_more_menus_on_screen,
 )
 from tldw_chatbook.Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
 from tldw_chatbook.Widgets.Console.console_video_card import (
@@ -212,18 +217,6 @@ class ConsoleMemoryBannerPresentation:
                 raise ValueError("range memory banner requires a start identity")
         elif self.start_message_id is not None:
             raise ValueError("prefix memory banner cannot carry a start identity")
-
-
-@dataclass(frozen=True, slots=True)
-class ConsoleCanvasCardPresentation:
-    """Minimal metadata-only Canvas row; interactive browser UX lands in Task 4.2."""
-
-    canvas_id: str
-    revision_id: str | None
-    label: str
-    digest: str
-    reopenable: bool
-    error_code: str | None
 
 
 def canvas_card_presentations(
@@ -1157,6 +1150,7 @@ class _TranscriptRow:
         "image",
         "generation-card",
         "video-card",
+        "canvas-card",
         "actions",
         "action-help",
         "assistant-turn",
@@ -1172,6 +1166,7 @@ class _TranscriptRow:
     image_spec: "ConsoleImageRowSpec | None" = None
     generation_card_spec: "ConsoleGenerationCardSpec | None" = None
     video_card_spec: "ConsoleVideoCardSpec | None" = None
+    canvas_card_spec: "ConsoleCanvasCardPresentation | None" = None
     assistant_turn: ConsoleAssistantTurn | None = None
     nested_rows: tuple["_TranscriptRow", ...] = ()
     activity_rows: tuple[tuple["_TranscriptRow", ...], ...] = ()
@@ -6472,8 +6467,9 @@ class ConsoleTranscript(VerticalScroll):
                     _TranscriptRow(
                         key=f"canvas-card:{message.id}:{index}",
                         kind="canvas-card",
-                        signature=("canvas-card", message.id, card),
+                        signature=(message.id, *canvas_card_signature(card)),
                         message=message,
+                        canvas_card_spec=card,
                         renderable=f"Canvas · {card.label}",
                     )
                 )
@@ -7037,11 +7033,16 @@ class ConsoleTranscript(VerticalScroll):
             return self._build_assistant_turn_widget(row)
         if row.kind == "message" and row.message is not None:
             return self._build_message_widget(row.message, selected=row.selected)
-        if row.kind == "canvas-card" and row.message is not None:
-            return Static(
-                row.renderable,
-                id=self._row_widget_id(row),
-                classes="console-transcript-canvas-card",
+        if (
+            row.kind == "canvas-card"
+            and row.message is not None
+            and row.canvas_card_spec is not None
+        ):
+            card_index = int(row.key.rsplit(":", 1)[1])
+            return ConsoleCanvasCard(
+                row.canvas_card_spec,
+                message_id=row.message.id,
+                card_index=card_index,
             )
         if (
             row.kind == "diff"

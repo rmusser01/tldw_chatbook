@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="referrer" content="no-referrer">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chatbook Canvas</title>
+  <link rel="stylesheet" href="static/canvas_shell.css">
+  <script src="static/canvas_shell.js" defer></script>
+</head>
+<body>
+<!--
+THESIS: A quiet, preview-dominant workbench that keeps revision authority visible without competing with the user's artifact.
+OWN-WORLD: Extends Chatbook's Precision Workbench in Operate mode; the trusted shell remains visually and structurally separate from generated content.
+STORY: Select and identify the Canvas, understand Following/Pinned and provenance, work in the preview, then inspect or export source only on demand.
+FIRST VIEWPORT: Compact trusted controls above one expansive preview; update feedback stays contextual and non-modal.
+FORM: Approved preview-first Precision Workbench extension; no concept roll required.
+FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
+-->
+  <main class="canvas-workbench" aria-labelledby="canvas-heading">
+    <header class="canvas-toolbar">
+      <div class="canvas-identity">
+        <h1 id="canvas-heading">Chatbook Canvas</h1>
+        <label class="sr-only" for="canvas-selector">Selected Canvas</label>
+        <select id="canvas-selector" aria-label="Selected Canvas"></select>
+        <label class="sr-only" for="canvas-title">Canvas title</label>
+        <input id="canvas-title" aria-label="Canvas title" value="Canvas" maxlength="200" autocomplete="off" spellcheck="false">
+        <span id="temporary-badge" class="state-badge state-temporary" hidden>Temporary</span>
+      </div>
+      <div class="canvas-state" aria-label="Canvas state">
+        <span id="connection-state" class="state-badge" role="status">Connecting</span>
+        <span id="follow-state" class="state-badge state-follow">Following</span>
+        <span id="revision-label" class="revision-label">Revision —</span>
+      </div>
+      <nav class="canvas-actions" aria-label="Canvas actions — scroll horizontally for more">
+        <button id="pin-button" type="button">Pin revision</button>
+        <button id="follow-button" type="button" hidden>Follow latest</button>
+        <button id="source-button" type="button" aria-expanded="false" aria-controls="source-panel">Inspect source</button>
+        <button id="copy-button" type="button">Copy source</button>
+        <button id="download-button" type="button">Download</button>
+        <button id="reload-button" type="button">Reload</button>
+        <button id="close-button" type="button">Close</button>
+      </nav>
+      <div id="provenance" class="provenance" aria-live="polite">Origin unavailable</div>
+    </header>
+
+    <section id="notice" class="canvas-notice" role="status" aria-live="polite" hidden>
+      <span id="notice-copy"></span>
+      <button id="notice-previous" type="button" hidden>View previous</button>
+      <button id="notice-follow" type="button" hidden>Follow latest</button>
+      <button id="notice-dismiss" type="button">Dismiss</button>
+    </section>
+
+    <section id="compatibility" class="compatibility" role="alert" hidden>
+      <strong id="compatibility-title">Incompatible</strong>
+      <span id="compatibility-copy"></span>
+      <button id="scripts-disabled-button" type="button">Reopen with scripts disabled</button>
+    </section>
+
+    <section class="preview-stage" aria-label="Canvas preview">
+      <div id="loading-state" class="loading-state">Preparing isolated preview…</div>
+      <iframe
+        id="canvas-preview"
+        title="Canvas preview"
+        sandbox="allow-scripts"
+        referrerpolicy="no-referrer"
+      ></iframe>
+    </section>
+
+    <aside id="source-panel" class="source-panel" aria-labelledby="source-heading" hidden>
+      <div class="source-header">
+        <div>
+          <h2 id="source-heading">Revision source</h2>
+          <p>Read-only. Copying or running this HTML outside Chatbook bypasses the Canvas sandbox.</p>
+        </div>
+        <button id="source-close-button" type="button">Close source</button>
+      </div>
+      <textarea id="source-view" readonly aria-label="Canvas revision source" spellcheck="false"></textarea>
+    </aside>
+  </main>
+  <noscript>
+    <section class="scripts-disabled-recovery">
+      <h1>Chatbook Canvas needs trusted shell scripts</h1>
+      <p>The generated page remains isolated, but this browser has disabled the Chatbook-owned controls needed to load it.</p>
+      <p>Enable JavaScript for this loopback Chatbook page, then reload. Generated scripts still run only inside the zero-egress Canvas runtime.</p>
+    </section>
+  </noscript>
+</body>
+</html>

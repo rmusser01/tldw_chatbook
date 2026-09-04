@@ -518,6 +518,9 @@ exclude = [
     "assets/tiktoken_cache/manifest.json",
 ]
 "tldw_chatbook.Canvas" = [
+    "static/canvas_shell.html",
+    "static/canvas_shell.css",
+    "static/canvas_shell.js",
     "static/quickjs-runtime.js",
     "static/canvas_renderer.js",
     "static/canvas_runtime_worker.js",

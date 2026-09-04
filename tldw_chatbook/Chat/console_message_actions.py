@@ -5,13 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from markdown_it import MarkdownIt
+
+from tldw_chatbook.Canvas.compiler import CanvasCompileError, compile_canvas_document
+from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
-from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
-
 
 ConsoleActionStatus = Literal[
     "completed",
@@ -20,6 +22,8 @@ ConsoleActionStatus = Literal[
     "continue_requested",
     "edit_requested",
     "fork_requested",
+    "canvas_open_requested",
+    "canvas_repair_requested",
 ]
 ConsoleSpeechPresentationState = Literal[
     "idle",
@@ -38,6 +42,55 @@ class ConsoleMessageAction:
     label: str
     enabled: bool = True
     disabled_reason: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleCanvasHtmlBlock:
+    """One parsed assistant HTML fence eligible for a Canvas action."""
+
+    index: int
+    identity: str
+    html: str
+    compatible: bool
+    compatibility_codes: tuple[str, ...] = ()
+
+
+def assistant_canvas_html_blocks(
+    message: ConsoleChatMessage,
+) -> tuple[ConsoleCanvasHtmlBlock, ...]:
+    """Parse Canvas-eligible HTML fences without inspecting rendered Markdown."""
+
+    if (
+        message.role is not ConsoleMessageRole.ASSISTANT
+        or message.status != "complete"
+    ):
+        return ()
+    blocks: list[ConsoleCanvasHtmlBlock] = []
+    for token in MarkdownIt("commonmark").parse(message.content):
+        language = (
+            token.info.strip().split(maxsplit=1)[0].casefold() if token.info else ""
+        )
+        if token.type != "fence" or language != "html":
+            continue
+        index = len(blocks)
+        codes: tuple[str, ...] = ()
+        compatible = True
+        try:
+            plan = compile_canvas_document(token.content)
+            codes = tuple(issue.code for issue in plan.compatibility_issues)
+        except CanvasCompileError as exc:
+            codes = tuple(issue.code for issue in exc.issues)
+            compatible = False
+        blocks.append(
+            ConsoleCanvasHtmlBlock(
+                index=index,
+                identity=f"{message.id}:canvas-html:{index}",
+                html=token.content,
+                compatible=compatible,
+                compatibility_codes=codes,
+            )
+        )
+    return tuple(blocks)
 
 
 @dataclass(frozen=True, slots=True)
@@ -415,6 +468,13 @@ class ConsoleMessageActionService:
             )
         if getattr(message, "video_metadata", None) is not None:
             completed_actions = completed_actions + list(self._VIDEO_ACTIONS)
+        for block in assistant_canvas_html_blocks(message):
+            completed_actions.extend(
+                (
+                    (f"canvas-open-{block.index}", "Open in Canvas"),
+                    (f"canvas-open-new-{block.index}", "Open as new"),
+                )
+            )
         if not self._is_forkable_row(message):
             completed_actions = [
                 (action_id, label)
@@ -615,6 +675,8 @@ class ConsoleMessageActionService:
                         action.disabled_reason,
                     )
                 )
+            elif action.action_id.startswith("canvas-open"):
+                overflow.append(action)
         return tuple(overflow)
 
     def selected_row_actions(
@@ -722,6 +784,48 @@ class ConsoleMessageActionService:
                 action_id=action_id,
                 status="blocked",
                 visible_copy=self._disabled_reason(message),
+            )
+        if action_id.startswith("canvas-open-"):
+            try:
+                block_index = int(action_id.rsplit("-", 1)[1])
+            except (ValueError, IndexError):
+                block_index = -1
+            blocks = assistant_canvas_html_blocks(message)
+            block = next((item for item in blocks if item.index == block_index), None)
+            if block is None:
+                return ConsoleActionResult(
+                    action_id=action_id,
+                    status="blocked",
+                    visible_copy="That HTML block is no longer available.",
+                    target_message_id=message.id,
+                )
+            if not block.compatible:
+                codes = ", ".join(block.compatibility_codes) or "unsupported input"
+                return ConsoleActionResult(
+                    action_id=action_id,
+                    status="canvas_repair_requested",
+                    visible_copy="Prepared a Canvas compatibility repair request.",
+                    target_message_id=message.id,
+                    target_content=(
+                        "Please rewrite HTML block "
+                        f"{block.index + 1} from your previous response as one "
+                        "self-contained Canvas V1 HTML document with inline CSS and "
+                        f"JavaScript only. Resolve these compatibility issues: {codes}."
+                    ),
+                    target_invocation_id=block.identity,
+                )
+            create_new = action_id.startswith("canvas-open-new-")
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="canvas_open_requested",
+                visible_copy=(
+                    "Opening HTML as a new Canvas."
+                    if create_new
+                    else "Opening HTML in Canvas."
+                ),
+                target_message_id=message.id,
+                target_content=block.html,
+                target_invocation_id=None if create_new else block.identity,
             )
         if (
             action_id in {"feedback-up", "feedback-down"}

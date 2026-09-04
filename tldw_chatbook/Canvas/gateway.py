@@ -19,6 +19,7 @@ import secrets
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from importlib.resources import files
 from threading import RLock
 from types import MappingProxyType
 from typing import Any, Literal, Protocol, TypeAlias
@@ -99,11 +100,14 @@ _RENDERER_CSP = (
     "form-action 'none'; base-uri 'none'; manifest-src 'none'; "
     "frame-ancestors 'self'; sandbox allow-scripts"
 )
-_SHELL_HTML = b"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Chatbook Canvas</title>
-</head><body><main id="canvas-shell" aria-live="polite">Chatbook Canvas</main></body></html>
-"""
+_STATIC_ROOT = files("tldw_chatbook.Canvas").joinpath("static")
+_SHELL_HTML = _STATIC_ROOT.joinpath("canvas_shell.html").read_bytes()
+_SHELL_ASSETS: Mapping[str, tuple[str, str]] = MappingProxyType(
+    {
+        "canvas_shell.css": ("text/css", "utf-8"),
+        "canvas_shell.js": ("text/javascript", "utf-8"),
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1211,6 +1215,14 @@ class CanvasGateway:
         if self._request_shell_incarnation(request) is None:
             return _error_response("asset_not_found", 404)
         name = request.match_info["name"]
+        shell_asset = _SHELL_ASSETS.get(name)
+        if shell_asset is not None:
+            content_type, charset = shell_asset
+            return web.Response(
+                body=_STATIC_ROOT.joinpath(name).read_bytes(),
+                content_type=content_type,
+                charset=charset,
+            )
         assets = self._runtime_assets()
         inventory = {
             "canvas_renderer.js": assets.renderer_javascript,

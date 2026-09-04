@@ -3,18 +3,74 @@ from dataclasses import replace
 import pytest
 
 from tldw_chatbook.Chat import console_message_actions as message_actions
+from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleVariantSet,
 )
-from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_message_actions import (
     ConsoleMessageActionService,
     action_row_guide,
+    assistant_canvas_html_blocks,
 )
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
+
+
+def test_canvas_html_actions_use_parsed_fences_and_stable_block_identity():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        id="assistant-canvas",
+        role=ConsoleMessageRole.ASSISTANT,
+        content=(
+            "A prose mention of ```html is not a block.\n\n"
+            "```python\nprint('<p>not html</p>')\n```\n\n"
+            "```html\n<!doctype html><title>One</title><p>safe</p>\n```\n"
+        ),
+    )
+
+    blocks = assistant_canvas_html_blocks(message)
+    actions = service.available_actions(message)
+
+    assert len(blocks) == 1
+    assert blocks[0].identity == "assistant-canvas:canvas-html:0"
+    assert blocks[0].compatible is True
+    canvas_action_ids = [
+        action.action_id
+        for action in actions
+        if action.action_id.startswith("canvas-")
+    ]
+    assert canvas_action_ids == [
+        "canvas-open-0",
+        "canvas-open-new-0",
+    ]
+    result = service.dispatch("canvas-open-0", message)
+    assert result.status == "canvas_open_requested"
+    assert result.target_content == blocks[0].html
+    assert result.target_invocation_id == blocks[0].identity
+    open_as_new = service.dispatch("canvas-open-new-0", message)
+    assert open_as_new.status == "canvas_open_requested"
+    assert open_as_new.target_invocation_id is None
+
+
+def test_incompatible_canvas_html_prefills_repair_without_returning_source():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        id="assistant-incompatible",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="```html\n<script src='https://example.com/app.js'></script>\n```",
+    )
+
+    block = assistant_canvas_html_blocks(message)[0]
+    result = service.dispatch("canvas-open-0", message)
+
+    assert block.compatible is False
+    assert result.status == "canvas_repair_requested"
+    assert result.target_content is not None
+    assert "self-contained" in result.target_content
+    assert "https://example.com/app.js" not in result.target_content
+    assert result.target_invocation_id == block.identity
 
 
 def test_assistant_message_actions_include_required_order():

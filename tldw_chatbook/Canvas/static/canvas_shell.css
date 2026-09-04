@@ -1,0 +1,191 @@
+:root {
+  color-scheme: light dark;
+  --canvas: #f5f6f7;
+  --panel: #ffffff;
+  --surface: #eaedf0;
+  --surface-hover: #dde2e7;
+  --text: #161a1d;
+  --muted: #59636b;
+  --line: #c7cdd2;
+  --accent: #176b87;
+  --accent-soft: #d9edf4;
+  --success: #246b49;
+  --warning: #8a5a12;
+  --warning-soft: #fff4dc;
+  --error: #9a3232;
+  --focus: #0b7699;
+  font-family: monospace;
+  background: var(--canvas);
+  color: var(--text);
+}
+
+* { box-sizing: border-box; }
+
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+
+body { background: var(--canvas); }
+
+::selection { background: var(--accent); color: #fff; }
+
+button, input, select, textarea { font: inherit; color: inherit; }
+
+button, input, select {
+  min-height: 2.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.35rem;
+  background: var(--panel);
+}
+
+button { padding: 0.55rem 0.75rem; cursor: pointer; white-space: nowrap; }
+button:hover { background: var(--surface-hover); }
+button:disabled { cursor: not-allowed; color: var(--muted); background: var(--surface); }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.canvas-workbench { height: 100%; display: grid; grid-template-rows: auto auto auto 1fr; }
+
+.canvas-toolbar {
+  display: grid;
+  grid-template-columns: minmax(24rem, 1fr) auto;
+  grid-template-areas: "identity state" "provenance actions";
+  gap: 0.45rem 1rem;
+  padding: 0.65rem 0.8rem 0.55rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.canvas-identity, .canvas-state, .canvas-actions { display: flex; align-items: center; gap: 0.5rem; }
+.canvas-identity { grid-area: identity; min-width: 0; }
+.canvas-state { grid-area: state; justify-content: flex-end; }
+.canvas-actions { grid-area: actions; justify-content: flex-end; overflow-x: auto; padding: 0.1rem 0.15rem 0.25rem; scrollbar-width: thin; }
+.canvas-actions::-webkit-scrollbar { height: 0.5rem; }
+.canvas-actions::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 0.25rem; }
+.canvas-actions::-webkit-scrollbar-track { background: var(--surface); }
+.provenance { grid-area: provenance; color: var(--muted); font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+
+h1 { margin: 0 0.25rem 0 0; font-size: 1rem; white-space: nowrap; }
+#canvas-selector { width: min(14rem, 30vw); padding: 0 2rem 0 0.6rem; }
+#canvas-title { min-width: 8rem; width: min(22rem, 35vw); padding: 0 0.65rem; font-weight: 650; }
+
+.state-badge, .revision-label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.8rem;
+  padding: 0.25rem 0.5rem;
+  background: var(--surface);
+  border-radius: 0.25rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.state-follow { color: var(--success); }
+.state-pinned { color: var(--warning); background: var(--warning-soft); }
+.state-temporary { color: var(--warning); }
+.state-disconnected { color: var(--error); }
+
+.canvas-notice, .compatibility {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.8rem;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--line);
+  animation: canvas-update 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.canvas-notice[hidden], .compatibility[hidden] { display: none; }
+.canvas-notice > span, .compatibility > span { flex: 1; }
+.compatibility { background: var(--warning-soft); border: 1px solid var(--warning); }
+
+@keyframes canvas-update {
+  from { opacity: 0.65; clip-path: inset(0 100% 0 0); }
+  to { opacity: 1; clip-path: inset(0 0 0 0); }
+}
+
+.preview-stage { min-height: 0; position: relative; background: var(--surface); }
+#canvas-preview { width: 100%; height: 100%; border: 0; display: block; background: #fff; }
+.loading-state {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  background: var(--canvas);
+}
+.loading-state[hidden] { display: none; }
+
+.source-panel {
+  position: fixed;
+  z-index: 5;
+  inset: 0 0 0 auto;
+  width: min(52rem, 92vw);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+}
+.source-panel[hidden] { display: none; }
+.source-header { display: flex; align-items: start; gap: 1rem; padding: 1rem; border-bottom: 1px solid var(--line); }
+.source-header > div { flex: 1; }
+.source-header h2 { margin: 0 0 0.35rem; font-size: 1rem; }
+.source-header p { margin: 0; color: var(--muted); font-size: 0.8rem; line-height: 1.45; }
+#source-view { width: 100%; height: 100%; resize: none; border: 0; padding: 1rem; line-height: 1.5; background: #101417; color: #e8edef; caret-color: #73c5e0; scrollbar-color: #59636b #101417; }
+
+.scripts-disabled-recovery { max-width: 48rem; margin: 12vh auto; padding: 1.5rem; border: 1px solid var(--error); background: var(--panel); }
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --canvas: #111518;
+    --panel: #181e22;
+    --surface: #222a2f;
+    --surface-hover: #2b353b;
+    --text: #edf1f3;
+    --muted: #aab5bc;
+    --line: #3a454d;
+    --accent: #65b9d5;
+    --accent-soft: #193944;
+    --success: #79c79e;
+    --warning: #efbd68;
+    --warning-soft: #3b301e;
+    --error: #f18a8a;
+    --focus: #82d1eb;
+  }
+}
+
+@media (max-width: 760px) {
+  .canvas-toolbar {
+    grid-template-columns: 1fr;
+    grid-template-areas: "identity" "state" "actions" "provenance";
+    padding: 0.5rem;
+    gap: 0.35rem;
+  }
+  .canvas-identity { display: grid; grid-template-columns: minmax(6rem, 0.8fr) minmax(8rem, 1.2fr) auto; }
+  .canvas-identity h1 { display: none; }
+  #canvas-selector, #canvas-title { width: 100%; min-width: 0; }
+  .canvas-state { justify-content: flex-start; overflow-x: auto; }
+  .canvas-actions { justify-content: flex-start; margin-inline: -0.1rem; scrollbar-width: auto; }
+  .canvas-actions button { min-height: 2.6rem; }
+  .provenance { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
+}
