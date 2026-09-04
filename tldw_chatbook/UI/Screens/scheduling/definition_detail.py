@@ -527,6 +527,9 @@ class DefinitionDetail(Vertical):
         #: other small helper in this file's own Frequency-row editors).
         self._runs_on_cancel_button: Button | None = None
         self._runs_on_retry_button: Button | None = None
+        #: PR-3 task 5 fix round 1 (finding 2): see `task_detail.py`'s
+        #: own `_runs_on_transfer_errors`.
+        self._runs_on_transfer_errors: list[str] = []
 
     def compose(self) -> ComposeResult:
         """Compose the empty pane skeleton (populated by `set_definition`).
@@ -725,6 +728,7 @@ class DefinitionDetail(Vertical):
                 self._runs_on_cancel_button.display = False
             if self._runs_on_retry_button is not None:
                 self._runs_on_retry_button.display = False
+            self._runs_on_transfer_errors = []
             return
         empty_state.display = False
         body.display = True
@@ -814,23 +818,33 @@ class DefinitionDetail(Vertical):
 
     def _configure_runs_on_row(self, definition: dict[str, Any]) -> None:
         """Definition-pane counterpart of `task_detail.TaskDetail._
-        configure_runs_on_row` (PR-3 task 5) -- see that method's
-        docstring for the full three-state rationale (normal / in-flight
-        / `to_server_failed`) and for why the Cancel/Retry buttons are
-        plain `.display`-toggled siblings rather than `begin_edit`-
-        mounted into the row; only the state-read (dict key vs.
-        attribute) differs here."""
+        configure_runs_on_row` (PR-3 task 5, fix round 1 finding 2) --
+        see that method's docstring for the full rationale (affordance
+        stays ON unconditionally; `on_detail_value_row_activated` decides
+        dropdown-vs-show-why; Cancel/Retry are plain `.display`-toggled
+        siblings, never `begin_edit`-mounted into the row); only the
+        state-read (dict key vs. attribute) differs here."""
         row = self._runs_on_row
         assert row is not None
+        row.affordance = True
+        row.can_focus = True
         state = definition.get("transfer_state")
         failed = state == "to_server_failed"
         locked = failed or state in IN_FLIGHT_TRANSFER_STATES
-        row.affordance = not locked
-        row.can_focus = not locked
         assert self._runs_on_cancel_button is not None
         assert self._runs_on_retry_button is not None
         self._runs_on_cancel_button.display = locked
         self._runs_on_retry_button.display = failed
+
+    def _runs_on_failure_reason(self, definition: dict[str, Any]) -> str:
+        """Definition-pane counterpart of `task_detail.TaskDetail._
+        runs_on_failure_reason` (fix round 1 finding 2)."""
+        errors = self._runs_on_transfer_errors
+        if errors:
+            return "Last transfer error: " + "; ".join(errors)
+        return _TRANSFER_STATE_ROW_LABELS.get(
+            definition.get("transfer_state") or "", "This transfer failed."
+        )
 
     def on_detail_value_row_activated(self, event: DetailValueRow.Activated) -> None:
         """Open the activated row's editor, or -- locked -- show why
@@ -856,12 +870,21 @@ class DefinitionDetail(Vertical):
         definition = self._definition
         if definition is None:
             return
+        if (
+            row is self._runs_on_row
+            and definition.get("transfer_state") == "to_server_failed"
+        ):
+            # fix round 1 finding 2: same as the reminder pane -- not
+            # `_lifecycle_lock_reason`-covered, but the dropdown has
+            # nothing sensible to offer a failed row either.
+            row.show_error(self._runs_on_failure_reason(definition))
+            return
         row.clear_error()
 
         if row is self._runs_on_row:
-            # `_configure_runs_on_row` already refused this row's
-            # affordance for an in-flight/failed transfer -- reaching
-            # here means a normal, unlocked owner pick (spec §7 flow).
+            # A normal, unlocked owner pick (spec §7 flow) -- an
+            # in-flight row never reaches here: the top-of-function
+            # `_lifecycle_lock_reason` check above already intercepted it.
             current_owner = str(definition.get("owner_id") or "local")
             options = list(self._runs_on_options)
             if current_owner not in {value for _, value in options}:
@@ -1355,6 +1378,11 @@ class DefinitionDetail(Vertical):
             return
         self._definition["lifecycle"] = lifecycle
         self._refresh_lifecycle_button()
+
+    def set_runs_on_transfer_errors(self, errors: list[str]) -> None:
+        """Definition-pane counterpart of `task_detail.TaskDetail.set_
+        runs_on_transfer_errors` (fix round 1, finding 2)."""
+        self._runs_on_transfer_errors = list(errors)
 
     def set_lifecycle_lock(self, reason: str | None) -> None:
         """Freeze the Pause/Resume button while a transfer is in flight

@@ -184,6 +184,37 @@ def _cancel_toast_text(name: str) -> str:
     )
 
 
+def _pending_transfer_errors(
+    service: "SchedulingService", table_kind: str, row_id: str
+) -> list[str]:
+    """The stored `transfer_errors` from `row_id`'s queued transfer
+    mutation, or `[]` when none exist -- shared by `_update_transfer_
+    actions`'s existing Retry-button computation (reminders) and both
+    panes' Runs-on row (fix round 1, finding 2: same source `set_
+    transfer_reasons`'s own "Last transfer error: …" line already reads,
+    fed here rather than re-derived, one lookup per row)."""
+    mutation = service.db.get_pending_mutation_for_local_id(row_id, table_kind)
+    if mutation is None:
+        return []
+    errors = (mutation.get("payload") or {}).get("transfer_errors")
+    return list(errors) if errors else []
+
+
+def _definition_transfer_errors(
+    service: "SchedulingService", definition: dict[str, Any]
+) -> list[str]:
+    """`_pending_transfer_errors` for a definition dict, only when it is
+    actually `to_server_failed` -- a `to_server_failed` row is always
+    local-owned (a failed to_server transfer never became server-owned),
+    so `definition["id"]` is already the local id, no `_resolve_local_
+    definition_id` round trip needed (fix round 1, finding 2)."""
+    if definition.get("transfer_state") != "to_server_failed":
+        return []
+    return _pending_transfer_errors(
+        service, "automation_definition", str(definition.get("id"))
+    )
+
+
 #: Delayed second fetch of the run-history pane after a Run-now dispatch:
 #: the terminal audit event lands only after the server finishes executing
 #: the run, so an immediate fetch alone would usually miss it.
@@ -1484,6 +1515,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 retry_errors=[],
             )
             task_detail.set_lifecycle_lock(None)
+            task_detail.set_runs_on_transfer_errors([])
             return
 
         row = transfer_row_dict(task)
@@ -1515,14 +1547,7 @@ class SchedulesWorkbench(BaseAppScreen):
             # whatever server was active at the time of the failed
             # attempt, which silently stops matching after a server
             # switch if guessed instead of read.
-            mutation = service.db.get_pending_mutation_for_local_id(
-                task.id, "reminder_task"
-            )
-            if mutation is not None:
-                payload = mutation.get("payload") or {}
-                errors = payload.get("transfer_errors")
-                if errors:
-                    retry_errors = list(errors)
+            retry_errors = _pending_transfer_errors(service, "reminder_task", task.id)
 
         task_detail.set_transfer_reasons(
             to_server_reason=to_server_reason,
@@ -1534,6 +1559,10 @@ class SchedulesWorkbench(BaseAppScreen):
         # spec §6.3 read-only-except-cancel (final review I7). Applied
         # AFTER set_transfer_reasons, which owns the same reason Static.
         task_detail.set_lifecycle_lock(service.transfer_lock_reason(row))
+        # PR-3 task 5 fix round 1 (finding 2): the SAME `retry_errors`
+        # feeds the Runs-on row's own failure text -- one source, not a
+        # second derivation.
+        task_detail.set_runs_on_transfer_errors(retry_errors)
 
     def _refuse_if_transfer_locked(self, task: Any, verb: str) -> bool:
         """Notify and return True when ``task`` is read-only mid-transfer.
@@ -2610,10 +2639,19 @@ class SchedulesWorkbench(BaseAppScreen):
         name = str(definition.get("name") or definition.get("id") or "")
 
         def _refresh() -> None:
-            self._definitions_stale = True
             self._request_automations_refresh()
 
         async def _do() -> None:
+            # fix round 1 finding 1: unconditional, BEFORE resolving --
+            # same rule `_begin_automation_transfer`/`_cancel_automation_
+            # transfer` follow (schedules_workbench.py:2766-2778).
+            # `_resolve_local_definition_id` can itself mirror a brand
+            # new local row (`upsert_automation_definitions_from_server`)
+            # the first time a pure server-fetch definition is touched --
+            # regardless of which branch below this lands on (refused,
+            # failed, `local_id is None`, or a genuine success), the
+            # Automations tab's cached list may now be outdated.
+            self._definitions_stale = True
             local_id = await self._resolve_local_definition_id(service, definition)
             if local_id is None:
                 row.show_error(
@@ -3172,6 +3210,7 @@ class SchedulesWorkbench(BaseAppScreen):
             # Same fallback `_update_transfer_actions` uses for `TaskDetail`
             # when there is no service to derive a real reason from.
             detail.set_lifecycle_lock(None)
+            detail.set_runs_on_transfer_errors([])
             return
 
         run_count, last_run, unread_count, history_error = (
@@ -3199,6 +3238,11 @@ class SchedulesWorkbench(BaseAppScreen):
         # method's own docstring, same as `_update_transfer_actions` does
         # for the reminder pane.
         detail.set_lifecycle_lock(service.transfer_lock_reason(definition))
+        # PR-3 task 5 fix round 1 (finding 2): the Runs-on row's own
+        # failure text, same source the legacy Retry button would use.
+        detail.set_runs_on_transfer_errors(
+            _definition_transfer_errors(service, definition)
+        )
 
     async def _fetch_definition_detail_counts(
         self,
@@ -3277,6 +3321,7 @@ class SchedulesWorkbench(BaseAppScreen):
                     definition, run_count=0, last_run=None, unread_count=0
                 )
                 detail.set_lifecycle_lock(None)
+                detail.set_runs_on_transfer_errors([])
             return
         run_count, last_run, unread_count, history_error = (
             await self._fetch_definition_detail_counts(
@@ -3304,6 +3349,11 @@ class SchedulesWorkbench(BaseAppScreen):
         # same call, independently (each `DefinitionDetail` instance
         # locks itself; there's no shared state between them).
         detail.set_lifecycle_lock(service.transfer_lock_reason(definition))
+        # PR-3 task 5 fix round 1 (finding 2): same as the Automations-tab
+        # sibling instance above.
+        detail.set_runs_on_transfer_errors(
+            _definition_transfer_errors(service, definition)
+        )
 
     @on(DataTable.RowHighlighted, "#scheduling-automations-table")
     def _on_automations_row_highlighted(

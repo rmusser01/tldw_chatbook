@@ -582,6 +582,12 @@ class TaskDetail(Vertical):
         #: see `_configure_runs_on_row`). `None` until first `compose()`.
         self._runs_on_cancel_button: Button | None = None
         self._runs_on_retry_button: Button | None = None
+        #: PR-3 task 5 fix round 1 (finding 2): a `to_server_failed`
+        #: row's stored `transfer_errors`, threaded in by the workbench
+        #: (`set_runs_on_transfer_errors`) the SAME way it already feeds
+        #: the legacy Retry button's own reason line -- read by
+        #: `_runs_on_failure_reason` when the row is activated.
+        self._runs_on_transfer_errors: list[str] = []
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -1026,37 +1032,57 @@ class TaskDetail(Vertical):
             row.can_focus = editable
 
     def _configure_runs_on_row(self, task: ReminderTask) -> None:
-        """Wire the Runs-on row's dropdown-vs-Cancel/Retry state (PR-3
+        """Wire the Runs-on row's Cancel/Retry button visibility (PR-3
         task 5).
 
-        Three states, keyed off `task.transfer_state`: normal (affordance
-        on, the owner-picker `Select` opens on activation, both buttons
-        hidden); in flight (`IN_FLIGHT_TRANSFER_STATES` -- affordance
-        off, Cancel shown); `to_server_failed` (affordance off, BOTH
-        Cancel and Retry shown -- `cancel_refusal`/the PR-5 retry leg
-        both allow this substate, mirroring the existing buttons' own
-        Retry-alongside-Cancel visibility rule).
+        `row.affordance`/`can_focus` stay ON unconditionally (ruling 3:
+        "dropdown always renders") -- unlike the Frequency rows' kind
+        gating, nothing about the owner row ever makes activation itself
+        unreachable; `on_detail_value_row_activated` is what decides
+        whether activating it opens the dropdown or shows why not (fix
+        round 1 finding 2: a locked/failed row must not go silently
+        inert, same idiom the Frequency rows already use for their own
+        lock reason).
 
-        The two buttons are plain always-mounted siblings of the row,
-        toggled via `.display` -- deliberately NOT `begin_edit`-mounted
-        INTO the row: `begin_edit` hides the row's own value `Static`
-        (`#scheduling-detail-runs-on`), and the existing transfer-badge
-        rendering (`_reminder_runs_on_label`'s suffix, painted into that
-        SAME Static by `set_task` above) is pinned verbatim by an
-        existing test -- this row's value must stay readable while the
-        actions show, not be replaced by them.
+        The Cancel[/Retry] buttons are plain always-mounted siblings of
+        the row, toggled via `.display` -- deliberately NOT `begin_edit`-
+        mounted INTO the row: `begin_edit` hides the row's own value
+        `Static` (`#scheduling-detail-runs-on`), and the existing
+        transfer-badge rendering (`_reminder_runs_on_label`'s suffix,
+        painted into that SAME Static by `set_task` above) is pinned
+        verbatim by an existing test -- this row's value must stay
+        readable while the actions show, not be replaced by them.
+        `to_server_failed` shows BOTH (`cancel_refusal`/the PR-5 retry
+        leg both allow this substate, mirroring the existing buttons'
+        own Retry-alongside-Cancel visibility rule); any other in-flight
+        state shows Cancel only.
         """
         row = self._runs_on_row
         assert row is not None
+        row.affordance = True
+        row.can_focus = True
         state = task.transfer_state
         failed = state == "to_server_failed"
         locked = failed or state in IN_FLIGHT_TRANSFER_STATES
-        row.affordance = not locked
-        row.can_focus = not locked
         assert self._runs_on_cancel_button is not None
         assert self._runs_on_retry_button is not None
         self._runs_on_cancel_button.display = locked
         self._runs_on_retry_button.display = failed
+
+    def _runs_on_failure_reason(self, task: ReminderTask) -> str:
+        """The Runs-on row's own `to_server_failed` explanation (fix
+        round 1 finding 2): the SAME "Last transfer error: …" copy
+        `set_transfer_reasons` already renders for the legacy Retry
+        button, reusing the SAME stored `transfer_errors` (threaded in
+        by `set_runs_on_transfer_errors`) -- falls back to the plain
+        state label when no stored errors exist (e.g. a row that failed
+        before this field existed)."""
+        errors = self._runs_on_transfer_errors
+        if errors:
+            return "Last transfer error: " + "; ".join(errors)
+        return _TRANSFER_STATE_ROW_LABELS.get(
+            task.transfer_state or "", "This transfer failed."
+        )
 
     def on_detail_value_row_activated(self, event: DetailValueRow.Activated) -> None:
         """Open the activated Frequency/Runs-on row's editor, or -- locked
@@ -1077,11 +1103,21 @@ class TaskDetail(Vertical):
         task = self._current_task
         if not isinstance(task, ReminderTask):
             return
+        if row is self._runs_on_row and task.transfer_state == "to_server_failed":
+            # fix round 1 finding 2: `_lifecycle_lock_reason` does not
+            # cover `to_server_failed` (it is not "locked" for the OTHER
+            # rows -- editing before a retry is meant to work there), but
+            # the Runs-on row's own dropdown has nothing sensible to
+            # offer a failed row either -- show why instead of opening it.
+            row.show_error(self._runs_on_failure_reason(task))
+            return
         row.clear_error()
         if row is self._runs_on_row:
-            # `_configure_runs_on_row` already refused this row's
-            # affordance for an in-flight/failed transfer -- reaching
-            # here means a normal, unlocked owner pick (spec §7 flow).
+            # A normal, unlocked owner pick (spec §7 flow) -- an
+            # in-flight row never reaches here at all: the top-of-
+            # function `_lifecycle_lock_reason` check above already
+            # intercepted it (that reason IS `transfer_lock_reason`,
+            # which covers every `IN_FLIGHT_TRANSFER_STATES` member).
             current_owner = task.owner_id or "local"
             options = list(self._runs_on_options)
             if current_owner not in {value for _, value in options}:
@@ -1291,6 +1327,7 @@ class TaskDetail(Vertical):
                 self._runs_on_cancel_button.display = False
             if self._runs_on_retry_button is not None:
                 self._runs_on_retry_button.display = False
+            self._runs_on_transfer_errors = []
             return
 
         empty_state.display = False
@@ -1546,6 +1583,15 @@ class TaskDetail(Vertical):
         self.query_one("#scheduling-transfer-why", Static).update(
             "\n".join(reason_lines)
         )
+
+    def set_runs_on_transfer_errors(self, errors: list[str]) -> None:
+        """Cache a `to_server_failed` row's stored `transfer_errors` (PR-3
+        task 5 fix round 1, finding 2) for `_runs_on_failure_reason` --
+        called by the workbench right alongside `set_transfer_reasons`,
+        fed from the SAME `retry_errors` list that already backs the
+        legacy Retry button's own reason line (one source, not a second
+        derivation)."""
+        self._runs_on_transfer_errors = list(errors)
 
     def set_lifecycle_lock(self, reason: str | None) -> None:
         """Freeze Edit/Enable/Disable/Delete while a transfer is in flight.
