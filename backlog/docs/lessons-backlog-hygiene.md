@@ -83,6 +83,20 @@ carried a bad number.
   Historical refs remain useful collision-discovery inputs, but they are immutable
   snapshots—not a uniqueness invariant a feature PR can retroactively repair.
 
+- **2026-09-04, Console rail colour grammar (TASK-31429, formerly 31420).** A
+  one-command sweep, `git log --all --diff-filter=A --name-only -- backlog/`,
+  reported max **31419** and "0 files named task-31420" — and was wrong on the
+  second count within the hour: PR #2383 had landed a *different* `task-31420`
+  on dev as a **merge commit**, and `git log` without `-m` lists no file adds
+  for merge commits, so the sweep could see every branch commit that was still
+  around but not a squash/merge-only add. The collision surfaced only because
+  another session's memory note named the id. Fix was the older-keeps-id rule
+  (theirs: created 19:28; mine: 22:30 → mine renumbered to 31429 with
+  provenance). **Sweep with `git ls-tree -r --name-only <ref> backlog/` per
+  ref (the loop above) or add `-m` to any `git log --all` shortcut**, and
+  re-run the sweep right before pushing — the id was free at filing and taken
+  at PR time.
+
 **What to do.** Before filing, sweep **every remote ref** plus every worktree, and
 re-check at merge time — dev moves under you. Never trust the CLI's auto-assignment.
 When a collision is found after both tasks have started, use add-commit provenance:

@@ -139,6 +139,7 @@ from dataclasses import replace
 from functools import partial
 from typing import Any, Dict, Iterable, TYPE_CHECKING
 
+import re
 import time
 
 from loguru import logger
@@ -181,6 +182,34 @@ _AGENT_STATUS_GLYPHS: Dict[str, str] = {
     "error": "✗",
     "cancelled": "✗",
 }
+
+#: TASK-31429: the rail's Agent status line ("Agent: running · step 3",
+#: "Sub-agent · done") carries its run status as the first word after the
+#: prefix; that word selects the line's `$ds-status-*` colour class.
+_AGENT_STATUS_LINE_RE = re.compile(r"^(?:Agent:|Sub-agent ·)\s*([a-z-]+)")
+
+
+def console_agent_status_state(status_line: str) -> str:
+    """Return the run status a rail status line carries, or "" to stay uncoloured.
+
+    Only the statuses in ``_AGENT_STATUS_GLYPHS`` are colour-worthy; "idle",
+    "unavailable", and anything unrecognised return "".
+    """
+    match = _AGENT_STATUS_LINE_RE.match(status_line or "")
+    status = match.group(1) if match else ""
+    return status if status in _AGENT_STATUS_GLYPHS else ""
+
+
+def apply_console_agent_status_state(widget: Any, status_line: str) -> None:
+    """Swap ``widget``'s ``console-agent-section-status-<state>`` class to match.
+
+    Exactly one state class (or none) is present after the call; the base
+    classes are left alone.
+    """
+    state = console_agent_status_state(status_line)
+    for status in _AGENT_STATUS_GLYPHS:
+        widget.set_class(status == state, f"console-agent-section-status-{status}")
+
 
 #: The ``ConsoleInspectorSection.section_id`` the fleet mini-section is
 #: constructed with (``left_rail.py``'s ``compose()``) and the id

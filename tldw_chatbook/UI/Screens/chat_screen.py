@@ -121,6 +121,7 @@ from ..Console_Modules.hands_free import (
 from ..Console_Modules.agent import (
     CONSOLE_AGENT_CANCEL_ALL_ID,
     CONSOLE_AGENT_FLEET_SECTION_ID,
+    apply_console_agent_status_state,
 )
 from ..Console_Modules.prompt_queue import (
     ConsolePromptDispatchStatus,
@@ -7784,6 +7785,12 @@ class ChatScreen(BaseAppScreen):
         ) = payload
         try:
             self.query_one("#console-agent-section-status", Static).update(status_line)
+            # TASK-31429: the run status word also picks the line's colour.
+            # (Separate lookup on purpose: the timer-path census pins the
+            # `.update()` receiver expression above.)
+            apply_console_agent_status_state(
+                self.query_one("#console-agent-section-status", Static), status_line
+            )
             self.query_one("#console-agent-section-steps", Static).update(steps_text)
             fleet_section = self.query_one(
                 "#console-agent-section-subagents", ConsoleInspectorSection

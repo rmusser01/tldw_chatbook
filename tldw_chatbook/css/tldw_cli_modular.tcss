@@ -103,6 +103,14 @@ $ds-source-role-context: $accent;
 $ds-source-role-evidence: $accent;
 $ds-source-role-editable-target: $warning;
 $ds-source-role-output-seed: $secondary;
+/* TASK-31429: Console context-rail colour grammar. Primary hue = what you
+   are in (active workspace, active/selected conversation); accent hue = a
+   value beside a muted label. Both are references to Textual's generated
+   per-theme text tints, so every theme -- built-in, Orb, or user-saved --
+   recolors the rail; themes.py pins the two generated names to AA-readable
+   values where Textual's 66% tint falls short (see ensure_readable_text_hues). */
+$ds-active-fg: $text-primary;
+$ds-value-fg: $text-accent;
 
 /* Console transcript speaker accents. Textual exposes whether the active
    theme is dark or light as an App class; the two assistant tones keep the
