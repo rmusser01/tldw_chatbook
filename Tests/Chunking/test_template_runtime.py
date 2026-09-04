@@ -135,6 +135,20 @@ class TestTemplateFromRecord:
 
 
 class TestApplyTemplate:
+    @pytest.mark.parametrize("options", [None, {"method": None}, {"method": " WORDS "}])
+    def test_saved_apply_does_not_claim_exact_mapping_for_normalized_repetitions(
+        self, options
+    ):
+        template = {
+            "chunking": {"method": "words", "config": {"max_size": 2, "overlap": 0}}
+        }
+        output = tr.apply_template(template, "one  two one two", options)
+        assert [chunk["text"] for chunk in output] == ["one two", "one two"]
+        assert all(
+            chunk["provenance"]["mapping"]["status"] == "unavailable"
+            for chunk in output
+        )
+
     def test_legacy_apply_does_not_use_strict_lab_admission(self):
         template = {
             "chunking": {"method": "words", "config": {"max_size": 2, "overlap": 0}},

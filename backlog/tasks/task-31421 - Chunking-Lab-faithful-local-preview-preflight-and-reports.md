@@ -80,3 +80,24 @@ passes. Warnings: pre-existing RequestsDependencyWarning and vendored
 method is counted as passing evidence, no dependencies were changed, and no full
 suite was run. Detailed RED/GREEN history and capability matrix are in the local
 handoff `.superpowers/sdd/2026-09-04-chunking-lab/task-1-report.md`.
+
+### Review fix round 1
+
+Fixed the reviewed mixed-whitespace attribution defect: `one  two one two`
+emits two `one two` chunks, but the first must not borrow the second occurrence's
+exact span. The shared seam now conservatively marks word mappings unavailable
+when whitespace normalization changes the processed document; no originating
+engine windows are exposed to prove attribution in that case. It observes the
+engine's resolved method, including legacy method overrides, and leaves actual
+chunk output and fixed-size exact mappings intact. Added double-space, tab,
+newline, saved-apply, and override regressions under the isolated pytest harness.
+ADR-118's verified-or-unavailable policy applies; vendor/parity code is unchanged.
+
+```text
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Chunking/test_lab_preflight.py Tests/Chunking/test_lab_execution.py Tests/Chunking/test_template_runtime.py Tests/RAG_Admin/test_template_validation.py -q
+115 passed, 2 warnings in 3.93s
+```
+
+Ruff checks and modified-range formatting pass using the same documented
+baseline runtime lint exclusions. `git diff --check` passes. Still In Progress
+pending re-review; no unisolated application imports were used in this fix round.

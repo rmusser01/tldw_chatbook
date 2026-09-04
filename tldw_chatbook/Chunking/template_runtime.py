@@ -614,11 +614,19 @@ class _ReportingChunker(Chunker):
     """Observe the engine's actual sanitation without copying its algorithm."""
 
     sanitized_text: str | None = None
+    resolved_method: str | None = None
 
     def _sanitize_input(self, text: str, **kwargs: Any) -> str:
         result = super()._sanitize_input(text, **kwargs)
         if self.sanitized_text is None:
             self.sanitized_text = result
+        return result
+
+    def _resolve_method(
+        self, method: Any, language: str | None, options: dict | None = None
+    ) -> str:
+        result = super()._resolve_method(method, language, options)
+        self.resolved_method = result
         return result
 
 
@@ -650,6 +658,10 @@ def _execute_report(
         pre_events.append(
             {"operation": "engine_sanitize", "changed_text": True, "metadata": {}}
         )
+    word_spacing_changed = (
+        chunker.resolved_method == "words"
+        and " ".join(transformed.split()) != transformed
+    )
     records = []
     for index, raw in enumerate(data.get("chunks", [])):
         raw = {"text": raw, "metadata": {}} if isinstance(raw, str) else deepcopy(raw)
@@ -671,8 +683,14 @@ def _execute_report(
                 "operations": [],
             },
         }
-        # Uniqueness is essential: matching the first occurrence is not attribution.
-        start = transformed.find(chunk_text) if chunk_text else -1
+        # Word normalization can make one window equal a different source window.
+        # Until the processor exposes originating windows, refuse these maps even
+        # when the normalized output has one exact match elsewhere in the source.
+        start = (
+            transformed.find(chunk_text)
+            if chunk_text and not word_spacing_changed
+            else -1
+        )
         if start >= 0 and transformed.find(chunk_text, start + 1) < 0:
             record["span"] = {
                 "start": start,
@@ -683,7 +701,11 @@ def _execute_report(
         else:
             record["provenance"]["mapping"] = {
                 "status": "unavailable",
-                "reason": "Output is not a unique exact substring of processed text",
+                "reason": (
+                    "Word chunking normalizes source whitespace; originating windows are unavailable"
+                    if word_spacing_changed
+                    else "Output is not a unique exact substring of processed text"
+                ),
             }
         records.append(record)
     original_texts = [record["text"] for record in records]

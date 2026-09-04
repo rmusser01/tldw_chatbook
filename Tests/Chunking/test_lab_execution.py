@@ -84,6 +84,31 @@ def test_exact_span_survives_filter_and_repeated_text_is_not_guessed():
     )
 
 
+@pytest.mark.parametrize(
+    "source", ["one  two one two", "one two one\ttwo", "one\ntwo one two"]
+)
+def test_normalized_word_chunks_cannot_borrow_another_occurrences_span(source):
+    report = run(words(), source)
+    assert [chunk["text"] for chunk in report.chunks] == ["one two", "one two"]
+    assert all("span" not in chunk for chunk in report.chunks)
+    assert all(
+        chunk["provenance"]["mapping"]["status"] == "unavailable"
+        for chunk in report.chunks
+    )
+
+
+def test_fixed_size_preserves_exact_whitespace_without_word_normalization():
+    body = {
+        "chunking": {"method": "fixed_size", "config": {"max_size": 2, "overlap": 0}}
+    }
+    report = run(body, "a  b")
+    assert [chunk["text"] for chunk in report.chunks] == ["a ", " b"]
+    assert [chunk["span"] for chunk in report.chunks] == [
+        {"start": 0, "end": 2, "coordinate_space": "source"},
+        {"start": 2, "end": 4, "coordinate_space": "source"},
+    ]
+
+
 def test_preprocessing_metadata_and_transformed_coordinates_survive():
     report = run(
         words(
