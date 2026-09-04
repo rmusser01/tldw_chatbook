@@ -50,6 +50,15 @@ class StagedCanvasRead:
     render_plan: CanvasRenderPlan = field(repr=False)
 
 
+@dataclass(frozen=True, slots=True, eq=False)
+class CanvasStagingOwner:
+    """Process-only incarnation fence for one temporary Console session."""
+
+    session_id: str
+    incarnation: int
+    _nonce: object = field(default_factory=object, repr=False, compare=False)
+
+
 @dataclass(frozen=True, slots=True)
 class _StagedRevision:
     info: CanvasRevisionInfo
@@ -82,6 +91,8 @@ class CanvasPromotionContribution:
     documents: tuple[_PromotionDocument, ...]
     revisions: tuple[_PromotionRevision, ...] = field(repr=False)
     reopen_canvas_id: str | None
+    _owner: CanvasStagingOwner = field(repr=False, compare=False)
+    _lease: object = field(repr=False, compare=False)
 
     def __repr__(self) -> str:
         return (
@@ -92,19 +103,19 @@ class CanvasPromotionContribution:
             f"reopen_canvas_id={self.reopen_canvas_id!r})"
         )
 
-    def write(
+    def write_exact(
         self,
         *,
         writer: ConsoleTransactionWriter,
         conversation_id: str,
-        message_ids: Mapping[str, str],
+        native_message_ids: Mapping[str, str],
     ) -> None:
         """Insert the complete graph through the caller-owned transaction."""
 
         try:
             revision_rows: list[tuple[object, ...]] = []
             for revision in self.revisions:
-                durable_origin = message_ids.get(revision.info.origin.message_id)
+                durable_origin = native_message_ids.get(revision.info.origin.message_id)
                 if not isinstance(durable_origin, str) or not durable_origin:
                     raise ValueError("origin_mapping_missing")
                 revision_rows.append(
@@ -190,14 +201,48 @@ class CanvasStagingStore:
             raise TypeError("repository_limits must be CanvasRepositoryLimits")
         if type(max_staged_source_bytes) is not int or max_staged_source_bytes <= 0:
             raise ValueError("max_staged_source_bytes must be a positive integer")
-        self._max_staged_source_bytes = max_staged_source_bytes
+        self._max_staged_source_bytes = min(
+            max_staged_source_bytes,
+            self._limits.max_source_bytes_per_conversation,
+        )
         self._sessions: dict[str, _SessionState] = {}
+        self._active_owners: dict[str, CanvasStagingOwner] = {}
+        self._incarnations: dict[str, int] = {}
+        self._promotion_leases: dict[str, object] = {}
+        self._runtime_closed = False
         self._lock = RLock()
+
+    def activate_session(self, session_id: str) -> CanvasStagingOwner:
+        """Activate one server-owned temporary session incarnation."""
+
+        self._id(session_id, "session_id")
+        with self._lock:
+            if self._runtime_closed:
+                raise CanvasStagingError("runtime_closed")
+            incarnation = self._incarnations.get(session_id, 0) + 1
+            owner = CanvasStagingOwner(session_id, incarnation)
+            self._incarnations[session_id] = incarnation
+            self._active_owners[session_id] = owner
+            self._sessions.pop(session_id, None)
+            self._promotion_leases.pop(session_id, None)
+            return owner
+
+    def session_owner(self, session_id: str) -> CanvasStagingOwner:
+        """Return the current process-only owner to trusted server code."""
+
+        self._id(session_id, "session_id")
+        with self._lock:
+            if self._runtime_closed:
+                raise CanvasStagingError("runtime_closed")
+            owner = self._active_owners.get(session_id)
+            if owner is None:
+                raise CanvasStagingError("session_retired")
+            return owner
 
     def create_canvas(
         self,
         *,
-        session_id: str,
+        owner: CanvasStagingOwner,
         run_id: str,
         tool_call_id: str,
         title: str,
@@ -206,7 +251,7 @@ class CanvasStagingStore:
     ) -> CanvasMutationResult:
         """Compile and stage one temporary Canvas root revision."""
 
-        self._id(session_id, "session_id")
+        self._require_owner_active(owner)
         self._id(run_id, "run_id")
         self._id(tool_call_id, "tool_call_id")
         title = self._title(title)
@@ -214,10 +259,10 @@ class CanvasStagingStore:
         self._id(origin_message_id, "origin_message_id")
         request = self._request("create", title, source, origin_message_id)
         with self._lock:
-            replay = self._replay(session_id, run_id, tool_call_id, request)
+            state = self._mutable_state(owner, create=True)
+            replay = self._replay(state, run_id, tool_call_id, request)
             if replay is not None:
                 return replay
-            state = self._sessions.setdefault(session_id, _SessionState())
             if len(state.documents) >= self._limits.max_canvases_per_conversation:
                 raise CanvasStagingError("canvas_count")
             plan = self._compile(source)
@@ -254,7 +299,7 @@ class CanvasStagingStore:
     def update_canvas(
         self,
         *,
-        session_id: str,
+        owner: CanvasStagingOwner,
         run_id: str,
         tool_call_id: str,
         canvas_id: str,
@@ -264,7 +309,7 @@ class CanvasStagingStore:
     ) -> CanvasMutationResult:
         """Compile and append one complete replacement from an exact parent."""
 
-        self._id(session_id, "session_id")
+        self._require_owner_active(owner)
         self._id(run_id, "run_id")
         self._id(tool_call_id, "tool_call_id")
         self._uuid(canvas_id, "canvas_id")
@@ -279,12 +324,11 @@ class CanvasStagingStore:
             origin_message_id,
         )
         with self._lock:
-            replay = self._replay(session_id, run_id, tool_call_id, request)
+            state = self._mutable_state(owner)
+            replay = self._replay(state, run_id, tool_call_id, request)
             if replay is not None:
                 return replay
-            state, parent = self._parent(
-                session_id, canvas_id, expected_parent_revision_id
-            )
+            parent = self._parent(state, canvas_id, expected_parent_revision_id)
             self._require_revision_capacity(state, canvas_id)
             plan = self._compile(source)
             source_bytes = plan.source_identity.source_bytes
@@ -305,7 +349,7 @@ class CanvasStagingStore:
     def rename_canvas(
         self,
         *,
-        session_id: str,
+        owner: CanvasStagingOwner,
         run_id: str,
         tool_call_id: str,
         canvas_id: str,
@@ -315,7 +359,7 @@ class CanvasStagingStore:
     ) -> CanvasMutationResult:
         """Append a title-only revision from an exact selected parent."""
 
-        self._id(session_id, "session_id")
+        self._require_owner_active(owner)
         self._id(run_id, "run_id")
         self._id(tool_call_id, "tool_call_id")
         self._uuid(canvas_id, "canvas_id")
@@ -330,12 +374,11 @@ class CanvasStagingStore:
             origin_message_id,
         )
         with self._lock:
-            replay = self._replay(session_id, run_id, tool_call_id, request)
+            state = self._mutable_state(owner)
+            replay = self._replay(state, run_id, tool_call_id, request)
             if replay is not None:
                 return replay
-            state, parent = self._parent(
-                session_id, canvas_id, expected_parent_revision_id
-            )
+            parent = self._parent(state, canvas_id, expected_parent_revision_id)
             self._require_revision_capacity(state, canvas_id)
             self._require_session_capacity(state, parent.info.source_bytes)
             return self._append(
@@ -372,9 +415,16 @@ class CanvasStagingStore:
         """Freeze the exact graph currently owned by one temporary session."""
 
         with self._lock:
+            if self._runtime_closed:
+                raise CanvasStagingError("runtime_closed")
+            owner = self._active_owners.get(session_id)
             state = self._sessions.get(session_id)
-            if state is None or not state.revisions:
+            if owner is None or state is None or not state.revisions:
                 return None
+            if session_id in self._promotion_leases:
+                raise CanvasStagingError("promotion_in_flight")
+            lease = object()
+            self._promotion_leases[session_id] = lease
             documents = tuple(
                 _PromotionDocument(canvas_id, created_at)
                 for canvas_id, created_at in sorted(state.documents.items())
@@ -395,6 +445,8 @@ class CanvasStagingStore:
                 documents=documents,
                 revisions=revisions,
                 reopen_canvas_id=state.selected_canvas_id,
+                _owner=owner,
+                _lease=lease,
             )
 
     def confirm_contribution(
@@ -408,9 +460,28 @@ class CanvasStagingStore:
                 state is None
                 or contribution.session_id != session_id
                 or state.generation != contribution.generation
+                or self._active_owners.get(session_id) is not contribution._owner
+                or self._promotion_leases.get(session_id) is not contribution._lease
             ):
                 return False
             self._sessions.pop(session_id, None)
+            self._active_owners.pop(session_id, None)
+            self._promotion_leases.pop(session_id, None)
+            return True
+
+    def abort_contribution(
+        self, session_id: str, contribution: CanvasPromotionContribution
+    ) -> bool:
+        """Release only the exact failed promotion lease, retaining staged state."""
+
+        with self._lock:
+            if (
+                contribution.session_id != session_id
+                or self._active_owners.get(session_id) is not contribution._owner
+                or self._promotion_leases.get(session_id) is not contribution._lease
+            ):
+                return False
+            self._promotion_leases.pop(session_id, None)
             return True
 
     def discard_session(self, session_id: str) -> None:
@@ -418,12 +489,25 @@ class CanvasStagingStore:
 
         with self._lock:
             self._sessions.pop(session_id, None)
+            self._active_owners.pop(session_id, None)
+            self._promotion_leases.pop(session_id, None)
 
     def discard_all(self) -> None:
-        """Destroy all process-local Canvas state at explicit app teardown."""
+        """Retire every current owner while leaving the runtime reusable."""
 
         with self._lock:
             self._sessions.clear()
+            self._active_owners.clear()
+            self._promotion_leases.clear()
+
+    def close_runtime(self) -> None:
+        """Permanently retire this staging runtime and every current owner."""
+
+        with self._lock:
+            self._runtime_closed = True
+            self._sessions.clear()
+            self._active_owners.clear()
+            self._promotion_leases.clear()
 
     def staged_revision_count(self, session_id: str) -> int:
         """Return a content-free diagnostic count for lifecycle coordination."""
@@ -489,16 +573,14 @@ class CanvasStagingStore:
 
     def _replay(
         self,
-        session_id: str,
+        state: _SessionState,
         run_id: str,
         tool_call_id: str,
         request: tuple[object, ...],
     ) -> CanvasMutationResult | None:
-        self._id(session_id, "session_id")
         self._id(run_id, "run_id")
         self._id(tool_call_id, "tool_call_id")
-        state = self._sessions.get(session_id)
-        prior = state.idempotency.get((run_id, tool_call_id)) if state else None
+        prior = state.idempotency.get((run_id, tool_call_id))
         if prior is None:
             return None
         if prior[0] != request:
@@ -506,15 +588,46 @@ class CanvasStagingStore:
         return prior[1]
 
     def _parent(
-        self, session_id: str, canvas_id: str, revision_id: str
-    ) -> tuple[_SessionState, _StagedRevision]:
+        self, state: _SessionState, canvas_id: str, revision_id: str
+    ) -> _StagedRevision:
         self._uuid(canvas_id, "canvas_id")
         self._uuid(revision_id, "revision_id")
-        state = self._sessions.get(session_id)
-        revision = state.revisions.get(revision_id) if state else None
+        revision = state.revisions.get(revision_id)
         if revision is None or revision.info.canvas_id != canvas_id:
             raise CanvasStagingError("parent_not_found")
-        return state, revision
+        return revision
+
+    def _mutable_state(
+        self, owner: CanvasStagingOwner, *, create: bool = False
+    ) -> _SessionState:
+        if self._runtime_closed:
+            raise CanvasStagingError("runtime_closed")
+        if (
+            not isinstance(owner, CanvasStagingOwner)
+            or self._active_owners.get(owner.session_id) is not owner
+        ):
+            raise CanvasStagingError("session_retired")
+        if owner.session_id in self._promotion_leases:
+            raise CanvasStagingError("promotion_in_flight")
+        state = self._sessions.get(owner.session_id)
+        if state is None:
+            if not create:
+                raise CanvasStagingError("session_empty")
+            state = _SessionState()
+            self._sessions[owner.session_id] = state
+        return state
+
+    def _require_owner_active(self, owner: CanvasStagingOwner) -> None:
+        with self._lock:
+            if self._runtime_closed:
+                raise CanvasStagingError("runtime_closed")
+            if (
+                not isinstance(owner, CanvasStagingOwner)
+                or self._active_owners.get(owner.session_id) is not owner
+            ):
+                raise CanvasStagingError("session_retired")
+            if owner.session_id in self._promotion_leases:
+                raise CanvasStagingError("promotion_in_flight")
 
     def _compile(self, source: str) -> CanvasRenderPlan:
         source_bytes = self._source_bytes(source)

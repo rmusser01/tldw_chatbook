@@ -24,8 +24,12 @@ def _create(
     tool_call_id: str = "call-create",
     source: str | None = None,
 ):
+    try:
+        owner = store.session_owner(session_id)
+    except CanvasStagingError:
+        owner = store.activate_session(session_id)
     return store.create_canvas(
-        session_id=session_id,
+        owner=owner,
         run_id=run_id,
         tool_call_id=tool_call_id,
         title="Trip planner",
@@ -40,7 +44,7 @@ def test_temporary_create_update_and_historical_rename_form_immutable_chain() ->
     store = CanvasStagingStore()
     created = _create(store)
     updated = store.update_canvas(
-        session_id="session-a",
+        owner=store.session_owner("session-a"),
         run_id="run-b",
         tool_call_id="call-update",
         canvas_id=created.revision.canvas_id,
@@ -49,7 +53,7 @@ def test_temporary_create_update_and_historical_rename_form_immutable_chain() ->
         origin_message_id="assistant-native-2",
     )
     renamed = store.rename_canvas(
-        session_id="session-a",
+        owner=store.session_owner("session-a"),
         run_id="run-c",
         tool_call_id="call-rename",
         canvas_id=created.revision.canvas_id,
@@ -112,7 +116,7 @@ def test_update_replay_returns_same_revision_without_recompiling() -> None:
     store = CanvasStagingStore(compiler=counting_compiler)
     created = _create(store)
     arguments = {
-        "session_id": "session-a",
+        "owner": store.session_owner("session-a"),
         "run_id": "run-update",
         "tool_call_id": "call-update",
         "canvas_id": created.revision.canvas_id,
@@ -156,7 +160,7 @@ def test_aggregate_source_cap_is_per_session_and_failure_does_not_stage() -> Non
 
     with pytest.raises(CanvasStagingError) as captured:
         store.update_canvas(
-            session_id="session-a",
+            owner=store.session_owner("session-a"),
             run_id="run-b",
             tool_call_id="call-update",
             canvas_id=created.revision.canvas_id,
@@ -191,7 +195,7 @@ def test_default_aggregate_source_cap_accepts_eight_mib_and_rejects_next_snapsho
     parent_id = created.revision.revision_id
     for index in range(15):
         renamed = store.rename_canvas(
-            session_id="session-a",
+            owner=store.session_owner("session-a"),
             run_id=f"rename-{index}",
             tool_call_id=f"call-{index}",
             canvas_id=created.revision.canvas_id,
@@ -203,7 +207,7 @@ def test_default_aggregate_source_cap_accepts_eight_mib_and_rejects_next_snapsho
 
     with pytest.raises(CanvasStagingError, match="session_source_bytes"):
         store.rename_canvas(
-            session_id="session-a",
+            owner=store.session_owner("session-a"),
             run_id="rename-overflow",
             tool_call_id="call-overflow",
             canvas_id=created.revision.canvas_id,
@@ -225,7 +229,7 @@ def test_staging_respects_central_canvas_and_revision_count_limits() -> None:
     store = CanvasStagingStore(repository_limits=limits)
     created = _create(store)
     updated = store.update_canvas(
-        session_id="session-a",
+        owner=store.session_owner("session-a"),
         run_id="run-update",
         tool_call_id="call-update",
         canvas_id=created.revision.canvas_id,
@@ -236,7 +240,7 @@ def test_staging_respects_central_canvas_and_revision_count_limits() -> None:
 
     with pytest.raises(CanvasStagingError, match="revision_count"):
         store.rename_canvas(
-            session_id="session-a",
+            owner=store.session_owner("session-a"),
             run_id="run-rename",
             tool_call_id="call-rename",
             canvas_id=created.revision.canvas_id,
@@ -304,23 +308,155 @@ def test_compiler_failure_is_source_free_and_does_not_stage() -> None:
     assert store.staged_revision_count("session-a") == 0
 
 
-def test_compare_and_confirm_does_not_discard_newer_staged_state() -> None:
-    """Confirming an old snapshot unconditionally can erase a concurrent revision."""
+def test_exact_promotion_confirm_clears_leased_staged_state() -> None:
+    """A successful transaction must clear its exact frozen contribution."""
 
     store = CanvasStagingStore()
-    created = _create(store)
+    _create(store)
     contribution = store.promotion_contribution("session-a")
     assert contribution is not None
-    store.update_canvas(
-        session_id="session-a",
+    assert store.confirm_contribution("session-a", contribution) is True
+    assert store.staged_revision_count("session-a") == 0
+    assert "one" not in repr(contribution)
+
+
+def test_promotion_lease_blocks_exact_session_mutation_until_abort() -> None:
+    """A snapshot without a mutation fence can strand a post-snapshot delta."""
+
+    store = CanvasStagingStore()
+    owner = store.activate_session("session-a")
+    created = store.create_canvas(
+        owner=owner,
+        run_id="run-a",
+        tool_call_id="call-create",
+        title="Trip planner",
+        source=_html("one"),
+        origin_message_id="assistant-native-1",
+    )
+    contribution = store.promotion_contribution("session-a")
+    assert contribution is not None
+
+    with pytest.raises(CanvasStagingError, match="promotion_in_flight"):
+        store.update_canvas(
+            owner=owner,
+            run_id="run-b",
+            tool_call_id="call-update",
+            canvas_id=created.revision.canvas_id,
+            expected_parent_revision_id=created.revision.revision_id,
+            source=_html("two"),
+            origin_message_id="assistant-native-2",
+        )
+
+    assert store.abort_contribution("session-a", contribution) is True
+    updated = store.update_canvas(
+        owner=owner,
         run_id="run-b",
         tool_call_id="call-update",
         canvas_id=created.revision.canvas_id,
         expected_parent_revision_id=created.revision.revision_id,
-        source=_html("newer"),
+        source=_html("two"),
         origin_message_id="assistant-native-2",
     )
+    assert updated.revision.sequence == 2
 
-    assert store.confirm_contribution("session-a", contribution) is False
-    assert store.staged_revision_count("session-a") == 2
-    assert "one" not in repr(contribution)
+
+def test_retired_owner_cannot_resurrect_or_mutate_reused_session_id() -> None:
+    """A bare session id cannot distinguish a late callback from a new owner."""
+
+    store = CanvasStagingStore()
+    first_owner = store.activate_session("session-a")
+    first = store.create_canvas(
+        owner=first_owner,
+        run_id="run-first",
+        tool_call_id="call-first",
+        title="First",
+        source=_html("first"),
+        origin_message_id="assistant-first",
+    )
+    store.discard_session("session-a")
+    second_owner = store.activate_session("session-a")
+
+    with pytest.raises(CanvasStagingError, match="session_retired"):
+        store.update_canvas(
+            owner=first_owner,
+            run_id="run-late",
+            tool_call_id="call-late",
+            canvas_id=first.revision.canvas_id,
+            expected_parent_revision_id=first.revision.revision_id,
+            source=_html("late"),
+            origin_message_id="assistant-late",
+        )
+
+    second = store.create_canvas(
+        owner=second_owner,
+        run_id="run-second",
+        tool_call_id="call-second",
+        title="Second",
+        source=_html("second"),
+        origin_message_id="assistant-second",
+    )
+    assert second.revision.sequence == 1
+    assert store.staged_revision_count("session-a") == 1
+
+
+def test_runtime_close_permanently_rejects_activation_and_late_mutation() -> None:
+    """Runtime teardown must be a terminal fence, not only dictionary cleanup."""
+
+    store = CanvasStagingStore()
+    owner = store.activate_session("session-a")
+    store.close_runtime()
+
+    with pytest.raises(CanvasStagingError, match="runtime_closed"):
+        store.create_canvas(
+            owner=owner,
+            run_id="run-late",
+            tool_call_id="call-late",
+            title="Late",
+            source=_html("late"),
+            origin_message_id="assistant-late",
+        )
+    with pytest.raises(CanvasStagingError, match="runtime_closed"):
+        store.create_canvas(
+            owner=owner,
+            run_id="run-invalid-late",
+            tool_call_id="call-invalid-late",
+            title="Late",
+            source="\ud800",
+            origin_message_id="assistant-late",
+        )
+    with pytest.raises(CanvasStagingError, match="runtime_closed"):
+        store.activate_session("session-b")
+
+
+def test_staging_uses_lower_durable_conversation_source_ceiling() -> None:
+    """Promotion bypasses public repository validation, so staging owns this cap."""
+
+    first = _html("one")
+    second = _html("two")
+    durable_limit = len(first.encode()) + len(second.encode()) - 1
+    store = CanvasStagingStore(
+        repository_limits=CanvasRepositoryLimits(
+            max_source_bytes_per_conversation=durable_limit
+        ),
+        max_staged_source_bytes=durable_limit + 1024,
+    )
+    owner = store.activate_session("session-a")
+    created = store.create_canvas(
+        owner=owner,
+        run_id="run-a",
+        tool_call_id="call-create",
+        title="Trip planner",
+        source=first,
+        origin_message_id="assistant-native-1",
+    )
+
+    with pytest.raises(CanvasStagingError, match="session_source_bytes"):
+        store.update_canvas(
+            owner=owner,
+            run_id="run-b",
+            tool_call_id="call-update",
+            canvas_id=created.revision.canvas_id,
+            expected_parent_revision_id=created.revision.revision_id,
+            source=second,
+            origin_message_id="assistant-native-2",
+        )

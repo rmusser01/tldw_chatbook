@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tldw_chatbook.Canvas.staging import CanvasStagingStore
+from tldw_chatbook.Canvas.staging import CanvasStagingError, CanvasStagingStore
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import (
@@ -8587,13 +8587,14 @@ def test_canvas_participant_joins_promotion_and_confirms_only_after_success(tmp_
             canvas_promotion_participant=staging,
         )
         session = store.create_session(ephemeral=True)
+        owner = staging.session_owner(session.id)
         assistant = store.append_message(
             session.id,
             role=ConsoleMessageRole.ASSISTANT,
             content="Canvas created.",
         )
         staged = staging.create_canvas(
-            session_id=session.id,
+            owner=owner,
             run_id="run-create",
             tool_call_id="call-create",
             title="Planner",
@@ -8606,7 +8607,7 @@ def test_canvas_participant_joins_promotion_and_confirms_only_after_success(tmp_
             content="Canvas updated.",
         )
         staging.update_canvas(
-            session_id=session.id,
+            owner=owner,
             run_id="run-update",
             tool_call_id="call-update",
             canvas_id=staged.revision.canvas_id,
@@ -8620,7 +8621,7 @@ def test_canvas_participant_joins_promotion_and_confirms_only_after_success(tmp_
             content="Call it Schedule.",
         )
         renamed = staging.rename_canvas(
-            session_id=session.id,
+            owner=owner,
             run_id="run-rename",
             tool_call_id="call-rename",
             canvas_id=staged.revision.canvas_id,
@@ -8699,13 +8700,14 @@ def test_failed_canvas_promotion_preserves_chat_and_staging_for_retry(
             canvas_promotion_participant=staging,
         )
         session = store.create_session(ephemeral=True)
+        owner = staging.session_owner(session.id)
         assistant = store.append_message(
             session.id,
             role=ConsoleMessageRole.ASSISTANT,
             content="Canvas created.",
         )
         staged = staging.create_canvas(
-            session_id=session.id,
+            owner=owner,
             run_id="run-create",
             tool_call_id="call-create",
             title="Planner",
@@ -8740,6 +8742,21 @@ def test_failed_canvas_promotion_preserves_chat_and_staging_for_retry(
             == 0
         )
 
+        retry_origin = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Canvas retry update.",
+        )
+        retry_update = staging.update_canvas(
+            owner=owner,
+            run_id="run-retry-update",
+            tool_call_id="call-retry-update",
+            canvas_id=staged.revision.canvas_id,
+            expected_parent_revision_id=staged.revision.revision_id,
+            source="<!doctype html><html><body>retry planner</body></html>",
+            origin_message_id=retry_origin.id,
+        )
+
         monkeypatch.setattr(
             seam._CursorConsoleTransactionWriter, "execute", original_execute
         )
@@ -8752,6 +8769,13 @@ def test_failed_canvas_promotion_preserves_chat_and_staging_for_retry(
             connection.execute(
                 "SELECT COUNT(*) FROM canvas_revisions WHERE id = ?",
                 (staged.revision.revision_id,),
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM canvas_revisions WHERE id = ?",
+                (retry_update.revision.revision_id,),
             ).fetchone()[0]
             == 1
         )
@@ -8783,11 +8807,181 @@ def test_console_lifecycle_discards_exact_canvas_staging() -> None:
     assert staging.staged_revision_count(survivor.id) == 0
 
 
+def test_canvas_promotion_lease_rejects_concurrent_update_without_stranding_graph(
+    tmp_path,
+) -> None:
+    """A write racing between snapshot and commit must not become unpromotable."""
+
+    db = CharactersRAGDB(tmp_path / "canvas-promotion-race.sqlite", "canvas-race")
+    entered = Event()
+    release = Event()
+
+    class PausingPersistence:
+        def __init__(self) -> None:
+            self.delegate = ChatPersistenceService(db)
+
+        def promote_console_conversation_bundle(self, **kwargs):
+            entered.set()
+            assert release.wait(timeout=5)
+            return self.delegate.promote_console_conversation_bundle(**kwargs)
+
+    try:
+        staging = CanvasStagingStore()
+        store = ConsoleChatStore(
+            persistence=PausingPersistence(),
+            canvas_promotion_participant=staging,
+        )
+        session = store.create_session(ephemeral=True)
+        owner = staging.session_owner(session.id)
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Canvas created.",
+        )
+        created = staging.create_canvas(
+            owner=owner,
+            run_id="run-create",
+            tool_call_id="call-create",
+            title="Planner",
+            source="<!doctype html><html><body>planner</body></html>",
+            origin_message_id=assistant.id,
+        )
+        outcome = {}
+
+        def promote() -> None:
+            outcome["conversation_id"] = store.promote_ephemeral_session(session.id)
+
+        thread = Thread(target=promote)
+        thread.start()
+        assert entered.wait(timeout=5)
+        with pytest.raises(CanvasStagingError, match="promotion_in_flight"):
+            staging.update_canvas(
+                owner=owner,
+                run_id="run-racing",
+                tool_call_id="call-racing",
+                canvas_id=created.revision.canvas_id,
+                expected_parent_revision_id=created.revision.revision_id,
+                source="<!doctype html><html><body>racing</body></html>",
+                origin_message_id=assistant.id,
+            )
+        release.set()
+        thread.join(timeout=5)
+
+        assert not thread.is_alive()
+        assert outcome["conversation_id"] is not None
+        assert session.ephemeral is False
+        assert staging.staged_revision_count(session.id) == 0
+        assert (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM canvas_revisions")
+            .fetchone()[0]
+            == 1
+        )
+    finally:
+        release.set()
+        db.close_connection()
+
+
+@pytest.mark.parametrize("confirm_behavior", ["false", "exception"])
+def test_postcommit_canvas_confirm_failure_leaves_chat_durable_and_stage_retired(
+    tmp_path, confirm_behavior
+) -> None:
+    """SQLite cannot roll back after return, so publication must survive confirm."""
+
+    class ConfirmFailureStaging(CanvasStagingStore):
+        def confirm_contribution(self, session_id, contribution):
+            if confirm_behavior == "exception":
+                raise RuntimeError("private confirm detail")
+            return False
+
+    db = CharactersRAGDB(
+        tmp_path / f"canvas-confirm-{confirm_behavior}.sqlite",
+        f"canvas-confirm-{confirm_behavior}",
+    )
+    try:
+        staging = ConfirmFailureStaging()
+        store = ConsoleChatStore(
+            persistence=ChatPersistenceService(db),
+            canvas_promotion_participant=staging,
+        )
+        session = store.create_session(ephemeral=True)
+        owner = staging.session_owner(session.id)
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Canvas created.",
+        )
+        staging.create_canvas(
+            owner=owner,
+            run_id="run-create",
+            tool_call_id="call-create",
+            title="Planner",
+            source="<!doctype html><html><body>planner</body></html>",
+            origin_message_id=assistant.id,
+        )
+
+        conversation_id = store.promote_ephemeral_session(session.id)
+
+        assert conversation_id is not None
+        assert session.ephemeral is False
+        assert session.persisted_conversation_id == conversation_id
+        assert staging.staged_revision_count(session.id) == 0
+        assert db.get_conversation_by_id(conversation_id) is not None
+    finally:
+        db.close_connection()
+
+
+def test_canvas_owner_fences_late_callbacks_across_close_restore_and_shutdown() -> None:
+    """Lifecycle deletion alone permits same-id ABA and post-shutdown resurrection."""
+
+    staging = CanvasStagingStore()
+    store = ConsoleChatStore(canvas_promotion_participant=staging)
+    session = store.create_session(session_id="same-id", ephemeral=True)
+    closed_owner = staging.session_owner(session.id)
+    store.close_session(session.id)
+    replacement = store.create_session(session_id="same-id", ephemeral=True)
+    replacement_owner = staging.session_owner(replacement.id)
+
+    with pytest.raises(CanvasStagingError, match="session_retired"):
+        staging.create_canvas(
+            owner=closed_owner,
+            run_id="run-closed",
+            tool_call_id="call-closed",
+            title="Closed",
+            source="<!doctype html><html><body>closed</body></html>",
+            origin_message_id="assistant-closed",
+        )
+
+    store.restore_state(sessions=[replace(replacement)], messages_by_session={})
+    restored_owner = staging.session_owner(replacement.id)
+    assert restored_owner is not replacement_owner
+    with pytest.raises(CanvasStagingError, match="session_retired"):
+        staging.create_canvas(
+            owner=replacement_owner,
+            run_id="run-replaced",
+            tool_call_id="call-replaced",
+            title="Replaced",
+            source="<!doctype html><html><body>replaced</body></html>",
+            origin_message_id="assistant-replaced",
+        )
+
+    store.end_app_runtime()
+    with pytest.raises(CanvasStagingError, match="runtime_closed"):
+        staging.create_canvas(
+            owner=restored_owner,
+            run_id="run-ended",
+            tool_call_id="call-ended",
+            title="Ended",
+            source="<!doctype html><html><body>ended</body></html>",
+            origin_message_id="assistant-ended",
+        )
+
+
 def _create_staged_canvas_for_console(
     staging: CanvasStagingStore, session_id: str, suffix: str
 ):
     return staging.create_canvas(
-        session_id=session_id,
+        owner=staging.session_owner(session_id),
         run_id=f"run-{suffix}",
         tool_call_id=f"call-{suffix}",
         title="Temporary",

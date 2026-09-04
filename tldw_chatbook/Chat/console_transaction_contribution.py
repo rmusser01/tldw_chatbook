@@ -6,8 +6,7 @@ import re
 import sqlite3
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
-from typing import Protocol, cast
-
+from typing import Protocol, cast, runtime_checkable
 
 _SIMPLE_IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
 _INSERT_VALUES_PATTERN = re.compile(
@@ -48,6 +47,25 @@ class ConsoleTransactionContribution(Protocol):
         message_ids: Mapping[str, str],
     ) -> None:
         """Write through the caller-owned capability without committing."""
+
+
+@runtime_checkable
+class ConsoleExactNativeIdTransactionContribution(Protocol):
+    """Write a sidecar using only exact native-to-durable message identities."""
+
+    def write_exact(
+        self,
+        *,
+        writer: ConsoleTransactionWriter,
+        conversation_id: str,
+        native_message_ids: Mapping[str, str],
+    ) -> None:
+        """Write without the legacy user/assistant role aliases."""
+
+
+ConsolePromotionTransactionContribution = (
+    ConsoleTransactionContribution | ConsoleExactNativeIdTransactionContribution
+)
 
 
 class ConsoleDurableFingerprintContribution(Protocol):

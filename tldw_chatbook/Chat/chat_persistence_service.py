@@ -52,7 +52,8 @@ from tldw_chatbook.Chat.console_generation_settings_metadata import (
     strict_json_metadata_object,
 )
 from tldw_chatbook.Chat.console_transaction_contribution import (
-    ConsoleTransactionContribution,
+    ConsoleExactNativeIdTransactionContribution,
+    ConsolePromotionTransactionContribution,
     _scoped_console_transaction_writer,
 )
 from tldw_chatbook.Chat.console_trace_repository import (
@@ -873,7 +874,7 @@ class ChatPersistenceService:
         context_summary_boundary_message_id: str | None = None,
         project_context_json: str | None = None,
         context_policy_overrides: ConsoleContextPolicyOverrides | None = None,
-        contributions: Sequence[ConsoleTransactionContribution] = (),
+        contributions: Sequence[ConsolePromotionTransactionContribution] = (),
         trace_boundary: TraceForkBoundary | None = None,
     ) -> ConsoleLibraryPolicySnapshot:
         """Commit one temporary Console transcript and all Task-7 sidecars."""
@@ -901,6 +902,7 @@ class ChatPersistenceService:
                 raise RuntimeError(
                     "Console Library policy could not be committed with conversation."
                 )
+            native_message_ids: dict[str, str] = {}
             message_ids: dict[str, str] = {}
             for prepared in messages:
                 native_id = str(prepared["native_id"])
@@ -912,6 +914,7 @@ class ChatPersistenceService:
                 expected_id = str(kwargs["message_id"])
                 if persisted_id != expected_id:
                     raise RuntimeError("Persistence returned an unexpected message id.")
+                native_message_ids[native_id] = persisted_id
                 message_ids[native_id] = persisted_id
                 role = str(kwargs["sender"])
                 if role in {"user", "assistant"}:
@@ -941,11 +944,21 @@ class ChatPersistenceService:
                     conversation_id,
                 ) as writer:
                     for contribution in contributions:
-                        contribution.write(
-                            writer=writer,
-                            conversation_id=conversation_id,
-                            message_ids=message_ids,
-                        )
+                        if isinstance(
+                            contribution,
+                            ConsoleExactNativeIdTransactionContribution,
+                        ):
+                            contribution.write_exact(
+                                writer=writer,
+                                conversation_id=conversation_id,
+                                native_message_ids=native_message_ids,
+                            )
+                        else:
+                            contribution.write(
+                                writer=writer,
+                                conversation_id=conversation_id,
+                                message_ids=message_ids,
+                            )
         return policy_result.snapshot
 
     def fork_console_conversation_bundle(

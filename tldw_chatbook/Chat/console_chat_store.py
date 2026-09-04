@@ -33,7 +33,10 @@ from uuid import uuid4
 from loguru import logger
 
 if TYPE_CHECKING:
-    from tldw_chatbook.Canvas.staging import CanvasPromotionContribution
+    from tldw_chatbook.Canvas.staging import (
+        CanvasPromotionContribution,
+        CanvasStagingOwner,
+    )
 
 from tldw_chatbook.Agents.agent_models import (
     FinalContinuation,
@@ -201,7 +204,7 @@ from tldw_chatbook.Chat.console_speech import (
 from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
 from tldw_chatbook.Chat.console_trace_provenance import ConsoleTraceCaptureMode
 from tldw_chatbook.Chat.console_transaction_contribution import (
-    ConsoleTransactionContribution,
+    ConsolePromotionTransactionContribution,
 )
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
 from tldw_chatbook.Chat.console_turn_preparation import (
@@ -1116,6 +1119,9 @@ class ConsoleChatSyncProducer(Protocol):
 class ConsoleCanvasPromotionParticipant(Protocol):
     """Optional process-local Canvas owner participating in chat promotion."""
 
+    def activate_session(self, session_id: str) -> CanvasStagingOwner:
+        """Create a new exact owner incarnation for a temporary session."""
+
     def promotion_contribution(
         self, session_id: str
     ) -> CanvasPromotionContribution | None:
@@ -1126,11 +1132,19 @@ class ConsoleCanvasPromotionParticipant(Protocol):
     ) -> bool:
         """Discard a still-current contribution only after commit."""
 
+    def abort_contribution(
+        self, session_id: str, contribution: CanvasPromotionContribution
+    ) -> bool:
+        """Release a failed contribution without discarding staged history."""
+
     def discard_session(self, session_id: str) -> None:
         """Destroy one session's temporary Canvas state."""
 
     def discard_all(self) -> None:
-        """Destroy all temporary Canvas state at process teardown."""
+        """Retire all current temporary owners during state replacement."""
+
+    def close_runtime(self) -> None:
+        """Permanently retire all owners at process teardown."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -2063,6 +2077,8 @@ class ConsoleChatStore:
                 )
             ),
         )
+        if ephemeral and self.canvas_promotion_participant is not None:
+            self.canvas_promotion_participant.activate_session(session.id)
         self._record_console_settings_binding_revision(
             session.id,
             session.conversation_binding_revision,
@@ -9779,6 +9795,13 @@ class ConsoleChatStore:
                 applied_settings_submission_ids=deque(maxlen=32),
                 library_policy_holder=restored_holder,
             )
+            if (
+                restored_session.ephemeral
+                and self.canvas_promotion_participant is not None
+            ):
+                self.canvas_promotion_participant.activate_session(
+                    restored_session.id
+                )
             self._sessions[session.id] = restored_session
             self._seed_console_settings_owned_bases(restored_session)
             if self.library_policy_coordinator is not None:
@@ -9821,7 +9844,7 @@ class ConsoleChatStore:
         """Drop every volatile recovery projection at explicit app teardown."""
 
         if self.canvas_promotion_participant is not None:
-            self.canvas_promotion_participant.discard_all()
+            self.canvas_promotion_participant.close_runtime()
 
         with self._fence_provider_trace_settlement_registrations(
             (),
@@ -16445,7 +16468,7 @@ class ConsoleChatStore:
         session_id: str,
         excluded_transient_message_id: str | None = None,
         *,
-        contributions: Sequence[ConsoleTransactionContribution] = (),
+        contributions: Sequence[ConsolePromotionTransactionContribution] = (),
     ) -> str | None:
         """Save a temporary conversation to durable storage, all or nothing.
 
@@ -16498,8 +16521,8 @@ class ConsoleChatStore:
             if self.canvas_promotion_participant is not None
             else None
         )
-        combined_contributions: tuple[ConsoleTransactionContribution, ...] = tuple(
-            contributions
+        combined_contributions: tuple[ConsolePromotionTransactionContribution, ...] = (
+            tuple(contributions)
         )
         if canvas_contribution is not None:
             combined_contributions = (
@@ -16511,19 +16534,31 @@ class ConsoleChatStore:
                 *combined_contributions,
                 activity_contribution,
             )
-        return self._promote_ephemeral_session_atomically(
-            session,
-            contributions=combined_contributions,
-            activity_contribution=activity_contribution,
-            canvas_contribution=canvas_contribution,
-            excluded_transient_message_id=excluded_transient_message_id,
-        )
+        try:
+            return self._promote_ephemeral_session_atomically(
+                session,
+                contributions=combined_contributions,
+                activity_contribution=activity_contribution,
+                canvas_contribution=canvas_contribution,
+                excluded_transient_message_id=excluded_transient_message_id,
+            )
+        finally:
+            if (
+                canvas_contribution is not None
+                and self.canvas_promotion_participant is not None
+            ):
+                if session.ephemeral:
+                    self.canvas_promotion_participant.abort_contribution(
+                        session_id, canvas_contribution
+                    )
+                else:
+                    self.canvas_promotion_participant.discard_session(session_id)
 
     def _promote_ephemeral_session_atomically(
         self,
         session: ConsoleChatSession,
         *,
-        contributions: Sequence[ConsoleTransactionContribution],
+        contributions: Sequence[ConsolePromotionTransactionContribution],
         activity_contribution: LibraryActivityContribution | None = None,
         canvas_contribution: CanvasPromotionContribution | None = None,
         excluded_transient_message_id: str | None = None,
@@ -16741,26 +16776,48 @@ class ConsoleChatStore:
             trace_boundary=session.fork_trace_boundary,
         )
 
+        # The transaction has returned and SQLite can no longer roll it back.
+        # Publish the minimal durable fence before any postcommit callback.
+        session.ephemeral = False
+        self.publish_committed_identity(session_id, identity)
+        if staged_generation_snapshot is not None:
+            session.generation_durable_snapshot = staged_generation_snapshot
+        session.library_policy_holder.snapshot = committed_policy
+        session.library_policy_holder.explicitly_staged = False
+        session.library_policy_holder.save_pending = False
+        for message in messages:
+            message.persisted_message_id = staged_message_ids[message.id]
+            native_parent = self._native_parent_by_message.get(message.id)
+            message.parent_message_id = (
+                staged_message_ids[native_parent] if native_parent is not None else None
+            )
+
+        if (
+            canvas_contribution is not None
+            and self.canvas_promotion_participant is not None
+        ):
+            canvas_confirmed = False
+            try:
+                try:
+                    canvas_confirmed = (
+                        self.canvas_promotion_participant.confirm_contribution(
+                            session_id, canvas_contribution
+                        )
+                    )
+                except Exception:
+                    logger.warning(
+                        "Canvas staging confirmation failed after committed promotion."
+                    )
+            finally:
+                if not canvas_confirmed:
+                    self.canvas_promotion_participant.discard_session(session_id)
+
         if activity_contribution is not None:
             self._library_activity_buffer.confirm_contribution(
                 session_id, activity_contribution
             )
             self._bump_library_activity_revision(session_id)
-        if (
-            canvas_contribution is not None
-            and self.canvas_promotion_participant is not None
-        ):
-            self.canvas_promotion_participant.confirm_contribution(
-                session_id, canvas_contribution
-            )
 
-        self.publish_committed_identity(session_id, identity)
-        if staged_generation_snapshot is not None:
-            session.generation_durable_snapshot = staged_generation_snapshot
-        session.ephemeral = False
-        session.library_policy_holder.snapshot = committed_policy
-        session.library_policy_holder.explicitly_staged = False
-        session.library_policy_holder.save_pending = False
         if self.library_policy_coordinator is not None:
             self.library_policy_coordinator.register_holder(
                 session_id,
@@ -16768,12 +16825,6 @@ class ConsoleChatStore:
                 session.library_policy_holder,
             )
         self._project_workspace_membership_after_commit(session)
-        for message in messages:
-            message.persisted_message_id = staged_message_ids[message.id]
-            native_parent = self._native_parent_by_message.get(message.id)
-            message.parent_message_id = (
-                staged_message_ids[native_parent] if native_parent is not None else None
-            )
         held_scope = session.rag_scope_holder.scope
         session.rag_scope_holder.set(None)
         if held_scope is not None and self.on_scope_flushed is not None:

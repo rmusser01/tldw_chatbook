@@ -66,6 +66,79 @@ def db_instance(db_path, client_id):
 
 @pytest.mark.integration
 class TestChatPersistenceService:
+    def test_canvas_origin_uses_exact_native_id_when_id_matches_legacy_role_alias(
+        self, db_instance: CharactersRAGDB
+    ) -> None:
+        """Legacy role aliases must not overwrite Canvas's exact native mapping."""
+
+        class LegacyAliasProbe:
+            def __init__(self) -> None:
+                self.assistant_id = None
+
+            def write(self, *, writer, conversation_id, message_ids) -> None:
+                self.assistant_id = message_ids["assistant"]
+
+        staging = CanvasStagingStore()
+        owner = staging.activate_session("temporary-session")
+        created = staging.create_canvas(
+            owner=owner,
+            run_id="turn-1",
+            tool_call_id="call-1",
+            title="Temporary",
+            source="<!doctype html><html><body>one</body></html>",
+            origin_message_id="assistant",
+        )
+        contribution = staging.promotion_contribution("temporary-session")
+        assert contribution is not None
+        legacy_probe = LegacyAliasProbe()
+        first_id = "00000000-0000-4000-8000-000000000002"
+        second_id = "00000000-0000-4000-8000-000000000003"
+
+        ChatPersistenceService(db_instance).promote_console_conversation_bundle(
+            conversation_id="00000000-0000-4000-8000-000000000001",
+            policy_candidate=ConsoleLibraryPolicyCandidate(
+                auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+            ),
+            conversation_kwargs={"conversation_title": "Promoted"},
+            messages=(
+                {
+                    "native_id": "assistant",
+                    "create_kwargs": {
+                        "message_id": first_id,
+                        "sender": "assistant",
+                        "content": "First assistant",
+                        "parent_message_id": None,
+                        "feedback": None,
+                    },
+                },
+                {
+                    "native_id": "later-assistant",
+                    "create_kwargs": {
+                        "message_id": second_id,
+                        "sender": "assistant",
+                        "content": "Second assistant",
+                        "parent_message_id": first_id,
+                        "feedback": None,
+                    },
+                },
+            ),
+            active_leaf_message_id=second_id,
+            contributions=(contribution, legacy_probe),
+        )
+
+        row = (
+            db_instance.get_connection()
+            .execute(
+                "SELECT origin_message_id FROM canvas_revisions WHERE id = ?",
+                (created.revision.revision_id,),
+            )
+            .fetchone()
+        )
+        assert row is not None
+        assert row[0] == first_id
+        assert legacy_probe.assistant_id == second_id
+
     @pytest.mark.parametrize("fail_after_write", [1, 2, 3, 4])
     def test_canvas_promotion_rolls_back_every_canvas_write_prefix(
         self,
@@ -78,8 +151,9 @@ class TestChatPersistenceService:
         from tldw_chatbook.Chat import console_transaction_contribution as seam
 
         staging = CanvasStagingStore()
+        owner = staging.activate_session("temporary-session")
         created = staging.create_canvas(
-            session_id="temporary-session",
+            owner=owner,
             run_id="turn-1",
             tool_call_id="call-1",
             title="Temporary",
@@ -87,7 +161,7 @@ class TestChatPersistenceService:
             origin_message_id="native-assistant",
         )
         staging.update_canvas(
-            session_id="temporary-session",
+            owner=owner,
             run_id="turn-2",
             tool_call_id="call-2",
             canvas_id=created.revision.canvas_id,
