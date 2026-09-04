@@ -1,0 +1,122 @@
+{
+  "build_tool": {
+    "extracted_files": {
+      "package/LICENSE.md": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
+      "package/README.md": "6bfb2272db99a435b490effa7c65034cfcce13a17555c4c3bb66aa458a27ffcb",
+      "package/bin/esbuild": "b3cdaf234fd51a7908b2ffc4a84b3baa466656ccb2586498de4cc2f77b6f1e1e",
+      "package/esbuild.wasm": "c4f8ab7b1cd318f6423b737c5da275c57c24489fe0ea926adc04d62e58394103",
+      "package/esm/browser.d.ts": "161c8e0690c46021506e32fda85956d785b70f309ae97011fd27374c065cac9b",
+      "package/esm/browser.js": "fa1abc8911da0de1de18108ff605dc985e4f433827e8801a592ea9ae0769e804",
+      "package/esm/browser.min.js": "32e10746e7b9720d32476eb324c5ecaaf85ca662d1972b8fe5881b337a267dca",
+      "package/lib/browser.d.ts": "161c8e0690c46021506e32fda85956d785b70f309ae97011fd27374c065cac9b",
+      "package/lib/browser.js": "8412273dd2ae9ac3a15f16d25979d8874fb6d498bba04236bf9939d9e15e58db",
+      "package/lib/browser.min.js": "0c995d0ad0e8de172a80806c97e73c4050e537b840f8d68f05c671953c5b0902",
+      "package/lib/main.d.ts": "161c8e0690c46021506e32fda85956d785b70f309ae97011fd27374c065cac9b",
+      "package/lib/main.js": "e799db0e4c86084fbd2dd1fd82a9cc9f07a8b58431827e73729f148ac6144e38",
+      "package/package.json": "7ece48565897b39dbede48fd0e0cb499ed1f535ab4e60602fdc3ceda3e4bc358",
+      "package/wasm_exec.js": "45ce9dfe7211247544ab6f4268eb8cb5b6f3d5ae602dc3b51447b7eada99c229",
+      "package/wasm_exec_node.js": "c91e20cf70dc4ab76b633f392676e9f1b22d849ba5fca4f80422391705a26638"
+    },
+    "integrity": "sha512-Jpv5tCSwQg18aCqCRD3oHIX/prBhXMDapIoG//A+6+dV0e7KQMGFg85ihJ5T1EeMjbZjON3TqFy0VrGAnIHLDA==",
+    "license": "MIT",
+    "name": "esbuild-wasm",
+    "source_url": "https://registry.npmjs.org/esbuild-wasm/-/esbuild-wasm-0.25.9.tgz",
+    "version": "0.25.9"
+  },
+  "outputs": {
+    "THIRD_PARTY_LICENSES.txt": {
+      "bytes": 6275,
+      "sha256": "9b4caf7be494664ff543370a7b8e1d4972a196702149ae2b06c5a19a0e4a4e2f"
+    },
+    "quickjs-runtime.js": {
+      "bytes": 737944,
+      "sha256": "59db482b382f4da0c5d5f616954757a538a09e45bd1fce590e875abc6594b386"
+    }
+  },
+  "packages": [
+    {
+      "extracted_files": {
+        "package/LICENSE": "3c6040aa318612a234cc951609b640c0c63d85ae5a98a9330d3116f1553a79db",
+        "package/README.md": "faeaa118e2cb9509f6ce05ffd397071d0c55a0a5ab0c1b7a1489577616354e1d",
+        "package/README.template.md": "7fcd4164644a4c10e40369eb67c4deb7e9d7e47e6b096c2d5867f49b9f889ce0",
+        "package/dist/chunk-TAV5CUKK.mjs": "b423c720a9deef215b404e4ee212533bcef9de785a11f44aacf1ad8266ae6769",
+        "package/dist/chunk-TAV5CUKK.mjs.map": "7a43bf38cb4f3f083bd3883a16498e17713ce246c1f3eda9005298dbf8ebc8f2",
+        "package/dist/chunk-V2S4ZYJR.mjs": "9601ad84160a56f1321e1ed67910a3b79a4e29312f11de129e6f94a5b3e17b9a",
+        "package/dist/chunk-V2S4ZYJR.mjs.map": "11e8bbbe268c90d2c025173a44c17f18bffbf2a7338644542097c1035f3e752d",
+        "package/dist/index.d.mts": "0d53129147a4be916231518ef6dd5d61391589b09ccf7ed46561b57b4c392303",
+        "package/dist/index.d.ts": "0d53129147a4be916231518ef6dd5d61391589b09ccf7ed46561b57b4c392303",
+        "package/dist/index.js": "cf8cdd9674a0cf4037d3788dc759cf7820bd7e67c699e9ea54a5a61f10b23a13",
+        "package/dist/index.js.map": "e52e0537b0b2e73be8cbe10c633bd789b54db94ed29f42ee0d5f01dac9de69cd",
+        "package/dist/index.mjs": "5f7a507ca71ffbff0ec0bad88a9c38f717d34fd8ab9222b58deacc9de5644a3e",
+        "package/dist/index.mjs.map": "02c1ee428cd14e9e24902343e16101010e8def6bbb90e64fa93a4d880eed41e5",
+        "package/dist/module-ES6BEMUI.mjs": "289a200ab91f855ed79f75147eb674b81cea7adf032f9344bd8b29ff5e7a7d43",
+        "package/dist/module-ES6BEMUI.mjs.map": "cba81f7ad4d5b1b629bf43823f1082e73a10d0c3114c937515e7f8c1047629b3",
+        "package/dist/module-asyncify-2EFITU5U.mjs": "c8cec04532f68af9aa436ad117defdc686d36a1670691d98cea9263345ba7b2b",
+        "package/dist/module-asyncify-2EFITU5U.mjs.map": "cba81f7ad4d5b1b629bf43823f1082e73a10d0c3114c937515e7f8c1047629b3",
+        "package/package.json": "9e6ee511f4dd74ca9283848b1dd7e4a94abe94581bae1c62f98e42e00c12d765"
+      },
+      "integrity": "sha512-QFnPfjFey8EqknSrSxe1hZrf1/8z7/6s1QzGOmKo6++02r7QRRX7ZoyNaZh7JuVjWsVW87KnQrbZqnHkOAzUyg==",
+      "license": "MIT",
+      "name": "quickjs-emscripten-core",
+      "source_url": "https://registry.npmjs.org/quickjs-emscripten-core/-/quickjs-emscripten-core-0.32.0.tgz",
+      "version": "0.32.0"
+    },
+    {
+      "extracted_files": {
+        "package/LICENSE": "446a69ae534aa8612d8b16d3bfc670c5a5050597dca3ce9820441a60d5d04fbb",
+        "package/README.md": "88cd889414f28608308243945132237c98935903f93a4dfa9ba1f6944c749a1d",
+        "package/dist/chunk-FGV2HSCH.mjs": "6dd70060dcfcda101ba8d51cb4b341cc66fef2a58c07ea524b8ef508fd359e32",
+        "package/dist/chunk-FGV2HSCH.mjs.map": "cba81f7ad4d5b1b629bf43823f1082e73a10d0c3114c937515e7f8c1047629b3",
+        "package/dist/emscripten-module.browser-XIKQQPVU.mjs": "49c171aa6ee9c782f40229c95cdfaeb282b6740dd8eea4cc8e655986276a766a",
+        "package/dist/emscripten-module.browser-XIKQQPVU.mjs.map": "cb8065ffbd7cc931adabe09fffa3e0c4f50f14e4e42a171016dc79d5fe7c3f0d",
+        "package/dist/emscripten-module.browser.d.ts": "48c7632a3a2fd82bb1ac630bd9c6a8ad2378d112599f2a1d52a6c93dc55dcfd4",
+        "package/dist/emscripten-module.browser.mjs": "87a860137228c270aec26d601e5cc7756a30bb5620d3bea3c577ff490d766337",
+        "package/dist/ffi.d.mts": "4aad6025f46424783cc19c3127b7c8fae72eaf39109cc108a70987af7fea02ce",
+        "package/dist/ffi.mjs": "3678ed1b43d0751000dad1cda02dc2c7b558677bb2a9fac9c8f49d3b68f0c3a3",
+        "package/dist/ffi.mjs.map": "7cedcff58d8baa53d07cc98da185890d917e2aeba7c16d4e58ca343de878a764",
+        "package/dist/index.d.mts": "1775d610a88d78385844038f57aaf2a2f1787e81b7adc077556e42703d6b6304",
+        "package/dist/index.mjs": "072f5a7f068718538805c1750871da9d90ef95aa7f7c9fc13cc1a1853081943d",
+        "package/dist/index.mjs.map": "22f3fca61cec0755a6020042cf22fb204d2383aa07b2966ce5646b0a1263c3c9",
+        "package/package.json": "f5795c5147866fec9b6c581bc0d78cd4b64246d28518eb36f412e9c9d024c837"
+      },
+      "integrity": "sha512-Hfdl7rh8dzxNWFRiYAYNbhn0RMF1/tO6SMH2mUW0aTibqwaAtqPRbi4WkwaIDlhNz8Z4dksJi1Zjl1R54Jsc/Q==",
+      "license": "MIT",
+      "name": "@jitl/quickjs-singlefile-browser-release-sync",
+      "source_url": "https://registry.npmjs.org/@jitl/quickjs-singlefile-browser-release-sync/-/quickjs-singlefile-browser-release-sync-0.32.0.tgz",
+      "version": "0.32.0"
+    },
+    {
+      "extracted_files": {
+        "package/LICENSE": "3c6040aa318612a234cc951609b640c0c63d85ae5a98a9330d3116f1553a79db",
+        "package/README.md": "808124bff16606acac21b74e72017c201200b370f62064dcd61baefbaa5470d6",
+        "package/dist/index.d.mts": "89d6886dc16653c9e3372b255d3967ca756babe1f82ba07ed7d32af269c1b21e",
+        "package/dist/index.d.ts": "89d6886dc16653c9e3372b255d3967ca756babe1f82ba07ed7d32af269c1b21e",
+        "package/dist/index.js": "3a2796efb42688b5c92c09deca5343bf01fe900cdbfde5f2813c9e98d57b5709",
+        "package/dist/index.js.map": "1d00190ceb7ce5ed385096721a70c8ccae3c8215d22edf5efc30f77e4064530d",
+        "package/dist/index.mjs": "5b6ccfe50a0d0066411135c66964b0c15c05167f5324df2e8066493da807efbe",
+        "package/dist/index.mjs.map": "765a4b5dcbe5ea430c3def6a02aeea92d4da24b5c732835a307004bd3e59dbd0",
+        "package/package.json": "94fec038d66a1b64e3bc0b5bbcd87a8ab217badf5291085a53e97b2bafbd4e3f"
+      },
+      "integrity": "sha512-v9T+GQpmk43VDJ7d72sf0Nexhk+ArvtUihW27dy7lqAl0zBObFKtSBBIm5RBjwIhE8VwsPPm9PNuvPvNqLWUEg==",
+      "license": "MIT",
+      "name": "@jitl/quickjs-ffi-types",
+      "source_url": "https://registry.npmjs.org/@jitl/quickjs-ffi-types/-/quickjs-ffi-types-0.32.0.tgz",
+      "version": "0.32.0"
+    }
+  ],
+  "quickjs": {
+    "build_mode": "release-sync",
+    "filesystem": false,
+    "module_format": "esm",
+    "single_file": true,
+    "source_revision": "2025-09-13+f1139494"
+  },
+  "reproducible_command": "python scripts/vendor_canvas_runtime.py",
+  "runtime_layout": {
+    "javascript": "quickjs-runtime.js",
+    "wasm": "embedded",
+    "wasm_fetch_required": false
+  },
+  "runtime_profile": "canvas-v1",
+  "schema_version": 1
+}

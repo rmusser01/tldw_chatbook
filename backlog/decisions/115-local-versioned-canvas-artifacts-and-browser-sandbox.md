@@ -94,6 +94,65 @@ conversation + Canvas + revision capability for iframe navigation, consumes
 it on load, and refuses top-level navigation. Generated code receives no
 reusable browser-session credential.
 
+### WebAssembly engine dependency and security addendum
+
+The reviewed V1 candidate is accepted for the worker implementation and real-
+browser qualification gate. Chatbook vendors the exact runtime closure
+`quickjs-emscripten-core@0.32.0`,
+`@jitl/quickjs-singlefile-browser-release-sync@0.32.0`, and
+`@jitl/quickjs-ffi-types@0.32.0`. The convenience `quickjs-emscripten` package
+is deliberately absent because the bundle entry point does not import it. The
+variant contains Bellard QuickJS revision `2025-09-13+f1139494` and its
+published metadata targets browser/worker ES modules in release/synchronous
+mode with `FILESYSTEM=0` and `SINGLE_FILE=1`.
+
+All three runtime packages are MIT-licensed and identify the same upstream
+`justjake/quickjs-emscripten` repository; the variant's notice also carries the
+Bellard/QuickJS MIT terms. Their coordinated `0.32.0` release, explicit source
+revision, documented browser/worker export, and complete generated variant are
+an acceptable maintenance posture for a pinned candidate. They do not prove a
+security response SLA or continuing maintenance. Every upgrade therefore
+requires a new license, integrity, dependency-closure, browser, and
+reproducibility review.
+
+Registry inputs are pinned to these exact HTTPS tarballs and SHA-512 SRI values:
+
+- `quickjs-emscripten-core-0.32.0.tgz` —
+  `sha512-QFnPfjFey8EqknSrSxe1hZrf1/8z7/6s1QzGOmKo6++02r7QRRX7ZoyNaZh7JuVjWsVW87KnQrbZqnHkOAzUyg==`
+- `quickjs-singlefile-browser-release-sync-0.32.0.tgz` —
+  `sha512-Hfdl7rh8dzxNWFRiYAYNbhn0RMF1/tO6SMH2mUW0aTibqwaAtqPRbi4WkwaIDlhNz8Z4dksJi1Zjl1R54Jsc/Q==`
+- `quickjs-ffi-types-0.32.0.tgz` —
+  `sha512-v9T+GQpmk43VDJ7d72sf0Nexhk+ArvtUihW27dy7lqAl0zBObFKtSBBIm5RBjwIhE8VwsPPm9PNuvPvNqLWUEg==`
+
+Regeneration uses only the pinned MIT-licensed
+`esbuild-wasm@0.25.9` tarball with SRI
+`sha512-Jpv5tCSwQg18aCqCRD3oHIX/prBhXMDapIoG//A+6+dV0e7KQMGFg85ihJ5T1EeMjbZjON3TqFy0VrGAnIHLDA==`.
+The Python vendor command downloads no other URL, rejects redirects, verifies
+SRI before opening archives, rejects path traversal, links, non-files,
+duplicates, undeclared members, and undeclared runtime dependencies, then calls
+the extracted esbuild executable directly. It never invokes a package manager.
+The output manifest records every extracted-file SHA-256 and generated-output
+SHA-256. Node and network are build-time inputs only; installed applications
+load committed resources through Python package data.
+
+The synchronous single-file variant is intentional: Canvas event dispatch has
+a synchronous host/worker control path, while embedding the identical WASM
+bytes removes a runtime `.wasm` fetch, URL resolver, and second integrity/CSP
+surface. This does not authorize synchronous execution on the browser main
+thread; Task 1.4 must keep the engine in a terminable worker. That task must use
+`setMemoryLimit`, `setMaxStackSize`, `setInterruptHandler`, and bounded
+`executePendingJobs`/`hasPendingJob`, configure no module loader, and expose no
+ambient browser or host capabilities.
+
+Neither QuickJS, quickjs-emscripten, the package's use of words such as
+"safe", nor this dependency review is a security audit or a complete sandbox.
+The package remains unaudited for Chatbook's threat model. Acceptance here only
+permits implementation behind the disabled-by-default runtime seam. Generated
+JavaScript cannot ship enabled until the Task 1.4 adversarial real-browser
+suite proves zero generated-code egress, no native-realm execution, enforced
+resource termination, and benign browser behavior. Failure of that gate keeps
+scripts disabled; it must never fall back to native JavaScript execution.
+
 V1's DOM/CSS API is an explicit compatibility subset. It supports structural
 HTML, local form controls, tables, SVG, selectors, event listeners, and common
 text/class/style/node mutations. It excludes external links, active embeds,
