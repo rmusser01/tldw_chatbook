@@ -243,7 +243,7 @@ async def _switch_to_analysis(screen, pilot) -> None:
         screen._library_media_reader_session, "analysis"
     )
     screen._sync_library_media_viewer_or_recompose()
-    await _wait_for_selector(screen, pilot, "#library-media-viewer-analysis-title")
+    await _wait_for_selector(screen, pilot, "#library-media-reader-mode-analysis")
     await pilot.pause()
 
 
@@ -483,59 +483,80 @@ async def test_find_bar_keeps_its_place_through_submit_and_next():
 async def test_no_join_artifact_after_find_closes():
     """task-31276 (critique #4 P2): no `┐─────` run at the pane join.
 
-    After Escape closed Find, a five-cell rule appeared immediately left of
-    the Reader header's first text row ("Local Media item" then; the title
-    since task-31277 made that identity line server-only) at the pane join,
-    and persisted across later interactions (14 live captures; absent on a
-    fresh open). The fresh-open row is the reference: nothing the Find
-    gesture does may change it.
+    After Escape closed Find, a five-cell rule appeared in the pane-grip
+    columns immediately left of the Reader header and persisted across
+    later interactions (14 live captures; absent on a fresh open). It is
+    the focused grip's accent end-caps: the grip is as tall as the shell,
+    so an outline can only paint its FIRST and LAST rows.
+
+    Sampled over the Reader's first three rows on purpose. task-31277
+    removed the identity line, so the pane's first row is now `‹ Back` and
+    the title is the second -- a single-row sample on the title is blind to
+    the outline-top, which paints on the first row (proved: restoring
+    `outline-top`/`outline-bottom` on the grip leaves a title-row-only
+    assertion passing).
     """
     host = _find_host()
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_media_list(host, pilot)
         await _open_first_reader_row(screen, pilot)
-        header = screen.query_one("#library-media-viewer-title")
-        fresh_row = _painted_row(host, header.region.y)
-        assert "Product Demo Video" in fresh_row, fresh_row
 
-        async def _identity_row() -> str:
+        def join_slices() -> list[str]:
+            """The five grip columns left of the Reader, top three rows."""
+            viewer = screen.query_one("#library-media-viewer")
+            title = screen.query_one("#library-media-viewer-title")
+            # The sample must actually cover the header: Back, title, toolbar.
+            assert title.region.y - viewer.region.y <= 2, (
+                title.region,
+                viewer.region,
+            )
+            assert screen.query_one("#library-media-back").region.y == viewer.region.y
+            return [
+                _painted_row(host, y)[title.region.x - 5 : title.region.x]
+                for y in range(viewer.region.y, viewer.region.y + 3)
+            ]
+
+        async def settled_join() -> list[str]:
             await pilot.pause()
             await pilot.pause()
-            widget = screen.query_one("#library-media-viewer-title")
-            return _painted_row(host, widget.region.y)
+            return join_slices()
 
-        # Find opened then closed. The stray rule lands in the five pane-grip
-        # columns immediately LEFT of the header Static, so the header's own
-        # region cannot see it -- the whole row is the assertion.
+        fresh_join = join_slices()
+        assert not any("─" in row for row in fresh_join), fresh_join
+        title = screen.query_one("#library-media-viewer-title")
+        assert "Product Demo Video" in _painted_row(host, title.region.y)
+
+        # Find opened then closed. The rule lands in the grip columns, so
+        # the header's own region cannot see it -- the join is the assertion.
         await _open_media_find(screen, pilot)
         await pilot.press("escape")
-        after_find = await _identity_row()
-        widget = screen.query_one("#library-media-viewer-title")
-        assert "─" not in _painted(host, widget.region)
-        join = after_find[widget.region.x - 5 : widget.region.x]
-        assert "─" not in join, join
-        assert after_find == fresh_row, (fresh_row, after_find)
+        after_find = await settled_join()
+        assert not any("─" in row for row in after_find), after_find
+        assert after_find == fresh_join, (fresh_join, after_find)
 
         # A mode-tab click.
         screen.query_one("#library-media-reader-select-analysis", Button).press()
-        after_tab = await _identity_row()
-        assert after_tab == fresh_row, (fresh_row, after_tab)
+        after_tab = await settled_join()
+        assert not any("─" in row for row in after_tab), after_tab
+        assert after_tab == fresh_join, (fresh_join, after_tab)
 
         # The More menu opened then dismissed.
         screen.query_one("#library-media-reader-more", Button).press()
         await pilot.pause()
         await pilot.press("escape")
-        after_more = await _identity_row()
-        assert after_more == fresh_row, (fresh_row, after_more)
+        after_more = await settled_join()
+        assert not any("─" in row for row in after_more), after_more
+        assert after_more == fresh_join, (fresh_join, after_more)
 
 
 def _plain_local_host() -> LibraryProductionCSSHarness:
     """Two local items with neither an author nor a URL.
 
     ``_two_media_items`` carries an author on both rows, so it can never
-    show the empty byline row task-31277 collapses. Content is plain prose
-    (no markdown syntax) so the Rendered|Raw strip stays out of the chrome
-    count, and one deliberately long line proves the reading measure.
+    show the empty byline row task-31277 collapses. The type is ``pdf`` --
+    outside ``_MARKDOWN_MEDIA_TYPES`` -- so no Rendered|Raw strip can enter
+    the chrome count whatever the content sniffs as, and one deliberately
+    long line proves the reading measure.
     """
     app = _build_media_test_app()
     long_line = (
@@ -547,7 +568,9 @@ def _plain_local_host() -> LibraryProductionCSSHarness:
         {
             "id": f"media-{index}",
             "title": f"Roadmap Recording {index}",
-            "type": "audio",
+            # pdf is outside _MARKDOWN_MEDIA_TYPES, so no Rendered|Raw strip
+            # can appear and the chrome count is independent of the sniff.
+            "type": "pdf",
             "last_modified": "2026-07-06T08:00:00Z",
             "keywords": ["roadmap"],
             "content": "\n".join(
@@ -564,8 +587,8 @@ def _plain_local_host() -> LibraryProductionCSSHarness:
 
 @pytest.mark.asyncio
 async def test_local_reader_chrome_stops_before_the_sixth_row():
-    """task-31277 (critique #4 P2): eight rows of chrome before the first
-    content line. The identity line restates what the Media list already
+    """task-31277 (critique #4 P2): nine rows of chrome before the first
+    content line (measured live at 235x52). The identity line restates what the Media list already
     said, the byline row paints empty when an item has no author or URL,
     and the section header repeats the selected mode tab. Counted from the
     reader pane's top edge to the first content line, inclusive of the
@@ -591,8 +614,8 @@ async def test_local_reader_chrome_stops_before_the_sixth_row():
 @pytest.mark.asyncio
 async def test_reader_bodies_do_not_repeat_the_selected_mode_tab():
     """task-31277 AC#3: the mode row is the label; a `Read`/`Analysis`
-    section header directly beneath it says the same word twice and costs
-    four rows (bold text + top rule + padding + margin)."""
+    section header directly beneath it spent a row of the reading surface
+    saying the same word twice."""
     host = _plain_local_host()
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_media_list(host, pilot)
@@ -608,8 +631,7 @@ async def test_reader_bodies_do_not_repeat_the_selected_mode_tab():
         screen.query_one("#library-media-reader-select-analysis", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-reader-mode-analysis")
         await pilot.pause()
-        title = screen.query_one("#library-media-viewer-analysis-title")
-        assert title.display is False, title.display
+        assert not screen.query("#library-media-viewer-analysis-title")
         # Re-queried after the recompose: the press replaces these widgets.
         analysis_body = screen.query_one("#library-media-reader-mode-analysis")
         mode_row = screen.query_one("#library-media-reader-mode-toolbar")

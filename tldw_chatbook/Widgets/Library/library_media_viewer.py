@@ -23,29 +23,6 @@ from tldw_chatbook.Widgets.Library.library_media_content import (
 )
 
 
-def _retired_section_header(label: str, widget_id: str) -> Static:
-    """Return a section header that is in the DOM but paints nothing.
-
-    task-31277 (critique #4 P2, AC#3): every Reader body opened with a
-    section header repeating the mode row's own selected label ("Analysis"
-    under "Analysis (selected)"), costing four rows -- bold text, a top
-    rule, its padding and its margin -- to say the same word twice. The
-    Read and Info headers are simply gone; these two keep their ids
-    because tests and CSS query them (a mounted-and-hidden widget still
-    answers ``query_one``, and ``display = False`` costs no rows).
-
-    Args:
-        label: The original header text, kept for readability.
-        widget_id: The header's id, preserved for existing queries.
-
-    Returns:
-        The display-gated header ``Static``.
-    """
-    header = Static(label, id=widget_id, classes="destination-section")
-    header.display = False
-    return header
-
-
 class LibraryMediaViewer(Vertical):
     """Render the full Library media item: metadata, content, and actions.
 
@@ -339,10 +316,10 @@ class LibraryMediaViewer(Vertical):
     def _compose_active_body(self) -> ComposeResult:
         """Compose exactly the selected Reader body; never mount hidden modes."""
         if self.external_detail or self.reader_mode == "read":
-            # task-31277 (critique #4 P2, AC#3): no "Read" section header
-            # here -- the mode row directly above already reads
-            # "Read (selected)". The header cost four rows (bold text, a
-            # top rule, its padding and its margin) to say that word twice.
+            # task-31277 (critique #4 P2, AC#3): no section header here --
+            # the mode row directly above already reads "Read (selected)",
+            # so the header spent a row of the reading surface saying that
+            # word twice. Analysis and Highlights lost theirs the same way.
             with Vertical(id="library-media-reader-mode-read"):
                 if self.image_preview is not None and not self.image_preview_hidden:
                     with Vertical(id="library-media-image-preview"):
@@ -635,9 +612,6 @@ class LibraryMediaViewer(Vertical):
         Returns:
             ComposeResult for the Analysis section.
         """
-        yield _retired_section_header(
-            "Analysis", "library-media-viewer-analysis-title"
-        )
         if self.editing_analysis:
             yield from self._compose_analysis_edit_form()
             return
@@ -834,9 +808,6 @@ class LibraryMediaViewer(Vertical):
         Returns:
             ComposeResult for the highlights section.
         """
-        yield _retired_section_header(
-            "Highlights", "library-media-viewer-highlights-title"
-        )
         if not self.highlights:
             yield Static(
                 "No highlights yet.",

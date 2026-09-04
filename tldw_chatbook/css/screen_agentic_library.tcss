@@ -2281,19 +2281,6 @@ with stray left-edge border fragments), and padding 0 1 so the full
     margin: 0 0 1 0;
 }
 
-/* Section headers: bold + a thin top rule so Content / Analysis / Highlights
-   read as real section boundaries the eye can find without reading. */
-#library-media-viewer-content-title,
-#library-media-viewer-analysis-title,
-#library-media-viewer-highlights-title {
-    width: 100%;
-    text-style: bold;
-    color: $ds-text-primary;
-    border-top: solid $ds-grid-line;
-    padding: 1 0 0 0;
-    margin: 1 0 1 0;
-}
-
 #library-media-content-search {
     width: 100%;
     height: 3;

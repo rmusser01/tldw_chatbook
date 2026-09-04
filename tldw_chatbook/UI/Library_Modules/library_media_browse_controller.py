@@ -253,16 +253,6 @@ class LibraryMediaBrowseController:
         self.invalidate(scope)
         return scope
 
-    def mark_stale_after_trash_restore(self) -> None:
-        """Retain the current exact Media page but withdraw its authority."""
-        if self.applied_result is None:
-            return
-        self.freshness = "stale"
-        self.loading = False
-        self.inflight_scope = None
-        self.error_copy = ""
-        self.stale_copy = _MUTATION_COPY
-
     def reconcile_committed_mutation(
         self,
         *,

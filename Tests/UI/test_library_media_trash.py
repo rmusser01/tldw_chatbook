@@ -3105,7 +3105,6 @@ def _bind_trash_mutation_seams(fake):
     fake._library_media_browse_controller = SimpleNamespace(
         mutation_refresh_scope=scope,
         begin_mutation=lambda: events.append(("begin",)) or scope,
-        mark_stale_after_trash_restore=lambda: events.append(("mark-stale",)),
         reconcile_committed_mutation=lambda **kwargs: events.append(
             ("reconcile", kwargs)
         ),
@@ -3687,7 +3686,6 @@ async def test_media_trash_permanent_delete_uses_only_scope_service_target_seam(
         _library_selected_row_id=LIBRARY_ROW_BROWSE_MEDIA,
         _library_media_browse_controller=SimpleNamespace(
             mutation_refresh_scope=MediaBrowseScope(page=2),
-            mark_stale_after_trash_restore=lambda: events.append(("mark-stale",)),
             reconcile_committed_mutation=lambda **kwargs: events.append(
                 ("reconcile", kwargs)
             ),
@@ -3786,7 +3784,6 @@ async def test_media_trash_permanent_failure_keeps_fresh_row_and_skips_refresh()
         _library_selected_row_id=LIBRARY_ROW_BROWSE_MEDIA,
         _library_media_browse_controller=SimpleNamespace(
             mutation_refresh_scope=MediaBrowseScope(),
-            mark_stale_after_trash_restore=lambda: events.append(("mark-stale",)),
             reconcile_committed_mutation=lambda **kwargs: events.append(
                 ("reconcile", kwargs)
             ),

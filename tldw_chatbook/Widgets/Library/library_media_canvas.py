@@ -491,6 +491,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # title, content or keyword…" rendered as "Filter by" (live,
                 # 235x52). The empty state names the full field set.
                 placeholder="Title/keyword…",
+                # The placeholder is truncated by design (see above), so the
+                # long form lives here rather than nowhere.
+                tooltip="Filter by title, content or keyword",
                 id="library-media-filter",
             )
             clear_filter = Button(
