@@ -1,9 +1,10 @@
 ---
 id: TASK-31221
 title: Media type chooser - options are invisible (zero-height OptionList)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-03 22:30'
+updated_date: '2026-09-04 00:31'
 labels:
   - library
   - media-ux
@@ -19,11 +20,12 @@ Re-critique P1: choices.styles.height = min(8, max(1, len(options))) ignores Opt
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every type option is visible for any option count
-- [ ] #2 The highlighted option is visually indicated
+- [x] #1 Every type option is visible for any option count
+- [x] #2 The highlighted option is visually indicated
 <!-- AC:END -->
 
+## Implementation Notes
 
-## Renumbering
-
-Renumbered from task-31203 on 2026-09-03: id collision with an older dev arrival (owner rule TASK-19601; older keeps the id).
+<!-- SECTION:NOTES:BEGIN -->
+Shipped in PR #2358. Root cause was the app-global '*:focus { outline: solid }' fallback painting OVER the option rows (no geometry cost) - third widget bitten after TASK-1160/TASK-2300; fixed the sanctioned way (outline:none in the library module beside TASK-2300's rationale; highlighted-row recolour carries focus, satisfying AC2). Pinned with PAINTED-TEXT assertions on the production harness - every region assertion measured correct while the paint was covered. Live-verified.
+<!-- SECTION:NOTES:END -->
