@@ -20796,6 +20796,15 @@ class SettingsScreen(BaseAppScreen):
             # (re)composed card at a workspace id a later visit's list may
             # not even show (e.g. after an archive elsewhere).
             self._settings_selected_workspace_id = None
+        if (
+            self.active_category == SettingsCategoryId.THEME.value
+            and category_value != SettingsCategoryId.THEME.value
+            and self.theme_editor_modified
+        ):
+            # TASK-31252: leaving Theme remounts the editor and drops the
+            # in-progress edit, so the dirty displays must not outlive it.
+            self.theme_editor_modified = False
+            self._refresh_theme_modified_widgets()
         category_changed = category_value != self.active_category
         self.active_category = category_value
 

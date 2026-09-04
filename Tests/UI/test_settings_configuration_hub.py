@@ -12976,3 +12976,34 @@ def test_settings_appearance_theme_options_include_registered_user_themes():
     options = SettingsScreen._appearance_theme_options(stub)
     assert ("Ocean (saved)", "ocean") in options
     assert [value for _label, value in options].count("textual-dark") == 1
+
+
+@pytest.mark.asyncio
+async def test_theme_dirty_flag_clears_when_leaving_the_category():
+    """TASK-31252: leaving Theme drops the in-progress edit, so the rail marker
+    and inspector row must not keep saying 'unsaved' on the next visit."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-theme")
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
+        for _ in range(6):
+            await pilot.pause()
+        editor = screen.query_one("#settings-theme-editor")
+        editor.query_one("#settings-theme-color-primary", Input).value = "#123456"
+        for _ in range(6):
+            await pilot.pause()
+        assert screen.theme_editor_modified is True
+
+        screen._select_category(SettingsCategoryId.APPEARANCE.value)
+        for _ in range(6):
+            await pilot.pause()
+        assert screen.theme_editor_modified is False
+
+        screen._select_category(SettingsCategoryId.THEME.value)
+        await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
+        for _ in range(6):
+            await pilot.pause()
+        note = screen.query_one("#settings-theme-unsaved-note", Static)
+        assert "No" in str(note.renderable)

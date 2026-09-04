@@ -637,3 +637,27 @@ async def test_settings_theme_editor_set_launch_default_requires_saved_theme(
         editor.on_set_launch_default()
         await pilot.pause()
         assert written == [("general", "default_theme", "ocean")]
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_remount_after_apply_restores_palette(tmp_path):
+    """TASK-31252: app.theme == 'custom_<name>' must load, not blank the editor."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        editor.on_new_theme()
+        await pilot.pause()
+        editor.color_inputs["primary"].value = "#123456"
+        await pilot.pause()
+        editor.on_apply_theme()
+        await pilot.pause()
+        assert app.theme == "custom_new_theme"
+
+        editor._initialize_editor()  # what a remount does
+        await pilot.pause()
+        assert editor.current_theme_name == "new_theme"
+        assert editor.query_one("#settings-theme-name", Input).value == "new_theme"
+        assert editor.color_inputs["primary"].value.upper() == "#123456"
+        assert editor.color_inputs["background"].value != ""

@@ -203,7 +203,17 @@ class SettingsThemeEditor(Vertical):
             }
             self.color_inputs = color_inputs
             self.color_swatches = color_swatches
-            self.load_theme(self.app.theme)
+            app_theme = str(self.app.theme)
+            self.load_theme(app_theme)
+            if app_theme.startswith("custom_"):
+                # Apply registers the working palette under a custom_ prefix
+                # so it never clobbers a shipped registration; the editor shows
+                # the user-facing name and keeps it editable (TASK-31252).
+                display_name = app_theme[len("custom_") :]
+                self.current_theme_name = display_name
+                name_input = self.query_one("#settings-theme-name", Input)
+                name_input.value = display_name
+                name_input.disabled = False
         except QueryError:
             # Settings can recompose while this callback is queued. A stale,
             # detached editor must not fail the replacement screen.
