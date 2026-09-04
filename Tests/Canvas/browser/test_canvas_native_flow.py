@@ -204,11 +204,19 @@ async def test_native_canvas_shell_follows_updates_and_keeps_pinned_revision() -
             await page.screenshot(path=output / "canvas-shell-desktop.png")
             await page.set_viewport_size({"width": 390, "height": 844})
             await page.screenshot(path=output / "canvas-shell-mobile.png")
+            primary = await page.locator(".canvas-primary-row").bounding_box()
+            secondary = await page.locator(".canvas-secondary-row").bounding_box()
+            assert primary is not None and secondary is not None
+            assert secondary["y"] >= primary["y"] + primary["height"] - 1
+            assert await page.get_by_text("More actions →", exact=True).is_visible()
+            assert await page.locator(".canvas-controls-scroll").evaluate(
+                "element => element.scrollWidth > element.clientWidth"
+            )
             await page.locator("#pin-button").focus()
             for _ in range(5):
                 await page.keyboard.press("Tab")
             assert await page.evaluate("document.activeElement.id") == "close-button"
-            assert await page.locator(".canvas-actions").evaluate(
+            assert await page.locator(".canvas-controls-scroll").evaluate(
                 "element => element.scrollLeft > 0"
             )
             await page.set_viewport_size({"width": 1440, "height": 900})

@@ -9,13 +9,6 @@
   <script src="static/canvas_shell.js" defer></script>
 </head>
 <body>
-  <noscript>
-    <section class="scripts-disabled-recovery">
-      <h1>Chatbook Canvas needs trusted shell scripts</h1>
-      <p>The generated page remains isolated, but this browser has disabled the Chatbook-owned controls needed to load it.</p>
-      <p>Enable JavaScript for this loopback Chatbook page, then reload. Generated scripts still run only inside the zero-egress Canvas runtime.</p>
-    </section>
-  </noscript>
 <!--
 THESIS: A quiet, preview-dominant workbench that keeps revision authority visible without competing with the user's artifact.
 OWN-WORLD: Extends Chatbook's Precision Workbench in Operate mode; the trusted shell remains visually and structurally separate from generated content.
@@ -24,31 +17,45 @@ FIRST VIEWPORT: Compact trusted controls above one expansive preview; update fee
 FORM: Approved preview-first Precision Workbench extension; no concept roll required.
 FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
 -->
+  <noscript>
+    <section class="scripts-disabled-recovery">
+      <h1>Chatbook Canvas needs trusted shell scripts</h1>
+      <p>The generated page remains isolated, but this browser has disabled the Chatbook-owned controls needed to load it.</p>
+      <p>Enable JavaScript for this loopback Chatbook page, then reload. Generated scripts still run only inside the zero-egress Canvas runtime.</p>
+    </section>
+  </noscript>
   <main class="canvas-workbench" aria-labelledby="canvas-heading">
     <header class="canvas-toolbar">
-      <div class="canvas-identity">
-        <h1 id="canvas-heading">Chatbook Canvas</h1>
-        <label class="sr-only" for="canvas-selector">Selected Canvas</label>
-        <select id="canvas-selector" aria-label="Selected Canvas"></select>
-        <label class="sr-only" for="canvas-title">Canvas title</label>
-        <input id="canvas-title" aria-label="Canvas title" value="Canvas" maxlength="200" autocomplete="off" spellcheck="false">
-        <span id="temporary-badge" class="state-badge state-temporary" hidden>Temporary</span>
+      <div class="canvas-primary-row">
+        <div class="canvas-identity">
+          <h1 id="canvas-heading">Chatbook Canvas</h1>
+          <label class="sr-only" for="canvas-selector">Selected Canvas</label>
+          <select id="canvas-selector" aria-label="Selected Canvas"></select>
+          <label class="sr-only" for="canvas-title">Canvas title</label>
+          <input id="canvas-title" aria-label="Canvas title" value="Canvas" maxlength="200" autocomplete="off" spellcheck="false">
+          <span id="temporary-badge" class="state-badge state-temporary" hidden>Temporary</span>
+        </div>
       </div>
-      <div class="canvas-state" aria-label="Canvas state">
-        <span id="connection-state" class="state-badge" role="status">Connecting</span>
-        <span id="follow-state" class="state-badge state-follow">Following</span>
-        <span id="revision-label" class="revision-label">Revision —</span>
+      <div class="canvas-secondary-row">
+        <div class="canvas-controls-scroll" tabindex="0" aria-label="Canvas status and actions; scroll horizontally for more">
+          <div class="canvas-state" aria-label="Canvas state">
+            <span id="connection-state" class="state-badge" role="status">Connecting</span>
+            <span id="follow-state" class="state-badge state-follow">Following</span>
+            <span id="revision-label" class="revision-label">Revision —</span>
+          </div>
+          <div id="provenance" class="provenance" aria-live="polite">Origin unavailable</div>
+          <nav class="canvas-actions" aria-label="Canvas actions">
+            <button id="pin-button" type="button">Pin revision</button>
+            <button id="follow-button" type="button" hidden>Follow latest</button>
+            <button id="source-button" type="button" aria-expanded="false" aria-controls="source-panel">Inspect source</button>
+            <button id="copy-button" type="button">Copy source</button>
+            <button id="download-button" type="button">Download</button>
+            <button id="reload-button" type="button">Reload</button>
+            <button id="close-button" type="button">Close</button>
+          </nav>
+        </div>
+        <span class="actions-overflow-cue" aria-hidden="true">More actions →</span>
       </div>
-      <nav class="canvas-actions" aria-label="Canvas actions — scroll horizontally for more">
-        <button id="pin-button" type="button">Pin revision</button>
-        <button id="follow-button" type="button" hidden>Follow latest</button>
-        <button id="source-button" type="button" aria-expanded="false" aria-controls="source-panel">Inspect source</button>
-        <button id="copy-button" type="button">Copy source</button>
-        <button id="download-button" type="button">Download</button>
-        <button id="reload-button" type="button">Reload</button>
-        <button id="close-button" type="button">Close</button>
-      </nav>
-      <div id="provenance" class="provenance" aria-live="polite">Origin unavailable</div>
     </header>
 
     <section id="notice" class="canvas-notice" role="status" aria-live="polite" hidden>

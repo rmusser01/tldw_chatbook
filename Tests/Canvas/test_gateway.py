@@ -354,6 +354,8 @@ async def test_two_shells_in_one_browser_keep_distinct_cookie_authority() -> Non
         assert (await session.get(_launch_url(first, "api/events"))).status == 200
         assert (await session.get(_launch_url(second, "api/events"))).status == 200
     assert gateway.browser_session_count == 2
+    assert gateway.has_browser_session_for("conversation-session-a") is True
+    assert gateway.has_browser_session_for("conversation-session-b") is False
     await gateway.aclose()
 
 

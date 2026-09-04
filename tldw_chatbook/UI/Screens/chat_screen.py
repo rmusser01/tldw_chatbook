@@ -8927,6 +8927,7 @@ class ChatScreen(BaseAppScreen):
                 scope_resolver=self._console_canvas_scope,
                 bridge_sink=self._prefill_console_canvas_repair,
                 auto_open=self._schedule_console_canvas_tool_open,
+                publication_guard=self._console_canvas_publication_is_current,
             )
         return store
 
@@ -19405,6 +19406,33 @@ class ChatScreen(BaseAppScreen):
             scope_resolver=self._console_canvas_scope,
             bridge_sink=self._prefill_console_canvas_repair,
             auto_open=self._schedule_console_canvas_tool_open,
+            publication_guard=self._console_canvas_publication_is_current,
+        )
+
+    def _console_canvas_publication_is_current(self, publication: Any) -> bool:
+        """Accept a settled mutation only for the live native chat branch."""
+
+        scope = getattr(publication, "scope", None)
+        revisions = getattr(publication, "revisions", ())
+        session_id = getattr(scope, "session_id", None)
+        conversation_id = getattr(scope, "conversation_id", None)
+        if not isinstance(session_id, str) or not revisions:
+            return False
+        store = self._ensure_console_chat_store()
+        if store.active_session_id != session_id:
+            return False
+        session = next(
+            (item for item in store.sessions() if item.id == session_id),
+            None,
+        )
+        if session is None:
+            return False
+        if (session.persisted_conversation_id or session.id) != conversation_id:
+            return False
+        active_ids = set(store.active_path_message_ids(session_id))
+        return all(
+            getattr(getattr(revision, "origin", None), "message_id", None) in active_ids
+            for revision in revisions
         )
 
     def _schedule_console_canvas_tool_open(self, session_id: str, info: Any) -> None:
@@ -19412,7 +19440,7 @@ class ChatScreen(BaseAppScreen):
 
         def schedule() -> None:
             gateway = self._console_runtime().canvas_gateway
-            if gateway is not None and gateway.browser_session_count:
+            if gateway is not None and gateway.has_browser_session_for(session_id):
                 return
             self.run_worker(
                 self._open_console_canvas_selection(
@@ -19436,18 +19464,29 @@ class ChatScreen(BaseAppScreen):
                 )
         schedule()
 
-    async def _open_console_canvas_block(
-        self, message_id: str, source: str, create_new: bool
-    ) -> Any:
+    async def _open_console_canvas_block(self, reference: Any, source: str) -> Any:
         """Import one authorized HTML block and open its native preview."""
 
         store = self._ensure_console_chat_store()
         session_id = store.active_session_id
-        if session_id is None or store.session_id_for_message(message_id) != session_id:
+        message_id = reference.message_id
+        if (
+            session_id is None
+            or store.session_id_for_message(message_id) != session_id
+            or message_id not in store.active_path_message_ids(session_id)
+        ):
             raise RuntimeError("Canvas source message is no longer current")
+        message = store.get_message(message_id)
         authority = self._console_canvas_authority()
         info = authority.import_html(
-            session_id=session_id, source=source, create_new=create_new
+            session_id=session_id,
+            source=source,
+            create_new=reference.create_new,
+            source_message_id=message.id,
+            origin_message_id=message.persisted_message_id or message.id,
+            source_turn_id=message.turn_id or message.trace_turn_id or message.id,
+            block_index=reference.block_index,
+            block_identity=reference.identity,
         )
         return await self._open_console_canvas_selection(
             session_id=session_id,

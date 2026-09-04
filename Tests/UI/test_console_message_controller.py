@@ -327,14 +327,86 @@ async def test_production_message_controller_resolves_canvas_source_only_at_open
 
     assert await screen.handle_console_message_action(event) is True
 
-    screen._message._open_canvas_block_fn.assert_awaited_once_with(
-        message.id,
-        "<!doctype html><title>Native</title><p>secret</p>\n",
-        False,
-    )
+    reference, source = screen._message._open_canvas_block_fn.await_args.args
+    assert reference.message_id == message.id
+    assert reference.block_index == 0
+    assert reference.create_new is False
+    assert source == "<!doctype html><title>Native</title><p>secret</p>\n"
     result = screen._message._last_console_action
     assert result.target_content is None
     assert "secret" not in repr(result)
+
+
+def test_canvas_auto_open_is_suppressed_only_by_same_session_browser():
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    runtime = screen._console_runtime()
+    runtime._canvas_gateway = SimpleNamespace(
+        has_browser_session_for=lambda session_id: session_id == "session-a"
+    )
+    screen.app_instance = SimpleNamespace(call_from_thread=lambda callback: callback())
+    screen._open_console_canvas_selection = Mock(
+        side_effect=lambda **_kwargs: _closed_coroutine()
+    )
+    workers: list[object] = []
+
+    def capture_worker(coroutine, **_kwargs):
+        workers.append(coroutine)
+        coroutine.close()
+
+    screen.run_worker = capture_worker
+    info = SimpleNamespace(canvas_id="canvas-a", revision_id="revision-a")
+
+    screen._schedule_console_canvas_tool_open("session-a", info)
+    screen._schedule_console_canvas_tool_open("session-b", info)
+
+    screen._open_console_canvas_selection.assert_called_once_with(
+        session_id="session-b",
+        canvas_id="canvas-a",
+        revision_id="revision-a",
+        follow_latest=True,
+    )
+    assert len(workers) == 1
+
+
+def test_canvas_publication_guard_rejects_stale_session_and_sibling_branch():
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    first = store.create_session(ephemeral=True)
+    store.append_message(
+        first.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="root",
+    )
+    left = store.append_message(
+        first.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="left",
+    )
+    publication = SimpleNamespace(
+        scope=SimpleNamespace(
+            session_id=first.id,
+            conversation_id=first.id,
+        ),
+        revisions=(SimpleNamespace(origin=SimpleNamespace(message_id=left.id)),),
+    )
+
+    assert screen._console_canvas_publication_is_current(publication) is True
+
+    store.create_sibling(
+        left.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="right",
+    )
+    assert screen._console_canvas_publication_is_current(publication) is False
+
+    store.create_session(ephemeral=True)
+    assert screen._console_canvas_publication_is_current(publication) is False
+
+
+async def _closed_coroutine() -> None:
+    return None
 
 
 @pytest.mark.asyncio

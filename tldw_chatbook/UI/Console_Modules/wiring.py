@@ -1559,8 +1559,8 @@ def build_console_controllers(
             )(message_id)
         ),
         open_canvas_block=(
-            lambda message_id, source, create_new: screen._open_console_canvas_block(
-                message_id, source, create_new
+            lambda reference, source: screen._open_console_canvas_block(
+                reference, source
             )
         ),
         prefill_canvas_repair=(

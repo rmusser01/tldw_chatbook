@@ -164,6 +164,51 @@ def test_user_import_create_and_update_preserve_durable_actor_provenance(db) -> 
     assert [row[0] for row in rows] == ["user_import", "user_import"]
 
 
+def test_user_import_can_record_an_earlier_active_message_as_origin(db) -> None:
+    conversation_id = _conversation(db)
+    source_message_id = _message(db, conversation_id, "Import this HTML")
+    current_leaf_id = _message(
+        db,
+        conversation_id,
+        "Later assistant message",
+        parent_message_id=source_message_id,
+    )
+    service = CanvasService(db)
+    scope = _scope(
+        conversation_id,
+        source_message_id,
+        current_leaf_id,
+        run_id="current-interaction",
+    )
+
+    created = service.import_canvas(
+        scope,
+        title="Earlier block",
+        source=_html("one"),
+        origin_message_id=source_message_id,
+        origin_turn_id="source-turn",
+    )
+
+    assert created.revision.origin.message_id == source_message_id
+    assert created.revision.origin.run_id == "source-turn"
+
+    updated = service.import_update_canvas(
+        replace(
+            scope,
+            selected_canvas_id=created.revision.canvas_id,
+            selected_revision_id=created.revision.revision_id,
+        ),
+        created.revision.canvas_id,
+        expected_parent_revision_id=created.revision.revision_id,
+        source=_html("two"),
+        origin_message_id=source_message_id,
+        origin_turn_id="source-update-turn",
+    )
+
+    assert updated.revision.origin.message_id == source_message_id
+    assert updated.revision.origin.run_id == "source-update-turn"
+
+
 def _revision_count(db: CharactersRAGDB, canvas_id: str | None = None) -> int:
     if canvas_id is None:
         row = (

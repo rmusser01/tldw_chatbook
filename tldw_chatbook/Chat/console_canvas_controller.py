@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
@@ -223,6 +223,15 @@ class CanvasRunSettlement:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class CanvasSettlementPublication:
+    """Source-free committed tool revisions published after durable settlement."""
+
+    scope: CanvasScope
+    assistant_message_id: str
+    revisions: tuple[CanvasRevisionInfo, ...]
+
+
 @dataclass(slots=True)
 class _RunStage:
     scope: CanvasScope
@@ -238,6 +247,8 @@ class _RunStage:
         tuple[str, str], tuple[str, CanvasMutationResult | CanvasConflictResult]
     ] = field(default_factory=dict)
     settlement: CanvasRunSettlement | None = None
+    publication: CanvasSettlementPublication | None = None
+    publication_delivered: set[int] = field(default_factory=set)
 
 
 class CanvasRunCoordinator:
@@ -298,22 +309,34 @@ class ConsoleCanvasController:
         self._promotion_leases: dict[str, object] = {}
         self._session_generations: dict[str, int] = {}
         self._lock = threading.RLock()
-        self._mutation_listeners: list[Any] = []
+        self._settlement_listeners: list[
+            Callable[[CanvasSettlementPublication], None]
+        ] = []
 
-    def add_mutation_listener(self, listener: Any) -> None:
-        """Observe source-free successful tool mutations."""
+    def add_settlement_listener(
+        self, listener: Callable[[CanvasSettlementPublication], None]
+    ) -> None:
+        """Observe source-free tool mutations only after successful commit."""
 
-        if callable(listener) and listener not in self._mutation_listeners:
-            self._mutation_listeners.append(listener)
+        if callable(listener) and listener not in self._settlement_listeners:
+            self._settlement_listeners.append(listener)
 
-    def _emit_mutation(self, scope: CanvasScope, result: CanvasMutationResult) -> None:
-        for listener in tuple(self._mutation_listeners):
+    def _publish_settlement(self, stage: _RunStage) -> None:
+        publication = stage.publication
+        if publication is None:
+            return
+        for listener in tuple(self._settlement_listeners):
+            listener_id = id(listener)
+            if listener_id in stage.publication_delivered:
+                continue
             try:
-                listener(scope, result)
+                listener(publication)
             except Exception as exc:  # noqa: BLE001 - observers cannot fail mutations
                 logger.warning(
-                    "canvas_mutation_listener_failed: {}", type(exc).__name__
+                    "canvas_settlement_listener_failed: {}", type(exc).__name__
                 )
+                continue
+            stage.publication_delivered.add(listener_id)
 
     @property
     def durable_service(self) -> object | None:
@@ -477,7 +500,6 @@ class ConsoleCanvasController:
             result = CanvasMutationResult(info, plan.compatibility_issues)
             self._append(stage, _StagedRevision(info, html, now, True))
             stage.replays[(scope.run_id, tool_call_id)] = (request_digest, result)
-            self._emit_mutation(scope, result)
             return result
 
     def interactive_create_canvas(
@@ -485,6 +507,7 @@ class ConsoleCanvasController:
         scope: CanvasScope,
         *,
         origin_message_id: str,
+        origin_turn_id: str | None = None,
         title: str,
         html: str,
         temporary: bool,
@@ -494,7 +517,12 @@ class ConsoleCanvasController:
         with self._lock:
             if not temporary:
                 created = self._service_call(
-                    "import_canvas", scope, title=title, source=html
+                    "import_canvas",
+                    replace(scope, run_id=origin_turn_id or scope.run_id),
+                    title=title,
+                    source=html,
+                    origin_message_id=origin_message_id,
+                    origin_turn_id=origin_turn_id,
                 )
                 return CanvasMutationResult(
                     created.revision, created.compatibility_issues
@@ -513,7 +541,7 @@ class ConsoleCanvasController:
                 content_sha256=plan.source_identity.sha256,
                 source_bytes=plan.source_identity.source_bytes,
                 sequence=1,
-                origin=CanvasOrigin(origin_message_id, scope.run_id),
+                origin=CanvasOrigin(origin_message_id, origin_turn_id or scope.run_id),
             )
             self._append(stage, _StagedRevision(info, html, now, True, "user_import"))
             stage.state = CanvasRunState.COMMITTED
@@ -527,6 +555,7 @@ class ConsoleCanvasController:
         scope: CanvasScope,
         *,
         origin_message_id: str,
+        origin_turn_id: str | None = None,
         canvas_id: str,
         expected_parent_revision_id: str,
         html: str,
@@ -543,10 +572,12 @@ class ConsoleCanvasController:
             if not temporary:
                 return self._service_call(
                     "import_update_canvas",
-                    selected,
+                    replace(selected, run_id=origin_turn_id or scope.run_id),
                     canvas_id,
                     expected_parent_revision_id=expected_parent_revision_id,
                     source=html,
+                    origin_message_id=origin_message_id,
+                    origin_turn_id=origin_turn_id,
                 )
             current = self.read_session_canvas(selected, canvas_id, temporary=True)
             if current.revision.revision_id != expected_parent_revision_id:
@@ -572,7 +603,7 @@ class ConsoleCanvasController:
                 content_sha256=plan.source_identity.sha256,
                 source_bytes=plan.source_identity.source_bytes,
                 sequence=self._temporary_max_sequence(scope, canvas_id) + 1,
-                origin=CanvasOrigin(origin_message_id, scope.run_id),
+                origin=CanvasOrigin(origin_message_id, origin_turn_id or scope.run_id),
             )
             self._append(
                 stage,
@@ -675,18 +706,6 @@ class ConsoleCanvasController:
                         for canvas_id, row in self._temporary_latest_rows(scope).items()
                     }
                 )
-            path = set(scope.active_message_ids)
-            for stage in self._runs.values():
-                if (
-                    stage.scope.session_id != scope.session_id
-                    or stage.scope.conversation_id != scope.conversation_id
-                    or stage.state not in {CanvasRunState.OPEN, CanvasRunState.READY}
-                    or not self._stage_owner_current(stage)
-                ):
-                    continue
-                for canvas_id, row in stage.latest_by_canvas_id.items():
-                    if row.info.origin.message_id in path:
-                        items[canvas_id] = self._list_item(row.info, scope)
             return tuple(items[key] for key in sorted(items))
 
     def read_session_canvas(
@@ -695,22 +714,40 @@ class ConsoleCanvasController:
         """Read a reachable exact/head revision outside an assistant run."""
 
         with self._lock:
-            if scope.selected_revision_id is not None:
-                for stage in self._runs.values():
-                    row = stage.by_revision_id.get(scope.selected_revision_id)
-                    if (
-                        row is not None
-                        and row.info.canvas_id == canvas_id
-                        and stage.scope.session_id == scope.session_id
-                        and self._stage_owner_current(stage)
-                    ):
-                        return CanvasReadResult(row.info, row.source)
             if not temporary:
                 return self._service_call("read_canvas", scope, canvas_id)
+            if scope.selected_revision_id is not None:
+                row = self._temporary_exact_row(scope, canvas_id)
+                if row is None:
+                    raise RuntimeError("canvas_base_unavailable")
+                return CanvasReadResult(row.info, row.source)
             row = self._temporary_latest_rows(scope).get(canvas_id)
             if row is None:
                 raise RuntimeError("canvas_base_unavailable")
             return CanvasReadResult(row.info, row.source)
+
+    def find_interactive_import(
+        self,
+        scope: CanvasScope,
+        *,
+        origin_message_id: str,
+        origin_turn_id: str,
+        content_sha256: str,
+        temporary: bool,
+    ) -> CanvasRevisionInfo | None:
+        """Return a durable prior transcript import; temporary lookup is cached."""
+
+        if temporary:
+            return None
+        result = self._service_call(
+            "find_imported_revision",
+            scope,
+            origin_message_id=origin_message_id,
+            origin_turn_id=origin_turn_id,
+            content_sha256=content_sha256,
+            default=(),
+        )
+        return result if isinstance(result, CanvasRevisionInfo) else None
 
     def _new_interactive_stage(
         self,
@@ -814,7 +851,6 @@ class ConsoleCanvasController:
                 _StagedRevision(info, html, datetime.now(UTC).isoformat(), False),
             )
             stage.replays[(scope.run_id, tool_call_id)] = (request_digest, result)
-            self._emit_mutation(scope, result)
             return result
 
     def finish_run(
@@ -925,6 +961,9 @@ class ConsoleCanvasController:
     def confirm_settlement(self, run_id: str) -> bool:
         with self._lock:
             stage = self._runs.get(run_id)
+            if stage is not None and stage.state is CanvasRunState.COMMITTED:
+                self._publish_settlement(stage)
+                return True
             if (
                 stage is None
                 or stage.state is not CanvasRunState.READY
@@ -934,6 +973,11 @@ class ConsoleCanvasController:
                 )
             ):
                 return False
+            stage.publication = CanvasSettlementPublication(
+                scope=stage.scope,
+                assistant_message_id=stage.assistant_message_id,
+                revisions=tuple(row.info for row in stage.revisions),
+            )
             stage.state = CanvasRunState.COMMITTED
             assert stage.settlement is not None
             stage.settlement = CanvasRunSettlement(
@@ -952,6 +996,7 @@ class ConsoleCanvasController:
                 stage.by_revision_id.clear()
                 stage.latest_by_canvas_id.clear()
                 stage.revisions.clear()
+            self._publish_settlement(stage)
             self._prune_closed_stages()
             return True
 
@@ -999,7 +1044,7 @@ class ConsoleCanvasController:
             if stage is None or stage.run_owner is not settlement._run_owner:
                 return False
             if stage.state is CanvasRunState.COMMITTED:
-                return True
+                return self.confirm_settlement(settlement.run_id)
             if stage.settlement is not settlement:
                 return False
             return self.confirm_settlement(settlement.run_id)
@@ -1235,13 +1280,19 @@ class ConsoleCanvasController:
             raise RuntimeError("canvas_idempotency_conflict")
         return prior[1]
 
-    def _service_call(self, name: str, *args: object, default: object = None) -> Any:
+    def _service_call(
+        self,
+        name: str,
+        *args: object,
+        default: object = None,
+        **kwargs: object,
+    ) -> Any:
         method = getattr(self._durable_service, name, None)
         if not callable(method):
             if default is not None:
                 return default
             raise RuntimeError("canvas_base_unavailable")
-        return method(*args)
+        return method(*args, **kwargs)
 
     def _temporary_latest_rows(self, scope: CanvasScope) -> dict[str, _StagedRevision]:
         latest: dict[str, _StagedRevision] = {}
@@ -1252,6 +1303,7 @@ class ConsoleCanvasController:
         for stage in self._runs.values():
             if (
                 stage.scope.session_id != scope.session_id
+                or stage.scope.conversation_id != scope.conversation_id
                 or not stage.temporary
                 or stage.state is not CanvasRunState.COMMITTED
                 or not self._stage_owner_current(stage)
@@ -1275,6 +1327,8 @@ class ConsoleCanvasController:
                 if (
                     row is not None
                     and row.info.canvas_id == scope.selected_canvas_id
+                    and stage.scope.session_id == scope.session_id
+                    and stage.scope.conversation_id == scope.conversation_id
                     and row.info.origin.message_id in path_positions
                     and stage.temporary
                     and stage.state is CanvasRunState.COMMITTED
@@ -1283,6 +1337,28 @@ class ConsoleCanvasController:
                     latest[row.info.canvas_id] = row
                     break
         return latest
+
+    def _temporary_exact_row(
+        self, scope: CanvasScope, canvas_id: str
+    ) -> _StagedRevision | None:
+        revision_id = scope.selected_revision_id
+        if revision_id is None or scope.selected_canvas_id != canvas_id:
+            return None
+        active_path = set(scope.active_message_ids)
+        for stage in self._runs.values():
+            row = stage.by_revision_id.get(revision_id)
+            if (
+                row is not None
+                and row.info.canvas_id == canvas_id
+                and row.info.origin.message_id in active_path
+                and stage.scope.session_id == scope.session_id
+                and stage.scope.conversation_id == scope.conversation_id
+                and stage.temporary
+                and stage.state is CanvasRunState.COMMITTED
+                and self._stage_owner_current(stage)
+            ):
+                return row
+        return None
 
     def _stage_owner_current(self, stage: _RunStage) -> bool:
         return not stage.temporary or (
@@ -1297,6 +1373,7 @@ class ConsoleCanvasController:
                 row.info.sequence
                 for stage in self._runs.values()
                 if stage.scope.session_id == scope.session_id
+                and stage.scope.conversation_id == scope.conversation_id
                 and stage.temporary
                 and stage.state is CanvasRunState.COMMITTED
                 and self._stage_owner_current(stage)
@@ -1371,7 +1448,14 @@ class ConsoleCanvasController:
             (run_id, stage)
             for run_id, stage in self._runs.items()
             if stage.state is CanvasRunState.DISCARDED
-            or (stage.state is CanvasRunState.COMMITTED and not stage.temporary)
+            or (
+                stage.state is CanvasRunState.COMMITTED
+                and not stage.temporary
+                and all(
+                    id(listener) in stage.publication_delivered
+                    for listener in self._settlement_listeners
+                )
+            )
         ]
         for run_id, stage in closed[:-_MAX_RETAINED_CLOSED_RUNS]:
             self._runs.pop(run_id, None)
@@ -1437,6 +1521,7 @@ __all__ = [
     "CanvasRunState",
     "CanvasSessionOwner",
     "CanvasSessionPromotionContribution",
+    "CanvasSettlementPublication",
     "CanvasTurnContribution",
     "ConsoleCanvasController",
 ]

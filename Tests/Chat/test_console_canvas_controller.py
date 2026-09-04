@@ -230,6 +230,151 @@ def test_metadata_serialization_never_contains_source() -> None:
     }
 
 
+def test_tool_mutation_publication_waits_for_postcommit_and_is_retry_safe() -> None:
+    controller = _controller()
+    publications = []
+    attempts = 0
+
+    def flaky_listener(publication) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("transient UI publication failure")
+        publications.append(publication)
+
+    controller.add_settlement_listener(flaky_listener)
+    result = controller.create_canvas(
+        _scope(),
+        tool_call_id="postcommit-create",
+        title="Postcommit",
+        html=f"<p>{SOURCE_SENTINEL}</p>",
+    )
+    settlement = controller.finish_run(RUN_ID, "done")
+
+    assert publications == []
+    assert settlement is not None
+    assert controller.confirm_exact_settlement(settlement) is True
+    assert publications == []
+    assert controller.confirm_exact_settlement(settlement) is True
+    assert len(publications) == 1
+    assert publications[0].scope == _scope()
+    assert publications[0].revisions == (result.revision,)
+    assert SOURCE_SENTINEL not in repr(publications[0])
+    assert controller.confirm_exact_settlement(settlement) is True
+    assert len(publications) == 1
+
+
+@pytest.mark.parametrize("terminal_status", ["failed", "cancelled", "stopped"])
+def test_failed_tool_mutation_never_publishes_phantom_selection(
+    terminal_status: str,
+) -> None:
+    controller = _controller()
+    publications = []
+    controller.add_settlement_listener(publications.append)
+    controller.create_canvas(
+        _scope(),
+        tool_call_id="failed-create",
+        title="Not committed",
+        html=f"<p>{SOURCE_SENTINEL}</p>",
+    )
+
+    settlement = controller.finish_run(RUN_ID, terminal_status)
+
+    assert settlement is not None
+    assert settlement.state is CanvasRunState.DISCARDED
+    assert publications == []
+
+
+def test_durable_transaction_rollback_cannot_publish_and_retry_publishes_once(
+    tmp_path,
+) -> None:
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    class FailingContribution:
+        def write(self, *, writer, conversation_id, message_ids) -> None:
+            raise RuntimeError("forced rollback")
+
+    db = CharactersRAGDB(tmp_path / "canvas-publication-rollback.sqlite", "canvas")
+    try:
+        service = ChatPersistenceService(db)
+        conversation_id = service.create_conversation(
+            assistant_kind="generic", assistant_id="console"
+        )
+        persisted_message_id = service.create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="pending",
+        )
+        initial = db.get_message_by_id(persisted_message_id)
+        controller = ConsoleCanvasController()
+        scope = _scope(
+            conversation_id=conversation_id,
+            active_message_ids=(ASSISTANT_ID,),
+        )
+        controller.register_run(
+            scope,
+            assistant_message_id=ASSISTANT_ID,
+            temporary=False,
+        )
+        result = controller.create_canvas(
+            scope,
+            tool_call_id="durable-rollback",
+            title="Postcommit",
+            html=f"<p>{SOURCE_SENTINEL}</p>",
+        )
+        settlement = controller.finish_run(RUN_ID, "done")
+        publications = []
+        controller.add_settlement_listener(publications.append)
+        write_args = {
+            "native_message_id": ASSISTANT_ID,
+            "message_id": persisted_message_id,
+            "content": "complete",
+            "thinking_blocks_json": None,
+            "provider_continuation_json": None,
+            "assistant_generation_state": "complete",
+            "usage_json": None,
+            "metadata_json": settlement.metadata_json,
+            "update_metadata": True,
+            "expected_version": initial["version"],
+        }
+
+        with pytest.raises(RuntimeError, match="forced rollback"):
+            service.replace_assistant_generation_projection_with_contributions(
+                **write_args,
+                contributions=(settlement.contribution, FailingContribution()),
+                on_durable_commit=lambda: controller.confirm_exact_settlement(
+                    settlement
+                ),
+            )
+
+        assert publications == []
+        assert controller.settlement_for_assistant(ASSISTANT_ID).state is (
+            CanvasRunState.READY
+        )
+        assert db.get_message_by_id(persisted_message_id)["content"] == "pending"
+        assert (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM canvas_revisions")
+            .fetchone()[0]
+            == 0
+        )
+
+        service.replace_assistant_generation_projection_with_contributions(
+            **write_args,
+            contributions=(settlement.contribution,),
+            on_durable_commit=lambda: controller.confirm_exact_settlement(settlement),
+        )
+
+        assert [item.revisions for item in publications] == [(result.revision,)]
+        assert controller.settlement_for_assistant(ASSISTANT_ID).state is (
+            CanvasRunState.COMMITTED
+        )
+        assert SOURCE_SENTINEL not in repr(publications)
+    finally:
+        db.close_connection()
+
+
 def test_bridge_terminal_binding_refuses_a_different_agent_run_id() -> None:
     controller = _controller()
     controller.create_canvas(

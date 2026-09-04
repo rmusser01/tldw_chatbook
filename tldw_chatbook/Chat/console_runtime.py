@@ -891,6 +891,7 @@ class ConsoleRuntime:
         scope_resolver: Callable[[str], Any],
         bridge_sink: Callable[[str], None] | None = None,
         auto_open: Callable[[str, Any], None] | None = None,
+        publication_guard: Callable[[Any], bool] | None = None,
     ) -> Any:
         """Return the single Console-bound Canvas browser authority."""
 
@@ -904,17 +905,26 @@ class ConsoleRuntime:
                 canvas_controller=self._canvas_controller,
                 bridge_sink=bridge_sink,
                 auto_open=auto_open,
+                publication_guard=publication_guard,
             )
-            self._canvas_controller.add_mutation_listener(
-                self._canvas_native_authority.on_tool_mutation
+            self._canvas_controller.add_settlement_listener(
+                self._canvas_native_authority.on_settlement_publication
             )
         else:
             self._canvas_native_authority.rebind_view(
                 scope_resolver=scope_resolver,
                 bridge_sink=bridge_sink,
                 auto_open=auto_open,
+                publication_guard=publication_guard,
             )
         return self._canvas_native_authority
+
+    def _sync_canvas_native_context(self, session_id: str | None) -> None:
+        """Forward live store context changes to an already-built authority."""
+
+        authority = self._canvas_native_authority
+        if authority is not None:
+            authority.sync_live_context(session_id)
 
     # -- construction ------------------------------------------------------
 
@@ -1068,6 +1078,7 @@ class ConsoleRuntime:
             ),
             canvas_promotion_participant=self._canvas_controller,
             canvas_turn_controller=self._canvas_controller,
+            on_canvas_context_changed=self._sync_canvas_native_context,
         )
         if db is not None and legacy_normalization_enabled:
             self._schedule_legacy_trace_maintenance(db, get_legacy_normalizer)

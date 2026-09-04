@@ -601,6 +601,16 @@ class CanvasGateway:
         self._discard_expired_sessions()
         return len(self._sessions)
 
+    def has_browser_session_for(self, conversation_session_id: str) -> bool:
+        """Return whether this exact native chat session owns a live shell."""
+
+        with self._state_lock:
+            self._discard_expired_sessions()
+            return any(
+                session.scope.conversation_session_id == conversation_session_id
+                for session in self._sessions.values()
+            )
+
     @property
     def bridge_settlement_count(self) -> int:
         """Return bounded current-load idempotency records across live sessions."""

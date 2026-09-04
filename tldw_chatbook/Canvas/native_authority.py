@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from html.parser import HTMLParser
@@ -22,7 +23,7 @@ from .gateway import (
     CanvasGatewayScope,
     CanvasSourceResponse,
 )
-from .limits import validate_utf8_text
+from .limits import sha256_utf8, validate_utf8_text
 from .models import (
     CanvasReadResult,
     CanvasRevisionInfo,
@@ -94,6 +95,16 @@ class _Selection:
     following: bool = True
 
 
+@dataclass(frozen=True, slots=True)
+class _ParsedBlockImport:
+    canvas_id: str
+    revision_id: str
+    content_sha256: str
+
+
+_MAX_PARSED_BLOCK_IMPORTS = 512
+
+
 class NativeConsoleCanvasAuthority:
     """Resolve all browser state from the exact active Console scope."""
 
@@ -104,12 +115,17 @@ class NativeConsoleCanvasAuthority:
         canvas_controller: Any,
         bridge_sink: Callable[[str], None] | None = None,
         auto_open: Callable[[str, CanvasRevisionInfo], None] | None = None,
+        publication_guard: Callable[[Any], bool] | None = None,
     ) -> None:
         self._scope_resolver = scope_resolver
         self._canvas_controller = canvas_controller
         self._bridge_sink = bridge_sink
         self._auto_open = auto_open
+        self._publication_guard = publication_guard
         self._selection: dict[str, _Selection] = {}
+        self._parsed_block_imports: OrderedDict[
+            tuple[str, str, int], _ParsedBlockImport
+        ] = OrderedDict()
         self._events: dict[tuple[str, str], list[CanvasGatewayEvent]] = {}
         self._lock = RLock()
 
@@ -119,52 +135,183 @@ class NativeConsoleCanvasAuthority:
         scope_resolver: Callable[[str], CanvasScope],
         bridge_sink: Callable[[str], None] | None,
         auto_open: Callable[[str, CanvasRevisionInfo], None] | None,
+        publication_guard: Callable[[Any], bool] | None = None,
     ) -> None:
         """Refresh view callbacks while preserving runtime-owned selections."""
 
         self._scope_resolver = scope_resolver
         self._bridge_sink = bridge_sink
         self._auto_open = auto_open
+        self._publication_guard = publication_guard
 
-    def on_tool_mutation(self, scope: CanvasScope, result: Any) -> None:
-        """Publish successful tool updates and request first-view auto-open."""
+    def on_settlement_publication(self, publication: Any) -> None:
+        """Publish committed tool revisions that still belong to the live branch."""
 
-        info = getattr(result, "revision", None)
-        if not isinstance(info, CanvasRevisionInfo):
+        scope = getattr(publication, "scope", None)
+        revisions = getattr(publication, "revisions", ())
+        if not isinstance(scope, CanvasScope) or not revisions:
             return
+        if self._publication_guard is not None:
+            if not self._publication_guard(publication):
+                return
+        else:
+            current = self._scope_resolver(scope.session_id)
+            if (
+                current.session_id != scope.session_id
+                or current.conversation_id != scope.conversation_id
+                or any(
+                    not isinstance(info, CanvasRevisionInfo)
+                    or info.origin.message_id not in current.active_message_ids
+                    for info in revisions
+                )
+            ):
+                return
+        info = revisions[-1]
         with self._lock:
             previous = self._selection.get(scope.session_id)
             self._selection[scope.session_id] = _Selection(
                 info.canvas_id, info.revision_id, True
             )
-            self._publish(
-                scope.session_id,
-                info,
-                "updated" if previous is not None else "selection_changed",
-            )
+            for revision in revisions:
+                self._publish(
+                    scope.session_id,
+                    revision,
+                    "updated"
+                    if previous is not None and previous.canvas_id == revision.canvas_id
+                    else "selection_changed",
+                )
+                previous = _Selection(revision.canvas_id, revision.revision_id)
         if self._auto_open is not None:
             self._auto_open(scope.session_id, info)
 
     def import_html(
-        self, *, session_id: str, source: str, create_new: bool = False
+        self,
+        *,
+        session_id: str,
+        source: str,
+        create_new: bool = False,
+        source_message_id: str | None = None,
+        origin_message_id: str | None = None,
+        source_turn_id: str | None = None,
+        block_index: int | None = None,
+        block_identity: str | None = None,
     ) -> CanvasRevisionInfo:
         """Create a revision from an authorized transcript block and select it."""
 
         scope = self._scope_resolver(session_id)
         title = _document_title(source)
+        parsed_key = self._parsed_block_key(
+            scope,
+            source_message_id=source_message_id,
+            origin_message_id=origin_message_id,
+            source_turn_id=source_turn_id,
+            block_index=block_index,
+            block_identity=block_identity,
+        )
+        revision_origin_message_id = (
+            origin_message_id or source_message_id or scope.active_message_ids[-1]
+        )
+        origin_turn_id = source_turn_id or scope.run_id
         with self._lock:
+            if parsed_key is not None and not create_new:
+                prior = self._parsed_block_imports.get(parsed_key)
+                if prior is None:
+                    persisted = self._canvas_controller.find_interactive_import(
+                        scope,
+                        origin_message_id=revision_origin_message_id,
+                        origin_turn_id=origin_turn_id,
+                        content_sha256=sha256_utf8(source),
+                        temporary=self._is_temporary(scope),
+                    )
+                    if persisted is not None:
+                        prior = _ParsedBlockImport(
+                            persisted.canvas_id,
+                            persisted.revision_id,
+                            persisted.content_sha256,
+                        )
+                        self._parsed_block_imports[parsed_key] = prior
+                if prior is not None:
+                    if prior.content_sha256 != sha256_utf8(source):
+                        raise RuntimeError("Canvas block identity changed")
+                    selected_scope = replace(
+                        scope,
+                        selected_canvas_id=prior.canvas_id,
+                        selected_revision_id=prior.revision_id,
+                    )
+                    existing = self._read_exact(
+                        selected_scope, prior.canvas_id, prior.revision_id
+                    )
+                    self._parsed_block_imports.move_to_end(parsed_key)
+                    self._selection[session_id] = _Selection(
+                        existing.revision.canvas_id,
+                        existing.revision.revision_id,
+                    )
+                    return existing.revision
             selection = self._selection.get(session_id)
             if not create_new and selection is not None:
                 result = self._update(
-                    scope, selection.canvas_id, selection.revision_id, source
+                    scope,
+                    selection.canvas_id,
+                    selection.revision_id,
+                    source,
+                    origin_message_id=revision_origin_message_id,
+                    origin_turn_id=origin_turn_id,
                 )
                 info = result.revision
             else:
-                created = self._create(scope, title, source)
+                created = self._create(
+                    scope,
+                    title,
+                    source,
+                    origin_message_id=revision_origin_message_id,
+                    origin_turn_id=origin_turn_id,
+                )
                 info = created.revision
+            if parsed_key is not None and not create_new:
+                self._parsed_block_imports[parsed_key] = _ParsedBlockImport(
+                    info.canvas_id, info.revision_id, info.content_sha256
+                )
+                self._parsed_block_imports.move_to_end(parsed_key)
+                while len(self._parsed_block_imports) > _MAX_PARSED_BLOCK_IMPORTS:
+                    self._parsed_block_imports.popitem(last=False)
             self._selection[session_id] = _Selection(info.canvas_id, info.revision_id)
             self._publish(session_id, info, "selection_changed")
             return info
+
+    @staticmethod
+    def _parsed_block_key(
+        scope: CanvasScope,
+        *,
+        source_message_id: str | None,
+        origin_message_id: str | None,
+        source_turn_id: str | None,
+        block_index: int | None,
+        block_identity: str | None,
+    ) -> tuple[str, str, int] | None:
+        values = (
+            source_message_id,
+            origin_message_id,
+            source_turn_id,
+            block_index,
+            block_identity,
+        )
+        if all(value is None for value in values):
+            return None
+        if (
+            not isinstance(source_message_id, str)
+            or not source_message_id
+            or not isinstance(origin_message_id, str)
+            or not origin_message_id
+            or origin_message_id not in scope.active_message_ids
+        ):
+            raise RuntimeError("Canvas source message is not on the active branch")
+        if not isinstance(source_turn_id, str) or not source_turn_id:
+            raise ValueError("Canvas source turn is invalid")
+        if type(block_index) is not int or not 0 <= block_index <= 1024:
+            raise ValueError("Canvas block index is invalid")
+        if block_identity != f"{source_message_id}:canvas-html:{block_index}":
+            raise ValueError("Canvas block identity is invalid")
+        return (scope.conversation_id, origin_message_id, block_index)
 
     def gateway_scope(
         self,
@@ -240,7 +387,6 @@ class NativeConsoleCanvasAuthority:
         session_id = scope.conversation_session_id
         canvas_scope = self._selected_scope(scope)
         with self._lock:
-            current = self._read_exact(canvas_scope, scope.canvas_id, scope.revision_id)
             following = self._selection.get(
                 session_id, _Selection(scope.canvas_id, scope.revision_id)
             ).following
@@ -249,22 +395,26 @@ class NativeConsoleCanvasAuthority:
                     raise ValueError("Canvas selection is required")
                 current = self._choose(canvas_scope, session_id, canvas_id, None)
                 following = True
-            elif action == "pin":
-                following = False
             elif action == "follow":
                 current = self._choose(canvas_scope, session_id, scope.canvas_id, None)
                 following = True
-            elif action == "previous":
-                parent = current.revision.parent_revision_id
-                if parent is None:
-                    raise ValueError("Previous revision is unavailable")
-                current = self._read_exact(canvas_scope, scope.canvas_id, parent)
-                following = False
-            elif action == "rename":
-                validated = _validated_title(title if title is not None else "")
-                current = self._rename(canvas_scope, current, validated)
             else:
-                raise ValueError("Unsupported Canvas navigation")
+                current = self._read_exact(
+                    canvas_scope, scope.canvas_id, scope.revision_id
+                )
+                if action == "pin":
+                    following = False
+                elif action == "previous":
+                    parent = current.revision.parent_revision_id
+                    if parent is None:
+                        raise ValueError("Previous revision is unavailable")
+                    current = self._read_exact(canvas_scope, scope.canvas_id, parent)
+                    following = False
+                elif action == "rename":
+                    validated = _validated_title(title if title is not None else "")
+                    current = self._rename(canvas_scope, current, validated)
+                else:
+                    raise ValueError("Unsupported Canvas navigation")
             self._selection[session_id] = _Selection(
                 current.revision.canvas_id,
                 current.revision.revision_id,
@@ -278,6 +428,39 @@ class NativeConsoleCanvasAuthority:
             return CanvasGatewayNavigation(
                 next_scope, self.describe_selection(next_scope)
             )
+
+    def sync_live_context(self, session_id: str | None) -> None:
+        """Publish the reachable head after a real session or branch transition."""
+
+        if session_id is None:
+            return
+        with self._lock:
+            if self._selection.get(session_id) is None:
+                return
+        scope = self._scope_resolver(session_id)
+        with self._lock:
+            selection = self._selection.get(session_id)
+            if selection is None:
+                return
+            items = self._list(
+                replace(scope, selected_canvas_id=None, selected_revision_id=None)
+            )
+            item = next(
+                (
+                    candidate
+                    for candidate in items
+                    if candidate.canvas_id == selection.canvas_id
+                ),
+                None,
+            )
+            if item is None or item.revision_id == selection.revision_id:
+                return
+            reachable = self._read_exact(scope, item.canvas_id, item.revision_id)
+            if selection.following:
+                self._selection[session_id] = _Selection(
+                    item.canvas_id, item.revision_id, True
+                )
+            self._publish(session_id, reachable.revision, "selection_changed")
 
     def read_events(
         self, scope: CanvasGatewayScope, *, after_event_id: str | None
@@ -323,10 +506,19 @@ class NativeConsoleCanvasAuthority:
             self._selected_scope(scope), scope.canvas_id, scope.revision_id
         )
 
-    def _create(self, scope: CanvasScope, title: str, source: str) -> Any:
+    def _create(
+        self,
+        scope: CanvasScope,
+        title: str,
+        source: str,
+        *,
+        origin_message_id: str,
+        origin_turn_id: str,
+    ) -> Any:
         result = self._canvas_controller.interactive_create_canvas(
             scope,
-            origin_message_id=scope.active_message_ids[-1],
+            origin_message_id=origin_message_id,
+            origin_turn_id=origin_turn_id,
             title=title,
             html=source,
             temporary=self._is_temporary(scope),
@@ -341,10 +533,20 @@ class NativeConsoleCanvasAuthority:
             },
         )()
 
-    def _update(self, scope: CanvasScope, canvas_id: str, parent_id: str, source: str):
+    def _update(
+        self,
+        scope: CanvasScope,
+        canvas_id: str,
+        parent_id: str,
+        source: str,
+        *,
+        origin_message_id: str,
+        origin_turn_id: str,
+    ):
         result = self._canvas_controller.interactive_update_canvas(
             scope,
-            origin_message_id=scope.active_message_ids[-1],
+            origin_message_id=origin_message_id,
+            origin_turn_id=origin_turn_id,
             canvas_id=canvas_id,
             expected_parent_revision_id=parent_id,
             html=source,

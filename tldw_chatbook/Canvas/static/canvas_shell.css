@@ -60,22 +60,24 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .canvas-toolbar {
   display: grid;
-  grid-template-columns: minmax(24rem, 1fr) auto;
-  grid-template-areas: "identity state" "provenance actions";
-  gap: 0.45rem 1rem;
+  grid-template-rows: auto auto;
+  gap: 0.45rem;
   padding: 0.65rem 0.8rem 0.55rem;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
 }
 
+.canvas-primary-row, .canvas-secondary-row, .canvas-controls-scroll,
 .canvas-identity, .canvas-state, .canvas-actions { display: flex; align-items: center; gap: 0.5rem; }
-.canvas-identity { grid-area: identity; min-width: 0; }
-.canvas-state { grid-area: state; justify-content: flex-end; }
-.canvas-actions { grid-area: actions; justify-content: flex-end; overflow-x: auto; padding: 0.1rem 0.15rem 0.25rem; scrollbar-width: thin; }
-.canvas-actions::-webkit-scrollbar { height: 0.5rem; }
-.canvas-actions::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 0.25rem; }
-.canvas-actions::-webkit-scrollbar-track { background: var(--surface); }
-.provenance { grid-area: provenance; color: var(--muted); font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+.canvas-primary-row, .canvas-secondary-row { min-width: 0; }
+.canvas-primary-row { justify-content: space-between; }
+.canvas-secondary-row { position: relative; }
+.canvas-controls-scroll { width: 100%; min-width: 0; }
+.canvas-identity { min-width: 0; width: 100%; }
+.canvas-state, .canvas-actions { flex: none; }
+.canvas-actions { justify-content: flex-end; }
+.provenance { flex: 1; min-width: 8rem; color: var(--muted); font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+.actions-overflow-cue { display: none; }
 
 h1 { margin: 0 0.25rem 0 0; font-size: 1rem; white-space: nowrap; }
 #canvas-selector { width: min(14rem, 30vw); padding: 0 2rem 0 0.6rem; }
@@ -173,19 +175,43 @@ h1 { margin: 0 0.25rem 0 0; font-size: 1rem; white-space: nowrap; }
 
 @media (max-width: 760px) {
   .canvas-toolbar {
-    grid-template-columns: 1fr;
-    grid-template-areas: "identity" "state" "actions" "provenance";
     padding: 0.5rem;
-    gap: 0.35rem;
+    gap: 0.4rem;
   }
   .canvas-identity { display: grid; grid-template-columns: minmax(6rem, 0.8fr) minmax(8rem, 1.2fr) auto; }
   .canvas-identity h1 { display: none; }
   #canvas-selector, #canvas-title { width: 100%; min-width: 0; }
-  .canvas-state { justify-content: flex-start; overflow-x: auto; }
-  .canvas-actions { justify-content: flex-start; margin-inline: -0.1rem; scrollbar-width: auto; }
-  .canvas-actions { background: linear-gradient(90deg, transparent calc(100% - 1.5rem), var(--accent-soft)); }
+  .canvas-secondary-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.4rem;
+  }
+  .canvas-controls-scroll {
+    overflow-x: auto;
+    padding: 0.1rem 0 0.35rem;
+    scrollbar-width: auto;
+  }
+  .canvas-controls-scroll::-webkit-scrollbar { height: 0.55rem; }
+  .canvas-controls-scroll::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 0.25rem; }
+  .canvas-controls-scroll::-webkit-scrollbar-track { background: var(--surface); }
+  .canvas-controls-scroll:focus-visible { outline: 3px solid var(--focus); outline-offset: 1px; }
+  .canvas-state, .canvas-actions { justify-content: flex-start; }
   .canvas-actions button { min-height: 2.6rem; }
-  .provenance { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .provenance { flex: none; min-width: max-content; white-space: nowrap; }
+  .actions-overflow-cue {
+    display: inline-flex;
+    align-items: center;
+    align-self: start;
+    min-height: 2rem;
+    padding: 0.25rem 0.45rem;
+    border: 1px solid var(--line);
+    border-radius: 0.25rem;
+    background: var(--panel);
+    color: var(--text);
+    font-size: 0.72rem;
+    font-weight: 700;
+    pointer-events: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

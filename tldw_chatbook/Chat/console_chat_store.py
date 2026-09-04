@@ -1614,6 +1614,7 @@ class ConsoleChatStore:
         settle_provider_traces_off_thread: bool = False,
         canvas_promotion_participant: ConsoleCanvasPromotionParticipant | None = None,
         canvas_turn_controller: Any | None = None,
+        on_canvas_context_changed: Callable[[str | None], None] | None = None,
     ) -> None:
         """Initialize the Console chat store.
 
@@ -1653,10 +1654,13 @@ class ConsoleChatStore:
                 owner used for atomic temporary-conversation promotion.
             canvas_turn_controller: Optional run-owned Canvas finalizer whose
                 source-private contribution joins assistant settlement.
+            on_canvas_context_changed: Optional source-free callback invoked after
+                a native session activation or active-branch transition.
         """
         self.persistence = persistence
         self.canvas_promotion_participant = canvas_promotion_participant
         self.canvas_turn_controller = canvas_turn_controller
+        self._on_canvas_context_changed = on_canvas_context_changed
         self.trace_projection = trace_projection
         self._provider_trace_settlements: dict[str, dict[str, object]] = {}
         self._provider_trace_settlement_owned_call_ids: set[str] = set()
@@ -2191,6 +2195,19 @@ class ConsoleChatStore:
             self._session_mru.appendleft(session_id)
         self.active_session_id = session_id
         self._active_session_epoch += 1
+        self._notify_canvas_context_changed(session_id)
+
+    def _notify_canvas_context_changed(self, session_id: str | None) -> None:
+        callback = self._on_canvas_context_changed
+        if callback is None:
+            return
+        try:
+            callback(session_id)
+        except Exception as exc:  # noqa: BLE001 - observer cannot break chat state
+            logger.warning(
+                "canvas_context_observer_failed: {}",
+                type(exc).__name__,
+            )
 
     def session_mru_ids(self) -> tuple[str, ...]:
         """Return live native session IDs in most-recent activation order."""
@@ -13143,6 +13160,7 @@ class ConsoleChatStore:
                         else None
                     ),
                 )
+            self._notify_canvas_context_changed(session_id)
 
     def session_context_summary(self, session_id: str) -> tuple[str | None, str | None]:
         """Return the session's in-memory ``(summary, boundary_native_id)`` pair.

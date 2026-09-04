@@ -162,6 +162,46 @@ class CanvasService:
             revision=self._revision_info(exact), source=exact.source
         )
 
+    def find_imported_revision(
+        self,
+        scope: CanvasScope,
+        *,
+        origin_message_id: str,
+        origin_turn_id: str,
+        content_sha256: str,
+    ) -> CanvasRevisionInfo | None:
+        """Resolve a prior user import by durable, branch-bound provenance."""
+
+        verified = self._validate_scope(scope)
+        self._validate_scope_id(origin_message_id, "origin message ID")
+        self._validate_scope_id(origin_turn_id, "origin turn ID")
+        if (
+            len(content_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in content_sha256)
+            or origin_message_id not in verified.path_positions
+        ):
+            raise CanvasServiceError("invalid_scope")
+        matches = tuple(
+            revision
+            for revision in self._list_metadata(scope.conversation_id)
+            if revision.actor_kind == "user_import"
+            and revision.origin_message_id == origin_message_id
+            and revision.origin_turn_id == origin_turn_id
+            and revision.content_sha256 == content_sha256
+        )
+        if not matches:
+            return None
+        chosen = min(
+            matches,
+            key=lambda revision: (
+                revision.canvas_created_at,
+                revision.revision_created_at,
+                revision.sequence,
+                revision.revision_id,
+            ),
+        )
+        return self._revision_info(chosen)
+
     def next_revision_sequence(self, scope: CanvasScope, canvas_id: str) -> int:
         """Return the next owner-global sequence after proving Canvas reachability."""
 
@@ -197,11 +237,18 @@ class CanvasService:
         *,
         title: str,
         source: str,
+        origin_message_id: str | None = None,
+        origin_turn_id: str | None = None,
     ) -> CanvasCreateResult:
         """Durably import a user-selected transcript HTML block."""
 
         return self._create_canvas(
-            scope, title=title, source=source, actor_kind="user_import"
+            scope,
+            title=title,
+            source=source,
+            actor_kind="user_import",
+            origin_message_id=origin_message_id,
+            origin_turn_id=origin_turn_id,
         )
 
     def _create_canvas(
@@ -211,8 +258,19 @@ class CanvasService:
         title: str,
         source: str,
         actor_kind: str,
+        origin_message_id: str | None = None,
+        origin_turn_id: str | None = None,
     ) -> CanvasCreateResult:
-        self._validate_scope(scope, require_active_path=True)
+        verified = self._validate_scope(scope, require_active_path=True)
+        origin_message_id = origin_message_id or scope.active_message_ids[-1]
+        origin_turn_id = origin_turn_id or scope.run_id
+        self._validate_scope_id(origin_message_id, "origin message ID")
+        self._validate_scope_id(origin_turn_id, "origin turn ID")
+        if origin_message_id not in verified.path_positions:
+            raise CanvasServiceError("invalid_scope")
+        origin_path = scope.active_message_ids[
+            : verified.path_positions[origin_message_id] + 1
+        ]
         plan = self._compile(source)
         repository_error: CanvasServiceError | None = None
         try:
@@ -222,9 +280,9 @@ class CanvasService:
                 source=source,
                 runtime_profile="canvas-v1",
                 actor_kind=actor_kind,
-                origin_message_id=scope.active_message_ids[-1],
-                origin_turn_id=scope.run_id,
-                active_message_ids=scope.active_message_ids,
+                origin_message_id=origin_message_id,
+                origin_turn_id=origin_turn_id,
+                active_message_ids=origin_path,
             )
         except CanvasRepositoryError as exc:
             repository_error = self._mapped_repository_error(exc)
@@ -265,6 +323,8 @@ class CanvasService:
         *,
         expected_parent_revision_id: str,
         source: str,
+        origin_message_id: str | None = None,
+        origin_turn_id: str | None = None,
     ) -> CanvasMutationResult | CanvasConflictResult:
         """Append a replacement imported explicitly by the user."""
 
@@ -274,6 +334,8 @@ class CanvasService:
             expected_parent_revision_id=expected_parent_revision_id,
             source=source,
             actor_kind="user_import",
+            origin_message_id=origin_message_id,
+            origin_turn_id=origin_turn_id,
         )
 
     def _update_canvas(
@@ -284,8 +346,19 @@ class CanvasService:
         expected_parent_revision_id: str,
         source: str,
         actor_kind: str,
+        origin_message_id: str | None = None,
+        origin_turn_id: str | None = None,
     ) -> CanvasMutationResult | CanvasConflictResult:
         verified = self._validate_scope(scope, require_active_path=True)
+        origin_message_id = origin_message_id or scope.active_message_ids[-1]
+        origin_turn_id = origin_turn_id or scope.run_id
+        self._validate_scope_id(origin_message_id, "origin message ID")
+        self._validate_scope_id(origin_turn_id, "origin turn ID")
+        if origin_message_id not in verified.path_positions:
+            raise CanvasServiceError("invalid_scope")
+        origin_path = scope.active_message_ids[
+            : verified.path_positions[origin_message_id] + 1
+        ]
         canvas_id = self._validate_uuid_argument(canvas_id, "invalid_canvas_id")
         expected_parent_revision_id = self._validate_uuid_argument(
             expected_parent_revision_id, "invalid_expected_parent"
@@ -306,9 +379,9 @@ class CanvasService:
                 source=source,
                 runtime_profile=base.runtime_profile,
                 actor_kind=actor_kind,
-                origin_message_id=scope.active_message_ids[-1],
-                origin_turn_id=scope.run_id,
-                active_message_ids=scope.active_message_ids,
+                origin_message_id=origin_message_id,
+                origin_turn_id=origin_turn_id,
+                active_message_ids=origin_path,
             )
         except CanvasRepositoryError as exc:
             repository_error = self._mapped_repository_error(exc)

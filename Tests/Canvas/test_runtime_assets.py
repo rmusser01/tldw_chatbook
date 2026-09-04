@@ -27,6 +27,7 @@ STATIC = ROOT / "tldw_chatbook" / "Canvas" / "static"
 MANIFEST = STATIC / "runtime-manifest.json"
 VENDOR_SCRIPT = ROOT / "scripts" / "vendor_canvas_runtime.py"
 ARCHIVE_CACHE_ENV = "TLDW_CANVAS_RUNTIME_ARCHIVE_DIR"
+SHELL_HTML = STATIC / "canvas_shell.html"
 
 EXPECTED_PACKAGES = {
     "quickjs-emscripten-core": {
@@ -61,6 +62,28 @@ EXPECTED_RUNTIME_OUTPUTS = {
     "canvas_renderer.js",
     "THIRD_PARTY_LICENSES.txt",
 }
+
+
+def test_canvas_shell_keeps_approved_direction_as_first_body_child() -> None:
+    html = SHELL_HTML.read_text(encoding="utf-8")
+    body = html.split("<body>", 1)[1]
+    first_child = body.lstrip()
+
+    assert first_child.startswith("<!--")
+    comment_end = first_child.index("-->")
+    direction = first_child[:comment_end]
+    assert all(
+        f"{heading}:" in direction
+        for heading in (
+            "THESIS",
+            "OWN-WORLD",
+            "STORY",
+            "FIRST VIEWPORT",
+            "FORM",
+            "FINISH",
+        )
+    )
+    assert body.index("<!--") < body.index("<noscript>")
 
 
 def _sha256(path: Path) -> str:
