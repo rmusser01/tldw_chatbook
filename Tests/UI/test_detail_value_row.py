@@ -519,3 +519,137 @@ async def test_a_select_editor_mounted_via_begin_edit_still_opens_on_enter():
             "Select's own Enter-to-open binding must still fire while it "
             "is the row's open editor"
         )
+
+
+# ---------------------------------------------------------------------------
+# redesign PR-4, task 4: spec §12 Up/Down detail-row traversal
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_down_up_move_focus_between_focusable_rows():
+    first = DetailValueRow("Repeat", "Weekly", can_focus=True, id="first")
+    second = DetailValueRow("At", "9:00 AM", can_focus=True, id="second")
+    app = _RowHarness(first, second)
+    async with app.run_test(size=(40, 8)) as pilot:
+        first.focus()
+        await pilot.pause()
+
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused is second
+
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.focused is first
+
+
+@pytest.mark.asyncio
+async def test_traversal_skips_non_focusable_rows():
+    """`can_focus=False` rows (every read-only row) are not in the focus
+    chain at all -- Down from a focusable row lands on the NEXT
+    focusable one, skipping any read-only rows in between."""
+    top = DetailValueRow("Repeat", "Weekly", can_focus=True, id="top")
+    middle = DetailValueRow("Status", "Waiting", id="middle")  # can_focus=False
+    bottom = DetailValueRow("At", "9:00 AM", can_focus=True, id="bottom")
+    app = _RowHarness(top, middle, bottom)
+    async with app.run_test(size=(40, 10)) as pilot:
+        top.focus()
+        await pilot.pause()
+
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused is bottom, "must skip the non-focusable middle row"
+
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.focused is top
+
+
+@pytest.mark.asyncio
+async def test_traversal_wraps_at_the_ends():
+    """Textual's own `focus_chain` wrap-around (`_move_focus`'s modulo),
+    reused rather than a hand-rolled row registry -- picked over
+    stopping at the ends (task-4 brief: "pick, document")."""
+    first = DetailValueRow("Repeat", "Weekly", can_focus=True, id="first")
+    last = DetailValueRow("At", "9:00 AM", can_focus=True, id="last")
+    app = _RowHarness(first, last)
+    async with app.run_test(size=(40, 8)) as pilot:
+        first.focus()
+        await pilot.pause()
+
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.focused is last, "Up from the first row must wrap to the last"
+
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused is first, "Down from the last row must wrap to the first"
+
+
+@pytest.mark.asyncio
+async def test_traversal_skips_rows_inside_a_hidden_pane():
+    """A row inside a `display:none` container (the pane-hidden sibling
+    detail pane, or a collapsed `DetailGroup`) is excluded from Textual's
+    own `focus_chain` -- traversal never needs to know about the other
+    pane at all."""
+    from textual.containers import Vertical
+
+    visible = DetailValueRow("Repeat", "Weekly", can_focus=True, id="visible")
+    hidden = DetailValueRow("At", "9:00 AM", can_focus=True, id="hidden")
+
+    class _TwoPaneHarness(ConsolidatedCSSApp):
+        CSS_PATH = str(BUNDLED_STYLESHEET)
+
+        def compose(self) -> ComposeResult:
+            yield visible
+            pane = Vertical(hidden, id="hidden-pane")
+            pane.styles.display = "none"
+            yield pane
+
+    app = _TwoPaneHarness()
+    async with app.run_test(size=(40, 8)) as pilot:
+        visible.focus()
+        await pilot.pause()
+
+        await pilot.press("down")
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.focused is visible, (
+            "the only focusable row is the one in the visible pane -- "
+            "traversal must stay on it, never touch the hidden row"
+        )
+
+
+@pytest.mark.asyncio
+async def test_up_down_belongs_to_an_open_editor_not_the_row():
+    """PR-3's editor-open input-ownership rule, extended to arrows
+    (task-4 brief): `Select` binds up/down itself (`show_overlay`) --
+    while an editor is open, the row must NOT intercept them (same
+    `self._editor is None` guard Enter/Escape already use), or the
+    mounted `Select` could never be opened with the keyboard."""
+    row = DetailValueRow(
+        "Repeat", "Weekly", affordance=True, can_focus=True, id="row"
+    )
+    other = DetailValueRow("At", "9:00 AM", can_focus=True, id="other")
+    app = _RowHarness(row, other)
+    async with app.run_test(size=(40, 8)) as pilot:
+        select: Select[str] = Select(
+            [("Weekly", "weekly"), ("Daily", "daily")], id="editor"
+        )
+        row.begin_edit(select)
+        await pilot.pause()
+        assert app.focused is select
+        assert select.expanded is False
+
+        await pilot.press("down")
+        await pilot.pause()
+        assert select.expanded is True, (
+            "Select's own up/down-to-open binding must fire while it is "
+            "the row's open editor"
+        )
+        # Opening moves focus to Select's own overlay popup (expected
+        # Textual behavior) -- the important thing is it did NOT move to
+        # the OTHER row, which is what the row's own traversal handler
+        # would have done had it wrongly intercepted the key.
+        assert app.focused is not other

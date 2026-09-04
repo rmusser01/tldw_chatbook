@@ -680,22 +680,23 @@ def build_unified_rows(
             ``SchedulingService.list_tasks(owner_id=None)``, filtered to
             real `ReminderTask` rows -- briefing/watchlist projections
             stay out of the unified list per plan ruling 1).
-        definitions: Local + server-mirrored ``recurring_question``
-            definition rows (the existing Automations-tab merge
-            precedent: `_load_local_automations` + `_load_server_automations`).
+        definitions: Local + server-mirrored definition rows of EVERY
+            family (PR-4 ruling 1 -- not just ``recurring_question``),
+            from `SchedulesWorkbench._load_queue_definitions`' local +
+            server merge.
         results: One all-owners `list_automation_results(owner_id=None)`
             listing, used only to derive `UnifiedRow.unread_count`.
         local_definitions: The FULL local definitions table
             (`list_automation_definitions(owner_id=None)`, the same input
-            the Results tab's own index uses), for result->definition
+            the results view's own index uses), for result->definition
             resolution ONLY -- never a source of rows. Final review F2:
             the display merge above deliberately EXCLUDES every local row
             that carries a ``server_id``, so a definition transferred to
             the server is a key in NEITHER of the merge's two id spaces;
             its pre-transfer, locally-produced results resolved to
             nothing and dropped out of the unread count, hiding the
-            rail's `Mark all read` button while the Results tab's badge
-            still counted them. Resolution indexes these rows AND the
+            rail's `Mark all read` button while the rail's `Results (N)`
+            badge still counted them. Resolution indexes these rows AND the
             display rows, since a server definition with no local mirror
             row is absent from the local table. Defaults to
             ``definitions`` -- every caller with no separate local
@@ -712,23 +713,25 @@ def build_unified_rows(
     )
     unread_by_row_key = _unread_counts_by_row_key(results, definitions_by_id)
     rows = [_reminder_row(task) for task in reminders]
-    # `family == "recurring_question"` only (Qodo MEDIUM): `definitions`
-    # is never family-filtered upstream (`list_automation_definitions`'s
-    # `family=` default, and a server page can return `agent_task` rows
-    # too -- same guard `_definition_row` for the plain Automations
-    # listing has no equivalent of, since that tab is family-agnostic by
-    # design). An `agent_task`/unknown-family row rendered here would be
-    # a pseudo-recurring Queue entry with no recurring semantics behind
-    # it. Definitions of every family stay visible on the Automations
-    # tab -- still the all-families home until PR-4 retires it (plan
-    # ruling: "their actions stay on the Automations tab until PR-4
-    # retires it") -- PR-4 MUST revisit this filter when that tab goes
-    # away, or agent_task definitions lose their only remaining surface.
-    rows.extend(
-        _definition_row(d, unread_by_row_key)
-        for d in definitions
-        if d.get("family") == "recurring_question"
-    )
+    # PR-4 ruling 1 (was: `family == "recurring_question"` only, Qodo
+    # MEDIUM): every definition family renders now, not just
+    # `recurring_question`. That original filter existed because the
+    # Automations tab was the all-families home and this list's own
+    # actions/editors only understood `recurring_question` -- but PR-4
+    # retires that tab, so filtering here would make every `agent_task`
+    # (or other unrecognized-family) definition permanently invisible,
+    # with no surface left at all. `_definition_bucket`/`_definition_
+    # glyph`/`_definition_at_label`/`_definition_question_text` are
+    # already family-agnostic (read `lifecycle`/`schedule`/`input` generi-
+    # cally, degrading to honest defaults for a shape they don't
+    # recognize -- verified against the real server fixture, which gives
+    # an `agent_task` row the same `schedule`/`lifecycle` shape as a
+    # `recurring_question` one). `DefinitionDetail` already has a
+    # read-only `_UNSUPPORTED_FAMILY_NOTE` fallback for a non-`recurring_
+    # question` row (built for the Automations tab, reused verbatim
+    # here) -- viewing is universal, editing stays `recurring_question`-
+    # only.
+    rows.extend(_definition_row(d, unread_by_row_key) for d in definitions)
     return rows
 
 

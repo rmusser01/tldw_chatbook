@@ -13,7 +13,6 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Input, Select, Static
 
 from ....Scheduling.events import (
-    CancelTransferRequested,
     DeleteTaskRequested,
     DisableTaskRequested,
     AcknowledgeIncidentRequested,
@@ -21,10 +20,7 @@ from ....Scheduling.events import (
     EnableTaskRequested,
     ReminderFieldEditRequested,
     ReminderOwnerActionRequested,
-    RetryTransferRequested,
     RunReminderNowRequested,
-    TransferToLocalRequested,
-    TransferToServerRequested,
 )
 from ....Scheduling.models import ReminderTask, ScheduledTask, ScheduleKind, TaskStatus
 # PR-3 task 5: the owner-row dropdown's own lock/failed-state gating reads
@@ -544,11 +540,6 @@ class TaskDetail(Vertical):
         height: auto;
     }
 
-    .scheduling-detail-managed {
-        color: $text-muted;
-        height: auto;
-        margin-top: 1;
-    }
     """
 
     def __init__(self, *args, **kwargs) -> None:
@@ -610,7 +601,7 @@ class TaskDetail(Vertical):
             classes="scheduling-column-title",
         )
         yield Static(
-            "Select a task from the queue, or press c to schedule one.",
+            "Select a task from the queue, or press n to schedule one.",
             id="scheduling-task-detail-empty-state",
         )
         with Vertical(id="scheduling-task-detail-metadata"):
@@ -781,13 +772,6 @@ class TaskDetail(Vertical):
                 id="scheduling-task-detail-incidents",
                 classes="scheduling-detail-value",
             )
-            # task-23106: rows managed by other systems say so, and where
-            # to edit them, instead of silently hiding the action row.
-            yield Static(
-                "",
-                id="scheduling-task-detail-managed",
-                classes="scheduling-detail-managed",
-            )
         yield Horizontal(
             Button(
                 "Edit",
@@ -832,40 +816,15 @@ class TaskDetail(Vertical):
             ),
             id="scheduling-task-detail-lifecycle",
         )
-        # schedules-handoff spec §6: per-task ownership transfer. All four
-        # buttons stay visible per-row per UX-059 (only the state-changing
-        # action is enabled); `_update_transfer_buttons` toggles `.display`
-        # per row structure, `set_transfer_reasons` toggles `.disabled` +
-        # the reason text (UX-073).
-        yield Horizontal(
-            Button(
-                "Move to server",
-                id="scheduling-transfer-to-server",
-                variant="primary",
-                tooltip="Queue this task to move to the connected server.",
-            ),
-            Button(
-                "Move to local",
-                id="scheduling-transfer-to-local",
-                variant="primary",
-                tooltip="Queue this server-owned task to move to this device.",
-            ),
-            Button(
-                "Retry transfer",
-                id="scheduling-retry-transfer",
-                variant="warning",
-                tooltip="Retry the failed transfer to the server.",
-            ),
-            Button(
-                "Cancel transfer",
-                id="scheduling-cancel-transfer",
-                variant="warning",
-                tooltip="Cancel this task's in-progress transfer.",
-            ),
-            id="scheduling-task-detail-transfer",
-        )
-        # Visible when a transfer action is disabled: keyboard users can't
-        # see hover tooltips, so the reason must live in text (UX-073).
+        # redesign PR-4, task 4 (ruling 2): the legacy Move/Retry/Cancel
+        # button row that lived here (schedules-handoff spec §6, PR-5
+        # task 7) is RETIRED -- the Runs-on row's own dropdown + mini-bar
+        # (`_runs_on_cancel_button`/`_runs_on_retry_button` above) is now
+        # the one transfer surface (PR-3 task 5's "coexistence pinned"
+        # window is over). `#scheduling-transfer-why` stays: `set_
+        # lifecycle_lock` still writes the Edit/Enable/Disable/Delete
+        # read-only reason into it (UX-073 -- keyboard users can't see
+        # hover tooltips).
         yield Static("", id="scheduling-transfer-why", classes="follow-why")
         yield Button(
             "Follow in Console",
@@ -887,10 +846,6 @@ class TaskDetail(Vertical):
             "scheduling-disable-task",
             "scheduling-delete-task",
             "scheduling-ack-incident",
-            "scheduling-transfer-to-server",
-            "scheduling-transfer-to-local",
-            "scheduling-retry-transfer",
-            "scheduling-cancel-transfer",
             _RUNS_ON_CANCEL_ID,
             _RUNS_ON_RETRY_ID,
         }:
@@ -905,14 +860,6 @@ class TaskDetail(Vertical):
             self._request_disable()
         elif button_id == "scheduling-delete-task":
             self.request_delete()
-        elif button_id == "scheduling-transfer-to-server":
-            self._request_transfer_to_server()
-        elif button_id == "scheduling-transfer-to-local":
-            self._request_transfer_to_local()
-        elif button_id == "scheduling-retry-transfer":
-            self._request_retry_transfer()
-        elif button_id == "scheduling-cancel-transfer":
-            self._request_cancel_transfer()
         elif button_id == "scheduling-ack-incident":
             self._request_acknowledge()
         elif button_id == _RUNS_ON_CANCEL_ID:
@@ -965,31 +912,12 @@ class TaskDetail(Vertical):
         if isinstance(self._current_task, ReminderTask):
             self.post_message(RunReminderNowRequested(self._current_task))
 
-    def _request_transfer_to_server(self) -> None:
-        """Post a local -> server transfer request (spec §6.1)."""
-        if isinstance(self._current_task, ReminderTask):
-            self.post_message(TransferToServerRequested(self._current_task))
-
-    def _request_transfer_to_local(self) -> None:
-        """Post a server -> local release request (spec §6.2)."""
-        if isinstance(self._current_task, ReminderTask):
-            self.post_message(TransferToLocalRequested(self._current_task))
-
-    def _request_retry_transfer(self) -> None:
-        """Post a retry request for a definitively-failed transfer."""
-        if isinstance(self._current_task, ReminderTask):
-            self.post_message(RetryTransferRequested(self._current_task))
-
-    def _request_cancel_transfer(self) -> None:
-        """Post a cancel request for the current task's in-flight transfer."""
-        if isinstance(self._current_task, ReminderTask):
-            self.post_message(CancelTransferRequested(self._current_task))
-
     def _request_runs_on_cancel(self) -> None:
         """Post a cancel request from the Runs-on row's own mini-bar
-        (PR-3 task 5) -- a SEPARATE surface from `_request_cancel_
-        transfer` above (coexistence, task-5 brief): this one renders a
-        refusal via `row.show_error`, not the legacy toast."""
+        (PR-3 task 5) -- the ONE transfer surface now (redesign PR-4 task
+        4 retired the legacy `_request_cancel_transfer` this docstring
+        used to contrast with): renders a refusal via `row.show_error`,
+        not a toast."""
         task = self._current_task
         row = self._runs_on_row
         if isinstance(task, ReminderTask) and row is not None:
@@ -997,8 +925,7 @@ class TaskDetail(Vertical):
 
     def _request_runs_on_retry(self) -> None:
         """Post a retry request from the Runs-on row's own mini-bar
-        (PR-3 task 5) -- the PR-5 retry leg (re-begin), same SEPARATE
-        row-scoped surface as `_request_runs_on_cancel` above."""
+        (PR-3 task 5) -- the PR-5 retry leg (re-begin)."""
         task = self._current_task
         row = self._runs_on_row
         if isinstance(task, ReminderTask) and row is not None:
@@ -1110,6 +1037,16 @@ class TaskDetail(Vertical):
         return _TRANSFER_STATE_ROW_LABELS.get(
             task.transfer_state or "", "This transfer failed."
         )
+
+    @property
+    def runs_on_row(self) -> DetailValueRow | None:
+        """The Runs-on row, for the workbench's `m` keybinding (redesign
+        PR-4 task 4) to activate programmatically -- posting `DetailValueRow.
+        Activated(row)` on it drives the exact same `on_detail_value_row_
+        activated` path (honest lock/failed-transfer refusal, then the
+        dropdown) a real Enter/click already does, so `m` needs no new
+        activation logic, only this reference."""
+        return self._runs_on_row
 
     def _editable_rows(self) -> tuple[DetailValueRow, ...]:
         """Every row this pane can open an editor on (mounted ones only).
@@ -1414,28 +1351,21 @@ class TaskDetail(Vertical):
         lifecycle = self.query_one("#scheduling-task-detail-lifecycle", Horizontal)
         self.query_one("#schedules-follow-in-console", Button)
         empty_state = self.query_one("#scheduling-task-detail-empty-state", Static)
-        transfer_row = self.query_one("#scheduling-task-detail-transfer", Horizontal)
 
         if task is None:
             empty_copy = (
-                "No scheduled tasks yet. Press c to schedule your first task."
+                "No scheduled tasks yet. Press n to schedule your first task."
                 if queue_empty
-                else "Select a task from the queue, or press c to schedule one."
+                else "Select a task from the queue, or press n to schedule one."
             )
             empty_state.update(empty_copy)
             empty_state.display = True
             metadata.display = False
             lifecycle.display = False
-            transfer_row.display = False
             self.query_one("#scheduling-transfer-why", Static).update("")
             missed_notice = self.query_one("#scheduling-task-detail-missed", Static)
             missed_notice.update("")
             missed_notice.display = False
-            managed_notice = self.query_one(
-                "#scheduling-task-detail-managed", Static
-            )
-            managed_notice.update("")
-            managed_notice.display = False
             self.query_one("#schedules-follow-in-console", Button).label = (
                 "Follow in Console"
             )
@@ -1456,7 +1386,6 @@ class TaskDetail(Vertical):
         empty_state.display = False
         metadata.display = True
         lifecycle.display = isinstance(task, ReminderTask)
-        transfer_row.display = isinstance(task, ReminderTask)
 
         # schedules-redesign PR-1, task 3: the Details/Frequency/History
         # groups are reminder-only (spec §5's reminder column); a
@@ -1483,41 +1412,33 @@ class TaskDetail(Vertical):
             self._configure_frequency_editability(task)
             self._configure_runs_on_row(task)
 
-        if isinstance(task, ReminderTask):
-            # Structural visibility only (spec §6, PR-5 task 7): Move to
-            # server on any local row, Move to local on any server mirror,
-            # Cancel on any in-flight state, Retry only alongside a
-            # definitively-failed to_server transfer (it re-triggers the
-            # SAME facade call as Move to server, but carries the stored
-            # `transfer_errors` beside it -- worth the redundancy). Which
-            # of the always-shown buttons are ENABLED is `set_transfer_
-            # reasons`' job (workbench-computed, via `transfer_refusal`).
-            is_server_owned = str(task.owner_id or "").startswith("server:")
-            transfer_state = task.transfer_state
-            self.query_one("#scheduling-transfer-to-server", Button).display = (
-                not is_server_owned
-            )
-            self.query_one("#scheduling-transfer-to-local", Button).display = (
-                is_server_owned
-            )
-            self.query_one("#scheduling-retry-transfer", Button).display = (
-                transfer_state == "to_server_failed"
-            )
-            self.query_one("#scheduling-cancel-transfer", Button).display = (
-                transfer_state is not None
-            )
-        else:
-            self.query_one("#scheduling-transfer-why", Static).update("")
+        # redesign PR-4, task 4: the legacy Move/Retry/Cancel button
+        # display-toggling that used to live here is retired along with
+        # the buttons themselves (ruling 2) -- the caller's `_update_
+        # transfer_actions` -> `set_lifecycle_lock` (which runs right
+        # after every `set_task`, for every task type) already owns
+        # `#scheduling-transfer-why`'s content, so no explicit reset is
+        # needed here either.
 
-        # task-23106: a row Schedules does not own says who owns it and
-        # where to edit it, instead of only hiding the action row.
-        managed_notice = self.query_one("#scheduling-task-detail-managed", Static)
-        if isinstance(task, ReminderTask):
-            managed_notice.update("")
-            managed_notice.display = False
-        else:
-            managed_notice.update(_managed_elsewhere_notice(task))
-            managed_notice.display = True
+        # redesign PR-4 task 5 (ruling 5): the task-23106 ownership line
+        # ("#scheduling-task-detail-managed") and its `else` branch are
+        # DELETED -- provably unreachable, not merely unused. `TaskDetail(`
+        # is constructed in exactly TWO places in the repo, both in
+        # `schedules_workbench.py` (the docked detail pane, and task 6's
+        # fresh per-push overlay instance -- final review F5 corrected the
+        # original "exactly once" wording, which task 6 had made false).
+        # Both are fed through the SAME single seam, `_update_detail_for_
+        # index` (`_detail_panes` is one list, not a second data path),
+        # whose data comes from `load_tasks` -> `list_tasks(owner_id=None,
+        # include_projections=False)` filtered to `ReminderTask`, and which
+        # asserts `isinstance(task, ReminderTask)` before every call. So
+        # `task` here is
+        # never anything but a `ReminderTask`, the `else` never ran, and
+        # the empty Static it painted into was pure weight. The copy
+        # generator itself (`_managed_elsewhere_notice`) STAYS: the
+        # workbench's own edit/mark/enable action guards still call it,
+        # and `test_managed_elsewhere_notice_names_the_owning_screen`
+        # covers it directly.
 
         follow_button = self.query_one("#schedules-follow-in-console", Button)
         short_title = task.title if len(task.title) <= 24 else f"{task.title[:23]}…"
@@ -1651,69 +1572,13 @@ class TaskDetail(Vertical):
         except Exception:  # noqa: BLE001 - widget not mounted yet
             pass
 
-    def set_transfer_reasons(
-        self,
-        *,
-        to_server_reason: str | None,
-        to_local_reason: str | None,
-        retry_reason: str | None,
-        cancel_reason: str | None,
-        retry_errors: list[str],
-    ) -> None:
-        """Apply disabled-with-reason state to the transfer buttons (UX-073).
-
-        Called by the workbench right after `set_task` -- it holds the
-        `SchedulingService` this widget doesn't reach into, so it computes
-        each reason via `transfer_refusal` (spec §6.4, quoting local
-        health verbatim for a refused `recurring_question` release) and
-        passes only the reason relevant to a button `set_task` already
-        decided to show; `None` means the action is allowed. Each reason
-        is BOTH the button's tooltip and a line in the always-visible
-        Static below the row -- keyboard users can't see hover tooltips.
-        """
-        to_server_btn = self.query_one("#scheduling-transfer-to-server", Button)
-        to_local_btn = self.query_one("#scheduling-transfer-to-local", Button)
-        retry_btn = self.query_one("#scheduling-retry-transfer", Button)
-        cancel_btn = self.query_one("#scheduling-cancel-transfer", Button)
-
-        to_server_btn.disabled = to_server_reason is not None
-        to_server_btn.tooltip = (
-            to_server_reason or "Queue this task to move to the connected server."
-        )
-        to_local_btn.disabled = to_local_reason is not None
-        to_local_btn.tooltip = (
-            to_local_reason
-            or "Queue this server-owned task to move to this device."
-        )
-        retry_btn.disabled = retry_reason is not None
-        retry_btn.tooltip = retry_reason or "Retry the failed transfer to the server."
-        cancel_btn.disabled = cancel_reason is not None
-        cancel_btn.tooltip = (
-            cancel_reason or "Cancel this task's in-progress transfer."
-        )
-
-        reason_lines: list[str] = []
-        if to_server_reason:
-            reason_lines.append(f"Move to server: {to_server_reason}")
-        if to_local_reason:
-            reason_lines.append(f"Move to local: {to_local_reason}")
-        if retry_reason:
-            reason_lines.append(f"Retry transfer: {retry_reason}")
-        if cancel_reason:
-            reason_lines.append(f"Cancel transfer: {cancel_reason}")
-        if retry_errors:
-            reason_lines.append("Last transfer error: " + "; ".join(retry_errors))
-        self.query_one("#scheduling-transfer-why", Static).update(
-            "\n".join(reason_lines)
-        )
-
     def set_runs_on_transfer_errors(self, errors: list[str]) -> None:
         """Cache a `to_server_failed` row's stored `transfer_errors` (PR-3
         task 5 fix round 1, finding 2) for `_runs_on_failure_reason` --
-        called by the workbench right alongside `set_transfer_reasons`,
-        fed from the SAME `retry_errors` list that already backs the
-        legacy Retry button's own reason line (one source, not a second
-        derivation)."""
+        fed from the same `retry_errors` the workbench computes (redesign
+        PR-4 task 4: the legacy Retry button that USED to also read this
+        list, via the now-retired `set_transfer_reasons`, is gone; this
+        stays the Runs-on row's own single source)."""
         self._runs_on_transfer_errors = list(errors)
 
     def set_lifecycle_lock(self, reason: str | None) -> None:
@@ -1829,8 +1694,8 @@ class TaskInspector(Vertical):
         """Update the conflict card for the current task state.
 
         Underlying status (review F5): a disabled task's conflict is
-        still a conflict -- the Conflicts tab lists it, so this card must
-        not claim "No conflict".
+        still a conflict -- the conflicts view lists it, so this card
+        must not claim "No conflict".
         """
         card = self.query_one("#scheduling-conflict-card", Vertical)
         text = self.query_one("#scheduling-conflict-text", Static)

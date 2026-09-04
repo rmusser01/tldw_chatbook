@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from textual.widgets import Button, DataTable, Input, Static, TabbedContent
+from textual.widgets import Button, DataTable, Input, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.schedules_test_helpers import MockSchedulingDB, MockSchedulingServiceMixin
@@ -26,6 +26,9 @@ from tldw_chatbook.Scheduling.events import (
 )
 from tldw_chatbook.Scheduling.models import ReminderTask, ScheduleKind
 from tldw_chatbook.UI.Screens.scheduling.definition_detail import DefinitionDetail
+from tldw_chatbook.UI.Screens.scheduling.forms.automation_definition_form import (
+    AutomationDefinitionForm,
+)
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
 from tldw_chatbook.UI.Screens.scheduling.task_detail import TaskDetail
 
@@ -53,17 +56,22 @@ def _reminder(
     )
 
 
-def _definition(def_id: str, name: str, *, lifecycle: str = "configured") -> dict:
+def _definition(
+    def_id: str,
+    name: str,
+    *,
+    lifecycle: str = "configured",
+    family: str = "recurring_question",
+) -> dict:
     return {
         "id": def_id,
         "server_id": None,
         "owner_id": "local",
         "name": name,
-        # Qodo MEDIUM (schedules-redesign PR-2): `build_unified_rows`
-        # filters definitions to `family == "recurring_question"` --
-        # every real definition row carries a family, so this fixture
-        # must too.
-        "family": "recurring_question",
+        # `build_unified_rows` lists every family now (PR-4 ruling 1) --
+        # every real definition row carries a family regardless, so this
+        # fixture always sets one.
+        "family": family,
         "lifecycle": lifecycle,
         "schedule": {"kind": "one_time", "run_at": "2099-01-01T00:00:00+00:00"},
         "input": {"question": f"Question for {name}?"},
@@ -367,14 +375,20 @@ async def test_reminder_actions_still_fire_amid_a_mixed_list():
 
 
 # ---------------------------------------------------------------------------
-# Definition rows: no actions in this PR
+# Definition rows: mark/toggle still no-op; run-now/edit are routed
+# (redesign PR-4, task 3 -- supersedes the original "no actions until
+# PR-4" pin from plan ruling 1).
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_definition_rows_expose_no_actions():
-    """Edit/mark/toggle/delete on a definition row must no-op -- plan
-    ruling 1: definition rows are viewable + detail only until PR-4."""
+async def test_definition_row_mark_and_toggle_still_no_op():
+    """Mark/toggle-enabled on a definition row still no-op -- PR-4 task 3
+    only wired run-now (`r`) and edit-in-full (`e`) onto Queue definition
+    rows; `x`/`space` remain unrouted (see `test_definition_row_edit_
+    opens_the_form_for_a_recurring_question_row` for the two that now
+    act, and `test_definition_row_keys_answer_honestly_by_kind` for the
+    full per-key picture)."""
     async with _App().run_test(size=(160, 48)) as pilot:
         workbench = await _mounted(pilot)
         table = workbench.query_one("#scheduling-task-table", DataTable)
@@ -393,13 +407,35 @@ async def test_definition_rows_expose_no_actions():
         await pilot.pause()
         assert not workbench._marked_ids
 
-        workbench.action_edit_task()
-        await pilot.pause()
-        assert isinstance(pilot.app.screen, SchedulesWorkbench)  # no form pushed
-
         workbench.action_toggle_enabled()
         await pilot.pause()
         assert workbench._scheduling_service.updated == []
+
+
+@pytest.mark.asyncio
+async def test_definition_row_edit_opens_the_form_for_a_recurring_question_row():
+    """redesign PR-4, task 3: `e` on a Queue definition row now opens the
+    SAME `AutomationDefinitionForm` the Automations tab's own `e` opens
+    (`_edit_selected_automation` reused via `_selected_queue_definition`)
+    -- this fixture's rows are all `recurring_question`, so the family
+    gate never refuses here."""
+    async with _App().run_test(size=(160, 48)) as pilot:
+        workbench = await _mounted(pilot)
+        table = workbench.query_one("#scheduling-task-table", DataTable)
+        definition_index = next(
+            i
+            for i, row in enumerate(workbench._visible_rows)
+            if row.kind == "definition"
+        )
+        table.move_cursor(row=definition_index)
+        await pilot.pause()
+
+        workbench.action_edit_task()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert isinstance(pilot.app.screen, AutomationDefinitionForm)
 
 
 # ---------------------------------------------------------------------------
@@ -492,10 +528,17 @@ async def test_search_narrows_a_mixed_reminder_and_definition_list():
 
 
 # ---------------------------------------------------------------------------
-# Fix round 2 (task-2 review addendum): an Automations-tab definition
-# mutation must not leave the Queue's cached definitions stale for the
-# rest of the session -- a reminder-only refresh upgrades to one full
-# fetch, and so does switching to the Queue tab while stale.
+# Fix round 2 (task-2 review addendum): a definition mutation must not
+# leave the Queue's cached definitions stale for the rest of the session
+# -- a reminder-only refresh upgrades to one full fetch, and so does
+# returning to the screen while stale.
+#
+# redesign PR-4 task 5 (the retirement): "switching to the Queue tab
+# while stale" was the original trigger and it no longer exists -- there
+# is one surface and no `TabbedContent`. The staleness MACHINE is
+# unchanged (every set-site kept), only its consumer moved: onto
+# `on_screen_resume` -> `_consume_definitions_stale`, which covers every
+# pushed view and modal this screen opens. Pinned below.
 # ---------------------------------------------------------------------------
 
 
@@ -519,9 +562,16 @@ async def test_automations_edit_save_refetches_definitions_immediately():
     """Round 2 pinned that a save marks the cache stale and the NEXT
     reminder-only refresh upgrades to one full fetch. Final review F1
     moved that fetch forward: the save's own path refreshes the Queue
-    (its create entry point is the Queue rail, which never fires
-    `TabActivated`), so the flag is consumed at the save -- exactly one
-    definitions fetch then, and none owed to the next reminder action."""
+    (its create entry point is the Queue rail, which never left the
+    surface), so the flag is consumed at the save -- exactly one
+    definitions fetch then, and none owed to the next reminder action.
+
+    redesign PR-4 task 5: the count drops 2 -> 1. The save used to fire
+    the Queue refresh AND a second, separate Automations-tab list reload
+    (`_request_automations_refresh`), each with its own definitions
+    fetch. That tab is retired and the Queue IS the definitions list, so
+    the duplicate fetch went with it -- same visible outcome, half the
+    DB work."""
     service, calls = _counting_definitions_service()
 
     class _CountingApp(ConsolidatedCSSApp):
@@ -540,9 +590,8 @@ async def test_automations_edit_save_refetches_definitions_immediately():
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
         assert workbench._definitions_stale is False
-        assert len(calls) == calls_before_save + 2, (
-            "the save refreshes the Automations list AND the Queue, one "
-            "definitions fetch each"
+        assert len(calls) == calls_before_save + 1, (
+            "the save refreshes the one definitions surface exactly once"
         )
         calls_after_save = len(calls)
 
@@ -563,10 +612,22 @@ async def test_automations_edit_save_refetches_definitions_immediately():
 
 
 @pytest.mark.asyncio
-async def test_automations_run_now_then_tab_switch_to_queue_refreshes():
-    """An Automations-tab run-now marks the cache stale; switching to
-    the Queue tab while stale upgrades the next refresh to a full one,
-    even with no reminder action in between."""
+async def test_local_run_now_refetches_the_queue_definitions():
+    """A local run-now is an Automations-era mutation path: it must still
+    upgrade the Queue's definitions snapshot.
+
+    redesign PR-4 task 5 rewrite (retirement citation). This used to be
+    `test_automations_run_now_then_tab_switch_to_queue_refreshes`: run
+    now, assert the stale FLAG, then flip to the Automations tab and back
+    to the Queue and assert the arrival consumed it. The tabs are retired,
+    so the flip half of that scenario cannot be staged at all -- and the
+    run-now path no longer parks the refresh behind a lazy consumer: the
+    reload it used to ask the Automations tab for is now the Queue's own
+    reload, so the fetch happens at the mutation. The claim under test is
+    unchanged (`run-now leaves the definitions rows current`); only the
+    trigger it is observed through moved. The lazy consumer's own
+    re-home is pinned separately, below.
+    """
     service, calls = _counting_definitions_service()
     service.run_automation_now = AsyncMock(
         return_value={"run_id": "run-1", "deduped": False}
@@ -579,6 +640,7 @@ async def test_automations_run_now_then_tab_switch_to_queue_refreshes():
 
     async with _CountingApp().run_test(size=(160, 48)) as pilot:
         workbench = await _mounted(pilot)
+        calls_before_run = len(calls)
         definition = next(
             row.source_row
             for row in workbench._visible_rows
@@ -588,21 +650,91 @@ async def test_automations_run_now_then_tab_switch_to_queue_refreshes():
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
-        assert workbench._definitions_stale is True
-        calls_after_run = len(calls)
 
-        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
-        tabs.active = "scheduling-automations-tab"
+        assert service.run_automation_now.await_count == 1
+        assert workbench._definitions_stale is False, (
+            "the run's own refresh consumed the staleness it marked"
+        )
+        assert len(calls) == calls_before_run + 1, (
+            "run-now refetches the definitions exactly once"
+        )
+
+
+@pytest.mark.asyncio
+async def test_returning_to_the_screen_while_stale_refetches_definitions():
+    """The staleness consumer's NEW home (redesign PR-4 task 5).
+
+    The retired `TabbedContent.TabActivated` handler fired when the user
+    arrived back on the Queue tab. With one surface, the equivalent
+    moment is the push/pop lifecycle (plan ruling 6): pushing any hosted
+    view or modal suspends this screen, popping resumes it. This drives
+    exactly that -- a mutation path that does NOT self-refresh (the flag
+    is set here directly, as `_definition_owner_action` does before it
+    can know whether its transfer will even resolve), then a real push
+    and pop of the conflicts overlay -- and pins that the arrival back
+    fetches definitions exactly once and clears the flag.
+    """
+    service, calls = _counting_definitions_service()
+
+    class _CountingApp(ConsolidatedCSSApp):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.scheduling_service = service
+
+    async with _CountingApp().run_test(size=(160, 48)) as pilot:
+        workbench = await _mounted(pilot)
+        workbench._definitions_stale = True
+        calls_before_push = len(calls)
+
+        workbench._push_conflicts_overlay()
         await pilot.pause()
-        tabs.active = "scheduling-queue-tab"
+        assert pilot.app.screen is not workbench
+        assert len(calls) == calls_before_push, (
+            "opening the view must not itself refetch"
+        )
+
+        await pilot.press("escape")
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
+        assert pilot.app.screen is workbench
         assert workbench._definitions_stale is False
-        assert len(calls) == calls_after_run + 1, (
-            "arriving on the Queue tab while stale must fetch definitions"
-            " exactly once"
+        assert len(calls) == calls_before_push + 1, (
+            "returning to the screen while stale fetches definitions once"
+        )
+
+
+@pytest.mark.asyncio
+async def test_returning_to_the_screen_when_nothing_is_stale_refetches_nothing():
+    """The re-homed consumer's own no-op half: `ScreenResume` fires on
+    every pop (and when this screen first becomes active), so it must
+    stay free when no definition mutation is pending. This is the
+    regression the retired handler had to be taught -- its own docstring
+    recorded a mount-time double-reload -- restated against the new
+    trigger."""
+    service, calls = _counting_definitions_service()
+
+    class _CountingApp(ConsolidatedCSSApp):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.scheduling_service = service
+
+    async with _CountingApp().run_test(size=(160, 48)) as pilot:
+        workbench = await _mounted(pilot)
+        assert workbench._definitions_stale is False
+        calls_before_push = len(calls)
+
+        workbench._push_conflicts_overlay()
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert pilot.app.screen is workbench
+        assert len(calls) == calls_before_push, (
+            "a pop with nothing stale must not fetch definitions"
         )
 
 
@@ -767,20 +899,22 @@ class _TransferredService(MockSchedulingServiceMixin):
 
 @pytest.mark.asyncio
 async def test_transferred_definition_unread_matches_the_results_badge():
-    """Final review F2, the review's own repro: the Results tab badge read
-    2 while the Queue counted 0 (and hid the rail button) for the same DB,
+    """Final review F2, the review's own repro: the results badge read 2
+    while the Queue counted 0 (and hid the rail button) for the same DB,
     because the Queue indexed the DISPLAY merge -- which drops every local
-    row carrying a `server_id`."""
+    row carrying a `server_id`.
+
+    redesign PR-4 task 5: the badge is read off the rail's `Results (N)`
+    button instead of the retired Results TAB's label. Same number, same
+    single `count_unread_results` source (`_refresh_results_badge`) -- the
+    tab label was always a mirror of it, and it is the mirror that was
+    retired, not the count."""
     service = _TransferredService()
     async with _app_for(service, with_server=True).run_test(size=(160, 48)) as pilot:
         workbench = await _mounted(pilot)
 
         queue_unread = sum(row.unread_count for row in workbench._all_rows)
-        badge = str(
-            workbench.query_one("#scheduling-tabs", TabbedContent)
-            .get_tab("scheduling-results-tab")
-            .label
-        )
+        badge = str(workbench.query_one("#scheduling-results-badge", Button).label)
         assert "Results (2)" in badge
         assert queue_unread == 2, (
             "the Queue's unread count must equal the Results badge for the "
@@ -977,8 +1111,15 @@ async def test_results_pull_reveals_the_rail_mark_all_read_button():
 
 @pytest.mark.asyncio
 async def test_marking_all_read_from_the_results_tab_clears_the_queue_dots():
-    """The inverse half of F5: `a` on the Results tab shares the fan-out,
-    so the Queue's dots and the rail button must drop with it."""
+    """The inverse half of F5: mark-all-read shares the fan-out, so the
+    Queue's dots and the rail button must drop with it.
+
+    redesign PR-4 task 5: the tab flip this used to stage first
+    (`tabs.active = "scheduling-results-tab"`, satisfying the retired
+    `_is_results_tab_active` gate) is gone -- `action_mark_all_results_
+    read` is ungated now and IS the rail button's own handler, so the
+    action is simply invoked. The claim -- one fan-out clears both the
+    results state and the Queue's derived dots -- is unchanged."""
     service = _MixedService()
     async with _app_for(service).run_test(size=(160, 48)) as pilot:
         workbench = await _mounted(pilot)
@@ -992,9 +1133,6 @@ async def test_marking_all_read_from_the_results_tab_clears_the_queue_dots():
             return True
 
         service.review_automation_result = _review
-        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
-        tabs.active = "scheduling-results-tab"
-        await pilot.pause()
         workbench.action_mark_all_results_read()
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
@@ -1020,13 +1158,30 @@ async def test_filter_placeholder_names_title_and_question():
         assert "type" not in placeholder.lower()
 
 
-# --- F8: definition rows answer the reminder keys honestly ----------------
+# --- F8: definition rows answer the reminder keys honestly -----------------
+# (redesign PR-4, task 3 supersedes part of this: `r`/`e` are ROUTED now,
+# not refused -- see the class/test docstrings below for the current
+# per-key picture.)
 
 
 @pytest.mark.asyncio
-async def test_definition_row_keys_say_where_the_action_lives():
-    """Final review F8: `r` was swallowed in silence and the other keys
-    answered "select a task first" while a row was plainly selected."""
+async def test_definition_row_keys_answer_honestly_by_kind():
+    """Final review F8, superseded by redesign PR-4 ruling 1 + task 3:
+    `x`/`space`/`d` (mark/toggle/delete) are UNCHANGED -- still not wired
+    to definition rows -- and must still ANSWER rather than do nothing.
+    `r`/`e` are ROUTED now: `r` attempts a real dispatch for ANY family
+    (`_run_automation_now` is owner-routed only, never family-gated); `e`
+    opens `AutomationDefinitionForm` for this fixture's
+    `recurring_question` row (see `test_definition_row_edit_refuses_
+    honestly_for_a_non_recurring_question_row` for the family-gated
+    refusal).
+
+    redesign PR-4 task 5: the refusal copy no longer says "managed on the
+    Automations tab" -- there is no such tab to send anyone to, and by
+    task 3 the pointer was already wrong (the verbs that DO work on a
+    definition row are routed before this copy is ever reached). It names
+    the limit instead. What is pinned is unchanged: these three keys
+    answer, and they do not act."""
     async with _App().run_test(size=(160, 48)) as pilot:
         workbench = await _mounted(pilot)
         table = workbench.query_one("#scheduling-task-table", DataTable)
@@ -1039,8 +1194,6 @@ async def test_definition_row_keys_say_where_the_action_lives():
         await pilot.pause()
 
         for action in (
-            workbench.action_run_task_now,
-            workbench.action_edit_task,
             workbench.action_mark_task,
             workbench.action_toggle_enabled,
             workbench.action_delete,
@@ -1050,13 +1203,79 @@ async def test_definition_row_keys_say_where_the_action_lives():
             await pilot.pause()
             new = _toasts(pilot.app)[before:]
             assert new, f"{action.__name__} answered nothing at all"
-            assert any("Automations tab" in message for message in new), (
-                f"{action.__name__} said {new!r}"
+            assert any(
+                "Automations don't support" in message for message in new
+            ), f"{action.__name__} said {new!r}"
+            assert not any("Automations tab" in message for message in new), (
+                "the retired tab must not be named as a place to go: "
+                f"{new!r}"
             )
 
-        # d must not reach TaskDetail.request_delete, which would open a
-        # confirmation for whatever reminder the pane last held.
+        # `d` must not reach TaskDetail.request_delete, which would open
+        # a confirmation for whatever reminder the pane last held.
         assert isinstance(pilot.app.screen, SchedulesWorkbench)
+
+        # `r`: routed now (task 3) -- a real dispatch attempt, not the
+        # old refusal. The stub service has no `run_automation_now`, so
+        # the attempt fails honestly rather than silently.
+        before = len(_toasts(pilot.app))
+        workbench.action_run_task_now()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        run_toasts = _toasts(pilot.app)[before:]
+        assert any("Failed to run" in message for message in run_toasts), run_toasts
+
+        # `e`: routed now too -- opens the SAME AutomationDefinitionForm
+        # the Automations tab's own `e` opens (this row is `recurring_
+        # question`).
+        workbench.action_edit_task()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(pilot.app.screen, AutomationDefinitionForm)
+
+
+class _AgentTaskOnlyService(MockSchedulingServiceMixin):
+    """One `agent_task` definition, no reminders -- isolates the Queue's
+    only row so `e`'s family-gated refusal can be pinned deterministically
+    (redesign PR-4 ruling 1: a non-`recurring_question` definition now
+    has a home on the Queue too)."""
+
+    def __init__(self) -> None:
+        self.db = MockSchedulingDB(
+            automation_definitions=[
+                _definition("def-agent", "Nightly agent run", family="agent_task"),
+            ]
+        )
+
+    async def list_tasks(self, owner_id=None, include_projections=True):
+        return []
+
+
+@pytest.mark.asyncio
+async def test_definition_row_edit_refuses_honestly_for_a_non_recurring_question_row():
+    """redesign PR-4, task 3: `e` on an `agent_task` Queue row refuses --
+    the SAME family-gate copy the Automations tab's own `e` already gives
+    (`_edit_selected_automation`'s existing refusal, reused verbatim) --
+    which is NOT the "managed on the Automations tab" copy the other
+    (still-unrouted) keys use."""
+    app = _App()
+    app.scheduling_service = _AgentTaskOnlyService()
+    async with app.run_test(size=(160, 48)) as pilot:
+        workbench = await _mounted(pilot)
+        table = workbench.query_one("#scheduling-task-table", DataTable)
+        table.move_cursor(row=0)
+        await pilot.pause()
+
+        before = len(_toasts(pilot.app))
+        workbench.action_edit_task()
+        await pilot.pause()
+        new = _toasts(pilot.app)[before:]
+
+        assert isinstance(pilot.app.screen, SchedulesWorkbench)  # no form pushed
+        assert any("recurring-question" in message for message in new), new
+        assert not any("Automations tab" in message for message in new), new
 
 
 # --- F10: empty-state copy at widths where the chips are hidden -----------
@@ -1122,11 +1341,29 @@ class _ServerRunNowService(MockSchedulingServiceMixin):
 @pytest.mark.asyncio
 async def test_server_run_now_marks_definitions_stale():
     """Final review F11: the branch's own rule is "mark staleness at each
-    genuine mutation call site"; only the local twin did."""
+    genuine mutation call site"; only the local twin did.
+
+    redesign PR-4 task 5: the server twin now also REFRESHES, like the
+    local twin always has -- the audit-pane re-fetches it used to do
+    instead retired with the Automations tab's history pane. So the flag
+    is set and then immediately consumed, and the observable claim
+    becomes the one that always mattered: after a server run-now the
+    Queue's definitions have been refetched. (The set-site itself is
+    unchanged, per the brief's "the staleness machine keeps every
+    set-site" -- `_definitions_stale = True` still runs before the
+    refresh, so a concurrent reminder-only reload upgrades itself.)"""
     service = _ServerRunNowService()
     async with _app_for(service, with_server=True).run_test(size=(160, 48)) as pilot:
         workbench = await _mounted(pilot)
         assert workbench._definitions_stale is False
+        definition_fetches: list[tuple] = []
+        _listing = service.server_client.list_automation_definitions
+
+        async def _counting_listing(*args, **kwargs):
+            definition_fetches.append((args, kwargs))
+            return await _listing(*args, **kwargs)
+
+        service.server_client.list_automation_definitions = _counting_listing
 
         workbench._run_automation_now(
             {
@@ -1142,7 +1379,12 @@ async def test_server_run_now_marks_definitions_stale():
         await pilot.pause()
 
         service.server_client.run_automation_definition_now.assert_awaited_once()
-        assert workbench._definitions_stale is True
+        assert workbench._definitions_stale is False, (
+            "the run's own refresh consumed the staleness it marked"
+        )
+        assert definition_fetches, (
+            "a server run-now must refetch the definitions listing"
+        )
 
 
 # --- F12: the ticker does not re-read the definition detail ---------------
@@ -1173,6 +1415,63 @@ async def test_tick_skips_the_definition_detail_read_for_an_unchanged_row():
             if row.kind == "definition"
         )
         table.move_cursor(row=definition_index)
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        after_selection = len(reads)
+        assert after_selection > 0
+
+        workbench._refresh_next_run_rendering()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert len(reads) == after_selection, "a tick must not re-read the DB"
+
+        # A refresh-driven render still re-feeds the pane.
+        workbench._render_table()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert len(reads) == after_selection + 1
+
+
+@pytest.mark.asyncio
+async def test_tick_skips_the_reminder_detail_reads_for_an_unchanged_row():
+    """redesign PR-4 task 5 (ruling 5's rider): F12's guard was applied to
+    ONE of `_update_detail_for_index`'s two branches.
+
+    A selected REMINDER row re-ran `_run_history_for` + `_incidents_for`
+    on every tick -- `list_task_runs` once and `list_task_incidents`
+    twice (both id spellings), three synchronous `service.db` reads a
+    minute for a row that had not moved, against the ticker's own "no
+    reload/DB on tick" contract (PR-2 plan Task 4). This mirrors the
+    definition branch's guard and its exception: a refresh-driven render
+    still re-feeds, because the DATA can change while the selection
+    stands still.
+    """
+    service = _MixedService()
+    reads: list[tuple] = []
+
+    # `MockSchedulingDB` implements neither reader, and `_run_history_for`/
+    # `_incidents_for` are both fail-safe (`callable(...)`-gated), so the
+    # unguarded branch silently made ZERO reads against the plain mock --
+    # a real DB is what pays the cost. Install a real-shaped
+    # `list_task_runs` so the tick either does or does not call it.
+    def _counting(*args, **kwargs):
+        reads.append((args, kwargs))
+        return []
+
+    service.db.list_task_runs = _counting
+
+    async with _app_for(service).run_test(size=(160, 48)) as pilot:
+        workbench = await _mounted(pilot)
+        table = workbench.query_one("#scheduling-task-table", DataTable)
+        reminder_index = next(
+            i
+            for i, row in enumerate(workbench._visible_rows)
+            if row.kind == "reminder"
+        )
+        table.move_cursor(row=reminder_index)
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
