@@ -1539,7 +1539,11 @@ async def test_media_trash_compact_status_folds_after_two_readable_rows():
         assert fold.region.height == 1
         assert fold.region.y == status.region.bottom
         assert fold.tooltip == f"{long_copy.rstrip('.')} · Retry"
-        assert trash_list.region.height >= 4
+        # task-28015: the row list is auto-height under a measured cap, so
+        # this retained-nothing error posture takes no space at all instead
+        # of holding a blank band above the pager.
+        assert not screen.query(".library-media-trash-row")
+        assert trash_list.region.height == 0
         assert items.region.contains_region(pager.region)
         assert items.region.contains_region(actions.region)
         painted = _compositor_text(host.export_screenshot(simplify=True))
@@ -2511,7 +2515,8 @@ async def test_media_trash_geometry_four_sizes_paints_all_fixed_controls(size):
                 <= filters.region.y
                 <= status.region.y
                 <= trash_list.region.y
-                < pager.region.y
+                <= trash_list.region.bottom
+                <= pager.region.y
                 < action_region.region.y
             ), (
                 f"{posture}: heading={heading.region!r}, "
@@ -2525,7 +2530,13 @@ async def test_media_trash_geometry_four_sizes_paints_all_fixed_controls(size):
                 f"{screen.query_one('#library-media-trash-canvas').region!r}"
             )
             assert status.region.height <= 3
-            assert trash_list.region.height >= (4 if size == (80, 24) else 1)
+            row_count = len(screen.query(".library-media-trash-row"))
+            if row_count:
+                assert trash_list.region.height >= (4 if size == (80, 24) else 1)
+            else:
+                # task-28015: auto height -- a posture with no retained rows
+                # holds no blank band.
+                assert trash_list.region.height == 0
             previous = screen.query_one("#library-media-trash-previous", Button)
             next_button = screen.query_one("#library-media-trash-next", Button)
             checked_controls = [
@@ -2594,8 +2605,14 @@ async def test_media_trash_geometry_four_sizes_paints_all_fixed_controls(size):
                     f"actions={action_region.region!r}, "
                     f"delete={delete.region!r}, label={str(delete.label)!r}"
                 )
-            assert trash_list.styles.height.is_fraction
+            # task-28015: auto height under a measured cap replaced the 1fr
+            # that docked Restore ~36 rows below a one-item page; the cap is
+            # what keeps a full page's pager and actions on the terminal.
+            assert trash_list.styles.height.is_auto
             assert trash_list.styles.min_height.value == 0
+            if row_count:
+                assert trash_list.styles.max_height is not None
+                assert trash_list.region.height <= trash_list.styles.max_height.value
             if posture == "initial-error":
                 assert (
                     screen.query_one("#library-media-trash-title", Static).renderable
@@ -4264,3 +4281,109 @@ async def test_restore_from_trash_returns_a_fresh_media_list(tmp_path):
             assert "Restored item" in painted
     finally:
         db.close_connection()
+
+
+# ---------------------------------------------------------------------------
+# task-28015 (critique #4): with one trashed item the 1fr list held ~36 blank
+# rows between the row and its Restore action, and the heading clipped the
+# item count to "Local Trash · 1 i" at the Items pane's real width.
+# ---------------------------------------------------------------------------
+
+
+def _one_trash_item():
+    return [
+        {
+            "id": "local:media:1",
+            "backing_media_id": 1,
+            "title": "Trashed item 01",
+            "media_type": "document",
+            "trash_date": "2026-08-10T12:00:00+00:00",
+        }
+    ]
+
+
+async def _open_trash_production(host, pilot, items):
+    """Drive the real screen (production stylesheet) into Trash over `items`."""
+    from Tests.UI.test_library_shell import (
+        _active_library_screen,
+        _wait_for_condition,
+        _wait_for_library_shell,
+        _wait_for_selector,
+    )
+
+    screen = _active_library_screen(host)
+    await _wait_for_library_shell(screen, pilot)
+    feed = _MountedTrashFeed(list(items))
+    feed.install(host.app_instance.media_reading_scope_service)
+    screen.query_one("#library-row-browse-media", Button).press()
+    await _wait_for_selector(screen, pilot, "#library-media-trash-open")
+    screen.query_one("#library-media-trash-open", Button).press()
+    controller = screen._library_media_trash_browse_controller
+    await _wait_for_condition(
+        pilot,
+        lambda: controller.state.applied_result is not None,
+        message="Trash page never applied.",
+    )
+    await _wait_for_selector(screen, pilot, f"#library-media-trash-row-{len(items) - 1}")
+    await pilot.pause()
+    await pilot.pause()
+    return screen
+
+
+def _trash_production_host():
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_library_shell import (
+        LibraryProductionCSSHarness,
+        _seed_conversations,
+        _two_media_items,
+    )
+
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    _seed_conversations(app, [], media=_two_media_items())
+    return LibraryProductionCSSHarness(app)
+
+
+@pytest.mark.asyncio
+async def test_trash_actions_sit_under_the_last_row():
+    """Restore renders beside the item, not ~36 rows below it (task-28015).
+
+    The pinned vertical grammar is list -> pager -> actions (see
+    ``test_media_trash_geometry_four_sizes_paints_all_fixed_controls``), and
+    the pager is two rows, so "directly below the last row" means each block
+    abuts the one above it: the pager within a row-margin of the last row and
+    the actions immediately under the pager.
+    """
+    host = _trash_production_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_trash_production(host, pilot, _one_trash_item())
+        row = screen.query_one("#library-media-trash-row-0", Button)
+        trash_list = screen.query_one("#library-media-trash-list")
+        pager = screen.query_one("#library-media-trash-pager")
+        actions = screen.query_one("#library-media-trash-actions")
+        assert trash_list.region.bottom <= row.region.bottom + 2, (
+            f"list={trash_list.region!r}, row={row.region!r}"
+        )
+        assert pager.region.y <= row.region.bottom + 2, (
+            f"pager={pager.region!r}, row={row.region!r}"
+        )
+        assert actions.region.y <= pager.region.bottom, (
+            f"actions={actions.region!r}, pager={pager.region!r}"
+        )
+        # The whole gap the critique measured (~36 blank rows) is gone.
+        assert actions.region.y - row.region.bottom <= 4, (
+            f"actions={actions.region!r}, row={row.region!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_trash_header_paints_in_full():
+    """The heading paints its whole label at the Items pane width (task-28015)."""
+    from Tests.UI.test_library_media_render_fixes import _painted
+
+    host = _trash_production_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_trash_production(host, pilot, _one_trash_item())
+        heading = screen.query_one("#library-media-trash-heading")
+        painted = _painted(host, heading.region)
+        assert "Local Trash · 1 item" in painted, painted
