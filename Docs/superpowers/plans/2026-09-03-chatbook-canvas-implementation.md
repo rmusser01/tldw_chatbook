@@ -305,14 +305,14 @@ The implementation may place tests beside an existing narrower suite when that b
 - Create: `Tests/Canvas/test_capabilities.py`
 - Modify: `pyproject.toml`
 
-- [ ] Add `aiohttp>=3.9,<4` to core dependencies after checking existing constraints. A default terminal Canvas cannot depend on an unrelated optional extra.
-- [ ] Add tests proving lazy startup, OS-assigned port, loopback-only bind, one gateway per app, clean shutdown, unavailable-browser recovery, and no second conversation authority.
-- [ ] Implement typed routes for the trusted shell, packaged static assets, render plans, event stream, source actions, and bridge confirmation. Every route resolves server-owned session scope.
-- [ ] Mint cryptographically random, short-lived, single-use capabilities scoped to browser session, frame, conversation session, Canvas, revision, action, and expiry. Store only hashes, rotate on reload, and revoke on session/branch/change/close.
-- [ ] Reject capabilities in query parameters for top-level pages. Deliver frame capabilities through a trusted boot exchange so they do not enter history, referrers, logs, or screenshots.
-- [ ] Add Host, Origin, CSRF, MIME, no-store, frame-ancestor, and CSP headers even on loopback.
-- [ ] Run gateway/capability tests and package-wheel tests.
-- [ ] Commit: `feat(canvas): add the loopback browser gateway`
+- [x] Add `aiohttp>=3.9,<4` to core dependencies after checking existing constraints. A default terminal Canvas cannot depend on an unrelated optional extra.
+- [x] Add tests proving lazy startup, OS-assigned port, loopback-only bind, one gateway per app, clean shutdown, unavailable-browser recovery, and no second conversation authority.
+- [x] Implement typed routes for the trusted shell, packaged static assets, render plans, event stream, source actions, and bridge confirmation. Every route resolves server-owned session scope.
+- [x] Mint cryptographically random, short-lived, single-use capabilities scoped to browser session, frame, conversation session, Canvas, revision, action, and expiry. Store only hashes, rotate on reload, and revoke on session/branch/change/close.
+- [x] Reject capabilities in query parameters for top-level pages. Deliver frame capabilities through a trusted boot exchange so they do not enter history, referrers, logs, or screenshots.
+- [x] Add Host, Origin, CSRF, MIME, no-store, frame-ancestor, and CSP headers even on loopback.
+- [x] Run gateway/capability tests and package-wheel tests.
+- [x] Commit: `feat(canvas): add the loopback browser gateway`
 
 ### Task 4.2: Build the preview-first shell and revision UX
 
@@ -326,14 +326,14 @@ The implementation may place tests beside an existing narrower suite when that b
 - Modify: `tldw_chatbook/Chat/console_message_actions.py`
 - Create: `Tests/Canvas/browser/test_canvas_native_flow.py`
 
-- [ ] Write a Playwright flow before UI implementation: tool create auto-opens, update hot-reloads, `Updated · Undo / View previous` appears, exact revision remains pinned, following URL tracks active branch, and branch switch changes the visible head.
-- [ ] Build a trusted, accessible shell with Canvas selector, editable title, Temporary badge, revision/provenance controls, follow/pin state, source inspect/copy/download, reload, close, connection status, compatibility notices, and scripts-disabled recovery.
-- [ ] Keep one selected Canvas per Console session. A following view updates only if session/conversation/Canvas/branch still match; otherwise show a new-version notice without redirecting the user.
-- [ ] Add transcript cards that reopen the exact originating revision and an explicit control to return to the branch-following head.
-- [ ] Detect assistant HTML fenced blocks through the parsed message model, not regex over rendered Markdown. Add idempotent `Open in Canvas` and `Open as new`; incompatible documents produce a prefilled repair request rather than partial execution.
-- [ ] Open the first native Canvas with Textual's supported URL-opening API. If the platform cannot open it, show/copy the loopback URL without blocking the terminal.
-- [ ] Run the Playwright native flow and focused transcript/message-action widget tests.
-- [ ] Commit: `feat(canvas): deliver preview-first native UX`
+- [x] Write a Playwright flow before UI implementation: tool create auto-opens, update hot-reloads, `Updated · Undo / View previous` appears, exact revision remains pinned, following URL tracks active branch, and branch switch changes the visible head.
+- [x] Build a trusted, accessible shell with Canvas selector, editable title, Temporary badge, revision/provenance controls, follow/pin state, source inspect/copy/download, reload, close, connection status, compatibility notices, and scripts-disabled recovery.
+- [x] Keep one selected Canvas per Console session. A following view updates only if session/conversation/Canvas/branch still match; otherwise show a new-version notice without redirecting the user.
+- [x] Add transcript cards that reopen the exact originating revision and an explicit control to return to the branch-following head.
+- [x] Detect assistant HTML fenced blocks through the parsed message model, not regex over rendered Markdown. Add idempotent `Open in Canvas` and `Open as new`; incompatible documents produce a prefilled repair request rather than partial execution.
+- [x] Open the first native Canvas with Textual's supported URL-opening API. If the platform cannot open it, show/copy the loopback URL without blocking the terminal.
+- [x] Run the Playwright native flow and focused transcript/message-action widget tests.
+- [x] Commit: `feat(canvas): deliver preview-first native UX`
 
 ### Task 4.3: Add confirmed submit and download actions
 
@@ -346,19 +346,19 @@ The implementation may place tests beside an existing narrower suite when that b
 - Modify: `tldw_chatbook/Chat/console_canvas_controller.py`
 - Modify: `Tests/Canvas/browser/test_canvas_native_flow.py`
 
-- [ ] Add tests for text/JSON submit, JSON depth and byte limits, complete confirmation display, cancel, stale session, changed composer, exact-session routing, replay, expiry, and two simultaneous Canvas windows.
-- [ ] Implement `canvas.submit(value)` as a virtual-runtime request only. Serialize canonical JSON or text, show the complete bounded payload in trusted UI, and after confirmation insert it into the exact matching Console composer as an unsent draft. Never auto-send.
-- [ ] Add tests for allowlisted passive formats, filename sanitization, MIME enforcement, byte cap, cancel, replay, and runnable HTML warning.
-- [ ] Implement `canvas.download({name, mime, data})` as a confirmed request. Allow only documented passive text/JSON/CSV/SVG/image formats; trusted code owns the browser download and revokes object URLs.
-- [ ] Default source download to an inert `.canvas.html.txt`. Offer runnable `.html` only behind a clear warning that it executes outside Chatbook's sandbox.
-- [ ] Reuse single-use action-scoped capabilities and reject worker messages not tied to the current frame/revision.
-- [ ] Run gateway, capability, Console controller, and native browser tests.
-- [ ] Commit: `feat(canvas): confirm bridge and download requests`
+- [x] Add tests for text/JSON submit, JSON depth and byte limits, complete confirmation display, cancel, stale session, changed composer, exact-session routing, replay, expiry, and two simultaneous Canvas windows.
+- [x] Implement `canvas.submit(value)` as a virtual-runtime request only. Serialize canonical JSON or text, show the complete bounded payload in trusted UI, and after confirmation insert it into the exact matching Console composer as an unsent draft. Never auto-send.
+- [x] Add tests for allowlisted passive formats, filename sanitization, MIME enforcement, encoded and decoded byte caps, cancel, replay, and runnable HTML warning.
+- [x] Implement `canvas.download({filename, mime_type, data})` as a confirmed request. Allow only literal UTF-8 text/CSV/JSON and signature-checked PNG/JPEG/GIF/WebP data URLs; reject SVG and every active, executable, archive, or ambiguous format. Trusted code owns the browser download and revokes object URLs.
+- [x] Default source download to an inert `.canvas.html.txt`. Offer runnable `.html` only behind a clear warning that it executes outside Chatbook's sandbox and bypasses Canvas zero-egress protections.
+- [x] Reuse single-use action-scoped capabilities and reject worker messages not tied to the current frame/revision.
+- [x] Run gateway, capability, Console controller, package-integrity, zero-egress, and native Chromium tests.
+- [x] Commit: `feat(canvas): confirm bridge and download requests` (plus independently reviewed hardening commits).
 
 ### Delivery 4 checkpoint
 
-- [ ] Update TASK-31229 with screenshots, keyboard/accessibility results, browser-open behavior, capability lifetime, and end-to-end commands.
-- [ ] Manually verify the outermost path in a real terminal: assistant creates Canvas, browser opens, user interacts, confirms submit, and text appears unsent in the correct composer.
+- [x] Update TASK-31229 with screenshots, keyboard/accessibility results, browser-open behavior, capability lifetime, and end-to-end commands.
+- [x] Manually verify the outermost path in a real terminal: assistant creates Canvas, browser opens, user interacts, confirms submit, and text appears unsent in the correct composer.
 
 ---
 
