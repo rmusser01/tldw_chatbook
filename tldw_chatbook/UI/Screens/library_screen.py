@@ -12525,12 +12525,17 @@ class LibraryScreen(BaseAppScreen):
         elif shell.canvas_kind == "skills":
             local_list_surface = True
             expected_selector = "#library-skills-canvas"
-            if self._library_lookup_error is None:
-                sync_kind = "skills"
-                replacement = LibrarySkillsListCanvas(
-                    **self._library_skills_list_canvas_kwargs(),
-                    id="library-skills-canvas",
-                )
+            # task-31263: Skills state is registry/trust-worker owned,
+            # independent of the Library source snapshot -- a sources outage
+            # must not replace a working Skills list with the source-error
+            # surface. Mirrors compose_content's ungated Skills mount (the
+            # same decision, recorded there since the adaptive-reader
+            # migration); this reconcile site was the un-fixed twin.
+            sync_kind = "skills"
+            replacement = LibrarySkillsListCanvas(
+                **self._library_skills_list_canvas_kwargs(),
+                id="library-skills-canvas",
+            )
         elif shell.canvas_kind == "handoff":
             sync_kind = "handoff"
             expected_selector = "#library-study-handoff-canvas"
@@ -12538,7 +12543,11 @@ class LibraryScreen(BaseAppScreen):
             sync_kind = "landing"
             expected_selector = "#library-landing-canvas"
 
-        if local_list_surface and self._library_lookup_error is not None:
+        if (
+            local_list_surface
+            and shell.canvas_kind != "skills"
+            and self._library_lookup_error is not None
+        ):
             expected_selector = "#library-canvas-error"
             replacement = Static(
                 self._library_lookup_error,

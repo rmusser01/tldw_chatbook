@@ -1,5 +1,6 @@
-# Pins PR #2374's review fixes: muted/placeholder/error-readable text in any
-# theme that defines them must clear WCAG AA (4.5:1) on the surfaces it sits on.
+# Readable-color gates for every registered theme, at the values that
+# actually paint: theme `variables` dict entries win only over generated
+# names no tcss source defines (see the mechanism note atop themes.py).
 import re
 from pathlib import Path
 
@@ -12,32 +13,8 @@ from tldw_chatbook.css.Themes.themes import ALL_THEMES
 CORE_VARIABLES = Path(__file__).resolve().parents[2] / (
     "tldw_chatbook/css/core/_variables.tcss"
 )
-# The Orb-ported themes (PR #2374) — the resolved-token floor below is pinned
-# for these; older themes carry pre-existing palette debt and are not gated.
-ORB_THEMES = {
-    "apricot",
-    "camono",
-    "christmas",
-    "frutiger_aero",
-    "halloween",
-    "litestep",
-    "litestep_dark",
-    "night_city",
-    "orb_dark",
-    "orb_ocean",
-    "parchment",
-    "vintage_wood",
-}
 
 AA = 4.5
-TEXT_TOKENS = (
-    "ds-text-muted",
-    "text-muted",
-    "ds-text-placeholder",
-    "ds-text-disabled-readable",
-    "ds-status-error-readable",
-)
-SURFACE_TOKENS = ("ds-surface-panel", "ds-surface-raised", "ds-surface-inspector")
 
 
 def _luminance(hex_color: str) -> float:
@@ -54,25 +31,6 @@ def _ratio(a: str, b: str) -> float:
     la, lb = _luminance(a), _luminance(b)
     lo, hi = min(la, lb), max(la, lb)
     return (hi + 0.05) / (lo + 0.05)
-
-
-@pytest.mark.parametrize(
-    "theme", [t for t in ALL_THEMES if t.variables], ids=lambda t: t.name
-)
-def test_readable_text_tokens_clear_aa_on_theme_surfaces(theme):
-    variables = theme.variables
-    surfaces = [variables[k] for k in SURFACE_TOKENS if k in variables]
-    if not surfaces:
-        pytest.skip("theme defines no ds surfaces")
-    for token in TEXT_TOKENS:
-        value = variables.get(token)
-        if not (isinstance(value, str) and value.startswith("#")):
-            continue
-        for surface in surfaces:
-            assert _ratio(value, surface) >= AA, (
-                f"{theme.name}: {token} {value} is {_ratio(value, surface):.2f}:1 "
-                f"against surface {surface} (needs {AA}:1)"
-            )
 
 
 def test_core_variables_do_not_freeze_readable_tokens_to_literals():
