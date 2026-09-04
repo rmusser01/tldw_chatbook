@@ -13,6 +13,7 @@ import json
 import os
 import re
 import stat
+import contextlib
 import threading
 import time
 from collections import OrderedDict
@@ -695,6 +696,9 @@ _DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS = 0.0
 #: loop (fallback used when no `worktree_merge_confirm_timeout_seconds`
 #: seam is injected).
 _DEFAULT_WORKTREE_MERGE_CONFIRM_TIMEOUT_SECONDS = 0.0
+#: PRD A7: `[console] ask_user_timeout_seconds`. 0 = no deadline (ADR-067);
+#: a positive value auto-continues the run with `answered: false`.
+_DEFAULT_ASK_USER_TIMEOUT_SECONDS = 0.0
 _DISPATCH_IDENTIFIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}\Z", re.ASCII)
 #: TASK-1050: synthetic round id `set_run_pending_approval`'s deprecated
 #: boolean shim registers under, internally, so its add/discard composes
@@ -3647,6 +3651,15 @@ class ConsoleChatController:
         #: Retained payload per ROUND, keyed by `request_id` -- same FIFO-
         #: head-remount contract as `_parked_skill_install_payloads`.
         self._parked_worktree_merge_payloads: dict[str, dict[str, Any]] = {}
+        #: PRD Feature A: the ask_user question round -- same shape as the
+        #: skill-script confirm (round-keyed registry + retained payloads).
+        self.set_pending_question: Callable[[dict | None], None] | None = None
+        self.ask_user_timeout_seconds: Callable[[], float] | None = None
+        self._pending_question_rounds: dict[str, dict[str, Any]] = {}
+        self._pending_question_lock = threading.Lock()
+        self._parked_question_payloads: dict[str, dict[str, Any]] = {}
+        #: A9: consecutive `busy` results per run id; reset on any real round.
+        self._question_bounces: dict[str, int] = {}
 
     def _hydrate_capture_policy(self, session: ConsoleChatSession) -> None:
         if session.id in self._capture_policy_hydrated:
@@ -10183,6 +10196,7 @@ class ConsoleChatController:
         self._remount_parked_skill_install(session.id)
         self._remount_parked_skill_script(session.id)
         self._remount_parked_worktree_merge(session.id)
+        self._remount_parked_question(session.id)
         self._remount_task_panel(session.id)
         return session
 
@@ -10569,6 +10583,7 @@ class ConsoleChatController:
         self._remount_parked_skill_install(session_id)
         self._remount_parked_skill_script(session_id)
         self._remount_parked_worktree_merge(session_id)
+        self._remount_parked_question(session_id)
         self._remount_task_panel(session_id)
         return session
 
@@ -10744,6 +10759,7 @@ class ConsoleChatController:
             self._remount_parked_skill_install(new_active_id)
             self._remount_parked_skill_script(new_active_id)
             self._remount_parked_worktree_merge(new_active_id)
+            self._remount_parked_question(new_active_id)
         # Unconditional: closing the LAST session leaves no neighbour to
         # activate (`new_active_id` is None) and the screen's follow-up sync
         # creates the blank replacement straight through the store, so this
@@ -12526,6 +12542,7 @@ class ConsoleChatController:
             watchlists_command_service=watchlists_command_service,
             admitted_roots=admitted_roots,
             **self._todo_wiring(session_id),
+            **self._ask_user_wiring(session_id),
         )
         return provider, build_local_review_hook(provider, bound_request_approvals)
 
@@ -12762,6 +12779,26 @@ class ConsoleChatController:
             "todo_store": session.todo_store,
             "on_todo_change": _on_todo_change,
         }
+
+    def _ask_user_wiring(self, session_id: str | None) -> dict[str, Any]:
+        """The ``ask_user`` kwarg for ``LocalToolProvider`` (PRD A10/A12).
+
+        Empty -- so the tool is never registered -- when there is no
+        session context or no view to show a card on (headless runs).
+
+        Args:
+            session_id: THIS run's owning session id.
+
+        Returns:
+            ``{"ask_user": callback}`` or ``{}``.
+        """
+        if session_id is None or self.app is None or self.set_pending_question is None:
+            return {}
+
+        def _ask(questions: list[dict[str, Any]]) -> dict[str, Any]:
+            return self.request_user_questions(questions, session_id=session_id)
+
+        return {"ask_user": _ask}
 
     def _library_provider_for_context(
         self, turn_context: ConsoleTurnExecutionContext
@@ -13090,6 +13127,7 @@ class ConsoleChatController:
             return 0
         revoked = self._revoke_tool_approval_rounds(run_id)
         script_revoked = self._revoke_skill_script_rounds(run_id)
+        question_revoked = self._revoke_question_rounds(run_id)
         for round_id, session_id in revoked:
             if session_id is not None:
                 self.discard_pending_round(session_id, round_id)
@@ -13119,7 +13157,16 @@ class ConsoleChatController:
                 )
             except Exception:  # noqa: BLE001 -- as above.
                 logger.debug("Failed to clear skill-script confirm during revocation")
-        total = len(revoked) + len(script_revoked)
+        for request_id, session_id in question_revoked:
+            if session_id is not None:
+                self.discard_pending_round(session_id, request_id)
+            with contextlib.suppress(Exception):
+                self._remount_head(
+                    self._parked_question_payloads,
+                    self.set_pending_question,
+                    session_id,
+                )
+        total = len(revoked) + len(script_revoked) + len(question_revoked)
         if total:
             logger.info("Revoked pending approval rounds for cancelled run")
         return total
@@ -13820,6 +13867,254 @@ class ConsoleChatController:
             return list(self._pending_skill_script_rounds)
 
     # -- Worktree-merge confirm bridge (TASK-28238 phase 2 Task 6) -----------
+
+    def _resolve_ask_user_timeout_seconds(self) -> float:
+        """PRD A7: the question deadline -- injected seam, else config, else 0.
+
+        Returns:
+            Seconds before an unanswered question auto-continues; ``0.0``
+            (the default) means no deadline. Never negative.
+        """
+        if self.ask_user_timeout_seconds is not None:
+            try:
+                return max(0.0, float(self.ask_user_timeout_seconds()))
+            except Exception:  # noqa: BLE001 -- fail open to the documented default
+                pass
+        try:
+            return max(
+                0.0,
+                float(
+                    get_cli_setting(
+                        "console",
+                        "ask_user_timeout_seconds",
+                        _DEFAULT_ASK_USER_TIMEOUT_SECONDS,
+                    )
+                ),
+            )
+        except (TypeError, ValueError):
+            return _DEFAULT_ASK_USER_TIMEOUT_SECONDS
+
+    def request_user_questions(
+        self, questions: list[dict[str, Any]], *, session_id: str | None = None
+    ) -> dict[str, Any]:
+        """WORKER THREAD: show ``questions`` on a card and wait for the answers.
+
+        PRD Feature A (A5-A7, A9-A11, A14). Clones
+        ``request_worktree_merge_confirm``'s round machinery -- fresh
+        request id, park-or-mount under the TASK-910 contract, poll under
+        ``use_human_input_wait`` so the owning run's tool clock pauses,
+        cancel/deadline checks -- with a question-shaped decision. Two
+        differences: a second call while this session already has a live
+        round returns ``busy`` at once (A9: depth is expressed by batching
+        questions, never by queueing rounds), and every outcome is recorded
+        in the transcript on resolve (A14).
+
+        Args:
+            questions: Validated questions (``ask_user_questions.
+                validate_questions`` output).
+            session_id: The run's OWNING session; ``None`` never parks.
+
+        Returns:
+            ``{"answered": True, "answers": [...]}`` or ``{"answered":
+            False, "reason": "timeout" | "cancelled" | "busy"}``.
+
+        Raises:
+            AskUserBusyRefusal: ``MAX_CONSECUTIVE_BUSY`` consecutive busy
+                results in one run (A9's retry-loop ceiling).
+        """
+        from tldw_chatbook.Agents.ask_user_questions import (
+            ASK_USER_REFUSAL_COPY,
+            MAX_CONSECUTIVE_BUSY,
+            AskUserBusyRefusal,
+            answered_result,
+            busy_result,
+            empty_answers,
+            unanswered_result,
+        )
+        from tldw_chatbook.Chat.console_agent_bridge import format_question_marker
+
+        if self.app is None or self.set_pending_question is None:
+            return unanswered_result("cancelled")
+        owning_session_id = (
+            session_id if session_id is not None else (self.store.active_session_id or "")
+        )
+        owning_run_id = current_run_id()
+        with self._pending_question_lock:
+            live = any(
+                state.get("session_id") == owning_session_id
+                for state in self._pending_question_rounds.values()
+            )
+            if live:
+                bounces = self._question_bounces.get(owning_run_id, 0) + 1
+                self._question_bounces[owning_run_id] = bounces
+            else:
+                bounces = 0
+                self._question_bounces.pop(owning_run_id, None)
+        if live:
+            if bounces >= MAX_CONSECUTIVE_BUSY:
+                raise AskUserBusyRefusal(ASK_USER_REFUSAL_COPY)
+            return busy_result()
+        event = threading.Event()
+        decision: dict[str, Any] = {}
+        request_id = str(uuid4())
+        round_cancel_event = self._bind_round_cancel_signal(session_id)
+        visit_cancel_event = self._bind_visit_cancel_signal()
+        round_state: dict[str, Any] = {
+            "event": event,
+            "decision": decision,
+            "session_id": owning_session_id,
+            "run_id": owning_run_id,
+            "revoked": False,
+        }
+        with self._pending_question_lock:
+            self._pending_question_rounds[request_id] = round_state
+        timeout_seconds = self._resolve_ask_user_timeout_seconds()
+        deadline = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
+        actor = current_run_actor()
+        asked_by = "sub-agent" if actor is not None and actor.kind == "subagent" else "agent"
+        card_payload: dict[str, Any] = {
+            "questions": [dict(question) for question in questions],
+            "asked_by": asked_by,
+            "timeout_seconds": timeout_seconds,
+            "request_id": request_id,
+            "session_id": owning_session_id,
+            "deadline_monotonic": deadline,
+        }
+        is_parked = session_id is not None and session_id != (
+            self.store.active_session_id or ""
+        )
+        is_head = True
+        if session_id is not None:
+            self.add_pending_round(session_id, request_id)
+            is_head = self._park_round_payload(
+                self._parked_question_payloads, request_id, card_payload
+            )
+        try:
+            if is_parked:
+                if self.park_pending_approval is not None:
+                    self.app.call_from_thread(self.park_pending_approval, session_id)
+            elif is_head:
+                self._marshal_pending_question(card_payload)
+            outcome = "answered"
+            with use_human_input_wait(owning_run_id):
+                while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
+                    if self._is_session_cancelled(
+                        session_id,
+                        cancel_event=round_cancel_event,
+                        visit_event=visit_cancel_event,
+                    ):
+                        outcome = "cancelled"
+                        break
+                    if deadline is not None and time.monotonic() >= deadline:
+                        outcome = "timeout"
+                        break
+            if round_state["revoked"]:
+                outcome = "cancelled"
+            if outcome == "answered":
+                answers = decision.get("answers")
+                result = answered_result(answers if answers else empty_answers(questions))
+            else:
+                result = unanswered_result(outcome)
+            bridge = self._agent_bridge
+            if bridge is not None:
+                with contextlib.suppress(Exception):
+                    bridge.append_question_marker(
+                        owning_session_id,
+                        format_question_marker(asked_by, questions, result),
+                    )
+            return result
+        finally:
+            with self._pending_question_lock:
+                self._pending_question_rounds.pop(request_id, None)
+            self._unpark_round_payload(self._parked_question_payloads, request_id)
+            if session_id is not None:
+                self.discard_pending_round(session_id, request_id)
+            with contextlib.suppress(Exception):
+                self._remount_head(
+                    self._parked_question_payloads,
+                    self.set_pending_question,
+                    owning_session_id if session_id is not None else None,
+                )
+
+    def resolve_pending_question(
+        self, answers: list[dict[str, Any]], request_id: str | None = None
+    ) -> None:
+        """UI THREAD: hand the card's answers to the waiting worker thread.
+
+        Strict ``request_id`` match, exactly like
+        ``resolve_pending_skill_script``: a resolve with no id, or an id
+        from any round but the armed one, is silently dropped.
+
+        Args:
+            answers: One PRD A6 answer dict per question, in order.
+            request_id: The armed round's id as echoed back by the card.
+        """
+        if request_id is None:
+            return
+        with self._pending_question_lock:
+            round_state = self._pending_question_rounds.get(request_id)
+        if round_state is None:
+            return
+        round_state["decision"]["answers"] = [dict(answer) for answer in answers]
+        round_state["event"].set()
+
+    def pending_question_ids(self) -> list[str]:
+        """Return the request ids of every armed question round, arm order.
+
+        Returns:
+            The armed round ids; empty when none is pending.
+        """
+        with self._pending_question_lock:
+            return list(self._pending_question_rounds)
+
+    def _marshal_pending_question(self, payload: dict[str, Any] | None) -> None:
+        """WORKER THREAD: hand a question payload to the UI thread.
+
+        Args:
+            payload: The card payload to show, or None to hide the card.
+        """
+        if self.app is not None and self.set_pending_question is not None:
+            self.app.call_from_thread(self.set_pending_question, payload)
+
+    def _remount_parked_question(self, session_id: str) -> None:
+        """UI THREAD: re-derive the question card for the session now viewed.
+
+        Called from ``switch_session``/``new_session``/``close_session``
+        beside the other card re-derives (PRD A10).
+
+        Args:
+            session_id: The session being activated/viewed.
+        """
+        if self.set_pending_question is None:
+            return
+        self.set_pending_question(
+            self._head_round_payload(self._parked_question_payloads, session_id)
+        )
+
+    def _revoke_question_rounds(self, run_id: str) -> list[tuple[str, str | None]]:
+        """Fail this run's question rounds closed as ``cancelled`` (PRD A10).
+
+        Registry work only, under ``_pending_question_lock``; the caller
+        (``revoke_approval_rounds_for_run``) does the badge and card work.
+
+        Args:
+            run_id: The cancelled/abandoned run.
+
+        Returns:
+            ``(request_id, session_id)`` per revoked round.
+        """
+        revoked: list[tuple[str, str | None]] = []
+        with self._pending_question_lock:
+            for request_id, state in list(self._pending_question_rounds.items()):
+                if state.get("run_id") != run_id:
+                    continue
+                state["revoked"] = True
+                self._pending_question_rounds.pop(request_id, None)
+                revoked.append((request_id, state.get("session_id") or None))
+                event = state.get("event")
+                if event is not None:
+                    event.set()
+        return revoked
 
     def request_worktree_merge_confirm(
         self, payload: dict[str, Any], *, session_id: str | None = None
