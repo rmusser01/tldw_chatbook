@@ -12,8 +12,13 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TypeAlias
 
-
 MAX_WIRE_INTEGER = (1 << 53) - 1
+MAX_CANVASES_PER_CONVERSATION = 10
+MAX_REVISIONS_PER_CANVAS = 100
+MAX_DURABLE_SOURCE_BYTES_PER_CONVERSATION = 50 * 1024 * 1024
+MAX_DURABLE_SOURCE_BYTES_PER_REVISION = 512 * 1024
+MAX_CANVAS_TITLE_BYTES = 4 * 1024
+MAX_CANVAS_ORIGIN_TURN_ID_BYTES = 256
 _DATA_MIME_PATTERN = re.compile(r"^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$")
 JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 
@@ -63,6 +68,38 @@ class CanvasLimits:
                 raise CanvasLimitError(f"{field_name} exceeds the supported integer range")
             if value == 0:
                 raise CanvasLimitError(f"{field_name} must be greater than zero")
+
+
+@dataclass(frozen=True, slots=True)
+class CanvasRepositoryLimits:
+    """Central durable Canvas ceilings, injectable for boundary tests."""
+
+    max_canvases_per_conversation: int = MAX_CANVASES_PER_CONVERSATION
+    max_revisions_per_canvas: int = MAX_REVISIONS_PER_CANVAS
+    max_source_bytes_per_conversation: int = (
+        MAX_DURABLE_SOURCE_BYTES_PER_CONVERSATION
+    )
+    max_source_bytes_per_revision: int = MAX_DURABLE_SOURCE_BYTES_PER_REVISION
+    max_title_bytes: int = MAX_CANVAS_TITLE_BYTES
+    max_origin_turn_id_bytes: int = MAX_CANVAS_ORIGIN_TURN_ID_BYTES
+
+    def __post_init__(self) -> None:
+        for field_name, value in (
+            ("max_canvases_per_conversation", self.max_canvases_per_conversation),
+            ("max_revisions_per_canvas", self.max_revisions_per_canvas),
+            (
+                "max_source_bytes_per_conversation",
+                self.max_source_bytes_per_conversation,
+            ),
+            ("max_source_bytes_per_revision", self.max_source_bytes_per_revision),
+            ("max_title_bytes", self.max_title_bytes),
+            ("max_origin_turn_id_bytes", self.max_origin_turn_id_bytes),
+        ):
+            _validate_non_negative_integer(value, field_name=field_name)
+            if value == 0:
+                raise CanvasLimitError(f"{field_name} must be greater than zero")
+            if value > MAX_WIRE_INTEGER:
+                raise CanvasLimitError(f"{field_name} exceeds the supported integer range")
 
 
 @dataclass(frozen=True, slots=True)

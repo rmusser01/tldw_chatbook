@@ -47,6 +47,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import threading
 import logging
+from collections.abc import Collection, Iterator
 from typing import (
     List,
     Dict,
@@ -113,6 +114,7 @@ DEFAULT_DISCOVERY_OWNER = "general_chat"
 _CONVERSATION_IDENTITY_TEXT_MAX_BYTES = 256
 _SQLITE_POSITIVE_INTEGER_MAX = (1 << 63) - 1
 _UNSET = object()
+_CANVAS_REVISION_DELETE_GUARD_FUNCTION = "canvas_revision_delete_authorized"
 _NOTES_ORGANIZATION_SYNC_ID_TABLES = (
     "keywords",
     "keyword_collections",
@@ -434,6 +436,48 @@ def _split_sql_statements(script: str) -> List[str]:
     return statements
 
 
+class _CanvasRevisionDeletionAuthorization:
+    """Connection-local capability for an exact repository-owned hard purge."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+        self._canvas_ids: frozenset[str] = frozenset()
+
+    @contextlib.contextmanager
+    def authorize(
+        self,
+        cursor: sqlite3.Cursor,
+        canvas_ids: Collection[str],
+    ) -> Iterator[None]:
+        """Authorize deletion of exactly ``canvas_ids`` in the current transaction."""
+
+        if cursor.connection is not self._connection:
+            raise RuntimeError("canvas_purge_connection_mismatch")
+        if not self._connection.in_transaction:
+            raise RuntimeError("caller_transaction_required")
+        if self._canvas_ids:
+            raise RuntimeError("canvas_purge_authorization_already_active")
+        normalized = frozenset(canvas_ids)
+        if not normalized or any(
+            type(value) is not str or not value for value in normalized
+        ):
+            raise ValueError("canvas_ids")
+        self._canvas_ids = normalized
+        try:
+            yield
+        finally:
+            self._canvas_ids = frozenset()
+
+    def sqlite_authorized(self, canvas_id: object) -> int:
+        """Return one only for an exact Canvas in the live purge transaction."""
+
+        return int(
+            type(canvas_id) is str
+            and canvas_id in self._canvas_ids
+            and self._connection.in_transaction
+        )
+
+
 def _table_check_references_console_project_context(create_sql: str) -> bool:
     """Return whether a CHECK expression references the local-only column."""
     tokens: list[tuple[str, str]] = []
@@ -591,7 +635,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 66  # Character-conversation selected-branch Keyword projection.
+    _CURRENT_SCHEMA_VERSION = 67  # Conversation-owned immutable Canvas revision graphs.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -3306,6 +3350,7 @@ UPDATE db_schema_version
                 conn = None
                 self._local.conn = None
                 self._local.semantic_mutation_authorization = None
+                self._local.canvas_revision_deletion_authorization = None
             if conn:
                 last_used = getattr(self._local, "conn_last_used", None)
                 if (
@@ -3366,6 +3411,17 @@ UPDATE db_schema_version
                     conn.isolation_level = None
                     self._local.semantic_mutation_authorization = (
                         register_semantic_mutation_guard(conn)
+                    )
+                    canvas_deletion_authorization = (
+                        _CanvasRevisionDeletionAuthorization(conn)
+                    )
+                    conn.create_function(
+                        _CANVAS_REVISION_DELETE_GUARD_FUNCTION,
+                        1,
+                        canvas_deletion_authorization.sqlite_authorized,
+                    )
+                    self._local.canvas_revision_deletion_authorization = (
+                        canvas_deletion_authorization
                     )
                     self._connection_quiescence.register(conn)
                     self._local.conn = conn
@@ -3492,6 +3548,21 @@ UPDATE db_schema_version
             authorization, _SemanticMutationAuthorization
         ):
             raise RuntimeError("trace_gc_connection_mismatch")
+        return authorization
+
+    def _canvas_revision_deletion_authorization_for_repository(
+        self, connection: sqlite3.Connection
+    ) -> _CanvasRevisionDeletionAuthorization:
+        """Return the connection-local exact-Canvas hard-purge capability."""
+
+        current = self.get_connection()
+        authorization = getattr(
+            self._local, "canvas_revision_deletion_authorization", None
+        )
+        if connection is not current or not isinstance(
+            authorization, _CanvasRevisionDeletionAuthorization
+        ):
+            raise RuntimeError("canvas_purge_connection_mismatch")
         return authorization
 
     @staticmethod
@@ -3677,6 +3748,7 @@ UPDATE db_schema_version
                 # even if conn.close() itself raised an exception.
                 if hasattr(self._local, "conn"):
                     self._local.conn = None
+                self._local.canvas_revision_deletion_authorization = None
                 self._local.semantic_mutation_authorization = None
 
     def backup_database(self, backup_file_path: str) -> bool:
@@ -7745,7 +7817,6 @@ UPDATE db_schema_version
             / "migrations"
             / "chachanotes_v65_to_v66_character_conversation_search.sql"
         )
-
         try:
             with self.transaction() as cursor:
                 self._execute_migration_statements(
@@ -7776,6 +7847,45 @@ UPDATE db_schema_version
         except Exception as exc:
             raise SchemaError(
                 f"Migration from V65 to V66 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
+    def _migrate_from_v66_to_v67(self, conn: sqlite3.Connection) -> None:
+        """Add conversation-owned immutable Canvas revision graphs."""
+
+        self._require_migration_entry_version(conn, 66, "V66→V67")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v66_to_v67_canvas_revisions.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V66→V67",
+                )
+                if cursor.execute("PRAGMA foreign_key_check").fetchall():
+                    raise SchemaError("Canvas migration foreign key audit failed")
+                version_cursor = cursor.execute(
+                    "UPDATE db_schema_version SET version = 67 "
+                    "WHERE schema_name = ? AND version = 66",
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V66→V67] Migration version update was not applied"
+                    )
+            if self._get_db_version(conn) != 67:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V66→V67] Migration version check failed"
+                )
+        except SchemaError:
+            raise
+        except Exception as exc:
+            raise SchemaError(
+                f"Migration from V66 to V67 failed for '{self._SCHEMA_NAME}': "
+                f"{type(exc).__name__}"
             ) from exc
 
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
@@ -7996,6 +8106,7 @@ UPDATE db_schema_version
                     63: self._migrate_from_v63_to_v64,
                     64: self._migrate_from_v64_to_v65,
                     65: self._migrate_from_v65_to_v66,
+                    66: self._migrate_from_v66_to_v67,
                 }
 
                 if current_db_version == 0:
