@@ -30,13 +30,6 @@
     width: 1fr;
 }
 
-SchedulesWorkbench TabbedContent,
-SchedulesWorkbench TabbedContent ContentSwitcher,
-SchedulesWorkbench TabbedContent TabPane {
-    height: 1fr;
-    min-height: 0;
-}
-
 #scheduling-workbench {
     layout: horizontal;
     height: 1fr;
