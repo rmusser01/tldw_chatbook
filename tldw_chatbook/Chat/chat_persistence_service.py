@@ -72,6 +72,9 @@ from tldw_chatbook.Chat.console_speech_preferences import (
     merge_console_speech_preferences,
     parse_console_speech_preferences,
 )
+from tldw_chatbook.Chat.console_session_endpoint_policy import (
+    ConsoleEndpointAdoptionReceipt,
+)
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_project_instructions import (
     encode_project_context_json,
@@ -1805,6 +1808,79 @@ class ChatPersistenceService:
                 if attempt == 1:
                     raise
         return False
+
+    def adopt_console_session_endpoint_settings(
+        self,
+        *,
+        conversation_id: str,
+        settings: ConsoleSessionSettings,
+    ) -> ConsoleEndpointAdoptionReceipt:
+        """Persist safe generation values and return an exact rollback receipt.
+
+        The caller owns the verified endpoint separately in process memory. The
+        endpoint-free generation codec is the only metadata owner changed here;
+        the complete settings codec (which includes ``base_url``) is deliberately
+        reserved for ordinary Console settings persistence.
+        """
+
+        for attempt in range(2):
+            record = self.db.get_conversation_by_id(str(conversation_id))
+            if record is None:
+                raise RuntimeError("Console conversation disappeared during adoption")
+            before_metadata = record.get("metadata")
+            metadata = _initial_metadata_object(before_metadata or {})
+            metadata = merge_console_generation_settings(
+                metadata,
+                snapshot_from_session_settings(settings),
+            )
+            written_metadata = json.dumps(metadata)
+            version = record.get("version")
+            if type(version) is not int:
+                raise RuntimeError("Console conversation version is invalid")
+            try:
+                self.db.update_conversation(
+                    str(conversation_id),
+                    {"metadata": written_metadata},
+                    expected_version=version,
+                )
+            except ConflictError:
+                if attempt == 1:
+                    raise
+                continue
+            return ConsoleEndpointAdoptionReceipt(
+                conversation_id=str(conversation_id),
+                before_metadata=before_metadata,
+                written_metadata=written_metadata,
+                written_version=version + 1,
+            )
+        raise RuntimeError("Console endpoint adoption could not be persisted")
+
+    def rollback_console_session_endpoint_adoption(
+        self,
+        *,
+        receipt: ConsoleEndpointAdoptionReceipt,
+    ) -> bool:
+        """Restore exact metadata only while the adoption still owns the row."""
+
+        if not isinstance(receipt, ConsoleEndpointAdoptionReceipt):
+            raise TypeError("Console endpoint adoption receipt is required")
+        record = self.db.get_conversation_by_id(receipt.conversation_id)
+        if record is None:
+            return False
+        if (
+            record.get("version") != receipt.written_version
+            or record.get("metadata") != receipt.written_metadata
+        ):
+            return False
+        try:
+            self.db.update_conversation(
+                receipt.conversation_id,
+                {"metadata": receipt.before_metadata},
+                expected_version=receipt.written_version,
+            )
+        except ConflictError:
+            return False
+        return True
 
     def update_conversation_title(
         self,

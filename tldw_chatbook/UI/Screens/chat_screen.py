@@ -331,6 +331,10 @@ from ...Chat.console_session_settings import (
     unsaved_console_endpoint_warning,
     validate_console_session_settings,
 )
+from ...Chat.console_session_endpoint_policy import (
+    ConsoleEndpointRollbackOutcome,
+    ConsoleEphemeralEndpointPolicy,
+)
 from ...Chat.console_chat_store import (
     MAX_PENDING_ATTACHMENTS,
     ConsoleChatSession,
@@ -7450,6 +7454,8 @@ class ChatScreen(BaseAppScreen):
         current_controller = None
         current_provider_selection = None
         current_summary_state = None
+        current_endpoint_policy = None
+        adoption_receipt = None
         replacement_started = False
         try:
             intent = claim.value
@@ -7469,24 +7475,43 @@ class ChatScreen(BaseAppScreen):
             if active_session.id != session_id:
                 raise RuntimeError("Console active session changed before adoption")
             current_has_user_work = active_session.has_user_work
+            current_endpoint_policy = (
+                session_store.session_ephemeral_endpoint_policy(session_id)
+            )
             current_controller = self._console_chat_controller
             current_provider_selection = self._build_console_provider_selection()
             current_summary_state = self._build_console_settings_summary_state()
+            configured_vllm = build_target_default_console_session_settings(
+                self._provider_readiness_app_config(),
+                "vllm",
+                intent.model_id,
+            )
             next_settings = replace(
                 current,
                 provider="vllm",
                 model=intent.model_id,
-                base_url=intent.api_url,
+                base_url=configured_vllm.base_url,
                 source="user",
             )
+            endpoint_policy = ConsoleEphemeralEndpointPolicy(
+                provider="vllm",
+                model=intent.model_id,
+                base_url=intent.api_url,
+            )
             errors = validate_console_session_settings(
-                next_settings,
+                endpoint_policy.effective_settings(next_settings),
                 app_config=self._provider_readiness_app_config(),
             )
             if errors:
                 raise ValueError("vLLM Console session settings are invalid")
+            adoption_receipt = session_store.adopt_session_ephemeral_endpoint(
+                session_id,
+                settings=next_settings,
+                policy=endpoint_policy,
+            )
             replacement_started = True
-            self._session._replace_active_console_session_settings(next_settings)
+            self._sync_console_chat_core_state()
+            self._sync_console_settings_summary()
             if (
                 not self.is_attached
                 or session_store.active_session_id != session_id
@@ -7504,17 +7529,23 @@ class ChatScreen(BaseAppScreen):
                 and current_has_user_work is not None
             ):
                 try:
-                    restored = session_store.rollback_session_settings_replacement(
+                    outcome = session_store.rollback_session_ephemeral_endpoint_adoption(
                         session_id,
                         expected_settings=next_settings,
+                        expected_policy=endpoint_policy,
                         prior_settings=current,
+                        prior_policy=current_endpoint_policy,
                         prior_has_user_work=current_has_user_work,
+                        receipt=adoption_receipt,
                     )
-                    if not restored:
+                    if outcome is ConsoleEndpointRollbackOutcome.LOST_SESSION_FENCE:
                         raise RuntimeError(
                             "vLLM Console rollback lost its session fence"
                         )
-                    if session_store.active_session_id == session_id:
+                    if (
+                        outcome is ConsoleEndpointRollbackOutcome.RESTORED
+                        and session_store.active_session_id == session_id
+                    ):
                         try:
                             self._sync_console_chat_core_state()
                         except BaseException:
@@ -7535,17 +7566,45 @@ class ChatScreen(BaseAppScreen):
                             self._apply_console_settings_summary_state(
                                 current_summary_state
                             )
-                except BaseException:
+                    elif (
+                        outcome
+                        is ConsoleEndpointRollbackOutcome.BLOCKED_DURABLE_RESTORE
+                        and session_store.active_session_id == session_id
+                    ):
+                        self.app_instance.notify(
+                            "vLLM session endpoint blocked because the prior "
+                            "conversation metadata could not be restored. Retry "
+                            "the handoff or choose a provider before sending.",
+                            severity="error",
+                        )
+                        self._sync_console_chat_core_state()
+                        self._sync_console_settings_summary()
+                except BaseException as rollback_error:
                     logger.warning(
                         "vLLM Console handoff rollback failed "
                         "(revision={}, exception_category={})",
                         claim.revision,
-                        type(error).__name__,
+                        type(rollback_error).__name__,
+                    )
+                    self.app_instance.notify(
+                        "vLLM session handoff could not restore its exact prior "
+                        "state. Review the current provider before sending.",
+                        severity="error",
                     )
             try:
                 store.release(claim)
-            except BaseException:
-                pass
+            except BaseException as release_error:
+                logger.warning(
+                    "vLLM Console handoff claim release failed "
+                    "(revision={}, exception_category={})",
+                    claim.revision,
+                    type(release_error).__name__,
+                )
+                self.app_instance.notify(
+                    "vLLM session handoff could not be re-queued. Reopen vLLM "
+                    "Lab before trying again.",
+                    severity="error",
+                )
             if isinstance(
                 error,
                 (asyncio.CancelledError, GeneratorExit, KeyboardInterrupt, SystemExit),
@@ -8006,10 +8065,17 @@ class ChatScreen(BaseAppScreen):
         app_config = self._provider_readiness_app_config()
         store = self._ensure_console_chat_store()
         if session_id is None:
-            selection_settings = self._session._ensure_active_console_session_settings()
+            raw_settings = self._session._ensure_active_console_session_settings()
             target_session_id = store.active_session_id
+            selection_settings = (
+                store.effective_session_settings(target_session_id)
+                if target_session_id is not None
+                else raw_settings
+            )
+            if selection_settings is None:
+                selection_settings = raw_settings
         else:
-            selection_settings = self._session._console_session_settings(session_id)
+            selection_settings = store.effective_session_settings(session_id)
             if selection_settings is None:
                 raise KeyError(f"Unknown Console session: {session_id}")
             target_session_id = session_id

@@ -473,6 +473,18 @@ class _AudioCppResultTransactionError(RuntimeError):
     """Bounded internal failure for one Settings result transaction."""
 
 
+@dataclass(frozen=True, slots=True)
+class _VllmDefaultPresentationSnapshot:
+    """Complete provider presentation restored after a late handoff failure."""
+
+    draft: SettingsDraft | None
+    provider_save_result: str
+    card_disabled: bool
+    inputs: tuple[tuple[str, str, str | None, bool], ...]
+    selects: tuple[tuple[str, object, bool], ...]
+    buttons: tuple[tuple[str, bool], ...]
+
+
 @dataclass(slots=True)
 class _AudioCppResultCleanup:
     """One exact retryable result rollback retained by its Settings owner."""
@@ -2628,7 +2640,9 @@ class SettingsScreen(BaseAppScreen):
             "Provider settings have not been saved this session."
         )
         self._vllm_default_claim: HandoffClaim[VllmDefaultIntent] | None = None
-        self._vllm_default_before_draft: SettingsDraft | None = None
+        self._vllm_default_before_presentation: (
+            _VllmDefaultPresentationSnapshot | None
+        ) = None
         self._model_discovery_status = MODEL_DISCOVERY_IDLE_COPY
         self._model_discovery_models: tuple[object, ...] = ()
         self._model_discovery_selected_model_ids: set[str] = set()
@@ -11337,6 +11351,128 @@ class SettingsScreen(BaseAppScreen):
             self._settings_drafts.pop(category, None)
         self._update_provider_evidence_for_edit(key, value)
 
+    def _snapshot_vllm_default_presentation(
+        self,
+    ) -> _VllmDefaultPresentationSnapshot:
+        """Capture the full mounted provider presentation before staging."""
+
+        card = self.query_one("#settings-providers-models-card", Vertical)
+        inputs = tuple(
+            (
+                widget.id,
+                widget.value,
+                widget.placeholder,
+                widget.disabled,
+            )
+            for widget in card.query(Input)
+            if widget.id is not None
+        )
+        selects = tuple(
+            (widget.id, widget.value, widget.disabled)
+            for widget in card.query(Select)
+            if widget.id is not None
+        )
+        action_selectors = (
+            "#settings-save-category",
+            "#settings-revert-category",
+        )
+        buttons = [
+            (widget.id, widget.disabled)
+            for widget in card.query(Button)
+            if widget.id is not None
+        ]
+        for selector in action_selectors:
+            try:
+                widget = self.query_one(selector, Button)
+            except QueryError:
+                continue
+            if widget.id is not None:
+                buttons.append((widget.id, widget.disabled))
+        return _VllmDefaultPresentationSnapshot(
+            draft=copy.deepcopy(self._provider_draft()),
+            provider_save_result=self._provider_save_result,
+            card_disabled=card.disabled,
+            inputs=inputs,
+            selects=selects,
+            buttons=tuple(buttons),
+        )
+
+    def _set_vllm_default_compensation_fence(self, fenced: bool) -> None:
+        """Prevent provider edits while stage acknowledgment may compensate."""
+
+        try:
+            self.query_one(
+                "#settings-providers-models-card", Vertical
+            ).disabled = fenced
+        except QueryError:
+            pass
+        if not fenced:
+            return
+        for selector in (
+            "#settings-save-category",
+            "#settings-revert-category",
+        ):
+            try:
+                self.query_one(selector, Button).disabled = True
+            except QueryError:
+                pass
+
+    def _restore_vllm_default_presentation(
+        self,
+        snapshot: _VllmDefaultPresentationSnapshot,
+    ) -> None:
+        """Rehydrate provider semantics, then restore exact captured controls."""
+
+        if snapshot.draft is None:
+            self._settings_drafts.pop(SettingsCategoryId.PROVIDERS_MODELS, None)
+        else:
+            self._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = copy.deepcopy(
+                snapshot.draft
+            )
+
+        values = self._provider_setting_values_mapping()
+        provider = str(values.get("provider") or "").strip()
+        model = str(values.get("model") or "").strip()
+        self._sync_provider_manual_widget(provider)
+        self._sync_provider_credential_widget(provider)
+        self._sync_provider_model_profile_widgets(provider, model)
+        self._update_provider_dynamic_widgets()
+
+        for widget_id, value, placeholder, disabled in snapshot.inputs:
+            try:
+                widget = self.query_one(f"#{widget_id}", Input)
+            except QueryError:
+                continue
+            with widget.prevent(Input.Changed):
+                widget.value = value
+            widget.placeholder = placeholder
+            widget.disabled = disabled
+        for widget_id, value, disabled in snapshot.selects:
+            try:
+                widget = self.query_one(f"#{widget_id}", Select)
+            except QueryError:
+                continue
+            with widget.prevent(Select.Changed):
+                widget.value = value
+            widget.disabled = disabled
+
+        self._provider_save_result = snapshot.provider_save_result
+        self._set_static_text(
+            "#settings-provider-save-result", snapshot.provider_save_result
+        )
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+        for widget_id, disabled in snapshot.buttons:
+            try:
+                self.query_one(f"#{widget_id}", Button).disabled = disabled
+            except QueryError:
+                continue
+        try:
+            self.query_one(
+                "#settings-providers-models-card", Vertical
+            ).disabled = snapshot.card_disabled
+        except QueryError:
+            pass
+
     def _consume_pending_vllm_default_intent(self) -> bool:
         """Stage one current verified target in Providers without saving it."""
 
@@ -11362,11 +11498,13 @@ class SettingsScreen(BaseAppScreen):
                 is not SettingsCategoryId.PROVIDERS_MODELS
             ):
                 raise RuntimeError("Providers Settings is not mounted")
-            before = self._provider_draft()
-            self._vllm_default_before_draft = copy.deepcopy(before)
+            self._vllm_default_before_presentation = (
+                self._snapshot_vllm_default_presentation()
+            )
             self._vllm_default_claim = cast(
                 HandoffClaim[VllmDefaultIntent], claim
             )
+            self._set_vllm_default_compensation_fence(True)
             self._stage_provider_value("provider", "vllm")
             self._stage_provider_value("model", intent.model_id)
             self._stage_provider_value("endpoint", intent.api_url)
@@ -11397,6 +11535,7 @@ class SettingsScreen(BaseAppScreen):
             )
             self._update_provider_dynamic_widgets()
             self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+            self._set_vllm_default_compensation_fence(True)
             self.call_after_refresh(
                 self._acknowledge_vllm_default_intent,
                 claim,
@@ -11449,8 +11588,17 @@ class SettingsScreen(BaseAppScreen):
         except BaseException:
             self._rollback_vllm_default_intent(claim=claim)
             return
+        presentation = self._vllm_default_before_presentation
         self._vllm_default_claim = None
-        self._vllm_default_before_draft = None
+        self._vllm_default_before_presentation = None
+        if presentation is not None:
+            try:
+                self.query_one(
+                    "#settings-providers-models-card", Vertical
+                ).disabled = presentation.card_disabled
+            except QueryError:
+                pass
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
     def _rollback_vllm_default_intent(
         self,
@@ -11462,20 +11610,33 @@ class SettingsScreen(BaseAppScreen):
         current_claim = self._vllm_default_claim or claim
         if current_claim is None:
             return
-        before = self._vllm_default_before_draft
-        if before is None:
-            self._settings_drafts.pop(SettingsCategoryId.PROVIDERS_MODELS, None)
-        else:
-            self._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = before
+        presentation = self._vllm_default_before_presentation
+        if presentation is not None:
+            if self.is_mounted:
+                self._restore_vllm_default_presentation(presentation)
+            elif presentation.draft is None:
+                self._settings_drafts.pop(
+                    SettingsCategoryId.PROVIDERS_MODELS, None
+                )
+            else:
+                self._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = (
+                    copy.deepcopy(presentation.draft)
+                )
         store = getattr(self.app_instance, "pending_handoffs", None)
         if type(store) is PendingHandoffStore:
             try:
                 store.release(current_claim)
-            except BaseException:
-                pass
+            except BaseException as release_error:
+                logger.warning(
+                    "vLLM Settings handoff release failed "
+                    "(revision={}, exception_category={})",
+                    current_claim.revision,
+                    type(release_error).__name__,
+                )
         self._vllm_default_claim = None
-        self._vllm_default_before_draft = None
-        if self.is_mounted:
+        self._vllm_default_before_presentation = None
+        if self.is_mounted and presentation is None:
+            self._set_vllm_default_compensation_fence(False)
             self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
     def _provider_evidence_store(self) -> ProviderTestEvidenceStore:
