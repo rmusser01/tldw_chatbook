@@ -70,6 +70,12 @@ def _bind_media_mutation_seams(fake):
     fake._complete_library_media_mutation = types.MethodType(
         LibraryScreen._complete_library_media_mutation, fake
     )
+    # task-31237: the delete path resets the content Find bar through the
+    # one ``_close_library_media_find`` seam (collapsed, no query, first
+    # match) instead of poking the two query attributes directly.
+    fake._close_library_media_find = types.MethodType(
+        LibraryScreen._close_library_media_find, fake
+    )
     if fake._library_media_bulk_delete_in_flight:
         fake._begin_library_media_mutation()
     return fake
