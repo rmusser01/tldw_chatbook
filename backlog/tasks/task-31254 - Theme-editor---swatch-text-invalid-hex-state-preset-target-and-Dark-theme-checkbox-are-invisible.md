@@ -2,7 +2,7 @@
 id: TASK-31254
 title: Theme editor - swatch text, invalid-hex state, preset target and Dark-theme
   checkbox are invisible
-status: To Do
+status: Done
 created_date: 2026-09-04 05:23
 assignee:
 - '@claude'
@@ -12,6 +12,7 @@ labels:
 - theme-editor
 - ux-review-2026-09
 priority: high
+updated_date: 2026-09-04 06:06
 ---
 
 ## Description
@@ -22,19 +23,18 @@ Four states the code sets are never painted: .color-swatch and .color-preset-swa
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each colour swatch shows its colour and hex text at the row's height
-- [ ] #2 An invalid hex value shows a visible invalid state on the input using the Settings invalid-input convention and the swatch does not silently turn black
-- [ ] #3 The colour row a preset will fill is named in visible text (not only a CSS class)
-- [ ] #4 The Dark theme toggle's on/off state is readable in the row; the same fix or a shared rule covers Appearance's toggle rows
-- [ ] #5 CSS bundle rebuilt via build_css.py and both bundle files committed; a compositor-text test asserts the swatch hex and the toggle state are painted
+- [x] #1 Each colour swatch shows its colour and hex text at the row's height
+- [x] #2 An invalid hex value shows a visible invalid state on the input using the Settings invalid-input convention and the swatch does not silently turn black
+- [x] #3 The colour row a preset will fill is named in visible text (not only a CSS class)
+- [x] #4 The Dark theme toggle's on/off state is readable in the row; the same fix or a shared rule covers Appearance's toggle rows
+- [x] #5 CSS bundle rebuilt via build_css.py and both bundle files committed; a compositor-text test asserts the swatch hex and the toggle state are painted
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Swatches lose their border (a 1-row bordered Static has no content row) and show the hex on the colour; preset swatches keep a focus outline; invalid input uses Settings' settings-invalid-input class and the swatch reads 'invalid' instead of turning black; the Dark toggle is one row with an On/Off text label (TASK-18960 escape idiom); the preset target is a visible 'Presets fill' Select. Bundle rebuilt. Render tests load the bundle plus screen_agentic_settings.tcss (TASK-25812 split) in Tests/UI/test_settings_theme_editor_render.py.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

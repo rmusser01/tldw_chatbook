@@ -2,7 +2,7 @@
 id: TASK-31251
 title: Theme editor - Name box is write-only, so Apply, Export, Reset and Delete act
   on a stale name
-status: To Do
+status: Done
 created_date: 2026-09-04 05:23
 assignee:
 - '@claude'
@@ -12,6 +12,7 @@ labels:
 - theme-editor
 - ux-review-2026-09
 priority: high
+updated_date: 2026-09-04 06:06
 ---
 
 ## Description
@@ -22,18 +23,17 @@ priority: high
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Editing the Name box updates the name used by Apply, Export, Reset and Delete without pressing Save
-- [ ] #2 After Save, Reset reloads the saved file under the saved name and the Name box keeps that name
-- [ ] #3 Apply's toast and the registered runtime theme use the name currently shown in the Name box
-- [ ] #4 A regression test walks New -> rename -> Apply -> Save -> Reset -> Delete and asserts the name at each step
+- [x] #1 Editing the Name box updates the name used by Apply, Export, Reset and Delete without pressing Save
+- [x] #2 After Save, Reset reloads the saved file under the saved name and the Name box keeps that name
+- [x] #3 Apply's toast and the registered runtime theme use the name currently shown in the Name box
+- [x] #4 A regression test walks New -> rename -> Apply -> Save -> Reset -> Delete and asserts the name at each step
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Added @on(Input.Changed, '#settings-theme-name') keeping current_theme_name in step with the box; Reset of a renamed never-saved theme now warns 'No saved version ... to reset to' instead of reverting the box and claiming success. Regression test walks New -> rename -> Apply -> Save -> Reset -> Delete.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

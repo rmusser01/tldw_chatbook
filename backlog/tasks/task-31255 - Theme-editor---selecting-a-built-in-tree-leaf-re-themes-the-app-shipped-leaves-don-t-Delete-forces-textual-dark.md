@@ -2,7 +2,7 @@
 id: TASK-31255
 title: Theme editor - selecting a built-in tree leaf re-themes the app, shipped leaves
   don't, Delete forces textual-dark
-status: To Do
+status: Done
 created_date: 2026-09-04 05:24
 assignee:
 - '@claude'
@@ -12,6 +12,7 @@ labels:
 - theme-editor
 - ux-review-2026-09
 priority: high
+updated_date: 2026-09-04 06:06
 ---
 
 ## Description
@@ -22,17 +23,16 @@ load_theme sets self.app.theme immediately when the leaf is textual-dark or text
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Selecting any tree leaf loads it for editing without changing the running app's theme; Apply is the only editor action that changes app.theme
-- [ ] #2 After Delete the editor reloads the previously selected theme (or the first available one) and app.theme is unchanged
-- [ ] #3 The existing delete tests are updated to assert the reloaded editor state instead of a forced textual-dark app theme
+- [x] #1 Selecting any tree leaf loads it for editing without changing the running app's theme; Apply is the only editor action that changes app.theme
+- [x] #2 After Delete the editor reloads the previously selected theme (or the first available one) and app.theme is unchanged
+- [x] #3 The existing delete tests are updated to assert the reloaded editor state instead of a forced textual-dark app theme
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+load_theme no longer assigns app.theme (Apply is the only path that does) and resolves colours from the registered Theme's colour system instead of two hardcoded tables (which were also wrong for textual-dark). Delete reloads textual-dark into the editor only. Tests assert app.theme is untouched by tree selection and by Delete.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

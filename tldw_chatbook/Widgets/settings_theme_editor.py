@@ -136,7 +136,7 @@ class SettingsThemeEditor(Vertical):
         # buttons only (the CSS fast-path ratchet forbids a bare `Button`
         # subject, TASK-31260).
         with Horizontal(classes="settings-action-row"):
-            yield Button("New", id="settings-theme-new", variant="primary", classes="theme-editor-action")
+            yield Button("New", id="settings-theme-new", classes="theme-editor-action")
             yield Button("Clone", id="settings-theme-clone", classes="theme-editor-action")
             yield Button("Delete", id="settings-theme-delete", variant="error", classes="theme-editor-action")
             yield Button("Export", id="settings-theme-export", classes="theme-editor-action")
@@ -214,7 +214,6 @@ class SettingsThemeEditor(Vertical):
             yield Button(
                 "Generate from Primary",
                 id="settings-theme-generate",
-                variant="primary",
                 classes="theme-editor-action",
             )
             yield Button(
@@ -371,7 +370,16 @@ class SettingsThemeEditor(Vertical):
             generated = {}
         colors: dict[str, str] = {}
         for our_name in self.BASE_COLORS:
-            value = generated.get(our_name)
+            # A colour the Theme sets explicitly comes back byte-exact (the
+            # resolved system round-trips through float maths: a saved
+            # "#FFD700" came back "#FED700" live); only unset ones resolve.
+            raw = getattr(theme, our_name, None)
+            if isinstance(raw, Color):
+                value: str | None = raw.hex
+            elif raw:
+                value = str(raw)
+            else:
+                value = generated.get(our_name)
             try:
                 colors[our_name] = Color.parse(str(value)).hex.upper() if value else "#808080"
             except Exception:  # noqa: BLE001
@@ -630,7 +638,9 @@ class SettingsThemeEditor(Vertical):
         # confirms its equivalent discard (revert) per ADR-031 rule 3, so the
         # editor follows the same confirmation rule.
         if not self.is_modified:
-            self._reset_theme()
+            # TASK-31261: nothing to discard -- say so instead of claiming a
+            # reset happened (still no confirmation dialog, task-1371).
+            self.app.notify("No changes to reset", severity="information")
             return
 
         async def _confirmed_reset() -> None:

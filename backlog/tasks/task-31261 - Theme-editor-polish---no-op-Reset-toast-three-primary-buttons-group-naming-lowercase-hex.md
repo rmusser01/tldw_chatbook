@@ -2,7 +2,7 @@
 id: TASK-31261
 title: Theme editor polish - no-op Reset toast, three primary buttons, group naming,
   lowercase hex
-status: To Do
+status: Done
 created_date: 2026-09-04 05:24
 assignee:
 - '@claude'
@@ -12,6 +12,7 @@ labels:
 - theme-editor
 - ux-review-2026-09
 priority: low
+updated_date: 2026-09-04 06:06
 ---
 
 ## Description
@@ -22,18 +23,17 @@ Small consistency items from the review: Reset toasts 'Theme reset to original v
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Reset with no changes gives a neutral message or no toast; Reset with changes still confirms (pinned behaviour)
-- [ ] #2 Exactly one primary-variant button per action row (Apply primary; New/Generate default)
-- [ ] #3 Tree groups read 'Your themes', 'Shipped themes', 'Built-in'; leaves have no user: prefix and the delete/shadowing tests still pass with updated labels
-- [ ] #4 All hex values shown are uppercase
+- [x] #1 Reset with no changes gives a neutral message or no toast; Reset with changes still confirms (pinned behaviour)
+- [x] #2 Exactly one primary-variant button per action row (Apply primary; New/Generate default)
+- [x] #3 Tree groups read 'Your themes', 'Shipped themes', 'Built-in'; leaves have no user: prefix and the delete/shadowing tests still pass with updated labels
+- [x] #4 All hex values shown are uppercase
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Reset with no edits now says 'No changes to reset' (still no dialog; pinned test updated); Apply is the only primary-variant button; tree groups renamed and 'user:' prefix dropped (done in TASK-31256); generated hex uppercased (TASK-31253).
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

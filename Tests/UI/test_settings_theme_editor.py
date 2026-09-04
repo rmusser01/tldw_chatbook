@@ -423,7 +423,7 @@ async def test_settings_theme_editor_reset_without_edits_skips_confirmation(tmp_
 
         assert not isinstance(app.screen, ConfirmationDialog)
         message = app.notify.call_args.args[0]
-        assert message == "Theme reset to original values"
+        assert message == "No changes to reset"
 
 
 @pytest.mark.asyncio
@@ -845,3 +845,46 @@ async def test_settings_theme_editor_preview_repaints_from_edits_without_apply(t
         assert error_row.styles.color.hex.upper() == "#654321"
         # Nothing was applied to the running app.
         assert not str(app.theme).startswith("custom_")
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_one_primary_button_per_action_row(tmp_path):
+    """TASK-31261: Apply is the one primary action; New and Generate were also
+    variant=primary, so three buttons competed for the eye."""
+    from textual.widgets import Button
+
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        primaries = [b.id for b in editor.query(Button) if b.variant == "primary"]
+        assert primaries == ["settings-theme-apply"]
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_load_theme_keeps_set_colours_exact(tmp_path):
+    """Live at 2026-09-04: a saved accent '#FFD700' displayed as '#FED700' because
+    the editor read every colour back through the resolved colour system, which
+    round-trips set colours through float maths. Colours a Theme sets explicitly
+    must come back byte-exact; only unset ones are resolved."""
+    from tldw_chatbook.css.Themes.themes import create_theme_from_dict
+
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.register_theme(
+            create_theme_from_dict(
+                "exact_check",
+                {"primary": "#9966FF", "accent": "#FFD700", "warning": "#FFD700", "dark": True},
+            )
+        )
+        editor.load_theme("exact_check")
+        await pilot.pause()
+        assert editor.color_inputs["accent"].value == "#FFD700"
+        assert editor.color_inputs["warning"].value == "#FFD700"
+        assert editor.color_inputs["primary"].value == "#9966FF"
+        # Unset colours are still resolved, not left blank.
+        assert editor.color_inputs["background"].value.startswith("#")

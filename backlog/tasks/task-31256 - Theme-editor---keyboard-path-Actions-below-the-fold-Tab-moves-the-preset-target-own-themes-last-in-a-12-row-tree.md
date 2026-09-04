@@ -2,7 +2,7 @@
 id: TASK-31256
 title: 'Theme editor - keyboard path: Actions below the fold, Tab moves the preset
   target, own themes last in a 12-row tree'
-status: To Do
+status: Done
 created_date: 2026-09-04 05:24
 dependencies:
 - TASK-31254
@@ -14,6 +14,7 @@ labels:
 - theme-editor
 - ux-review-2026-09
 priority: high
+updated_date: 2026-09-04 06:06
 ---
 
 ## Description
@@ -24,19 +25,18 @@ Apply/Save/Reset/Generate sit after 10 colour rows and 40 preset swatches: 50 Ta
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Apply, Save, Reset and Generate are reachable without passing through the preset grid (Actions row rendered before Color Presets, or pinned above the palette)
-- [ ] #2 Focusing a preset swatch does not change which colour it will fill; the target is the last colour input the user edited or focused by choice, default Primary, and is named in visible text
-- [ ] #3 User Themes is the first group in the tree and the shipped group starts collapsed; the tree opens expanded to the user's themes instead of a collapsed root
-- [ ] #4 The tree hint copy still mentions New and theme (pinned) and now describes the new order
-- [ ] #5 Tests: Tab order test (Actions before presets), preset-target-unchanged-by-focus test, tree order test
+- [x] #1 Apply, Save, Reset and Generate are reachable without passing through the preset grid (Actions row rendered before Color Presets, or pinned above the palette)
+- [x] #2 Focusing a preset swatch does not change which colour it will fill; the target is the last colour input the user edited or focused by choice, default Primary, and is named in visible text
+- [x] #3 User Themes is the first group in the tree and the shipped group starts collapsed; the tree opens expanded to the user's themes instead of a collapsed root
+- [x] #4 The tree hint copy still mentions New and theme (pinned) and now describes the new order
+- [x] #5 Tests: Tab order test (Actions before presets), preset-target-unchanged-by-focus test, tree order test
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+compose order is library -> actions -> palette -> presets -> preview; preset target no longer follows focus (Select from TASK-31254); tree lists 'Your themes' (expanded) then 'Built-in' then 'Shipped themes' (collapsed) with the root expanded; leaves carry a data tag instead of a 'user:' prefix; hint copy updated (still names New and theme). Tests: focus-order, target-unchanged-by-focus, tree-order.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

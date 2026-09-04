@@ -1,7 +1,7 @@
 ---
 id: TASK-31253
 title: Theme editor - Generate from Primary ignores the primary hue (HSL 0-1 vs degrees)
-status: To Do
+status: Done
 created_date: 2026-09-04 05:23
 assignee:
 - '@claude'
@@ -11,6 +11,7 @@ labels:
 - theme-editor
 - ux-review-2026-09
 priority: high
+updated_date: 2026-09-04 06:06
 ---
 
 ## Description
@@ -21,17 +22,16 @@ textual.color.Color.hsl returns hue in the 0-1 range; _generate_theme_from_prima
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Generate from Primary produces a secondary and background whose hue is within 30 degrees of the primary's hue, and an accent roughly complementary to it
-- [ ] #2 Generated colours are uppercase #RRGGBB like the rest of the editor
-- [ ] #3 A unit test checks the generated palette for a purple, a green and an orange primary
+- [x] #1 Generate from Primary produces a secondary and background whose hue is within 30 degrees of the primary's hue, and an accent roughly complementary to it
+- [x] #2 Generated colours are uppercase #RRGGBB like the rest of the editor
+- [x] #3 A unit test checks the generated palette for a purple, a green and an orange primary
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+hsl.h * 360 before the degree-based HSL helper; generated hex uppercased. Parametrised test over purple/green/orange primaries checks hue distance and complementary accent.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

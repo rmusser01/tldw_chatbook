@@ -2,7 +2,7 @@
 id: TASK-31250
 title: Theme editor - saved user themes are never loaded, so Save cannot make a theme
   the launch theme
-status: To Do
+status: Done
 created_date: 2026-09-04 05:23
 assignee:
 - '@claude'
@@ -12,6 +12,7 @@ labels:
 - theme-editor
 - ux-review-2026-09
 priority: high
+updated_date: 2026-09-04 06:06
 ---
 
 ## Description
@@ -22,20 +23,19 @@ The editor's Save writes ~/.config/tldw_cli/themes/<name>.toml, but the only cod
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every readable *.toml under the active profile's themes directory is registered as an app theme at startup; an unreadable file is skipped with a logged warning and does not block startup
-- [ ] #2 A theme saved in the editor is registered immediately after Save (no restart) and can be selected in Appearance > Theme and in the command palette 'Theme: Switch to' list
-- [ ] #3 Launching with general.default_theme set to a saved theme applies that theme
-- [ ] #4 The editor offers a way to set the current saved theme as the launch default (writes general.default_theme) and the Save hint states what Save does and does not do
-- [ ] #5 Docs/User_Guide/settings.md Theme section and the 'theme didn't change after saving' quirk describe the new behaviour, with the Verified-against stamp updated
-- [ ] #6 Tests cover: startup registration from a temp themes dir, skip-on-bad-file, Appearance options include the saved theme
+- [x] #1 Every readable *.toml under the active profile's themes directory is registered as an app theme at startup; an unreadable file is skipped with a logged warning and does not block startup
+- [x] #2 A theme saved in the editor is registered immediately after Save (no restart) and can be selected in Appearance > Theme and in the command palette 'Theme: Switch to' list
+- [x] #3 Launching with general.default_theme set to a saved theme applies that theme
+- [x] #4 The editor offers a way to set the current saved theme as the launch default (writes general.default_theme) and the Save hint states what Save does and does not do
+- [x] #5 Docs/User_Guide/settings.md Theme section and the 'theme didn't change after saving' quirk describe the new behaviour, with the Verified-against stamp updated
+- [x] #6 Tests cover: startup registration from a temp themes dir, skip-on-bad-file, Appearance options include the saved theme
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+themes.load_user_themes() reads the profile's themes/*.toml (unreadable or primary-less files skipped with a warning); app startup registers them after ALL_THEMES; ThemeProvider lists app.available_themes; Appearance options add '<Name> (saved)' from app_instance.available_themes; config.get_user_themes_dir() is the single path home; the editor registers on Save and gained 'Set as launch default' (writes general.default_theme, warns if unsaved). Docs/User_Guide/settings.md Theme section, recipe 3 and quirk rewritten. Tests: Tests/Utils/test_user_theme_loader.py, editor save/registration + set-default tests, hub options test.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

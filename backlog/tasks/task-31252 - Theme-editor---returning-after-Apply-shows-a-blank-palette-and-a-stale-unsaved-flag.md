@@ -2,7 +2,7 @@
 id: TASK-31252
 title: Theme editor - returning after Apply shows a blank palette and a stale unsaved
   flag
-status: To Do
+status: Done
 created_date: 2026-09-04 05:23
 dependencies:
 - TASK-31251
@@ -14,6 +14,7 @@ labels:
 - theme-editor
 - ux-review-2026-09
 priority: high
+updated_date: 2026-09-04 06:06
 ---
 
 ## Description
@@ -24,18 +25,17 @@ Apply registers the theme as custom_<name> and sets app.theme to it. Leaving the
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 After Apply, leaving and re-entering Theme shows the applied theme's name and all ten colours
-- [ ] #2 The inspector's 'Unsaved theme changes' row and the rail marker reflect the freshly mounted editor's real state
-- [ ] #3 test_theme_category_settles_without_recompose_storm and test_settings_theme_editor_mount_posts_no_modified_status still pass
-- [ ] #4 A regression test applies a theme, remounts the editor, and asserts the palette and the unsaved flag
+- [x] #1 After Apply, leaving and re-entering Theme shows the applied theme's name and all ten colours
+- [x] #2 The inspector's 'Unsaved theme changes' row and the rail marker reflect the freshly mounted editor's real state
+- [x] #3 test_theme_category_settles_without_recompose_storm and test_settings_theme_editor_mount_posts_no_modified_status still pass
+- [x] #4 A regression test applies a theme, remounts the editor, and asserts the palette and the unsaved flag
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+_initialize_editor resolves app.theme 'custom_<name>' through app.available_themes and shows the user-facing name (Apply keeps the custom_ prefix so an edited shipped theme never clobbers the shipped registration). SettingsScreen._select_category clears theme_editor_modified when leaving Theme. Mount still posts no ThemeModifiedStatus (storm guard kept). Tests: editor remount test + screen dirty-flag test.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
