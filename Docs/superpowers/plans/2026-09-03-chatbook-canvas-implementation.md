@@ -1,0 +1,558 @@
+# Chatbook Canvas V1 Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Deliver a preview-first Canvas for native terminal and `--serve` sessions that stores branch-aware HTML artifacts, runs their interactive JavaScript with strict zero egress, and exposes only confirmed, bounded return actions to Chatbook.
+
+**Architecture:** Treat Canvas as a local conversation artifact domain, not as an iframe containing arbitrary web content. Chatbook compiles one complete HTML document into a closed render plan; generated JavaScript runs only in a bounded QuickJS-family WebAssembly worker over a mediated virtual DOM, while a trusted renderer applies revalidated patches. Tool mutations are staged with an assistant run and committed atomically with its message. Native mode exposes a loopback shell; served mode mounts the same shell on the existing authenticated Chatbook origin through a private parent/child control protocol.
+
+**Tech Stack:** Python 3.11, Textual 8.x, SQLite/FTS5, aiohttp, html5lib, tinycss2, QuickJS WebAssembly, vanilla trusted browser JavaScript, pytest, Hypothesis, and Playwright.
+
+**Spec:** `Docs/superpowers/specs/2026-09-03-chatbook-canvas-design.md`
+
+## Global Constraints
+
+- ADR required: yes
+- ADR path: `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+- Reason: Canvas establishes new storage, runtime, authentication, process, archive, and long-lived UX boundaries.
+- Execute against a fresh branch based on current `origin/dev`. At plan-writing time, `origin/dev` is schema version 65 while this planning branch is version 42. Re-read `_CURRENT_SCHEMA_VERSION` immediately before creating the migration and allocate exactly the next version; do not assume that v66 will still be available.
+- Start each Backlog task by changing it to In Progress and adding its task-specific Implementation Plan. Finish it only after its acceptance criteria, Implementation Notes, targeted checks, documentation, self-review, and ADR links satisfy `AGENTS.md`.
+- Do not run the full repository suite without explicit user approval. Every delivery below specifies targeted evidence.
+- Preserve Canvas source as UTF-8 bytes and identify it with SHA-256. Never log source, bridge payloads, bearer tokens, frame capabilities, or browser session secrets.
+- Never pass generated HTML to `innerHTML`, `srcdoc`, `document.write`, `eval`, `Function`, a module loader, or a native browser script element. There is no compatibility fallback that weakens this rule.
+- All quotas are enforced at every relevant boundary. The initial constants below are conservative hypotheses; TASK-31232 may lower them from recorded measurements, but raising them requires documented security and memory evidence.
+- Existing provider approval, continuation, chat branching, deletion, restore, archive, and failure behavior must remain byte-for-byte compatible when Canvas is disabled.
+- Use real in-memory SQLite for repository tests and actual browser/network observation for zero-egress claims. Mocks alone are not completion evidence.
+
+## Proposed File Structure
+
+```text
+tldw_chatbook/Canvas/
+├── __init__.py                 # public Canvas domain exports
+├── capabilities.py             # browser/frame capability mint, verify, revoke
+├── compiler.py                 # HTML/CSS parser and closed render-plan compiler
+├── control_protocol.py         # typed served-mode parent/child wire protocol
+├── gateway.py                  # native loopback routes and shared shell handlers
+├── limits.py                   # hard size, CPU, memory, and mutation quotas
+├── models.py                   # IDs, revisions, render plans, bridge requests
+├── repository.py               # transactional durable revision graph
+├── runtime_assets.py           # packaged asset manifest and digest verification
+├── service.py                  # scoped Canvas create/read/update/rename/list logic
+├── staging.py                  # per-session/run temporary and pending revisions
+├── web_auth.py                 # remote login, cookie, CSRF, origin, proxy policy
+└── static/
+    ├── canvas_shell.html
+    ├── canvas_shell.css
+    ├── canvas_shell.js
+    ├── canvas_renderer.js
+    ├── canvas_runtime_worker.js
+    ├── quickjs-runtime.js
+    ├── quickjs-runtime.wasm
+    ├── runtime-manifest.json
+    └── THIRD_PARTY_LICENSES.txt
+tldw_chatbook/Agents/canvas_tool_provider.py
+tldw_chatbook/Chat/console_canvas_controller.py
+tldw_chatbook/Widgets/Console/console_canvas_card.py
+scripts/vendor_canvas_runtime.py
+Tests/Canvas/
+├── test_capabilities.py
+├── test_compiler.py
+├── test_control_protocol.py
+├── test_gateway.py
+├── test_limits.py
+├── test_repository.py
+├── test_runtime_assets.py
+├── test_service.py
+├── test_staging.py
+├── test_web_auth.py
+└── browser/
+    ├── test_canvas_accessibility.py
+    ├── test_canvas_native_flow.py
+    ├── test_canvas_served_flow.py
+    └── test_canvas_zero_egress.py
+```
+
+The implementation may place tests beside an existing narrower suite when that better matches repository conventions, but it must preserve the ownership boundaries above. Do not create a second database connection owner, chat lifecycle, tool registry, or web server.
+
+---
+
+## Delivery 1 — Prove and package the strict zero-egress runtime (TASK-31226)
+
+### Task 1.1: Freeze the runtime contract and limits
+
+**Files:**
+
+- Create: `tldw_chatbook/Canvas/__init__.py`
+- Create: `tldw_chatbook/Canvas/models.py`
+- Create: `tldw_chatbook/Canvas/limits.py`
+- Create: `Tests/Canvas/test_limits.py`
+- Modify: `pyproject.toml`
+
+- [ ] Add failing tests for UTF-8 byte counting, nested JSON depth, decoded `data:` asset sizes, aggregate asset sizes, DOM node counts, CSS rule counts, script bytes, and exact boundary acceptance/rejection.
+- [ ] Define immutable, slotted dataclasses for `CanvasCompatibilityIssue`, `RenderAsset`, `RenderNode`, `CanvasRenderPlan`, `CanvasBridgeRequest`, and `CanvasRuntimeFailure`. Use opaque strings for wire IDs and reject unknown fields while decoding browser messages.
+- [ ] Define `RuntimeProfile = Literal["canvas-v1"]` and a frozen `CanvasLimits` with these starting ceilings: 512 KiB HTML, 1 MiB per asset, 4 MiB aggregate assets, 5,000 nodes, 2,000 CSS rules, 256 KiB scripts, 32 MiB runtime memory, 512 KiB stack, 250 ms startup, 50 ms per event, 1,000 patches per event, 16 KiB submit payload, JSON depth 16, and 10 MiB download payload.
+- [ ] Centralize byte/depth/count validation in pure functions so compiler, tool provider, gateway, and archive paths cannot drift.
+- [ ] Add `html5lib>=1.1,<2` and `tinycss2>=1.4,<2` as core dependencies; Canvas is a default terminal feature, so its parser cannot live behind an unrelated extra.
+- [ ] Run `pytest Tests/Canvas/test_limits.py -q` and `python -m build --wheel` followed by wheel-content inspection for the new package.
+- [ ] Self-review malformed Unicode, integer overflow, duplicate identifiers, and all off-by-one boundaries.
+- [ ] Commit: `feat(canvas): define runtime contract and hard limits`
+
+### Task 1.2: Compile HTML/CSS into a closed render plan
+
+**Files:**
+
+- Create: `tldw_chatbook/Canvas/compiler.py`
+- Create: `Tests/Canvas/test_compiler.py`
+- Create: `Tests/Canvas/fixtures/compiler/`
+
+- [ ] Write failing unit and Hypothesis tests for well-formed and malformed complete documents, inline styles, inline classic scripts, SVG, supported form controls, entity decoding, duplicate IDs, capped `data:` images, and stable SHA-256 output.
+- [ ] Write rejection tests for external URLs in every parsed URL-bearing HTML/SVG attribute, `srcset`, meta refresh, forms, CSS `url()`, `@import`, font sources, namespaces, event-handler attributes, module scripts, base URLs, navigation, embedded documents, and unsupported MIME types. Include whitespace, case, entity, escape, and computed-token variants.
+- [ ] Parse HTML with html5lib and CSS with tinycss2; do not use regex as the security parser. Normalize into immutable `RenderNode` and `RenderAsset` records with compiler-assigned IDs.
+- [ ] Emit only an allowlisted element/property/attribute/event vocabulary. Convert `data:` assets to separate render-plan entries and rewrite references to opaque asset IDs.
+- [ ] Preserve script source only as worker input. Strip all native event-handler attributes and represent script/event bindings through the virtual runtime protocol.
+- [ ] Return bounded, position-aware compatibility issues and fail the whole compile when any security-relevant construct is unsupported. Do not silently weaken or partially execute a document.
+- [ ] Run `pytest Tests/Canvas/test_compiler.py Tests/Canvas/test_limits.py -q`.
+- [ ] Self-review every browser fetch/navigation surface against MDN/HTML and CSS parser semantics, then add a regression fixture for each discovered gap.
+- [ ] Commit: `feat(canvas): compile documents into closed render plans`
+
+### Task 1.3: Vendor and verify the WebAssembly engine reproducibly
+
+**Files:**
+
+- Create: `scripts/vendor_canvas_runtime.py`
+- Create: `tldw_chatbook/Canvas/runtime_assets.py`
+- Create: `tldw_chatbook/Canvas/static/runtime-manifest.json`
+- Create: `tldw_chatbook/Canvas/static/THIRD_PARTY_LICENSES.txt`
+- Create: `Tests/Canvas/test_runtime_assets.py`
+- Modify: `pyproject.toml`
+
+- [ ] Record an ADR-115 addendum choosing or rejecting the candidate only after reviewing its license, published integrity, maintenance posture, browser support, and disclosure that the package is not itself a security audit. The current candidate is `quickjs-emscripten`/`quickjs-emscripten-core`/`@jitl/quickjs-singlefile-browser-release-sync` 0.32.0; reverify those facts at execution time.
+- [ ] Write a failing manifest test that requires exact package names, versions, source URLs, SHA-512 tarball integrity, extracted-file SHA-256 values, licenses, build tool version, runtime profile, and reproducible command.
+- [ ] Implement a vendoring script that downloads only pinned HTTPS package URLs, verifies SRI before extraction, rejects traversal/symlinks, extracts an allowlist into a temporary directory, builds the trusted bundle with an exact build-tool version, and atomically replaces only the declared generated assets. The generated JS/WASM and notices are committed; application startup never invokes Node or the network.
+- [ ] Add `runtime_assets.py` to load assets via `importlib.resources`, compare them to the committed manifest, and disable Canvas with a bounded diagnostic on any digest mismatch.
+- [ ] Include `tldw_chatbook.Canvas` and all static runtime assets in sdists and wheels.
+- [ ] Re-run the vendoring process twice in clean temporary directories and compare SHA-256 outputs; investigate any difference rather than blessing it.
+- [ ] Run `pytest Tests/Canvas/test_runtime_assets.py -q`, build sdist/wheel, install the wheel into a fresh venv, disconnect networking, and verify that the runtime assets load.
+- [ ] Commit: `build(canvas): vendor the pinned wasm runtime`
+
+### Task 1.4: Implement the virtual DOM worker and adversarial proof
+
+**Files:**
+
+- Create: `tldw_chatbook/Canvas/static/canvas_renderer.js`
+- Create: `tldw_chatbook/Canvas/static/canvas_runtime_worker.js`
+- Create: `Tests/Canvas/browser/test_canvas_zero_egress.py`
+- Create: `Tests/Canvas/browser/fixtures/`
+- Modify: `Tests/Canvas/test_runtime_assets.py`
+
+- [ ] First build a browser harness whose trusted shell can load a render plan and whose test HTTP servers record all DNS-independent requests, redirects, websocket attempts, navigation, popup, beacon, form, media, font, CSS, and worker activity.
+- [ ] Add failing adversarial cases for literal and computed URLs, DOM clobbering, prototype pollution, encoded CSS URLs, SVG animation/links, timers, event storms, infinite loops, promise/job loops, deep recursion, oversized patches, listener leaks, blob/data navigation, native downloads, and bridge spoofing.
+- [ ] Implement a worker-only QuickJS runtime exposing a documented virtual subset of `document`, nodes, events, timers, JSON, console, SVG, `canvas.submit()`, and `canvas.download()`. Do not expose browser globals, import/module hooks, native fetch primitives, SharedArrayBuffer, storage, cookies, filesystem, WebAssembly compilation, workers, or arbitrary host callbacks.
+- [ ] Enforce QuickJS memory, stack, interrupt/time, pending-job, timer, listener, patch-count, and mutation-rate limits. Termination must discard the worker and leave the trusted shell responsive with scripts disabled.
+- [ ] Implement a trusted renderer that creates nodes only with `createElement`/`createTextNode`, applies an allowlisted property/attribute/style patch vocabulary, revalidates every patch, owns all object URLs, and never interprets generated strings as markup or code.
+- [ ] Use a renderer iframe with an opaque origin and a CSP that denies network, navigation, forms, plugins, frames, and native scripts except the packaged trusted renderer. Generated code remains data sent to the worker.
+- [ ] Assert from the harness that every adversarial case produced zero egress and zero top-level navigation while a benign interactive counter/form/SVG fixture still works.
+- [ ] Run `pytest Tests/Canvas/test_compiler.py Tests/Canvas/test_runtime_assets.py Tests/Canvas/browser/test_canvas_zero_egress.py -q` in Chromium and, if supported by the existing CI matrix, WebKit/Firefox.
+- [ ] Commit: `feat(canvas): execute scripts in a bounded virtual browser`
+
+### Delivery 1 checkpoint
+
+- [ ] Update TASK-31226 acceptance criteria and Implementation Notes with package versions, measured limits, threat cases, commands, and evidence paths.
+- [ ] Request a security-focused code review before any Canvas tool or UI is enabled.
+- [ ] If zero egress is not demonstrated through the real browser harness, stop here: keep Canvas disabled and do not continue with product integration.
+
+---
+
+## Delivery 2 — Add durable branch-aware Canvas revisions (TASK-31227)
+
+### Task 2.1: Add the schema migration and immutable repository
+
+**Files:**
+
+- Modify: `tldw_chatbook/DB/ChaChaNotes_DB.py`
+- Create: `tldw_chatbook/Canvas/repository.py`
+- Create: `Tests/Canvas/test_repository.py`
+- Modify: migration fixtures under the existing database test suite
+
+- [ ] Rebase on current `origin/dev`, read the actual schema head, and name the migration from that head to the next integer. Update `_CURRENT_SCHEMA_VERSION` only in the same change.
+- [ ] Add failing migration tests from the immediately previous schema fixture plus current-schema create/open tests. Do not claim migration coverage using an already-current database.
+- [ ] Add tables for Canvas identity/ownership and immutable revisions. Store revision parent, sequence, title, runtime profile, UTF-8 source, SHA-256, source byte count, origin message/turn, created time, deleted time, and local reopen hints. Add foreign keys and indexes for conversation lookup, canvas ancestry, origin message, and sequence.
+- [ ] Keep titles revisioned so rename history follows branches. Enforce same-conversation/same-Canvas parentage, immutable rows, unique `(canvas_id, sequence)`, digest agreement, and quotas in one immediate transaction.
+- [ ] Implement typed repository methods for list, read revision, append revision, soft delete/restore, purge with owning conversation, and import batches. All SQL values are parameterized.
+- [ ] Add concurrent-writer tests with two real SQLite connections and injected rollback failures.
+- [ ] Run the focused DB migration and `Tests/Canvas/test_repository.py` suites.
+- [ ] Commit: `feat(canvas): persist immutable revision graphs`
+
+### Task 2.2: Resolve revisions against the active chat branch
+
+**Files:**
+
+- Create: `tldw_chatbook/Canvas/service.py`
+- Modify: `tldw_chatbook/Canvas/models.py`
+- Create: `Tests/Canvas/test_service.py`
+- Modify: `Tests/Chat/test_console_chat_store.py`
+
+- [ ] Add failing graph tests covering two message branches, two Canvas branches, historical selection, title-only revisions, sibling exclusion, exact revision reopen, and deterministic ties.
+- [ ] Define `CanvasScope(session_id, conversation_id, active_message_ids, selected_canvas_id, selected_revision_id, run_id)` and require it for every service operation. The service must never derive authority from a client-supplied conversation ID alone.
+- [ ] Implement `list_canvases`, `read_canvas`, `create_canvas`, `update_canvas`, and `rename_canvas`. `update_canvas` accepts the complete replacement document and required `expected_parent_revision_id`.
+- [ ] Select the newest revision whose origin message is reachable on the active path. If a user explicitly selected a historical revision, the next mutation branches from exactly that revision.
+- [ ] Return a structured optimistic-conflict result containing only current revision ID, digest, title, sequence, and origin—not source—and make no write.
+- [ ] Enforce per-conversation limits initially at 10 Canvases, 100 revisions per Canvas, and 50 MiB of durable Canvas source; keep constants centralized for later measured tuning.
+- [ ] Run `pytest Tests/Canvas/test_service.py Tests/Canvas/test_repository.py Tests/Chat/test_console_chat_store.py -q`.
+- [ ] Commit: `feat(canvas): resolve revisions on conversation branches`
+
+### Task 2.3: Stage temporary history and join existing promotion
+
+**Files:**
+
+- Create: `tldw_chatbook/Canvas/staging.py`
+- Modify: `tldw_chatbook/Chat/console_chat_store.py`
+- Modify: `tldw_chatbook/Chat/console_chat_store.py` protocol declarations
+- Create: `Tests/Canvas/test_staging.py`
+- Modify: `Tests/Chat/test_console_chat_store.py`
+- Modify: `Tests/Chat/test_chat_persistence_service.py`
+
+- [ ] Add failing tests for temporary create/update/rename chains, 8 MiB staged cap, idempotent `(session_id, run_id, tool_call_id)`, shutdown destruction, successful promotion, failure after each database write, and retry after rollback.
+- [ ] Implement an in-memory `CanvasStagingStore` keyed by session/run/tool call. It owns staged source and compile plans; transcript/tool records retain metadata only.
+- [ ] Add an explicit optional Canvas promotion participant to `ConsoleChatStore` rather than reaching through private attributes. The participant receives the existing transaction connection, new conversation ID, and message-ID mapping.
+- [ ] Extend `promote_ephemeral_session` so conversation, message tree, Canvas identities, revisions, and origin links commit in its existing transaction. Restore both chat and Canvas state completely on failure.
+- [ ] Destroy temporary Canvas state when its ephemeral session is discarded or the process exits. Never create orphan disk files for temporary history.
+- [ ] Assert that conversation soft delete/restore follows existing ownership and hard purge removes Canvas rows; no Canvas mutation enters current sync queues.
+- [ ] Run the focused Canvas staging, Console store, and chat persistence suites.
+- [ ] Commit: `feat(canvas): promote temporary histories atomically`
+
+### Delivery 2 checkpoint
+
+- [ ] Update TASK-31227 and ADR-115 with the actual migration number, tables, constraints, quotas, and rollback evidence.
+- [ ] Review repository queries with `EXPLAIN QUERY PLAN` for active-path list/read and record the result in task notes.
+
+---
+
+## Delivery 3 — Integrate Canvas tools with atomic Console turns (TASK-31228)
+
+### Task 3.1: Add safe generic tool-record projection
+
+**Files:**
+
+- Modify: `tldw_chatbook/Agents/agent_models.py`
+- Modify: `tldw_chatbook/Agents/tool_catalog.py`
+- Modify: the Agent runtime file that defines `LoopDeps` and persists `AgentStep`
+- Modify: `tldw_chatbook/Chat/console_agent_bridge.py`
+- Create/modify: focused tests under `Tests/Agents/`
+
+- [ ] Locate every use of raw tool arguments/results in display, logging, cycle fingerprints, run records, continuations, diagnostics, and model history; encode this call-site inventory in parametrized failing tests.
+- [ ] Add `ToolProjectionAudience = Literal["display", "log", "cycle", "continuation"]` and an immutable `ToolRecordProjection`. Define an optional provider projection protocol and a registry dispatch method.
+- [ ] Keep raw values only for the immediate provider invocation and model tool-result history. Route every durable/non-model call site through its audience projection.
+- [ ] Default projection must preserve existing providers exactly. Add regression assertions across builtin, local, skill, and MCP providers.
+- [ ] Ensure a projection failure fails closed to tool name, call ID, success state, and bounded error category—never raw arguments/results.
+- [ ] Run the focused Agent runtime, tool catalog, run-store, continuation, and cycle-detection tests.
+- [ ] Commit: `refactor(agents): project sensitive tool records by audience`
+
+### Task 3.2: Register scoped Canvas tools
+
+**Files:**
+
+- Create: `tldw_chatbook/Agents/canvas_tool_provider.py`
+- Modify: `tldw_chatbook/Chat/console_agent_bridge.py`
+- Modify: the Console tool-registration seam
+- Create: `Tests/Agents/test_canvas_tool_provider.py`
+
+- [ ] Add schema tests for `canvas_list`, `canvas_read`, `canvas_create`, and `canvas_update`; validate additional properties are rejected and all strings/counts use shared limits.
+- [ ] Inject a server-owned `CanvasScope` when resolving the provider. Do not accept session, conversation, branch, or run authority fields from model arguments.
+- [ ] Implement full-document `canvas_create(title, html)` and `canvas_update(canvas_id, expected_parent_revision_id, html)` against staging/service APIs. Return revision IDs, digests, titles, compatibility diagnostics, and conflict metadata.
+- [ ] Make Canvas mutations pre-authorized as reversible conversation-local operations through a narrowly named policy classification. Prove with tests that no other tool bypasses normal approval.
+- [ ] Return source only from explicit `canvas_read` to model history. For display/log/cycle/continuation projections, retain metadata/digests and omit all HTML.
+- [ ] Advertise tools only when Canvas is enabled and the session has a valid Canvas coordinator.
+- [ ] Run `pytest Tests/Agents/test_canvas_tool_provider.py` plus focused tool approval/catalog tests.
+- [ ] Commit: `feat(canvas): expose scoped assistant tools`
+
+### Task 3.3: Commit staged mutations with the originating assistant turn
+
+**Files:**
+
+- Create: `tldw_chatbook/Chat/console_canvas_controller.py`
+- Modify: `tldw_chatbook/Chat/console_chat_store.py`
+- Modify: `tldw_chatbook/Chat/console_agent_bridge.py`
+- Modify: `tldw_chatbook/Widgets/Console/console_transcript.py`
+- Create: `Tests/Chat/test_console_canvas_controller.py`
+- Modify: focused Agent runtime and Console tests
+
+- [ ] Add failing tests for successful finalization, Canvas-only turns, cancellation, provider failure, app shutdown, duplicate callbacks, sequential same-turn updates, parallel ambiguous updates, message-write failure, revision-write failure, and continuation resume.
+- [ ] Coordinate one stage per assistant run. Serialize same-Canvas calls in invocation order; reject parallel calls whose ancestry cannot be proven.
+- [ ] On successful turn completion, ensure an assistant message/turn anchor exists, then commit its message, Canvas card metadata, and staged revisions within the existing persistence transaction. Mark the stage committed only after transaction success.
+- [ ] On cancellation or terminal failure, discard the run stage and render a non-reopenable bounded failure/status card. Retrying a tool call with the same identity must not duplicate a revision.
+- [ ] Persist transcript cards with Canvas/revision IDs, title, sequence, digest, status, and origin only. Reopen source through the Canvas service.
+- [ ] Prove serialized AgentStep records, logs, transcript widgets, cycle keys, and continuation payloads contain no unique sentinel from source HTML.
+- [ ] Run the focused controller, Console persistence, Agent runtime, continuation, cancellation, and transcript tests.
+- [ ] Commit: `feat(canvas): commit revisions with assistant turns`
+
+### Delivery 3 checkpoint
+
+- [ ] Update TASK-31228 with the projection inventory, transaction boundary, cancellation semantics, and sentinel-leak evidence.
+- [ ] Request a review specifically for approval bypass scope and source leakage.
+
+---
+
+## Delivery 4 — Deliver native browser UX and confirmed bridge (TASK-31229)
+
+### Task 4.1: Build the trusted native Canvas gateway
+
+**Files:**
+
+- Create: `tldw_chatbook/Canvas/gateway.py`
+- Create: `tldw_chatbook/Canvas/capabilities.py`
+- Create: `Tests/Canvas/test_gateway.py`
+- Create: `Tests/Canvas/test_capabilities.py`
+- Modify: `pyproject.toml`
+
+- [ ] Add `aiohttp>=3.9,<4` to core dependencies after checking existing constraints. A default terminal Canvas cannot depend on an unrelated optional extra.
+- [ ] Add tests proving lazy startup, OS-assigned port, loopback-only bind, one gateway per app, clean shutdown, unavailable-browser recovery, and no second conversation authority.
+- [ ] Implement typed routes for the trusted shell, packaged static assets, render plans, event stream, source actions, and bridge confirmation. Every route resolves server-owned session scope.
+- [ ] Mint cryptographically random, short-lived, single-use capabilities scoped to browser session, frame, conversation session, Canvas, revision, action, and expiry. Store only hashes, rotate on reload, and revoke on session/branch/change/close.
+- [ ] Reject capabilities in query parameters for top-level pages. Deliver frame capabilities through a trusted boot exchange so they do not enter history, referrers, logs, or screenshots.
+- [ ] Add Host, Origin, CSRF, MIME, no-store, frame-ancestor, and CSP headers even on loopback.
+- [ ] Run gateway/capability tests and package-wheel tests.
+- [ ] Commit: `feat(canvas): add the loopback browser gateway`
+
+### Task 4.2: Build the preview-first shell and revision UX
+
+**Files:**
+
+- Create: `tldw_chatbook/Canvas/static/canvas_shell.html`
+- Create: `tldw_chatbook/Canvas/static/canvas_shell.css`
+- Create: `tldw_chatbook/Canvas/static/canvas_shell.js`
+- Create: `tldw_chatbook/Widgets/Console/console_canvas_card.py`
+- Modify: `tldw_chatbook/Widgets/Console/console_transcript.py`
+- Modify: `tldw_chatbook/Chat/console_message_actions.py`
+- Create: `Tests/Canvas/browser/test_canvas_native_flow.py`
+
+- [ ] Write a Playwright flow before UI implementation: tool create auto-opens, update hot-reloads, `Updated · Undo / View previous` appears, exact revision remains pinned, following URL tracks active branch, and branch switch changes the visible head.
+- [ ] Build a trusted, accessible shell with Canvas selector, editable title, Temporary badge, revision/provenance controls, follow/pin state, source inspect/copy/download, reload, close, connection status, compatibility notices, and scripts-disabled recovery.
+- [ ] Keep one selected Canvas per Console session. A following view updates only if session/conversation/Canvas/branch still match; otherwise show a new-version notice without redirecting the user.
+- [ ] Add transcript cards that reopen the exact originating revision and an explicit control to return to the branch-following head.
+- [ ] Detect assistant HTML fenced blocks through the parsed message model, not regex over rendered Markdown. Add idempotent `Open in Canvas` and `Open as new`; incompatible documents produce a prefilled repair request rather than partial execution.
+- [ ] Open the first native Canvas with Textual's supported URL-opening API. If the platform cannot open it, show/copy the loopback URL without blocking the terminal.
+- [ ] Run the Playwright native flow and focused transcript/message-action widget tests.
+- [ ] Commit: `feat(canvas): deliver preview-first native UX`
+
+### Task 4.3: Add confirmed submit and download actions
+
+**Files:**
+
+- Modify: `tldw_chatbook/Canvas/models.py`
+- Modify: `tldw_chatbook/Canvas/gateway.py`
+- Modify: `tldw_chatbook/Canvas/static/canvas_shell.js`
+- Modify: `tldw_chatbook/Canvas/static/canvas_runtime_worker.js`
+- Modify: `tldw_chatbook/Chat/console_canvas_controller.py`
+- Modify: `Tests/Canvas/browser/test_canvas_native_flow.py`
+
+- [ ] Add tests for text/JSON submit, JSON depth and byte limits, complete confirmation display, cancel, stale session, changed composer, exact-session routing, replay, expiry, and two simultaneous Canvas windows.
+- [ ] Implement `canvas.submit(value)` as a virtual-runtime request only. Serialize canonical JSON or text, show the complete bounded payload in trusted UI, and after confirmation insert it into the exact matching Console composer as an unsent draft. Never auto-send.
+- [ ] Add tests for allowlisted passive formats, filename sanitization, MIME enforcement, byte cap, cancel, replay, and runnable HTML warning.
+- [ ] Implement `canvas.download({name, mime, data})` as a confirmed request. Allow only documented passive text/JSON/CSV/SVG/image formats; trusted code owns the browser download and revokes object URLs.
+- [ ] Default source download to an inert `.canvas.html.txt`. Offer runnable `.html` only behind a clear warning that it executes outside Chatbook's sandbox.
+- [ ] Reuse single-use action-scoped capabilities and reject worker messages not tied to the current frame/revision.
+- [ ] Run gateway, capability, Console controller, and native browser tests.
+- [ ] Commit: `feat(canvas): confirm bridge and download requests`
+
+### Delivery 4 checkpoint
+
+- [ ] Update TASK-31229 with screenshots, keyboard/accessibility results, browser-open behavior, capability lifetime, and end-to-end commands.
+- [ ] Manually verify the outermost path in a real terminal: assistant creates Canvas, browser opens, user interacts, confirms submit, and text appears unsent in the correct composer.
+
+---
+
+## Delivery 5 — Add same-origin served Canvas and remote authentication (TASK-31230)
+
+### Task 5.1: Define the private parent/child protocol
+
+**Files:**
+
+- Create: `tldw_chatbook/Canvas/control_protocol.py`
+- Modify: `tldw_chatbook/Web_Server/serve.py`
+- Modify: the app startup path in `tldw_chatbook/app.py`
+- Create: `Tests/Canvas/test_control_protocol.py`
+- Modify: focused `Tests/Web_Server/` tests
+
+- [ ] Inspect the installed/pinned textual-serve `Server`/`AppService` process-spawn API and capture a compatibility test before choosing the override point. Do not patch a shell command string or minified JavaScript.
+- [ ] Define a versioned length-bounded protocol with explicit message types for scope snapshot, list/read render metadata, selection, events, bridge request/decision, health, and shutdown. Reject unknown versions, types, fields, oversized frames, and out-of-order replies.
+- [ ] Give each AppService child a random secret through the supported spawn environment and listen only on a parent-owned loopback endpoint. Authenticate before transmitting any conversation metadata; rotate/revoke on child restart.
+- [ ] Implement request IDs, deadlines, backpressure, cancellation, and bounded errors. The parent is a transport/UI host; the child remains the only conversation and Canvas authority.
+- [ ] Prove two child processes cannot authenticate as or receive events for one another.
+- [ ] Run protocol and focused textual-serve lifecycle tests.
+- [ ] Commit: `feat(canvas): connect served parent and child securely`
+
+### Task 5.2: Protect the complete remote origin
+
+**Files:**
+
+- Create: `tldw_chatbook/Canvas/web_auth.py`
+- Modify: `tldw_chatbook/Web_Server/serve.py`
+- Modify: `tldw_chatbook/config.py`
+- Modify: the canonical config defaults/example
+- Create: `Tests/Canvas/test_web_auth.py`
+- Modify: focused Web Server tests
+
+- [ ] Add table-driven tests for IPv4/IPv6 loopback, wildcard/private/public binds, missing token, environment/config/keyring precedence, plaintext remote bind, trusted proxy allowlist, malformed forwarded headers, Host/Origin mismatch, CSRF, websocket upgrade, expiry, revocation, and rate limits.
+- [ ] Add a dedicated Chatbook web access token setting. Never reuse provider API keys, MCP credentials, or legacy server tokens; never log the configured value.
+- [ ] Refuse non-loopback bind without the token. Refuse non-loopback plaintext HTTP by default; permit only an explicit warned insecure-development override. Document direct TLS and trusted reverse-proxy deployment.
+- [ ] Implement one-time login bootstrap, opaque in-memory sessions, `HttpOnly`/`Secure`/`SameSite=Strict` cookies, CSRF tokens, Host/Origin validation, websocket checks, idle/absolute expiry, revocation, constant-time secret comparison, and bounded rate limiting.
+- [ ] Apply middleware to every authority-bearing route on the origin, including `/`, `/ws`, Canvas APIs/events, downloads, and static boot data. Static immutable assets may be public only if they contain no runtime state.
+- [ ] Trust forwarded scheme/host/client data only from explicitly configured proxy addresses.
+- [ ] Run web-auth and existing served-mode tests.
+- [ ] Commit: `feat(server): authenticate remote Chatbook sessions`
+
+### Task 5.3: Mount the same-origin split-pane shell
+
+**Files:**
+
+- Modify: `tldw_chatbook/Web_Server/serve.py`
+- Create/modify: owned served-shell template and styles under the Web Server or Canvas package
+- Modify: `tldw_chatbook/Canvas/gateway.py` to share route handlers
+- Create: `Tests/Canvas/browser/test_canvas_served_flow.py`
+
+- [ ] Add Playwright tests at narrow and wide viewports for terminal-only state, split view, close/reopen, hot reload, active branch switch, exact transcript reopen, connection loss, and terminal survival.
+- [ ] Serve terminal and Canvas as sibling regions from an owned responsive template on the same origin. Reuse trusted Canvas handlers; do not duplicate compiler/runtime or embed a second localhost URL.
+- [ ] Route each browser session only to its authenticated AppService child and child-issued Canvas scope. A URL or ID from another browser must return indistinguishable not-found/unauthorized behavior.
+- [ ] On control-channel loss, disable Canvas and show reconnection state while the Textual websocket remains usable. Never fall back to a global or most-recent conversation.
+- [ ] Test two browser profiles, two AppService children, guessed IDs, copied exact URLs, event streams, submits, and downloads for cross-session isolation.
+- [ ] Run served Playwright, control protocol, authentication, and existing textual-serve compatibility suites.
+- [ ] Commit: `feat(canvas): add the authenticated served split view`
+
+### Delivery 5 checkpoint
+
+- [ ] Update TASK-31230 and ADR-115 with the actual textual-serve extension seam, protocol version, authentication flow, proxy policy, and isolation evidence.
+- [ ] Perform one real authenticated remote/proxy flow and one two-browser isolation flow through the user-visible server, not only handler tests.
+
+---
+
+## Delivery 6 — Round-trip Canvas through Chatbook archives (TASK-31231)
+
+### Task 6.1: Specify Chatbook archive 3.0 Canvas records
+
+**Files:**
+
+- Modify: `tldw_chatbook/Chatbooks/chatbook_models.py`
+- Create: `tldw_chatbook/Canvas/archive.py`
+- Create/modify: focused Chatbook model tests
+- Modify: archive format documentation
+
+- [ ] Add failing serialization/validation tests for Canvas identity, revisions, parent graph, titles, runtime profile, digest, byte count, origin message/turn, deletion metadata, and reopen hints.
+- [ ] Add `ChatbookVersion.V3` and typed Canvas manifest records. Keep V1/V2 decoding unchanged.
+- [ ] Define inert archive paths such as `canvas/<canvas-id>/<revision-id>.html.txt`; never use runnable `.html` entries or render while inspecting/importing.
+- [ ] Make archives with Canvas select 3.0; archives without Canvas may remain 2.0 for compatibility.
+- [ ] Document every new field, limit, ID-remapping rule, and unsupported-runtime behavior.
+- [ ] Run focused Chatbook model tests.
+- [ ] Commit: `feat(chatbooks): define Canvas archive format 3`
+
+### Task 6.2: Export and import the complete graph atomically
+
+**Files:**
+
+- Modify: `tldw_chatbook/Chatbooks/chatbook_creator.py`
+- Modify: `tldw_chatbook/Chatbooks/chatbook_importer.py`
+- Modify: `tldw_chatbook/Chatbooks/local_chatbook_service.py`
+- Modify: `tldw_chatbook/Canvas/archive.py`
+- Create/modify: focused Chatbook creator/importer tests
+
+- [ ] Add a whole-graph round-trip fixture with multiple Canvases, title changes, sibling branches, historical origins, deletions, and reopen hints. Assert exact source/digest/ancestry equality.
+- [ ] Export source from the repository in bounded chunks, recompute digest/size, and emit deterministic ordering and timestamps without executing or compiling source.
+- [ ] Before extraction/import, validate archive entry count, path containment, duplicate normalized paths, declared and streamed uncompressed sizes, compression ratio, aggregate limits, UTF-8, digests, duplicate IDs, graph cycles, parent ownership, origin-message existence, and runtime profile.
+- [ ] Implement digest-idempotent same-identity restore. Refuse same-ID/different-digest conflicts with no mutation.
+- [ ] Implement import-as-new by precomputing maps for conversation, messages, Canvas, revisions, parents, origins, and hints, validating the remapped graph, then committing all records in one transaction.
+- [ ] Inject failures at validation, file streaming, message import, Canvas import, and final commit; assert no partial imported graph remains.
+- [ ] Keep unsupported profiles inert and labeled; never compile them using the current profile.
+- [ ] Verify V1/V2 golden archives still behave identically and no Canvas data enters synchronization services.
+- [ ] Run focused Chatbook, repository, decompression-bomb, property, and transaction tests.
+- [ ] Commit: `feat(chatbooks): round-trip Canvas histories`
+
+### Delivery 6 checkpoint
+
+- [ ] Update TASK-31231 with archive examples, limits, atomicity evidence, and compatibility results.
+- [ ] Inspect a produced archive manually to confirm source is inert and all manifest relationships are understandable without executing content.
+
+---
+
+## Delivery 7 — Complete settings, documentation, and cross-mode verification (TASK-31232)
+
+### Task 7.1: Add canonical settings and the kill switch
+
+**Files:**
+
+- Modify: `tldw_chatbook/UI/Screens/settings_screen.py`
+- Modify: `tldw_chatbook/config.py`
+- Modify: canonical default/example config
+- Modify: Console tool and message-action registration seams
+- Modify: native and served route startup seams
+- Create/modify: focused Settings and configuration tests
+
+- [ ] Add failing tests for defaults, environment/config precedence, invalid limits, live-disable behavior, and disabled startup in native/served modes.
+- [ ] Add settings only to the canonical F9 Settings surface: enabled, auto-open on create, remote access policy/status, and read-only effective hard quotas. Do not add new controls to deprecated settings widgets.
+- [ ] Implement one kill switch whose disabled state removes Canvas tool schemas, hides HTML-block actions, revokes browser/control capabilities, returns fail-closed route responses, and leaves stored artifacts/export intact.
+- [ ] Keep security ceilings non-increasable from ordinary UI. Any advanced lower-limit overrides must validate through `CanvasLimits` and apply consistently after restart.
+- [ ] Run focused config, Settings screen, tool registration, and route tests.
+- [ ] Commit: `feat(canvas): add settings and a global kill switch`
+
+### Task 7.2: Measure and freeze conservative defaults
+
+**Files:**
+
+- Create: a reproducible Canvas benchmark/probe script under `scripts/`
+- Modify: `tldw_chatbook/Canvas/limits.py`
+- Modify: `Docs/superpowers/specs/2026-09-03-chatbook-canvas-design.md`
+- Modify: Canvas user/security documentation
+
+- [ ] Build probes for representative provider-generated pages and adversarial near-limit pages. Record compiler latency, render-plan expansion, QuickJS heap/stack, startup/event interruption accuracy, patch throughput, and browser process memory.
+- [ ] Run probes on the repository's supported baseline environment and save summarized, non-source evidence. Do not include model outputs that may contain user data.
+- [ ] Lower initial quotas where needed to keep compile/startup under the intended 100 ms worker threshold or browser interaction responsive. Do not raise a security ceiling without separate review.
+- [ ] Add boundary tests for the final values and document what users see when each quota is exceeded.
+- [ ] Commit: `perf(canvas): freeze measured runtime quotas`
+
+### Task 7.3: Write user, model, operations, and recovery guidance
+
+**Files:**
+
+- Modify: relevant user documentation under `Docs/`
+- Modify: Console model/tool guidance
+- Modify: `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+- Modify: TASK-31003 only if the implemented local archive boundary changes its assumptions
+
+- [ ] Document creation/update, multiple names, Temporary state, save/promotion, active branches, exact revisions, Undo/View previous, source copy/download, confirmed submit/download, compatibility errors, and scripts-disabled recovery.
+- [ ] Document strict zero egress accurately: generated code has no network/filesystem/cookies/Chatbook/parent DOM, while trusted user-confirmed host actions are outside that runtime. Do not market the system as a general browser sandbox.
+- [ ] Document remote token setup, TLS or trusted-proxy requirements, the insecure-development override, session revocation, and incident response.
+- [ ] Tell models when Canvas materially helps, how to call list/read/create/update, that updates are complete documents with expected parent IDs, and which V1 APIs are supported.
+- [ ] Keep V2 bundled libraries, V3 multi-file VFS, and server synchronization explicitly deferred; do not add speculative compatibility code.
+- [ ] Commit: `docs(canvas): explain the v1 workflow and security model`
+
+### Task 7.4: Run outermost-path verification and close the rollout
+
+**Files:**
+
+- Modify: `Tests/Canvas/browser/test_canvas_native_flow.py`
+- Modify: `Tests/Canvas/browser/test_canvas_served_flow.py`
+- Modify: `Tests/Canvas/browser/test_canvas_zero_egress.py`
+- Modify: TASK-31232 with final evidence and notes
+- Modify: `backlog/docs/lessons-*.md` only if this work produced a repeatable, incident-backed lesson
+
+- [ ] Native live flow: create, automatic browser open, interact, update/hot reload, submit to unsent draft, passive download, exact revision reopen, historical branch update, temporary promotion, and unsaved destruction.
+- [ ] Served live flow: authenticated login, sibling split view, create/update, branch switch, exact card reopen, control-channel failure, reconnect, proxy/TLS configuration, and two-browser isolation.
+- [ ] Archive flow: export a branching Canvas conversation, delete/purge the source as appropriate in a disposable database, import, and verify graph/source/digests/reopen behavior.
+- [ ] Security flow: rerun the adversarial real-browser suite through native and served outer routes while recording zero attempted egress at the harness boundary.
+- [ ] Run targeted Canvas, Agents, Console, database migration, Chatbooks, Web Server, packaging, and browser suites. Run formatter/linter only over changed files. Run `git diff --check`.
+- [ ] Ask the user whether they want the full repository test sweep. Do not silently substitute the targeted result for a full-suite claim.
+- [ ] Perform a final self-review against every design invariant and every TASK-31226 through TASK-31232 acceptance criterion.
+- [ ] Mark each task Done only after its own Definition of Done is met. TASK-31003 remains To Do as the explicit future sync-contract backlog item.
+- [ ] Commit: `test(canvas): verify native and served v1 workflows`
+
+---
+
+## Execution Handoff
+
+The plan is organized as seven independently reviewable Backlog tasks. Delivery 1 is a hard security gate; Delivery 2 establishes storage; Delivery 3 integrates agent turns; Deliveries 4 and 5 add native and served UX; Delivery 6 can proceed after Delivery 2 without waiting for browser UX; Delivery 7 closes rollout.
+
+Choose one execution mode when implementation begins:
+
+1. **Subagent-Driven (recommended):** execute one Backlog task at a time in this session with a fresh implementation worker and review checkpoint for each task.
+2. **Inline:** execute the plan serially in a dedicated session using `superpowers:executing-plans`, stopping at every delivery checkpoint.
+
+In either mode, create a clean worktree/branch from current `origin/dev`, preserve the task dependency order, and stop immediately if the strict zero-egress proof fails.
