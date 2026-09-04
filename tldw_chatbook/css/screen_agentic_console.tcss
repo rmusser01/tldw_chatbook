@@ -182,12 +182,12 @@ $ds-library-source-browser-width: 31;
     text-wrap: wrap;
 }
 
-#console-settings-view-tabs > Button {
+.console-settings-view-tab {
     background: $ds-surface-raised;
     color: $ds-text-muted;
 }
 
-#console-settings-view-tabs > Button.console-settings-view-active {
+.console-settings-view-tab.console-settings-view-active {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold;

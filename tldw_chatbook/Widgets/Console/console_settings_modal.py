@@ -1575,9 +1575,9 @@ class ConsoleSettingsModal(
                     ),
                     id="console-settings-view-model",
                     classes=(
-                        "console-settings-view-active"
+                        "console-settings-view-tab console-settings-view-active"
                         if self._active_view == "model"
-                        else ""
+                        else "console-settings-view-tab"
                     ),
                 )
                 model_view.tooltip = (
@@ -1594,9 +1594,9 @@ class ConsoleSettingsModal(
                     ),
                     id="console-settings-view-context",
                     classes=(
-                        "console-settings-view-active"
+                        "console-settings-view-tab console-settings-view-active"
                         if self._active_view == "context"
-                        else ""
+                        else "console-settings-view-tab"
                     ),
                 )
                 context_view.tooltip = (
@@ -1735,6 +1735,7 @@ class ConsoleSettingsModal(
                             model_custom = Button(
                                 "Custom model",
                                 id="console-settings-model-custom",
+                                classes="console-settings-connection-action",
                                 disabled=False,
                             )
                             model_custom.display = True
@@ -1745,6 +1746,7 @@ class ConsoleSettingsModal(
                             model_discover = Button(
                                 MODEL_DISCOVER_BUTTON_LABEL,
                                 id=MODEL_DISCOVER_BUTTON_ID,
+                                classes="console-settings-connection-action",
                                 disabled=not supports_discovery,
                             )
                             model_discover.tooltip = (
@@ -1755,6 +1757,7 @@ class ConsoleSettingsModal(
                             keep_unverified = Button(
                                 "Keep unverified model",
                                 id="console-settings-keep-unverified-model",
+                                classes="console-settings-connection-action",
                             )
                             keep_unverified.display = False
                             yield keep_unverified

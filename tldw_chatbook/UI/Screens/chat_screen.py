@@ -391,11 +391,6 @@ from ...Chat.provider_test_evidence import (
     ProviderGenerationProbeResult,
     ProviderProbeResult,
 )
-from .settings_endpoint_probe import (
-    SettingsEndpointProbePurpose,
-    probe_settings_endpoint,
-    provider_probe_result_from_settings_outcome,
-)
 from ...Chat.console_ephemeral import ACTION_SAVE_CHAT, blocked_reason
 from ...Chat.console_live_work import (
     ACP_READINESS_ROW_ID,
@@ -512,7 +507,6 @@ from ...Widgets.Console import (
     ConsoleRunInspector,
     ConsoleSendAuthoritySummary,
     ConsoleSessionSurface,
-    ConsoleSettingsModal,
     ConsoleSettingsSummary,
     ConsoleSetupModal,
     ConsoleStagedContextTray,
@@ -542,11 +536,6 @@ from ...Widgets.Console.console_control_bar import (
 from ...Widgets.Console.console_speech_controls import (
     ConsoleAutoSpeakChanged,
     ConsoleHandsFreeToggleRequested,
-)
-from ...Widgets.Console.console_settings_modal import (
-    ConsoleSettingsCredentialRequest,
-    ConsoleSettingsDraftSnapshot,
-    ConsoleSettingsResult,
 )
 from ...Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
 from ...Widgets.Console.console_terminal_messages import (
@@ -673,6 +662,12 @@ NoteRequested = ConsoleSelectionNoteRequested
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsCredentialRequest,
+        ConsoleSettingsDraftSnapshot,
+        ConsoleSettingsModal,
+        ConsoleSettingsResult,
+    )
     from tldw_chatbook.Widgets.Console.console_workspace_action_menu import (
         WorkspaceActionChosen,
         WorkspaceActionMenuDismissed,
@@ -682,6 +677,15 @@ if TYPE_CHECKING:
     )
 
 logger = logger.bind(module="ChatScreen")
+
+
+def _conversation_settings_modal_module():
+    """Load the Conversation Settings modal only when its workflow starts."""
+    from ...Widgets.Console import console_settings_modal
+
+    return console_settings_modal
+
+
 _CONSOLE_DEFAULT_RESERVATION_ATTEMPTS = 8
 Changed = Input.Changed
 #: The Console's DEFAULT Library RAG source kinds, unchanged by RAG-44's
@@ -2894,6 +2898,12 @@ class ChatScreen(BaseAppScreen):
         identity: ProviderDraftIdentity,
     ) -> ProviderProbeResult:
         """Run the existing bounded model-catalog probe for one exact draft."""
+        from .settings_endpoint_probe import (
+            SettingsEndpointProbePurpose,
+            probe_settings_endpoint,
+            provider_probe_result_from_settings_outcome,
+        )
+
         outcome = await probe_settings_endpoint(
             identity.connection_identity[1],
             provider=identity.provider_key,
@@ -2972,7 +2982,7 @@ class ChatScreen(BaseAppScreen):
         focus_model: bool = False,
         focus_context: bool = False,
         transfer: ConsoleSettingsTransfer | None = None,
-        suspended_draft: ConsoleSettingsDraftSnapshot | None = None,
+        suspended_draft: "ConsoleSettingsDraftSnapshot | None" = None,
         _pre_push_guard: Callable[[], bool] | None = None,
         _suspended_owner_token: int | None = None,
         _on_transfer_committed: Callable[[], bool] | None = None,
@@ -3039,7 +3049,8 @@ class ChatScreen(BaseAppScreen):
         )
         active_run = self._console_run_active()
 
-        modal = ConsoleSettingsModal(
+        modal_contract = _conversation_settings_modal_module()
+        modal = modal_contract.ConsoleSettingsModal(
             settings=settings,
             origin=origin,
             initial_draft=initial_draft,
@@ -3082,7 +3093,7 @@ class ChatScreen(BaseAppScreen):
         def apply_origin_result(result) -> None:
             if transfer_revoked:
                 return
-            if isinstance(result, ConsoleSettingsCredentialRequest):
+            if isinstance(result, modal_contract.ConsoleSettingsCredentialRequest):
                 self._stage_console_settings_credential_request(
                     result,
                     session_id=session_id,
@@ -3163,7 +3174,7 @@ class ChatScreen(BaseAppScreen):
 
     def _console_settings_modal_is_on_stack(
         self,
-        modal: ConsoleSettingsModal,
+        modal: "ConsoleSettingsModal",
     ) -> bool:
         """Return whether the exact pushed modal remains anywhere on the stack."""
         try:
@@ -3173,7 +3184,7 @@ class ChatScreen(BaseAppScreen):
 
     async def _unwind_failed_console_settings_modal(
         self,
-        modal: ConsoleSettingsModal,
+        modal: "ConsoleSettingsModal",
     ) -> bool:
         """Pop only the exact failed modal when it still owns the stack top."""
         try:
@@ -3198,7 +3209,7 @@ class ChatScreen(BaseAppScreen):
 
     def _stage_console_settings_credential_request(
         self,
-        request: ConsoleSettingsCredentialRequest,
+        request: "ConsoleSettingsCredentialRequest",
         *,
         session_id: str,
     ) -> None:
@@ -3293,13 +3304,14 @@ class ChatScreen(BaseAppScreen):
         _on_transfer_committed: Callable[[], bool] | None = None,
     ) -> bool:
         """Transfer the exact retained draft to a restored modal when safe."""
+        modal_contract = _conversation_settings_modal_module()
         snapshot = getattr(self, "_suspended_conversation_settings", None)
         store = self._ensure_console_chat_store()
 
         def may_push() -> bool:
             """Revalidate exact source, token, snapshot, and session ownership."""
             if (
-                not isinstance(snapshot, ConsoleSettingsDraftSnapshot)
+                not isinstance(snapshot, modal_contract.ConsoleSettingsDraftSnapshot)
                 or getattr(self, "_suspended_conversation_settings", None)
                 is not snapshot
                 or getattr(self, "_suspended_conversation_settings_token", None)
@@ -3456,7 +3468,10 @@ class ChatScreen(BaseAppScreen):
         snapshot = getattr(self, "_suspended_conversation_settings", None)
         token = getattr(self, "_suspended_conversation_settings_token", None)
         if not (
-            isinstance(snapshot, ConsoleSettingsDraftSnapshot)
+            isinstance(
+                snapshot,
+                _conversation_settings_modal_module().ConsoleSettingsDraftSnapshot,
+            )
             and type(token) is int
             and token > 0
             and snapshot.active_view == target.active_view
@@ -3632,7 +3647,10 @@ class ChatScreen(BaseAppScreen):
             snapshot = self._suspended_conversation_settings
             token = self._suspended_conversation_settings_token
             if (
-                not isinstance(snapshot, ConsoleSettingsDraftSnapshot)
+                not isinstance(
+                    snapshot,
+                    _conversation_settings_modal_module().ConsoleSettingsDraftSnapshot,
+                )
                 or type(token) is not int
             ):
                 self._reject_conversation_settings_return(
@@ -3762,12 +3780,15 @@ class ChatScreen(BaseAppScreen):
     async def _mount_conversation_settings_return_status(
         self,
         target: ConsoleSettingsReturnTarget,
-        snapshot: ConsoleSettingsDraftSnapshot,
+        snapshot: "ConsoleSettingsDraftSnapshot",
     ) -> None:
         """Mount fixed return copy beside, not inside, canonical readiness."""
 
         modal = self.app.screen_stack[-1]
-        if not isinstance(modal, ConsoleSettingsModal):
+        if not isinstance(
+            modal,
+            _conversation_settings_modal_module().ConsoleSettingsModal,
+        ):
             return
         outcome_copy = {
             ConversationSettingsReturnOutcome.CREDENTIAL_SAVED: (
@@ -3884,17 +3905,23 @@ class ChatScreen(BaseAppScreen):
 
     def _apply_console_settings_result(
         self,
-        result: ConsoleSettingsResult | ConsoleSessionSettings | None,
+        result: "ConsoleSettingsResult | ConsoleSessionSettings | None",
         *,
         origin_session_id: str | None = None,
         origin_system_prompt: str | None = None,
         origin_pinned_prefill: str | None = None,
     ) -> None:
         """Apply provider settings and the separately owned chat-name override."""
-        if not isinstance(result, (ConsoleSettingsResult, ConsoleSessionSettings)):
+        modal_contract = _conversation_settings_modal_module()
+        if not isinstance(
+            result,
+            (modal_contract.ConsoleSettingsResult, ConsoleSessionSettings),
+        ):
             return
         settings = (
-            result.settings if isinstance(result, ConsoleSettingsResult) else result
+            result.settings
+            if isinstance(result, modal_contract.ConsoleSettingsResult)
+            else result
         )
         store = self._ensure_console_chat_store()
         session_id = origin_session_id or store.active_session_id
@@ -3929,7 +3956,7 @@ class ChatScreen(BaseAppScreen):
                 pinned_prefill=current_pinned_prefill,
             ),
         )
-        if isinstance(result, ConsoleSettingsResult):
+        if isinstance(result, modal_contract.ConsoleSettingsResult):
             if result.context_policy_overrides is not None:
                 _session, policy_persisted = store.set_session_context_policy_overrides(
                     session_id,
@@ -14824,13 +14851,21 @@ class ChatScreen(BaseAppScreen):
             # navigation context from it.
             "suspended_conversation_settings": (
                 suspended_settings.to_mapping()
-                if isinstance(suspended_settings, ConsoleSettingsDraftSnapshot)
+                if suspended_settings is not None
+                and isinstance(
+                    suspended_settings,
+                    _conversation_settings_modal_module().ConsoleSettingsDraftSnapshot,
+                )
                 else None
             ),
             "suspended_conversation_settings_token": (
                 suspended_settings_token
                 if (
-                    isinstance(suspended_settings, ConsoleSettingsDraftSnapshot)
+                    suspended_settings is not None
+                    and isinstance(
+                        suspended_settings,
+                        _conversation_settings_modal_module().ConsoleSettingsDraftSnapshot,
+                    )
                     and type(suspended_settings_token) is int
                     and suspended_settings_token > 0
                 )
@@ -14931,7 +14966,9 @@ class ChatScreen(BaseAppScreen):
         # fails closed rather than restoring loosely typed sensitive content.
         raw_suspended_settings = payload.get("suspended_conversation_settings")
         self._suspended_conversation_settings = (
-            ConsoleSettingsDraftSnapshot.from_mapping(raw_suspended_settings)
+            _conversation_settings_modal_module().ConsoleSettingsDraftSnapshot.from_mapping(
+                raw_suspended_settings
+            )
             if isinstance(raw_suspended_settings, Mapping)
             else None
         )

@@ -234,12 +234,6 @@ from ...model_capabilities import (
     reload_capabilities,
     zai_model_supports_reasoning_effort,
 )
-from .settings_endpoint_probe import (
-    SettingsEndpointProbeOutcome,
-    SettingsEndpointProbePurpose,
-    probe_settings_endpoint,
-    provider_probe_result_from_settings_outcome,
-)
 from .settings_provider_view_model import (
     ProviderPickerGroup,
     SettingsOverviewPresentation,
@@ -434,6 +428,7 @@ if TYPE_CHECKING:
     from ...Widgets.Settings_Widgets.personal_context_panel import (
         PersonalContextSettingsPanel,
     )
+    from .settings_endpoint_probe import SettingsEndpointProbeOutcome
     from .settings_network_defaults import SettingsNetworkTLS
 
 
@@ -13233,6 +13228,11 @@ class SettingsScreen(BaseAppScreen):
         identity: ProviderDraftIdentity | None = None,
         token: object | None = None,
     ) -> None:
+        from .settings_endpoint_probe import (
+            SettingsEndpointProbePurpose,
+            probe_settings_endpoint,
+        )
+
         try:
             outcome = await probe_settings_endpoint(
                 base_url,
@@ -13271,7 +13271,9 @@ class SettingsScreen(BaseAppScreen):
             self._update_provider_test_result()
 
     @staticmethod
-    def _provider_probe_connection_error_outcome() -> SettingsEndpointProbeOutcome:
+    def _provider_probe_connection_error_outcome() -> "SettingsEndpointProbeOutcome":
+        from .settings_endpoint_probe import SettingsEndpointProbeOutcome
+
         return SettingsEndpointProbeOutcome(
             state="unreachable",
             summary="unreachable: connection error",
@@ -13280,8 +13282,10 @@ class SettingsScreen(BaseAppScreen):
 
     @staticmethod
     def _provider_probe_result_from_outcome(
-        outcome: SettingsEndpointProbeOutcome,
+        outcome: "SettingsEndpointProbeOutcome",
     ) -> ProviderProbeResult:
+        from .settings_endpoint_probe import provider_probe_result_from_settings_outcome
+
         return provider_probe_result_from_settings_outcome(outcome)
 
     def _apply_provider_endpoint_probe_outcome(
@@ -13300,6 +13304,8 @@ class SettingsScreen(BaseAppScreen):
             summary: Passing readiness toast summary the probe extends.
             outcome: ``SettingsEndpointProbeOutcome`` from the probe helper.
         """
+        from .settings_endpoint_probe import SettingsEndpointProbeOutcome
+
         if type(outcome) is not SettingsEndpointProbeOutcome:
             outcome = self._provider_probe_connection_error_outcome()
         probe_result = self._provider_probe_result_from_outcome(outcome)

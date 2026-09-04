@@ -358,12 +358,12 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     text-wrap: wrap;
 }
 
-#console-settings-view-tabs > Button {
+.console-settings-view-tab {
     background: $ds-surface-raised;
     color: $ds-text-muted;
 }
 
-#console-settings-view-tabs > Button.console-settings-view-active {
+.console-settings-view-tab.console-settings-view-active {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold;
@@ -416,14 +416,13 @@ ConsoleSettingsModal.-conversation-settings-compact #console-settings-connection
     display: none;
 }
 
-ConsoleSettingsModal.-conversation-settings-compact #console-settings-connection-actions > Button,
-ConsoleSettingsModal.-conversation-settings-compact #console-settings-actions > Button {
+ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-connection-action {
     width: 100%;
     min-width: 0;
     max-width: 100%;
 }
 
-ConsoleSettingsModal.-conversation-settings-compact #console-settings-connection-actions > Button {
+ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-connection-action {
     height: 1;
     min-height: 1;
 }
