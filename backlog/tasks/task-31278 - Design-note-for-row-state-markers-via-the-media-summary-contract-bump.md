@@ -1,9 +1,10 @@
 ---
 id: TASK-31278
 title: Design note for row state markers via the media summary-contract bump
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-04 13:54'
+updated_date: '2026-09-04 15:09'
 labels:
   - library
   - media-ux
@@ -20,8 +21,14 @@ Critique #4 close, user ruling: reviewed and analysis markers on list rows need 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A design note exists at backlog/docs/design-library-row-state-markers.md covering contract, projection, reviewed source-of-truth, 38-col rendering and the producer/fake migration plan
+- [x] #1 A design note exists at backlog/docs/design-library-row-state-markers.md covering contract, projection, reviewed source-of-truth, 38-col rendering and the producer/fake migration plan
 - [ ] #2 The note lists the decisions that need the user's ruling with a recommendation for each
 - [ ] #3 User approval is recorded in the note before any implementation task is started
-- [ ] #4 Implementation tasks reference 28008 and 28009 rather than duplicating them
+- [x] #4 Implementation tasks reference 28008 and 28009 rather than duplicating them
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Design note drafted at backlog/docs/design-library-row-state-markers.md (options A/B/C, recommendation A: seven-key contract with has_analysis projected in SQL and reviewed decorated from the active set; four decisions listed for the user). Awaiting user approval (AC#2) before any implementation of 28008/28009.
+<!-- SECTION:NOTES:END -->
