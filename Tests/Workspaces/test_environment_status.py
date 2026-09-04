@@ -101,3 +101,79 @@ def test_gather_git_env_error_keeps_previous_as_stale(main_repo: Path, monkeypat
     assert state.stale is True
     assert state.availability is EnvSourceAvailability.OK
     assert state.branch == good.branch
+
+
+import json
+
+from tldw_chatbook.Chat.console_environment_state import PrEnvState
+from tldw_chatbook.Workspaces.environment_status import GhResult, gather_pr_env
+
+_GH_JSON = json.dumps({
+    "number": 2281, "title": "Split boot CSS", "state": "OPEN", "isDraft": False,
+    "url": "https://github.com/o/r/pull/2281",
+    "additions": 36643, "deletions": 2871, "mergedAt": None,
+    "statusCheckRollup": [
+        {"__typename": "CheckRun", "name": "lint", "status": "COMPLETED",
+         "conclusion": "SUCCESS", "detailsUrl": "https://ci/lint"},
+        {"__typename": "CheckRun", "name": "tests", "status": "COMPLETED",
+         "conclusion": "FAILURE", "detailsUrl": "https://ci/tests"},
+        {"__typename": "CheckRun", "name": "build", "status": "IN_PROGRESS",
+         "conclusion": None, "detailsUrl": "https://ci/build"},
+        {"__typename": "StatusContext", "context": "legacy-ci", "state": "SUCCESS",
+         "targetUrl": "https://ci/legacy"},
+    ],
+})
+
+
+def test_gather_pr_env_parses_pr_and_both_check_shapes(tmp_path: Path):
+    state = gather_pr_env(tmp_path, "feat/x", runner=lambda root, args: GhResult(0, _GH_JSON, ""))
+    assert state.availability is EnvSourceAvailability.OK
+    assert state.number == 2281 and state.state == "OPEN"
+    assert {c.name for c in state.checks} == {"lint", "tests", "build", "legacy-ci"}
+    assert [c.name for c in state.failing_checks] == ["tests"]
+    assert [c.name for c in state.pending_checks] == ["build"]
+    assert state.passing_count == 2
+
+
+def test_gather_pr_env_no_pr_maps_to_not_applicable(tmp_path: Path):
+    result = GhResult(1, "", "no pull requests found for branch \"feat/x\"")
+    state = gather_pr_env(tmp_path, "feat/x", runner=lambda root, args: result)
+    assert state.availability is EnvSourceAvailability.NOT_APPLICABLE
+
+
+def test_gather_pr_env_missing_binary(tmp_path: Path):
+    state = gather_pr_env(tmp_path, "feat/x", runner=lambda root, args: None)
+    assert state.availability is EnvSourceAvailability.MISSING_TOOL
+
+
+def test_gather_pr_env_detached_branch_skips_entirely(tmp_path: Path):
+    def exploding_runner(root, args):  # must not be called
+        raise AssertionError("runner must not run for a detached HEAD")
+    state = gather_pr_env(tmp_path, None, runner=exploding_runner)
+    assert state.availability is EnvSourceAvailability.NOT_APPLICABLE
+
+
+def test_gather_pr_env_error_keeps_previous_as_stale(tmp_path: Path):
+    good = gather_pr_env(tmp_path, "feat/x", runner=lambda root, args: GhResult(0, _GH_JSON, ""))
+    state = gather_pr_env(
+        tmp_path, "feat/x",
+        runner=lambda root, args: GhResult(1, "", "connect: network is unreachable"),
+        previous=good,
+    )
+    assert state.stale is True and state.number == 2281
+
+
+def test_gather_pr_env_garbage_json_is_error_not_crash(tmp_path: Path):
+    state = gather_pr_env(tmp_path, "feat/x", runner=lambda root, args: GhResult(0, "{not json", ""))
+    assert state.availability is EnvSourceAvailability.ERROR
+
+
+def test_run_gh_missing_binary_returns_none(tmp_path: Path):
+    from tldw_chatbook.Workspaces.environment_status import run_gh
+    import tldw_chatbook.Workspaces.environment_status as mod
+    original = mod._GH_EXECUTABLE
+    mod._GH_EXECUTABLE = "/nonexistent/gh-binary-for-test"
+    try:
+        assert run_gh(tmp_path, ["pr", "view"]) is None
+    finally:
+        mod._GH_EXECUTABLE = original
