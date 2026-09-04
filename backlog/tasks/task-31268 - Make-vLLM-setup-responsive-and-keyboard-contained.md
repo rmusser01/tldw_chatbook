@@ -105,7 +105,7 @@ same node name).
 4. No-retype Lab-to-Console handoff — `test_vllm_handoff_intents_are_secret_free_exact_and_strict`, `test_vllm_handoff_stages_only_current_target_and_uses_normal_navigation`.
 5. Device-local reusable profiles and confirmed deletion — `test_default_path_is_device_local_active_profile_data`, `test_profile_round_trip_has_exact_v1_schema_and_excludes_launch_only_fields`, `test_profile_repository_io_is_threaded_and_selected_profile_restores`, `test_profile_delete_cancel_or_escape_preserves_exact_document`, `test_confirmed_profile_delete_executes_selected_claim_once_and_recreates_default`, `test_profile_delete_confirmation_rejects_stale_selection_claim`, `test_profile_delete_queued_terminal_actions_settle_once`.
 6. Immutable current versus editable next restart — `test_launch_snapshot_is_immutable_exact_and_changed_labels_are_allowlisted`, `test_current_server_is_separate_from_modified_next_restart_without_path_leak`.
-7. Bounded sanitized activity/recovery — `test_owner_keeps_only_current_operation_bounded_allowlisted_activity`, `test_owner_snapshot_excludes_launch_privacy_canaries`, `test_mounted_activity_renders_ready_and_expands_bounded_failure`.
+7. Bounded sanitized activity/recovery — `test_owner_keeps_only_current_operation_bounded_allowlisted_activity`, `test_owner_snapshot_excludes_launch_privacy_canaries`, `test_mounted_activity_renders_ready_and_expands_bounded_failure`, `test_probe_deadline_reports_overall_thirty_second_elapsed_bucket`, `test_vllm_failure_details_never_cross_logs_notifications_or_global_state`.
 8. Focus-correct at all three sizes — `test_every_visible_focusable_is_inside_its_owner`, `test_complete_tab_walk_stays_in_active_vllm_provider`, `test_background_projection_preserves_focus_but_explicit_transition_moves_it`.
 
 **State model**
@@ -156,7 +156,7 @@ same node name).
 
 1. Pure source/path/field projection — `test_preflight_accepts_hugging_face_repository_ids`, `test_preflight_validates_selected_local_model_directory`, `test_preflight_reports_missing_local_model_directory`, `test_preflight_rejects_out_of_bounds_structured_values`.
 2. Public CLI plus managed/secret rejection — `test_local_command_uses_public_cli_and_one_served_alias`, `test_raw_arguments_cannot_override_managed_or_secret_flags`.
-3. Wildcard IPv4/IPv6 normalization — `test_wildcard_binds_use_loopback_client_urls`.
+3. Wildcard IPv4/IPv6 availability and normalization — `test_ipv6_wildcard_availability_checks_the_requested_bind`, `test_wildcard_binds_use_loopback_client_urls`.
 4. Fingerprint/generation invalidation — `test_semantic_fingerprint_changes_for_every_launch_field_except_profile_name`, `test_older_generation_cannot_replace_newer_owner_state`, `test_mounted_recomposition_and_detach_invalidate_readiness_generation`.
 5. Served-model/path-ID admissibility — `test_chatbook_owned_ready_result_requires_exact_served_alias`, `test_existing_server_rejects_path_like_or_noncanonical_model_ids`, `test_existing_server_accepts_namespace_model_id`.
 6. Product-state projection — `test_lifecycle_sync_projects_vllm_without_legacy_button_queries`, `test_lifecycle_projection_enables_stop_only_while_runtime_is_active`, `test_explicit_vllm_state_transition_focuses_phase_action`.
@@ -196,6 +196,14 @@ unchanged; the one-shot dismissal guard is private to vLLM profile deletion.
 Fix Round 3 modified only `llm_screen.py`, `test_vllm_lab_workflow.py`, and this
 task ledger. The vLLM-private guard now makes the first terminal result immutable;
 the shared `ConfirmationDialog` and every other call site remain untouched.
+
+Task 6 integration fix round closes four verified review findings through the
+smallest owning seams: field-adjacent preflight recovery (including opening a
+collapsed Advanced field), requested-address IPv6 wildcard availability,
+30-second overall readiness-window Activity, and real notifier/logger/global-state
+privacy canaries. It also reconciles the feature-owned Console handoff assertion
+with the current upstream structured readiness summary. Exact RED/GREEN and final
+matrix evidence is recorded in the Task 6 report.
 
 No lesson entry was added: this task produced no new generalizable incident beyond
 the production-CSS/layout evidence rules already recorded in

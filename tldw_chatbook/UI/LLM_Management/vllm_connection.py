@@ -65,7 +65,7 @@ _ACTIVITY_CODES = frozenset(
     }
 )
 _ELAPSED_BUCKETS = frozenset(
-    {"under_1s", "1_to_4s", "5_to_14s", "15_to_59s", "60s_or_more"}
+    {"under_1s", "1_to_4s", "5_to_14s", "15_to_29s", "30s_or_more"}
 )
 _ISSUE_CODES = frozenset(
     {
@@ -97,23 +97,29 @@ _ISSUE_CODES = frozenset(
 )
 
 
-def _elapsed_bucket(started_at: float) -> str:
-    elapsed = max(0.0, time.monotonic() - started_at)
+def activity_elapsed_bucket(elapsed_seconds: float) -> str:
+    """Bucket elapsed activity against the bounded 30-second readiness window."""
+
+    elapsed = max(0.0, elapsed_seconds)
     if elapsed < 1:
         return "under_1s"
     if elapsed < 5:
         return "1_to_4s"
     if elapsed < 15:
         return "5_to_14s"
-    if elapsed < 60:
-        return "15_to_59s"
-    return "60s_or_more"
+    if elapsed < 30:
+        return "15_to_29s"
+    return "30s_or_more"
 
 
 def _activity(
     code: str, started_at: float, exit_code: int | None = None
 ) -> "VllmActivityEvent":
-    return VllmActivityEvent(code, _elapsed_bucket(started_at), exit_code)
+    return VllmActivityEvent(
+        code,
+        activity_elapsed_bucket(time.monotonic() - started_at),
+        exit_code,
+    )
 
 
 def _is_admissible_model_id(value: object) -> bool:
@@ -752,5 +758,6 @@ __all__ = [
     "VllmOperationToken",
     "VllmProbeRequest",
     "VllmProbeResult",
+    "activity_elapsed_bucket",
     "probe_vllm_target",
 ]

@@ -257,6 +257,35 @@ def test_wildcard_binds_use_loopback_client_urls(bind_address, expected):
     assert client_api_url(bind_address, 8000) == expected
 
 
+def test_ipv6_wildcard_availability_checks_the_requested_bind(monkeypatch):
+    """Substituting ::1 misses conflicts created by platform dual-stack policy."""
+
+    calls = []
+
+    class SocketDouble:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def setsockopt(self, *args):
+            calls.append(("setsockopt", args))
+
+        def bind(self, address):
+            calls.append(("bind", address))
+
+    def open_socket(family, kind):
+        calls.append(("socket", (family, kind)))
+        return SocketDouble()
+
+    monkeypatch.setattr(vllm_setup.socket, "socket", open_socket)
+
+    assert vllm_setup.is_port_available("::", 8000)
+    assert ("bind", ("::", 8000)) in calls
+    assert ("bind", ("::1", 8000)) not in calls
+
+
 def test_defaults_are_real_and_safe_values():
     draft = local_draft()
     assert draft.bind_address == "127.0.0.1"

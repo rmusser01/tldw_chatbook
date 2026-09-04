@@ -18,6 +18,7 @@ from .vllm_profiles import (
     default_vllm_profile,
 )
 from .vllm_setup import (
+    VllmIssue,
     VllmLaunchDraft,
     VllmLaunchSnapshot,
     VllmMode,
@@ -27,6 +28,66 @@ from .vllm_setup import (
     changed_launch_field_labels,
     semantic_fingerprint,
 )
+
+
+_PREFLIGHT_HELP_TARGETS = {
+    "python_environment": "vllm-python-environment-help",
+    "model_value": "vllm-model-help",
+    "bind_address": "vllm-bind-address-help",
+    "port": "vllm-port-help",
+    "existing_server_url": "vllm-existing-server-url-help",
+    "raw_arguments": "vllm-raw-arguments-help",
+    "tensor_parallel_size": "vllm-profile-help",
+    "maximum_model_length": "vllm-profile-help",
+    "gpu_memory_utilization": "vllm-profile-help",
+}
+_PREFLIGHT_ISSUE_COPY = {
+    "missing_python_environment": "Choose a Python interpreter or virtual environment.",
+    "python_unavailable": (
+        "Python environment not found. Choose an available interpreter "
+        "or virtual environment."
+    ),
+    "vllm_cli_unavailable": (
+        "vLLM is not installed in this Python environment. Install it there "
+        "or choose another environment."
+    ),
+    "vllm_import_unavailable": (
+        "vLLM cannot be imported from this Python environment. Repair it "
+        "or choose another environment."
+    ),
+    "invalid_hugging_face_model": (
+        "Enter a Hugging Face model as organization/model."
+    ),
+    "invalid_model_directory": "Choose an existing local model directory.",
+    "invalid_bind_address": "Enter an IP address or localhost.",
+    "invalid_port": "Enter a port from 1 to 65535.",
+    "port_unavailable": "This port is already in use. Choose another port.",
+    "invalid_existing_server_url": (
+        "Enter an http(s) vLLM server URL without credentials or extra parameters."
+    ),
+    "invalid_arguments": "Check the Advanced arguments quoting and try again.",
+    "arguments_conflict": (
+        "Advanced arguments duplicate a managed setting. Remove the duplicate option."
+    ),
+    "invalid_tensor_parallel_size": (
+        "The saved tensor parallel size must be a positive whole number."
+    ),
+    "invalid_maximum_model_length": (
+        "The saved maximum model length must be a positive whole number."
+    ),
+    "invalid_gpu_memory_utilization": (
+        "The saved GPU memory utilization must be greater than 0 and at most 1."
+    ),
+}
+
+
+def _preflight_issue_copy(issue: VllmIssue) -> str:
+    """Return bounded user-facing recovery copy without internal field keys."""
+
+    return _PREFLIGHT_ISSUE_COPY.get(
+        issue.code,
+        "Review this setup value and retry the setup check.",
+    )
 
 
 class VllmSetupView(VerticalScroll):
@@ -206,6 +267,11 @@ class VllmSetupView(VerticalScroll):
                 id="vllm-python-environment",
                 placeholder="python or /path/to/venv/bin/python",
             )
+            yield Label(
+                "",
+                id="vllm-python-environment-help",
+                classes="prereq-hint vllm-field-help",
+            )
             yield Label("Model source", classes="inline-label")
             with Horizontal(classes="vllm-source-actions"):
                 yield Button(
@@ -229,11 +295,22 @@ class VllmSetupView(VerticalScroll):
                 id="vllm-browse-local-model-directory-button",
                 classes="browse_button",
             )
+            yield Label(
+                "", id="vllm-model-help", classes="prereq-hint vllm-field-help"
+            )
             yield Label("Network", classes="section_label")
             yield Label("Bind address", classes="inline-label")
             yield Input(value=self._draft.bind_address, id="vllm-bind-address")
+            yield Label(
+                "",
+                id="vllm-bind-address-help",
+                classes="prereq-hint vllm-field-help",
+            )
             yield Label("Port", classes="inline-label")
             yield Input(value=str(self._draft.port), id="vllm-port")
+            yield Label(
+                "", id="vllm-port-help", classes="prereq-hint vllm-field-help"
+            )
         with Container(id="vllm-existing-setup"):
             yield Label("Existing server URL", classes="inline-label")
             yield Input(
@@ -241,6 +318,14 @@ class VllmSetupView(VerticalScroll):
                 id="vllm-existing-server-url",
                 placeholder="http://127.0.0.1:8000/v1",
             )
+            yield Label(
+                "",
+                id="vllm-existing-server-url-help",
+                classes="prereq-hint vllm-field-help",
+            )
+        yield Label(
+            "", id="vllm-profile-help", classes="prereq-hint vllm-field-help"
+        )
         yield Label("", id="vllm-start-blocker", classes="prereq-hint")
         with Container(id="vllm-current-server"):
             yield Label("Current server", classes="section-title")
@@ -266,6 +351,11 @@ class VllmSetupView(VerticalScroll):
                 id="vllm-raw-arguments-scope",
             )
             yield TextArea(id="vllm-raw-arguments", classes="additional_args_textarea")
+            yield Label(
+                "",
+                id="vllm-raw-arguments-help",
+                classes="prereq-hint vllm-field-help",
+            )
         with Horizontal(classes="vllm-console-actions"):
             yield Button(
                 "Make default for new chats",
@@ -584,9 +674,24 @@ class VllmSetupView(VerticalScroll):
             self.set_class(visible_primary_actions > 1, "vllm-two-actions")
             self._render_readiness()
             blocker = self.query_one("#vllm-start-blocker", Label)
+            help_labels = self.query(".vllm-field-help").results(Label)
+            for help_label in help_labels:
+                help_label.update("")
+                help_label.display = False
             if self._preflight and self._preflight.issues:
                 issue = self._preflight.issues[0]
-                blocker.update(f"{issue.field}: {issue.code.replace('_', ' ')}")
+                target_id = _PREFLIGHT_HELP_TARGETS.get(issue.field)
+                if target_id is not None:
+                    if issue.field == "raw_arguments":
+                        self.query_one(
+                            "#vllm-advanced-options", Collapsible
+                        ).collapsed = False
+                    help_label = self.query_one(f"#{target_id}", Label)
+                    help_label.update(_preflight_issue_copy(issue))
+                    help_label.display = True
+                blocker.update(
+                    "Fix the highlighted setup field, then retry the setup check."
+                )
             elif not is_current_success:
                 blocker.update("Check setup before Start is available.")
             elif self._preflight is not None and self._preflight.network_exposed:

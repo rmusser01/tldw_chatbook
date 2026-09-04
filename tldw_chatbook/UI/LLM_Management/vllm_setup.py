@@ -248,11 +248,10 @@ def is_port_available(bind_address: str, port: int) -> bool:
     """Check availability without retaining a listening socket."""
 
     family = socket.AF_INET6 if ":" in bind_address else socket.AF_INET
-    host = "::1" if bind_address == "::" else bind_address
     try:
         with socket.socket(family, socket.SOCK_STREAM) as sock:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            sock.bind((host, port))
+            sock.bind((bind_address, port))
         return True
     except OSError:
         return False

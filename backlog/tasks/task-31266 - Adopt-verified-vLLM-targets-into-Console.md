@@ -61,6 +61,12 @@ Fix Round 1: compensation now begins before the existing active-session replacem
 Fix Round 2 plan: add RED mounted regressions for restoring a pristine session's has_user_work ownership and for concrete controller/summary recovery when public rollback sync methods fail; implement the smallest store-owned rollback and projection-owner fallback; rerun all focused Task 3 gates before returning Done.
 
 Fix Round 2: Console now snapshots the active session's ownership flag plus its concrete controller and summary projections before replacement. Failed adoption uses a store-owned exact replacement rollback to restore both settings and has_user_work, then falls back from either failing public projection sync to the captured controller/summary owner seams before releasing the claim. Mounted regressions cover forward mutation, repeated core/summary rollback-sync failure, projection restoration, and successful replay. All focused Task 3, pending-store, upstream vLLM, exact Ruff/py_compile, focused mypy, and diff checks pass; ADR-117 remains governing.
+
+Task 6 integration reconciliation updated one feature-owned assertion to the
+current Console summary contract shipped on `origin/dev`: display rows use the
+canonical `vLLM` label and compact model text, while endpoint persistence remains
+machine-readable as `blocker=endpoint_not_saved` with
+`recovery_action=save_endpoint`. Production behavior was unchanged.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

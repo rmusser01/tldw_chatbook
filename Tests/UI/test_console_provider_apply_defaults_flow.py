@@ -1199,10 +1199,12 @@ async def test_vllm_console_handoff_replaces_only_active_session_without_config_
             == "http://127.0.0.1:9098"
         )
         summary = console._build_console_settings_summary_state()
-        assert summary.provider_row == "Provider: vllm"
-        assert summary.model_row == "Model: chatbook-vllm (Endpoint not saved)"
+        assert summary.provider_row == "Provider: vLLM"
+        assert summary.model_row == "Model: chatbook-vllm"
         assert "127.0.0.1:8000" in summary.endpoint_row
-        assert summary.readiness_label == "Endpoint not saved"
+        assert summary.readiness_label == ""
+        assert summary.readiness.blocker == "endpoint_not_saved"
+        assert summary.readiness.recovery_action == "save_endpoint"
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
 
 

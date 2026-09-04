@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import threading
 from dataclasses import replace
 from pathlib import Path
@@ -13,6 +14,7 @@ from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
 from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
     ServerLaunchClaim,
+    attach_server_claim_resource,
     clear_server_process,
     current_server_claim,
     publish_server_process,
@@ -29,6 +31,7 @@ from tldw_chatbook.UI.LLM_Management.vllm_connection import (
     VllmProbeResult,
 )
 from tldw_chatbook.UI.LLM_Management.vllm_profiles import (
+    VllmProfileCorrupt,
     VllmProfileDocumentV1,
     VllmProfileRepository,
     draft_from_profile,
@@ -737,7 +740,7 @@ async def test_source_specific_controls_and_mode_drafts_are_preserved():
 
 async def test_preflight_blocker_is_adjacent_and_start_enables_only_for_current_success():
     app = _VllmHost()
-    async with app.run_test(size=(120, 40)):
+    async with app.run_test(size=(120, 40)) as pilot:
         view = app.query_one(VllmSetupView)
         draft = VllmLaunchDraft(
             mode=VllmMode.LOCAL,
@@ -745,15 +748,43 @@ async def test_preflight_blocker_is_adjacent_and_start_enables_only_for_current_
             model_source=VllmModelSource.HUGGING_FACE,
             model_value="org/model",
         )
+        preflight = VllmPreflightResult(
+            generation=1,
+            fingerprint=semantic_fingerprint(draft),
+            issues=(VllmIssue("python_unavailable", "python_environment"),),
+        )
         view.apply_state(
             draft=draft,
             state=VllmReadinessState.NEEDS_ATTENTION,
-            preflight=None,
+            preflight=preflight,
         )
         assert app.query_one("#vllm-start", Button).disabled
-        assert "Check setup" in str(
-            app.query_one("#vllm-start-blocker", Label).renderable
+        assert str(
+            app.query_one("#vllm-python-environment-help", Label).renderable
+        ) == (
+            "Python environment not found. Choose an available interpreter "
+            "or virtual environment."
         )
+        blocker = str(app.query_one("#vllm-start-blocker", Label).renderable)
+        assert "Fix the highlighted setup field" in blocker
+        assert "python_environment" not in blocker
+
+        view.focus_state_action(VllmReadinessState.NEEDS_ATTENTION)
+        await pilot.pause()
+        assert app.focused.id == "vllm-recovery-primary"
+        assert not app.query_one("#vllm-recovery-primary", Button).disabled
+
+        view.apply_state(
+            draft=draft,
+            state=VllmReadinessState.NEEDS_ATTENTION,
+            preflight=VllmPreflightResult(
+                generation=1,
+                fingerprint=semantic_fingerprint(draft),
+                issues=(VllmIssue("invalid_arguments", "raw_arguments"),),
+            ),
+        )
+        assert not app.query_one("#vllm-advanced-options", Collapsible).collapsed
+        assert app.query_one("#vllm-raw-arguments-help", Label).display
 
 
 async def test_lifecycle_projection_enables_stop_only_while_runtime_is_active():
@@ -1070,6 +1101,128 @@ async def test_preflight_issue_settles_owner_view_and_recovery(monkeypatch):
         assert "Ready to start" in str(
             view.query_one("#vllm-readiness-state", Label).renderable
         )
+
+
+async def test_probe_deadline_reports_overall_thirty_second_elapsed_bucket(monkeypatch):
+    """A final retry must not report only its own sub-second attempt duration."""
+
+    import tldw_chatbook.UI.Screens.llm_screen as llm_screen_module
+
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, _ = await _mount_vllm_screen(app, pilot)
+        draft = VllmLaunchDraft(
+            mode=VllmMode.LOCAL,
+            python_environment="python",
+            model_source=VllmModelSource.HUGGING_FACE,
+            model_value="org/model",
+        )
+        token = screen._vllm_owner.begin(draft, runtime_owner="chatbook")
+        claim = _bind_local_claim(screen._vllm_owner, token)
+        process = object()
+        clock = [100.0]
+
+        async def unavailable(request):
+            return VllmProbeResult(
+                token=request.token,
+                state=VllmReadinessState.NEEDS_ATTENTION,
+                target=None,
+                issue=VllmIssue("health_timeout", "connection"),
+                activity=(VllmActivityEvent("health_timeout", "under_1s"),),
+            )
+
+        async def reach_deadline(_delay):
+            clock[0] = 130.0
+
+        monkeypatch.setattr(llm_screen_module.time, "monotonic", lambda: clock[0])
+        monkeypatch.setattr(llm_screen_module.asyncio, "sleep", reach_deadline)
+        monkeypatch.setattr(llm_screen_module, "probe_vllm_target", unavailable)
+        monkeypatch.setattr(
+            llm_screen_module,
+            "server_lifecycle_snapshot",
+            lambda _app, _provider: (claim, process),
+        )
+        monkeypatch.setattr(llm_screen_module, "process_is_running", lambda _p: True)
+
+        await screen._probe_vllm_generation(token, draft, claim)
+
+        snapshot = screen._vllm_owner.snapshot()
+        assert snapshot.state is VllmReadinessState.NEEDS_ATTENTION
+        assert snapshot.issue == VllmIssue("health_timeout", "connection")
+        assert (
+            snapshot.activity[-1].code,
+            snapshot.activity[-1].elapsed_bucket,
+        ) == ("health_timeout", "30s_or_more")
+
+
+async def test_vllm_failure_details_never_cross_logs_notifications_or_global_state(
+    caplog,
+):
+    """Exception details must stop below every app-wide lifecycle surface."""
+
+    import tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle as lifecycle
+
+    private_detail = (
+        "CREDENTIAL_CANARY /private/PATH_CANARY --api-key RAW_COMMAND_CANARY "
+        "https://URL_CANARY.invalid/v1 RESPONSE_CANARY"
+    )
+
+    class FailingResource:
+        def close(self):
+            raise RuntimeError(private_detail)
+
+    def fail_profile_change():
+        raise VllmProfileCorrupt(private_detail)
+
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+        draft = VllmLaunchDraft(
+            mode=VllmMode.LOCAL,
+            python_environment="python",
+            model_source=VllmModelSource.HUGGING_FACE,
+            model_value="org/model",
+        )
+        token = screen._vllm_owner.begin(draft, runtime_owner="chatbook")
+        claim = reserve_server_launch(app, "vllm", authority="chatbook-vllm")
+        assert claim is not None
+        assert screen._vllm_owner.bind_launch_claim(token, claim)
+        assert attach_server_claim_resource(app, "vllm", claim, FailingResource())
+
+        # App startup intentionally rebuilds root handlers, so attach pytest's
+        # capture handler directly before exercising the real lifecycle logger.
+        lifecycle.logger.addHandler(caplog.handler)
+        try:
+            with caplog.at_level(logging.ERROR, logger=lifecycle.__name__):
+                await screen._run_vllm_profile_mutation(fail_profile_change)
+                assert release_server_claim(app, "vllm", claim)
+        finally:
+            lifecycle.logger.removeHandler(caplog.handler)
+        await pilot.pause()
+
+        notification_text = " ".join(
+            f"{notification.title} {notification.message}"
+            for notification in app._notifications
+        )
+        visible_text = " ".join(str(label.renderable) for label in view.query(Label))
+        state_text = repr(screen._vllm_owner.snapshot()) + repr(
+            app._llm_server_launch_claims
+        )
+        log_text = "\n".join(record.getMessage() for record in caplog.records)
+        assert "vLLM profile change was not saved" in notification_text
+        assert "category=resource_close_failed" in log_text
+        assert current_server_claim(app, "vllm") is None
+        all_surfaces = " ".join(
+            (notification_text, visible_text, state_text, log_text)
+        )
+        for canary in (
+            "CREDENTIAL_CANARY",
+            "PATH_CANARY",
+            "RAW_COMMAND_CANARY",
+            "URL_CANARY",
+            "RESPONSE_CANARY",
+        ):
+            assert canary not in all_surfaces
 
 
 async def test_vllm_handoff_intents_are_secret_free_exact_and_strict():

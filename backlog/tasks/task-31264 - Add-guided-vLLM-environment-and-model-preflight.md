@@ -55,6 +55,19 @@ Tests: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pyt
 ADR required: no. Existing ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md. Reason: directly implements accepted runtime and UX boundaries.
 
 Modified: tldw_chatbook/UI/LLM_Management/{__init__.py,vllm_setup.py,vllm_setup_view.py}, tldw_chatbook/UI/LLM_Management_Window.py, tldw_chatbook/Event_Handlers/LLM_Management_Events/llm_management_events_vllm.py, and focused tests.
+
+Task 6 integration fix round: preflight issues now project bounded human recovery
+copy beside the owning visible control instead of exposing internal field keys in
+the aggregate blocker. Raw-argument failures open Advanced options so their help
+is actually visible; Start remains disabled and Retry remains the focused recovery
+action. IPv6 wildcard availability now binds the requested `::` address and lets
+the platform apply its dual-stack policy instead of substituting `::1`; client URLs
+still normalize wildcard binds to loopback. Focused TDD evidence: the ordinary
+field-help node went RED for a missing adjacent label then GREEN (`1 passed`); its
+collapsed Advanced assertion went RED then GREEN (`1 passed`); the deterministic
+socket double went RED on `('::1', 8000)` then the setup/URL nodes went GREEN
+(`3 passed`). A macOS real-bind comparison with an IPv4 listener held open observed
+the same result from a direct `::` bind and `is_port_available("::", port)`.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

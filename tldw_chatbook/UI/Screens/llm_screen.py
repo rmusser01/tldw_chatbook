@@ -79,6 +79,7 @@ from ..LLM_Management.vllm_connection import (
     VllmOperationToken,
     VllmProbeRequest,
     VllmProbeResult,
+    activity_elapsed_bucket,
     probe_vllm_target,
 )
 from ..LLM_Management.vllm_profiles import (
@@ -3257,7 +3258,8 @@ class LLMScreen(LabScreen):
         draft: VllmLaunchDraft,
         claim: ServerLaunchClaim | None,
     ) -> None:
-        deadline = time.monotonic() + self._vllm_probe_window_seconds
+        window_started_at = time.monotonic()
+        deadline = window_started_at + self._vllm_probe_window_seconds
         last_result: VllmProbeResult | None = None
         while time.monotonic() < deadline:
             if (
@@ -3377,15 +3379,24 @@ class LLMScreen(LabScreen):
             )
             self._apply_vllm_view_state(focus=False)
             await asyncio.sleep(0.25)
-        if last_result is None:
-            last_result = VllmProbeResult(
-                token=token,
-                state=VllmReadinessState.NEEDS_ATTENTION,
-                target=None,
-                issue=VllmIssue("health_timeout", "connection"),
-                activity=(VllmActivityEvent("health_timeout", "60s_or_more"),),
-            )
-        self._vllm_owner.settle(token, last_result)
+        terminal_issue = (
+            last_result.issue
+            if last_result is not None and last_result.issue is not None
+            else VllmIssue("health_timeout", "connection")
+        )
+        terminal_result = VllmProbeResult(
+            token=token,
+            state=VllmReadinessState.NEEDS_ATTENTION,
+            target=None,
+            issue=terminal_issue,
+            activity=(
+                VllmActivityEvent(
+                    terminal_issue.code,
+                    activity_elapsed_bucket(time.monotonic() - window_started_at),
+                ),
+            ),
+        )
+        self._vllm_owner.settle(token, terminal_result)
         self._apply_vllm_view_state(focus=True)
 
     @on(VllmSetupView.RetryRequested)

@@ -52,6 +52,17 @@ Implemented an app-scoped immutable vLLM connection owner with exact generation/
 Fix Round 1 binds the immutable launch snapshot to the exact shared lifecycle claim, retries live processes only from that binding, rejects cancelled claims, and restores exact runtime ownership across draft invalidation and screen replacement. READY results now require a canonical credential-free target, exact `chatbook-vllm` identity for owned launches, and fail-closed owner revalidation. Stop-before-publication settles as cancellation, preflight failures settle into the authoritative owner, and Stop enablement is derived independently from exact live process ownership. Final focused evidence: readiness/workflow 45 passed; lifecycle/status 31 passed; Task 1 setup compatibility 34 passed; deferred-view compatibility 2 passed/7 deselected; Ruff, focused mypy, and `git diff --check` passed.
 
 Fix Round 2 closes the remaining owned-target identity gap: READY settlement for a Chatbook-owned token now derives the canonical completion endpoint from the exact claim-bound launch snapshot, requires the exact bound operation token and fingerprint, and refuses any other canonical endpoint. External-server targets remain claim-independent. The canonical port-8001 mutation against a port-8000 claim failed before the fix and passes after it; final focused evidence is 48 readiness/workflow and 31 lifecycle/status tests passing, with Ruff, focused mypy, and `git diff --check` green.
+
+Task 6 integration fix round: deadline settlement now buckets the total bounded
+readiness orchestration window, while individual probe Activity keeps its own
+attempt timing. The allowlist matches the configured 30-second deadline
+(`under_1s`, `1_to_4s`, `5_to_14s`, `15_to_29s`, `30s_or_more`). A controlled
+clock test went RED when a 30-second terminal timeout reported `under_1s`, then the
+deadline/loopback timeout nodes went GREEN (`2 passed`). Integrated privacy
+canaries now traverse the real profile notifier, app-scoped owner/claim state, and
+server-resource lifecycle logger; after restoring pytest capture following the
+app's deliberate logging reconfiguration, the node passed (`1 passed`) with no
+credential, path, raw-command, URL, or response canary retained or emitted.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
