@@ -927,6 +927,9 @@ class TestCharacterSelectionAndEdit:
             assert screen._edit_mode == "create"
             editor = screen.query_one("#ccp-character-editor-view")
             assert editor.display is True
+            assert not list(screen.query("#ccp-persona-editor-view"))
+            assert not list(screen.query("#personas-dictionary-detail"))
+            assert not list(screen.query("#personas-lore-detail"))
             selected_name = str(
                 screen.query_one("#personas-selected-name", Static).renderable
             )
@@ -1153,7 +1156,7 @@ class TestCharacterSelectionAndEdit:
             screen.post_message(EditCharacterRequested(2))
             await pilot.pause()
             assert screen._edit_mode == "view"
-            assert screen.query_one("#ccp-character-editor-view").display is False
+            assert not list(screen.query("#ccp-character-editor-view"))
 
     async def test_mode_switch_during_save_does_not_render_character_into_other_mode(
         self, mock_app_instance, stub_characters, monkeypatch
@@ -1346,6 +1349,9 @@ class TestPersonasMode:
             # read-only card).
             assert screen._edit_mode == "edit"
             assert screen.query_one("#ccp-persona-editor-view").display is True
+            assert not list(screen.query("#ccp-character-editor-view"))
+            assert not list(screen.query("#personas-dictionary-detail"))
+            assert not list(screen.query("#personas-lore-detail"))
 
     async def test_profile_save_refresh_failure_updates_purpose_line_and_recovery(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -2556,8 +2562,7 @@ class TestImportExport:
             await screen._stage_character_avatar_from_path(str(avatar))
             await pilot.pause()
 
-            editor = screen.query_one(PersonasCharacterEditorWidget)
-            assert "image" not in editor.get_character_data()
+            assert not list(screen.query(PersonasCharacterEditorWidget))
             assert screen.state.has_unsaved_changes is False
             assert any("Open a character editor" in msg for msg, _ in notifications)
 
@@ -5539,14 +5544,14 @@ class TestConversationsPanel:
             )
             resume = screen.query_one("#personas-conversation-resume", Button)
 
-            await pilot.click("#personas-conversation-resume")
+            resume.press()
             await pilot.pause()
             assert len(callbacks) == 1
             callbacks[0]()
             assert resume.disabled is False
             await pilot.pause()
 
-            await pilot.click("#personas-conversation-resume")
+            resume.press()
             await pilot.pause()
             assert len(callbacks) == 2
             callbacks[0]()
@@ -6130,6 +6135,7 @@ class TestConsoleActions:
                 screen.character_handler, "load_character", load_character
             )
 
+            await screen._ensure_center_view("character-editor")
             await screen._after_character_save("1", "Detective Sam")
             await pilot.pause()
 
@@ -6165,6 +6171,7 @@ class TestConsoleActions:
 
             monkeypatch.setattr(screen, "_render_profile_rows", observe_render_rows)
 
+            await screen._ensure_center_view("persona-editor")
             await screen._after_profile_save({"id": "p-1", "name": "Archivist"})
             await pilot.pause()
 
@@ -6871,7 +6878,7 @@ class TestServerCharacterSourceIsolation:
             save_worker = Mock()
             screen._full_character_record = full_record
             screen._save_character_worker = save_worker
-            screen._handle_edit_requested(EditCharacterRequested("7"))
+            await screen._handle_edit_requested(EditCharacterRequested("7"))
             screen._handle_save_requested(
                 CharacterSaveRequested({"name": "Must stay remote"})
             )
@@ -10561,6 +10568,7 @@ class TestPersonaHumanIdentityRemoval:
             stub_scope_service.list_persona_profiles = AsyncMock(
                 return_value={"items": [renamed], "total": 1}
             )
+            await screen._ensure_center_view("persona-editor")
             await screen._after_profile_save({"id": "p-1", "name": "Chronicler"})
             await pilot.pause()
             assert screen.state.selected_entity_name == "Chronicler"
@@ -12384,6 +12392,8 @@ async def test_character_tts_population_requires_one_generation_and_observes_off
         assert screen._character_tts_snapshot is not None
         assert screen._character_tts_snapshot.repository_generation == 7
         card_control = screen.query_one("#personas-character-card-tts")
+        assert not list(screen.query("#personas-character-editor-tts"))
+        await screen._ensure_center_view("character-editor")
         editor_control = screen.query_one("#personas-character-editor-tts")
         assert card_control.presentation_state.selected_profile_id == (
             assigned_profile.profile_id

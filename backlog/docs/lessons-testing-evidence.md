@@ -10967,3 +10967,17 @@ budget collapse, not flake — reproduce by calling
 `build_first_request_schema_plan` directly and printing `used` vs the
 reserve before dismissing or "fixing" the test. Structural fix tracked in
 TASK-31212.
+
+## A painted Textual editor can still be outside its hit-testable layout
+
+Incident (TASK-31215, 2026-09-03): demand-mounted Personas editors initially
+used auto-height wrapper slots around editor roots that own `height: 100%`.
+Widget queries and paint-based assertions passed, but real actor-pack button
+clicks were ignored because the controls were outside the wrapper's effective
+hit-testable geometry. Giving the stable slot its natural container height
+restored both full-height layout and pointer dispatch.
+
+Rule: when introducing a wrapper around an existing full-height Textual view,
+verify it with a real pointer-driven workflow, not only widget queries,
+visibility flags, or screenshots. Painted descendants do not prove their
+ancestor geometry participates in hit testing.
