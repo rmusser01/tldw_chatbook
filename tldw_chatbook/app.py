@@ -7603,10 +7603,13 @@ class TldwCli(
             CanvasControlClient,
             ControlProtocolError,
         )
+        from .Canvas.gateway import ServedCanvasControlHandler
 
+        self.served_canvas_handler = ServedCanvasControlHandler()
         try:
             self.served_canvas_control = CanvasControlClient.from_environment(
-                os.environ
+                os.environ,
+                handler=self.served_canvas_handler.handle,
             )
         except ControlProtocolError:
             self.served_canvas_control = None

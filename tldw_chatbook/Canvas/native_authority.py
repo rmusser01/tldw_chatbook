@@ -475,6 +475,31 @@ class NativeConsoleCanvasAuthority:
     def resolve_render_plan(self, scope: CanvasGatewayScope):
         return compile_canvas_document(self._read_gateway(scope).source)
 
+    def control_scope_snapshot(self, scope: CanvasGatewayScope) -> CanvasScope:
+        """Return the exact active branch scope for the private served channel."""
+
+        canvas_scope = self._scope_resolver(scope.conversation_session_id)
+        with self._lock:
+            selection = self._selection.get(scope.conversation_session_id)
+            if selection is None:
+                return canvas_scope
+            selected_scope = replace(
+                canvas_scope,
+                selected_canvas_id=selection.canvas_id,
+                selected_revision_id=selection.revision_id,
+            )
+            target = self._browser_targets.get(scope.browser_session_id)
+            if target is not None:
+                self._browser_targets[scope.browser_session_id] = CanvasBridgeTarget(
+                    browser_session_id=scope.browser_session_id,
+                    session_id=canvas_scope.session_id,
+                    conversation_id=canvas_scope.conversation_id,
+                    active_message_ids=canvas_scope.active_message_ids,
+                    canvas_id=selection.canvas_id,
+                    revision_id=selection.revision_id,
+                )
+            return selected_scope
+
     def read_source(self, scope: CanvasGatewayScope) -> CanvasSourceResponse:
         read = self._read_gateway(scope)
         return CanvasSourceResponse(read.source, read.revision.content_sha256)

@@ -40,6 +40,7 @@ from Tests.UI.test_destination_shells import _build_test_app
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Canvas.gateway import CanvasGatewayScope
 from tldw_chatbook.Canvas.native_authority import CanvasBridgeTarget
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
@@ -566,6 +567,44 @@ async def test_production_canvas_card_handler_routes_exact_and_retry_mints_fresh
         revision_id="revision-2",
         follow_latest=False,
     )
+
+
+@pytest.mark.asyncio
+async def test_served_canvas_selection_binds_child_without_opening_native_browser():
+    app = _build_test_app()
+    app.served_canvas_control = SimpleNamespace(child_id="app-service-child-a")
+    app.served_canvas_handler = Mock()
+    screen = ChatScreen(app)
+    scope = CanvasGatewayScope(
+        browser_session_id="app-service-child-a",
+        conversation_session_id="session-a",
+        canvas_id="canvas-a",
+        revision_id="revision-a",
+    )
+    authority = Mock()
+    authority.gateway_scope.return_value = scope
+    screen._console_canvas_authority = Mock(return_value=authority)
+    screen._console_runtime = Mock(
+        side_effect=AssertionError("served Canvas must not open a native gateway")
+    )
+
+    launch = await screen._open_console_canvas_selection(
+        session_id="session-a",
+        canvas_id="canvas-a",
+        revision_id="revision-a",
+        follow_latest=True,
+    )
+
+    authority.gateway_scope.assert_called_once_with(
+        session_id="session-a",
+        browser_session_id="app-service-child-a",
+        canvas_id="canvas-a",
+        revision_id="revision-a",
+        follow_latest=True,
+    )
+    app.served_canvas_handler.bind.assert_called_once_with(authority, scope)
+    assert launch.clean_url == launch.browser_url == "/canvas/"
+    assert launch.opened is True
 
 
 @pytest.mark.asyncio

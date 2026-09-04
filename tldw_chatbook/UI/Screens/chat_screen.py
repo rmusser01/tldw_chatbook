@@ -19618,7 +19618,13 @@ class ChatScreen(BaseAppScreen):
         follow_latest: bool,
     ) -> Any:
         authority = self._console_canvas_authority()
-        browser_id = f"browser-{session_id}"
+        served_client = getattr(self.app_instance, "served_canvas_control", None)
+        served_handler = getattr(self.app_instance, "served_canvas_handler", None)
+        browser_id = (
+            served_client.child_id
+            if served_client is not None and served_handler is not None
+            else f"browser-{session_id}"
+        )
         scope = authority.gateway_scope(
             session_id=session_id,
             browser_session_id=browser_id,
@@ -19626,6 +19632,22 @@ class ChatScreen(BaseAppScreen):
             revision_id=revision_id,
             follow_latest=follow_latest,
         )
+        if served_client is not None and served_handler is not None:
+            served_handler.bind(authority, scope)
+            self._canvas_last_open_request = (
+                session_id,
+                canvas_id,
+                revision_id,
+                follow_latest,
+            )
+            from tldw_chatbook.Canvas.gateway import CanvasGatewayLaunch
+
+            return CanvasGatewayLaunch(
+                clean_url="/canvas/",
+                browser_url="/canvas/",
+                opened=True,
+                error_code=None,
+            )
         gateway = self._console_runtime().ensure_canvas_gateway(authority=authority)
         self._canvas_last_open_request = (
             session_id,

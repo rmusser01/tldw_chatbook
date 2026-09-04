@@ -772,6 +772,9 @@
     ui.loading.textContent = "Canvas closed. Reopen it from Chatbook.";
     ui.loading.hidden = false;
     setConnection("Disconnected", true);
+    if (window.parent !== window) {
+      window.parent.postMessage({type: "chatbook:canvas-close"}, location.origin);
+    }
   });
   ui.bridgeCancel.addEventListener("click", () => void cancelPendingBridge());
   ui.bridgeCopy.addEventListener("click", () => {

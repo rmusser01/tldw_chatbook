@@ -527,6 +527,11 @@ exclude = [
     "static/runtime-manifest.json",
     "static/THIRD_PARTY_LICENSES.txt",
 ]
+"tldw_chatbook.Web_Server" = [
+    "static/served_shell.html",
+    "static/served_shell.css",
+    "static/served_shell.js",
+]
 "tldw_profile_core" = ["schemas/*.json", "fixtures/v1/*.json"]
 # Include all .tcss files in css directory and subdirectories
 "tldw_chatbook.css" = ["*.tcss", "**/*.tcss"]

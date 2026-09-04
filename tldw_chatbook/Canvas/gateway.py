@@ -17,13 +17,14 @@ import json
 import math
 import secrets
 import time
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from importlib.resources import files
 from threading import RLock
 from types import MappingProxyType
 from typing import Any, Literal, Protocol, TypeAlias
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 from uuid import uuid4
 
 from aiohttp import web
@@ -33,6 +34,11 @@ from .capabilities import (
     CanvasCapabilityError,
     CanvasCapabilityScope,
     CanvasCapabilityStore,
+)
+from .control_protocol import (
+    CONTROL_PROTOCOL_VERSION,
+    ControlMessage,
+    ControlProtocolError,
 )
 from .limits import (
     CanvasLimitError,
@@ -92,6 +98,9 @@ _SHELL_CSP = (
     "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
     "frame-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; "
     "form-action 'none'; frame-ancestors 'none'"
+)
+_MOUNTED_SHELL_CSP = _SHELL_CSP.replace(
+    "frame-ancestors 'none'", "frame-ancestors 'self'"
 )
 _RENDERER_CSP = (
     "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src data:; "
@@ -385,6 +394,430 @@ class CanvasGatewayAuthority(Protocol):
     ) -> BridgeConfirmationResponse | Awaitable[BridgeConfirmationResponse]: ...
 
 
+class _ServedBridgeSettlement:
+    """Child-local settlement compatible with NativeConsoleCanvasAuthority."""
+
+    __slots__ = ("_used",)
+
+    def __init__(self) -> None:
+        self._used = False
+
+    def try_settle(self, effect: Callable[[], object]) -> bool:
+        if self._used:
+            return False
+        self._used = True
+        result = effect()
+        if inspect.isawaitable(result):
+            close = getattr(result, "close", None)
+            if callable(close):
+                close()
+            raise TypeError("served Canvas bridge effect must be synchronous")
+        return True
+
+
+@dataclass(slots=True)
+class _ServedPreparedBridge:
+    nonce: str
+    request: CanvasBridgeRequest
+    preparation: object | None
+    scope: CanvasGatewayScope
+    payload_digest: bytes
+    expiry_handle: asyncio.TimerHandle | None = None
+
+
+@dataclass(slots=True)
+class _ServedBridgeReceipt:
+    request_id: str
+    request_kind: str
+    payload_digest: bytes
+    scope: CanvasGatewayScope
+    approved: bool
+    status: BridgeConfirmationStatus
+    expiry_handle: asyncio.TimerHandle | None = None
+
+
+class ServedCanvasControlHandler:
+    """Translate private wire requests into one child-owned Canvas authority."""
+
+    def __init__(self, *, preparation_ttl_seconds: float = 300.0) -> None:
+        if (
+            isinstance(preparation_ttl_seconds, bool)
+            or not isinstance(preparation_ttl_seconds, (int, float))
+            or not math.isfinite(preparation_ttl_seconds)
+            or not 0 < preparation_ttl_seconds <= 300.0
+        ):
+            raise ValueError("invalid served bridge preparation lifetime")
+        self._authority: CanvasGatewayAuthority | None = None
+        self._scope: CanvasGatewayScope | None = None
+        self._prepared: dict[str, _ServedPreparedBridge] = {}
+        self._receipts: OrderedDict[str, _ServedBridgeReceipt] = OrderedDict()
+        self._preparation_ttl_seconds = float(preparation_ttl_seconds)
+
+    def _clear_prepared(self) -> None:
+        for prepared in self._prepared.values():
+            if prepared.expiry_handle is not None:
+                prepared.expiry_handle.cancel()
+        self._prepared.clear()
+
+    def _clear_receipts(self) -> None:
+        for receipt in self._receipts.values():
+            if receipt.expiry_handle is not None:
+                receipt.expiry_handle.cancel()
+        self._receipts.clear()
+
+    def _expire_prepared(
+        self, request_id: str, expected: _ServedPreparedBridge
+    ) -> None:
+        if self._prepared.get(request_id) is expected:
+            self._prepared.pop(request_id, None)
+
+    def _expire_receipt(
+        self, request_id: str, expected: _ServedBridgeReceipt
+    ) -> None:
+        if self._receipts.get(request_id) is expected:
+            self._receipts.pop(request_id, None)
+
+    def _remember_receipt(
+        self,
+        prepared: _ServedPreparedBridge,
+        *,
+        approved: bool,
+        status: BridgeConfirmationStatus,
+    ) -> None:
+        receipt = _ServedBridgeReceipt(
+            request_id=prepared.request.request_id,
+            request_kind=prepared.request.kind,
+            payload_digest=prepared.payload_digest,
+            scope=prepared.scope,
+            approved=approved,
+            status=status,
+        )
+        receipt.expiry_handle = asyncio.get_running_loop().call_later(
+            self._preparation_ttl_seconds,
+            self._expire_receipt,
+            prepared.nonce,
+            receipt,
+        )
+        self._receipts[prepared.nonce] = receipt
+        self._receipts.move_to_end(prepared.nonce)
+        while len(self._receipts) > 64:
+            _expired_id, expired = self._receipts.popitem(last=False)
+            if expired.expiry_handle is not None:
+                expired.expiry_handle.cancel()
+
+    def bind(
+        self, authority: CanvasGatewayAuthority, scope: CanvasGatewayScope
+    ) -> None:
+        if not isinstance(scope, CanvasGatewayScope):
+            raise TypeError("served Canvas scope is required")
+        if self._scope != scope:
+            self._clear_prepared()
+            self._clear_receipts()
+        self._authority = authority
+        self._scope = scope
+
+    def clear(self) -> None:
+        self._authority = None
+        self._scope = None
+        self._clear_prepared()
+        self._clear_receipts()
+
+    @property
+    def scope(self) -> CanvasGatewayScope | None:
+        return self._scope
+
+    def _current(self) -> tuple[CanvasGatewayAuthority, CanvasGatewayScope]:
+        if self._authority is None or self._scope is None:
+            raise ControlProtocolError("scope_unavailable")
+        return self._authority, self._scope
+
+    @staticmethod
+    def _response(
+        request: ControlMessage, message_type: str, payload: Mapping[str, object]
+    ) -> ControlMessage:
+        return ControlMessage(
+            CONTROL_PROTOCOL_VERSION,
+            message_type,
+            request.request_id,
+            None,
+            payload,
+        )
+
+    async def handle(self, request: ControlMessage) -> ControlMessage:
+        if request.message_type == "health.request":
+            return self._response(request, "health.response", {"status": "ready"})
+        if request.message_type == "shutdown.request":
+            self.clear()
+            return self._response(request, "shutdown.response", {"status": "closed"})
+
+        authority, scope = self._current()
+        if request.message_type == "scope.snapshot.request":
+            try:
+                snapshot_reader = getattr(authority, "control_scope_snapshot", None)
+                canvas_scope = (
+                    await _maybe_await(snapshot_reader(scope))
+                    if callable(snapshot_reader)
+                    else None
+                )
+                selected_canvas_id = getattr(
+                    canvas_scope, "selected_canvas_id", None
+                )
+                selected_revision_id = getattr(
+                    canvas_scope, "selected_revision_id", None
+                )
+                if isinstance(selected_canvas_id, str) and isinstance(
+                    selected_revision_id, str
+                ):
+                    current_scope = replace(
+                        scope,
+                        canvas_id=selected_canvas_id,
+                        revision_id=selected_revision_id,
+                    )
+                    if current_scope != scope:
+                        scope = current_scope
+                        self._scope = scope
+                        self._clear_prepared()
+                        self._clear_receipts()
+                projection = await _maybe_await(authority.describe_selection(scope))
+                if projection.following:
+                    navigation = await _maybe_await(
+                        authority.navigate(scope, action="follow")
+                    )
+                    scope = navigation.scope
+                    self._scope = scope
+                    canvas_scope = (
+                        await _maybe_await(snapshot_reader(scope))
+                        if callable(snapshot_reader)
+                        else canvas_scope
+                    )
+            except (RuntimeError, TypeError, ValueError):
+                self.clear()
+                raise ControlProtocolError("scope_unavailable") from None
+            session_id = getattr(
+                canvas_scope, "session_id", scope.conversation_session_id
+            )
+            conversation_id = getattr(
+                canvas_scope, "conversation_id", scope.conversation_session_id
+            )
+            active_message_ids = list(getattr(canvas_scope, "active_message_ids", ()))
+            run_id = getattr(canvas_scope, "run_id", "served-browser")
+            return self._response(
+                request,
+                "scope.snapshot.response",
+                {
+                    "session_id": session_id,
+                    "conversation_id": conversation_id,
+                    "active_message_ids": active_message_ids,
+                    "selected_canvas_id": scope.canvas_id,
+                    "selected_revision_id": scope.revision_id,
+                    "run_id": run_id,
+                },
+            )
+
+        if request.message_type == "canvas.list.request":
+            projection = await _maybe_await(authority.describe_selection(scope))
+            return self._response(
+                request,
+                "canvas.list.response",
+                {
+                    "canvases": [
+                        {
+                            "canvas_id": option.canvas_id,
+                            "revision_id": option.revision_id,
+                            "title": option.title,
+                        }
+                        for option in projection.options
+                    ]
+                },
+            )
+
+        if request.message_type == "canvas.read.request":
+            canvas_id = request.payload["canvas_id"]
+            revision_id = request.payload.get("revision_id") or scope.revision_id
+            if canvas_id != scope.canvas_id or revision_id != scope.revision_id:
+                raise ControlProtocolError("canvas_unavailable")
+            source = await _maybe_await(authority.read_source(scope))
+            projection = await _maybe_await(authority.describe_selection(scope))
+            return self._response(
+                request,
+                "canvas.read.response",
+                {
+                    "canvas_id": scope.canvas_id,
+                    "revision_id": scope.revision_id,
+                    "title": projection.title,
+                    "content_sha256": projection.content_sha256,
+                    "source_bytes": projection.source_bytes,
+                    "render_metadata": {
+                        "source": source.source,
+                        "projection": _projection_wire(projection),
+                    },
+                },
+            )
+
+        if request.message_type == "canvas.events.request":
+            after_event_id = request.payload.get("after_event_id")
+            try:
+                events = await _maybe_await(
+                    authority.read_events(scope, after_event_id=after_event_id)
+                )
+            except (RuntimeError, TypeError, ValueError):
+                raise ControlProtocolError("events_unavailable") from None
+            if not isinstance(events, tuple) or not all(
+                isinstance(event, CanvasGatewayEvent) for event in events
+            ):
+                raise ControlProtocolError("events_unavailable")
+            return self._response(
+                request,
+                "canvas.events.response",
+                {
+                    "events": [
+                        {
+                            "event_id": event.event_id,
+                            "kind": event.kind,
+                            "canvas_id": event.canvas_id,
+                            "revision_id": event.revision_id,
+                            "metadata": dict(event.metadata),
+                        }
+                        for event in events
+                    ]
+                },
+            )
+
+        if request.message_type == "selection.request":
+            try:
+                navigation = await _maybe_await(
+                    authority.navigate(
+                        scope,
+                        action=str(request.payload["action"]),
+                        canvas_id=request.payload.get("canvas_id"),
+                        title=request.payload.get("title"),
+                    )
+                )
+            except (RuntimeError, TypeError, ValueError):
+                raise ControlProtocolError("selection_refused") from None
+            self._scope = navigation.scope
+            self._clear_prepared()
+            self._clear_receipts()
+            return self._response(
+                request,
+                "selection.response",
+                {
+                    "canvas_id": navigation.scope.canvas_id,
+                    "revision_id": navigation.scope.revision_id,
+                    "following": navigation.projection.following,
+                },
+            )
+
+        if request.message_type == "bridge.request":
+            try:
+                bridge_request = CanvasBridgeRequest.from_wire(
+                    request.payload["request"]
+                )
+                prepared = await _maybe_await(
+                    authority.prepare_bridge(scope, bridge_request)
+                )
+            except (RuntimeError, TypeError, ValueError):
+                raise ControlProtocolError("bridge_refused") from None
+            if (
+                not isinstance(prepared, tuple)
+                or len(prepared) != 2
+                or not isinstance(prepared[0], BridgePreparationResponse)
+            ):
+                raise ControlProtocolError("bridge_refused")
+            presentation = prepared[0]
+            if (
+                presentation.request_id != bridge_request.request_id
+                or presentation.kind != bridge_request.kind
+                or presentation.conversation_id != scope.conversation_session_id
+                or presentation.canvas_id != scope.canvas_id
+                or presentation.revision_id != scope.revision_id
+            ):
+                raise ControlProtocolError("bridge_refused")
+            self._clear_prepared()
+            loop = asyncio.get_running_loop()
+            preparation_nonce = f"prepare-{uuid4().hex}"
+            placeholder = _ServedPreparedBridge(
+                preparation_nonce,
+                bridge_request,
+                prepared[1],
+                scope,
+                _bridge_payload_digest(bridge_request.value),
+            )
+            placeholder.expiry_handle = loop.call_later(
+                self._preparation_ttl_seconds,
+                self._expire_prepared,
+                preparation_nonce,
+                placeholder,
+            )
+            self._prepared[preparation_nonce] = placeholder
+            return self._response(
+                request,
+                "bridge.response",
+                {
+                    "request_id": bridge_request.request_id,
+                    "preparation_nonce": preparation_nonce,
+                    "presentation": _bridge_preparation_wire(
+                        # The private control protocol deliberately excludes
+                        # floats; the mounted parent gateway owns the actual
+                        # lease and replaces this presentation lifetime.
+                        presentation,
+                        expires_in_seconds=max(
+                            1, math.ceil(self._preparation_ttl_seconds)
+                        ),
+                    ),
+                },
+            )
+
+        if request.message_type == "bridge.decision.request":
+            request_id = str(request.payload["request_id"])
+            preparation_nonce = str(request.payload["preparation_nonce"])
+            approved = bool(request.payload["approved"])
+            receipt = self._receipts.get(preparation_nonce)
+            if receipt is not None:
+                if (
+                    receipt.request_id != request_id
+                    or receipt.scope != scope
+                    or receipt.approved != approved
+                ):
+                    raise ControlProtocolError("bridge_refused")
+                self._receipts.move_to_end(preparation_nonce)
+                return self._response(
+                    request,
+                    "bridge.decision.response",
+                    {"request_id": request_id, "status": receipt.status},
+                )
+            pending = self._prepared.pop(preparation_nonce, None)
+            if pending is None or pending.request.request_id != request_id:
+                raise ControlProtocolError("bridge_refused")
+            if pending.expiry_handle is not None:
+                pending.expiry_handle.cancel()
+            bridge_request = pending.request
+            result = await _maybe_await(
+                authority.confirm_bridge(
+                    scope,
+                    BridgeConfirmationRequest(
+                        approved, bridge_request
+                    ),
+                    settlement=_ServedBridgeSettlement(),  # type: ignore[arg-type]
+                    preparation=pending.preparation,
+                )
+            )
+            if not isinstance(result, BridgeConfirmationResponse):
+                raise ControlProtocolError("bridge_refused")
+            self._remember_receipt(
+                pending,
+                approved=approved,
+                status=result.status,
+            )
+            return self._response(
+                request,
+                "bridge.decision.response",
+                {"request_id": result.request_id, "status": result.status},
+            )
+
+        raise ControlProtocolError("unsupported_request_type")
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class CanvasGatewayLaunch:
     """Browser-open result; its one-time fragment is deliberately redacted."""
@@ -462,6 +895,7 @@ class CanvasBridgeSettlementLease:
         "_gateway",
         "_load_id",
         "_record",
+        "_reserved_external",
         "_selection_epoch",
         "_session",
         "_settled",
@@ -483,6 +917,7 @@ class CanvasBridgeSettlementLease:
         self._session = session
         self._load_id = load_id
         self._record = record
+        self._reserved_external = False
         self._selection_epoch = selection_epoch
         self._effect_allowed = effect_allowed
         self._finalized = False
@@ -548,6 +983,64 @@ class CanvasBridgeSettlementLease:
                 if callable(close):
                     close()
                 raise TypeError("Canvas bridge settlement effect must be synchronous")
+            self._gateway._commit_bridge_record(
+                self._record,
+                committed,
+                expires_at=committed_expires_at,
+            )
+            self._settled = True
+            return True
+
+    def reserve_external(self) -> bool:
+        """Authorize one idempotent child effect without publishing success yet."""
+
+        with self._gateway._state_lock:
+            if self._finalized or self._used:
+                return False
+            self._used = True
+            if (
+                not self._effect_allowed
+                or not self._gateway._bridge_lease_is_current(
+                    self._session,
+                    load_id=self._load_id,
+                    selection_epoch=self._selection_epoch,
+                )
+                or not self._gateway._bridge_record_is_current(
+                    self._session, self._record
+                )
+            ):
+                self._stale = True
+                return False
+            self._reserved_external = True
+            return True
+
+    def commit_external(self) -> bool:
+        """Publish confirmation only after the child returns its durable receipt."""
+
+        with self._gateway._state_lock:
+            if (
+                self._finalized
+                or not self._reserved_external
+                or self._settled
+                or not self._gateway._bridge_record_is_current(
+                    self._session, self._record
+                )
+            ):
+                self._stale = True
+                return False
+            committed = BridgeConfirmationResponse(
+                request_id=self._record.request_id,
+                status="confirmed",
+            )
+            committed_expires_at = min(
+                self._session.expires_at,
+                self._gateway._clock() + self._gateway._bridge_settlement_ttl_seconds,
+            )
+            self._gateway._prepare_bridge_commit(
+                self._session,
+                self._record,
+                expires_at=committed_expires_at,
+            )
             self._gateway._commit_bridge_record(
                 self._record,
                 committed,
@@ -657,6 +1150,7 @@ class CanvasGateway:
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
         self._origin: str | None = None
+        self._mounted_app: web.Application | None = None
         self._start_lock = asyncio.Lock()
         self._state_lock = RLock()
         self._closed = False
@@ -681,8 +1175,10 @@ class CanvasGateway:
 
     @property
     def started(self) -> bool:
-        return (
-            self._runner is not None and self._origin is not None and not self._closed
+        return bool(
+            self._origin is not None
+            and not self._closed
+            and (self._runner is not None or self._mounted_app is not None)
         )
 
     @property
@@ -707,6 +1203,16 @@ class CanvasGateway:
                 not session.unavailable
                 and session.scope.conversation_session_id == conversation_session_id
                 for session in self._sessions.values()
+            )
+
+    def has_shell_binding(self, browser_session_id: str) -> bool:
+        """Return whether a mounted/native shell URL still belongs to a browser."""
+
+        with self._state_lock:
+            self._discard_expired_sessions()
+            return any(
+                binding.browser_session_id == browser_session_id
+                for binding in self._shell_bindings.values()
             )
 
     def mark_browser_session_unavailable(self, browser_session_id: str) -> None:
@@ -746,6 +1252,62 @@ class CanvasGateway:
     def routes(self) -> tuple[web.AbstractRoute, ...]:
         return tuple(self._app.router.routes())
 
+    def mounted_request_is_owned_by(
+        self, request: web.Request, browser_session_id: str
+    ) -> bool:
+        """Check the outer authenticated browser against a mounted shell URL."""
+
+        if request.app is not self._mounted_app:
+            return False
+        shell_incarnation_id = self._request_shell_incarnation(request)
+        if shell_incarnation_id is None:
+            return False
+        binding = self._shell_bindings.get(shell_incarnation_id)
+        return bool(
+            binding is not None
+            and hmac.compare_digest(binding.browser_session_id, browser_session_id)
+        )
+
+    async def handle_mounted_request(
+        self,
+        request: web.Request,
+        *,
+        browser_session_id: str,
+        handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+    ) -> web.StreamResponse:
+        """Apply Canvas' policy and headers inside Chatbook's owned listener.
+
+        The outer web-auth layer already validates the public Host and any
+        configured trusted-proxy headers. Mounted Canvas routes therefore
+        retain the remaining gateway boundary checks without treating those
+        already-reviewed forwarding headers as a second, conflicting trust
+        boundary.
+        """
+
+        async def apply_policy(inner_request: web.Request) -> web.StreamResponse:
+            if not self.mounted_request_is_owned_by(inner_request, browser_session_id):
+                return _error_response("canvas_unavailable", 404)
+            if any(key.lower() in _SENSITIVE_QUERY_KEYS for key in inner_request.query):
+                return _error_response("query_credentials_refused", 400)
+            if inner_request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+                origin_headers = inner_request.headers.getall("Origin", [])
+                if len(origin_headers) != 1 or origin_headers[0] != self._origin:
+                    return _error_response("origin_refused", 403)
+                content_types = inner_request.headers.getall("Content-Type", [])
+                if (
+                    len(content_types) != 1
+                    or inner_request.content_type != "application/json"
+                ):
+                    return _error_response("content_type_refused", 415)
+                if (
+                    inner_request.content_length is not None
+                    and inner_request.content_length > self._max_request_bytes
+                ):
+                    return _error_response("request_too_large", 413)
+            return await handler(inner_request)
+
+        return await self._security_headers_middleware(request, apply_policy)
+
     async def start(self) -> str:
         """Start once on an OS-assigned loopback port and return its origin."""
 
@@ -775,6 +1337,27 @@ class CanvasGateway:
             self._start_count += 1
             assert self._origin is not None
             return self._origin
+
+    def mount_on_app(self, app: web.Application, *, origin: str) -> None:
+        """Mount trusted handlers on an existing same-origin aiohttp app.
+
+        Served mode owns the listener in textual-serve's parent process.  This
+        seam shares Canvas' reviewed routes and runtime without opening a
+        second port or copying their security-sensitive implementation.
+        """
+
+        if not isinstance(app, web.Application):
+            raise TypeError("app must be an aiohttp Application")
+        if self._closed or self._runner is not None or self._mounted_app is not None:
+            raise RuntimeError("Canvas gateway is already started")
+        parsed = urlparse(origin)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("mounted Canvas origin must be an HTTP(S) origin")
+        if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+            raise ValueError("mounted Canvas origin must not contain a path")
+        self._install_routes(app)
+        self._origin = origin.rstrip("/")
+        self._mounted_app = app
 
     async def _bind(self) -> None:
         runner = web.AppRunner(self._app, access_log=None)
@@ -898,25 +1481,26 @@ class CanvasGateway:
             self._runner = None
             self._origin = None
 
-    def _install_routes(self) -> None:
+    def _install_routes(self, app: web.Application | None = None) -> None:
+        target = self._app if app is None else app
         root = f"/canvas/{self._gateway_namespace}/{{shell_incarnation_id}}"
-        self._app.router.add_get(f"{root}/", self._shell, allow_head=False)
-        self._app.router.add_post(f"{root}/api/boot", self._boot)
-        self._app.router.add_post(f"{root}/api/frame", self._frame)
-        self._app.router.add_get(f"{root}/api/state", self._state, allow_head=False)
-        self._app.router.add_post(f"{root}/api/navigate", self._navigate)
-        self._app.router.add_get(f"{root}/render", self._renderer, allow_head=False)
-        self._app.router.add_get(f"{root}/api/plan", self._plan, allow_head=False)
-        self._app.router.add_get(f"{root}/api/events", self._events, allow_head=False)
-        self._app.router.add_post(f"{root}/api/actions", self._action_capability)
-        self._app.router.add_get(f"{root}/api/source", self._source, allow_head=False)
-        self._app.router.add_get(
+        target.router.add_get(f"{root}/", self._shell, allow_head=False)
+        target.router.add_post(f"{root}/api/boot", self._boot)
+        target.router.add_post(f"{root}/api/frame", self._frame)
+        target.router.add_get(f"{root}/api/state", self._state, allow_head=False)
+        target.router.add_post(f"{root}/api/navigate", self._navigate)
+        target.router.add_get(f"{root}/render", self._renderer, allow_head=False)
+        target.router.add_get(f"{root}/api/plan", self._plan, allow_head=False)
+        target.router.add_get(f"{root}/api/events", self._events, allow_head=False)
+        target.router.add_post(f"{root}/api/actions", self._action_capability)
+        target.router.add_get(f"{root}/api/source", self._source, allow_head=False)
+        target.router.add_get(
             f"{root}/api/source-download", self._source_download, allow_head=False
         )
-        self._app.router.add_post(f"{root}/api/bridge/prepare", self._prepare_bridge)
-        self._app.router.add_post(f"{root}/api/bridge", self._bridge)
-        self._app.router.add_post(f"{root}/api/close", self._close_session)
-        self._app.router.add_get(
+        target.router.add_post(f"{root}/api/bridge/prepare", self._prepare_bridge)
+        target.router.add_post(f"{root}/api/bridge", self._bridge)
+        target.router.add_post(f"{root}/api/close", self._close_session)
+        target.router.add_get(
             f"{root}/static/{{name}}", self._static_asset, allow_head=False
         )
 
@@ -936,8 +1520,11 @@ class CanvasGateway:
         response.headers["Pragma"] = "no-cache"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Content-Type-Options"] = "nosniff"
+        mounted_shell = request.app is self._mounted_app and request.path.endswith("/")
         response.headers["X-Frame-Options"] = (
-            "SAMEORIGIN" if request.path.endswith("/render") else "DENY"
+            "SAMEORIGIN"
+            if request.path.endswith("/render") or mounted_shell
+            else "DENY"
         )
         response.headers["Permissions-Policy"] = (
             "camera=(), microphone=(), geolocation=(), payment=(), usb=(), "
@@ -950,7 +1537,11 @@ class CanvasGateway:
             response.headers["Access-Control-Allow-Origin"] = "*"
             response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
         response.headers["Content-Security-Policy"] = (
-            _RENDERER_CSP if request.path.endswith("/render") else _SHELL_CSP
+            _RENDERER_CSP
+            if request.path.endswith("/render")
+            else _MOUNTED_SHELL_CSP
+            if mounted_shell
+            else _SHELL_CSP
         )
         return response
 

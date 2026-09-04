@@ -22,8 +22,16 @@ from types import MappingProxyType
 from typing import Any
 from uuid import uuid4
 
+from .limits import CanvasLimits
+
 CONTROL_PROTOCOL_VERSION = 1
-MAX_CONTROL_FRAME_BYTES = 1024 * 1024
+# A generated download may carry 10 MiB of decoded bytes as a base64 data URL.
+# Keep the private frame closed to that documented V1 ceiling plus a small JSON
+# envelope allowance; this is not an unbounded general-purpose transport.
+MAX_CONTROL_VALUE_BYTES = (
+    (CanvasLimits().download_payload_bytes + 2) // 3
+) * 4 + 64 * 1024
+MAX_CONTROL_FRAME_BYTES = MAX_CONTROL_VALUE_BYTES + 256 * 1024
 DEFAULT_MAX_PENDING_REQUESTS = 32
 DEFAULT_MAX_QUEUED_EVENTS = 64
 
@@ -41,6 +49,7 @@ _REQUEST_REPLY = {
     "canvas.list.request": "canvas.list.response",
     "canvas.read.request": "canvas.read.response",
     "selection.request": "selection.response",
+    "canvas.events.request": "canvas.events.response",
     "bridge.request": "bridge.response",
     "bridge.decision.request": "bridge.decision.response",
     "health.request": "health.response",
@@ -96,10 +105,15 @@ _MESSAGE_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
         frozenset({"event_id", "kind", "canvas_id", "revision_id", "metadata"}),
         frozenset(),
     ),
+    "canvas.events.request": (frozenset(), frozenset({"after_event_id"})),
+    "canvas.events.response": (frozenset({"events"}), frozenset()),
     "bridge.request": (frozenset({"request"}), frozenset()),
-    "bridge.response": (frozenset({"request_id", "presentation"}), frozenset()),
+    "bridge.response": (
+        frozenset({"request_id", "preparation_nonce", "presentation"}),
+        frozenset(),
+    ),
     "bridge.decision.request": (
-        frozenset({"request_id", "approved"}),
+        frozenset({"request_id", "preparation_nonce", "approved"}),
         frozenset(),
     ),
     "bridge.decision.response": (
@@ -146,7 +160,10 @@ def _validate_json(value: object, *, depth: int = 0) -> None:
     if depth > 16:
         raise ControlProtocolError("payload_too_deep")
     if value is None or isinstance(value, (str, bool, int)):
-        if isinstance(value, str) and len(value.encode("utf-8")) > 512 * 1024:
+        if (
+            isinstance(value, str)
+            and len(value.encode("utf-8")) > MAX_CONTROL_VALUE_BYTES
+        ):
             raise ControlProtocolError("payload_value_too_large")
         return
     if isinstance(value, list):
@@ -200,9 +217,14 @@ def _validate_typed_fields(payload: Mapping[str, Any]) -> None:
         "event_id",
         "kind",
         "request_id",
+        "preparation_nonce",
         "code",
     }
-    nullable_string_fields = {"selected_canvas_id", "selected_revision_id"}
+    nullable_string_fields = {
+        "selected_canvas_id",
+        "selected_revision_id",
+        "after_event_id",
+    }
     mapping_fields = {"render_metadata", "metadata", "request", "presentation"}
     for key, value in payload.items():
         if key in string_fields and not isinstance(value, str):
@@ -217,6 +239,8 @@ def _validate_typed_fields(payload: Mapping[str, Any]) -> None:
             raise ControlProtocolError("invalid_payload_field")
         if key in {"following", "approved"} and type(value) is not bool:
             raise ControlProtocolError("invalid_payload_field")
+        if key in {"events", "canvases"} and not isinstance(value, list):
+            raise ControlProtocolError("invalid_payload_field")
         if key == "source_bytes" and (
             not isinstance(value, int) or isinstance(value, bool) or value < 0
         ):
@@ -225,8 +249,6 @@ def _validate_typed_fields(payload: Mapping[str, Any]) -> None:
             not isinstance(value, list)
             or any(not isinstance(item, str) for item in value)
         ):
-            raise ControlProtocolError("invalid_payload_field")
-        if key == "canvases" and not isinstance(value, list):
             raise ControlProtocolError("invalid_payload_field")
 
 
@@ -734,6 +756,12 @@ class CanvasControlClient:
         if not all(present):
             raise ControlProtocolError("invalid_spawn_environment")
         return cls(environment, handler=handler)
+
+    @property
+    def child_id(self) -> str:
+        """Return the non-secret AppService identity bound at spawn."""
+
+        return self._child_id
 
     async def start(self) -> None:
         if self._reader_task is not None:

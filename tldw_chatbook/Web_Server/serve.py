@@ -6,17 +6,33 @@ This module provides functions to launch the Textual application as a web server
 allowing users to access the TUI through their web browser.
 """
 
+from __future__ import annotations
+
 import asyncio
 import html
 import signal
 import ssl
 import sys
+from collections.abc import Mapping
+from importlib.resources import files
 from pathlib import Path
 from urllib.parse import quote, urlparse, urlunparse
 
 from loguru import logger
 
-from ..Canvas.control_protocol import CanvasControlBroker
+from ..Canvas.compiler import compile_canvas_document
+from ..Canvas.control_protocol import CanvasControlBroker, ControlProtocolError
+from ..Canvas.gateway import (
+    BridgeConfirmationResponse,
+    BridgePreparationResponse,
+    CanvasGateway,
+    CanvasGatewayEvent,
+    CanvasGatewayNavigation,
+    CanvasGatewayOption,
+    CanvasGatewayProjection,
+    CanvasGatewayScope,
+    CanvasSourceResponse,
+)
 from ..Canvas.web_auth import (
     CSRF_HEADER_NAME,
     SESSION_COOKIE_NAME,
@@ -87,6 +103,240 @@ _CHATBOOK_AUTH_BOOTSTRAP_JS = """(() => {
   window.WebSocket = ChatbookWebSocket;
 })();
 """
+_SERVED_STATIC_ROOT = files("tldw_chatbook.Web_Server").joinpath("static")
+_SERVED_SHELL_HTML = _SERVED_STATIC_ROOT.joinpath("served_shell.html").read_text(
+    encoding="utf-8"
+)
+_SERVED_SHELL_ASSETS = {
+    "served-shell.css": ("text/css", "served_shell.css"),
+    "served-shell.js": ("application/javascript", "served_shell.js"),
+}
+
+
+class ServedCanvasUnavailable(RuntimeError):
+    """The authenticated browser has no usable exact child Canvas scope."""
+
+
+def _json_wire(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {key: _json_wire(child) for key, child in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_wire(child) for child in value]
+    return value
+
+
+class _ServedCanvasAuthorityProxy:
+    """Bounded parent transport for one browser-scoped AppService child."""
+
+    def __init__(self, owner: ChatbookWebServerMixin) -> None:
+        self._owner = owner
+
+    async def _request(self, scope, message_type, payload):
+        child_id = self._owner._served_browser_children.get(scope.browser_session_id)
+        broker = getattr(self._owner, "_canvas_control_broker", None)
+        if child_id is None or broker is None:
+            raise ServedCanvasUnavailable("canvas_session_unavailable")
+        try:
+            return await broker.request(child_id, message_type, payload, timeout=2.0)
+        except Exception:  # noqa: BLE001 - private transport failures stay bounded
+            raise ServedCanvasUnavailable("canvas_session_unavailable") from None
+
+    async def _read(self, scope: CanvasGatewayScope):
+        response = await self._request(
+            scope,
+            "canvas.read.request",
+            {"canvas_id": scope.canvas_id, "revision_id": scope.revision_id},
+        )
+        payload = response.payload
+        if (
+            payload.get("canvas_id") != scope.canvas_id
+            or payload.get("revision_id") != scope.revision_id
+        ):
+            raise ServedCanvasUnavailable("canvas_session_unavailable")
+        metadata = payload.get("render_metadata")
+        if not isinstance(metadata, dict) or not isinstance(
+            metadata.get("source"), str
+        ):
+            raise ServedCanvasUnavailable("canvas_session_unavailable")
+        return payload, metadata
+
+    async def resolve_render_plan(self, scope: CanvasGatewayScope):
+        _payload, metadata = await self._read(scope)
+        return compile_canvas_document(metadata["source"])
+
+    async def read_source(self, scope: CanvasGatewayScope):
+        payload, metadata = await self._read(scope)
+        return CanvasSourceResponse(metadata["source"], str(payload["content_sha256"]))
+
+    async def describe_selection(self, scope: CanvasGatewayScope):
+        read_payload, metadata = await self._read(scope)
+        list_response = await self._request(scope, "canvas.list.request", {})
+        canvases = list_response.payload.get("canvases")
+        projection = metadata.get("projection")
+        if not isinstance(canvases, list) or not isinstance(projection, dict):
+            raise ServedCanvasUnavailable("canvas_session_unavailable")
+        projection_metadata = projection.get("metadata")
+        if not isinstance(projection_metadata, dict):
+            raise ServedCanvasUnavailable("canvas_session_unavailable")
+        options: list[CanvasGatewayOption] = []
+        for item in canvases:
+            if not isinstance(item, dict):
+                raise ServedCanvasUnavailable("canvas_session_unavailable")
+            try:
+                options.append(
+                    CanvasGatewayOption(
+                        str(item["canvas_id"]),
+                        str(item["revision_id"]),
+                        str(item["title"]),
+                    )
+                )
+            except (KeyError, TypeError, ValueError):
+                raise ServedCanvasUnavailable("canvas_session_unavailable") from None
+        try:
+            return CanvasGatewayProjection(
+                scope=scope,
+                options=tuple(options),
+                title=str(read_payload["title"]),
+                sequence=int(projection_metadata["sequence"]),
+                parent_revision_id=projection_metadata.get("parent_revision_id"),
+                source_bytes=int(read_payload["source_bytes"]),
+                content_sha256=str(read_payload["content_sha256"]),
+                origin_message_id=str(projection_metadata["origin_message_id"]),
+                origin_turn_id=str(projection_metadata["origin_turn_id"]),
+                temporary=projection_metadata.get("temporary") is True,
+                following=projection.get("following") is True,
+            )
+        except (KeyError, TypeError, ValueError):
+            raise ServedCanvasUnavailable("canvas_session_unavailable") from None
+
+    async def navigate(self, scope, *, action, canvas_id=None, title=None):
+        payload: dict[str, object] = {"action": action}
+        if canvas_id is not None:
+            payload["canvas_id"] = canvas_id
+        if title is not None:
+            payload["title"] = title
+        response = await self._request(scope, "selection.request", payload)
+        next_scope = CanvasGatewayScope(
+            browser_session_id=scope.browser_session_id,
+            conversation_session_id=scope.conversation_session_id,
+            canvas_id=str(response.payload["canvas_id"]),
+            revision_id=str(response.payload["revision_id"]),
+        )
+        return CanvasGatewayNavigation(
+            next_scope, await self.describe_selection(next_scope)
+        )
+
+    async def read_events(self, scope, *, after_event_id):
+        response = await self._request(
+            scope,
+            "canvas.events.request",
+            {"after_event_id": after_event_id},
+        )
+        wire_events = response.payload.get("events")
+        if not isinstance(wire_events, list):
+            raise ServedCanvasUnavailable("canvas_session_unavailable")
+        events: list[CanvasGatewayEvent] = []
+        try:
+            for value in wire_events:
+                if not isinstance(value, dict):
+                    raise TypeError("invalid event")
+                event = CanvasGatewayEvent(
+                    event_id=str(value["event_id"]),
+                    kind=value["kind"],
+                    canvas_id=str(value["canvas_id"]),
+                    revision_id=str(value["revision_id"]),
+                    metadata=value["metadata"],
+                )
+                if event.canvas_id != scope.canvas_id:
+                    raise ValueError("event scope mismatch")
+                events.append(event)
+        except (KeyError, TypeError, ValueError):
+            raise ServedCanvasUnavailable("canvas_session_unavailable") from None
+        return tuple(events)
+
+    async def prepare_bridge(self, scope, request):
+        response = await self._request(
+            scope,
+            "bridge.request",
+            {
+                "request": {
+                    "version": request.version,
+                    "request_id": request.request_id,
+                    "kind": request.kind,
+                    "value": _json_wire(request.value),
+                }
+            },
+        )
+        presentation = response.payload.get("presentation")
+        if not isinstance(presentation, dict):
+            raise ServedCanvasUnavailable("bridge_refused")
+        try:
+            result = BridgePreparationResponse(
+                request_id=str(presentation["request_id"]),
+                kind=str(presentation["kind"]),
+                conversation_id=str(presentation["conversation_id"]),
+                canvas_id=str(presentation["canvas_id"]),
+                revision_id=str(presentation["revision_id"]),
+                canvas_title=str(presentation["canvas_title"]),
+                revision_number=int(presentation["revision_number"]),
+                complete_text=presentation.get("complete_text"),
+                filename=presentation.get("filename"),
+                mime_type=presentation.get("mime_type"),
+                byte_size=presentation.get("byte_size"),
+            )
+        except (KeyError, TypeError, ValueError):
+            raise ServedCanvasUnavailable("bridge_refused") from None
+        preparation_nonce = response.payload.get("preparation_nonce")
+        if not isinstance(preparation_nonce, str):
+            raise ServedCanvasUnavailable("bridge_refused")
+        return result, preparation_nonce
+
+    async def confirm_bridge(self, scope, request, *, settlement, preparation=None):
+        if not isinstance(preparation, str):
+            return BridgeConfirmationResponse(request.request.request_id, "refused")
+        reserve_external = getattr(settlement, "reserve_external", None)
+        commit_external = getattr(settlement, "commit_external", None)
+        if request.approved and (
+            not callable(reserve_external) or not reserve_external()
+        ):
+            try:
+                await self._request(
+                    scope,
+                    "bridge.decision.request",
+                    {
+                        "request_id": request.request.request_id,
+                        "preparation_nonce": preparation,
+                        "approved": False,
+                    },
+                )
+            except ServedCanvasUnavailable:
+                pass
+            return BridgeConfirmationResponse(request.request.request_id, "refused")
+        response = None
+        for attempt in range(2):
+            try:
+                response = await self._request(
+                    scope,
+                    "bridge.decision.request",
+                    {
+                        "request_id": request.request.request_id,
+                        "preparation_nonce": preparation,
+                        "approved": request.approved,
+                    },
+                )
+                break
+            except ServedCanvasUnavailable:
+                if attempt:
+                    raise
+        assert response is not None
+        status = response.payload.get("status")
+        if status == "confirmed" and (
+            not callable(commit_external) or not commit_external()
+        ):
+            status = "refused"
+        if status not in {"confirmed", "cancelled", "refused"}:
+            status = "refused"
+        return BridgeConfirmationResponse(request.request.request_id, status)
 
 
 def _coerce_web_font_size(value: object, default: int) -> int:
@@ -206,6 +456,11 @@ class ChatbookWebServerMixin:
             )
         self._web_auth = WebAuthManager(web_auth_policy)
         self._web_ssl_context = web_ssl_context
+        self._served_browser_children: dict[str, str] = {}
+        self._served_canvas_gateway = CanvasGateway(
+            authority=_ServedCanvasAuthorityProxy(self)
+        )
+        self._served_canvas_launches: dict[str, tuple[CanvasGatewayScope, object]] = {}
 
     def __repr__(self) -> str:
         return (
@@ -250,8 +505,13 @@ class ChatbookWebServerMixin:
         async def web_auth_middleware(request, handler):
             return await self._web_auth_middleware(request, handler)
 
+        @web.middleware
+        async def served_canvas_middleware(request, handler):
+            return await self._served_canvas_middleware(request, handler)
+
         app = web.Application(
-            middlewares=[web_auth_middleware], client_max_size=16 * 1024
+            middlewares=[web_auth_middleware, served_canvas_middleware],
+            client_max_size=16 * 1024,
         )
         aiohttp_jinja2.setup(app, loader=jinja2.FileSystemLoader(self.templates_path))
 
@@ -263,16 +523,27 @@ class ChatbookWebServerMixin:
             ),
             web.get("/", self.handle_index, name="index"),
             web.get("/ws", self.handle_websocket, name="websocket"),
+            web.get(
+                "/canvas/api/session",
+                self.handle_served_canvas_session,
+                name="served_canvas_session",
+            ),
             web.get("/download/{key}", self.handle_download, name="download"),
             web.get(
                 "/static/js/chatbook-auth.js",
                 self.handle_chatbook_auth_js,
                 name="chatbook_auth_js",
             ),
+            web.get(
+                "/static/chatbook/{name}",
+                self.handle_served_shell_asset,
+                name="served_shell_asset",
+            ),
             web.get("/static/js/textual.js", self.handle_textual_js, name="textual_js"),
             web.static("/static", self.statics_path, show_index=False, name="static"),
         ]
         app.add_routes(routes)
+        self._served_canvas_gateway.mount_on_app(app, origin=self.public_url)
 
         app.on_startup.append(self.on_startup)
         app.on_shutdown.append(self.on_shutdown)
@@ -346,9 +617,16 @@ class ChatbookWebServerMixin:
         grant = None
         try:
             websocket = request.path == "/ws"
+            mounted_canvas = request.path.startswith("/canvas/gateway-")
             session = self._web_auth.authenticate_request(
                 facts,
-                require_csrf=request.method in {"POST", "PUT", "PATCH", "DELETE"},
+                # Mounted Canvas mutations carry their own session-scoped
+                # X-Canvas-CSRF proof. Requiring the outer token as well would
+                # force that separate credential into the nested shell.
+                require_csrf=(
+                    request.method in {"POST", "PUT", "PATCH", "DELETE"}
+                    and not mounted_canvas
+                ),
                 websocket=websocket,
             )
             request["chatbook_browser_session"] = session
@@ -381,6 +659,19 @@ class ChatbookWebServerMixin:
                 secure=self._web_auth.policy.secure_cookies,
             )
         return response
+
+    async def _served_canvas_middleware(self, request, handler):
+        """Fence every mounted Canvas URL to its exact outer browser session."""
+
+        if not request.path.startswith("/canvas/gateway-"):
+            return await handler(request)
+        session = request.get("chatbook_browser_session")
+        browser_session_id = "" if session is None else session.session_id
+        return await self._served_canvas_gateway.handle_mounted_request(
+            request,
+            browser_session_id=browser_session_id,
+            handler=handler,
+        )
 
     async def handle_login(self, request):
         from aiohttp import web
@@ -458,6 +749,9 @@ class ChatbookWebServerMixin:
         if broker is not None:
             await broker.aclose()
             self._canvas_control_broker = None
+        await self._served_canvas_gateway.aclose()
+        self._served_canvas_launches.clear()
+        self._served_browser_children.clear()
         self._web_auth.revoke_all()
         await super().on_shutdown(app)
 
@@ -496,6 +790,134 @@ class ChatbookWebServerMixin:
                 await app_service.blur()
             elif type_ == "focus":
                 await app_service.focus()
+
+    def bind_served_browser(self, browser_session_id: str, child_id: str) -> None:
+        """Bind one authenticated browser to exactly one AppService child."""
+
+        if not isinstance(browser_session_id, str) or not browser_session_id:
+            raise ValueError("browser session ID is required")
+        if not isinstance(child_id, str) or not child_id:
+            raise ValueError("child ID is required")
+        current = self._served_browser_children.get(browser_session_id)
+        if current is not None and current != child_id:
+            raise ServedCanvasUnavailable("browser_session_already_bound")
+        if any(
+            owner != browser_session_id and owned_child == child_id
+            for owner, owned_child in self._served_browser_children.items()
+        ):
+            raise ServedCanvasUnavailable("child_session_already_bound")
+        self._served_browser_children[browser_session_id] = child_id
+
+    def unbind_served_browser(self, browser_session_id: str, child_id: str) -> None:
+        """Remove a binding only when its exact child incarnation still owns it."""
+
+        if self._served_browser_children.get(browser_session_id) == child_id:
+            self._served_browser_children.pop(browser_session_id, None)
+            self._served_canvas_launches.pop(browser_session_id, None)
+            self._served_canvas_gateway.mark_browser_session_unavailable(
+                browser_session_id
+            )
+
+    async def served_canvas_state(self, browser_session_id: str) -> dict[str, object]:
+        """Return only the Canvas state owned by one exact authenticated child."""
+
+        child_id = self._served_browser_children.get(browser_session_id)
+        broker = getattr(self, "_canvas_control_broker", None)
+        if child_id is None or broker is None:
+            raise ServedCanvasUnavailable("canvas_session_unavailable")
+
+        fixture_reader = getattr(broker, "browser_state", None)
+        try:
+            if callable(fixture_reader):
+                state = await fixture_reader(child_id)
+            else:
+                response = await broker.request(
+                    child_id,
+                    "scope.snapshot.request",
+                    {},
+                    timeout=1.0,
+                )
+                payload = response.payload
+                canvas_id = payload.get("selected_canvas_id")
+                revision_id = payload.get("selected_revision_id")
+                if not isinstance(canvas_id, str) or not isinstance(revision_id, str):
+                    return {"status": "terminal_only"}
+                state = {
+                    "status": "ready",
+                    "canvas_id": canvas_id,
+                    "revision_id": revision_id,
+                    "conversation_session_id": payload["session_id"],
+                }
+        except ControlProtocolError as error:
+            if error.code == "scope_unavailable":
+                return {"status": "terminal_only"}
+            logger.debug(
+                "Served Canvas unavailable child_type={} code=control_unavailable",
+                type(error).__name__,
+            )
+            raise ServedCanvasUnavailable("canvas_session_unavailable") from None
+        except Exception as error:  # noqa: BLE001 - private transport errors stay bounded
+            logger.debug(
+                "Served Canvas unavailable child_type={} code=control_unavailable",
+                type(error).__name__,
+            )
+            raise ServedCanvasUnavailable("canvas_session_unavailable") from None
+
+        if not isinstance(state, dict):
+            raise ServedCanvasUnavailable("canvas_session_unavailable")
+        status = state.get("status")
+        if status not in {"ready", "terminal_only", "disconnected", "reconnecting"}:
+            raise ServedCanvasUnavailable("canvas_session_unavailable")
+        result = dict(state)
+        if status != "ready":
+            return result
+        canvas_id = result.get("canvas_id")
+        revision_id = result.get("revision_id")
+        if not isinstance(canvas_id, str) or not isinstance(revision_id, str):
+            raise ServedCanvasUnavailable("canvas_session_unavailable")
+        scope = CanvasGatewayScope(
+            browser_session_id=browser_session_id,
+            conversation_session_id=str(
+                result.get("conversation_session_id", browser_session_id)
+            ),
+            canvas_id=canvas_id,
+            revision_id=revision_id,
+        )
+        existing = self._served_canvas_launches.get(browser_session_id)
+        if existing is None or not self._served_canvas_gateway.has_shell_binding(
+            browser_session_id
+        ):
+            launch = await self._served_canvas_gateway.open_shell(scope)
+            self._served_canvas_launches[browser_session_id] = (scope, launch)
+        else:
+            prior_scope, launch = existing
+            if prior_scope != scope:
+                self._served_canvas_gateway.change_selection(
+                    browser_session_id=browser_session_id, scope=scope
+                )
+                self._served_canvas_launches[browser_session_id] = (scope, launch)
+        result["url"] = launch.browser_url
+        return result
+
+    async def handle_served_canvas_session(self, request):
+        """Expose bounded child-owned state to its matching authenticated browser."""
+
+        from aiohttp import web
+
+        session = request.get("chatbook_browser_session")
+        if session is None:
+            raise web.HTTPNotFound(text="Canvas unavailable")
+        try:
+            state = await self.served_canvas_state(session.session_id)
+        except ServedCanvasUnavailable:
+            state = {
+                "status": (
+                    "reconnecting"
+                    if session.session_id in self._served_browser_children
+                    else "terminal_only"
+                )
+            }
+        return web.json_response(state, headers={"Cache-Control": "no-store"})
 
     async def handle_websocket(self, request):
         """Bind one browser websocket to exactly one authenticated child."""
@@ -538,6 +960,9 @@ class ChatbookWebServerMixin:
                 debug=self.debug,
                 canvas_control_broker=broker,
             )
+            child_id = app_service.app_service_id
+            if session is not None:
+                self.bind_served_browser(session.session_id, child_id)
             await app_service.start(width, height)
             try:
                 await self._process_authenticated_messages(
@@ -558,6 +983,10 @@ class ChatbookWebServerMixin:
             if unregister is not None:
                 unregister()
             if app_service is not None:
+                session = locals().get("session")
+                child_id = getattr(app_service, "app_service_id", None)
+                if session is not None and isinstance(child_id, str):
+                    self.unbind_served_browser(session.session_id, child_id)
                 await app_service.stop()
         return websocket
 
@@ -574,27 +1003,41 @@ class ChatbookWebServerMixin:
         return urlunparse(parsed_url._replace(scheme=websocket_scheme))
 
     async def handle_index(self, request):
-        """Serve the HTML shell with Chatbook's denser terminal default."""
-        import aiohttp_jinja2
+        """Serve Chatbook's owned terminal-first, Canvas-ready browser shell."""
+        from aiohttp import web
 
         font_size = resolve_web_font_size(request.query.get("fontsize"))
-        context = {
-            "font_size": font_size,
-            "app_websocket_url": self._app_websocket_url,
-            "config": {"static": {"url": self._static_url}},
-            "application": {"name": self.title},
-        }
-        response = aiohttp_jinja2.render_template("app_index.html", request, context)
         csrf = html.escape(str(request["chatbook_csrf"]), quote=True)
-        auth_bootstrap = (
-            f'<meta name="chatbook-csrf" content="{csrf}">'
-            '<script src="/static/js/chatbook-auth.js"></script>'
+        body = (
+            _SERVED_SHELL_HTML.replace("__CHATBOOK_CSRF__", csrf)
+            .replace("__CHATBOOK_TITLE__", html.escape(self.title, quote=True))
+            .replace(
+                "__APP_WEBSOCKET_URL__",
+                html.escape(self._app_websocket_url, quote=True),
+            )
+            .replace("__FONT_SIZE__", str(font_size))
         )
-        if "<head>" not in response.text:
-            raise RuntimeError("served HTML template is missing its head element")
-        response.text = response.text.replace("<head>", f"<head>{auth_bootstrap}", 1)
-        response.headers["Cache-Control"] = "no-store"
-        return response
+        return web.Response(
+            text=body,
+            content_type="text/html",
+            charset="utf-8",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    async def handle_served_shell_asset(self, request):
+        """Serve only the two immutable, state-free owned shell assets."""
+
+        from aiohttp import web
+
+        asset = _SERVED_SHELL_ASSETS.get(request.match_info.get("name", ""))
+        if asset is None:
+            raise web.HTTPNotFound(text="Asset not found")
+        content_type, filename = asset
+        return web.Response(
+            body=_SERVED_STATIC_ROOT.joinpath(filename).read_bytes(),
+            content_type=content_type,
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
 
     async def handle_chatbook_auth_js(self, request):
         """Serve the owned, state-free browser authentication bootstrap."""
