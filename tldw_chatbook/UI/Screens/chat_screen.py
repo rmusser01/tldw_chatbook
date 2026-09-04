@@ -16740,6 +16740,8 @@ class ChatScreen(BaseAppScreen):
                 )
                 return False
 
+        if self._answer_pending_question_with_draft(draft):
+            return False
         return await self._dispatch_console_draft_send(draft, stash=stash)
 
     async def _dispatch_console_draft_send(
@@ -20773,6 +20775,55 @@ class ChatScreen(BaseAppScreen):
         self.set_task_resume_state(
             replace(self._task_resume_state, pending_question=payload)
         )
+
+    def _answer_pending_question_with_draft(self, draft: str) -> bool:
+        """PRD A8: let a composer send answer the mounted question card.
+
+        Only a MOUNTED card on the viewed session intercepts; a parked or
+        background round never touches the composer. The typed text becomes
+        ``other_text`` for every question still unanswered on the card, the
+        card's existing selections ride along, and the round resolves
+        through the controller's strict request-id match. Staged context
+        (a pending image attachment or a staged Library-evidence launch)
+        refuses interception: carrying it into a tool result is meaningless
+        and discarding it silently would destroy work the user staged.
+        Slash commands never reach this point -- the command branches of
+        ``_send_console_message_from_visible_action`` return before it.
+
+        Args:
+            draft: The composer text as sent.
+
+        Returns:
+            True when the draft answered the question and must NOT also be
+            dispatched as a turn; False to send normally.
+        """
+        text = draft.strip()
+        if not text:
+            return False
+        controller = self._console_chat_controller
+        if controller is None:
+            return False
+        card = next((c for c in self.query("#chat-question-card") if c.display), None)
+        if card is None:
+            return False
+        request_id = getattr(card, "_request_id", None)
+        if not request_id:
+            return False
+        if self._console_pending_image_attachment() is not None:
+            return False
+        if self._retrieval._pending_launch() is not None:
+            return False
+        answers = card.collect_answers()
+        for answer in answers:
+            if answer.get("unanswered") or (
+                not answer.get("selected") and answer.get("other_text") is None
+            ):
+                answer["other_text"] = text
+                answer["unanswered"] = False
+        card.set_questions(None)
+        self._clear_console_composer_draft()
+        controller.resolve_pending_question(answers, request_id=request_id)
+        return True
 
     def _mount_console_task_panel(self):
         """Mount the task panel right after the Console task cards.
