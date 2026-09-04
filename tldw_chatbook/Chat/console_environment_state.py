@@ -360,3 +360,69 @@ def failing_checks_text(pr: PrEnvState) -> str:
         suffix = f" — {check.details_url}" if check.details_url else ""
         lines.append(f"- {check.name}{suffix}")
     return "\n".join(lines)
+
+
+TASKS_ROW_HEAD = "task-head"
+TASKS_ROW_ADD = "task-add"
+TASKS_ENTRY_ROW_PREFIX = "task-entry-"
+MAX_TASK_LIST_ROWS = 30
+
+_STATUS_ROW_CLASS = {"In Progress": "running", "Done": "done"}
+
+
+def project_tasks_section(
+    snapshot: EnvironmentSnapshot,
+    expanded: frozenset[str],
+) -> ConsoleInspectorSectionState:
+    tasks = snapshot.tasks
+    if tasks.availability is not EnvSourceAvailability.OK:
+        return ConsoleInspectorSectionState(rows=(), summary="")
+    if tasks.scanning and not tasks.entries and tasks.branch_task is None:
+        return ConsoleInspectorSectionState(
+            rows=(InspectorSectionRow(row_id="task-scanning",
+                                      primary_text="Scanning backlog…"),),
+            summary="",
+        )
+    rows: list[InspectorSectionRow] = []
+    if tasks.branch_task is not None:
+        bt = tasks.branch_task
+        ac = f"{bt.ac_done}/{bt.ac_total} ACs · " if bt.ac_total else ""
+        rows.append(InspectorSectionRow(
+            row_id=TASKS_ROW_HEAD,
+            primary_text=f"task-{bt.task_id} · {bt.status}",
+            secondary_text=f"{ac}{bt.title}",
+            status=_STATUS_ROW_CLASS.get(bt.status, ""),
+            clickable=True,
+        ))
+    else:
+        rows.append(InspectorSectionRow(
+            row_id=TASKS_ROW_HEAD,
+            primary_text=f"{tasks.in_progress} in progress · {tasks.todo} to do",
+            clickable=True,
+        ))
+    if TASKS_ROW_HEAD in expanded:
+        ordered = sorted(
+            tasks.entries,
+            key=lambda e: (0 if e.status == "In Progress" else 1, e.task_id),
+        )
+        for index, entry in enumerate(ordered[:MAX_TASK_LIST_ROWS]):
+            rows.append(InspectorSectionRow(
+                row_id=f"{TASKS_ENTRY_ROW_PREFIX}{index}",
+                primary_text=f"task-{entry.task_id} · {entry.title}",
+                secondary_text=entry.status,
+                status=_STATUS_ROW_CLASS.get(entry.status, ""),
+            ))
+        if len(tasks.entries) > MAX_TASK_LIST_ROWS:
+            rows.append(InspectorSectionRow(
+                row_id="task-entry-more",
+                primary_text=f"… {len(tasks.entries) - MAX_TASK_LIST_ROWS} more",
+            ))
+        if tasks.branch_task is not None:
+            rows.append(InspectorSectionRow(
+                row_id=TASKS_ROW_ADD, primary_text="Add task to chat", clickable=True,
+            ))
+    summary = (
+        f"task-{tasks.branch_task.task_id} · {tasks.branch_task.status}"
+        if tasks.branch_task else f"{tasks.in_progress} doing · {tasks.todo} todo"
+    )
+    return ConsoleInspectorSectionState(rows=tuple(rows), summary=summary)

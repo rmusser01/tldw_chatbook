@@ -175,3 +175,63 @@ def test_composer_payload_builders():
     assert "PR #7" in pr_summary_text(pr) and "https://x/pull/7" in pr_summary_text(pr)
     fix = failing_checks_text(pr)
     assert "ci" in fix and "https://ci/1" in fix
+
+
+from tldw_chatbook.Chat.console_environment_state import (
+    BacklogTaskEntry,
+    BranchTaskState,
+    TASKS_ROW_ADD,
+    TASKS_ROW_HEAD,
+    project_tasks_section,
+)
+
+
+def _tasks_state(**kw) -> TasksEnvState:
+    base = dict(
+        availability=EnvSourceAvailability.OK,
+        branch_task=BranchTaskState(task_id="3401", title="Video gen foundation",
+                                    status="In Progress", ac_done=3, ac_total=6,
+                                    path="backlog/tasks/task-3401 - Video.md"),
+        in_progress=3, todo=12,
+        entries=(BacklogTaskEntry("3401", "Video gen foundation", "In Progress"),
+                 BacklogTaskEntry("25704", "Render-path sweep", "To Do")),
+    )
+    base.update(kw)
+    return TasksEnvState(**base)
+
+
+def test_tasks_card_absent_without_backlog_dir():
+    state = project_tasks_section(EnvironmentSnapshot(), frozenset())
+    assert state.rows == ()
+
+
+def test_branch_task_headline_with_ac_progress():
+    snapshot = EnvironmentSnapshot(tasks=_tasks_state())
+    head = project_tasks_section(snapshot, frozenset()).rows[0]
+    assert head.row_id == TASKS_ROW_HEAD
+    assert head.primary_text == "task-3401 · In Progress"
+    assert head.secondary_text == "3/6 ACs · Video gen foundation"
+    assert head.clickable
+
+
+def test_counts_headline_when_no_branch_task():
+    snapshot = EnvironmentSnapshot(tasks=_tasks_state(branch_task=None))
+    head = project_tasks_section(snapshot, frozenset()).rows[0]
+    assert head.primary_text == "3 in progress · 12 to do"
+
+
+def test_expansion_lists_entries_in_progress_first_and_add_action():
+    snapshot = EnvironmentSnapshot(tasks=_tasks_state())
+    rows = project_tasks_section(snapshot, frozenset({TASKS_ROW_HEAD})).rows
+    ids = [r.row_id for r in rows]
+    assert TASKS_ROW_ADD in ids
+    entry_rows = [r for r in rows if r.row_id.startswith("task-entry-")]
+    assert entry_rows[0].primary_text.startswith("task-3401")
+    assert entry_rows[0].status == "running"
+
+
+def test_scanning_placeholder():
+    snapshot = EnvironmentSnapshot(
+        tasks=TasksEnvState(availability=EnvSourceAvailability.OK, scanning=True))
+    rows = project_tasks_section(snapshot, frozenset()).rows
+    assert rows[0].primary_text == "Scanning backlog…"
