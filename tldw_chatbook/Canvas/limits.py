@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
+import hmac
 import math
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TypeAlias
 
@@ -90,6 +92,42 @@ def validate_utf8_text(value: str, *, limit: int, field_name: str) -> int:
     if byte_count > limit:
         raise CanvasLimitError(f"{field_name} exceeds {limit} UTF-8 bytes")
     return byte_count
+
+
+def validate_utf8_text_parts(
+    values: Iterable[str], *, limit: int, field_name: str
+) -> int:
+    """Validate the aggregate strict UTF-8 size of untrusted text values."""
+    _validate_non_negative_integer(limit, field_name=f"{field_name} limit")
+    if limit > MAX_WIRE_INTEGER:
+        raise CanvasLimitError(f"{field_name} limit exceeds the supported integer range")
+
+    total = 0
+    for value in values:
+        total += utf8_byte_length(value)
+        if total > MAX_WIRE_INTEGER:
+            raise CanvasLimitError(f"{field_name} exceeds the supported integer range")
+        if total > limit:
+            raise CanvasLimitError(f"{field_name} exceeds {limit} UTF-8 bytes")
+    return total
+
+
+def sha256_utf8(value: str) -> str:
+    """Return the lowercase SHA-256 identity for one strict UTF-8 text value."""
+    if not isinstance(value, str):
+        raise CanvasLimitError("value must be a string")
+    try:
+        encoded = value.encode("utf-8", errors="strict")
+    except UnicodeEncodeError as exc:
+        raise CanvasLimitError("value must contain valid Unicode") from exc
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def verify_sha256_utf8(value: str, digest: str) -> bool:
+    """Return whether *digest* is the exact lowercase SHA-256 of UTF-8 *value*."""
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise CanvasLimitError("SHA-256 digest must be 64 lowercase hexadecimal characters")
+    return hmac.compare_digest(sha256_utf8(value), digest)
 
 
 def validate_count(count: int, *, limit: int, field_name: str) -> int:

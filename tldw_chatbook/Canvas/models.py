@@ -17,7 +17,10 @@ from .limits import (
     validate_json_value,
     validate_opaque_identifier,
     validate_unique_identifiers,
+    sha256_utf8,
+    validate_utf8_text_parts,
     validate_utf8_text,
+    verify_sha256_utf8,
 )
 
 
@@ -93,11 +96,40 @@ class RenderNode:
             raise CanvasLimitError("node children must be an immutable tuple of render nodes")
 
 
+@dataclass(frozen=True, slots=True, init=False)
+class CanvasSourceIdentity:
+    """A factory-created, lossless identity for source retained outside the plan."""
+
+    source_bytes: int
+    sha256: str
+
+    @classmethod
+    def from_source(cls, source: str) -> "CanvasSourceIdentity":
+        """Create the only valid identity for exact UTF-8 Canvas source text."""
+        identity = object.__new__(cls)
+        object.__setattr__(
+            identity,
+            "source_bytes",
+            validate_utf8_text(source, limit=CanvasLimits().html_bytes, field_name="HTML source"),
+        )
+        object.__setattr__(identity, "sha256", sha256_utf8(source))
+        return identity
+
+    def verify_source(self, source: str) -> None:
+        """Fail closed unless *source* exactly recreates this byte/digest identity."""
+        source_bytes = validate_utf8_text(
+            source, limit=CanvasLimits().html_bytes, field_name="HTML source"
+        )
+        if source_bytes != self.source_bytes or not verify_sha256_utf8(source, self.sha256):
+            raise CanvasLimitError("source identity does not match source")
+
+
 @dataclass(frozen=True, slots=True)
 class CanvasRenderPlan:
     """A closed, derived render plan for exactly one supported runtime profile."""
 
     runtime_profile: RuntimeProfile
+    source_identity: CanvasSourceIdentity
     root: RenderNode
     assets: tuple[RenderAsset, ...] = ()
     css_rules: tuple[str, ...] = ()
@@ -107,6 +139,8 @@ class CanvasRenderPlan:
     def __post_init__(self) -> None:
         if self.runtime_profile != "canvas-v1":
             raise CanvasLimitError("unsupported Canvas runtime profile")
+        if not isinstance(self.source_identity, CanvasSourceIdentity):
+            raise CanvasLimitError("render plan source identity must be a Canvas source identity")
         if not isinstance(self.root, RenderNode):
             raise CanvasLimitError("render plan root must be a render node")
         _require_tuple_of(self.assets, RenderAsset, "render plan assets")
@@ -126,10 +160,22 @@ class CanvasRenderPlan:
             aggregate_limit=limits.aggregate_asset_bytes,
         )
         validate_count(len(self.css_rules), limit=limits.css_rules, field_name="CSS rules")
-        validate_utf8_text("".join(self.scripts), limit=limits.script_bytes, field_name="script")
-        validate_count(len(_all_nodes(self.root)), limit=limits.dom_nodes, field_name="DOM nodes")
+        validate_utf8_text_parts(self.scripts, limit=limits.script_bytes, field_name="script")
+        nodes = _all_nodes(self.root)
+        validate_count(len(nodes), limit=limits.dom_nodes, field_name="DOM nodes")
         validate_unique_identifiers(
-            tuple(node.node_id for node in _all_nodes(self.root)), field_name="node IDs"
+            tuple(node.node_id for node in nodes), field_name="node IDs"
+        )
+        validate_utf8_text_parts(
+            _render_plan_text_values(
+                nodes=nodes,
+                assets=self.assets,
+                css_rules=self.css_rules,
+                scripts=self.scripts,
+                compatibility_issues=self.compatibility_issues,
+            ),
+            limit=limits.html_bytes,
+            field_name="render plan text",
         )
 
 
@@ -241,6 +287,34 @@ def _all_nodes(root: RenderNode) -> tuple[RenderNode, ...]:
         nodes.append(node)
         stack.extend(reversed(node.children))
     return tuple(nodes)
+
+
+def _render_plan_text_values(
+    *,
+    nodes: tuple[RenderNode, ...],
+    assets: tuple[RenderAsset, ...],
+    css_rules: tuple[str, ...],
+    scripts: tuple[str, ...],
+    compatibility_issues: tuple[CanvasCompatibilityIssue, ...],
+):
+    for node in nodes:
+        yield node.node_id
+        yield node.tag
+        for name, value in node.attributes:
+            yield name
+            yield value
+        if node.text is not None:
+            yield node.text
+    for asset in assets:
+        yield asset.asset_id
+        yield asset.mime_type
+    yield from css_rules
+    yield from scripts
+    for issue in compatibility_issues:
+        yield issue.code
+        yield issue.message
+        if issue.location is not None:
+            yield issue.location
 
 
 def _require_tuple_of(values: object, item_type: type[object], field_name: str) -> None:

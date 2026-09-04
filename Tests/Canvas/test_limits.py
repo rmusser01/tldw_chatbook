@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 
 import pytest
 
@@ -23,6 +24,7 @@ from tldw_chatbook.Canvas.models import (
     CanvasCompatibilityIssue,
     CanvasRenderPlan,
     CanvasRuntimeFailure,
+    CanvasSourceIdentity,
     RenderAsset,
     RenderNode,
 )
@@ -158,12 +160,56 @@ def test_duplicate_opaque_identifiers_fail_closed() -> None:
         validate_unique_identifiers(("node-1", "node-1"), field_name="node IDs")
 
 
+def test_source_identity_preserves_exact_utf8_size_and_full_lowercase_sha256() -> None:
+    source = "<!doctype html><main>é</main>"
+
+    identity = CanvasSourceIdentity.from_source(source)
+
+    assert identity.source_bytes == len(source.encode("utf-8"))
+    assert identity.sha256 == hashlib.sha256(source.encode("utf-8")).hexdigest()
+    assert identity.sha256 == identity.sha256.lower()
+    assert len(identity.sha256) == 64
+    identity.verify_source(source)
+
+    with pytest.raises(CanvasLimitError, match="does not match source"):
+        identity.verify_source("<!doctype html><main>different</main>")
+
+    with pytest.raises(TypeError):
+        CanvasSourceIdentity(source_bytes=identity.source_bytes, sha256=identity.sha256)  # type: ignore[call-arg]
+
+
+def test_render_plan_rejects_aggregate_text_over_html_ceiling() -> None:
+    source_identity = CanvasSourceIdentity.from_source("<main></main>")
+    child_text = "x" * (300 * 1024)
+    root = RenderNode(
+        node_id="root",
+        tag="main",
+        children=(
+            RenderNode(node_id="first", tag="p", text=child_text),
+            RenderNode(node_id="second", tag="p", text=child_text),
+        ),
+    )
+
+    with pytest.raises(CanvasLimitError, match="render plan text exceeds 524288 UTF-8 bytes"):
+        CanvasRenderPlan(runtime_profile="canvas-v1", source_identity=source_identity, root=root)
+
+
+def test_render_plan_aggregate_text_accepts_the_exact_html_ceiling() -> None:
+    source_identity = CanvasSourceIdentity.from_source("<main></main>")
+    root = RenderNode(node_id="r", tag="x", text="x" * (512 * 1024 - 2))
+
+    plan = CanvasRenderPlan(runtime_profile="canvas-v1", source_identity=source_identity, root=root)
+
+    assert plan.source_identity == source_identity
+
+
 def test_canvas_contract_records_are_immutable_slotted_and_validate_wire_messages() -> None:
     issue = CanvasCompatibilityIssue(code="unsupported-tag", message="Unsupported tag")
     node = RenderNode(node_id="node-1", tag="main")
     asset = RenderAsset(asset_id="asset-1", mime_type="text/plain", data=b"x")
     plan = CanvasRenderPlan(
         runtime_profile="canvas-v1",
+        source_identity=CanvasSourceIdentity.from_source("<main></main>"),
         root=node,
         assets=(asset,),
         compatibility_issues=(issue,),
