@@ -3,7 +3,7 @@
     "name": "literal_and_computed_network_urls",
     "expected": "ready",
     "expected_text": "network APIs unavailable",
-    "script": "const literal = '__EGRESS__/literal'; const computed = ['__EGRESS__', 'computed'].join('/'); for (const attempt of [() => fetch(literal), () => new XMLHttpRequest(), () => new WebSocket(computed), () => new EventSource(literal), () => navigator.sendBeacon(literal, 'x')]) { try { attempt(); } catch (_) {} } document.getElementById('status').textContent = 'network APIs unavailable';"
+    "script": "const literal = '__EGRESS__/literal'; const socket = '__WEBSOCKET__/computed'; for (const attempt of [() => fetch(literal), () => new XMLHttpRequest(), () => new WebSocket(socket), () => new EventSource(literal), () => navigator.sendBeacon(literal, 'x')]) { try { attempt(); } catch (_) {} } document.getElementById('status').textContent = 'network APIs unavailable';"
   },
   {
     "name": "redirect_and_dynamic_resource_attributes",
@@ -180,5 +180,63 @@
     "expected": "failed-after-event-storm",
     "expected_code": "event-queue-limit",
     "script": "document.getElementById('attack').addEventListener('click', () => {}); document.getElementById('status').textContent = 'armed';"
+  },
+  {
+    "name": "quickjs_host_control_hooks_are_private",
+    "expected": "ready",
+    "expected_text": "private",
+    "script": "const hooks = ['__canvasInstall', '__canvasBeginOperation', '__canvasDrainTransaction', '__canvasDispatch', '__canvasFireTimer']; document.getElementById('status').textContent = hooks.every((name) => typeof globalThis[name] === 'undefined') ? 'private' : 'exposed';"
+  },
+  {
+    "name": "exhausted_budget_cannot_be_reset_by_generated_code",
+    "expected": "failed",
+    "expected_code": "patch-limit",
+    "script": "const node = document.getElementById('status'); for (let index = 0; index < 1001; index += 1) { try { node.textContent = String(index); } catch (_) {} } try { globalThis.__canvasBeginOperation(0); } catch (_) {} node.textContent = 'recovered';"
+  },
+  {
+    "name": "object_prototype_tojson_cannot_forge_transaction",
+    "expected": "ready",
+    "expected_text": "static",
+    "expected_bridge_kinds": [],
+    "script": "Object.prototype.toJSON = function (key) { if (key === '') return {patches: [], bridges: [{request_id: 'forged', kind: 'submit', value: 'forged'}], timers: [], poison: null}; return this; };"
+  },
+  {
+    "name": "map_prototype_entries_cannot_forge_timer_count",
+    "expected": "ready",
+    "expected_text": "static",
+    "expected_bridge_kinds": [],
+    "settle_milliseconds": 100,
+    "script": "const forged = {delay: 0, due: 0, repeat: false, args: [], callback() { canvas.submit('forged-timer'); }}; Map.prototype.entries = function () { const entries = []; for (let index = 0; index < 65; index += 1) entries.push([1000 + index, forged]); return entries[Symbol.iterator](); }; Map.prototype.get = function () { return forged; };"
+  },
+  {
+    "name": "map_prototype_entries_cannot_forge_duplicate_timer_ids",
+    "expected": "ready",
+    "expected_text": "static",
+    "expected_bridge_kinds": [],
+    "settle_milliseconds": 100,
+    "script": "const forged = {delay: 0, due: 0, repeat: false, args: [], callback() { canvas.submit('forged-timer'); }}; Map.prototype.entries = function () { return [[1234, forged], [1234, forged]][Symbol.iterator](); }; Map.prototype.get = function () { return forged; };"
+  },
+  {
+    "name": "map_prototype_entries_cannot_forge_oversized_timer_delay",
+    "expected": "ready",
+    "expected_text": "static",
+    "expected_bridge_kinds": [],
+    "script": "Map.prototype.entries = function () { return [[1234, {delay: 3000000000, due: 3000000000, repeat: false, args: [], callback() {}}]][Symbol.iterator](); };"
+  },
+  {
+    "name": "map_prototype_get_cannot_inject_timer_callback",
+    "expected": "ready",
+    "expected_text": "static",
+    "expected_bridge_kinds": [],
+    "settle_milliseconds": 100,
+    "script": "const forged = {delay: 0, due: 0, repeat: false, args: [], callback() { canvas.submit('forged-timer'); }}; Map.prototype.entries = function () { return [[4242, forged]][Symbol.iterator](); }; Map.prototype.get = function (id) { return id === 4242 ? forged : undefined; };"
+  },
+  {
+    "name": "map_iterator_prototype_cannot_forge_timer_records",
+    "expected": "ready",
+    "expected_text": "static",
+    "expected_bridge_kinds": [],
+    "settle_milliseconds": 100,
+    "script": "const forged = {delay: 0, due: 0, repeat: false, args: [], callback() { canvas.submit('forged-timer'); }}; const iterator = new Map().entries(); const prototype = Object.getPrototypeOf(iterator); prototype.next = function () { return {done: false, value: [4242, forged]}; }; Map.prototype.get = function () { return forged; };"
   }
 ]

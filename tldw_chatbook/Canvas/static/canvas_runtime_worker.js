@@ -33,6 +33,7 @@ const encoder = new TextEncoder();
 let quickJS = null;
 let runtime = null;
 let context = null;
+let virtualControls = null;
 let plan = null;
 let prepared = false;
 let executed = false;
@@ -130,6 +131,45 @@ function dumpEval(source, filename) {
   return value;
 }
 
+function handleEval(source, filename) {
+  interrupted = false;
+  const result = context.evalCode(source, filename);
+  if (result.error) {
+    const error = context.dump(result.error);
+    result.error.dispose();
+    const wrapped = new Error("QuickJS evaluation failed");
+    wrapped.quickJSError = error;
+    wrapped.interrupted = interrupted;
+    throw wrapped;
+  }
+  return result.value;
+}
+
+function callVirtualControl(name, values = []) {
+  const callable = context.getProp(virtualControls, name);
+  const arguments_ = values.map((value) => (
+    typeof value === "number" ? context.newNumber(value) : context.newString(value)
+  ));
+  try {
+    interrupted = false;
+    const result = context.callFunction(callable, context.undefined, arguments_);
+    if (result.error) {
+      const error = context.dump(result.error);
+      result.error.dispose();
+      const wrapped = new Error("QuickJS control call failed");
+      wrapped.quickJSError = error;
+      wrapped.interrupted = interrupted;
+      throw wrapped;
+    }
+    const value = context.dump(result.value);
+    result.value.dispose();
+    return value;
+  } finally {
+    for (const argument of arguments_) argument.dispose();
+    callable.dispose();
+  }
+}
+
 function executeJobs() {
   let count = 0;
   while (runtime.hasPendingJob()) {
@@ -166,11 +206,11 @@ function failureCode(error) {
 
 function beginOperation(milliseconds) {
   deadline = performance.now() + milliseconds;
-  dumpEval(`globalThis.__canvasBeginOperation(${JSON.stringify(performance.now())});`, "canvas-host-begin.js");
+  callVirtualControl("beginOperation", [performance.now()]);
 }
 
 function drainTransaction() {
-  const encoded = dumpEval("globalThis.__canvasDrainTransaction();", "canvas-host-drain.js");
+  const encoded = callVirtualControl("drainTransaction");
   if (typeof encoded !== "string" || encoder.encode(encoded).byteLength > LIMITS.hostMessageBytes) {
     const error = new Error("QuickJS transaction message exceeded its limit");
     error.limitCode = "patch-limit";
@@ -234,15 +274,19 @@ function enforceBridgeRate(bridgeCount) {
 }
 
 function syncTimers(records) {
+  if (!Array.isArray(records) || records.length > LIMITS.timers) {
+    throw new Error("QuickJS timer record count was invalid");
+  }
   const active = new Set();
   for (const record of records) {
     if (
       !ownRecord(record, ["id", "delay"]) || !Number.isSafeInteger(record.id) ||
-      record.id <= 0 || !Number.isFinite(record.delay) || record.delay < 0
+      record.id <= 0 || !Number.isFinite(record.delay) || record.delay < 0 ||
+      record.delay > 2_147_483_647 || active.has(record.id)
     ) throw new Error("QuickJS timer record was invalid");
     active.add(record.id);
     if (!nativeTimers.has(record.id)) {
-      const handle = setTimeout(() => fireTimer(record.id), Math.min(record.delay, 2_147_483_647));
+      const handle = setTimeout(() => fireTimer(record.id), record.delay);
       nativeTimers.set(record.id, handle);
     }
   }
@@ -291,7 +335,7 @@ function validateEvent(value) {
 
 function runEvent(operationId, event) {
   beginOperation(LIMITS.eventMilliseconds);
-  dumpEval(`globalThis.__canvasDispatch(${JSON.stringify(event)});`, "canvas-host-event.js");
+  callVirtualControl("dispatch", [JSON.stringify(event)]);
   executeJobs();
   postTransaction(operationId, "event", drainTransaction());
 }
@@ -314,10 +358,7 @@ function fireTimer(identifier) {
   try {
     recordTimerFire();
     beginOperation(LIMITS.eventMilliseconds);
-    dumpEval(
-      `globalThis.__canvasFireTimer(${JSON.stringify(identifier)}, ${JSON.stringify(performance.now())});`,
-      "canvas-host-timer.js",
-    );
+    callVirtualControl("fireTimer", [identifier, performance.now()]);
     executeJobs();
     postTransaction(internalOperation, "timer", drainTransaction());
   } catch (error) {
@@ -387,10 +428,52 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
   let nextBridge = 1;
   let listenerCount = 0;
   let logBytes = 0;
-  const state = {patches: [], bridges: [], poison: null, now: 0};
   const safeJsonParse = JSON.parse.bind(JSON);
   const safeJsonStringify = JSON.stringify.bind(JSON);
-  const safeObjectValues = Object.values.bind(Object);
+  const safeNumber = Number;
+  const safeNumberIsFinite = Number.isFinite.bind(Number);
+  const safeMathFloor = Math.floor.bind(Math);
+  const safeMathMax = Math.max.bind(Math);
+  const safeMathMin = Math.min.bind(Math);
+  const safeReflectApply = Reflect.apply;
+  const safeArrayIsArray = Array.isArray;
+  const safeArrayPushMethod = Array.prototype.push;
+  const safeArrayPopMethod = Array.prototype.pop;
+  const safeArrayIndexOfMethod = Array.prototype.indexOf;
+  const safeMapForEachMethod = Map.prototype.forEach;
+  const safeMapGetMethod = Map.prototype.get;
+  const safeMapSetMethod = Map.prototype.set;
+  const safeMapDeleteMethod = Map.prototype.delete;
+  const safeMapSizeGetter = Object.getOwnPropertyDescriptor(Map.prototype, "size").get;
+  const safeObjectCreate = Object.create;
+  const safeObjectKeys = Object.keys.bind(Object);
+  const safeObjectSetPrototypeOf = Object.setPrototypeOf;
+
+  function apply(method, receiver, arguments_ = []) {
+    return safeReflectApply(method, receiver, arguments_);
+  }
+  function push(list, value) { apply(safeArrayPushMethod, list, [value]); }
+  function pop(list) { return apply(safeArrayPopMethod, list); }
+  function listIncludes(list, value) {
+    return apply(safeArrayIndexOfMethod, list, [value]) !== -1;
+  }
+  function makeList() {
+    const list = [];
+    safeObjectSetPrototypeOf(list, null);
+    return list;
+  }
+  function makeRecord() { return safeObjectCreate(null); }
+  function mapForEach(map, callback) { apply(safeMapForEachMethod, map, [callback]); }
+  function mapGet(map, key) { return apply(safeMapGetMethod, map, [key]); }
+  function mapSet(map, key, value) { apply(safeMapSetMethod, map, [key, value]); }
+  function mapDelete(map, key) { apply(safeMapDeleteMethod, map, [key]); }
+  function mapSize(map) { return apply(safeMapSizeGetter, map); }
+
+  const state = makeRecord();
+  state.patches = makeList();
+  state.bridges = makeList();
+  state.poison = null;
+  state.now = 0;
 
   function poison(code) {
     if (state.poison === null) state.poison = code;
@@ -409,21 +492,36 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
   }
   function emit(patch) {
     if (state.patches.length >= MAX.patches) poison("patch-limit");
-    state.patches.push(patch);
+    push(state.patches, patch);
   }
-  function validateJson(value, byteLimit) {
-    let encoded;
-    try { encoded = safeJsonStringify(value); } catch (_) { throw new TypeError("Canvas bridge value must be JSON-compatible"); }
-    if (encoded === undefined || utf8Length(encoded) > byteLimit) throw new RangeError("Canvas bridge value exceeds its byte limit");
-    const cloned = safeJsonParse(encoded);
-    const stack = [{value: cloned, depth: 0}];
-    while (stack.length) {
-      const item = stack.pop();
-      if (item.depth > MAX.jsonDepth) throw new RangeError("Canvas bridge value exceeds its depth limit");
-      if (item.value && typeof item.value === "object") {
-        for (const child of safeObjectValues(item.value)) stack.push({value: child, depth: item.depth + 1});
+  function cloneJson(value, depth = 0, seen = makeList(), maxDepth = MAX.jsonDepth) {
+    if (depth > maxDepth) throw new RangeError("Canvas bridge value exceeds its depth limit");
+    if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+    if (typeof value === "number" && safeNumberIsFinite(value)) return value;
+    if (!value || typeof value !== "object" || listIncludes(seen, value)) {
+      throw new TypeError("Canvas bridge value must be JSON-compatible");
+    }
+    push(seen, value);
+    const cloned = safeArrayIsArray(value) ? makeList() : makeRecord();
+    if (safeArrayIsArray(value)) {
+      for (let index = 0; index < value.length; index += 1) {
+        push(cloned, cloneJson(value[index], depth + 1, seen, maxDepth));
+      }
+    } else {
+      const keys = safeObjectKeys(value);
+      for (let index = 0; index < keys.length; index += 1) {
+        const key = keys[index];
+        cloned[key] = cloneJson(value[key], depth + 1, seen, maxDepth);
       }
     }
+    pop(seen);
+    return cloned;
+  }
+  function validateJson(value, byteLimit) {
+    const cloned = cloneJson(value);
+    let encoded;
+    try { encoded = safeJsonStringify(cloned); } catch (_) { throw new TypeError("Canvas bridge value must be JSON-compatible"); }
+    if (encoded === undefined || utf8Length(encoded) > byteLimit) throw new RangeError("Canvas bridge value exceeds its byte limit");
     return cloned;
   }
   function allowedAttribute(node, name) {
@@ -657,16 +755,22 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
 
   function schedule(callback, delay, repeat, args) {
     if (typeof callback !== "function") throw new TypeError("Timer callback must be a function");
-    if (timers.size >= MAX.timers) poison("timer-limit");
-    delay = Number(delay); if (!Number.isFinite(delay) || delay < 0) delay = 0;
-    delay = Math.min(Math.floor(delay), 2147483647);
-    const id = nextTimer++; timers.set(id, {callback, args, delay, due: state.now + delay, repeat}); return id;
+    if (mapSize(timers) >= MAX.timers) poison("timer-limit");
+    delay = safeNumber(delay); if (!safeNumberIsFinite(delay) || delay < 0) delay = 0;
+    delay = safeMathMin(safeMathFloor(delay), 2147483647);
+    const id = nextTimer++;
+    mapSet(timers, id, {callback, args, delay, due: state.now + delay, repeat});
+    return id;
   }
-  function cancelTimer(id) { timers.delete(Number(id)); }
+  function cancelTimer(id) { mapDelete(timers, safeNumber(id)); }
   function bridge(kind, value) {
     if (state.bridges.length >= MAX.bridges) poison("bridge-limit");
     const limit = kind === "submit" ? MAX.submitBytes : MAX.downloadBytes;
-    state.bridges.push({request_id: "bridge-" + nextBridge++, kind, value: validateJson(value, limit)});
+    const record = makeRecord();
+    record.request_id = "bridge-" + nextBridge++;
+    record.kind = kind;
+    record.value = validateJson(value, limit);
+    push(state.bridges, record);
   }
   function log(...values) {
     if (logs.length >= MAX.consoleEntries) return;
@@ -674,33 +778,6 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
     const bytes = utf8Length(text); if (logBytes + bytes > MAX.consoleBytes) return;
     logBytes += bytes; logs.push(text);
   }
-
-  Object.defineProperties(globalThis, {
-    __canvasInstall: {value: (record) => {
-      root = installNode(record, HTML);
-      body = [...nodes.values()].find((node) => node.localName === "body") || root;
-    }, writable: false, configurable: false},
-    __canvasBeginOperation: {value: (now) => {
-      state.patches = []; state.bridges = []; state.poison = null; state.now = Number(now);
-    }, writable: false, configurable: false},
-    __canvasDrainTransaction: {value: () => safeJsonStringify({
-      patches: state.patches,
-      bridges: state.bridges,
-      timers: [...timers.entries()].map(([id, timer]) => ({id, delay: Math.max(0, timer.due - state.now)})),
-      poison: state.poison,
-    }), writable: false, configurable: false},
-    __canvasDispatch: {value: (record) => {
-      const target = nodes.get(record.target_id); if (!target) throw new Error("Unknown event target");
-      if (record.value !== null) target.__value = record.value;
-      if (record.checked !== null) target.__checked = record.checked;
-      target.dispatchEvent(new VirtualEvent(record.type, {key: record.key}));
-    }, writable: false, configurable: false},
-    __canvasFireTimer: {value: (id, now) => {
-      state.now = Number(now); const timer = timers.get(Number(id)); if (!timer) return;
-      if (timer.repeat) timer.due = state.now + timer.delay; else timers.delete(Number(id));
-      timer.callback(...timer.args);
-    }, writable: false, configurable: false},
-  });
 
   Object.defineProperties(globalThis, {
     document: {value: new VirtualDocument(), writable: false, configurable: false},
@@ -715,6 +792,49 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
   for (const name of ["window", "parent", "top", "self", "location", "navigator", "fetch", "XMLHttpRequest", "WebSocket", "EventSource", "Worker", "SharedWorker", "importScripts", "localStorage", "sessionStorage", "indexedDB", "caches", "cookieStore", "FileSystemHandle", "showOpenFilePicker", "SharedArrayBuffer", "Atomics", "WebAssembly", "open", "postMessage", "alert", "confirm", "prompt", "print", "Deno", "Bun", "process", "require"]) {
     Object.defineProperty(globalThis, name, {value: undefined, writable: false, configurable: false});
   }
+
+  const controls = makeRecord();
+  controls.install = (encoded) => {
+    root = installNode(safeJsonParse(encoded), HTML);
+    body = [...nodes.values()].find((node) => node.localName === "body") || root;
+  };
+  controls.beginOperation = (now) => {
+    state.patches = makeList();
+    state.bridges = makeList();
+    state.poison = null;
+    state.now = safeNumber(now);
+  };
+  controls.drainTransaction = () => {
+    const timerRecords = makeList();
+    mapForEach(timers, (timer, id) => {
+      const record = makeRecord();
+      record.id = id;
+      record.delay = safeMathMax(0, timer.due - state.now);
+      push(timerRecords, record);
+    });
+    const transaction = makeRecord();
+    transaction.patches = cloneJson(state.patches, 0, makeList(), 64);
+    transaction.bridges = cloneJson(state.bridges, 0, makeList(), 64);
+    transaction.timers = timerRecords;
+    transaction.poison = state.poison;
+    return safeJsonStringify(transaction);
+  };
+  controls.dispatch = (encoded) => {
+    const record = safeJsonParse(encoded);
+    const target = nodes.get(record.target_id); if (!target) throw new Error("Unknown event target");
+    if (record.value !== null) target.__value = record.value;
+    if (record.checked !== null) target.__checked = record.checked;
+    target.dispatchEvent(new VirtualEvent(record.type, {key: record.key}));
+  };
+  controls.fireTimer = (id, now) => {
+    state.now = safeNumber(now);
+    const timer = mapGet(timers, safeNumber(id));
+    if (!timer) return;
+    if (timer.repeat) timer.due = state.now + timer.delay;
+    else mapDelete(timers, safeNumber(id));
+    timer.callback(...timer.args);
+  };
+  return Object.freeze(controls);
 })();
 `;
 
@@ -733,8 +853,13 @@ async function prepare(value) {
   runtime.removeModuleLoader();
   context = runtime.newContext();
   deadline = performance.now() + LIMITS.startupMilliseconds;
-  dumpEval(VIRTUAL_RUNTIME_SOURCE, "canvas-trusted-bootstrap.js");
-  dumpEval(`globalThis.__canvasInstall(${JSON.stringify(plan.root)});`, "canvas-trusted-plan.js");
+  virtualControls = handleEval(VIRTUAL_RUNTIME_SOURCE, "canvas-trusted-bootstrap.js");
+  if (context.typeof(virtualControls) !== "object") {
+    virtualControls.dispose();
+    virtualControls = null;
+    throw new Error("QuickJS virtual controls were invalid");
+  }
+  callVirtualControl("install", [JSON.stringify(plan.root)]);
   prepared = true;
   postMessage({type: "prepared", native_worker_sentinel: self.__canvasNativeWorkerSentinel});
 }

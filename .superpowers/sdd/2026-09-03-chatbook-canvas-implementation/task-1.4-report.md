@@ -5,7 +5,7 @@
 **Implementation status: complete; independent security review pending.**
 
 Mandatory real-browser qualification passed in Chromium 145.0.7632.6 with
-Playwright 1.58.0. Across the 30-case generated-code adversarial corpus there
+Playwright 1.58.0. Across the 38-case generated-code adversarial corpus there
 were no post-execution HTTP(S) requests, WebSockets, frame/top navigations,
 popups, downloads, or new workers, and the separately owned egress server
 received no requests. Native shell, renderer, parent-DOM, and worker sentinels
@@ -33,8 +33,9 @@ explicitly recorded as skips.
    nodes with `createElement`, `createElementNS`, and `createTextNode`, inserts
    CSS through a detached/validated `CSSStyleSheet`, parses and bounds passive
    image metadata, requires a time-bounded native decode, and owns every
-   passive-image object URL. It never assigns generated text to a markup or
-   code sink.
+   passive-image object URL. A complete plan remains detached until all DOM,
+   CSS, and asset records are valid. It never assigns generated text to a markup
+   or code sink.
 4. Chromium denies a direct HTTP module worker from an opaque-origin iframe;
    blob wrapping also failed. The trusted renderer therefore creates a fixed
    `data:` module bootstrap whose only operation is importing the exact packaged
@@ -56,7 +57,8 @@ explicitly recorded as skips.
    WebAssembly, postMessage, dialogs/popups, and common server-runtime globals.
    Dynamic `import()` reached through QuickJS `eval()` has no configured module
    loader and produced no request.
-8. QuickJS drains each operation to a JSON transaction. The renderer validates
+8. QuickJS drains each operation through private host-held controls to a
+   prototype-independent JSON transaction. The renderer validates
    the exact message shape, operation ordering, every patch, every identifier,
    every tag/namespace/attribute/style/property, and every bridge value before
    touching native DOM or the shell port.
@@ -93,7 +95,7 @@ effects remain outside Task 1.4.
 | CSS rules | 2,000; style/media rules only |
 | One CSS rule | 64 KiB |
 | One internal node/asset/patch/bridge identifier | 256 UTF-8 bytes |
-| One attribute/style/event value | 16 KiB (event key is sliced to 64 characters) |
+| One attribute/style/event value | 16 KiB UTF-8; event key is 64 UTF-8 bytes |
 | One tag token | 128 UTF-8 bytes before allowlist validation |
 | Generated script text | 256 KiB aggregate |
 | One text patch | 512 KiB |
@@ -186,19 +188,41 @@ Playwright boundary observations and server receipt log.
     `runtime-timeout` after click.
 30. `event_queue_storm` — initial load ready, then failed with
     `event-queue-limit` while the shell remained responsive.
+31. `quickjs_host_control_hooks_are_private` — every former install/operation/
+    drain/dispatch/timer hook was absent from generated `globalThis`.
+32. `exhausted_budget_cannot_be_reset_by_generated_code` — catching the 1,001st
+    mutation and attempting the former begin-operation hook still failed with
+    the original `patch-limit` poison.
+33. `object_prototype_tojson_cannot_forge_transaction` — an inherited hostile
+    `toJSON` could not inject a submit bridge or replace the transaction.
+34. `map_prototype_entries_cannot_forge_timer_count` — a hostile 65-record
+    iterator produced no timer or bridge effect.
+35. `map_prototype_entries_cannot_forge_duplicate_timer_ids` — duplicate forged
+    timer identities produced no timer or bridge effect.
+36. `map_prototype_entries_cannot_forge_oversized_timer_delay` — a forged delay
+    above 2,147,483,647 ms was not accepted.
+37. `map_prototype_get_cannot_inject_timer_callback` — replacing timer lookup
+    could not run an injected callback or bridge after a real native wait.
+38. `map_iterator_prototype_cannot_forge_timer_records` — replacing the shared
+    QuickJS map-iterator `next()` could not fabricate, omit, or loop timer
+    records because private enumeration does not dispatch through iterators.
 
 The separate trusted-renderer tampering suite changed a valid compiler plan to
 contain an active tag, CSS `@import` to the egress listener, forged SVG bytes
 declared as PNG, a dimension-overflow PNG, a pixel-overflow PNG, a
-signature-shaped but natively undecodable PNG, a two-frame GIF, 65 assets, and
-more than 5,000 nodes. Every variant returned
-`invalid-plan`, started no worker, emitted no egress request, and kept scripts
-disabled. A separate window-message spoof could not forge status or a bridge.
+signature-shaped but natively undecodable PNG, a two-frame GIF, 65 assets, more
+than 5,000 nodes, a nested style rule containing an egress URL, and a final
+invalid node after otherwise-valid images/CSS/DOM. Every variant returned
+`invalid-plan`, left the live root and adopted stylesheet list empty, started no
+worker, emitted no egress request, and kept scripts disabled. Separate
+invalid-last patch and bridge transactions left the prior DOM/style untouched
+and emitted no bridge. A window-message spoof could not forge status or a
+bridge.
 
 ## Actual request and browser observations
 
-For a successful Canvas load, the owned HTTP server received exactly these five
-startup GET paths before generated execution was acknowledged:
+For a successful zero-asset Canvas load, the owned HTTP server received exactly
+these five startup GET paths before generated execution was acknowledged:
 
 ```text
 /shell.html
@@ -214,6 +238,17 @@ the opaque request origin (`Origin: null`) and were served with explicit CORS
 and cross-origin resource policy headers. There was no `.wasm` request because
 the reviewed single-file package embeds the WASM bytes.
 
+The fix-round harness now enforces this as a pre-ACK allowlist on every mandatory
+Chromium load: exact URL, GET method, request destination, navigation target,
+successful completed response, and count for all five trusted resources;
+exactly the fixed renderer-owned `data:` worker; and no foreign startup event or
+independently owned egress receipt. Plans with passive images additionally must
+produce exactly their plan-derived count of unique `blob:null/...` GET/image
+requests with paired successful responses. The four-image benign plan produced
+exactly four such pairs. An injected shell image to the egress listener was
+observed and received, caused the allowlist to return false, and no execution
+ACK or ready status followed.
+
 The current Chromium run printed these exact server-side startup records
 (`null` without quotes means the request omitted the Origin header):
 
@@ -225,9 +260,10 @@ The current Chromium run printed these exact server-side startup records
 | `/static/canvas_runtime_worker.js` | GET | `"null"` | script | cors | cross-site |
 | `/static/quickjs-runtime.js` | GET | `"null"` | script | cors | cross-site |
 
-Startup browser-observation counts were exactly: 2 navigations, 5 requests, 5
-responses, and 1 worker. The focused evidence run reported
-`1 passed, 1 warning in 1.35s`.
+The zero-asset CSP evidence load's startup browser-observation counts were
+exactly: 2 navigations, 5 requests, 5 completed requests, 5 successful
+responses, and 1 worker. The final combined CSP/corpus evidence run reported
+`2 passed, 1 warning in 7.16s`.
 
 For every generated adversarial case, the complete post-start observation list
 was `[]`. In particular:
@@ -375,10 +411,10 @@ Controller-specified focused command (run with loopback/browser permission):
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Canvas/test_compiler.py Tests/Canvas/test_runtime_assets.py Tests/Canvas/browser/test_canvas_zero_egress.py -q
 ```
 
-Final summary after the completed corpus:
+Final summary after the completed corpus and security-review fixes:
 
 ```text
-91 passed, 3 skipped, 1 warning in 9.43s
+96 passed, 3 skipped, 1 warning in 13.93s
 ```
 
 Skips were the cache-gated pinned-archive regeneration test (already run and
@@ -425,6 +461,117 @@ receipt and an exact redirect path, the exact summary was:
 The test proves recorded GET, POST, redirect, and redirect-target requests.
 Thus the empty adversarial server log covers form/beacon POST as well as GET
 resource and redirect attempts.
+
+### Security-review fix round 1 RED/GREEN
+
+The four reviewer findings were first encoded as focused behavioral tests. The
+exact grouped RED command was:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Canvas/browser/test_canvas_zero_egress.py::test_python_playwright_is_a_mandatory_security_gate Tests/Canvas/browser/test_canvas_zero_egress.py::test_adversarial_corpus_has_zero_egress_and_never_mutates_native_realms Tests/Canvas/browser/test_canvas_zero_egress.py::test_renderer_revalidates_tampered_plans_before_worker_start Tests/Canvas/browser/test_canvas_zero_egress.py::test_renderer_rejects_whole_invalid_transaction_without_partial_effects Tests/Canvas/browser/test_canvas_zero_egress.py::test_startup_allowlist_withholds_execution_ack_for_foreign_observation Tests/Canvas/browser/test_canvas_zero_egress.py::test_renderer_caps_event_fields_by_utf8_bytes -q
+```
+
+```text
+6 failed, 1 skipped, 1 warning in 12.78s
+```
+
+The failures behaviorally showed public host controls (`exposed`), an adopted
+stylesheet after an invalid-last plan, live text mutation after an invalid-last
+transaction, execution proceeding after a foreign startup request, character-
+rather than byte-bounded input/key events, and a simulated missing Playwright
+dependency being skipped instead of failing the mandatory gate.
+
+The minimum defensive changes were:
+
+- retain control functions as private host-held QuickJS handles; serialize with
+  captured intrinsics and null-prototype transport values; revalidate timer
+  count, unique safe-integer identity, finite non-negative delay, and the
+  2,147,483,647 ms ceiling in the native worker;
+- prepare the entire plan off-DOM and each transaction against a detached
+  shadow, then commit only after every item and bridge validates; committed
+  passive assets remain usable when a transaction fails and are revoked on
+  renderer `pagehide`;
+- reject nested descendants in style rules before stylesheet adoption; and
+- make Python Playwright/Chromium mandatory and require an exact startup
+  allowlist of request, successful response, request-finished, navigation,
+  fixed-worker, server-header, blob-image, and independent-receipt evidence
+  before sending the generated-execution ACK.
+
+The first post-fix grouped run exposed two test-fixture integration issues and
+otherwise closed the findings:
+
+```text
+5 passed, 2 failed, 1 warning in 12.68s
+```
+
+The crafted transaction worker needed to import the already-allowlisted
+QuickJS asset, and native `fill()` did not produce the explicit multibyte input
+event required by that case after subtree replacement. Importing the fixed
+asset and dispatching a real bubbling native `Event` made the individual
+transaction and UTF-8 tests green (`1 passed` each).
+
+A final proof audit then added two sharper REDs. Before recording body
+completion, the startup gate rejected with an empty completed-request list:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Canvas/browser/test_canvas_zero_egress.py::test_opaque_iframe_and_csp_block_native_parent_storage_requests_forms_and_images -q
+```
+
+```text
+AssertionError: startup allowlist rejected execution: []
+1 failed, 1 warning in 1.33s
+```
+
+After `requestfinished` became an exact pre-ACK observation, the same command
+reported `1 passed, 1 warning in 1.27s`. Before preserving committed assets, an
+invalid-last transaction left its original image visible from cache but made a
+second decode of the same renderer-owned URL fail:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Canvas/browser/test_canvas_zero_egress.py::test_renderer_rejects_whole_invalid_transaction_without_partial_effects -q
+```
+
+```text
+AssertionError: invalid-last-patch
+assert None == [1, 1]
+1 failed, 1 warning in 1.24s
+```
+
+Keeping committed URLs through the inert failure state and revoking them on
+`pagehide` made that command report `1 passed, 1 warning in 1.36s`; the final
+stronger assertion that shadow preparation itself emitted no asset request also
+remained green (`1 passed, 1 warning in 1.94s`). The final prototype audit also
+mutated the shared QuickJS map-iterator prototype. Before
+timer enumeration stopped using that iterator, the adversarial corpus ended
+with `map_iterator_prototype_cannot_forge_timer_records` in `failed` rather than
+`ready` (`1 failed, 1 warning in 6.42s`). Enumerating the private timer map via a
+captured `Map.forEach` removed iterator dispatch; the same corpus reported
+`1 passed, 1 warning in 6.01s`.
+
+The final permissioned focused suite was the controller-specified command above
+and reported `96 passed, 3 skipped, 1 warning in 13.93s`.
+
+Final fix-round static/integrity commands and exact results:
+
+```text
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff check Tests/Canvas/browser/test_canvas_zero_egress.py
+All checks passed!
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff format --check Tests/Canvas/browser/test_canvas_zero_egress.py
+1 file already formatted
+node --check tldw_chatbook/Canvas/static/canvas_renderer.js
+# exit 0, no output
+node --check tldw_chatbook/Canvas/static/canvas_runtime_worker.js
+# exit 0, no output
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python scripts/vendor_canvas_runtime.py --verify
+Canvas runtime assets verified
+git diff --check
+# exit 0, no output
+```
+
+Files changed in this fix round were the worker, renderer, runtime manifest,
+real-browser harness, adversarial corpus, V1 compatibility document, ADR-115,
+TASK-31226 notes, and this report. No gateway, persistence, tool, confirmation,
+or UI surface was changed.
 
 ## Browser engines
 
@@ -493,8 +640,10 @@ the worker boundary rather than skip if either engine is installed later.
 - Capped typed bridges independently at 16 per operation and 32 per second after
   an adversarial flood proved that per-value/transaction bytes alone permitted
   avoidable trusted-renderer message amplification.
-- Preserved safe JSON intrinsics and made internal VM hooks non-writable so
-  generated prototype/global changes cannot replace transaction serialization.
+- Removed internal VM controls from generated `globalThis` entirely, retained
+  private host-held QuickJS handles, captured serialization/timer intrinsics,
+  emitted null-prototype transport records, and independently revalidated timer
+  count/uniqueness/identity/delay in the native worker.
 - Verified a generated dynamic import hidden inside `eval()` cannot reach a
   module loader or browser request.
 - Verified poisoned runtimes are discarded by terminating the worker rather than
@@ -527,12 +676,18 @@ the worker boundary rather than skip if either engine is installed later.
 7. Bridge messages are request-only in this delivery. Later gateway code must
    revalidate identity, nonce, schema, size/depth, conversation/revision/session,
    confirmation, and rate limits before any host effect.
-8. The static renderer remains visible after worker termination, but passive
-   object URLs are revoked and scripts cannot resume without a fresh load.
+8. The static renderer and its committed passive assets remain visible after
+   worker termination. Their renderer-owned object URLs are retained only for
+   that inert document and revoked on `pagehide`; scripts cannot resume without
+   a fresh load.
 9. Chromium's native raster decoders remain part of the trusted computing base.
    Dimensions, pixels, frames, bytes, asset count, and preparation time are
    bounded before object-URL use, and a decode that completes after its timeout
    is immediately closed; JavaScript cannot synchronously cancel the underlying
    browser decode operation.
-10. Product integration must remain disabled until the controller's independent
+10. Atomic transaction commit replaces the renderer-owned subtree with its
+    validated shadow. V1 does not promise stable native node identity, focus,
+    text selection, or scroll anchoring across a committed event transaction;
+    generated code continues to address stable virtual node IDs.
+11. Product integration must remain disabled until the controller's independent
    security review explicitly accepts this release-blocking boundary.

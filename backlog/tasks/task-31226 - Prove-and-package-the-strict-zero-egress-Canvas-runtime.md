@@ -87,7 +87,7 @@ were blocked. Firefox and WebKit were not installed and are explicit skips.
 
 Focused verification:
 `pytest Tests/Canvas/test_compiler.py Tests/Canvas/test_runtime_assets.py Tests/Canvas/browser/test_canvas_zero_egress.py -q`
-reported `91 passed, 3 skipped, 1 pre-existing dependency warning in 9.43s`.
+reported `96 passed, 3 skipped, 1 pre-existing dependency warning in 13.93s`.
 Compatibility and exact budgets are documented in
 `Docs/Canvas/V1_RUNTIME_COMPATIBILITY.md`; architecture and qualification
 results are recorded in ADR-115. Detailed RED/GREEN and request evidence is in
@@ -96,3 +96,22 @@ results are recorded in ADR-115. Detailed RED/GREEN and request evidence is in
 The task intentionally remains **In Progress** until the delivery controller's
 independent security-focused review is clean. No Canvas product tool, gateway,
 persistence, confirmation effect, or UI was enabled in this delivery.
+
+Security-review fix round 1 removes every QuickJS host-control hook from
+generated `globalThis` and retains the control functions only as private
+host-held handles. Captured intrinsics, iterator-free timer enumeration, and
+null-prototype transport records make transaction/timer serialization
+independent of generated prototype mutation;
+the native worker also rechecks timer count, uniqueness, identity, and delay.
+The renderer now prepares full plans off-DOM and applies full transactions to a
+detached shadow tree, committing only after every DOM/CSS/asset/bridge item is
+valid. Nested descendants of style rules fail closed. The mandatory Chromium
+harness now hard-fails without Python Playwright or Chromium and withholds the
+execution ACK unless its exact trusted startup request/response/completion/
+navigation/worker allowlist is complete and the independent egress receipt log
+is empty. Invalid runtime transactions also retain the already-committed inert
+document and passive assets; asset URLs are revoked when that document exits.
+Real-Chromium regressions cover invalid-last plans and transactions, private
+controls, poison-reset and prototype forgeries, nested CSS, foreign startup
+traffic, and UTF-8 event-field caps. Detailed RED/GREEN output remains in the
+Task 1.4 report. Status remains **In Progress** for controller rereview.

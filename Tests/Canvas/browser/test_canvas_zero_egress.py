@@ -3,24 +3,27 @@
 from __future__ import annotations
 
 import base64
-from collections.abc import Iterator
-from dataclasses import asdict, dataclass
+import builtins
 import hashlib
-from http.client import HTTPConnection
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import html
+import importlib
 import json
 import os
-from pathlib import Path
 import shutil
-from threading import Lock, Thread
+import sys
 import time
+from collections.abc import Iterator
+from dataclasses import asdict, dataclass
+from http.client import HTTPConnection
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from threading import Lock, Thread
 from typing import Any
 
 import pytest
 
 from tldw_chatbook.Canvas.compiler import compile_canvas_document
 from tldw_chatbook.Canvas.models import RenderNode
-
 
 ROOT = Path(__file__).resolve().parents[3]
 STATIC = ROOT / "tldw_chatbook" / "Canvas" / "static"
@@ -39,8 +42,8 @@ RENDERER_CSP = (
 )
 
 
-def _shell_html() -> bytes:
-    return b"""<!doctype html>
+def _shell_html(startup_probe_url: str | None = None) -> bytes:
+    document = """<!doctype html>
 <meta charset="utf-8">
 <title>Owned Canvas security harness</title>
 <script>
@@ -50,6 +53,7 @@ def _shell_html() -> bytes:
     rendererReady: false,
     messages: [],
     status: null,
+    startupApproved: null,
     nonce: null,
     port: null,
   };
@@ -72,8 +76,10 @@ def _shell_html() -> bytes:
       const message = event.data;
       state.messages.push(message);
       if (message && message.type === 'canvas:execution-started') {
-        await window.__canvasMarkExecution();
-        channel.port1.postMessage({type: 'canvas:execution-ack', nonce: state.nonce});
+        state.startupApproved = await window.__canvasApproveExecution();
+        if (state.startupApproved === true) {
+          channel.port1.postMessage({type: 'canvas:execution-ack', nonce: state.nonce});
+        }
       }
       if (message && message.type === 'canvas:status') state.status = message;
     };
@@ -91,6 +97,13 @@ def _shell_html() -> bytes:
 </script>
 <iframe id="renderer" name="canvas-renderer" sandbox="allow-scripts" src="/renderer.html"></iframe>
 """
+    if startup_probe_url is not None:
+        document += (
+            '<img id="foreign-startup-probe" alt="" src="'
+            + html.escape(startup_probe_url, quote=True)
+            + '">\n'
+        )
+    return document.encode("utf-8")
 
 
 def _renderer_html() -> bytes:
@@ -103,7 +116,22 @@ def _renderer_html() -> bytes:
         '<meta name="referrer" content="no-referrer">'
         f'<script type="module" src="/static/canvas_renderer.js" integrity="sha384-{digest}" crossorigin="anonymous"></script>'
         '</head><body><div id="canvas-root"></div></body></html>'
-    ).encode("utf-8")
+    ).encode()
+
+
+def _expected_worker_bootstrap_url(origin: str) -> str:
+    worker_url = f"{origin}/static/canvas_runtime_worker.js"
+    bootstrap = (
+        f"import({json.dumps(worker_url)}).then((module) => {{ "
+        "module.startCanvasRuntimeWorker(globalThis); "
+        'postMessage({type: "bootstrap-ready"}); '
+        "}).catch((error) => "
+        'postMessage({type: "bootstrap-failure", '
+        'name: String(error && error.name || "Error")}));'
+    )
+    return "data:text/javascript;base64," + base64.b64encode(
+        bootstrap.encode("utf-8")
+    ).decode("ascii")
 
 
 @dataclass(frozen=True)
@@ -119,6 +147,8 @@ class _OwnedServer(ThreadingHTTPServer):
     def __init__(self, *, assets: bool) -> None:
         self.assets = assets
         self.requests: list[RequestRecord] = []
+        self.runtime_overrides: dict[str, bytes] = {}
+        self.startup_probe_url: str | None = None
         self.lock = Lock()
         super().__init__(("127.0.0.1", 0), _OwnedHandler)
 
@@ -142,7 +172,7 @@ class _OwnedServer(ThreadingHTTPServer):
 class _OwnedHandler(BaseHTTPRequestHandler):
     server: _OwnedServer
 
-    def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
+    def do_GET(self) -> None:
         self.server.record(self)
         if not self.server.assets:
             if self.path == "/redirect":
@@ -155,7 +185,11 @@ class _OwnedHandler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/shell.html":
-            self._send(200, _shell_html(), "text/html; charset=utf-8")
+            self._send(
+                200,
+                _shell_html(self.server.startup_probe_url),
+                "text/html; charset=utf-8",
+            )
             return
         if self.path == "/renderer.html":
             self._send(
@@ -172,12 +206,13 @@ class _OwnedHandler(BaseHTTPRequestHandler):
             return
         if self.path in RUNTIME_ASSETS:
             path = STATIC / RUNTIME_ASSETS[self.path]
-            if not path.is_file():
+            body = self.server.runtime_overrides.get(self.path)
+            if body is None and not path.is_file():
                 self._send(404, b"missing trusted runtime asset", "text/plain")
                 return
             self._send(
                 200,
-                path.read_bytes(),
+                body if body is not None else path.read_bytes(),
                 "text/javascript; charset=utf-8",
                 {
                     "Access-Control-Allow-Origin": "*",
@@ -189,7 +224,7 @@ class _OwnedHandler(BaseHTTPRequestHandler):
             return
         self._send(404, b"not found", "text/plain")
 
-    def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
+    def do_POST(self) -> None:
         self.server.record(self)
         if self.server.assets:
             self._send(405, b"method not allowed", "text/plain")
@@ -225,14 +260,157 @@ class BrowserObservation:
 
 
 class BrowserRecorder:
-    def __init__(self) -> None:
+    def __init__(self, asset_server: _OwnedServer, egress_server: _OwnedServer) -> None:
         self._phase = "startup"
         self._lock = Lock()
         self.observations: list[BrowserObservation] = []
+        self.asset_server = asset_server
+        self.egress_server = egress_server
+        self.asset_request_start = len(asset_server.requests)
+        self.egress_request_start = len(egress_server.requests)
+        self.startup_error: str | None = None
+        self.expected_asset_count: int | None = None
+
+    def arm_plan(self, plan: dict[str, Any]) -> None:
+        assets = plan.get("assets")
+        self.expected_asset_count = len(assets) if isinstance(assets, list) else 0
 
     def mark_execution(self) -> None:
         with self._lock:
             self._phase = "generated"
+
+    def approve_execution(self) -> bool:
+        try:
+            self._assert_startup_allowlist()
+        except AssertionError as exc:
+            self.startup_error = f"startup allowlist rejected execution: {exc}"
+            return False
+        self.mark_execution()
+        return True
+
+    def _assert_startup_allowlist(self) -> None:
+        origin = self.asset_server.origin
+        expected_urls = {
+            f"{origin}/shell.html": "document",
+            f"{origin}/renderer.html": "document",
+            f"{origin}/static/canvas_renderer.js": "script",
+            f"{origin}/static/canvas_runtime_worker.js": "script",
+            f"{origin}/static/quickjs-runtime.js": "script",
+        }
+        with self._lock:
+            startup = [item for item in self.observations if item.phase == "startup"]
+        requests = [item for item in startup if item.kind == "request"]
+        actual_requests = sorted(
+            (
+                item.target,
+                json.loads(item.detail)["method"],
+                json.loads(item.detail)["resource_type"],
+            )
+            for item in requests
+        )
+        expected_http_requests = sorted(
+            (url, "GET", resource_type) for url, resource_type in expected_urls.items()
+        )
+        blob_requests = [
+            item for item in actual_requests if item[0].startswith("blob:null/")
+        ]
+        assert len(blob_requests) == self.expected_asset_count, blob_requests
+        assert len({item[0] for item in blob_requests}) == len(blob_requests)
+        assert all(
+            method == "GET" and resource_type == "image"
+            for _, method, resource_type in blob_requests
+        ), blob_requests
+        assert [
+            item for item in actual_requests if not item[0].startswith("blob:null/")
+        ] == expected_http_requests, actual_requests
+
+        responses = [item for item in startup if item.kind == "response"]
+        actual_responses = sorted(
+            (
+                item.target,
+                json.loads(item.detail)["status"],
+                json.loads(item.detail)["ok"],
+            )
+            for item in responses
+        )
+        expected_response_urls = [*expected_urls, *(item[0] for item in blob_requests)]
+        assert actual_responses == sorted(
+            (url, 200, True) for url in expected_response_urls
+        ), actual_responses
+
+        finished = [item for item in startup if item.kind == "request-finished"]
+        actual_finished = sorted(
+            (
+                item.target,
+                json.loads(item.detail)["method"],
+                json.loads(item.detail)["resource_type"],
+            )
+            for item in finished
+        )
+        assert actual_finished == sorted([*expected_http_requests, *blob_requests]), (
+            actual_finished
+        )
+
+        navigations = sorted(
+            (item.target, item.detail) for item in startup if item.kind == "navigation"
+        )
+        assert navigations == sorted(
+            [
+                (f"{origin}/shell.html", "top"),
+                (f"{origin}/renderer.html", "frame"),
+            ]
+        ), navigations
+
+        workers = [item.target for item in startup if item.kind == "worker"]
+        assert workers == [_expected_worker_bootstrap_url(origin)], workers
+        assert all(
+            item.kind
+            in {"request", "response", "request-finished", "navigation", "worker"}
+            for item in startup
+        ), startup
+
+        with self.asset_server.lock:
+            server_requests = list(
+                self.asset_server.requests[self.asset_request_start :]
+            )
+        actual_http = sorted(
+            (
+                item.method,
+                item.path,
+                item.headers.get("origin"),
+                item.headers.get("sec-fetch-dest"),
+                item.headers.get("sec-fetch-mode"),
+                item.headers.get("sec-fetch-site"),
+            )
+            for item in server_requests
+        )
+        expected_http = sorted(
+            [
+                ("GET", "/shell.html", None, "document", "navigate", "none"),
+                (
+                    "GET",
+                    "/renderer.html",
+                    None,
+                    "iframe",
+                    "navigate",
+                    "same-origin",
+                ),
+                *[
+                    ("GET", path, "null", "script", "cors", "cross-site")
+                    for path in (
+                        "/static/canvas_renderer.js",
+                        "/static/canvas_runtime_worker.js",
+                        "/static/quickjs-runtime.js",
+                    )
+                ],
+            ]
+        )
+        assert actual_http == expected_http, actual_http
+        with self.egress_server.lock:
+            egress_requests = list(
+                self.egress_server.requests[self.egress_request_start :]
+            )
+        assert egress_requests == [], egress_requests
 
     def mark_csp_probe(self) -> None:
         with self._lock:
@@ -329,9 +507,46 @@ def _chromium_executable(browser_type: Any) -> str | None:
 
 @pytest.fixture(scope="module")
 def playwright_runtime() -> Iterator[Any]:
-    playwright_module = pytest.importorskip("playwright.sync_api")
+    try:
+        playwright_module = importlib.import_module("playwright.sync_api")
+    except ImportError:
+        pytest.fail(
+            "Python Playwright is required for the Canvas security gate",
+            pytrace=False,
+        )
     with playwright_module.sync_playwright() as playwright:
         yield playwright
+
+
+def test_python_playwright_is_a_mandatory_security_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_builtin_import = builtins.__import__
+    original_module_import = importlib.import_module
+
+    def import_without_playwright(name: str, *args: object, **kwargs: object) -> Any:
+        if name == "playwright.sync_api":
+            raise ModuleNotFoundError("simulated missing mandatory Playwright")
+        return original_builtin_import(name, *args, **kwargs)
+
+    def module_import_without_playwright(
+        name: str, *args: object, **kwargs: object
+    ) -> Any:
+        if name == "playwright.sync_api":
+            raise ModuleNotFoundError("simulated missing mandatory Playwright")
+        return original_module_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_playwright)
+    monkeypatch.setattr(importlib, "import_module", module_import_without_playwright)
+    monkeypatch.delitem(sys.modules, "playwright.sync_api", raising=False)
+    fixture = playwright_runtime.__wrapped__()
+    caught: BaseException | None = None
+    try:
+        next(fixture)
+    except (pytest.fail.Exception, pytest.skip.Exception) as exc:
+        caught = exc
+    assert isinstance(caught, pytest.fail.Exception)
+    assert "Python Playwright is required" in str(caught)
 
 
 @pytest.fixture(scope="module")
@@ -396,6 +611,42 @@ def _wire_plan(source: str) -> dict[str, Any]:
     }
 
 
+def _node_id_for_html_id(node: dict[str, Any], html_id: str) -> str:
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if ["id", html_id] in current["attributes"]:
+            return str(current["node_id"])
+        stack.extend(reversed(current["children"]))
+    raise AssertionError(f"compiled plan has no node with id={html_id!r}")
+
+
+def _transaction_worker(transaction: dict[str, Any]) -> bytes:
+    encoded = json.dumps(transaction, separators=(",", ":"))
+    return f"""import "./quickjs-runtime.js";
+export function startCanvasRuntimeWorker(self) {{
+  self.__canvasNativeWorkerSentinel = "native-worker-clean";
+  self.onmessage = (event) => {{
+    if (event.data.type === "prepare") {{
+      postMessage({{type: "prepared", native_worker_sentinel: "native-worker-clean"}});
+      return;
+    }}
+    if (event.data.type === "execute") {{
+      const transaction = {encoded};
+      postMessage({{
+        type: "transaction",
+        operation_id: event.data.operation_id,
+        operation_kind: "startup",
+        patches: transaction.patches,
+        bridges: transaction.bridges,
+        native_worker_sentinel: "native-worker-clean",
+      }});
+    }}
+  }};
+}}
+""".encode()
+
+
 def _attack_source(script: str) -> str:
     clobbering_ids = "".join(
         f'<span id="{name}">{name}</span>'
@@ -409,24 +660,51 @@ def _attack_source(script: str) -> str:
 
 
 def _new_page(
-    browser: Any, asset_server: _OwnedServer
+    browser: Any, asset_server: _OwnedServer, egress_server: _OwnedServer
 ) -> tuple[Any, Any, BrowserRecorder]:
     context = browser.new_context(accept_downloads=True)
     context.add_init_script(
         "window.__canvasNativeWindowSentinel = 'native-frame-clean';"
         "Object.prototype.__canvasNativePrototypeSentinel = 'native-frame-clean';"
     )
-    recorder = BrowserRecorder()
+    recorder = BrowserRecorder(asset_server, egress_server)
     page = context.new_page()
-    page.expose_function("__canvasMarkExecution", recorder.mark_execution)
+    page.expose_function("__canvasApproveExecution", recorder.approve_execution)
     context.on(
         "request",
-        lambda request: recorder.add("request", request.url, request.resource_type),
+        lambda request: recorder.add(
+            "request",
+            request.url,
+            json.dumps(
+                {"method": request.method, "resource_type": request.resource_type},
+                sort_keys=True,
+            ),
+        ),
     )
     context.on(
         "response",
         lambda response: recorder.add(
-            "response", response.url, json.dumps(response.headers, sort_keys=True)
+            "response",
+            response.url,
+            json.dumps(
+                {
+                    "headers": response.headers,
+                    "ok": response.ok,
+                    "status": response.status,
+                },
+                sort_keys=True,
+            ),
+        ),
+    )
+    context.on(
+        "requestfinished",
+        lambda request: recorder.add(
+            "request-finished",
+            request.url,
+            json.dumps(
+                {"method": request.method, "resource_type": request.resource_type},
+                sort_keys=True,
+            ),
         ),
     )
     page.on("websocket", lambda socket: recorder.add("websocket", socket.url))
@@ -456,11 +734,14 @@ def _new_page(
 def _load(
     page: Any, plan: dict[str, Any], recorder: BrowserRecorder | None = None
 ) -> dict[str, Any]:
+    if recorder is not None:
+        recorder.arm_plan(plan)
     page.evaluate("plan => window.loadCanvas(plan)", plan)
     try:
         page.wait_for_function(
-            "window.__canvasHarness.status && "
-            "['ready', 'failed'].includes(window.__canvasHarness.status.state)",
+            "window.__canvasHarness.startupApproved === false || "
+            "(window.__canvasHarness.status && "
+            "['ready', 'failed'].includes(window.__canvasHarness.status.state))",
             timeout=10_000,
         )
     except Exception as exc:
@@ -470,6 +751,8 @@ def _load(
             "Canvas runtime produced no terminal status; "
             f"messages={messages!r}; observations={observations!r}"
         ) from exc
+    if recorder is not None and recorder.startup_error is not None:
+        raise AssertionError(recorder.startup_error)
     return page.evaluate("window.__canvasHarness.status")
 
 
@@ -493,7 +776,7 @@ def test_benign_counter_form_timer_svg_and_typed_submit_work_with_zero_egress(
     asset_server: _OwnedServer,
     egress_server: _OwnedServer,
 ) -> None:
-    context, page, recorder = _new_page(chromium_browser, asset_server)
+    context, page, recorder = _new_page(chromium_browser, asset_server, egress_server)
     try:
         source = (FIXTURES / "benign_canvas.html").read_text(encoding="utf-8")
         status = _load(page, _wire_plan(source), recorder)
@@ -547,9 +830,18 @@ def test_adversarial_corpus_has_zero_egress_and_never_mutates_native_realms(
     )
     evidence: list[dict[str, Any]] = []
     for case in cases:
-        context, page, recorder = _new_page(chromium_browser, asset_server)
+        context, page, recorder = _new_page(
+            chromium_browser, asset_server, egress_server
+        )
         try:
-            script = case["script"].replace("__EGRESS__", egress_server.origin)
+            script = (
+                case["script"]
+                .replace("__EGRESS__", egress_server.origin)
+                .replace(
+                    "__WEBSOCKET__",
+                    egress_server.origin.replace("http://", "ws://", 1),
+                )
+            )
             status = _load(page, _wire_plan(_attack_source(script)), recorder)
             frame = page.frame(name="canvas-renderer")
             assert frame is not None
@@ -585,6 +877,8 @@ def test_adversarial_corpus_has_zero_egress_and_never_mutates_native_realms(
                 status = page.evaluate("window.__canvasHarness.status")
             else:
                 assert status["state"] == case["expected"], case["name"]
+            if case.get("settle_milliseconds"):
+                page.wait_for_timeout(case["settle_milliseconds"])
             if case.get("expected_code"):
                 assert status["code"] == case["expected_code"], case["name"]
             if case.get("expected_text"):
@@ -597,6 +891,14 @@ def test_adversarial_corpus_has_zero_egress_and_never_mutates_native_realms(
                 assert [item["kind"] for item in bridge_messages] == [
                     case["bridge_kind"]
                 ]
+            if "expected_bridge_kinds" in case:
+                bridge_messages = page.evaluate(
+                    "window.__canvasHarness.messages.filter((item) => "
+                    "item.type === 'canvas:bridge-request')"
+                )
+                assert [item["kind"] for item in bridge_messages] == case[
+                    "expected_bridge_kinds"
+                ], case["name"]
 
             assert page.evaluate("window.__canvasNativeWindowSentinel") in {
                 "native-shell-clean",
@@ -644,7 +946,7 @@ def test_opaque_iframe_and_csp_block_native_parent_storage_requests_forms_and_im
     asset_server: _OwnedServer,
     egress_server: _OwnedServer,
 ) -> None:
-    context, page, recorder = _new_page(chromium_browser, asset_server)
+    context, page, recorder = _new_page(chromium_browser, asset_server, egress_server)
     try:
         status = _load(
             page,
@@ -718,7 +1020,7 @@ def test_opaque_iframe_and_csp_block_native_parent_storage_requests_forms_and_im
             for item in recorder.observations
             if item.kind == "response" and item.target.endswith("/renderer.html")
         )
-        renderer_headers = json.loads(renderer_response.detail)
+        renderer_headers = json.loads(renderer_response.detail)["headers"]
         assert renderer_headers["content-security-policy"] == RENDERER_CSP
         assert renderer_headers["referrer-policy"] == "no-referrer"
         assert renderer_headers["x-content-type-options"] == "nosniff"
@@ -767,6 +1069,13 @@ def test_opaque_iframe_and_csp_block_native_parent_storage_requests_forms_and_im
                 startup_observation_counts[item.kind] = (
                     startup_observation_counts.get(item.kind, 0) + 1
                 )
+        assert startup_observation_counts == {
+            "navigation": 2,
+            "request": 5,
+            "request-finished": 5,
+            "response": 5,
+            "worker": 1,
+        }
         print(
             "CANVAS_CSP_EVIDENCE="
             + json.dumps(
@@ -790,12 +1099,46 @@ def test_opaque_iframe_and_csp_block_native_parent_storage_requests_forms_and_im
 
 
 @pytest.mark.loopback_network
+def test_startup_allowlist_withholds_execution_ack_for_foreign_observation(
+    chromium_browser: Any,
+    asset_server: _OwnedServer,
+    egress_server: _OwnedServer,
+) -> None:
+    asset_server.startup_probe_url = f"{egress_server.origin}/foreign-startup"
+    context, page, recorder = _new_page(chromium_browser, asset_server, egress_server)
+    try:
+        with pytest.raises(AssertionError, match="startup allowlist"):
+            _load(
+                page,
+                _wire_plan(
+                    _attack_source(
+                        "document.getElementById('status').textContent = 'must-not-run';"
+                    )
+                ),
+                recorder,
+            )
+        assert page.evaluate(
+            "window.__canvasHarness.messages.some((item) => "
+            "item.type === 'canvas:execution-started')"
+        )
+        assert not page.evaluate(
+            "window.__canvasHarness.messages.some((item) => "
+            "item.type === 'canvas:status' && item.state === 'ready')"
+        )
+        assert [(item.method, item.path) for item in egress_server.requests] == [
+            ("GET", "/foreign-startup")
+        ]
+    finally:
+        context.close()
+
+
+@pytest.mark.loopback_network
 def test_window_message_spoof_cannot_forge_worker_status_or_bridge(
     chromium_browser: Any,
     asset_server: _OwnedServer,
     egress_server: _OwnedServer,
 ) -> None:
-    context, page, recorder = _new_page(chromium_browser, asset_server)
+    context, page, recorder = _new_page(chromium_browser, asset_server, egress_server)
     try:
         status = _load(
             page,
@@ -930,8 +1273,30 @@ def test_renderer_revalidates_tampered_plans_before_worker_start(
     )
     plans.append(("node-count", node_plan))
 
+    nested_css_plan = _wire_plan(source)
+    nested_css_plan["css_rules"] = [
+        f"#status {{ color: red; & {{ background-image: url('{egress_server.origin}/nested-css') }} }}"
+    ]
+    plans.append(("nested-style-rule", nested_css_plan))
+
+    late_plan = _wire_plan(
+        (FIXTURES / "benign_canvas.html").read_text(encoding="utf-8")
+    )
+    late_plan["root"]["children"].append(
+        {
+            "node_id": "invalid-last-node",
+            "tag": "script",
+            "attributes": [],
+            "text": None,
+            "children": [],
+        }
+    )
+    plans.append(("invalid-last-after-assets-css-and-dom", late_plan))
+
     for name, plan in plans:
-        context, page, recorder = _new_page(chromium_browser, asset_server)
+        context, page, recorder = _new_page(
+            chromium_browser, asset_server, egress_server
+        )
         try:
             status = _load(page, plan, recorder)
             assert status["state"] == "failed", name
@@ -944,9 +1309,188 @@ def test_renderer_revalidates_tampered_plans_before_worker_start(
                 item.kind == "request" and item.target.startswith(egress_server.origin)
                 for item in recorder.observations
             ), name
+            frame = page.frame(name="canvas-renderer")
+            assert frame is not None
+            assert (
+                frame.locator("#canvas-root").evaluate("node => node.childNodes.length")
+                == 0
+            ), name
+            assert frame.evaluate("document.adoptedStyleSheets.length") == 0, name
+            assert frame.locator("#canvas-root img").count() == 0, name
+            assert (
+                page.evaluate(
+                    "window.__canvasHarness.messages.filter((item) => "
+                    "item.type === 'canvas:bridge-request').length"
+                )
+                == 0
+            ), name
             assert egress_server.requests == [], name
         finally:
             context.close()
+
+
+@pytest.mark.loopback_network
+def test_renderer_rejects_whole_invalid_transaction_without_partial_effects(
+    chromium_browser: Any,
+    asset_server: _OwnedServer,
+    egress_server: _OwnedServer,
+) -> None:
+    plan = _wire_plan((FIXTURES / "benign_canvas.html").read_text(encoding="utf-8"))
+    status_id = _node_id_for_html_id(plan["root"], "count")
+    valid_patches = [
+        {"op": "set-text", "node_id": status_id, "value": "mutated"},
+        {
+            "op": "set-style",
+            "node_id": status_id,
+            "name": "color",
+            "value": "red",
+        },
+    ]
+    transactions = [
+        (
+            "invalid-last-patch",
+            {
+                "patches": [
+                    *valid_patches,
+                    {
+                        "op": "set-attribute",
+                        "node_id": status_id,
+                        "name": "src",
+                        "value": f"{egress_server.origin}/transaction-asset",
+                    },
+                ],
+                "bridges": [],
+            },
+        ),
+        (
+            "invalid-last-bridge",
+            {
+                "patches": valid_patches,
+                "bridges": [
+                    {
+                        "request_id": "valid-first",
+                        "kind": "submit",
+                        "value": {"before": "invalid-last"},
+                    },
+                    {
+                        "request_id": "invalid-last",
+                        "kind": "native-host-effect",
+                        "value": "must-not-escape",
+                    },
+                ],
+            },
+        ),
+    ]
+
+    for name, transaction in transactions:
+        asset_server.runtime_overrides["/static/canvas_runtime_worker.js"] = (
+            _transaction_worker(transaction)
+        )
+        context, page, recorder = _new_page(
+            chromium_browser, asset_server, egress_server
+        )
+        try:
+            status = _load(page, plan, recorder)
+            assert status["state"] == "failed", name
+            assert status["code"] == "invalid-patch", name
+            frame = page.frame(name="canvas-renderer")
+            assert frame is not None
+            assert frame.locator("#count").text_content() == "0", name
+            assert frame.locator("#count").get_attribute("style") in {None, ""}, name
+            assert (
+                frame.locator("#count").evaluate("node => getComputedStyle(node).color")
+                == "rgb(12, 34, 56)"
+            ), name
+            assert frame.evaluate("document.adoptedStyleSheets.length") == 1, name
+            image_url = frame.locator("#pixel").get_attribute("src")
+            assert isinstance(image_url, str) and image_url.startswith("blob:null/"), (
+                name
+            )
+            assert frame.locator("#pixel").evaluate(
+                "image => [image.naturalWidth, image.naturalHeight]"
+            ) == [1, 1], name
+            assert [
+                item for item in recorder.generated() if item.kind == "request"
+            ] == [], name
+            assert frame.evaluate(
+                "async (url) => { const image = new Image(); image.src = url; "
+                "try { await image.decode(); return [image.naturalWidth, image.naturalHeight]; } "
+                "catch (_) { return null; } }",
+                image_url,
+            ) == [1, 1], name
+            assert (
+                page.evaluate(
+                    "window.__canvasHarness.messages.filter((item) => "
+                    "item.type === 'canvas:bridge-request').length"
+                )
+                == 0
+            ), name
+            assert not any(
+                item.kind == "request" and item.target.startswith(egress_server.origin)
+                for item in recorder.observations
+            ), name
+            assert egress_server.requests == [], name
+        finally:
+            context.close()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.parametrize(
+    ("event_kind", "expected_length"),
+    [("input", "8192"), ("keydown", "32")],
+)
+def test_renderer_caps_event_fields_by_utf8_bytes(
+    event_kind: str,
+    expected_length: str,
+    chromium_browser: Any,
+    asset_server: _OwnedServer,
+    egress_server: _OwnedServer,
+) -> None:
+    source = (
+        '<!doctype html><html><head><meta charset="utf-8"></head><body>'
+        '<input id="payload"><output id="status">static</output><script>'
+        "const payload = document.getElementById('payload');"
+        "const status = document.getElementById('status');"
+        f"payload.addEventListener('{event_kind}', (event) => {{"
+        "status.textContent = String("
+        + ("payload.value.length" if event_kind == "input" else "event.key.length")
+        + "); });"
+        "</script></body></html>"
+    )
+    context, page, recorder = _new_page(chromium_browser, asset_server, egress_server)
+    try:
+        assert _load(page, _wire_plan(source), recorder)["state"] == "ready"
+        frame = page.frame(name="canvas-renderer")
+        assert frame is not None
+        if event_kind == "input":
+            frame.locator("#payload").evaluate(
+                "(node, value) => { node.value = value; "
+                "node.dispatchEvent(new Event('input', {bubbles: true})); }",
+                chr(0x1F600) * 5_000,
+            )
+        else:
+            frame.locator("#payload").evaluate(
+                "node => node.dispatchEvent(new KeyboardEvent('keydown', "
+                "{key: String.fromCodePoint(0x1F600).repeat(20), bubbles: true}))"
+            )
+        try:
+            frame.wait_for_function(
+                "expected => document.getElementById('status').textContent === expected",
+                arg=expected_length,
+                timeout=2_000,
+            )
+        except Exception as exc:
+            actual = frame.locator("#status").text_content()
+            status = page.evaluate("window.__canvasHarness.status")
+            messages = page.evaluate("window.__canvasHarness.messages")
+            raise AssertionError(
+                f"event={event_kind!r}, text={actual!r}, "
+                f"status={status!r}, messages={messages!r}"
+            ) from exc
+        assert page.evaluate("window.__canvasHarness.status.state") == "ready"
+        _assert_zero_generated_egress(recorder, egress_server)
+    finally:
+        context.close()
 
 
 @pytest.mark.loopback_network
@@ -956,7 +1500,7 @@ def test_optional_browser_engine_runs_the_worker_boundary_when_installed(
     egress_server: _OwnedServer,
 ) -> None:
     name, browser = optional_browser
-    context, page, recorder = _new_page(browser, asset_server)
+    context, page, recorder = _new_page(browser, asset_server, egress_server)
     try:
         status = _load(
             page,

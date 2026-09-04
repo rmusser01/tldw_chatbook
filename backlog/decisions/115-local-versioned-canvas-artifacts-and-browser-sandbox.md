@@ -177,6 +177,20 @@ facade; native host capabilities are absent. Every failure causes the trusted
 renderer to terminate and discard the worker, with scripts disabled and no
 native execution fallback.
 
+The worker retains install, operation, dispatch, drain, and timer functions only
+as private QuickJS handles held by the native wrapper. Generated `globalThis`
+cannot name or recover them. Transport serialization uses captured intrinsics
+and null-prototype records; private timer enumeration uses captured
+`Map.forEach`, not mutable iterator dispatch. The native wrapper independently
+bounds timer count, uniqueness, identity, and delay. The renderer likewise uses
+two-phase
+validation: plans remain detached until every DOM/CSS/asset record is valid,
+and transactions mutate a detached shadow tree and validate every bridge before
+one live commit. Nested descendants inside a CSS style rule are unsupported and
+rejected before stylesheet adoption. A rejected transaction leaves the inert
+committed DOM, stylesheet, and passive assets unchanged; those asset URLs remain
+document-owned until renderer exit.
+
 Passive-image handling is also fail closed at this boundary. The renderer
 accepts at most 64 static PNG/JPEG/GIF/WebP assets, independently parses their
 container dimensions/frame structure, caps each dimension at 4,096 and each
@@ -195,7 +209,12 @@ single trusted mechanism and `script-src 'self' 'wasm-unsafe-eval'` so the
 packaged embedded QuickJS WASM can compile; it does not permit `unsafe-eval`,
 inline native script, network connections, forms, frames, external images,
 fonts, media, objects, or navigation privileges. Runtime requests complete
-before the explicit generated-execution acknowledgement.
+before the explicit generated-execution acknowledgement. The mandatory
+Chromium harness now makes that statement executable: it hard-fails when
+Playwright or Chromium is absent and withholds the acknowledgement unless the
+exact successful trusted HTTP requests/responses and completed-request events,
+renderer navigations, fixed bootstrap worker, and plan-derived local blob-image
+loads are present with no foreign observation or independent egress receipt.
 
 The owned numeric-loopback Playwright harness passed the mandatory Chromium
 gate against computed/literal URLs, redirect and resource surfaces, beacons,
@@ -211,7 +230,9 @@ and inline native script execution were blocked. Firefox and WebKit were not
 installed and are recorded as skips. Product integration remains disabled
 pending the independent security-focused review required by TASK-31226.
 
-The only model-page bridge in V1 is:
+The following bridge behavior is the required future product-gateway contract;
+Task 1.4 implements request emission and validation only, not confirmation or
+host effects. The only model-page bridge in V1 is:
 
 - `canvas.submit(value)`: bounded text/JSON is validated by the trusted shell,
   shown for user confirmation, revalidated by the Chatbook process, and

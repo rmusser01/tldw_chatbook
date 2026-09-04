@@ -173,9 +173,9 @@ const PASSIVE_IMAGE_TYPES = new Set([
 ]);
 
 const root = document.getElementById("canvas-root");
-const nativeById = new Map();
-const idByNative = new WeakMap();
-const assetUrls = new Map();
+let nativeById = new Map();
+let idByNative = new WeakMap();
+let assetUrls = new Map();
 const decoder = new TextDecoder("utf-8", {fatal: true});
 const encoder = new TextEncoder();
 let initialized = false;
@@ -206,6 +206,21 @@ function boundedString(value, limit) {
 
 function boundedIdentifier(value) {
   return typeof value === "string" && value.length > 0 && boundedString(value, 256);
+}
+
+function truncateUtf8(value, byteLimit) {
+  const candidate = value.slice(0, byteLimit);
+  const encoded = encoder.encode(candidate);
+  if (encoded.byteLength <= byteLimit) return candidate;
+  const minimum = Math.max(0, byteLimit - 3);
+  for (let end = byteLimit; end >= minimum; end -= 1) {
+    try {
+      return decoder.decode(encoded.subarray(0, end));
+    } catch (_) {
+      // A UTF-8 code point occupies at most four bytes.
+    }
+  }
+  return "";
 }
 
 function jsonDepthAndShape(value, byteLimit = MAX.bridgeBytes) {
@@ -305,6 +320,9 @@ function applyStyleText(target, cssText) {
 
 function validateStyleSheetRule(rule) {
   if (rule.type === CSSRule.STYLE_RULE) {
+    if (rule.cssRules && rule.cssRules.length !== 0) {
+      throw new Error("nested style rules are forbidden");
+    }
     if (/(^|[^\\]):visited(?:\W|$)/i.test(rule.selectorText)) {
       throw new Error("visited selectors are forbidden");
     }
@@ -322,7 +340,7 @@ function validateStyleSheetRule(rule) {
   throw new Error("CSS rule type is forbidden");
 }
 
-function installStyleRules(rules) {
+function prepareStyleRules(rules) {
   if (!Array.isArray(rules) || rules.length > MAX.cssRules) throw new Error("CSS rule limit");
   if (typeof CSSStyleSheet !== "function") throw new Error("trusted CSSOM is unavailable");
   const sheet = new CSSStyleSheet();
@@ -333,7 +351,7 @@ function installStyleRules(rules) {
     count += validateStyleSheetRule(sheet.cssRules[index]);
     if (count > MAX.cssRules) throw new Error("CSS rule limit");
   }
-  document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+  return sheet;
 }
 
 function readU16BigEndian(bytes, offset) {
@@ -630,13 +648,14 @@ async function verifyImageDecode(blob, metadata, milliseconds) {
   }
 }
 
-async function createAssets(assets) {
+async function prepareAssets(assets) {
   if (!Array.isArray(assets) || assets.length > MAX.assets) throw new Error("asset list schema");
+  const prepared = new Map();
   let aggregateBytes = 0;
   let aggregatePixels = 0;
   const deadline = performance.now() + MAX.assetDecodeTotalMilliseconds;
   for (const asset of assets) {
-    if (assetUrls.has(asset.asset_id)) throw new Error("duplicate asset ID");
+    if (prepared.has(asset.asset_id)) throw new Error("duplicate asset ID");
     const decoded = decodeAsset(asset, aggregateBytes);
     aggregateBytes += decoded.size;
     aggregatePixels += decoded.pixels;
@@ -644,9 +663,9 @@ async function createAssets(assets) {
     const blob = new Blob([decoded.bytes], {type: asset.mime_type});
     const remaining = Math.floor(deadline - performance.now());
     await verifyImageDecode(blob, decoded, Math.min(MAX.imageDecodeMilliseconds, remaining));
-    const url = URL.createObjectURL(blob);
-    assetUrls.set(asset.asset_id, url);
+    prepared.set(asset.asset_id, blob);
   }
+  return prepared;
 }
 
 function validateNodeRecord(node) {
@@ -664,7 +683,7 @@ function validateNodeRecord(node) {
   }
 }
 
-function nativeNode(node, inheritedNamespace) {
+function nativeNode(node, inheritedNamespace, assets, assetBindings) {
   if (node.tag === "#text") {
     if (node.attributes.length || node.children.length || node.text === null) {
       throw new Error("text node schema");
@@ -686,8 +705,8 @@ function nativeNode(node, inheritedNamespace) {
     if (!boundedIdentifier(name) || seen.has(name)) throw new Error("attribute identity");
     seen.add(name);
     if (name === "data-canvas-asset") {
-      if (node.tag !== "img" || !assetUrls.has(value)) throw new Error("asset handle");
-      native.src = assetUrls.get(value);
+      if (node.tag !== "img" || !assets.has(value)) throw new Error("asset handle");
+      assetBindings.push({native, assetId: value});
       continue;
     }
     if (!isAllowedAttribute(node.tag, namespace, name)) throw new Error("attribute is not allowlisted");
@@ -699,23 +718,61 @@ function nativeNode(node, inheritedNamespace) {
   return {native, namespace};
 }
 
-function buildTree(planRoot) {
-  const work = [{node: planRoot, parent: root, namespace: HTML_NAMESPACE}];
+function prepareTree(planRoot, assets) {
+  const fragment = document.createDocumentFragment();
+  const preparedById = new Map();
+  const preparedIdByNative = new WeakMap();
+  const assetBindings = [];
+  const work = [{node: planRoot, parent: fragment, namespace: HTML_NAMESPACE}];
   let count = 0;
   while (work.length) {
     const item = work.pop();
     validateNodeRecord(item.node);
     count += 1;
-    if (count > MAX.domNodes || nativeById.has(item.node.node_id)) {
+    if (count > MAX.domNodes || preparedById.has(item.node.node_id)) {
       throw new Error("DOM node boundary");
     }
-    const created = nativeNode(item.node, item.namespace);
-    nativeById.set(item.node.node_id, created.native);
-    idByNative.set(created.native, item.node.node_id);
+    const created = nativeNode(
+      item.node,
+      item.namespace,
+      assets,
+      assetBindings,
+    );
+    preparedById.set(item.node.node_id, created.native);
+    preparedIdByNative.set(created.native, item.node.node_id);
     item.parent.appendChild(created.native);
     for (let index = item.node.children.length - 1; index >= 0; index -= 1) {
       work.push({node: item.node.children[index], parent: created.native, namespace: created.namespace});
     }
+  }
+  return {
+    fragment,
+    nativeById: preparedById,
+    idByNative: preparedIdByNative,
+    assetBindings,
+  };
+}
+
+function commitPlan(preparedAssets, sheet, tree) {
+  const urls = new Map();
+  const previousSheets = document.adoptedStyleSheets;
+  try {
+    for (const [assetId, blob] of preparedAssets) {
+      urls.set(assetId, URL.createObjectURL(blob));
+    }
+    for (const binding of tree.assetBindings) {
+      binding.native.src = urls.get(binding.assetId);
+    }
+    document.adoptedStyleSheets = [...previousSheets, sheet];
+    root.replaceChildren(tree.fragment);
+    nativeById = tree.nativeById;
+    idByNative = tree.idByNative;
+    assetUrls = urls;
+  } catch (error) {
+    root.replaceChildren();
+    document.adoptedStyleSheets = previousSheets;
+    for (const url of urls.values()) URL.revokeObjectURL(url);
+    throw error;
   }
 }
 
@@ -771,8 +828,6 @@ function fail(code, message) {
     URL.revokeObjectURL(workerBootstrapUrl);
     workerBootstrapUrl = null;
   }
-  for (const url of assetUrls.values()) URL.revokeObjectURL(url);
-  assetUrls.clear();
   postTrusted({
     type: "canvas:status",
     state: "failed",
@@ -837,38 +892,38 @@ function validatePatch(patch) {
   throw new Error("patch operation/schema");
 }
 
-function removeMappings(native) {
+function removeMappings(native, state) {
   const stack = [native];
   while (stack.length) {
     const current = stack.pop();
-    const identifier = idByNative.get(current);
-    if (identifier) nativeById.delete(identifier);
+    const identifier = state.idByNative.get(current);
+    if (identifier) state.nativeById.delete(identifier);
     for (const child of current.childNodes) stack.push(child);
   }
 }
 
-function applyPatch(patch) {
+function applyPatch(patch, state) {
   validatePatch(patch);
   if (patch.op === "create-element") {
-    if (nativeById.has(patch.node_id) || nativeById.size >= MAX.domNodes) throw new Error("created node boundary");
+    if (state.nativeById.has(patch.node_id) || state.nativeById.size >= MAX.domNodes) throw new Error("created node boundary");
     const native = patch.namespace === SVG_NAMESPACE
       ? document.createElementNS(SVG_NAMESPACE, patch.tag)
       : document.createElement(patch.tag);
-    nativeById.set(patch.node_id, native);
-    idByNative.set(native, patch.node_id);
+    state.nativeById.set(patch.node_id, native);
+    state.idByNative.set(native, patch.node_id);
     return;
   }
   if (patch.op === "create-text") {
-    if (nativeById.has(patch.node_id) || nativeById.size >= MAX.domNodes) throw new Error("created node boundary");
+    if (state.nativeById.has(patch.node_id) || state.nativeById.size >= MAX.domNodes) throw new Error("created node boundary");
     const native = document.createTextNode(patch.value);
-    nativeById.set(patch.node_id, native);
-    idByNative.set(native, patch.node_id);
+    state.nativeById.set(patch.node_id, native);
+    state.idByNative.set(native, patch.node_id);
     return;
   }
-  const target = nativeById.get(patch.node_id);
+  const target = state.nativeById.get(patch.node_id);
   if (!target) throw new Error("unknown patch target");
   if (patch.op === "set-text") {
-    for (const child of target.childNodes) removeMappings(child);
+    for (const child of target.childNodes) removeMappings(child, state);
     target.textContent = patch.value;
   } else if (patch.op === "set-attribute") {
     if (!(target instanceof Element)) throw new Error("attribute target");
@@ -892,20 +947,88 @@ function applyPatch(patch) {
     if (!(target instanceof Element)) throw new Error("style target");
     target.style.removeProperty(patch.name);
   } else {
-    const child = nativeById.get(patch.child_id);
+    const child = state.nativeById.get(patch.child_id);
     if (!child) throw new Error("unknown patch child");
     if (patch.op === "append-child") target.appendChild(child);
     else if (patch.op === "remove-child") {
       if (child.parentNode !== target) throw new Error("patch parent mismatch");
       target.removeChild(child);
-      removeMappings(child);
+      removeMappings(child, state);
     } else {
-      const reference = patch.reference_id === null ? null : nativeById.get(patch.reference_id);
+      const reference = patch.reference_id === null ? null : state.nativeById.get(patch.reference_id);
       if (patch.reference_id !== null && (!reference || reference.parentNode !== target)) {
         throw new Error("patch reference mismatch");
       }
       target.insertBefore(child, reference);
     }
+  }
+}
+
+function cloneRendererState() {
+  const state = {
+    fragment: document.createDocumentFragment(),
+    nativeById: new Map(),
+    idByNative: new WeakMap(),
+  };
+  const cloned = new Map();
+
+  function indexClone(original, copy) {
+    cloned.set(original, copy);
+    const identifier = idByNative.get(original);
+    if (identifier) {
+      state.nativeById.set(identifier, copy);
+      state.idByNative.set(copy, identifier);
+    }
+    for (let index = 0; index < original.childNodes.length; index += 1) {
+      indexClone(original.childNodes[index], copy.childNodes[index]);
+    }
+  }
+
+  for (const child of root.childNodes) {
+    const copy = child.cloneNode(true);
+    state.fragment.appendChild(copy);
+    indexClone(child, copy);
+  }
+  for (const original of nativeById.values()) {
+    if (cloned.has(original)) continue;
+    let top = original;
+    while (
+      top.parentNode && top.parentNode !== root &&
+      idByNative.has(top.parentNode) && !cloned.has(top.parentNode)
+    ) top = top.parentNode;
+    if (!cloned.has(top)) indexClone(top, top.cloneNode(true));
+  }
+  return state;
+}
+
+function prepareBridge(bridge) {
+  if (!ownRecord(bridge, ["request_id", "kind", "value"])) throw new Error("bridge schema");
+  if (!boundedIdentifier(bridge.request_id) || !["submit", "download"].includes(bridge.kind)) {
+    throw new Error("bridge identity");
+  }
+  return {
+    request_id: bridge.request_id,
+    kind: bridge.kind,
+    value: jsonDepthAndShape(
+      bridge.value,
+      bridge.kind === "submit" ? 16 * 1024 : MAX.bridgeBytes,
+    ),
+  };
+}
+
+function prepareTransaction(patches, bridges) {
+  const state = cloneRendererState();
+  for (const patch of patches) applyPatch(patch, state);
+  const preparedBridges = bridges.map(prepareBridge);
+  return {state, bridges: preparedBridges};
+}
+
+function commitTransaction(transaction) {
+  root.replaceChildren(transaction.state.fragment);
+  nativeById = transaction.state.nativeById;
+  idByNative = transaction.state.idByNative;
+  for (const bridge of transaction.bridges) {
+    postTrusted({type: "canvas:bridge-request", ...bridge});
   }
 }
 
@@ -970,16 +1093,7 @@ function handleWorkerMessage(event) {
       return fail("worker-protocol", "Canvas worker event ordering was invalid.");
     }
     try {
-      for (const patch of message.patches) applyPatch(patch);
-      for (const bridge of message.bridges) {
-        if (!ownRecord(bridge, ["request_id", "kind", "value"])) throw new Error("bridge schema");
-        if (!boundedIdentifier(bridge.request_id) || !["submit", "download"].includes(bridge.kind)) throw new Error("bridge identity");
-        const value = jsonDepthAndShape(
-          bridge.value,
-          bridge.kind === "submit" ? 16 * 1024 : MAX.bridgeBytes,
-        );
-        postTrusted({type: "canvas:bridge-request", request_id: bridge.request_id, kind: bridge.kind, value});
-      }
+      commitTransaction(prepareTransaction(message.patches, message.bridges));
     } catch (_) {
       return fail("invalid-patch", "Canvas emitted a patch outside the V1 renderer vocabulary.");
     }
@@ -1031,9 +1145,9 @@ function sendEvent(type, nativeEvent, explicitTarget = null) {
   const record = {
     type,
     target_id: idByNative.get(target),
-    value: typeof target.value === "string" ? target.value.slice(0, 16 * 1024) : null,
+    value: typeof target.value === "string" ? truncateUtf8(target.value, 16 * 1024) : null,
     checked: typeof target.checked === "boolean" ? target.checked : null,
-    key: typeof nativeEvent.key === "string" ? nativeEvent.key.slice(0, 64) : null,
+    key: typeof nativeEvent.key === "string" ? truncateUtf8(nativeEvent.key, 64) : null,
   };
   if (eventQueue.length >= MAX.eventQueue) {
     fail("event-queue-limit", "Canvas event queue exceeded its bounded capacity.");
@@ -1069,9 +1183,10 @@ for (const type of EVENTS) {
 async function start(plan) {
   try {
     validatePlan(plan);
-    await createAssets(plan.assets);
-    installStyleRules(plan.css_rules);
-    buildTree(plan.root);
+    const preparedAssets = await prepareAssets(plan.assets);
+    const sheet = prepareStyleRules(plan.css_rules);
+    const tree = prepareTree(plan.root, preparedAssets);
+    commitPlan(preparedAssets, sheet, tree);
   } catch (_) {
     fail("invalid-plan", "Canvas render plan failed trusted renderer validation.");
     return;
@@ -1112,6 +1227,11 @@ window.addEventListener("message", (event) => {
   };
   channel.start();
   void start(event.data.plan);
+});
+
+window.addEventListener("pagehide", () => {
+  for (const url of assetUrls.values()) URL.revokeObjectURL(url);
+  assetUrls.clear();
 });
 
 parent.postMessage({type: "canvas:renderer-ready"}, new URL(location.href).origin);

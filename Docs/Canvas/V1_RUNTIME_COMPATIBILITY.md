@@ -43,10 +43,16 @@ The facade does not expose native `window`, `self`, `parent`, `top`, DOM,
 `importScripts`, a module loader, storage, cookies, caches, filesystem/file
 pickers, clipboard, dialogs, popups, native object URLs, `SharedArrayBuffer`,
 `Atomics`, or WebAssembly compilation. Generated prototype or global mutations
-therefore remain in the disposable QuickJS realm.
+therefore remain in the disposable QuickJS realm. Trusted install, operation,
+dispatch, drain, and timer controls are private host-held QuickJS handles, not
+properties of generated `globalThis`. Transaction serialization uses bootstrap-
+captured intrinsics and null-prototype transport records. Timer enumeration
+uses captured `Map.forEach` rather than a mutable iterator path, and the native
+worker independently revalidates timer count, identity, uniqueness, and delay.
 
 CSS is parsed twice and inserted by the trusted renderer through CSSOM. Only
-style and media rules and the V1 property allowlist are accepted. Resource and
+flat style rules and media rules containing supported descendants are accepted;
+nested descendants inside a style rule fail closed. Resource and
 computed-value functions such as `url()`, `image-set()`, `var()`, `env()`, and
 `attr()` fail closed. Passive images must be compiler-issued PNG, JPEG, GIF, or
 WebP handles. Before creating its own object URL, the renderer rechecks the
@@ -67,6 +73,7 @@ dimensions. SVG animation and link elements are not supported.
 | Native image decode | 1 s each / 3 s total preparation |
 | DOM nodes / CSS rules / generated script text | 5,000 / 2,000 / 256 KiB |
 | Node/asset/patch/bridge identifier | 256 UTF-8 bytes |
+| Event value / event key | 16 KiB / 64 UTF-8 bytes |
 | QuickJS heap / stack | 32 MiB / 512 KiB |
 | Generated startup / one event or timer callback | 250 ms / 50 ms |
 | Trusted worker startup / startup-response backstop / event-response backstop | 10 s / 750 ms / 250 ms |
@@ -81,9 +88,15 @@ dimensions. SVG animation and link elements are not supported.
 | QuickJS console | 100 entries and 16 KiB total text |
 | One worker transaction / one renderer plan or message | 12 MiB |
 
-Crossing a runtime budget or producing an invalid patch terminates and discards
-the worker. The renderer leaves the inert, already-constructed document visible,
-reports a bounded failure, and marks scripts disabled.
+Plans and worker transactions use two phases. A complete plan is decoded and
+validated as detached assets, CSS, and DOM before one live commit. A complete
+transaction is applied to a detached shadow tree and every bridge request is
+validated before the live tree is swapped or any request is posted. An invalid
+plan therefore leaves no DOM, stylesheet, or asset attachment; an invalid
+transaction leaves the previously committed inert document unchanged. Either
+failure terminates and discards the worker, reports a bounded failure, and marks
+scripts disabled. Committed passive-asset URLs remain owned by and usable in
+that inert renderer document, then are revoked when it exits.
 
 ## Browser containment
 
@@ -101,7 +114,12 @@ in Chromium. The trusted renderer therefore creates a fixed `data:` module
 bootstrap that imports the exact packaged worker URL; generated content never
 contributes bytes or a URL to that bootstrap. The worker then imports the
 integrity-checked, single-file QuickJS asset before the generated-execution
-boundary. Runtime asset loading after that boundary is forbidden.
+boundary. The mandatory Chromium harness withholds that boundary acknowledgment
+unless it has observed exactly the five successful, completed trusted HTTP
+GETs, exactly the fixed `data:` bootstrap worker, the plan-derived number of
+successful completed local `blob:` image loads, no foreign startup observation,
+and no independently owned egress-server receipt. Runtime asset loading after
+that boundary is forbidden.
 
 Firefox and WebKit behavior is tested when their Playwright engines are already
 installed. Chromium is the mandatory release gate. Canvas remains unavailable
