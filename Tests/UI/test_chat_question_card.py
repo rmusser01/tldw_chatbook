@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 import pytest
 from textual import on
 from textual.app import ComposeResult
 from textual.widgets import Input, RadioButton, RadioSet, SelectionList, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 
@@ -231,3 +235,52 @@ async def test_four_by_four_card_stays_bounded_under_bundled_css():
         assert sections.region.height <= 15, sections.region
         submit = card.query_one("#question-submit")
         assert submit.region.height > 0 and submit.region.y < 40, "Submit stays reachable"
+
+
+# --- screen and runtime wiring (Task 7) ---------------------------------------
+#
+# Driven as unbound methods on stubs: constructing a real ``ChatScreen`` with
+# the shared ``mock_chat_host`` fixture trips a real-path check on current
+# dev (the sibling ``test_skill_script_confirm_card`` screen tests are red
+# for the same reason), and these handlers touch nothing but the two
+# attributes the stubs carry.
+
+
+def test_screen_forwards_answers_to_the_controller_with_request_id():
+    controller = Mock()
+    screen = SimpleNamespace(_console_chat_controller=controller)
+    answers = [{"question": "q", "selected": ["a"], "other_text": None, "unanswered": False}]
+    event = ChatTaskCards.QuestionAnswered(answers, "round-7")
+    ChatScreen.handle_console_question_answered(screen, event)
+    controller.resolve_pending_question.assert_called_once_with(answers, request_id="round-7")
+
+
+def test_screen_question_handler_tolerates_no_controller():
+    screen = SimpleNamespace(_console_chat_controller=None)
+    ChatScreen.handle_console_question_answered(
+        screen, ChatTaskCards.QuestionAnswered([], "round-7")
+    )  # must not raise
+
+
+def test_screen_setter_replaces_only_the_pending_question():
+    recorded = []
+    screen = SimpleNamespace(
+        _task_resume_state=TaskResumeState(
+            summary="keep me", pending_skill_script={"skill_name": "x"}
+        ),
+        set_task_resume_state=recorded.append,
+    )
+    ChatScreen._set_console_pending_question(screen, _payload())
+    (state,) = recorded
+    assert state.pending_question["request_id"] == "round-1"
+    assert state.summary == "keep me"
+    assert state.pending_skill_script == {"skill_name": "x"}
+    ChatScreen._set_console_pending_question(screen, None)
+    assert recorded[-1].pending_question is None
+
+
+def test_the_hook_slot_is_declared_for_the_new_setter():
+    from tldw_chatbook.Chat.console_runtime import CONSOLE_VIEW_HOOK_SLOTS
+
+    slot = next(s for s in CONSOLE_VIEW_HOOK_SLOTS if s.name == "set_pending_question")
+    assert slot.target == "controller" and slot.viewless_default is None and slot.why
