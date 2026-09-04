@@ -161,6 +161,55 @@ async def test_concurrent_first_use_builds_and_mounts_one_view(monkeypatch):
         assert len(list(screen.query(PersonasCharacterEditorWidget))) == 1
 
 
+async def test_concurrent_caller_waits_until_mounted_view_is_hydrated(monkeypatch):
+    """A queryable-but-unready body must not escape the per-view lock."""
+    from Tests.UI.app_factory import _build_test_app
+
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        screen = PersonasScreen(app)
+        await app.push_screen(screen)
+        await pilot.pause()
+        slot = screen.query_one("#personas-character-editor-slot", Vertical)
+        real_mount = slot.mount
+        real_hydrate = screen._hydrate_center_view
+        mounted = asyncio.Event()
+        release = asyncio.Event()
+        hydration_attempts = 0
+
+        async def mount_then_pause(*widgets, **kwargs):
+            result = await real_mount(*widgets, **kwargs)
+            mounted.set()
+            await release.wait()
+            return result
+
+        def fail_first_hydration(view_key: str, view):
+            nonlocal hydration_attempts
+            hydration_attempts += 1
+            if hydration_attempts == 1:
+                raise RuntimeError("first hydration failed")
+            real_hydrate(view_key, view)
+
+        monkeypatch.setattr(slot, "mount", mount_then_pause)
+        monkeypatch.setattr(screen, "_hydrate_center_view", fail_first_hydration)
+        first = asyncio.create_task(screen._ensure_center_view("character-editor"))
+        await mounted.wait()
+        second = asyncio.create_task(screen._ensure_center_view("character-editor"))
+        await asyncio.sleep(0)
+        escaped_before_hydration = second.done()
+        release.set()
+
+        assert await first is None
+        ready = await second
+
+        assert not escaped_before_hydration
+        assert isinstance(ready, PersonasCharacterEditorWidget)
+        assert ready.is_mounted
+        assert hydration_attempts == 2
+        assert len(list(screen.query(PersonasCharacterEditorWidget))) == 1
+
+
 async def test_transient_mount_failure_remains_retryable(monkeypatch):
     """A failed attempt owns no ready state and a later attempt can succeed."""
     from Tests.UI.app_factory import _build_test_app

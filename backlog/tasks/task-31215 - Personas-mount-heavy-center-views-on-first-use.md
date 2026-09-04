@@ -4,7 +4,7 @@ title: Personas mount heavy center views on first use
 status: Done
 assignee: []
 created_date: '2026-09-04 00:23'
-updated_date: '2026-09-04 01:56'
+updated_date: '2026-09-04 02:34'
 labels:
   - roleplay
   - performance
@@ -54,4 +54,6 @@ Reason: the change defines the long-lived lifecycle and restore/admission contra
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented screen-owned, first-use mounting for the character editor, persona editor, dictionary manager, and lore manager. Stable lightweight slots preserve document order while per-view locks, cached instances, retryable mount failures, and lifecycle-generation checks protect concurrent activation and teardown. Character/persona creation and editing, actor packs, dictionary/lore workflows, restore intents, runtime-source hydration, and character TTS presentation now cross the exact view admission boundary before mutating widget state. A natural-height slot replaced the planned auto-height wrapper after real pointer testing exposed painted but non-hit-testable controls. Verification: 378 Personas Workbench tests, 246 other affected Personas tests, and 6 architecture checks passed (630 targeted tests total); the production-CSS heartbeat regression enforces a sub-250 ms event-loop stall; compileall, Ruff lint/format checks, and git diff whitespace checks passed. The full repository suite was not run, per the repository targeted-test policy.
+
+PR #2364 review follow-up: verified Qodo's concurrency finding with a red-first regression that pauses after DOM mount but before hydration. Replaced queryability-based reuse with an explicit ready-view cache published only after hydration and cleared on unmount, so concurrent callers remain behind the per-view lock and a failed hydration is retried safely. Added the required on_unmount lifecycle docstring. Post-fix verification: 247 affected workflow/lifecycle tests and 378 Workbench tests passed (625 total); compileall, Ruff lint/format, and git diff whitespace checks passed.
 <!-- SECTION:NOTES:END -->

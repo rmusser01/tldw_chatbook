@@ -1184,6 +1184,7 @@ class PersonasScreen(BaseAppScreen):
         self._center_view_mount_locks = {
             view_key: asyncio.Lock() for view_key in _DEMAND_CENTER_VIEW_ROOTS
         }
+        self._ready_center_views: dict[str, Widget] = {}
         # Refuse-reentry flag for the import/export file dialogs. Cancelling
         # an in-flight dialog worker (exclusive=True) would orphan a modal
         # pushed via push_screen_wait, whose dismissal then calls
@@ -1748,15 +1749,15 @@ class PersonasScreen(BaseAppScreen):
             return PersonasLoreDetailWidget(id="personas-lore-detail")
         raise ValueError(f"Unknown Personas center view: {view_key}")
 
-    def _mounted_center_view(self, view_key: str) -> Widget | None:
-        """Return a requested heavy root when it is already mounted."""
-        selector = _DEMAND_CENTER_VIEW_ROOTS.get(view_key)
-        if selector is None:
+    def _ready_center_view(self, view_key: str) -> Widget | None:
+        """Return a requested heavy root only after successful hydration."""
+        if view_key not in _DEMAND_CENTER_VIEW_ROOTS:
             raise ValueError(f"Unknown Personas center view: {view_key}")
-        try:
-            return self.query_one(selector)
-        except QueryError:
-            return None
+        existing = self._ready_center_views.get(view_key)
+        if existing is not None and existing.is_mounted:
+            return existing
+        self._ready_center_views.pop(view_key, None)
+        return None
 
     def _hydrate_center_view(self, view_key: str, view: Widget) -> None:
         """Apply screen-owned retained state before a new body is used."""
@@ -1780,12 +1781,12 @@ class PersonasScreen(BaseAppScreen):
         """
         if view_key not in _DEMAND_CENTER_VIEW_ROOTS:
             raise ValueError(f"Unknown Personas center view: {view_key}")
-        existing = self._mounted_center_view(view_key)
+        existing = self._ready_center_view(view_key)
         if existing is not None:
             return existing
 
         async with self._center_view_mount_locks[view_key]:
-            existing = self._mounted_center_view(view_key)
+            existing = self._ready_center_view(view_key)
             if existing is not None:
                 return existing
 
@@ -1804,6 +1805,7 @@ class PersonasScreen(BaseAppScreen):
                     return None
                 self._hydrate_center_view(view_key, body)
                 slot.display = True
+                self._ready_center_views[view_key] = body
                 return body
             except asyncio.CancelledError:
                 if body.is_mounted:
@@ -1906,7 +1908,9 @@ class PersonasScreen(BaseAppScreen):
             self._sync_title_and_console_actions()
 
     async def on_unmount(self) -> None:
+        """Invalidate deferred Personas work before releasing screen resources."""
         self._center_view_lifecycle_generation += 1
+        self._ready_center_views.clear()
         self._advance_persona_buddy_session()
         self._cancel_actor_pack_export()
         self._cancel_actor_pack_import()
