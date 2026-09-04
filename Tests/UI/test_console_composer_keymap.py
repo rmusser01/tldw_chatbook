@@ -105,6 +105,25 @@ async def test_ctrl_u_clears_the_whole_draft():
         assert composer.cursor_index == 0
 
 
+@pytest.mark.asyncio
+async def test_ctrl_c_clears_an_unselected_focused_draft_and_is_undoable():
+    _, host = _ready_host()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        composer = await _focused_composer(host, pilot, "throw me away")
+
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+
+        assert composer.draft_text() == ""
+        assert composer.cursor_index == 0
+
+        await pilot.press("ctrl+z")
+        await pilot.pause()
+
+        assert composer.draft_text() == "throw me away"
+        assert composer.cursor_index == len("throw me away")
+
+
 # ---------------------------------------------------------------------------
 # Caret movement
 # ---------------------------------------------------------------------------
@@ -284,3 +303,20 @@ async def test_an_edit_key_reaches_the_composer_while_nothing_is_focused():
 
         assert composer.draft_text() == "ac"
         assert composer.cursor_index == 1
+
+
+@pytest.mark.asyncio
+async def test_ctrl_c_does_not_clear_the_draft_while_nothing_is_focused():
+    _, host = _ready_host()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("keep me")
+        host.set_focus(None)
+        await pilot.pause()
+        assert host.focused is None
+
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+
+        assert composer.draft_text() == "keep me"
