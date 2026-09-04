@@ -22,8 +22,8 @@ from textual.widget import Widget
 from textual.widgets import Button, Static
 from textual.worker import Worker, get_current_worker
 
-from ...Constants import TAB_CHAT, TAB_SETTINGS
 from ...config import get_api_key
+from ...Constants import TAB_CHAT, TAB_SETTINGS
 from ...Event_Handlers.LLM_Management_Events.server_lifecycle import (
     ServerLaunchClaim,
     current_server_claim,
@@ -109,6 +109,7 @@ from ..LLM_Management.vllm_setup import (
     build_vllm_command,
     changed_launch_field_labels,
     run_vllm_preflight,
+    run_vllm_profile_repair_check,
     semantic_fingerprint,
 )
 from ..LLM_Management.vllm_setup_view import VllmSetupView
@@ -148,6 +149,51 @@ if TYPE_CHECKING:
         PreflightReport,
     )
     from tldw_chatbook.Model_Artifacts.curated_registry import CuratedRegistry
+
+
+def _classify_vllm_profile_validation(
+    error: VllmProfileValidationError,
+) -> tuple[str, str]:
+    """Map private profile validation text to bounded adjacent UI recovery."""
+
+    message = str(error)
+    if "profile names must be unique" in message:
+        return "name", "duplicate_name"
+    field_rules = (
+        ("python_environment", "python_environment", "invalid_python_environment"),
+        ("model_value", "model_value", "invalid_model_value"),
+        ("model_source", "model_source", "invalid_model_source"),
+        ("bind_address", "bind_address", "invalid_bind_address"),
+        (
+            "tensor_parallel_size",
+            "tensor_parallel_size",
+            "invalid_tensor_parallel_size",
+        ),
+        (
+            "maximum_model_length",
+            "maximum_model_length",
+            "invalid_maximum_model_length",
+        ),
+        (
+            "gpu_memory_utilization",
+            "gpu_memory_utilization",
+            "invalid_gpu_memory_utilization",
+        ),
+        ("trust_remote_code", "trust_remote_code", "invalid_trust_remote_code"),
+        ("dtype", "dtype", "invalid_dtype"),
+        ("port", "port", "invalid_port"),
+        ("name", "name", "invalid_name"),
+    )
+    for marker, field, classification in field_rules:
+        if marker in message:
+            return field, classification
+    if "only local launch drafts" in message:
+        return "mode", "local_profiles_only"
+    if "profile store is capped" in message:
+        return "profile", "profile_cap"
+    if "profile is unavailable" in message:
+        return "profile", "profile_unavailable"
+    return "profile", "profile_invalid"
 
 
 class _AudioCppConsentDeclined(Exception):
@@ -2664,7 +2710,7 @@ class LLMScreen(LabScreen):
             ("lab-vllm-target", f"Verified · {verified}"),
             (
                 "lab-vllm-persistence",
-                "Persistence · Not adopted; defaults unchanged",
+                "Persistence · Console use is session-only; defaults unchanged",
             ),
             ("lab-vllm-configuration", configuration),
             ("lab-vllm-next-action", f"Next action · {self._vllm_next_action()}"),
@@ -2733,6 +2779,7 @@ class LLMScreen(LabScreen):
             and snapshot.current_token is not None
             and preflight.generation == snapshot.current_token.generation
             and preflight.issues
+            and snapshot.target is None
         ):
             state = VllmReadinessState.NEEDS_ATTENTION
         view.apply_state(
@@ -2767,11 +2814,22 @@ class LLMScreen(LabScreen):
             selected,
             raw_arguments=self._vllm_draft.raw_arguments,
         )
-        self._vllm_preflight = None
         self._vllm_profiles_loaded = True
-        if semantic_fingerprint(self._vllm_draft) != previous_fingerprint:
-            self._vllm_owner.invalidate("target_changed")
+        fingerprint_changed = (
+            semantic_fingerprint(self._vllm_draft) != previous_fingerprint
+        )
+        owner_snapshot = self._vllm_owner.snapshot()
+        if fingerprint_changed or owner_snapshot.current_token is None:
+            generation = self._vllm_owner.invalidate("target_changed")
+        else:
+            generation = owner_snapshot.current_token.generation
+        if fingerprint_changed:
             self._cancel_vllm_workers()
+        if fingerprint_changed or self._vllm_preflight is None:
+            self._vllm_preflight = run_vllm_profile_repair_check(
+                self._vllm_draft,
+                generation,
+            )
         self._apply_vllm_view_state(focus=False)
 
     async def _load_vllm_profiles(self) -> None:
@@ -2798,11 +2856,20 @@ class LLMScreen(LabScreen):
 
         try:
             receipt = await asyncio.to_thread(operation)
+        except VllmProfileValidationError as error:
+            field, classification = _classify_vllm_profile_validation(error)
+            view = self._vllm_view()
+            if view is not None:
+                view.show_profile_validation_error(field, classification)
+            self.notify(
+                "vLLM profile fields need repair before this change can be saved.",
+                severity="error",
+            )
+            return
         except (
             VllmProfileConflict,
             VllmProfileCorrupt,
             VllmProfileFutureVersion,
-            VllmProfileValidationError,
             OSError,
         ):
             view = self._vllm_view()
@@ -2846,11 +2913,12 @@ class LLMScreen(LabScreen):
         event.stop()
         try:
             profile = profile_from_draft(event.name, event.draft)
-        except VllmProfileValidationError:
+        except VllmProfileValidationError as error:
+            field, classification = _classify_vllm_profile_validation(error)
             view = self._vllm_view()
             if view is not None:
-                view.show_profile_validation_error("name")
-            self.notify("Choose a valid unique profile name.", severity="error")
+                view.show_profile_validation_error(field, classification)
+            self.notify("Profile fields need repair before saving.", severity="error")
             return
         self._start_vllm_profile_mutation(
             partial(
@@ -2880,27 +2948,10 @@ class LLMScreen(LabScreen):
                 profile_id=selected.profile_id,
             )
         except VllmProfileValidationError as error:
-            field = next(
-                (
-                    candidate
-                    for candidate in (
-                        "python_environment",
-                        "model_value",
-                        "bind_address",
-                        "port",
-                        "dtype",
-                        "tensor_parallel_size",
-                        "maximum_model_length",
-                        "gpu_memory_utilization",
-                        "trust_remote_code",
-                    )
-                    if candidate in str(error)
-                ),
-                "name",
-            )
+            field, classification = _classify_vllm_profile_validation(error)
             view = self._vllm_view()
             if view is not None:
-                view.show_profile_validation_error(field)
+                view.show_profile_validation_error(field, classification)
             self.notify("Profile fields need repair before saving.", severity="error")
             return
         self._start_vllm_profile_mutation(

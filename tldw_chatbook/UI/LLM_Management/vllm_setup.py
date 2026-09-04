@@ -108,6 +108,7 @@ class VllmPreflightResult:
     vllm_version: str | None = None
     cli_path: Path | None = field(default=None, repr=False)
     network_exposed: bool = False
+    repair_only: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -506,6 +507,45 @@ def _resolve_python_environment(
         selected = Path(resolved) if resolved else Path()
     selected = selected.absolute()
     return selected if selected.is_file() and os.access(selected, os.X_OK) else None
+
+
+def run_vllm_profile_repair_check(
+    draft: VllmLaunchDraft,
+    generation: int,
+    *,
+    which: Callable[[str], str | None] = shutil.which,
+) -> VllmPreflightResult:
+    """Validate selected-profile repairs without runtime, port, or network probes."""
+
+    structural_issues = _validate_draft_structure(draft)
+    if structural_issues:
+        return VllmPreflightResult(
+            generation,
+            _invalid_draft_fingerprint(structural_issues),
+            structural_issues,
+            repair_only=True,
+        )
+
+    issues: list[VllmIssue] = []
+    if draft.mode is not VllmMode.LOCAL:
+        issues.append(VllmIssue("invalid_mode", "mode"))
+    if draft.model_source is VllmModelSource.HUGGING_FACE:
+        if not is_valid_hugging_face_repository_id(draft.model_value):
+            issues.append(VllmIssue("invalid_hugging_face_model", "model_value"))
+    else:
+        model_issue = _validate_local_model_directory(draft.model_value)
+        if model_issue is not None:
+            issues.append(model_issue)
+    if not draft.python_environment.strip():
+        issues.append(VllmIssue("missing_python_environment", "python_environment"))
+    elif _resolve_python_environment(draft.python_environment, which) is None:
+        issues.append(VllmIssue("python_unavailable", "python_environment"))
+    return VllmPreflightResult(
+        generation,
+        semantic_fingerprint(draft),
+        tuple(issues),
+        repair_only=True,
+    )
 
 
 def _matching_vllm_cli(python_path: Path) -> Path | None:

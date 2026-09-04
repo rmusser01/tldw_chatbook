@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 22:32'
-updated_date: '2026-09-04 12:29'
+updated_date: '2026-09-04 14:05'
 labels:
   - vllm
   - lab
@@ -31,6 +31,7 @@ Replace process-liveness completion with an explicit, privacy-bounded vLLM lifec
 - [x] #5 Unit, loopback HTTP, lifecycle, privacy, and mounted UI tests cover the state machine.
 - [x] #6 Existing-server discovery returns a bounded non-ready candidate set; only an explicit admissible selection followed by an exact current-generation reprobe may publish a verified target.
 - [x] #7 Presentation-only recomposition preserves valid exact-claim evidence or exposes a reachable Reverify action, while an active runtime with a dirty checked draft exposes Restart with draft without losing Stop or synchronized network-warning recovery.
+- [x] #8 Active credential values are excluded before candidate retention; Chatbook-owned probes/results/snapshots retain no candidate list, while external discovery and exact selection retain only bounded safe IDs necessary for the visible selection flow.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -63,6 +64,15 @@ Final UX fix round:
 ADR required: no
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: The accepted ADR already separates discovery, explicit model selection, exact verification, semantic invalidation, and current-versus-next restart ownership; no new service or security boundary is introduced.
+
+UX Fix Round 2/5:
+12. Add sequential RED privacy regressions for credential-shaped model IDs, Chatbook-owned success/failure minimality, external discovery filtering, and exact-selection visibility.
+13. Filter the ephemeral active credential before model-ID retention, enforce owner-specific candidate invariants at result construction/settlement, and retain only the safe external IDs required by discovery or exact selection.
+14. Run focused RED/GREEN privacy/owner probes and every requested full gate before checking the new AC and restoring Done.
+
+ADR required: no
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: This narrows retained readiness evidence under ADR-117's existing credential and bounded-discovery privacy rules without changing the service contract.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -115,6 +125,17 @@ descriptor-growth warning; the production CSS build/sync/staleness gate passed
 and `git diff --check` passed. The host still has neither a `vllm` executable
 nor an importable `vllm` package, so loopback probes remain contract evidence,
 not a live-vLLM claim.
+
+UX Fix Round 2/5 filters an exact active credential echo before any model-ID
+candidate is retained and adds constructor-level owner invariants: Chatbook
+results retain no candidates, external discovery alone may retain the bounded
+candidate set, and external READY may retain at most its exact selected
+singleton. Probe success/failure, owner snapshots, and logs are covered by
+credential-echo and response-canary regressions. The four initial privacy
+contracts and the later forged-READY invariant were observed RED before their
+production checks and GREEN afterward. Final connection plus mounted workflow
+passed `100`; the final five-file primary passed `325`. This narrows ADR-117's
+existing evidence-retention contract and requires no new ADR.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

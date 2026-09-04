@@ -5,7 +5,7 @@ status: Done
 assignee:
   - codex
 created_date: '2026-09-03 22:34'
-updated_date: '2026-09-04 12:29'
+updated_date: '2026-09-04 14:05'
 labels:
   - vllm
   - lab
@@ -34,6 +34,7 @@ Ensure the complete vLLM setup, activity, profile, and Console-handoff workflow 
 - [x] #5 Production-stylesheet compositor and keyboard tests cover first-run, loading, ready, failure, current-versus-next, and handoff states.
 - [x] #6 While vLLM is active, the outer Lab header, status, and visible Inspector project selected profile, ownership, safe verified endpoint/model, persistence scope, Current versus Next state, and the reachable next action; projection refreshes without focus theft and respects compact/medium Inspector collapse.
 - [x] #7 The production-stylesheet evidence matrix covers actual Checking, existing-server discovery and selection, Console/default presentations where applicable, mounted edit -> check -> restart, and presentation recomposition with assertion-level mappings for every claimed outcome.
+- [x] #8 The contextual Inspector describes Console use truthfully before and after handoff/return as session-only with defaults unchanged, without claiming an adoption state the Lab does not own.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -85,6 +86,15 @@ Final UX fix round:
 ADR required: no
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: This round directly completes ADR-117's already accepted contextual Lab, responsive, focus, and evidence obligations; it adds no new application structure or ownership boundary.
+
+UX Fix Round 2/5:
+8. Add a RED mounted handoff/return regression for state-agnostic truthful Inspector persistence copy.
+9. Replace only the vLLM Inspector's unsupported adoption-state claim; keep verified target, current/next, focus, and responsive projection unchanged.
+10. Run focused GREEN plus the complete primary/geometry/compatibility/CSS/static/inventory/diff qualification before checking the new AC and restoring Done.
+
+ADR required: no
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: This is copy correction within ADR-117's existing session/default handoff boundary, not a persistence or ownership change.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -313,4 +323,23 @@ post-edit detector reported no findings. Format, critical Ruff, `py_compile`,
 privacy/scope review, and `git diff --check` pass. The host has no installed or
 importable vLLM, so live server qualification remains unavailable and no
 unrelated service or model was downloaded or started.
+
+UX Fix Round 2/5 makes the Inspector persistence statement state-agnostic:
+`Console use is session-only; defaults unchanged`. Mounted assertions cover the
+same copy before and after staging the verified target for Console use. The
+final production-stylesheet primary passed `325` tests, including all `71`
+eleven-state/three-size geometry and complete Tab-order cases. Compatibility
+passed `350/352`; both failures and every source path in their traces are
+unchanged from exact base `d3d6a03`. CSS build/sync/staleness passed `39`; two
+fresh builds reproduced SHA-256
+`8dd093edc0a8a6ce6281c42f39eb7c450b59146dea7b9e9e28bc6dfa903b32ae`
+with no generated diff. Direct profile and diagnostic inventories passed.
+The broader static replay passed `134`, skipped `1`, and retained seven
+exact-base failures: the previously recorded five persistent-diagnostic/timer
+findings plus two untouched worker-inventory findings. Critical Ruff,
+`compileall`, scoped format, privacy/scope review, Impeccable's post-edit
+detector, and `git diff --check` pass. The host remains without an installed or
+importable vLLM, so no live-vLLM claim, download, or unrelated service start was
+made. ADR-117 remains the governing UX/evidence record; no new ADR or lesson was
+needed.
 <!-- SECTION:NOTES:END -->

@@ -21,6 +21,7 @@ from tldw_chatbook.UI.LLM_Management.vllm_setup import (
     build_vllm_command,
     client_api_url,
     run_vllm_preflight,
+    run_vllm_profile_repair_check,
     semantic_fingerprint,
     validate_raw_arguments,
 )
@@ -344,6 +345,42 @@ def test_preflight_reports_missing_local_model_directory(tmp_path):
         cli_path=tmp_path / "vllm",
     )
     assert VllmIssue("invalid_model_directory", "model_value") in result.issues
+
+
+def test_profile_repair_check_resolves_python_without_running_runtime_probes(tmp_path):
+    missing_python = tmp_path / "missing-python"
+
+    result = run_vllm_profile_repair_check(
+        local_draft(python_environment=str(missing_python)),
+        7,
+        which=lambda _name: pytest.fail("absolute paths must not use PATH lookup"),
+    )
+
+    assert result.generation == 7
+    assert result.repair_only is True
+    assert result.issues == (VllmIssue("python_unavailable", "python_environment"),)
+    assert result.python_version is None
+    assert result.vllm_version is None
+
+
+def test_profile_repair_check_requires_selected_local_directory(tmp_path):
+    python_path = tmp_path / "bin/python"
+    python_path.parent.mkdir()
+    python_path.touch()
+    python_path.chmod(0o755)
+    missing_model = tmp_path / "missing-model"
+
+    result = run_vllm_profile_repair_check(
+        local_draft(
+            python_environment=str(python_path),
+            model_source=VllmModelSource.LOCAL_DIRECTORY,
+            model_value=str(missing_model),
+        ),
+        8,
+    )
+
+    assert result.repair_only is True
+    assert result.issues == (VllmIssue("invalid_model_directory", "model_value"),)
 
 
 @pytest.mark.parametrize(

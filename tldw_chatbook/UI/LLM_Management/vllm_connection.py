@@ -255,6 +255,10 @@ class VllmProbeResult:
             )
         ):
             raise ValueError("discovered model identifiers must be bounded and unique")
+        if self.token.runtime_owner == "chatbook" and self.discovered_model_ids:
+            raise ValueError(
+                "Chatbook-owned results cannot retain discovery candidates"
+            )
         ready = self.state is VllmReadinessState.READY
         if ready != (self.target is not None):
             raise ValueError("a ready result requires exactly one target")
@@ -279,6 +283,13 @@ class VllmProbeResult:
                 )
             ):
                 raise ValueError("target does not match the operation token")
+            if self.discovered_model_ids not in {
+                (),
+                (self.target.model_id,),
+            }:
+                raise ValueError(
+                    "a ready result can retain only its exact selected model"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -689,6 +700,7 @@ async def probe_vllm_target(
                     for entry in data
                     if isinstance(entry, dict)
                     and _is_admissible_model_id(entry.get("id"))
+                    and entry.get("id") != credential
                 )
             )[:_DISCOVERED_MODELS_LIMIT]
             if request.expected_model_id is not None:
@@ -730,7 +742,6 @@ async def probe_vllm_target(
                     health_event,
                     health_ok,
                     model_event,
-                    discovered_model_ids=model_ids,
                 )
             if request.cancellation_requested and request.cancellation_requested():
                 return _failure(
@@ -772,7 +783,11 @@ async def probe_vllm_target(
                     model_event,
                     _activity("ready", started_at),
                 ),
-                discovered_model_ids=model_ids,
+                discovered_model_ids=(
+                    (selected_model,)
+                    if request.token.runtime_owner == "external"
+                    else ()
+                ),
             )
     except (TimeoutError, httpx.TimeoutException, httpx.TransportError):
         return _failure(

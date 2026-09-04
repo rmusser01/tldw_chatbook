@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 22:34'
-updated_date: '2026-09-04 12:29'
+updated_date: '2026-09-04 14:05'
 labels:
   - vllm
   - lab
@@ -29,6 +29,7 @@ Make repeated vLLM operation efficient and honest by separating the immutable ru
 - [x] #4 The last selected vLLM view and profile restore across screen recomposition and application restart.
 - [x] #5 Storage, migration if required, privacy, and profile lifecycle tests cover invalid, stale, and recovery states.
 - [x] #6 Profile-loaded structured expert values are always visible and editable under Advanced, invalid/repairable profile fields receive adjacent recovery, and active-runtime Current versus Next restart context stays accurate through selection, lifecycle, and draft changes.
+- [x] #7 Create/save/rename/duplicate validation failures map to the correct visible adjacent profile, source, model, environment, network, or Advanced control with bounded actionable copy; duplicate-name and invalid-rename outcomes do not fall back to generic reload messaging.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -76,6 +77,15 @@ Final UX fix round:
 ADR required: no
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: ADR-117 already defines these structured profile fields and immutable Current versus editable Next ownership; this round repairs their presentation without changing storage.
+
+UX Fix Round 2/5:
+23. Add RED mounted tests for duplicate-name, invalid rename, source-specific model-value recovery, profile-cap/schema-field mapping, and existing-server action availability.
+24. Classify only allowlisted profile validation messages at the controller boundary, then project bounded adjacent copy to the exact visible control while preserving generic reload recovery for corrupt/future/conflict storage outcomes.
+25. Run focused RED/GREEN profile/view nodes and the complete requested gates before checking the new AC and restoring Done.
+
+ADR required: no
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: ADR-117 already fixes the exact profile schema, local-only ownership, corrupt-store recovery, and adjacent repair outcome; this round corrects presentation routing only.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -125,6 +135,17 @@ descriptor-growth warning; the production CSS build/sync/staleness gate passed
 `39`; format, critical Ruff, `py_compile`, both profile/diagnostic inventories,
 and `git diff --check` passed. No profile schema/storage file or Console/Settings
 persistence boundary was changed.
+
+UX Fix Round 2/5 classifies every profile schema/editable-field validation and
+projects bounded recovery beside the actual visible source-specific or Advanced
+control. Rename duplicate-name and Duplicate capacity failures now travel the
+real mounted button -> event -> worker path and focus the profile-name or
+profile selector recovery respectively, rather than generic reload copy.
+Mounted Hugging Face/local-source focus, existing-mode action, and asynchronous
+mutation tests cover the action matrix. The source/mode slice moved from six
+RED cases to seven GREEN cases; the later real mounted action regression also
+passes. No profile schema, storage, raw-argument, or persistence boundary
+changed, so ADR-117 remains sufficient.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

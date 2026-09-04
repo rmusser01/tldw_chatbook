@@ -30,7 +30,6 @@ from .vllm_setup import (
     semantic_fingerprint,
 )
 
-
 _PREFLIGHT_HELP_TARGETS = {
     "python_environment": "vllm-python-environment-help",
     "model_value": "vllm-model-help",
@@ -45,6 +44,9 @@ _PREFLIGHT_HELP_TARGETS = {
     "trust_remote_code": "vllm-trust-remote-code-error",
 }
 _PREFLIGHT_ISSUE_COPY = {
+    "invalid_python_environment": (
+        "Choose an absolute Python path or a bare executable name."
+    ),
     "missing_python_environment": "Choose a Python interpreter or virtual environment.",
     "python_unavailable": (
         "Python environment not found. Choose an available interpreter "
@@ -671,16 +673,35 @@ class VllmSetupView(VerticalScroll):
 
         return self._preflight
 
-    def show_profile_validation_error(self, field: str) -> None:
+    def show_profile_validation_error(
+        self, field: str, classification: str | None = None
+    ) -> None:
         """Place bounded profile repair beside the exact editable control."""
 
         targets = {
+            "profile": ("vllm-profile-help", "vllm-profile-select"),
             "name": ("vllm-profile-name-help", "vllm-profile-name"),
             "python_environment": (
                 "vllm-python-environment-help",
                 "vllm-python-environment",
             ),
-            "model_value": ("vllm-model-help", "vllm-hf-model"),
+            "model_source": (
+                "vllm-model-help",
+                (
+                    "vllm-hugging-face-source-button"
+                    if self._draft.model_source is VllmModelSource.HUGGING_FACE
+                    else "vllm-local-model-source-button"
+                ),
+            ),
+            "model_value": (
+                "vllm-model-help",
+                (
+                    "vllm-hf-model"
+                    if self._draft.model_source is VllmModelSource.HUGGING_FACE
+                    else "vllm-local-model-directory"
+                ),
+            ),
+            "mode": ("vllm-profile-help", "vllm-start-local-button"),
             "bind_address": ("vllm-bind-address-help", "vllm-bind-address"),
             "port": ("vllm-port-help", "vllm-port"),
             "dtype": ("vllm-dtype-help", "vllm-dtype"),
@@ -701,13 +722,47 @@ class VllmSetupView(VerticalScroll):
                 "vllm-trust-remote-code",
             ),
         }
-        help_id, control_id = targets.get(field, targets["name"])
-        if field == "name":
+        help_id, control_id = targets.get(field, targets["profile"])
+        copies = {
+            "duplicate_name": "Choose a unique profile name.",
+            "invalid_name": "Enter a valid unique profile name.",
+            "profile_cap": (
+                "Profile limit reached. Delete a local profile before creating another."
+            ),
+            "profile_unavailable": (
+                "The selected profile is no longer available. Reload profiles."
+            ),
+            "local_profiles_only": (
+                "Profiles are for local starts. Switch to Start on this computer to edit them."
+            ),
+            "invalid_model_source": (
+                "Choose Hugging Face repository or Local model directory."
+            ),
+        }
+        if classification in copies:
+            copy = copies[classification]
+        elif field == "model_value":
+            issue_code = (
+                "invalid_hugging_face_model"
+                if self._draft.model_source is VllmModelSource.HUGGING_FACE
+                else "invalid_model_directory"
+            )
+            copy = _preflight_issue_copy(VllmIssue(issue_code, field))
+        elif classification is not None:
+            copy = _preflight_issue_copy(VllmIssue(classification or "", field))
+        elif field == "name":
             copy = "Enter a valid unique profile name."
         elif field == "profile":
             copy = "Profile data needs repair or reload before it can be used."
         else:
             copy = "Repair this profile value before saving."
+        if field in {
+            "dtype",
+            "tensor_parallel_size",
+            "maximum_model_length",
+            "gpu_memory_utilization",
+            "trust_remote_code",
+        }:
             self.query_one("#vllm-advanced-options", Collapsible).collapsed = False
         help_label = self.query_one(f"#{help_id}", Label)
         help_label.update(copy)
@@ -815,6 +870,15 @@ class VllmSetupView(VerticalScroll):
             if profile_name.value != selected_profile.name:
                 with profile_name.prevent(Input.Changed):
                     profile_name.value = selected_profile.name
+            profile_name.disabled = not local
+            for profile_action_id in (
+                "vllm-profile-create-button",
+                "vllm-profile-save-button",
+                "vllm-profile-rename-button",
+                "vllm-profile-duplicate-button",
+                "vllm-profile-delete-button",
+            ):
+                self.query_one(f"#{profile_action_id}", Button).disabled = not local
             for selector, value in projected_inputs.items():
                 input_widget = self.query_one(selector, Input)
                 if input_widget.value != value:
@@ -926,6 +990,13 @@ class VllmSetupView(VerticalScroll):
             for help_label in help_labels:
                 help_label.update("")
                 help_label.display = False
+            if not local:
+                profile_help = self.query_one("#vllm-profile-help", Label)
+                profile_help.update(
+                    "Profiles are for local starts. Switch to Start on this computer "
+                    "to edit them."
+                )
+                profile_help.display = True
             if self._preflight and self._preflight.issues:
                 issue = self._preflight.issues[0]
                 target_id = _PREFLIGHT_HELP_TARGETS.get(issue.field)
@@ -1063,15 +1134,19 @@ class VllmSetupView(VerticalScroll):
                 else "✓ Environment · "
                 + (self._preflight.python_version or "Python resolved")
             )
-            installation = (
-                "✕ vLLM installation · install or repair vLLM"
-                if any(
-                    issue.code in {"vllm_cli_unavailable", "vllm_import_unavailable"}
-                    for issue in issues
+            if self._preflight.repair_only:
+                installation = "○ vLLM installation · not checked"
+            else:
+                installation = (
+                    "✕ vLLM installation · install or repair vLLM"
+                    if any(
+                        issue.code
+                        in {"vllm_cli_unavailable", "vllm_import_unavailable"}
+                        for issue in issues
+                    )
+                    else "✓ vLLM installation · "
+                    + (self._preflight.vllm_version or "vLLM resolved")
                 )
-                else "✓ vLLM installation · "
-                + (self._preflight.vllm_version or "vLLM resolved")
-            )
         else:
             environment = "○ Environment · not checked"
             installation = "○ vLLM installation · not checked"
@@ -1092,7 +1167,9 @@ class VllmSetupView(VerticalScroll):
                 if "model_value" in issue_fields or "model" in issue_fields
                 else "✓ Model · selected"
             )
-            if "bind_address" in issue_fields or "port" in issue_fields:
+            if self._preflight.repair_only:
+                network = "○ Network · not checked"
+            elif "bind_address" in issue_fields or "port" in issue_fields:
                 network = "✕ Network · repair bind address or port"
             elif self._preflight.network_exposed:
                 network = "! Network · reachable beyond this computer"

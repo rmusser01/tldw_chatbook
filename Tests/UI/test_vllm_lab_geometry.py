@@ -98,7 +98,10 @@ _COMMON_LOCAL_TAB_IDS = _PROFILE_TAB_IDS + (
     "vllm-advanced-toggle",
 )
 
-_COMMON_EXISTING_TAB_IDS = _PROFILE_TAB_IDS + (
+_COMMON_EXISTING_TAB_IDS = (
+    "vllm-start-local-button",
+    "vllm-connect-existing-button",
+    "vllm-profile-select",
     "vllm-existing-server-url",
     "vllm-existing-model",
     "vllm-activity-toggle",
@@ -368,7 +371,11 @@ def _state_projection(state: str):
         )
         token_owner = VllmConnectionOwner()
         token = token_owner.begin(draft, runtime_owner="external")
-        discovered_model_ids = ("org/model-a", "org/model-b")
+        discovered_model_ids = (
+            ("org/model-a", "org/model-b")
+            if state == "existing_discovery"
+            else ("org/model-b",)
+        )
         target = (
             VllmConnectionTarget(
                 provider_key="vllm",

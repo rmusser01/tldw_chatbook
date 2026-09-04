@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 22:32'
-updated_date: '2026-09-04 12:29'
+updated_date: '2026-09-04 14:05'
 labels:
   - vllm
   - lab
@@ -31,6 +31,7 @@ Prevent predictable first-run vLLM launch failures by making environment, model-
 - [x] #6 Guided readiness remains a persistent four-row Environment, vLLM installation, Model, and Network checklist with row-specific status, bounded adjacent recovery, resolved versions on success, Python-environment Browse, and a Cancel check action bound to the current worker generation.
 - [x] #7 Advanced exposes editable typed dtype, tensor parallel size, maximum model length, GPU memory utilization, and trust-remote-code controls with adjacent validation/consequence copy; raw arguments remain under a separate nested Advanced arguments disclosure.
 - [x] #8 Existing-server setup shows credential-source status without values, discovers only bounded admissible model IDs after an explicit Check connection, requires explicit model selection, and does not publish readiness until the selected exact model is re-probed for the current generation.
+- [x] #9 Selecting a saved local profile immediately reports missing Python or local-model prerequisites beside the visible source-appropriate field without running version, port, launch, or network probes; existing-server mode clearly disables local-profile mutations.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -80,6 +81,15 @@ Final UX fix round:
 ADR required: no
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: ADR-117 already requires the persistent guided setup, structured expert fields, bounded explicit discovery, user-selected existing-server model, and exact current-generation reprobe; this round implements those accepted outcomes.
+
+UX Fix Round 2/5:
+16. Add RED pure and mounted tests for immediate profile repair validation, source-aware focus/copy, and truthful existing-server profile actions without invoking runtime or network probes.
+17. Add the smallest synchronous repair-only validator and project its bounded issue through the existing checklist/adjacent-control seams; disable local-profile mutation controls outside local mode.
+18. Run each focused RED/GREEN node, then the primary, geometry, compatibility, CSS, inventory, privacy, static, and diff gates before checking the new AC and restoring Done.
+
+ADR required: no
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: ADR-117 already requires selected missing environment/local paths to remain selected as Needs setup with repair, and defines profiles as local-launch convenience.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -161,6 +171,21 @@ descriptor-growth warning; the production CSS build/sync/staleness gate passed
 `39`; format, critical Ruff, `py_compile`, both profile/diagnostic inventories,
 and `git diff --check` passed. The host still has neither a `vllm` executable
 nor an importable `vllm` package, so no live server was downloaded or launched.
+
+UX Fix Round 2/5 adds a synchronous repair-only profile check at selection. It
+validates draft shape, source/model, local-directory shape, and Python
+resolution without invoking version, port, launch, or network probes; the
+four-row checklist leaves the deferred installation and network rows honestly
+`not checked`. Missing Python and local-directory mounted cases project Needs
+attention beside the visible owning input. Existing-server mode disables the
+five local-profile mutation actions and explains how to return to local mode.
+Semantically unchanged profile refreshes preserve stronger completed preflight
+evidence instead of replacing it with repair-only proof; the mounted regression
+was RED before that retention guard and GREEN afterward. The pure repair pair
+and focused mounted profile cases passed, and the shared final primary passed
+`325` tests under the normal descriptor threshold. ADR-117
+already owns this repair and local-profile boundary; no new ADR or lesson was
+required.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

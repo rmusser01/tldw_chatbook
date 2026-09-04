@@ -218,6 +218,37 @@ async def test_external_discovery_never_publishes_an_implicit_ready_target(
 
 
 @pytest.mark.asyncio
+async def test_external_discovery_filters_exact_credential_echo_without_retention(
+    loopback_vllm, caplog
+):
+    loopback_vllm.required_authorization = "Bearer CREDENTIAL_CANARY"
+    loopback_vllm.health_status = 200
+    loopback_vllm.models = [
+        {"id": "CREDENTIAL_CANARY"},
+        {"id": "org/safe-model"},
+    ]
+    owner = VllmConnectionOwner()
+    token = owner.begin(
+        replace(
+            local_draft(),
+            mode=VllmMode.EXISTING,
+            existing_server_url=loopback_vllm.url,
+        ),
+        runtime_owner="external",
+    )
+
+    result = await probe_vllm_target(
+        probe_request(loopback_vllm.url, token=token, expected_model_id=None),
+        credential_resolver=lambda: ("CREDENTIAL_CANARY", "configured"),
+    )
+
+    assert result.discovered_model_ids == ("org/safe-model",)
+    assert owner.settle(token, result)
+    visible = repr(result) + repr(owner.snapshot()) + caplog.text
+    assert "CREDENTIAL_CANARY" not in visible
+
+
+@pytest.mark.asyncio
 async def test_external_discovery_bounds_candidates_and_rejects_an_empty_list(
     loopback_vllm,
 ):
@@ -654,7 +685,10 @@ async def test_existing_server_rejects_path_like_or_noncanonical_model_ids(
 @pytest.mark.asyncio
 async def test_existing_server_accepts_exact_selected_namespace_model_id(loopback_vllm):
     loopback_vllm.health_status = 200
-    loopback_vllm.models = [{"id": "organization/model"}]
+    loopback_vllm.models = [
+        {"id": "organization/unselected"},
+        {"id": "organization/model"},
+    ]
     token = VllmConnectionOwner().begin(local_draft(), runtime_owner="external")
 
     result = await probe_vllm_target(
@@ -668,6 +702,37 @@ async def test_existing_server_accepts_exact_selected_namespace_model_id(loopbac
     assert result.target is not None
     assert result.target.model_id == "organization/model"
     assert result.discovered_model_ids == ("organization/model",)
+
+
+@pytest.mark.asyncio
+async def test_chatbook_owned_probe_retains_no_discovery_candidates(loopback_vllm):
+    loopback_vllm.health_status = 200
+    loopback_vllm.models = [
+        {"id": "unrelated/model"},
+        {"id": "chatbook-vllm"},
+    ]
+
+    result = await probe_vllm_target(probe_request(loopback_vllm.url))
+
+    assert result.target is not None
+    assert result.discovered_model_ids == ()
+
+
+def test_chatbook_owned_result_rejects_discovery_candidate_retention():
+    token = VllmConnectionOwner().begin(local_draft(), runtime_owner="chatbook")
+
+    with pytest.raises(ValueError, match="Chatbook-owned"):
+        replace(ready_result(token), discovered_model_ids=("RESPONSE_CANARY",))
+
+
+def test_external_ready_result_rejects_unselected_candidate_retention():
+    token = VllmConnectionOwner().begin(local_draft(), runtime_owner="external")
+
+    with pytest.raises(ValueError, match="ready result"):
+        replace(
+            ready_result(token),
+            discovered_model_ids=("chatbook-vllm", "RESPONSE_CANARY"),
+        )
 
 
 def test_owner_keeps_only_current_operation_bounded_allowlisted_activity():

@@ -34,6 +34,7 @@ from tldw_chatbook.UI.LLM_Management.vllm_profiles import (
     VllmProfileCorrupt,
     VllmProfileDocumentV1,
     VllmProfileRepository,
+    VllmProfileValidationError,
     draft_from_profile,
     profile_from_draft,
 )
@@ -379,6 +380,205 @@ async def test_profile_buttons_post_exact_actions_and_raw_arguments_are_launch_o
         ]
 
 
+async def test_existing_server_mode_disables_local_profile_mutations_with_explanation():
+    app = _VllmHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        view = app.query_one(VllmSetupView)
+        view.apply_state(
+            draft=replace(
+                view.draft,
+                mode=VllmMode.EXISTING,
+                existing_server_url="http://127.0.0.1:8000/v1",
+            ),
+            state=VllmReadinessState.NOT_CONFIGURED,
+            preflight=None,
+        )
+
+        assert view.query_one("#vllm-profile-name", Input).disabled
+        for selector in (
+            "#vllm-profile-create-button",
+            "#vllm-profile-save-button",
+            "#vllm-profile-rename-button",
+            "#vllm-profile-duplicate-button",
+            "#vllm-profile-delete-button",
+        ):
+            button = view.query_one(selector, Button)
+            assert button.disabled
+            button.press()
+        await pilot.pause()
+
+        assert app.profile_events == []
+        profile_help = view.query_one("#vllm-profile-help", Label)
+        assert profile_help.display
+        assert "Start on this computer" in str(profile_help.renderable)
+
+
+@pytest.mark.parametrize(
+    ("source", "expected_control", "expected_copy"),
+    [
+        (VllmModelSource.HUGGING_FACE, "vllm-hf-model", "Hugging Face"),
+        (
+            VllmModelSource.LOCAL_DIRECTORY,
+            "vllm-local-model-directory",
+            "local model directory",
+        ),
+    ],
+)
+async def test_profile_model_repair_focuses_visible_source_specific_control(
+    source, expected_control, expected_copy, tmp_path: Path
+):
+    app = _VllmHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        view = app.query_one(VllmSetupView)
+        view.apply_state(
+            draft=replace(
+                view.draft,
+                model_source=source,
+                model_value=(
+                    "invalid"
+                    if source is VllmModelSource.HUGGING_FACE
+                    else str(tmp_path)
+                ),
+            ),
+            state=VllmReadinessState.NEEDS_ATTENTION,
+            preflight=None,
+        )
+
+        view.show_profile_validation_error(
+            "model_value",
+            "invalid_hugging_face_model"
+            if source is VllmModelSource.HUGGING_FACE
+            else "invalid_model_directory",
+        )
+        await pilot.pause()
+
+        control = view.query_one(f"#{expected_control}", Input)
+        assert control.display
+        assert app.focused is control
+        assert expected_copy in str(
+            view.query_one("#vllm-model-help", Label).renderable
+        )
+
+
+@pytest.mark.parametrize(
+    ("message", "expected_help", "expected_control", "expected_copy"),
+    [
+        (
+            "profile names must be unique",
+            "vllm-profile-name-help",
+            "vllm-profile-name",
+            "unique profile name",
+        ),
+        (
+            "profile store is capped at 32",
+            "vllm-profile-help",
+            "vllm-profile-select",
+            "Profile limit reached",
+        ),
+        (
+            "profile is unavailable",
+            "vllm-profile-help",
+            "vllm-profile-select",
+            "no longer available",
+        ),
+    ],
+)
+async def test_async_profile_validation_routes_to_adjacent_recovery(
+    message, expected_help, expected_control, expected_copy
+):
+    def fail_profile_change():
+        raise VllmProfileValidationError(message)
+
+    app = _build_test_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+
+        await screen._run_vllm_profile_mutation(fail_profile_change)
+        await pilot.pause()
+
+        help_label = view.query_one(f"#{expected_help}", Label)
+        assert help_label.display
+        assert expected_copy in str(help_label.renderable)
+        assert app.focused is view.query_one(f"#{expected_control}")
+
+
+async def test_mounted_rename_and_duplicate_validation_stays_action_adjacent(
+    monkeypatch, tmp_path: Path
+):
+    repo = VllmProfileRepository(tmp_path / "vllm_launch_profiles.json")
+    local_draft = VllmLaunchDraft(
+        mode=VllmMode.LOCAL,
+        python_environment="python",
+        model_source=VllmModelSource.HUGGING_FACE,
+        model_value="org/model",
+    )
+    first = profile_from_draft("First", local_draft)
+    second = profile_from_draft("Second", local_draft)
+    document = repo.save(first, expected_revision=0).document
+    document = repo.save(second, expected_revision=document.revision).document
+    document = repo.select(
+        first.profile_id, expected_revision=document.revision
+    ).document
+
+    app = _build_test_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+        screen._vllm_profile_repository = repo
+        screen._accept_vllm_profiles(document)
+        await pilot.pause()
+
+        view.query_one("#vllm-profile-name", Input).value = "Second"
+        await pilot.click("#vllm-profile-rename-button")
+        await _wait_for_profile_mutation_idle(screen, pilot)
+        name_help = view.query_one("#vllm-profile-name-help", Label)
+        assert name_help.display
+        assert "unique profile name" in str(name_help.renderable)
+        assert app.focused is view.query_one("#vllm-profile-name", Input)
+
+        def reject_duplicate(*_args, **_kwargs):
+            raise VllmProfileValidationError("profile store is capped at 32")
+
+        monkeypatch.setattr(repo, "duplicate", reject_duplicate)
+        await pilot.click("#vllm-profile-duplicate-button")
+        await _wait_for_profile_mutation_idle(screen, pilot)
+        profile_help = view.query_one("#vllm-profile-help", Label)
+        assert profile_help.display
+        assert "Profile limit reached" in str(profile_help.renderable)
+        assert app.focused is view.query_one("#vllm-profile-select", Select)
+
+
+async def test_profile_validation_classifier_maps_every_editable_schema_field():
+    from tldw_chatbook.UI.Screens.llm_screen import (
+        _classify_vllm_profile_validation,
+    )
+
+    cases = (
+        ("name must not be empty", "name"),
+        ("python_environment must be a string", "python_environment"),
+        ("model_source is invalid", "model_source"),
+        ("model_value is invalid for model_source", "model_value"),
+        ("bind_address must not be empty", "bind_address"),
+        ("port must be an integer from 1 to 65535", "port"),
+        ("dtype is not supported", "dtype"),
+        ("tensor_parallel_size must be positive", "tensor_parallel_size"),
+        ("maximum_model_length must be positive", "maximum_model_length"),
+        ("gpu_memory_utilization must be finite", "gpu_memory_utilization"),
+        ("trust_remote_code must be a boolean", "trust_remote_code"),
+        ("only local launch drafts can be profiled", "mode"),
+        ("profile store is capped at 32", "profile"),
+        ("profile is unavailable", "profile"),
+        ("selected_profile_id must identify a profile", "profile"),
+        ("document keys do not match V1", "profile"),
+    )
+
+    for message, expected_field in cases:
+        field, classification = _classify_vllm_profile_validation(
+            VllmProfileValidationError(message)
+        )
+        assert field == expected_field, message
+        assert classification, message
+
+
 async def _wait_for_profile_confirmation(app, pilot) -> ConfirmationDialog:
     for _ in range(40):
         await pilot.pause()
@@ -399,6 +599,102 @@ async def _wait_for_profile_mutation_idle(screen: LLMScreen, pilot) -> None:
                 return
         await pilot.pause()
     raise AssertionError("profile mutation did not settle")
+
+
+@pytest.mark.parametrize("repair", ["python", "local_model"])
+async def test_selected_profile_immediately_projects_local_repair_without_probing(
+    repair, tmp_path: Path
+):
+    python_path = tmp_path / "venv/bin/python"
+    python_path.parent.mkdir(parents=True)
+    python_path.touch()
+    python_path.chmod(0o755)
+    model_path = tmp_path / "missing-model"
+    draft = VllmLaunchDraft(
+        mode=VllmMode.LOCAL,
+        python_environment=(
+            str(tmp_path / "missing-python") if repair == "python" else str(python_path)
+        ),
+        model_source=(
+            VllmModelSource.HUGGING_FACE
+            if repair == "python"
+            else VllmModelSource.LOCAL_DIRECTORY
+        ),
+        model_value="org/model" if repair == "python" else str(model_path),
+    )
+    profile = profile_from_draft("Repair me", draft)
+    document = VllmProfileDocumentV1(1, 1, profile.profile_id, (profile,))
+
+    app = _build_test_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+        screen._accept_vllm_profiles(document)
+        await pilot.pause()
+
+        assert screen._vllm_preflight is not None
+        assert screen._vllm_preflight.repair_only is True
+        assert str(view.query_one("#vllm-readiness-state", Label).renderable) == (
+            "Needs attention"
+        )
+        assert view.query_one("#vllm-recovery-primary", Button).display
+        assert "not checked" in str(
+            view.query_one("#vllm-check-installation", Label).renderable
+        )
+        if repair == "python":
+            help_label = view.query_one("#vllm-python-environment-help", Label)
+            control = view.query_one("#vllm-python-environment", Input)
+            assert "not found" in str(help_label.renderable)
+        else:
+            help_label = view.query_one("#vllm-model-help", Label)
+            control = view.query_one("#vllm-local-model-directory", Input)
+            assert "existing local model directory" in str(help_label.renderable)
+            assert not view.query_one("#vllm-hf-model", Input).display
+        assert help_label.display
+        assert control.display and control.can_focus
+
+
+async def test_name_only_profile_refresh_preserves_stronger_full_preflight():
+    draft = VllmLaunchDraft(
+        mode=VllmMode.LOCAL,
+        python_environment="python",
+        model_source=VllmModelSource.HUGGING_FACE,
+        model_value="org/model",
+    )
+    profile = profile_from_draft("Renamed only", draft)
+    document = VllmProfileDocumentV1(1, 1, profile.profile_id, (profile,))
+
+    app = _build_test_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+        token = screen._vllm_owner.begin(draft, runtime_owner="chatbook")
+        full_preflight = VllmPreflightResult(
+            generation=token.generation,
+            fingerprint=token.fingerprint,
+            issues=(),
+            python_version="Python 3.12.0",
+            vllm_version="vLLM 0.9.0",
+            cli_path=Path("/safe/vllm"),
+        )
+        screen._vllm_draft = draft
+        screen._vllm_preflight = full_preflight
+        screen._settle_vllm_state(
+            token,
+            VllmReadinessState.READY_TO_START,
+            activity_code="checking",
+        )
+
+        screen._accept_vllm_profiles(document)
+        await pilot.pause()
+
+        assert screen._vllm_preflight is full_preflight
+        assert screen._vllm_preflight.repair_only is False
+        assert "Python 3.12.0" in str(
+            view.query_one("#vllm-check-environment", Label).renderable
+        )
+        assert "vLLM 0.9.0" in str(
+            view.query_one("#vllm-check-installation", Label).renderable
+        )
+        assert not view.query_one("#vllm-start", Button).disabled
 
 
 @pytest.mark.parametrize("dismissal", ["cancel", "escape", "backdrop"])
@@ -1190,7 +1486,7 @@ async def test_mounted_external_selection_starts_fresh_exact_probe(monkeypatch):
                 ),
                 issue=None,
                 activity=(VllmActivityEvent("ready", "under_1s"),),
-                discovered_model_ids=("org/first", "org/second"),
+                discovered_model_ids=(request.expected_model_id,),
             )
 
         monkeypatch.setattr(
@@ -1216,11 +1512,11 @@ async def test_mounted_external_selection_starts_fresh_exact_probe(monkeypatch):
         assert snapshot.state is VllmReadinessState.READY
         assert snapshot.target is not None
         assert snapshot.target.model_id == "org/second"
-        assert screen._vllm_external_models == ("org/first", "org/second")
+        assert screen._vllm_external_models == ("org/second",)
         assert selector.value == "org/second"
 
 
-async def test_mounted_external_changed_list_clears_and_fences_stale_selection(
+async def test_mounted_external_changed_list_requires_fresh_bounded_rediscovery(
     monkeypatch,
 ):
     app = _build_test_app()
@@ -1239,13 +1535,21 @@ async def test_mounted_external_changed_list_clears_and_fences_stale_selection(
         screen._vllm_external_models = ("org/old",)
 
         async def changed_probe(request):
+            if request.expected_model_id is None:
+                return VllmProbeResult(
+                    token=request.token,
+                    state=VllmReadinessState.NOT_CONFIGURED,
+                    target=None,
+                    issue=None,
+                    activity=(VllmActivityEvent("models_discovered", "under_1s"),),
+                    discovered_model_ids=("org/new",),
+                )
             return VllmProbeResult(
                 token=request.token,
                 state=VllmReadinessState.NEEDS_ATTENTION,
                 target=None,
                 issue=VllmIssue("model_missing", "model"),
                 activity=(VllmActivityEvent("model_missing", "under_1s"),),
-                discovered_model_ids=("org/new",),
             )
 
         monkeypatch.setattr(
@@ -1255,19 +1559,29 @@ async def test_mounted_external_changed_list_clears_and_fences_stale_selection(
         await screen._probe_vllm_generation(token, draft, None)
 
         assert screen._vllm_draft.existing_model_id == ""
-        assert screen._vllm_external_models == ("org/new",)
+        assert screen._vllm_external_models == ()
         assert screen._vllm_owner.snapshot().target is None
         selector = view.query_one("#vllm-existing-model", Select)
         assert selector.value is Select.NULL
-        assert "Select a returned model" in str(
+        assert selector.disabled
+        assert "Check connection" in str(
             view.query_one("#vllm-existing-model-help", Label).renderable
         )
 
-        generation = screen._vllm_owner.snapshot().generation
+        stale_generation = screen._vllm_owner.snapshot().generation
         screen._on_vllm_external_model_selected(
             VllmSetupView.ExternalModelSelected("org/old")
         )
-        assert screen._vllm_owner.snapshot().generation == generation
+        assert screen._vllm_owner.snapshot().generation == stale_generation
+
+        discovery_draft = screen._vllm_draft
+        discovery_token = screen._vllm_owner.begin(
+            discovery_draft, runtime_owner="external"
+        )
+        await screen._probe_vllm_generation(discovery_token, discovery_draft, None)
+        assert screen._vllm_external_models == ("org/new",)
+        assert not selector.disabled
+        generation = screen._vllm_owner.snapshot().generation
 
         exact_starts = []
         monkeypatch.setattr(
@@ -1436,7 +1750,9 @@ async def test_outer_lab_chrome_tracks_verified_vllm_context_without_focus_theft
             "lab-vllm-target": (
                 "Verified · http://127.0.0.1:8000/v1/chat/completions · org/model"
             ),
-            "lab-vllm-persistence": "Persistence · Not adopted; defaults unchanged",
+            "lab-vllm-persistence": (
+                "Persistence · Console use is session-only; defaults unchanged"
+            ),
             "lab-vllm-configuration": "Current · Verified external; Next · Matches",
             "lab-vllm-next-action": "Next action · Use in Console",
         }
@@ -1497,6 +1813,10 @@ async def test_mounted_recomposition_preserves_exact_readiness_but_detach_invali
             await pilot.pause()
             if not replacement_view.query_one("#vllm-use-console", Button).disabled:
                 break
+        assert replacement_view._state is VllmReadinessState.READY
+        assert replacement_view._connection is not None
+        assert replacement_view._connection.state is VllmReadinessState.READY
+        assert replacement_view._connection.target is not None
         assert not replacement_view.query_one("#vllm-use-console", Button).disabled
 
         await app.pop_screen()
@@ -1996,6 +2316,10 @@ async def test_vllm_handoff_stages_only_current_target_and_uses_normal_navigatio
         ]
         assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
         assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_DEFAULT)
+        screen._apply_vllm_view_state(focus=False)
+        assert str(screen.query_one("#lab-vllm-persistence", Static).renderable) == (
+            "Persistence · Console use is session-only; defaults unchanged"
+        )
 
         screen._vllm_owner.invalidate("target_changed")
         app.pending_handoffs.clear_pending(HandoffChannel.VLLM_CONSOLE)
