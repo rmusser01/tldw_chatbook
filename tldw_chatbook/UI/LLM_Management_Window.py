@@ -54,7 +54,12 @@ from ..Event_Handlers.LLM_Management_Events.llm_management_events_transformers i
 )
 from ..Event_Handlers.LLM_Management_Events.llm_management_events_vllm import (
     VLLM_BUTTON_HANDLERS,
+    handle_vllm_setup_check_requested,
+    handle_vllm_local_directory_browse_requested,
+    handle_vllm_setup_start_requested,
+    handle_vllm_setup_stop_requested,
 )
+from .LLM_Management.vllm_setup_view import VllmSetupView
 from ..Event_Handlers.LLM_Management_Events.server_lifecycle import (
     current_llm_destination,
     server_lifecycle_snapshot,
@@ -603,6 +608,7 @@ class LLMManagementWindow(Container):
         self._lazy_server_bodies: dict[str, tuple[Widget, ...]] = {}
         self._populated_views: set[str] = set()
         self._populating_views: set[str] = set()
+        self._vllm_preflight_generation = 0
 
         # Map navigation button IDs to view IDs. Order matters: it drives the
         # [/] cycling and the position indicator, so it matches the sidebar's
@@ -1293,76 +1299,7 @@ class LLMManagementWindow(Container):
 
             # vLLM View
             with _LazyServerPane(id="llm-view-vllm", classes="llm-view"):
-                yield Label("vLLM Configuration", classes="section-title")
-                yield Label(
-                    "High-performance LLM serving with vLLM", classes="description"
-                )
-
-                with Container(classes="button_container"):
-                    yield Button(
-                        "Start Server",
-                        id="vllm-start-server-button",
-                        classes="action_button",
-                    )
-                    yield Button(
-                        "Stop Server",
-                        id="vllm-stop-server-button",
-                        classes="action_button",
-                        disabled=True,
-                    )
-
-                with Container(classes="input_container"):
-                    yield Label("Python Interpreter Path:", classes="inline-label")
-                    yield Input(
-                        id="vllm-python-path",
-                        value="python",
-                        placeholder="e.g., /path/to/venv/bin/python",
-                    )
-                    yield Button(
-                        "Browse",
-                        id="vllm-browse-python-button",
-                        classes="browse_button",
-                        tooltip="Choose the Python interpreter used to launch vLLM.",
-                    )
-
-                with Container(classes="input_container"):
-                    yield Label(
-                        "Model Path (or HuggingFace Repo ID):", classes="inline-label"
-                    )
-                    yield Input(
-                        id="vllm-model-path",
-                        placeholder="e.g., /path/to/model or HuggingFaceName/ModelName",
-                    )
-                    yield Button(
-                        "Browse",
-                        id="vllm-browse-model-button",
-                        classes="browse_button",
-                        tooltip="Choose a local model directory for vLLM, or type a Hugging Face repo ID.",
-                    )
-
-                yield Label("Host:", classes="label")
-                yield Input(id="vllm-host", value="127.0.0.1")
-
-                yield Label("Port:", classes="label")
-                yield Input(id="vllm-port", placeholder="8000")
-                yield Static(
-                    "Default 8000 — change it if another server already uses that port.",
-                    classes="prereq-hint",
-                )
-
-                yield Label("Additional Arguments:", classes="label")
-                yield TextArea(
-                    id="vllm-additional-args",
-                    classes="additional_args_textarea",
-                    theme="vscode_dark",
-                )
-
-                yield RichLog(
-                    id="vllm-log-output",
-                    classes="log_output",
-                    wrap=True,
-                    highlight=True,
-                )
+                yield VllmSetupView(id="vllm-setup-view")
 
             # ONNX View
             with _LazyServerPane(id="llm-view-onnx", classes="llm-view"):
@@ -2025,6 +1962,24 @@ class LLMManagementWindow(Container):
                 await result
         except Exception as exc:
             self._recover_failed_action(button.id, exc)
+
+    @on(VllmSetupView.CheckRequested)
+    def _on_vllm_setup_check_requested(self, event: VllmSetupView.CheckRequested) -> None:
+        handle_vllm_setup_check_requested(self, self.app_instance, event)
+
+    @on(VllmSetupView.StartRequested)
+    def _on_vllm_setup_start_requested(self, event: VllmSetupView.StartRequested) -> None:
+        handle_vllm_setup_start_requested(self, self.app_instance, event)
+
+    @on(VllmSetupView.StopRequested)
+    async def _on_vllm_setup_stop_requested(self, event: VllmSetupView.StopRequested) -> None:
+        await handle_vllm_setup_stop_requested(self, self.app_instance, event)
+
+    @on(VllmSetupView.LocalDirectoryBrowseRequested)
+    async def _on_vllm_local_directory_browse_requested(
+        self, event: VllmSetupView.LocalDirectoryBrowseRequested
+    ) -> None:
+        await handle_vllm_local_directory_browse_requested(self, self.app_instance, event)
 
     def _recover_failed_action(self, action_id: str, exc: Exception) -> None:
         """Restore truthful controls and surface bounded, non-sensitive recovery."""

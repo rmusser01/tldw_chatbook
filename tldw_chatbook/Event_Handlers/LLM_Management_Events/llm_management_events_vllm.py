@@ -17,7 +17,7 @@ import re
 import shlex
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, Any, List
 
 #
 # Third-party Libraries
@@ -39,6 +39,13 @@ from .server_lifecycle import (
     reserve_server_launch,
     run_server_subprocess,
     stop_server_process,
+)
+from tldw_chatbook.UI.LLM_Management.vllm_setup import (
+    VllmMode,
+    VllmReadinessState,
+    build_vllm_command,
+    run_vllm_preflight,
+    semantic_fingerprint,
 )
 #
 #
@@ -160,6 +167,10 @@ __all__ = [
     "run_vllm_server_worker",
     "handle_start_vllm_server_button_pressed",
     "handle_stop_vllm_server_button_pressed",
+    "handle_vllm_setup_check_requested",
+    "handle_vllm_setup_start_requested",
+    "handle_vllm_setup_stop_requested",
+    "handle_vllm_local_directory_browse_requested",
 ]
 
 ###############################################################################
@@ -347,6 +358,119 @@ async def handle_stop_vllm_server_button_pressed(
     """Stops the vLLM server process if it's running."""
     await stop_server_process(app, "vllm", "vLLM server")
     return
+
+
+def handle_vllm_setup_check_requested(
+    window: "LLMManagementWindow", app: "TldwCli", event: Any
+) -> None:
+    """Run the bounded setup checks off the Textual event loop."""
+
+    view = window.query_one("#vllm-setup-view")
+    draft = event.draft
+    window._vllm_preflight_generation += 1
+    generation = window._vllm_preflight_generation
+    view.apply_state(
+        draft=draft,
+        state=VllmReadinessState.CHECKING,
+        preflight=None,
+    )
+
+    def complete() -> None:
+        result = run_vllm_preflight(draft, generation)
+
+        def apply_result() -> None:
+            if semantic_fingerprint(view.draft) != result.fingerprint:
+                return
+            state = (
+                VllmReadinessState.READY_TO_START
+                if not result.issues and draft.mode is VllmMode.LOCAL
+                else VllmReadinessState.NEEDS_ATTENTION
+            )
+            view.apply_state(draft=draft, state=state, preflight=result)
+
+        app.call_from_thread(apply_result)
+
+    app.run_worker(
+        complete,
+        group="vllm_preflight",
+        description="Checking vLLM setup",
+        exclusive=True,
+        thread=True,
+    )
+
+
+def handle_vllm_setup_start_requested(
+    window: "LLMManagementWindow", app: "TldwCli", event: Any
+) -> None:
+    """Reserve and launch only a current, successful local vLLM draft."""
+
+    view = window.query_one("#vllm-setup-view")
+    preflight = view.preflight
+    try:
+        command = build_vllm_command(event.draft, preflight)  # type: ignore[arg-type]
+    except ValueError:
+        view.apply_state(
+            draft=event.draft,
+            state=VllmReadinessState.NEEDS_ATTENTION,
+            preflight=preflight,
+        )
+        return
+    claim = reserve_server_launch(app, "vllm")
+    if claim is None:
+        view.apply_state(
+            draft=event.draft,
+            state=VllmReadinessState.NEEDS_ATTENTION,
+            preflight=preflight,
+        )
+        app.notify("vLLM server is already starting or running.", severity="warning")
+        return
+    view.apply_state(
+        draft=event.draft,
+        state=VllmReadinessState.LAUNCHING,
+        preflight=preflight,
+    )
+    app.run_worker(
+        functools.partial(run_vllm_server_worker, app, list(command), claim),
+        group="vllm_server",
+        description="Running vLLM API server",
+        exclusive=True,
+        thread=True,
+    )
+
+
+async def handle_vllm_setup_stop_requested(
+    window: "LLMManagementWindow", app: "TldwCli", event: Any
+) -> None:
+    """Stop only the exact Chatbook-owned vLLM claim."""
+
+    view = window.query_one("#vllm-setup-view")
+    view.apply_state(
+        draft=view.draft,
+        state=VllmReadinessState.STOPPING,
+        preflight=view.preflight,
+    )
+    await stop_server_process(app, "vllm", "vLLM server")
+    view.apply_state(
+        draft=view.draft,
+        state=VllmReadinessState.NOT_CONFIGURED,
+        preflight=None,
+    )
+
+
+async def handle_vllm_local_directory_browse_requested(
+    window: "LLMManagementWindow", app: "TldwCli", event: Any
+) -> None:
+    """Open a local-only directory picker for the vLLM source field."""
+
+    await app.push_screen(
+        FileOpen(
+            location=str(Path.home()),
+            title="Select local vLLM model directory",
+            filters=Filters(("Directories", lambda path: path.is_dir())),
+            context="vllm_models",
+        ),
+        callback=_make_path_update_callback(window, app, "vllm-local-model-directory"),
+    )
 
 
 # --- Button Handler Map ---
