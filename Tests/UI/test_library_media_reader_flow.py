@@ -1108,7 +1108,11 @@ def _escape_fake_query_one(shell, find, *, mounted):
 
 
 def _escape_fake(
-    *, region: str, more_open: bool = False, find_mounted: bool | None = None
+    *,
+    region: str,
+    more_open: bool = False,
+    find_mounted: bool | None = None,
+    find_open: bool | None = None,
 ):
     layout = SimpleNamespace(items_open=True, library_open=True)
     library = SimpleNamespace(role="library", ancestors=())
@@ -1128,6 +1132,10 @@ def _escape_fake(
     # task-31237: the bar is collapsed by default, so the fake mounts it
     # only when the test's region IS the find bar (or explicitly asked).
     mounted = (region == "find") if find_mounted is None else find_mounted
+    # task-31271 seam (a): DOM presence and screen state are the same thing
+    # AT REST, but a recompose is one refresh behind in both directions --
+    # ``find_open`` splits them so a test can sit inside that window.
+    open_state = mounted if find_open is None else find_open
     calls = []
     fake = SimpleNamespace(
         focused=focused,
@@ -1140,9 +1148,9 @@ def _escape_fake(
         # mounts the bar for exactly ``find_open or content_query``, so the
         # fake keeps the two sides consistent -- a mounted bar with an
         # empty state is a shape production cannot produce.
-        _library_media_find_open=mounted,
-        _library_media_content_query="needle" if mounted else "",
-        _library_media_content_match_index=1 if mounted else 0,
+        _library_media_find_open=open_state,
+        _library_media_content_query="needle" if open_state else "",
+        _library_media_content_match_index=1 if open_state else 0,
         _library_media_reader_session=LibraryMediaReaderSessionState(
             more_open=more_open
         ),
@@ -1159,7 +1167,35 @@ def _escape_fake(
     fake._close_library_media_find = MethodType(
         LibraryScreen._close_library_media_find, fake
     )
+    # task-31271 seam (a): Escape and its footer label read one seam now.
+    fake._library_media_find_state = MethodType(
+        LibraryScreen._library_media_find_state, fake
+    )
     return fake, calls, shell, find
+
+
+def test_escape_and_its_label_read_the_same_find_state():
+    """task-31271 seam (a): the bar's DOM presence lags its state by one
+    refresh, so Escape and the chip that describes it must both read the
+    STATE -- otherwise, for that one refresh, the footer promises a close
+    the key will not perform (or the reverse).
+    """
+    # Closed, but the bar is still mounted (the window right after Escape).
+    fake, calls, _shell, _find = _escape_fake(
+        region="reader", find_mounted=True, find_open=False
+    )
+    assert LibraryScreen._library_media_escape_label(fake) != "close find"
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert calls[:1] == [("items-pane",)]  # graduated panes, did not close find
+
+    # Open, but the bar is not mounted yet (the window right after Find).
+    fake, calls, _shell, _find = _escape_fake(
+        region="reader", find_mounted=False, find_open=True
+    )
+    assert LibraryScreen._library_media_escape_label(fake) == "close find"
+    LibraryScreen.action_library_media_viewer_back(fake)
+    assert fake._library_media_find_open is False
+    assert calls == ["sync", ("focus", "#library-media-reader-find")]
 
 
 def test_escape_closes_more_find_confirmation_before_leaving_reader():

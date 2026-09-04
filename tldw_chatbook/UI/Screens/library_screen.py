@@ -27884,21 +27884,35 @@ class LibraryScreen(BaseAppScreen):
             # footer said "toggle selection" (B cap_69). The binding is
             # priority now, so it outranks the focused Button -- which
             # means the gate must claim only what Space should own:
-            # a media row (toggle it) and the reader shell's pane GRIPS
-            # (chrome; swallow it). Every other button in select mode --
-            # Done, Select all, Clear, Export, Delete -- keeps its own
-            # Space press. A focused Input still swallows the space first
+            # a media row (toggle it) and MEDIA's own pane GRIPS (chrome;
+            # swallow it). Every other button in select mode -- Done,
+            # Select all, Clear, Export, Delete -- keeps its own Space
+            # press. A focused Input still swallows the space first
             # (Textual filters consumed keys out of the binding chain), and
             # the freshness/confirm/in-flight guards live inside the action
             # so those states no-op rather than firing something else.
+            #
+            # Review round: the surface guard and the MEDIA-specific grip
+            # class are both load-bearing. Select mode survives a rail
+            # switch (only Done, a bulk delete, and the media scope-change
+            # sites clear it), and
+            # ``library-adaptive-reader-pane-grip`` is the SHARED base
+            # class every destination's shell applies -- matching it
+            # swallowed Space on the Notes/Prompts/Skills grips after an
+            # abandoned media selection. ``library-media-pane-grip`` is
+            # what ``LibraryMediaReaderShell`` passes as ``grip_classes``
+            # (both grips get it); the surface guard mirrors the sibling
+            # ``library_media_toggle_select_mode`` branch above.
             if not self._library_media_select_mode:
+                return False
+            if self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA:
                 return False
             focused = self.focused
             return bool(
                 focused is not None
                 and (
                     focused.has_class("library-media-row")
-                    or focused.has_class("library-adaptive-reader-pane-grip")
+                    or focused.has_class("library-media-pane-grip")
                 )
             )
         if action in ("library_media_next_item", "library_media_prev_item"):
@@ -38642,10 +38656,9 @@ class LibraryScreen(BaseAppScreen):
             self._sync_library_media_viewer_or_recompose()
             return
         focused = self.focused
-        try:
-            find_controls = self.query_one("#library-media-content-search-controls")
-        except (NoMatches, QueryError):
-            find_controls = None
+        # task-31271 seam (a): same seam as the footer's escape label, so
+        # the chip and this key can never describe different outcomes.
+        find_open, find_controls = self._library_media_find_state()
         if (
             find_controls is not None
             and focused is not None
@@ -38693,7 +38706,7 @@ class LibraryScreen(BaseAppScreen):
         # and _library_media_escape_label advertises exactly that. The
         # items/library-pane branches above stay untouched: their Escape
         # never consumes the reader's find state.
-        if find_controls is not None:
+        if find_open:
             self._close_library_media_find()
             self._sync_library_media_viewer_or_recompose()
             self.call_after_refresh(
@@ -39866,6 +39879,32 @@ class LibraryScreen(BaseAppScreen):
             return
         self._focus_library_control("#library-media-filter")
 
+    def _library_media_find_state(self) -> tuple[bool, Widget | None]:
+        """Whether the content Find bar is OPEN, plus its widget if mounted.
+
+        task-31271 seam (a): openness is the screen's own state -- the DOM
+        is one refresh behind it in both directions, so reading widget
+        presence let Escape and the footer chip that describes Escape
+        disagree (the chip promised "close find" over a bar the recompose
+        had already removed). The state test mirrors the viewer's own
+        render condition (``find_open or content_query``), so the two agree
+        at rest; the widget is returned only for focus-containment tests,
+        which need the real node.
+
+        Returns:
+            ``(find_open, controls)`` -- ``controls`` is ``None`` when the
+            bar is closed or has not been mounted yet.
+        """
+        find_open = bool(
+            self._library_media_find_open or self._library_media_content_query
+        )
+        if not find_open:
+            return False, None
+        try:
+            return True, self.query_one("#library-media-content-search-controls")
+        except (NoMatches, QueryError):
+            return True, None
+
     def _library_media_escape_label(self) -> str:
         """Describe the action Escape will take from the current effective role."""
         session = self._library_media_reader_session
@@ -39880,24 +39919,10 @@ class LibraryScreen(BaseAppScreen):
             )
         except (NoMatches, QueryError):
             return "back to list"
-        # task-31271 seam (a): the bar's LIVE state, not its DOM presence.
-        # Escape closes Find and then recomposes; the footer re-registers
-        # inside that sync, one refresh BEFORE the bar is actually removed,
-        # so a DOM read still saw it and the chip kept promising "esc close
-        # find" over a closed bar (critique #4, A cap 08/23, B cap_21).
-        # Mirrors the viewer's own render condition
-        # (``find_open or content_query``) so label and bar agree at rest.
-        find_open = bool(
-            self._library_media_find_open or self._library_media_content_query
-        )
-        find_controls = None
-        if find_open:
-            try:
-                find_controls = self.query_one(
-                    "#library-media-content-search-controls"
-                )
-            except (NoMatches, QueryError):
-                find_controls = None
+        # task-31271 seam (a): the bar's LIVE state, not its DOM presence
+        # (critique #4, A cap 08/23, B cap_21) -- and the same seam Escape
+        # itself reads, so the chip and the key can never disagree.
+        find_open, find_controls = self._library_media_find_state()
         if (
             find_controls is not None
             and focused is not None

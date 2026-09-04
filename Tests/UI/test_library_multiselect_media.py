@@ -2096,3 +2096,65 @@ async def test_single_delete_failure_leaves_no_receipt_and_clears_flag(tmp_path)
     assert fake._notified[0][1].get("severity") == "warning"
 
     db.close_connection()
+
+
+def _grip(*classes: str) -> SimpleNamespace:
+    """A focused pane grip carrying exactly ``classes``."""
+    return SimpleNamespace(has_class=lambda cls: cls in classes)
+
+
+def test_space_gate_is_scoped_to_the_media_surface_and_its_own_grips():
+    """task-31271 seam (b): the priority Space binding must not leak.
+
+    ``library-adaptive-reader-pane-grip`` is the SHARED base class -- Notes,
+    Prompts, Skills, Conversations, Collections and File Notes mount grips
+    carrying it too -- and ``_library_media_select_mode`` survives a rail
+    switch (only Done, a bulk delete, and the media scope-change sites
+    clear it). Matching the shared class therefore swallowed Space on
+    another destination's grip. The gate matches the MEDIA grip class and
+    the media surface, mirroring the sibling select-mode branch.
+    """
+    fake = _media_fake(select_mode=True)
+    def gate() -> bool | None:
+        return LibraryScreen.check_action(
+            fake, "library_media_toggle_row_selection", ()
+        )
+
+
+    fake.focused = _focused_media_row("7")
+    assert gate() is True
+    fake.focused = _grip(
+        "library-adaptive-reader-pane-grip", "library-media-pane-grip"
+    )
+    assert gate() is True  # the media grip: swallowed, never a pane collapse
+
+    # Another destination's grip carries only the shared class.
+    fake.focused = _grip("library-adaptive-reader-pane-grip")
+    assert gate() is False
+    # ...and a rail switch away from Media leaves select mode set.
+    fake.focused = _grip(
+        "library-adaptive-reader-pane-grip", "library-media-pane-grip"
+    )
+    fake._library_selected_row_id = "library-row-browse-notes"
+    assert gate() is False
+
+
+def test_space_action_noops_on_a_stale_page_and_under_a_confirm():
+    """task-31271 seam (b): the guards moved out of ``check_action``.
+
+    They used to return False there, which let Space fall THROUGH to the
+    focused widget; they are no-ops inside the action now, so Space in
+    select mode never fires something else. Same three states, same
+    outcome: nothing toggles.
+    """
+    for mutate in (
+        lambda f: setattr(f._library_media_browse_controller, "freshness", "stale"),
+        lambda f: setattr(f, "_library_media_confirming_bulk_delete", True),
+        lambda f: setattr(f, "_library_media_bulk_delete_in_flight", True),
+    ):
+        fake = _media_fake(select_mode=True)
+        fake.refresh = lambda **k: None
+        fake.focused = _focused_media_row("7")
+        mutate(fake)
+        LibraryScreen.action_library_media_toggle_row_selection(fake)
+        assert fake._library_media_row_selection.count == 0
