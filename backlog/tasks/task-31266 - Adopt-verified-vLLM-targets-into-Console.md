@@ -4,7 +4,7 @@ title: Adopt verified vLLM targets into Console
 status: Done
 assignee: []
 created_date: '2026-09-03 22:33'
-updated_date: '2026-09-04 12:53'
+updated_date: '2026-09-04 13:20'
 labels:
   - vllm
   - lab
@@ -41,6 +41,7 @@ Complete the Lab workflow by applying a verified vLLM provider, canonical endpoi
 - [x] #16 Settings compensation restores endpoint/readiness/model guidance rows after authoritative inputs and semantic state, with no staged target text remaining.
 - [x] #17 Failed Settings claim release survives unmount and screen replacement under a bounded owner and exposes a public recovery action after automatic retries are exhausted.
 - [x] #18 Failed Console claim release retains cleanup authority across false/exception outcomes and supports later successful re-adoption.
+- [x] #19 Durable Capture-On direct-prefill sends bind trace provenance to the final assistant-prefilled message vector, dispatch exactly once, and persist safe checkpoint/exchange state without changing ordinary fresh-send behavior.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -69,6 +70,11 @@ Fix Round 5 plan:
 17. Reproduce Settings claim-release loss across unmount/replacement and failed scheduling, then move bounded cleanup and public recovery to a surviving existing owner.
 18. Reproduce Console release false/exception outcomes, retain cleanup authority under the surviving owner, and prove later re-adoption after confirmed cleanup.
 19. Run focused RED/GREEN after each item, then the established handoff, Console, Settings, fork, provider, static, diagnostic-inventory, and diff gates; document inherited baselines without changing them.
+
+Fix Round 6 plan:
+20. Reproduce both pinned and one-shot durable Capture-On direct-prefill sends and trace request construction from initial preparation through final dispatch.
+21. Move or derive the durable trace request at the owner of the final prefilled message vector, binding it to `DIRECT_PREFILL` while preserving fresh requests and the existing ephemeral endpoint omission contract.
+22. Run the focused RED/GREEN nodes, provider gateway/controller/checkpoint suites, static checks, diagnostic inventory, and diff review; record exact evidence and inherited baselines.
 
 ADR required: no new ADR
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
@@ -218,6 +224,10 @@ reviewed warning deltas contain only integer revisions and exception class
 names. The new durable fields contain only the fixed omission marker and
 provenance enum--never the live URL, user content, credentials, or paths.
 ADR-117 remains governing; no new ADR or generalized lesson was needed.
+
+Fix Round 6 corrects durable Capture-On direct-prefill ownership without changing ADR-117. The Console now freezes trace input from the same final provider vector used for dispatch, including the terminal assistant prefill, and records DIRECT_PREFILL rather than FRESH. The trace boundary recognizes that the final assistant descriptor is an unsaved response prefill and binds the preceding saved user revision as the durable turn owner. Fresh sends retain FRESH provenance. Live dispatch still receives the exact process-local endpoint exactly once, while checkpoint intent, destination, trace headers/components, message exchanges, and the complete SQLite dump remain endpoint-free.
+
+Exact RED: both pinned and one-shot real-SQLite Capture-On nodes failed before adapter dispatch (2 failed; provider_started=False and adapter call count 0) because the frozen FRESH trace request omitted the later assistant prefill and could not bind to DIRECT_PREFILL. Exact focused GREEN: those two nodes plus the ordinary fresh-send control pass (3 passed, 1 warning). The trace atomicity plus provider-gateway matrix passes 435 with 2 restricted-loopback skips. The controller file passes 257 with one unchanged MCP shadow-name inventory failure that reproduces at the pre-fix c645 baseline. The checkpoint/trace compatibility slice passes 132 with 12 deliberate inherited-baseline deselections and one unchanged checkpoint-transition expectation failure that also reproduces at c645. Ruff fatal/undefined-name checks, py_compile, git diff --check, and the reviewed diagnostic inventory pass (570 owners, 1,338 TASK-492 calls, 7,602 TASK-494 calls, 10 sinks). Full-file formatter checks still report pre-existing drift in the legacy large controller/test/runtime files, so they were not mechanically reformatted. Self-review found no new durable endpoint sink, ADR, or generalized lesson.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

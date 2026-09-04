@@ -5982,10 +5982,18 @@ class ConsoleChatController:
         try:
             trace_request = self._build_durable_trace_request(
                 preparation=committing,
-                provider_messages=continuation.provider_messages,
+                provider_messages=self._provider_messages_with_prefill(
+                    continuation.provider_messages,
+                    continuation.prefill,
+                ),
                 trace_source_messages=continuation.trace_source_messages,
                 echoed_user_id=continuation.echoed_user_id,
                 committed_user_id=continuation.commit.user_message_id,
+                route=(
+                    ConsoleRequestRoute.DIRECT_PREFILL
+                    if continuation.prefill
+                    else ConsoleRequestRoute.FRESH
+                ),
             )
         except Exception:
             return self._handle_durable_trace_provenance_failure(continuation)
@@ -8508,6 +8516,7 @@ class ConsoleChatController:
         trace_source_messages: tuple[dict[str, Any], ...],
         echoed_user_id: str,
         committed_user_id: str,
+        route: ConsoleRequestRoute,
     ) -> PreparedConsoleRequest | None:
         """Freeze one Capture-On request from the admitted durable inputs."""
 
@@ -8629,13 +8638,30 @@ class ConsoleChatController:
         return build_console_request_for_preparation(
             preparation,
             visible_messages,
-            route=ConsoleRequestRoute.FRESH,
+            route=route,
             message_provenance=descriptors,
             memory_provenance=(),
             mandatory_provenance=(),
             tool_provenance=(),
             capture_policy=policy,
         )
+
+    @staticmethod
+    def _provider_messages_with_prefill(
+        provider_messages: list[dict[str, Any]],
+        prefill: str | None,
+    ) -> list[dict[str, Any]]:
+        """Return the final direct-provider vector including response prefill."""
+
+        if not prefill:
+            return provider_messages
+        return [
+            *provider_messages,
+            {
+                "role": ConsoleMessageRole.ASSISTANT.value,
+                "content": prefill,
+            },
+        ]
 
     def _handle_durable_trace_provenance_failure(
         self,
@@ -8927,10 +8953,18 @@ class ConsoleChatController:
         try:
             trace_request = self._build_durable_trace_request(
                 preparation=preparation,
-                provider_messages=provider_messages,
+                provider_messages=self._provider_messages_with_prefill(
+                    provider_messages,
+                    prefill,
+                ),
                 trace_source_messages=trace_source_messages,
                 echoed_user_id=echoed_user.id,
                 committed_user_id=commit.user_message_id,
+                route=(
+                    ConsoleRequestRoute.DIRECT_PREFILL
+                    if prefill
+                    else ConsoleRequestRoute.FRESH
+                ),
             )
         except Exception:
             return self._handle_durable_trace_provenance_failure(continuation)
@@ -21176,14 +21210,10 @@ class ConsoleChatController:
         except KeyError:
             return self._session_closed_result()
         one_shot_used = one_shot_prefill_revision if prefill_from_one_shot else None
-        if prefill:
-            provider_messages = [
-                *provider_messages,
-                {
-                    "role": ConsoleMessageRole.ASSISTANT.value,
-                    "content": prefill,
-                },
-            ]
+        provider_messages = self._provider_messages_with_prefill(
+            provider_messages,
+            prefill,
+        )
         dispatch_request: Any = provider_messages
         capture_mode = capture_mode_override or ConsoleTraceCaptureMode.CAPTURE_OFF
         if capture_mode_override is None and preparation_id is not None:

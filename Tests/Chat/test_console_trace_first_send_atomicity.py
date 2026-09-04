@@ -41,6 +41,7 @@ from tldw_chatbook.Chat.console_session_endpoint_policy import (
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_trace_provenance import (
+    ConsoleRequestRoute,
     ConsoleTraceCaptureMode,
     TraceProvenancePersistenceError,
 )
@@ -170,6 +171,7 @@ async def test_ephemeral_vllm_real_send_omits_target_from_checkpoint_trace_and_e
     )
 
     assert result.accepted is True and result.provider_started is True
+    assert len(adapter_calls) == 1
     assert adapter_calls[0]["api_base_url"] == target
     authority = json.loads(str(checkpoint_rows[0]["frozen_authority_json"]))
     destination = json.loads(str(checkpoint_rows[0]["resolved_destination_json"]))
@@ -189,13 +191,14 @@ async def test_ephemeral_vllm_real_send_omits_target_from_checkpoint_trace_and_e
     trace_header = (
         db.get_connection()
         .execute(
-            "SELECT endpoint_identity, generation_parameters_json, "
+            "SELECT route_identity, endpoint_identity, generation_parameters_json, "
             "adapter_defaults_json, response_format_json, reasoning_controls_json "
             "FROM console_trace_request_headers"
         )
         .fetchone()
     )
     assert trace_header is not None
+    assert trace_header["route_identity"] == ConsoleRequestRoute.FRESH.value
     assert trace_header["endpoint_identity"] == EPHEMERAL_SESSION_ENDPOINT_OMITTED
     assert target not in str(tuple(trace_header))
     component_kinds = {
@@ -205,6 +208,143 @@ async def test_ephemeral_vllm_real_send_omits_target_from_checkpoint_trace_and_e
         .fetchall()
     }
     assert "api_base_url" not in component_kinds
+    assert target not in "\n".join(db.get_connection().iterdump())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prefill_kind", ("pinned", "one_shot"))
+async def test_durable_capture_on_prefill_binds_final_vector_to_direct_route(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    prefill_kind: str,
+) -> None:
+    """Pinned and one-shot prefill must share one final trace/dispatch vector."""
+
+    target = "http://127.0.0.1:9199/v1"
+    configured = "http://127.0.0.1:8100/v1"
+    prefill = f"{prefill_kind} response:"
+    initial = ConsoleSessionSettings(
+        provider="vllm",
+        model="local-model",
+        base_url=configured,
+        streaming=False,
+    )
+    db, store, controller, _old_gateway = _controller(
+        tmp_path,
+        initial_settings=initial,
+    )
+    store.adopt_session_ephemeral_endpoint(
+        "session-1",
+        settings=initial,
+        policy=ConsoleEphemeralEndpointPolicy(
+            provider="vllm",
+            model="local-model",
+            base_url=target,
+        ),
+    )
+    if prefill_kind == "pinned":
+        store.set_session_pinned_prefill("session-1", prefill)
+    else:
+        store.set_session_one_shot_prefill("session-1", prefill)
+
+    checkpoint_rows: list[dict[str, object]] = []
+    adapter_calls: list[dict[str, object]] = []
+
+    def adapter(**kwargs: object) -> dict[str, object]:
+        adapter_calls.append(dict(kwargs))
+        row = (
+            db.get_connection()
+            .execute(
+                "SELECT frozen_authority_json, resolved_destination_json "
+                "FROM console_dispatch_checkpoints"
+            )
+            .fetchone()
+        )
+        assert row is not None
+        checkpoint_rows.append(dict(row))
+        return {"choices": [{"message": {"content": "done"}}]}
+
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter,
+        trace_call_boundary_factory=ConsoleTraceBoundaryFactory(db),
+    )
+
+    async def resolve(selection):
+        resolution = ConsoleProviderResolution(
+            provider="vllm",
+            base_url=target,
+            model="local-model",
+            ready=True,
+            execution_key="vllm",
+            endpoint_provenance=selection.endpoint_provenance,
+            streaming=False,
+        )
+        return replace(
+            resolution,
+            resolved_destination=resolve_console_destination(resolution),
+        )
+
+    gateway.resolve_for_send = resolve
+    controller.provider_gateway = gateway
+    controller.prompt_history = PromptHistory(tmp_path / "history.jsonl")
+    signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
+    monkeypatch.setattr(
+        controller,
+        "_admit_capture_policy",
+        lambda *_args, **_kwargs: signals,
+    )
+    _force_capture_on(monkeypatch)
+
+    result = await controller.submit_draft(
+        "send one durable direct-prefill request",
+        session_id="session-1",
+    )
+
+    assert result.accepted is True
+    assert result.provider_started is True
+    assert len(adapter_calls) == 1
+    assert adapter_calls[0]["api_base_url"] == target
+    assert adapter_calls[0]["messages_payload"][-1] == {
+        "role": "assistant",
+        "content": prefill,
+    }
+    assistant = store.get_message(str(result.assistant_message_id))
+    assert assistant.content == f"{prefill}done"
+    authority = json.loads(str(checkpoint_rows[0]["frozen_authority_json"]))
+    destination = json.loads(str(checkpoint_rows[0]["resolved_destination_json"]))
+    assert authority["provider_intent"]["endpoint"] is None
+    assert destination["endpoint_identity"] == EPHEMERAL_SESSION_ENDPOINT_OMITTED
+
+    persisted_message_id = assistant.persisted_message_id
+    assert persisted_message_id is not None
+    exchange_rows = db.get_message_exchanges(persisted_message_id)
+    assert len(exchange_rows) == 1
+    capture = capture_from_blob(exchange_rows[0]["capture_blob"])
+    assert capture.request["messages_payload"][-1] == {
+        "role": "assistant",
+        "content": prefill,
+    }
+    assert capture.endpoint is None
+    assert "api_base_url" not in capture.request
+    assert {"api_base_url", "endpoint"}.issubset(capture.omitted_keys)
+    trace_header = (
+        db.get_connection()
+        .execute(
+            "SELECT route_identity, endpoint_identity "
+            "FROM console_trace_request_headers"
+        )
+        .fetchone()
+    )
+    assert trace_header is not None
+    assert trace_header["route_identity"] == ConsoleRequestRoute.DIRECT_PREFILL.value
+    assert trace_header["endpoint_identity"] == EPHEMERAL_SESSION_ENDPOINT_OMITTED
+    artifacts = tuple(
+        json.loads(bytes(row[0]))
+        for row in db.get_connection()
+        .execute("SELECT sanitized_bytes FROM console_trace_artifacts")
+        .fetchall()
+    )
+    assert {"role": "assistant", "content": prefill} in artifacts
     assert target not in "\n".join(db.get_connection().iterdump())
 
 
