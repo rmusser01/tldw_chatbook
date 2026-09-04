@@ -158,6 +158,17 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         width: auto;
         min-width: 0;
     }
+    /* task-31224: Textual Input defaults to width 100%, which consumed the
+     * whole filter row and pushed "Clear filter" off-screen -- the one
+     * honest recovery for a filter miss was invisible (live: it never
+     * rendered at any width). Share the row instead. */
+    #library-media-filter {
+        width: 1fr;
+    }
+    #library-media-filter-clear {
+        width: auto;
+        min-width: 0;
+    }
     """
 
     def __init__(
@@ -479,6 +490,12 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 id="library-media-status",
                 markup=False,
             )
+            # task-31224: a FILTER miss must not suggest importing -- the
+            # query-echoing status copy plus the (now visible) Clear filter
+            # control above are the honest recovery. Import/Show-all stay
+            # the recovery for a genuinely empty source only.
+            if self.canvas.query:
+                return
             if self.canvas.active_type is None:
                 yield Button(
                     "Import media",

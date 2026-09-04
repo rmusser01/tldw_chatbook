@@ -1882,3 +1882,34 @@ release from that) — and treat "the click closes the dialog but the action
 didn't happen" as a coordinates smell, not an app bug, whenever the row
 contains any non-ASCII glyph. Verify a suspected hit-region bug with the
 widget's own oracle (DB row, `pilot.click`) before touching app code.
+
+## Region assertions are blind to paint-over — the `*:focus` outline family (media type chooser, task-31221, 2026-09-03)
+
+**What happened.** The Library media type chooser rendered live as an empty
+bordered band with its options invisible, while every harness test on it
+passed. Two hypotheses died on evidence (the OptionList height math; a
+compact-variant focus border) before compositor painted-text probes showed
+the truth: the app-global `*:focus { outline: solid }` fallback
+(core/_reset.tcss) PAINTS OVER a widget's outermost rows without costing
+geometry, and the screen focuses the option-count-height chooser on open —
+with a two-option catalogue the outline's top and bottom rows covered every
+option. Every geometry assertion (`region`, `scrollable_content_region`)
+measured *correct* the whole time, because outlines do not participate in
+layout. This was the THIRD widget bitten by that reset (TASK-1160 DataTable,
+TASK-2300 SelectOverlay — whose block literally predicts "a bare box with
+nothing in it" for two-option compacts).
+
+**What to do.** When a widget looks empty or clipped live but its regions
+measure fine, suspect paint-over (outline, overlay, ANSI layer) before
+layout, and assert on **compositor painted text**
+(`screen._compositor.render_strips()` cropped to the region — see
+`_painted_text_in_region` in test_library_media_reader_shell.py) rather
+than on geometry. Check the TASK-1160/TASK-2300 blocks in
+components/_lists.tcss first: any focusable widget whose outermost rows
+carry content needs the same `outline: none` + content-safe-cue opt-out.
+Two auxiliary traps from the same hunt: widget-tier CSS (BUNDLED_CSS /
+DEFAULT_CSS) loses to app-tier rules regardless of specificity, so an
+opt-out fighting an app-tier reset must live at app tier; and a sentinel
+edit used to test code provenance MUST be verified to have landed
+(`assert old in s` before replace) — an unverified no-op replace produced a
+false "app runs foreign code" scare mid-hunt.
