@@ -1,9 +1,9 @@
 """PRD Feature B (milestone M1): the pinned Console task panel.
 
 Covers the pure renderer, the widget's show/hide/collapse behaviour under
-the real consolidated CSS, and the controller wiring that feeds it (the
-``todo_*`` change callback on the worker thread and the session-activation
-re-derive on the UI thread).
+the real consolidated CSS, and the controller/runtime wiring that feeds it
+(the ``todo_*`` change callback on the worker thread, the session
+activation re-derives on the UI thread, and the re-derive at view attach).
 """
 
 from __future__ import annotations
@@ -13,6 +13,8 @@ from types import SimpleNamespace
 import pytest
 from textual.app import ComposeResult
 from textual.widgets import Static
+
+from Tests.Chat.test_console_runtime_lifetime import _runtime_with, _View
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -76,10 +78,7 @@ class _Harness(ConsolidatedCSSApp):
 
 
 def _rows(panel: ConsoleTaskPanel) -> list[str]:
-    return [
-        str(row.render())
-        for row in panel.query("#console-task-panel-body Static")
-    ]
+    return str(panel.query_one("#console-task-panel-rows", Static).render()).splitlines()
 
 
 @pytest.mark.asyncio
@@ -105,6 +104,22 @@ async def test_panel_hidden_until_tasks_arrive_then_hidden_again_when_cleared():
         panel.set_tasks("s1", [])
         await pilot.pause()
         assert panel.display is False
+
+
+@pytest.mark.asyncio
+async def test_back_to_back_snapshots_render_only_the_newest():
+    """Repaint is a synchronous ``update()``: no remove/mount cycle to race."""
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        panel = app.query_one(ConsoleTaskPanel)
+        for n in range(1, 6):
+            panel.set_tasks(
+                "s1",
+                [{"content": f"task {i}", "status": "pending"} for i in range(n)],
+            )
+        await pilot.pause()
+        assert _rows(panel) == [f"[ ] task {i}" for i in range(5)]
 
 
 @pytest.mark.asyncio
@@ -139,7 +154,7 @@ async def test_collapse_is_remembered_per_session_and_survives_updates():
         assert body.display is False
 
 
-# --- controller wiring -------------------------------------------------------
+# --- controller and runtime wiring -------------------------------------------
 
 
 def _wired_controller() -> tuple[ConsoleChatController, list[tuple[str | None, list]]]:
@@ -186,3 +201,35 @@ def test_session_activation_re_derives_the_panel_from_the_todo_store():
 
     controller.set_task_panel = None
     controller._remount_task_panel(first.id)  # viewless: no-op, no raise
+
+
+def test_closing_the_last_session_clears_the_panel():
+    """No neighbour to activate still has to take the departed tasks down."""
+    controller, calls = _wired_controller()
+    only = controller.new_session(title="only")
+    only.todo_store.create(content="doomed")
+    controller._remount_task_panel(only.id)
+    assert calls[-1][1], "precondition: the panel shows the task"
+
+    controller.close_session(only.id)
+    assert controller.store.active_session_id is None
+    assert calls[-1] == (None, [])
+
+
+def test_attaching_a_new_view_pushes_the_active_sessions_tasks():
+    """The runtime outlives the screen; a fresh panel must not start empty."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=None)
+    session = controller.new_session(title="kept")
+    session.todo_store.create(content="survives navigation")
+
+    calls: list[tuple[str | None, list]] = []
+    view = _View(
+        {"set_task_panel": lambda sid, tasks: calls.append((sid, list(tasks)))}
+    )
+    _runtime_with(controller, view)
+
+    assert calls, "attach must re-derive the panel"
+    session_id, tasks = calls[-1]
+    assert session_id == session.id
+    assert [t["content"] for t in tasks] == ["survives navigation"]

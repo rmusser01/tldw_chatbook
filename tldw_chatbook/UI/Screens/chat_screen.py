@@ -491,7 +491,6 @@ from ...Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from ...Widgets.Chat_Widgets.skill_install_confirm_card import SkillInstallConfirmCard
 from ...Widgets.Chat_Widgets.skill_script_confirm_card import SkillScriptConfirmCard
 from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
-from ...Widgets.Console.console_task_panel import ConsoleTaskPanel
 from ...Widgets.Chat_Widgets.watchlists_operation_card import (
     WatchlistsOperationCard,
 )
@@ -20728,6 +20727,9 @@ class ChatScreen(BaseAppScreen):
             session_id: The session the snapshot belongs to.
             tasks: That session's full task list; empty hides the panel.
         """
+        # Local import: keeps the panel module off the boot path (ADR-097).
+        from ...Widgets.Console.console_task_panel import ConsoleTaskPanel
+
         controller = self._console_chat_controller
         if controller is None or controller.store.active_session_id != session_id:
             return

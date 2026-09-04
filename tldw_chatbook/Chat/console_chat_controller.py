@@ -10744,7 +10744,11 @@ class ConsoleChatController:
             self._remount_parked_skill_install(new_active_id)
             self._remount_parked_skill_script(new_active_id)
             self._remount_parked_worktree_merge(new_active_id)
-            self._remount_task_panel(new_active_id)
+        # Unconditional: closing the LAST session leaves no neighbour to
+        # activate (`new_active_id` is None) and the screen's follow-up sync
+        # creates the blank replacement straight through the store, so this
+        # is the only place the departed session's tasks get cleared.
+        self._remount_task_panel(new_active_id)
         return closed
 
     def original_attempt_for_message(self, message_id: str) -> str | None:
@@ -13746,15 +13750,18 @@ class ConsoleChatController:
         if self.app is not None and self.set_task_panel is not None:
             self.app.call_from_thread(self.set_task_panel, session_id, tasks)
 
-    def _remount_task_panel(self, session_id: str) -> None:
+    def _remount_task_panel(self, session_id: str | None) -> None:
         """UI THREAD: re-derive the pinned task panel for ``session_id``.
 
         Called from `switch_session`/`new_session`/`close_session` next to
-        the card re-derives, so the panel always shows the VIEWED session's
-        tasks (AC-B5) and hides when that session has none.
+        the card re-derives, and from `ConsoleRuntime.attach_view` when a
+        new screen claims the surviving runtime, so the panel always shows
+        the VIEWED session's tasks (AC-B5) and hides when that session has
+        none -- or when there is no session at all.
 
         Args:
-            session_id: The session now being activated/viewed.
+            session_id: The session now being activated/viewed, or None
+                when none is (the last session was just closed).
         """
         if self.set_task_panel is None:
             return

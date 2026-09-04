@@ -35,7 +35,6 @@ from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from tldw_chatbook.Widgets.Console.console_background_effect import (
     ConsoleTranscriptSurface,
 )
-from tldw_chatbook.Widgets.Console.console_task_panel import ConsoleTaskPanel
 from tldw_chatbook.Widgets.Console.console_activity_outcome_notice import (
     ConsoleActivityOutcomeNotice,
 )
@@ -266,6 +265,11 @@ class ConsoleSessionSurface(Vertical):
         yield self._build_tab_strip_row()
         yield self._build_fleet_coachmark()
         yield ChatTaskCards(id="console-task-surface")
+        # Imported here, not at module level: this module is on the boot
+        # path (ADR-097 UI-ready module census) and the panel is only
+        # needed once a Console surface actually composes.
+        from tldw_chatbook.Widgets.Console.console_task_panel import ConsoleTaskPanel
+
         yield ConsoleTaskPanel(id="console-task-panel")
         yield ConsoleActivityOutcomeNotice(id="console-activity-outcome-notice")
         yield ConsoleTranscriptSurface(

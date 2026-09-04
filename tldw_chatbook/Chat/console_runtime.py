@@ -1558,6 +1558,28 @@ class ConsoleRuntime:
         self._rearm_delivery_ui_hook()
         if claimed:
             self.remount_pending_approval()
+            self._remount_task_panel()
+
+    def _remount_task_panel(self) -> None:
+        """Push the active session's tasks into a newly claimed view's panel.
+
+        PRD Feature B: the runtime and its todo stores outlive the screen,
+        but the panel widget is screen-owned and mounts empty. Without this
+        a return visit to Console shows no tasks until the next ``todo_*``
+        change or session switch.
+        """
+        controller = self._chat_controller
+        store = self._chat_store
+        remount = getattr(controller, "_remount_task_panel", None)
+        if store is None or not callable(remount):
+            return
+        try:
+            remount(store.active_session_id)
+        except Exception as exc:  # noqa: BLE001 - a UI re-derive must not break attach
+            logger.warning(
+                "Task-panel remount raised at attach (exception_type={})",
+                type(exc).__name__,
+            )
 
     def detach_view(self, view: Any | None = None) -> bool:
         """Clear every screen-owned slot; the runtime itself survives.

@@ -2231,16 +2231,9 @@
         overflow-y: auto;
         scrollbar-gutter: stable;
     }
-    ConsoleTaskPanel .console-task-panel-row {
+    ConsoleTaskPanel #console-task-panel-rows {
         height: auto;
         width: 1fr;
-    }
-    ConsoleTaskPanel .console-task-panel-done {
-        color: $text-muted;
-    }
-    ConsoleTaskPanel .console-task-panel-active {
-        color: $accent;
-        text-style: bold;
     }
 
 

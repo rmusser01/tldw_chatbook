@@ -11,7 +11,7 @@ the two views can never disagree about what a task is called.
 
 from __future__ import annotations
 
-from rich.markup import escape as _escape_markup
+from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
@@ -20,11 +20,7 @@ from textual.widgets import Static
 from tldw_chatbook.Chat.console_agent_bridge import _sanitize_task_marker_label
 
 _GLYPHS = {"completed": "[x]", "in_progress": "[~]", "pending": "[ ]"}
-_STATUS_CLASS = {
-    "completed": "console-task-panel-done",
-    "in_progress": "console-task-panel-active",
-    "pending": "console-task-panel-pending",
-}
+_STATUS_STYLE = {"completed": "dim", "in_progress": "bold", "pending": ""}
 
 
 def render_task_lines(
@@ -69,6 +65,11 @@ class ConsoleTaskPanel(Vertical):
 
     Hidden while the active session has no tasks (AC-B1). Collapse state is
     remembered per session for the widget's lifetime (AC-B6).
+
+    The body is ONE ``Static`` holding every row, repainted with a
+    synchronous ``update()``: there is no remove/mount cycle, so two
+    snapshots arriving back to back cannot interleave -- the last one
+    written is the one shown.
     """
 
     BUNDLED_CSS = """
@@ -93,16 +94,9 @@ class ConsoleTaskPanel(Vertical):
         overflow-y: auto;
         scrollbar-gutter: stable;
     }
-    ConsoleTaskPanel .console-task-panel-row {
+    ConsoleTaskPanel #console-task-panel-rows {
         height: auto;
         width: 1fr;
-    }
-    ConsoleTaskPanel .console-task-panel-done {
-        color: $text-muted;
-    }
-    ConsoleTaskPanel .console-task-panel-active {
-        color: $accent;
-        text-style: bold;
     }
     """
 
@@ -114,8 +108,10 @@ class ConsoleTaskPanel(Vertical):
         self._collapsed_by_session: dict[str, bool] = {}
 
     def compose(self) -> ComposeResult:
+        """Yield the clickable header line and the scrollable rows body."""
         yield Static("", id="console-task-panel-header")
-        yield VerticalScroll(id="console-task-panel-body")
+        with VerticalScroll(id="console-task-panel-body"):
+            yield Static("", id="console-task-panel-rows")
 
     @property
     def collapsed(self) -> bool:
@@ -147,28 +143,30 @@ class ConsoleTaskPanel(Vertical):
         self._repaint()
 
     def on_click(self, event: events.Click) -> None:
+        """Collapse or expand the panel when its header line is clicked.
+
+        Args:
+            event: The click; only one landing on the header is consumed.
+        """
         if event.widget is not None and event.widget.id == "console-task-panel-header":
             event.stop()
             self.toggle_collapsed()
+
+    def on_mount(self) -> None:
+        """Paint a snapshot that arrived before the children existed."""
+        if self._tasks:
+            self._repaint()
 
     def _repaint(self) -> None:
         if not self.is_mounted:
             return
         header, rows = render_task_lines(self._tasks, collapsed=self.collapsed)
-        self.query_one("#console-task-panel-header", Static).update(
-            _escape_markup(header)
-        )
+        self.query_one("#console-task-panel-header", Static).update(Text(header))
         body = self.query_one("#console-task-panel-body", VerticalScroll)
         body.display = not self.collapsed
-        body.remove_children()
-        body.mount_all(
-            Static(
-                _escape_markup(text),
-                classes=f"console-task-panel-row {_STATUS_CLASS.get(status, '')}".strip(),
-            )
-            for status, text in rows
-        )
-
-    def on_mount(self) -> None:
-        if self._tasks:
-            self._repaint()
+        text = Text()
+        for index, (status, line) in enumerate(rows):
+            if index:
+                text.append("\n")
+            text.append(line, style=_STATUS_STYLE.get(status, ""))
+        self.query_one("#console-task-panel-rows", Static).update(text)
