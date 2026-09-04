@@ -1347,3 +1347,40 @@ def test_every_real_tooling_warning_names_its_feature():
         "no tooling warnings were produced at all -- this venv has every "
         "optional extra installed, so the guard proved nothing"
     )
+
+
+# --- task-28007 AC#6: the collapsed Import behavior header states its state --
+
+
+def test_import_behavior_header_summarises_its_analysis_state():
+    """AC#6: "Analyze after import" lives inside a fold that is collapsed by
+    default, so the panel's whole point was invisible until it was opened.
+    The title carries the state for both values."""
+    from tldw_chatbook.Library.ingest_capabilities import type_group_state_summary
+
+    generic = get_capabilities("generic")
+    assert type_group_state_summary(generic, {}) == "Import behavior · analysis off"
+    assert (
+        type_group_state_summary(generic, {"analyze": True})
+        == "Import behavior · analysis on"
+    )
+    # Only the group that owns the toggle gains the clause.
+    pdf = get_capabilities("pdf")
+    assert type_group_state_summary(pdf, {}) == pdf.label
+
+
+def test_the_collapsed_generic_title_carries_the_analysis_state():
+    """The wiring, not just the helper: the title the Collapsible actually
+    renders (and the screen's in-place update assigns) leads with the
+    state, and never stutters it a second time as a changed-value pair."""
+    from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
+        build_type_group_title,
+    )
+
+    generic = get_capabilities("generic")
+    off = build_type_group_title(generic, {}, is_installed=lambda _f: True)
+    assert off.startswith("Import behavior · analysis off"), off
+
+    on = build_type_group_title(generic, {"analyze": True}, is_installed=lambda _f: True)
+    assert on.startswith("Import behavior · analysis on"), on
+    assert "Analyze after import" not in on, on

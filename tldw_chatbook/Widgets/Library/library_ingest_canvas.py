@@ -25,12 +25,14 @@ from textual.widgets import (
 )
 
 from tldw_chatbook.Library.ingest_capabilities import (
+    ANALYSIS_STATE_FIELD,
     TypeGroupCapabilities,
     _is_installed,
     capabilities_for_backend,
     field_disabled_state,
     get_capabilities,
     select_option_label,
+    type_group_state_summary,
 )
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState
 from tldw_chatbook.Workspaces.conversation_browser_state import (
@@ -932,6 +934,10 @@ def build_type_group_title(
             continue
         if value is None or str(value).strip() == "":
             continue
+        if field.name == ANALYSIS_STATE_FIELD:
+            # (task-28007 AC#6) Its state already leads the title via
+            # `type_group_state_summary`; a pair would stutter it.
+            continue
         if not _option_is_default(field, value):
             changed.append(_summarise_option(field, value))
     # Order: the blocker first (nothing in this panel can be committed
@@ -964,9 +970,10 @@ def build_type_group_title(
         shown.append(blocked_clause)
     if len(changed) > len([pair for pair in shown if pair in changed]):
         shown.append("…")
+    label = type_group_state_summary(cap, values)
     if not shown:
-        return cap.label
-    return f"{cap.label} — {', '.join(shown)}"
+        return label
+    return f"{label} — {', '.join(shown)}"
 
 
 def ingest_scope_label(cap: TypeGroupCapabilities, has_files: bool) -> str:

@@ -126,7 +126,10 @@ from ...Widgets.Library.library_export_canvas import (
     apply_library_export_submit_gate,
 )
 from ...Chat.Chat_Functions import chat_api_call, extract_response_content
-from ...Library.ingest_analysis import resolve_ingest_analysis_provider
+from ...Library.ingest_analysis import (
+    analysis_unavailable_reason,
+    resolve_ingest_analysis_provider,
+)
 from ...Library.ingest_capabilities import (
     capabilities_for_backend,
     get_capabilities,
@@ -40843,6 +40846,7 @@ class LibraryScreen(BaseAppScreen):
             ),
             editing_analysis=self._library_media_editing_analysis,
             generating_analysis=self._library_media_generating_analysis,
+            analysis_provider_reason=self._library_media_analysis_provider_reason(),
             content_query=self._library_media_content_query,
             content_match_index=self._library_media_content_match_index,
             content_mode=self._library_media_content_mode,
@@ -41086,6 +41090,9 @@ class LibraryScreen(BaseAppScreen):
         # decides it changes under resizes and pane toggles, and a viewer
         # attribute missing from this compare silently never updates.
         back_visible = self._library_media_reader_exit_available()
+        # task-28007 AC#5: a compose input like any other -- resolved once
+        # per sync and read by both halves below.
+        analysis_provider_reason = self._library_media_analysis_provider_reason()
         unchanged = (
             (viewer.viewer is viewer_state or viewer.viewer == viewer_state)
             and viewer.review_banner == review_banner
@@ -41094,6 +41101,7 @@ class LibraryScreen(BaseAppScreen):
             and viewer.confirming_delete == self._library_media_confirming_delete
             and tuple(viewer.highlights) == highlights
             and viewer.editing_analysis == self._library_media_editing_analysis
+            and viewer.analysis_provider_reason == analysis_provider_reason
             and viewer.content_query == self._library_media_content_query
             and viewer.content_match_index == self._library_media_content_match_index
             and viewer.content_mode == self._library_media_content_mode
@@ -41140,6 +41148,7 @@ class LibraryScreen(BaseAppScreen):
             viewer.highlights = highlights
             viewer.editing_analysis = self._library_media_editing_analysis
             viewer.generating_analysis = self._library_media_generating_analysis
+            viewer.analysis_provider_reason = analysis_provider_reason
             viewer.content_query = self._library_media_content_query
             viewer.content_match_index = self._library_media_content_match_index
             viewer.content_mode = self._library_media_content_mode
@@ -41447,6 +41456,21 @@ class LibraryScreen(BaseAppScreen):
             analysis=analysis,
             generating=self._library_media_generating_analysis,
             editing=self._library_media_editing_analysis,
+        )
+
+    def _library_media_analysis_provider_reason(self) -> str:
+        """Why the Reader's Generate cannot run, or "" when it can.
+
+        task-28007 AC#5: resolved through the same seam the Generate
+        handler and the ingest path use, so the disabled control's reason,
+        the post-click refusal, and the import receipt are one sentence
+        with one source. Called once per viewer build/sync.
+
+        Returns:
+            The user-facing reason, or "" when an analysis call can be made.
+        """
+        return analysis_unavailable_reason(
+            resolve_ingest_analysis_provider(self.app_instance.app_config)
         )
 
     def _consume_library_media_find_focus(self) -> bool:
@@ -42029,11 +42053,12 @@ class LibraryScreen(BaseAppScreen):
         if not media_id:
             return
         resolution = resolve_ingest_analysis_provider(self.app_instance.app_config)
-        if not resolution.ready:
-            self._notify_library_media_analysis_warning(
-                resolution.hint
-                or f"Analysis provider not ready: {resolution.short_reason}"
-            )
+        reason = analysis_unavailable_reason(resolution)
+        if reason:
+            # Belt and braces behind the disabled control (AC#5): same
+            # sentence the button already wears, so a click that somehow
+            # lands (a stale mount, a keyboard route) never contradicts it.
+            self._notify_library_media_analysis_warning(reason)
             return
         detail = (
             self._library_media_detail

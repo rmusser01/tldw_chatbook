@@ -10537,7 +10537,14 @@ async def test_library_media_generate_analysis_dispatches_and_persists():
                 lambda *a, **k: ready,
             )
             mp.setattr(library_screen_module, "chat_api_call", _fake_dispatch)
-            screen.query_one("#library-media-analysis-generate", Button).press()
+            # task-28007 AC#5: the action is composed disabled while no
+            # provider resolves, so the patched-ready resolution has to
+            # reach the viewer before the press can land.
+            screen._sync_library_media_viewer_or_recompose()
+            await pilot.pause()
+            generate = screen.query_one("#library-media-analysis-generate", Button)
+            assert generate.disabled is False
+            generate.press()
 
             service = app.media_reading_scope_service
             for _ in range(200):
@@ -10605,7 +10612,18 @@ async def test_library_media_generate_analysis_without_provider_notifies_and_ski
                 "chat_api_call",
                 lambda **k: dispatched.append(k) or "should not run",
             )
-            screen.query_one("#library-media-analysis-generate", Button).press()
+            # task-28007 AC#5: the refusal is now stated at the control
+            # BEFORE the click -- a disabled Button swallows press() -- so
+            # the handler's surviving post-click guard is exercised directly.
+            screen._sync_library_media_viewer_or_recompose()
+            await pilot.pause()
+            generate = screen.query_one("#library-media-analysis-generate", Button)
+            assert generate.disabled is True
+            assert str(generate.label) == "○ Generate"
+            assert str(generate.tooltip) == "No analysis provider is configured."
+            screen.handle_library_media_analysis_generate(
+                SimpleNamespace(stop=lambda: None)
+            )
             await pilot.pause()
             await pilot.pause()
 

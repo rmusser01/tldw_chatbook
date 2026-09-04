@@ -1345,3 +1345,64 @@ async def test_media_filter_placeholder_names_the_fields_it_searches():
         # placeholder, and the default Items pane fits ~15 cells (task-31274).
         assert placeholder == "Title/keyword…"
         assert len(placeholder) <= 15
+
+
+# ---------------------------------------------------------------------------
+# Wave 4 PR D (task-28007 AC#5) -- Generate says why it is off.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_generate_is_disabled_with_its_reason_when_no_provider_is_configured():
+    """Critique #4 P1: the Reader's Generate learned that no analysis
+    provider is configured only AFTER the click, as a toast. It now wears
+    the resolver's own reason, in the ``○``-with-reason grammar PR A gave
+    Find -- and the post-click guard still refuses with the same words."""
+    host = _host()  # the test config configures no analysis provider
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        await _switch_to_analysis(screen, pilot)
+        generate = screen.query_one("#library-media-analysis-generate", Button)
+        assert generate.disabled is True
+        assert str(generate.label) == "○ Generate"
+        assert str(generate.tooltip) == "No analysis provider is configured."
+        # Belt and braces: the handler refuses with the same sentence.
+        warnings: list[str] = []
+        screen._notify_library_media_analysis_warning = warnings.append
+        screen.handle_library_media_analysis_generate(
+            SimpleNamespace(stop=lambda: None)
+        )
+        await pilot.pause()
+        assert warnings == ["No analysis provider is configured."]
+        assert screen._library_media_generating_analysis is False
+
+
+@pytest.mark.asyncio
+async def test_generate_is_live_when_the_configured_provider_is_ready(monkeypatch):
+    """The counterpart: a ready resolution leaves the action untouched --
+    no marker, no tooltip, no disabled state."""
+    from tldw_chatbook.Library.ingest_analysis import IngestAnalysisResolution
+    from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+
+    monkeypatch.setattr(
+        library_screen_module,
+        "resolve_ingest_analysis_provider",
+        lambda _config: IngestAnalysisResolution(
+            provider="OpenAI",
+            api_key="sk-test",
+            ready=True,
+            short_reason="",
+            hint="",
+            dispatch_name="openai",
+        ),
+    )
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        await _switch_to_analysis(screen, pilot)
+        generate = screen.query_one("#library-media-analysis-generate", Button)
+        assert generate.disabled is False
+        assert str(generate.label) == "Generate"
+        assert generate.tooltip is None
