@@ -1,9 +1,10 @@
 ---
 id: TASK-31222
 title: Reader - content takes the pane instead of an 18-row box under a blank band
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-03 22:31'
+updated_date: '2026-09-04 00:31'
 labels:
   - library
   - media-ux
@@ -19,11 +20,12 @@ Re-critique P1: #library-media-reader-mode-read has no CSS rule (unstyled Vertic
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 No blank band above the Find bar in the Read tab
-- [ ] #2 Content height scales with the pane (long content scrolls inside; short content stays compact)
+- [x] #1 No blank band above the Find bar in the Read tab
+- [x] #2 Content height scales with the pane (long content scrolls inside; short content stays compact)
 <!-- AC:END -->
 
+## Implementation Notes
 
-## Renumbering
-
-Renumbered from task-31204 on 2026-09-03: id collision with an older dev arrival (owner rule TASK-19601; older keeps the id).
+<!-- SECTION:NOTES:BEGIN -->
+Shipped in PR #2358. #library-media-reader-mode-read height:auto (was an unstyled 1fr Vertical = ~14 blank rows) + #library-media-viewer-content max-height 75vh (was fixed 18). Live-verified: heading sits directly above the Find bar; a full document renders without inner scroll on a tall window.
+<!-- SECTION:NOTES:END -->

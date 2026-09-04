@@ -1,9 +1,10 @@
 ---
 id: TASK-31223
 title: Footer - never advertise keys the focused widget will swallow
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-03 22:31'
+updated_date: '2026-09-04 00:31'
 labels:
   - library
   - media-ux
@@ -19,11 +20,12 @@ Re-critique P1: the footer shortcut branch keys off screen state, not focus; wit
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 With focus in a text input, the footer reflects typing context instead of advertising swallowed action keys
-- [ ] #2 Walk keys shown in the footer always work when shown
+- [x] #1 With focus in a text input, the footer reflects typing context instead of advertising swallowed action keys
+- [x] #2 Walk keys shown in the footer always work when shown
 <!-- AC:END -->
 
+## Implementation Notes
 
-## Renumbering
-
-Renumbered from task-31205 on 2026-09-03: id collision with an older dev arrival (owner rule TASK-19601; older keeps the id).
+<!-- SECTION:NOTES:BEGIN -->
+Shipped in PR #2359. _library_footer_shortcuts_for_current_state drops single-printable-key entries while an Input/TextArea holds focus, keeps esc/enter/F-keys + informational chips, announces the swap ('typing in field'). Re-applied on context FLIPS only from on_descendant_focus, routed through _apply_library_notes_footer_context (Qodo catch: the generic registration overwrote the Notes editor footer). Live-verified both directions.
+<!-- SECTION:NOTES:END -->
