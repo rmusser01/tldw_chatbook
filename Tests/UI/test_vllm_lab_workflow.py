@@ -144,6 +144,7 @@ async def test_guided_readiness_keeps_four_recoverable_rows_and_python_browse():
         view.apply_state(
             draft=draft,
             state=VllmReadinessState.READY_TO_START,
+            profiles_ready=True,
             preflight=VllmPreflightResult(
                 generation=1,
                 fingerprint=semantic_fingerprint(draft),
@@ -177,6 +178,7 @@ async def test_advanced_structured_profile_values_are_visible_editable_and_adjac
             draft=draft,
             state=VllmReadinessState.NOT_CONFIGURED,
             preflight=None,
+            profiles_ready=True,
         )
         advanced = view.query_one("#vllm-advanced-options", Collapsible)
         advanced.collapsed = False
@@ -198,6 +200,7 @@ async def test_advanced_structured_profile_values_are_visible_editable_and_adjac
         view.apply_state(
             draft=draft,
             state=VllmReadinessState.NEEDS_ATTENTION,
+            profiles_ready=True,
             preflight=VllmPreflightResult(
                 generation=2,
                 fingerprint=semantic_fingerprint(draft),
@@ -240,6 +243,7 @@ async def test_existing_server_discovery_requires_explicit_model_selection():
             connection=owner.snapshot(),
             discovered_model_ids=("org/first", "org/second"),
             credential_configured=True,
+            profiles_ready=True,
         )
 
         selector = view.query_one("#vllm-existing-model", Select)
@@ -268,6 +272,7 @@ async def test_checking_exposes_generation_bound_cancel_action():
             state=VllmReadinessState.CHECKING,
             preflight=None,
             connection=owner.snapshot(),
+            profiles_ready=True,
         )
         assert not view.query_one("#vllm-cancel-check", Button).disabled
         assert view.query_one("#vllm-cancel-check", Button).display
@@ -313,6 +318,7 @@ async def test_current_server_is_separate_from_modified_next_restart_without_pat
             current_launch_snapshot=snapshot,
             profiles=document,
             runtime_active=True,
+            profiles_ready=True,
         )
 
         current_copy = str(
@@ -355,6 +361,7 @@ async def test_profile_buttons_post_exact_actions_and_raw_arguments_are_launch_o
             state=VllmReadinessState.NOT_CONFIGURED,
             preflight=None,
             profiles=document,
+            profiles_ready=True,
         )
         assert app.query_one("#vllm-profile-select", Select).value == profile.profile_id
         assert "Launch only · not saved in profiles." in " ".join(
@@ -393,6 +400,7 @@ async def test_existing_server_mode_disables_local_profile_mutations_with_explan
             ),
             state=VllmReadinessState.NOT_CONFIGURED,
             preflight=None,
+            profiles_ready=True,
         )
 
         profile_select = view.query_one("#vllm-profile-select", Select)
@@ -419,6 +427,7 @@ async def test_existing_server_mode_disables_local_profile_mutations_with_explan
             draft=replace(view.draft, mode=VllmMode.LOCAL),
             state=VllmReadinessState.NOT_CONFIGURED,
             preflight=None,
+            profiles_ready=True,
         )
         assert not profile_select.disabled
 
@@ -552,6 +561,7 @@ async def test_profile_model_repair_focuses_visible_source_specific_control(
             ),
             state=VllmReadinessState.NEEDS_ATTENTION,
             preflight=None,
+            profiles_ready=True,
         )
 
         view.show_profile_validation_error(
@@ -1389,6 +1399,7 @@ async def test_preflight_blocker_is_adjacent_and_start_enables_only_for_current_
             draft=draft,
             state=VllmReadinessState.NEEDS_ATTENTION,
             preflight=preflight,
+            profiles_ready=True,
         )
         assert app.query_one("#vllm-start", Button).disabled
         assert str(
@@ -1409,6 +1420,7 @@ async def test_preflight_blocker_is_adjacent_and_start_enables_only_for_current_
         view.apply_state(
             draft=draft,
             state=VllmReadinessState.NEEDS_ATTENTION,
+            profiles_ready=True,
             preflight=VllmPreflightResult(
                 generation=1,
                 fingerprint=semantic_fingerprint(draft),
@@ -1452,6 +1464,73 @@ def _bind_local_claim(owner: VllmConnectionOwner, token) -> ServerLaunchClaim:
     return claim
 
 
+async def test_child_view_requires_explicit_profile_hydration_for_ready_projection():
+    """A newly mounted child cannot infer that app-scoped READY is reconciled."""
+
+    app = _VllmHost()
+    owner = VllmConnectionOwner()
+    app._vllm_connection_owner = owner
+    async with app.run_test(size=(120, 40)) as pilot:
+        view = app.query_one(VllmSetupView)
+        draft = replace(
+            view.draft,
+            mode=VllmMode.EXISTING,
+            existing_server_url="http://127.0.0.1:8000/v1",
+            existing_model_id="chatbook-vllm",
+        )
+        token = owner.begin(draft, runtime_owner="external")
+        assert owner.settle(token, _ready_result(token))
+
+        view.apply_state(
+            draft=draft,
+            state=VllmReadinessState.READY,
+            preflight=None,
+            connection=owner.snapshot(),
+        )
+        await pilot.pause()
+
+        assert str(view.query_one("#vllm-readiness-state", Label).renderable) == (
+            "Setup incomplete"
+        )
+        checklist = " ".join(
+            str(view.query_one(f"#vllm-check-{row}", Label).renderable)
+            for row in ("environment", "installation", "model", "network")
+        )
+        assert "✓" not in checklist
+        assert str(view.query_one("#vllm-activity-summary", Label).renderable) == (
+            "No activity yet."
+        )
+        assert "API and model are ready" not in str(
+            view.query_one("#vllm-activity-events", Label).renderable
+        )
+        assert not view.query_one("#vllm-use-console", Button).display
+        assert not view.query_one("#vllm-make-default", Button).display
+
+        view.apply_state(
+            draft=draft,
+            state=VllmReadinessState.READY,
+            preflight=None,
+            connection=owner.snapshot(),
+            profiles_ready=True,
+        )
+        await pilot.pause()
+
+        assert "Ready · Existing vLLM server" == str(
+            view.query_one("#vllm-readiness-state", Label).renderable
+        )
+        assert "✓ Model · exact selection verified" in str(
+            view.query_one("#vllm-check-model", Label).renderable
+        )
+        assert "✓ Network · API reachable" in str(
+            view.query_one("#vllm-check-network", Label).renderable
+        )
+        assert "API and model are ready" in str(
+            view.query_one("#vllm-activity-summary", Label).renderable
+        )
+        assert view.query_one("#vllm-use-console", Button).display
+        assert view.query_one("#vllm-make-default", Button).display
+
+
 async def test_mounted_activity_renders_ready_and_expands_bounded_failure():
     app = _VllmHost()
     async with app.run_test(size=(120, 40)):
@@ -1472,6 +1551,7 @@ async def test_mounted_activity_renders_ready_and_expands_bounded_failure():
             state=VllmReadinessState.READY,
             preflight=None,
             connection=owner.snapshot(),
+            profiles_ready=True,
         )
         assert "Ready at" in str(
             app.query_one("#vllm-readiness-state", Label).renderable
@@ -1491,6 +1571,7 @@ async def test_mounted_activity_renders_ready_and_expands_bounded_failure():
             state=failure.state,
             preflight=None,
             connection=owner.snapshot(),
+            profiles_ready=True,
         )
         assert not app.query_one("#vllm-activity-details", Collapsible).collapsed
         assert not app.query_one("#vllm-recovery-primary", Button).disabled
@@ -1659,8 +1740,38 @@ async def test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff(
         fresh_view = fresh_screen.query_one(VllmSetupView)
         for _ in range(5):
             await pilot.pause()
+        assert (
+            str(fresh_view.query_one("#vllm-readiness-state", Label).renderable)
+            == "Setup incomplete"
+        )
+        assert "✓" not in " ".join(
+            str(fresh_view.query_one(f"#vllm-check-{row}", Label).renderable)
+            for row in ("environment", "installation", "model", "network")
+        )
+        assert (
+            str(fresh_view.query_one("#vllm-activity-summary", Label).renderable)
+            == "No activity yet."
+        )
+        assert "API and model are ready" not in str(
+            fresh_view.query_one("#vllm-activity-events", Label).renderable
+        )
         fresh_view.project_lifecycle(active=True)
         await pilot.pause()
+        assert (
+            str(fresh_view.query_one("#vllm-readiness-state", Label).renderable)
+            == "Setup incomplete"
+        )
+        assert "✓" not in " ".join(
+            str(fresh_view.query_one(f"#vllm-check-{row}", Label).renderable)
+            for row in ("environment", "installation", "model", "network")
+        )
+        assert (
+            str(fresh_view.query_one("#vllm-activity-summary", Label).renderable)
+            == "No activity yet."
+        )
+        assert "API and model are ready" not in str(
+            fresh_view.query_one("#vllm-activity-events", Label).renderable
+        )
         assert not fresh_view.query_one("#vllm-use-console", Button).display
         assert fresh_view.query_one("#vllm-use-console", Button).disabled
         assert not fresh_view.query_one("#vllm-make-default", Button).display
@@ -1699,7 +1810,22 @@ async def test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff(
         assert snapshot.current_token == token
         assert snapshot.state is VllmReadinessState.READY
         assert snapshot.target == _ready_result(token).target
+        assert "Ready at http://127.0.0.1:8000/v1" in str(
+            fresh_view.query_one("#vllm-readiness-state", Label).renderable
+        )
+        assert "✓ Model · exact selection verified" in str(
+            fresh_view.query_one("#vllm-check-model", Label).renderable
+        )
+        assert "✓ Network · API reachable" in str(
+            fresh_view.query_one("#vllm-check-network", Label).renderable
+        )
+        assert "API and model are ready" in str(
+            fresh_view.query_one("#vllm-activity-summary", Label).renderable
+        )
+        assert fresh_view.query_one("#vllm-use-console", Button).display
         assert not fresh_view.query_one("#vllm-use-console", Button).disabled
+        assert fresh_view.query_one("#vllm-make-default", Button).display
+        assert not fresh_view.query_one("#vllm-make-default", Button).disabled
         assert not fresh_view.query_one("#vllm-stop", Button).disabled
         assert not fresh_view.query_one("#vllm-recovery-primary", Button).display
 
@@ -1777,7 +1903,10 @@ async def test_staged_owned_handoff_is_discarded_without_positive_liveness(
 
     from tldw_chatbook.Constants import TAB_CHAT
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
-    from tldw_chatbook.UI.Navigation.vllm_handoff import VllmConsoleIntent
+    from tldw_chatbook.UI.Navigation.vllm_handoff import (
+        VllmConsoleIntent,
+        VllmDefaultIntent,
+    )
 
     class _ControllableProcess(_RunningProcess):
         poll_raises = False
@@ -1797,6 +1926,31 @@ async def test_staged_owned_handoff_is_discarded_without_positive_liveness(
                 break
         assert screen._vllm_profiles_loaded
         profile = screen._selected_vllm_profile()
+        external_draft = replace(
+            screen._vllm_draft,
+            mode=VllmMode.EXISTING,
+            existing_server_url="http://127.0.0.1:8000/v1",
+            existing_model_id="chatbook-vllm",
+        )
+        external_token = screen._vllm_owner.begin(
+            external_draft,
+            runtime_owner="external",
+        )
+        assert screen._vllm_owner.settle(
+            external_token,
+            _ready_result(external_token),
+        )
+        screen._vllm_draft = external_draft
+        original_post_message = screen.post_message
+        monkeypatch.setattr(screen, "post_message", lambda *_args: True)
+        assert screen._stage_vllm_handoff(
+            channel=HandoffChannel.VLLM_DEFAULT,
+            intent_type=VllmDefaultIntent,
+            route="settings",
+        )
+        monkeypatch.setattr(screen, "post_message", original_post_message)
+        assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_DEFAULT)
+
         draft = draft_from_profile(profile)
         token = screen._vllm_owner.begin(
             draft,
@@ -1812,7 +1966,6 @@ async def test_staged_owned_handoff_is_discarded_without_positive_liveness(
         screen._vllm_draft = draft
         screen._apply_vllm_view_state(focus=False)
 
-        original_post_message = screen.post_message
         monkeypatch.setattr(screen, "post_message", lambda *_args: True)
         staged = screen._stage_vllm_handoff(
             channel=HandoffChannel.VLLM_CONSOLE,
@@ -1832,6 +1985,7 @@ async def test_staged_owned_handoff_is_discarded_without_positive_liveness(
 
         screen.on_unmount()
         assert app.pending_handoffs.claim(HandoffChannel.VLLM_CONSOLE) is None
+        assert app.pending_handoffs.claim(HandoffChannel.VLLM_DEFAULT) is None
         snapshot = screen._vllm_owner.snapshot()
         assert snapshot.state is VllmReadinessState.NOT_CONFIGURED
         assert snapshot.target is None
@@ -1839,6 +1993,164 @@ async def test_staged_owned_handoff_is_discarded_without_positive_liveness(
         process.poll_raises = False
         process.running = False
         assert clear_server_process(app, "vllm", claim, process)
+
+
+@pytest.mark.parametrize("receipt_state", ("pending", "in_flight"))
+async def test_exact_external_handoff_preserves_ready_departure(
+    monkeypatch,
+    receipt_state: str,
+):
+    """Only the exact current external transfer may preserve READY on departure."""
+
+    from tldw_chatbook.Constants import TAB_CHAT
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+    from tldw_chatbook.UI.Navigation.vllm_handoff import VllmConsoleIntent
+
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, _ = await _mount_vllm_screen(app, pilot)
+        for _ in range(50):
+            await pilot.pause(0.02)
+            if screen._vllm_profiles_loaded:
+                break
+        assert screen._vllm_profiles_loaded
+        draft = replace(
+            screen._vllm_draft,
+            mode=VllmMode.EXISTING,
+            existing_server_url="http://127.0.0.1:8000/v1",
+            existing_model_id="chatbook-vllm",
+        )
+        token = screen._vllm_owner.begin(draft, runtime_owner="external")
+        assert screen._vllm_owner.settle(token, _ready_result(token))
+        screen._vllm_draft = draft
+
+        original_post_message = screen.post_message
+        monkeypatch.setattr(screen, "post_message", lambda *_args: True)
+        assert screen._stage_vllm_handoff(
+            channel=HandoffChannel.VLLM_CONSOLE,
+            intent_type=VllmConsoleIntent,
+            route=TAB_CHAT,
+        )
+        monkeypatch.setattr(screen, "post_message", original_post_message)
+        claim = (
+            app.pending_handoffs.claim(HandoffChannel.VLLM_CONSOLE)
+            if receipt_state == "in_flight"
+            else None
+        )
+
+        screen.on_unmount()
+
+        if claim is None:
+            claim = app.pending_handoffs.claim(HandoffChannel.VLLM_CONSOLE)
+        assert claim is not None
+        assert (
+            claim.revision
+            == screen._vllm_staged_handoffs[HandoffChannel.VLLM_CONSOLE][0]
+        )
+        assert claim.value == VllmConsoleIntent.from_target(_ready_result(token).target)
+        assert screen._vllm_owner.snapshot().target == _ready_result(token).target
+        assert app.pending_handoffs.acknowledge(claim)
+
+
+async def test_superseded_external_handoff_cannot_preserve_ready_departure(monkeypatch):
+    """A newer unrelated value on the same channel does not own this departure."""
+
+    from tldw_chatbook.Constants import TAB_CHAT
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+    from tldw_chatbook.UI.Navigation.vllm_handoff import VllmConsoleIntent
+
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, _ = await _mount_vllm_screen(app, pilot)
+        for _ in range(50):
+            await pilot.pause(0.02)
+            if screen._vllm_profiles_loaded:
+                break
+        assert screen._vllm_profiles_loaded
+        draft = replace(
+            screen._vllm_draft,
+            mode=VllmMode.EXISTING,
+            existing_server_url="http://127.0.0.1:8000/v1",
+            existing_model_id="chatbook-vllm",
+        )
+        token = screen._vllm_owner.begin(draft, runtime_owner="external")
+        assert screen._vllm_owner.settle(token, _ready_result(token))
+        screen._vllm_draft = draft
+
+        original_post_message = screen.post_message
+        monkeypatch.setattr(screen, "post_message", lambda *_args: True)
+        assert screen._stage_vllm_handoff(
+            channel=HandoffChannel.VLLM_CONSOLE,
+            intent_type=VllmConsoleIntent,
+            route=TAB_CHAT,
+        )
+        monkeypatch.setattr(screen, "post_message", original_post_message)
+        unrelated = VllmConsoleIntent(
+            api_url="http://127.0.0.1:9000/v1/chat/completions",
+            model_id="org/unrelated",
+            generation=token.generation,
+        )
+        app.pending_handoffs.stage(HandoffChannel.VLLM_CONSOLE, unrelated)
+
+        screen.on_unmount()
+
+        snapshot = screen._vllm_owner.snapshot()
+        assert snapshot.state is VllmReadinessState.NOT_CONFIGURED
+        assert snapshot.target is None
+        unrelated_claim = app.pending_handoffs.claim(HandoffChannel.VLLM_CONSOLE)
+        assert unrelated_claim is not None
+        assert unrelated_claim.value == unrelated
+        assert app.pending_handoffs.acknowledge(unrelated_claim)
+
+
+async def test_external_handoff_revision_lookup_error_fails_closed(monkeypatch):
+    """An indeterminate exact-revision lookup cannot preserve external READY."""
+
+    from tldw_chatbook.Constants import TAB_CHAT
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+    from tldw_chatbook.UI.Navigation.vllm_handoff import VllmConsoleIntent
+
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, _ = await _mount_vllm_screen(app, pilot)
+        for _ in range(50):
+            await pilot.pause(0.02)
+            if screen._vllm_profiles_loaded:
+                break
+        assert screen._vllm_profiles_loaded
+        draft = replace(
+            screen._vllm_draft,
+            mode=VllmMode.EXISTING,
+            existing_server_url="http://127.0.0.1:8000/v1",
+            existing_model_id="chatbook-vllm",
+        )
+        token = screen._vllm_owner.begin(draft, runtime_owner="external")
+        assert screen._vllm_owner.settle(token, _ready_result(token))
+        screen._vllm_draft = draft
+
+        original_post_message = screen.post_message
+        monkeypatch.setattr(screen, "post_message", lambda *_args: True)
+        assert screen._stage_vllm_handoff(
+            channel=HandoffChannel.VLLM_CONSOLE,
+            intent_type=VllmConsoleIntent,
+            route=TAB_CHAT,
+        )
+        monkeypatch.setattr(screen, "post_message", original_post_message)
+
+        def fail_lookup(*_args):
+            raise RuntimeError("revision lookup unavailable")
+
+        monkeypatch.setattr(
+            app.pending_handoffs,
+            "exact_revision_status",
+            fail_lookup,
+        )
+        screen.on_unmount()
+
+        snapshot = screen._vllm_owner.snapshot()
+        assert snapshot.state is VllmReadinessState.NOT_CONFIGURED
+        assert snapshot.target is None
+        assert app.pending_handoffs.claim(HandoffChannel.VLLM_CONSOLE) is None
 
 
 async def test_staged_owned_handoff_survives_exact_live_unmount_for_consumption(
@@ -2753,6 +3065,7 @@ async def test_handoff_buttons_enable_only_for_current_verified_target():
             state=VllmReadinessState.READY,
             preflight=None,
             connection=owner.snapshot(),
+            profiles_ready=True,
         )
         assert not use.disabled and not default.disabled
 
@@ -2762,6 +3075,7 @@ async def test_handoff_buttons_enable_only_for_current_verified_target():
             state=VllmReadinessState.NOT_CONFIGURED,
             preflight=None,
             connection=owner.snapshot(),
+            profiles_ready=True,
         )
         assert use.disabled and default.disabled
 
@@ -2812,6 +3126,7 @@ async def test_explicit_vllm_state_transition_focuses_phase_action(state, target
             preflight=preflight,
             connection=connection,
             runtime_active=runtime_active,
+            profiles_ready=True,
         )
         view.focus_state_action(state)
         await pilot.pause()

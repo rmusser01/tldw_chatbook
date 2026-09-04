@@ -244,7 +244,7 @@ class VllmSetupView(VerticalScroll):
         self._runtime_active = False
         self._discovered_model_ids: tuple[str, ...] = ()
         self._credential_configured = False
-        self._profiles_ready = True
+        self._profiles_ready = False
         self._profile_store_error = False
         self._rendering = False
 
@@ -915,7 +915,10 @@ class VllmSetupView(VerticalScroll):
                 local and is_current_success and not self._runtime_active
             )
             stop.disabled = not self._runtime_active
-            retry.disabled = self._state is not VllmReadinessState.NEEDS_ATTENTION
+            retry.disabled = (
+                not self._profiles_ready
+                or self._state is not VllmReadinessState.NEEDS_ATTENTION
+            )
             target = self._connection.target if self._connection is not None else None
             token = (
                 self._connection.current_token if self._connection is not None else None
@@ -979,7 +982,10 @@ class VllmSetupView(VerticalScroll):
             )
             start.display = bool(is_current_success and not self._runtime_active)
             stop.display = self._runtime_active
-            retry.display = self._state is VllmReadinessState.NEEDS_ATTENTION
+            retry.display = bool(
+                self._profiles_ready
+                and self._state is VllmReadinessState.NEEDS_ATTENTION
+            )
             restart.display = dirty_restart
             use_in_console.display = current_target
             make_default.display = current_target
@@ -1080,8 +1086,11 @@ class VllmSetupView(VerticalScroll):
             VllmReadinessState.STOPPING: "Stopping…",
             VllmReadinessState.NEEDS_ATTENTION: "Needs attention",
         }
-        connection = self._connection
-        readiness = state_copy[self._state]
+        state = (
+            self._state if self._profiles_ready else VllmReadinessState.NOT_CONFIGURED
+        )
+        connection = self._connection if self._profiles_ready else None
+        readiness = state_copy[state]
         if (
             self._profiles_ready
             and connection is not None
@@ -1134,16 +1143,19 @@ class VllmSetupView(VerticalScroll):
             "\n".join(lines) or summary
         )
         details = self.query_one("#vllm-activity-details", Collapsible)
-        if self._state is VllmReadinessState.NEEDS_ATTENTION:
+        if state is VllmReadinessState.NEEDS_ATTENTION:
             details.collapsed = False
 
     def _render_readiness_checklist(self) -> None:
         """Keep four stable setup checks visible with bounded recovery copy."""
 
         local = self._draft.mode is VllmMode.LOCAL
-        checking = self._state is VllmReadinessState.CHECKING
+        checking = bool(
+            self._profiles_ready and self._state is VllmReadinessState.CHECKING
+        )
         current_preflight = bool(
-            self._preflight is not None
+            self._profiles_ready
+            and self._preflight is not None
             and self._preflight.fingerprint == semantic_fingerprint(self._draft)
         )
         issues = self._preflight.issues if current_preflight and self._preflight else ()
@@ -1179,7 +1191,7 @@ class VllmSetupView(VerticalScroll):
             environment = "○ Environment · not checked"
             installation = "○ vLLM installation · not checked"
 
-        connection = self._connection
+        connection = self._connection if self._profiles_ready else None
         if checking:
             model = "… Model · checking"
             network = "… Network · checking"

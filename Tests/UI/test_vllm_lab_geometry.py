@@ -423,6 +423,7 @@ def _state_projection(state: str):
         "runtime_active": runtime_active,
         "discovered_model_ids": discovered_model_ids,
         "credential_configured": False,
+        "profiles_ready": True,
     }
 
 

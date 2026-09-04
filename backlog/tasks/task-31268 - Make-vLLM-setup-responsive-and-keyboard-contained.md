@@ -5,7 +5,7 @@ status: Done
 assignee:
   - codex
 created_date: '2026-09-03 22:34'
-updated_date: '2026-09-04 16:29'
+updated_date: '2026-09-04 17:23'
 labels:
   - vllm
   - lab
@@ -37,6 +37,7 @@ Ensure the complete vLLM setup, activity, profile, and Console-handoff workflow 
 - [x] #8 The contextual Inspector describes Console use truthfully before and after handoff/return as session-only with defaults unchanged, without claiming an adoption state the Lab does not own.
 - [x] #9 The 11-state responsive/Tab matrix treats the existing-server profile selector as disabled and unreachable while keeping Local-mode selection reachable, and fresh-screen hydration preserves truthful Use/Reverify/recovery actions without stealing focus.
 - [x] #10 During initial hydration the mounted Lab hides Use, Console, and Reverify actions derived only from unreconciled app state, keeps exact owned Stop reachable, and projects persistent adjacent profile-store recovery on load failure without focus theft.
+- [x] #11 The production-mounted delayed-hydration flow renders only non-verified readiness, checklist, and activity copy before reconciliation—even after lifecycle refresh—then restores the exact verified projection without focus theft after hydration.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -115,6 +116,15 @@ UX Fix Round 4/5:
 ADR required: no
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: This directly enforces ADR-117's existing truthful-action and focus contract during initial profile hydration; it introduces no new UI or handoff architecture.
+
+UX Fix Round 5/5:
+17. Expand the existing production-shaped delayed-hydration RED test to assert readiness label, all four checklist rows, activity summary/details, Use/default visibility, staging, Stop, and focus across initial mount and explicit lifecycle refresh.
+18. Change only the child projection fence needed to keep every READY-derived surface truthful before reconciliation; preserve current copy, layout, keyboard order, and exact post-hydration presentation.
+19. Re-run workflow, the 71-case geometry/Tab matrix, five-file primary, compatibility, CSS, privacy, inventories, statics, scope, and diff gates before checking the AC and restoring Done.
+
+ADR required: no
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: This completes ADR-117's existing truthful loading-state projection and adds no new visual or application structure.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -413,4 +423,23 @@ round. The exact prior Round 2 broad-static aggregate remains provenance-only
 and was not guessed. The host has neither an installed executable nor importable
 vLLM module, so loopback remains contract evidence rather than live-server
 qualification. ADR-117 remains sufficient; no new ADR or lesson was required.
+UX Fix Round 5/5 extends the real delayed-hydration navigation regression to
+assert every visible truth surface before and after explicit lifecycle refresh:
+readiness remains Setup incomplete, no checklist row is verified, Activity stays
+non-ready, Use/default remain absent, staging refuses, Stop remains independently
+truthful, and focus is preserved. Exact repository reconciliation restores the
+verified endpoint/model, Model and Network checks, ready Activity, and both
+handoff actions. The geometry projection now declares its reconciled fixture
+state rather than depending on an unsafe child default; all eleven states and
+three supported sizes retain production-CSS containment and Tab order.
+
+Round 5 evidence is workflow `70`, geometry/Tab `71`, and complete primary `339`
+passing under the normal FD limit. Compatibility remains `350/352` with only the
+same untouched Console/Settings baseline nodes. CSS tests passed `39`; two builds
+reproduced SHA-256
+`8dd093edc0a8a6ce6281c42f39eb7c450b59146dea7b9e9e28bc6dfa903b32ae`
+and bundle sync passed. Privacy `7`, critical Ruff, scoped format, `compileall`,
+both inventories, scope review, and diff checks passed. No stylesheet source or
+generated bundle changed, and no live-vLLM claim was possible on this host.
+ADR-117 remains sufficient; no new ADR or generalized lesson arose.
 <!-- SECTION:NOTES:END -->

@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 22:34'
-updated_date: '2026-09-04 16:28'
+updated_date: '2026-09-04 17:23'
 labels:
   - vllm
   - lab
@@ -32,6 +32,7 @@ Make repeated vLLM operation efficient and honest by separating the immutable ru
 - [x] #7 Create/save/rename/duplicate validation failures map to the correct visible adjacent profile, source, model, environment, network, or Advanced control with bounded actionable copy; duplicate-name and invalid-rename outcomes do not fall back to generic reload messaging.
 - [x] #8 Initial saved-profile hydration is distinguished from deliberate profile selection: exact current launch evidence survives only for the bound profile/runtime fingerprint, and all profile mutation/select handlers are inert in existing-server mode even when invoked programmatically.
 - [x] #9 Initial profile-store hydration is a fail-closed readiness gate: success reconciles the exact selected profile before exposing READY, while corrupt, future, unavailable, or failed loads invalidate stale evidence and show persistent adjacent recovery without hiding truthful Stop.
+- [x] #10 A newly constructed or lazily mounted child view begins unreconciled and cannot project any saved-profile READY evidence until its parent explicitly supplies a reconciled profile document.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -106,6 +107,15 @@ UX Fix Round 4/5:
 ADR required: no
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: This tightens ADR-117's existing selected-profile restoration and fail-closed corrupt-store behavior; no profile schema, storage, or ownership boundary changes.
+
+UX Fix Round 5/5:
+32. Extend the delayed-load RED test to cover the child view's constructor default, initial mount, direct lifecycle projection, and all saved-readiness surfaces.
+33. Make the profile-ready flag fail closed by default and require explicit parent hydration before projecting any inherited profile readiness; retain the current exact reconciliation path.
+34. Run the complete requested lifecycle, profile, responsive, privacy, static, inventory, CSS, and diff qualification before checking the new AC and restoring Done.
+
+ADR required: no
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: ADR-117 already makes selected profile restoration a prerequisite for reusable readiness; this change closes a default-state projection hole without changing storage.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -199,6 +209,22 @@ format, `compileall`, both direct inventories, scope review, and diff checks
 passed. No profile schema, storage, CSS source, Console/Settings persistence, or
 handoff-consumer file changed. ADR-117 remains the governing profile/readiness
 boundary; no new ADR or generalized lesson was needed.
+UX Fix Round 5/5 changes the child profile prerequisite default from implicitly
+ready to explicitly unreconciled. Standalone and lazily mounted children cannot
+project inherited READY evidence until the parent completes exact selected-profile
+hydration; direct component and geometry fixtures now opt into reconciled state
+explicitly. The production-shaped delayed worker test proves the complete
+projection remains non-verified before hydration and returns exactly after the
+selected profile reconciles. No profile schema, repository, persistence, or
+migration changed.
+
+Final evidence: focused post-format regressions `9 passed`; workflow `70 passed`;
+geometry/Tab `71 passed`; five-file primary `339 passed` in `447.91s` under the
+normal FD limit. Compatibility retained the same two untouched baselines
+(`350 passed, 2 failed`). Privacy `7`, CSS `39`, deterministic double build,
+bundle sync, critical Ruff, scoped format, `compileall`, both inventories,
+scope/diff review, and `git diff --check` passed. ADR-117 remains the governing
+profile/readiness boundary; no new ADR or generalized lesson was needed.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

@@ -3265,6 +3265,35 @@ class LLMScreen(LabScreen):
             store.discard_pending_exact(channel, revision, intent)
             self._vllm_staged_handoffs.pop(channel, None)
 
+    def _has_exact_external_departure_handoff(
+        self,
+        *,
+        store: PendingHandoffStore,
+        generation: int | None,
+    ) -> bool:
+        """Return whether an exact current external receipt owns departure."""
+
+        if generation is None:
+            return False
+        snapshot = self._vllm_owner.snapshot()
+        if snapshot.generation != generation:
+            return False
+        for channel, receipt in self._vllm_staged_handoffs.items():
+            revision, intent, runtime_owner = receipt
+            if (
+                runtime_owner != "external"
+                or intent.generation != generation
+                or not owner_has_current_intent(self._vllm_owner, intent)
+            ):
+                continue
+            try:
+                status = store.exact_revision_status(channel, revision)
+            except Exception:  # noqa: BLE001 - departure must fail closed
+                return False
+            if status in {"pending", "in_flight"}:
+                return True
+        return False
+
     @on(VllmSetupView.UseInConsoleRequested)
     def _on_vllm_use_in_console_requested(
         self, event: VllmSetupView.UseInConsoleRequested
@@ -3968,19 +3997,18 @@ class LLMScreen(LabScreen):
 
         preserve_generation = self._vllm_handoff_departure_generation
         store = getattr(self.app_instance, "pending_handoffs", None)
-        snapshot = self._vllm_owner.snapshot()
         preserve_external_handoff = bool(
-            preserve_generation is not None
-            and type(store) is PendingHandoffStore
-            and snapshot.generation == preserve_generation
-            and any(
-                runtime_owner == "external" and store.has_pending(channel)
-                for channel, (_, _, runtime_owner) in self._vllm_staged_handoffs.items()
+            type(store) is PendingHandoffStore
+            and self._has_exact_external_departure_handoff(
+                store=cast(PendingHandoffStore, store),
+                generation=preserve_generation,
             )
         )
         preserve_live_launch = self._live_vllm_ready_launch_snapshot() is not None
         if not preserve_live_launch:
             self._discard_staged_vllm_handoffs(runtime_owner="chatbook")
+        if not preserve_external_handoff:
+            self._discard_staged_vllm_handoffs(runtime_owner="external")
         self._vllm_handoff_departure_generation = None
         if not preserve_external_handoff and not preserve_live_launch:
             self._vllm_owner.invalidate("screen_detached")

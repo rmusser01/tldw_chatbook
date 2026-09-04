@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 22:32'
-updated_date: '2026-09-04 16:28'
+updated_date: '2026-09-04 17:23'
 labels:
   - vllm
   - lab
@@ -34,6 +34,8 @@ Replace process-liveness completion with an explicit, privacy-bounded vLLM lifec
 - [x] #8 Active credential values are excluded before candidate retention; Chatbook-owned probes/results/snapshots retain no candidate list, while external discovery and exact selection retain only bounded safe IDs necessary for the visible selection flow.
 - [x] #9 A newly mounted Models screen preserves an app-scoped READY target only when the restored profile, current owner token, exact claim-bound launch snapshot, and live runtime ownership still agree; profile mismatch invalidates safely and recovery remains reachable without focus theft.
 - [x] #10 App-scoped READY and handoff actions remain unavailable until initial profile hydration completes and exact reconciliation succeeds; corrupt, future, unavailable, cancelled, dead, or indeterminate owned evidence fails closed while truthful Stop and profile-store recovery remain reachable.
+- [x] #11 Until initial profile reconciliation succeeds, the child vLLM view exposes no READY status, verified checklist row, ready activity, Use/default action, or stageable handoff across initial mount or explicit lifecycle refresh; exact readiness returns after reconciliation.
+- [x] #12 Screen departure preserves an external handoff only while the exact recorded channel revision and intent for the current departure generation remain pending or in flight; stale, superseded, unrelated, or unreadable receipts fail closed without allowing residue on another channel to preserve owned evidence.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -94,6 +96,16 @@ UX Fix Round 4/5:
 ADR required: no
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: ADR-117 already requires exact profile reconciliation, current claim ownership, generation fencing, and safe handoff rollback; this round closes two lifecycle projection gaps without changing that boundary.
+
+UX Fix Round 5/5:
+22. Add a RED production-shaped delayed-hydration assertion set for every child readiness surface before and after a direct lifecycle projection, then prove exact READY returns only after the repository worker reconciles the selected profile.
+23. Add RED mounted departure cases for stale cross-channel external residue, superseded/unrelated revisions, the exact external preservation control, and owned cancellation/death/poll failure in the presence of stale external residue.
+24. Default the child hydration prerequisite fail closed and mask all readiness/activity/checklist projections until explicitly marked ready; replace broad pending lookup with exception-safe exact revision/intent status validation.
+25. Run focused GREEN nodes and the full workflow, geometry/Tab, five-file primary, incumbent compatibility, CSS determinism, privacy, inventory, static, scope, and diff gates before checking the Round 5 ACs and restoring Done.
+
+ADR required: no
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: This is a narrow correction to ADR-117's existing hydration and revision-fenced handoff rules; no service, persistence, or consumer interface changes.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -206,6 +218,28 @@ not counted because their loopback fixtures could not bind `127.0.0.1`; the
 identical permitted commands produced the green results above. The host still
 has no vLLM executable or importable module, so no live-vLLM claim, download, or
 unrelated service start was made. ADR-117 remains sufficient; no new ADR or
+generalized lesson arose.
+UX Fix Round 5/5 makes the child readiness projection fail closed before its
+parent explicitly supplies reconciled profiles. Initial mount and direct
+lifecycle refresh now mask READY status, verified checklist rows, ready Activity,
+Use/default actions, and handoff staging; the exact profile worker path restores
+the complete verified projection after reconciliation. Departure preserves
+external readiness only when the recorded channel revision is pending or in
+flight and its intent exactly matches the current READY target and departure
+generation. Stale cross-channel residue, unrelated newer revisions, and lookup
+failures cannot preserve evidence; exact pending and in-flight transfers remain
+valid. Receipt ownership was RED as `6 failed, 1 passed`; the final focused
+post-format regression set passed `9`.
+
+Final Round 5 qualification passed workflow `70`, geometry/Tab `71`, and the
+normal-FD five-file primary `339` in `447.91s`. Compatibility remains `350/352`,
+with only the two documented untouched Console/Settings baseline failures.
+Privacy passed `7`; CSS build/sync/staleness passed `39`; two builds reproduced
+SHA-256 `8dd093edc0a8a6ce6281c42f39eb7c450b59146dea7b9e9e28bc6dfa903b32ae`.
+Critical Ruff, scoped format, `compileall`, both inventories, forbidden-scope
+review, and `git diff --check` passed. No CSS, Chat, Console, Settings,
+persistence, or handoff-consumer file changed. This host still has no vLLM
+executable or importable module. ADR-117 remains sufficient; no new ADR or
 generalized lesson arose.
 <!-- SECTION:NOTES:END -->
 
