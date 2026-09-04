@@ -79,6 +79,7 @@ dependencies = [
     "defusedxml",    # engine xml security parsing (Q9: core)
     "html5lib>=1.1,<2",
     "tinycss2>=1.4,<2",
+    "aiohttp>=3.9,<4",
 ]
 
 # --- Optional Dependencies ---
@@ -518,6 +519,8 @@ exclude = [
 ]
 "tldw_chatbook.Canvas" = [
     "static/quickjs-runtime.js",
+    "static/canvas_renderer.js",
+    "static/canvas_runtime_worker.js",
     "static/runtime-manifest.json",
     "static/THIRD_PARTY_LICENSES.txt",
 ]
