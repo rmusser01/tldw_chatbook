@@ -11579,14 +11579,17 @@ async def test_library_shell_media_viewer_search_chrome_paints_at_compact_size()
 
 
 @pytest.mark.asyncio
-async def test_library_shell_media_viewer_search_chrome_undocks_when_inactive():
-    """Catch the active-search dock stealing layout with no search active.
+async def test_library_shell_media_viewer_search_chrome_stays_in_flow_when_active():
+    """The search chrome appears on submit without relocating the bar.
 
-    task-15774's docked find bar must be scoped to an ACTIVE search: with no
-    query submitted, the search box stays in its normal flow position inside
-    the Content section (below the Back control), no status/Prev/Next chrome
-    exists, and clearing an active query returns to exactly that state.
-    Spot-checked at 120x40 per the task's larger-size non-regression note.
+    task-15774 docked an ACTIVE search to the top of the viewer; task-31276
+    (critique #4 P2) retired that dock, because Enter then teleported the
+    bar the user was typing into out from under the mode row and pushed the
+    Reader header down six rows. The contract this now pins: submitting a
+    query only reveals the status/Prev/Next chrome -- the bar's own ``y``
+    is unchanged, it stays below the Back control, and clearing the query
+    hides the chrome again without moving anything. Spot-checked at 120x40
+    per task-15774's larger-size non-regression note.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_large_markdown_media_item())
@@ -11610,19 +11613,22 @@ async def test_library_shell_media_viewer_search_chrome_undocks_when_inactive():
         assert "◀ Prev" not in painted_inactive
         assert "Next ▶" not in painted_inactive
 
-        # Active: the controls dock above the scrolled stack; exactly one
-        # search box is painted (docking must not duplicate chrome).
+        # Active: the chrome appears in place -- the bar keeps the exact ``y``
+        # it had when Find opened it and stays below Back; exactly one search
+        # box is painted (task-31276).
+        inactive_y = controls.region.y
         await _submit_content_search_query(screen, pilot, "budget")
         await pilot.pause()
         controls_active = screen.query_one(
             "#library-media-content-search-controls",
             LibraryMediaContentSearchControls,
         )
-        assert controls_active.region.y <= back_button.region.y
+        assert controls_active.region.y == inactive_y
+        assert back_button.region.y < controls_active.region.y
         assert len(screen.query("#library-media-content-search")) == 1
         assert "Match 1 of 101 matches" in "\n".join(_painted_rows(screen))
 
-        # Cleared: the dock releases and the flow order returns.
+        # Cleared: the chrome hides again and nothing has moved.
         search_input = screen.query_one("#library-media-content-search", Input)
         search_input.value = ""
         search_input.focus()
@@ -11634,13 +11640,12 @@ async def test_library_shell_media_viewer_search_chrome_undocks_when_inactive():
         painted_cleared = "\n".join(_painted_rows(screen))
         assert "◀ Prev" not in painted_cleared
         assert "Next ▶" not in painted_cleared
-        assert (
-            back_button.region.y
-            < screen.query_one(
-                "#library-media-content-search-controls",
-                LibraryMediaContentSearchControls,
-            ).region.y
+        cleared = screen.query_one(
+            "#library-media-content-search-controls",
+            LibraryMediaContentSearchControls,
         )
+        assert back_button.region.y < cleared.region.y
+        assert cleared.region.y == inactive_y
 
 
 @pytest.mark.asyncio

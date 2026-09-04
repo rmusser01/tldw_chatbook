@@ -182,14 +182,13 @@ item-specific empty state; it does not silently switch modes.
   "No matches") and a "◀ Prev" / "Next ▶" pair that steps through matches
   and wraps at either end — in both views. Only the visual highlighting of
   the current match is Raw-only; Rendered shows the same step count with
-  no on-screen mark. While a search is active, the search box, match
-  count, and "◀ Prev" / "Next ▶" pin to the top of the viewer pane so
-  they stay visible while you step through matches — even in a small
-  terminal, and no matter how far you scroll. Clearing the query
-  (submit an empty box) unpins them back into the Read section. Eligible local
-  PNG, JPEG, and WebP files can also show an inline image above the complete
-  text. **Hide preview** / **Show preview** affects only that item for this
-  session. An unavailable or failed preview reports the problem and leaves
+  no on-screen mark. The search bar stays exactly where Find opened it,
+  directly under the Read/Analysis/Highlights/Info row: submitting a query
+  only reveals the match count and "◀ Prev" / "Next ▶" beneath the box, and
+  clearing the query (submit an empty box) hides them again. Nothing above
+  the bar moves. Eligible local PNG, JPEG, and WebP files can also show an
+  inline image above the complete text. **Hide preview** / **Show preview**
+  affects only that item for this session. An unavailable or failed preview reports the problem and leaves
   every character of stored text readable; GIF, PDF, audio, video, remote URL,
   and server-item previews are not fetched or rendered here.
 - **Analysis** — stored analysis text you can view and edit ("Edit
@@ -254,6 +253,10 @@ them one by one, with your place and progress saved between visits.
   that still exist, and a set whose items were all removed reports "No items
   to review" instead of completing.
 
+*Verified against fix/media-wave4-c — 2026-09-04 (task-31276: Find opened, "item"
+submitted, "Next ▶" stepped and Escape closed, live in tmux 235x52 and 100x30 — the bar
+holds its row under the mode toolbar through every step and the pane join stays clean.)*
+
 *Verified against fix/media-wave4-a — 2026-09-04 (task-31269: Analysis-mode [ ] walk over
 three items, Find on the Analysis tab, Escape, Find toggle, all live in tmux 235x52; the earlier
 task-31233/34/36/38 create-from-selection → every-entry resume → dismiss-undo pass still holds).*
@@ -309,12 +312,11 @@ setting**; it supplies one bundle of **staged context** for the next send.
 ### Open a media item and search inside it
 1. Click a row; it loads into Reader without replacing Items.
 2. Press **Find**, type into "Search content…", and press Enter. The status shows
-   "Match 1 of N matches", the matches are highlighted in the content, and
-   the whole search bar pins to the top of the viewer for as long as the
-   search is active.
-3. Step through with "◀ Prev" / "Next ▶"; the current match is emphasized
-   and the pinned bar keeps the count and both controls in view while you
-   navigate.
+   "Match 1 of N matches", the matches are highlighted in the content, and the
+   count plus "◀ Prev" / "Next ▶" appear directly beneath the box — the bar
+   itself does not move, and neither does the header above it.
+3. Step through with "◀ Prev" / "Next ▶"; the current match is emphasized and
+   the bar keeps the count and both controls in view while you navigate.
 
 ### Highlight a passage
 1. In Reader, choose **Highlights** and expand "Add highlight".

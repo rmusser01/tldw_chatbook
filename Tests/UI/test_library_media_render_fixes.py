@@ -38,7 +38,9 @@ from Tests.UI.test_library_media_reader_flow import (
 )
 from Tests.UI.test_library_shell import (
     LibraryProductionCSSHarness,
+    _open_media_find,
     _seed_conversations,
+    _submit_content_search_query,
     _two_conversations,
     _wait_for_condition,
     _wait_for_selector,
@@ -401,3 +403,121 @@ async def test_dismiss_receipt_paints_undo_at_the_items_pane_width():
         assert "✓ dismissed · 2 selected items" in painted, painted
         assert "Undo" in painted, painted
         assert "Dismiss" in painted, painted
+
+
+# ---------------------------------------------------------------------------
+# task-31276 (critique #4 P2): the Find bar stays put; no join artifact.
+# ---------------------------------------------------------------------------
+
+
+def _find_host() -> LibraryProductionCSSHarness:
+    """A reader item whose body carries several matches for "item"."""
+    app = _build_media_test_app()
+    items = _two_media_items()
+    for item in items:
+        item["content"] = "\n".join(
+            f"Line {number} mentions the item." for number in range(1, 9)
+        )
+    _seed_conversations(app, _two_conversations(), media=items)
+    return LibraryProductionCSSHarness(app)
+
+
+def _painted_row(host, y: int) -> str:
+    """Return the whole painted screen row at ``y`` (pane join included)."""
+    strips = list(host.screen._compositor.render_strips())
+    return strips[y].text
+
+
+@pytest.mark.asyncio
+async def test_find_bar_keeps_its_place_through_submit_and_next():
+    """task-31276 (critique #4 P2): submitting must not relocate the bar.
+
+    task-15774 docked an ACTIVE search to the top of the viewer, so Enter
+    teleported the whole bar from under the mode row to above the "Local
+    Media item" identity line and shoved the Reader header down six rows
+    (live cap_20). The bar's anchor is the mode row, at every stage of the
+    gesture: open, submit, match navigation.
+    """
+    host = _find_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        await _open_media_find(screen, pilot)
+        controls = screen.query_one("#library-media-content-search-controls")
+        mode_row = screen.query_one("#library-media-reader-mode-toolbar")
+        identity = screen.query_one("#library-media-reader-identity")
+        opened_y = controls.region.y
+        assert mode_row.region.y < opened_y
+        assert identity.region.y < opened_y
+
+        await _submit_content_search_query(screen, pilot, "item")
+        status = screen.query_one("#library-media-content-search-status")
+        assert "Match 1 of" in _painted(host, status.region), _painted(
+            host, status.region
+        )
+        assert screen.query_one(
+            "#library-media-content-search-controls"
+        ).region.y == opened_y
+        assert (
+            screen.query_one("#library-media-reader-mode-toolbar").region.y
+            == mode_row.region.y
+        )
+        assert (
+            screen.query_one("#library-media-reader-identity").region.y
+            == identity.region.y
+        )
+
+        screen.query_one("#library-media-content-search-next", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen.query_one(
+            "#library-media-content-search-controls"
+        ).region.y == opened_y
+
+
+@pytest.mark.asyncio
+async def test_no_join_artifact_after_find_closes():
+    """task-31276 (critique #4 P2): no `┐─────` run at the pane join.
+
+    After Escape closed Find, a five-cell rule appeared immediately left of
+    "Local Media item" at the pane join and persisted across later
+    interactions (14 live captures; absent on a fresh open). The fresh-open
+    row is the reference: nothing the Find gesture does may change it.
+    """
+    host = _find_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        identity = screen.query_one("#library-media-reader-identity")
+        fresh_row = _painted_row(host, identity.region.y)
+        assert "Local Media item" in fresh_row, fresh_row
+
+        async def _identity_row() -> str:
+            await pilot.pause()
+            await pilot.pause()
+            widget = screen.query_one("#library-media-reader-identity")
+            return _painted_row(host, widget.region.y)
+
+        # Find opened then closed. The stray rule lands in the five pane-grip
+        # columns immediately LEFT of the identity Static, so the identity
+        # region alone cannot see it -- the whole row is the assertion.
+        await _open_media_find(screen, pilot)
+        await pilot.press("escape")
+        after_find = await _identity_row()
+        widget = screen.query_one("#library-media-reader-identity")
+        assert "─" not in _painted(host, widget.region)
+        join = after_find[widget.region.x - 5 : widget.region.x]
+        assert "─" not in join, join
+        assert after_find == fresh_row, (fresh_row, after_find)
+
+        # A mode-tab click.
+        screen.query_one("#library-media-reader-select-analysis", Button).press()
+        after_tab = await _identity_row()
+        assert after_tab == fresh_row, (fresh_row, after_tab)
+
+        # The More menu opened then dismissed.
+        screen.query_one("#library-media-reader-more", Button).press()
+        await pilot.pause()
+        await pilot.press("escape")
+        after_more = await _identity_row()
+        assert after_more == fresh_row, (fresh_row, after_more)

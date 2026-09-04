@@ -192,14 +192,23 @@ $ds-library-source-browser-width: 31;
     color: $ds-text-primary;
 }
 
+/* task-31276: no focus outline here. The grip is 5 columns wide and as
+   TALL AS THE SHELL, so an outline can only ever paint its top and bottom
+   rows -- and the top row sits on the Reader's identity line, where a
+   five-cell rule reads as a rendering artifact at the pane join, not as
+   focus (live: `┐─────Local Media item`, 14 captures -- and it persists,
+   because focus lands here after ANY Reader recompose: Escape out of the
+   Find bar, a mode-tab click, More). Fourth widget bitten by an outline
+   painting over content rather than around it, after TASK-1160
+   (DataTable), TASK-2300 (SelectOverlay) and task-31221 (the media type
+   chooser). Focus stays visible the sanctioned way: the arrow glyph
+   recolours to the accent and goes bold. */
 .library-adaptive-reader-shell > .library-adaptive-reader-pane-grip:focus {
     background: $ds-surface-raised;
     color: $ds-action-focus;
     text-style: bold;
     tint: transparent;
     outline: none;
-    outline-top: solid $ds-action-focus;
-    outline-bottom: solid $ds-action-focus;
 }
 
 #library-collections-reader-shell #library-canvas {
@@ -2382,6 +2391,16 @@ with stray left-edge border fragments), and padding 0 1 so the full
    1fr, inserting a blank band above the Find bar while the content sat in
    a fixed 18-row box below -- the Reader's product got ~1/3 of its pane. */
 #library-media-reader-mode-read {
+    height: auto;
+}
+
+/* task-31276: a bare Horizontal defaults to height:1fr, so this one-row
+   Rendered|Raw toggle claimed the reader's whole remaining height (12 rows
+   at 80x24, 18 once the Find bar mounted) and pushed the reading surface --
+   and, once task-15774's dock was retired, the Find bar's match count and
+   Prev/Next -- below the fold. The same unstyled-1fr-wrapper trap task-31222
+   fixed one level up on #library-media-reader-mode-read. */
+#library-media-content-mode-strip {
     height: auto;
 }
 

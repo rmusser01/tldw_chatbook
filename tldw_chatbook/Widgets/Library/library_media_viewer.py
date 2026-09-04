@@ -335,9 +335,9 @@ class LibraryMediaViewer(Vertical):
                     )
                 yield from self._compose_content_mode_toggle()
             # Keep the search controls and content body as direct children of
-            # the scrolling Reader. Textual docks relative to the immediate
-            # container, so nesting these under the mode marker pins an active
-            # Find bar below the Reader header instead of at the viewport top.
+            # the Reader, siblings of the mode marker -- the mode row is the
+            # Find bar's anchor (task-31276 retired the dock that moved an
+            # active bar to the viewport top).
             # task-31237: the Find bar is collapsed until the Find action
             # opens it (or a query is applied); a permanently open
             # "Search content…" input duplicated Find and spent 3 rows on

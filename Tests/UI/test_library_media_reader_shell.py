@@ -195,7 +195,7 @@ async def test_grips_are_focusable_clickable_and_geometry_stable():
 
 
 @pytest.mark.asyncio
-async def test_grip_hover_focus_and_press_keep_neutral_paint_with_accent_endcaps():
+async def test_grip_hover_focus_and_press_keep_neutral_paint_without_endcaps():
     host = LibraryProductionCSSHarness(_build_media_test_app())
 
     async with host.run_test(size=(160, 50)) as pilot:
@@ -203,6 +203,7 @@ async def test_grip_hover_focus_and_press_keep_neutral_paint_with_accent_endcaps
         grip = shell.library_grip
         region = grip.region
         rest_backgrounds = _painted_backgrounds_in_region(host, region)
+        rest_color = grip.styles.color
 
         await pilot.hover(grip)
         await pilot.pause(0.01)
@@ -212,12 +213,19 @@ async def test_grip_hover_focus_and_press_keep_neutral_paint_with_accent_endcaps
         await pilot.pause()
         assert grip.has_focus and grip.region == region
         assert _painted_backgrounds_in_region(host, region) == rest_backgrounds
-        assert grip.styles.outline_top[0] == "solid"
-        assert grip.styles.outline_bottom[0] == "solid"
+        # task-31276: no outline on ANY edge. The grip spans the shell's full
+        # height, so the accent "endcaps" this test used to pin painted on the
+        # Reader's first and last content rows: the top one landed beside the
+        # pane join, immediately left of the identity line, and read as a
+        # five-cell rendering artifact (`┐─────Local Media item`, critique #4
+        # P2) -- worse, focus lands here after any Reader recompose, so it
+        # persisted. The accent recolour of the arrow glyph is the focus signal.
+        assert grip.styles.outline_top[0] in {"", "none"}
+        assert grip.styles.outline_bottom[0] in {"", "none"}
         assert grip.styles.outline_left[0] in {"", "none"}
         assert grip.styles.outline_right[0] in {"", "none"}
-        assert grip.styles.outline_top[1] == grip.styles.color
-        assert grip.styles.outline_bottom[1] == grip.styles.color
+        assert grip.styles.color != rest_color
+        assert grip.styles.text_style.bold
         assert not grip.get_visual_style().reverse
 
         grip.add_class("-active")

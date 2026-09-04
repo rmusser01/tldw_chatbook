@@ -317,13 +317,12 @@ class LibraryMediaContentBody(ScrollableContainer):
 class LibraryMediaContentSearchControls(Vertical):
     """Maintain search controls while preserving active widget identity."""
 
-    #: Set while a query is active. The app CSS (task-15774) docks the
-    #: active controls to the top of the scrolling viewer so the match
-    #: count and Prev/Next stay painted at every terminal size -- at 80x24
-    #: the in-flow stack above them (Back, title, metadata, section
-    #: header) pushed them below the fold exactly while they were in use.
-    #: An inactive search stays in flow, so no space is reserved when
-    #: nobody is searching.
+    #: Set while a query is active. task-31276 retired task-15774's
+    #: dock-on-active (submitting relocated the whole bar to the top of the
+    #: viewer, above the Reader header, while the user was typing into it);
+    #: the class now only collapses the active bar's child margins, so it
+    #: costs 6 rows instead of 8. The bar's anchor is the mode row, in flow,
+    #: at every stage of the gesture.
     ACTIVE_SEARCH_CLASS = "-library-media-search-active"
 
     DEFAULT_CSS = """
@@ -444,8 +443,7 @@ class LibraryMediaContentSearchControls(Vertical):
         self.matches = matches
         self.match_index = match_index
         is_active = bool(query)
-        # Dock-on-active (task-15774): the class stays on the persistent
-        # container itself.
+        # The active-state class stays on the persistent container itself.
         self.set_class(is_active, self.ACTIVE_SEARCH_CLASS)
 
         search_input = self.query_one("#library-media-content-search", Input)
