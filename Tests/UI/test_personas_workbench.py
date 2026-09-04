@@ -1156,7 +1156,7 @@ class TestCharacterSelectionAndEdit:
             screen.post_message(EditCharacterRequested(2))
             await pilot.pause()
             assert screen._edit_mode == "view"
-            assert screen.query_one("#ccp-character-editor-view").display is False
+            assert not list(screen.query("#ccp-character-editor-view"))
 
     async def test_mode_switch_during_save_does_not_render_character_into_other_mode(
         self, mock_app_instance, stub_characters, monkeypatch
@@ -2562,8 +2562,7 @@ class TestImportExport:
             await screen._stage_character_avatar_from_path(str(avatar))
             await pilot.pause()
 
-            editor = screen.query_one(PersonasCharacterEditorWidget)
-            assert "image" not in editor.get_character_data()
+            assert not list(screen.query(PersonasCharacterEditorWidget))
             assert screen.state.has_unsaved_changes is False
             assert any("Open a character editor" in msg for msg, _ in notifications)
 
