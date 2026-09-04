@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from textual.color import Color
+from textual.theme import Theme
 
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
 
@@ -117,7 +118,7 @@ def _resolve_color(value: str, base: Color) -> Color:
 
 
 @pytest.mark.parametrize("theme", ALL_THEMES, ids=lambda t: t.name)
-def test_resolved_readable_tokens_clear_aa_on_every_theme(theme):
+def test_resolved_readable_tokens_clear_aa_on_every_theme(theme: Theme) -> None:
     """The values `$text-error` / `$text-muted` resolve to at runtime (theme
     variables dict over Textual's generated set) must clear AA on the theme's
     own surfaces — these feed the ds readable tokens since task-31264;
@@ -142,7 +143,11 @@ FOCUS_SHIFT_FLOOR = 1.25
 
 
 @pytest.mark.parametrize("theme", ALL_THEMES, ids=lambda t: t.name)
-def test_resolved_focus_tint_is_visible_and_readable_on_every_theme(theme):
+def test_resolved_focus_tint_is_visible_and_readable_on_every_theme(
+    theme: Theme,
+) -> None:
+    """The resolved focus tint must visibly shift the surface and keep text
+    readable on the composite (task-31284; floors documented above)."""
     resolved = _resolved_variables(theme)
     surface = Color.parse(resolved["surface"])
     text = _resolve_color(resolved["text"], surface)
