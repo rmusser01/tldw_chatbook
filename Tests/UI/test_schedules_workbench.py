@@ -1,7 +1,7 @@
 """Tests for the SchedulesWorkbench shell."""
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -23,6 +23,7 @@ from textual.widgets._collapsible import CollapsibleTitle
 
 from tldw_chatbook.Scheduling.events import (
     DeleteTaskRequested,
+    ReminderOwnerActionRequested,
     SyncCompleted,
     SyncFailed,
 )
@@ -3414,3 +3415,578 @@ async def test_status_strip_sync_widget_is_not_compact_at_wide_width():
             "#scheduling-sync-status", SyncStatusWidget
         )
         assert "compact" not in sync_status.classes
+
+
+# --- redesign PR-3, task 5: owner-row transfer dropdown ---------------------
+
+
+class _FakeConnectedServerClient:
+    """Reads as "a server is connected" (`notifications_service is not
+    None`) without making any real network call -- local duplicate of
+    `test_schedules_transfer_actions.py`'s own `_FakeServerClient`,
+    matching this file's own no-cross-file-test-coupling precedent."""
+
+    def __init__(self) -> None:
+        self.notifications_service = object()
+
+
+def _connected_service(tmp_path, app):
+    """A real `ScheduledTasksDB` + `SchedulingService`, wired to LOOK
+    connected to a server (`active_server_id="1"`, a fake `server_
+    client`) -- for tests where the owner-row dropdown must actually
+    OFFER a `Server (1)` option (`SchedulesWorkbench._server_available`/
+    `SchedulingService._active_server_owner_id` both gate on this)."""
+    from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+    from tldw_chatbook.Scheduling.services.scheduling_service import SchedulingService
+
+    db = ScheduledTasksDB(tmp_path / "scheduled_tasks.db")
+    app.active_server_id = "1"
+    app.runtime_policy = SimpleNamespace(
+        state=SimpleNamespace(active_server_id="1")
+    )
+    service = SchedulingService(
+        db=db,
+        server_client=_FakeConnectedServerClient(),
+        runtime_source="local",
+        app_getter=lambda: app,
+    )
+    app.scheduling_service = service
+    return db, service
+
+
+# -- bare-harness: widget mechanics, no service needed -----------------------
+
+
+@pytest.mark.asyncio
+async def test_runs_on_dropdown_opens_with_current_owner_preselected():
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(
+            _frequency_reminder(owner_id="local"),
+            runs_on_options=[("This device", "local"), ("Server (1)", "server:1")],
+        )
+        await pilot.pause()
+
+        row = detail._runs_on_row
+        await pilot.click(row)
+        await pilot.pause()
+        select = row.query_one(Select)
+        assert select.value == "local"
+
+
+@pytest.mark.asyncio
+async def test_definition_runs_on_dropdown_opens_with_current_owner_preselected():
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(
+            _editable_definition(owner_id="server:9"),
+            runs_on_options=[("This device", "local")],
+        )
+        await pilot.pause()
+
+        row = detail._runs_on_row
+        await pilot.click(row)
+        await pilot.pause()
+        select = row.query_one(Select)
+        # `server:9` isn't in the base options -- the row's own current
+        # owner is appended as a fallback (survey §7's "never a value
+        # outside a Select's own options" precedent) so it still preselects.
+        assert select.value == "server:9"
+
+
+@pytest.mark.asyncio
+async def test_runs_on_same_owner_selection_is_a_no_op():
+    """The mount-time synthetic `Changed` `begin_edit` posts the moment
+    it preselects the row's OWN current owner (same trap Task 3's Repeat/
+    Timezone commits already guard against, reused verbatim) must not
+    close the editor or post a transfer request -- same as those rows,
+    the editor stays open for a real pick rather than self-closing."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(
+            _frequency_reminder(owner_id="local"),
+            runs_on_options=[("This device", "local"), ("Server (1)", "server:1")],
+        )
+        await pilot.pause()
+
+        with patch.object(
+            detail, "post_message", wraps=detail.post_message
+        ) as post_spy:
+            row = detail._runs_on_row
+            await pilot.click(row)
+            await pilot.pause()
+
+            assert row.query(Select)
+            assert not any(
+                isinstance(call.args[0], ReminderOwnerActionRequested)
+                for call in post_spy.call_args_list
+            )
+
+
+@pytest.mark.asyncio
+async def test_runs_on_escape_cancels_dropdown_without_posting():
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(
+            _frequency_reminder(owner_id="local"),
+            runs_on_options=[("This device", "local"), ("Server (1)", "server:1")],
+        )
+        await pilot.pause()
+
+        with patch.object(
+            detail, "post_message", wraps=detail.post_message
+        ) as post_spy:
+            row = detail._runs_on_row
+            await pilot.click(row)
+            await pilot.pause()
+            assert row.query(Select)
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert not row.query(Select)
+            assert not any(
+                isinstance(call.args[0], ReminderOwnerActionRequested)
+                for call in post_spy.call_args_list
+            )
+
+
+@pytest.mark.asyncio
+async def test_runs_on_row_reflects_transfer_state():
+    """Three states (task-5 brief): normal (affordance on, both buttons
+    hidden), in flight (affordance off, Cancel only), `to_server_failed`
+    (affordance off, Cancel + Retry) -- mirroring the existing per-button
+    visibility rules `test_schedules_transfer_actions.py` already pins."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+
+        detail.set_task(_frequency_reminder(transfer_state=None))
+        await pilot.pause()
+        assert detail._runs_on_row.affordance is True
+        assert detail._runs_on_cancel_button.display is False
+        assert detail._runs_on_retry_button.display is False
+
+        detail.set_task(_frequency_reminder(transfer_state="to_server_pending"))
+        await pilot.pause()
+        assert detail._runs_on_row.affordance is False
+        assert detail._runs_on_cancel_button.display is True
+        assert detail._runs_on_retry_button.display is False
+
+        detail.set_task(_frequency_reminder(transfer_state="to_server_failed"))
+        await pilot.pause()
+        assert detail._runs_on_row.affordance is False
+        assert detail._runs_on_cancel_button.display is True
+        assert detail._runs_on_retry_button.display is True
+
+        detail.set_task(_frequency_reminder(transfer_state="from_server_pending"))
+        await pilot.pause()
+        assert detail._runs_on_row.affordance is False
+        assert detail._runs_on_cancel_button.display is True
+        assert detail._runs_on_retry_button.display is False
+
+        # Back to normal restores the dropdown and hides both buttons.
+        detail.set_task(_frequency_reminder(transfer_state=None))
+        await pilot.pause()
+        assert detail._runs_on_row.affordance is True
+        assert detail._runs_on_cancel_button.display is False
+        assert detail._runs_on_retry_button.display is False
+
+
+@pytest.mark.asyncio
+async def test_definition_runs_on_row_reflects_transfer_state():
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+
+        detail.set_definition(_editable_definition(transfer_state=None))
+        await pilot.pause()
+        assert detail._runs_on_row.affordance is True
+        assert detail._runs_on_cancel_button.display is False
+        assert detail._runs_on_retry_button.display is False
+
+        detail.set_definition(
+            _editable_definition(transfer_state="from_server_pending")
+        )
+        await pilot.pause()
+        assert detail._runs_on_row.affordance is False
+        assert detail._runs_on_cancel_button.display is True
+        assert detail._runs_on_retry_button.display is False
+
+        detail.set_definition(_editable_definition(transfer_state="to_server_failed"))
+        await pilot.pause()
+        assert detail._runs_on_row.affordance is False
+        assert detail._runs_on_cancel_button.display is True
+        assert detail._runs_on_retry_button.display is True
+
+
+# -- integration: real DB + service + full workbench -------------------------
+
+
+@pytest.mark.asyncio
+async def test_runs_on_dropdown_refusal_renders_inline_with_health_reason(tmp_path):
+    """A refused target renders via `row.show_error` (this row's OWN
+    surface, never the Automations tab's shared inline notice) -- health-
+    quoting preserved verbatim (spec §6.4/§7), and nothing is written.
+
+    `transfer_refusal`'s FIRST gate ("No server connection is
+    configured.") applies to EVERY direction, not only `to_server` --
+    `_connected_service` is required here too, purely to get PAST that
+    gate and reach the `to_local`/`recurring_question` health check this
+    test actually targets.
+    """
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        definition_id = db.create_automation_definition(
+            "server:1",
+            "recurring_question",
+            "Server automation",
+            server_id="srv-1",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What shipped?"},
+            config={
+                "generation_mode": "optional",
+                "scope": {"mode": "all_searchable_library"},
+            },
+        )
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+
+            # A server-fetch-shaped dict (Task 4's own documented trap,
+            # its report's "trap hit while writing the lifecycle/offline
+            # tests": `id` IS the server's own id) -- painted directly
+            # onto the Automations-tab `DefinitionDetail` instance rather
+            # than driving a real server-list fetch (out of this test's
+            # scope), matching what `_selected_automation()` would hand
+            # this pane for a pure server row.
+            server_item = dict(db.get_automation_definition(definition_id) or {})
+            server_item["id"] = "srv-1"
+            detail = pilot.app.screen.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            detail.set_definition(
+                server_item, runs_on_options=[("This device", "local")]
+            )
+            await pilot.pause()
+
+            row = detail._runs_on_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            select = row.query_one(Select)
+            # "This device" (`to_local`) is always offered, server or not.
+            select.value = "local"
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            error = row.query_one(".detail-value-row-error", Static)
+            assert error.display is True
+            assert (
+                "Library RAG search is not available"
+                in error.render_line(0).text
+            )
+            assert db.get_automation_definition(definition_id)["transfer_state"] is None
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_runs_on_dropdown_confirm_dialog_lists_warnings(tmp_path):
+    """Allowed -> the SAME `ConfirmationDialog` + `transfer_warnings`
+    shape the legacy buttons already use (imminent run_at + the
+    non-transferring `timeout_seconds` field, spec §6.4)."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        imminent = (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat()
+        db.create_reminder_task(
+            owner_id="local",
+            title="Almost due",
+            schedule_kind="one_time",
+            run_at=imminent,
+            timeout_seconds=30,
+        )
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+            assert table.row_count == 1
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+            row = detail._runs_on_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            select = row.query_one(Select)
+            select.value = "server:1"
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, ConfirmationDialog)
+            message = pilot.app.screen.message
+            assert "Almost due" in message
+            assert "unverified" in message
+            assert "timeout_seconds" in message
+            pilot.app.screen.dismiss(False)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_runs_on_dropdown_confirm_begins_to_local_transfer_with_dormant_copy_id(
+    tmp_path,
+):
+    """Task-5 brief pinned case: `begin_transfer_to_local`'s outcome
+    carries the NEW dormant copy's own id, DISTINCT from the mirror's --
+    the mirror itself stays untouched (survey §3's `create_local_copy_
+    from_mirror` precedent). `_connected_service` -- `transfer_refusal`'s
+    FIRST gate ("No server connection is configured.") applies to `to_
+    local` too, not only `to_server`."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        mirror_id = db.create_reminder_task(
+            owner_id="server:1",
+            server_id="srv-9",
+            title="Server task",
+            schedule_kind="one_time",
+            run_at="2030-01-01T00:00:00+00:00",
+        )
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+            assert table.row_count == 1
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+            row = detail._runs_on_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            select = row.query_one(Select)
+            select.value = "local"
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, ConfirmationDialog)
+            pilot.app.screen.dismiss(True)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            mirror = db.get_reminder_task(mirror_id)
+            assert mirror["transfer_state"] is None
+            assert mirror["owner_id"] == "server:1"
+
+            local_rows = [
+                row_dict
+                for row_dict in db.list_reminder_tasks(owner_id="local")
+                if row_dict["id"] != mirror_id
+            ]
+            assert len(local_rows) == 1
+            copy = local_rows[0]
+            assert copy["id"] != mirror_id
+            assert copy["transfer_state"] == "from_server_pending"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_runs_on_dropdown_confirm_begins_to_server_transfer(tmp_path):
+    """The other direction: confirm fires `begin_transfer_to_server` with
+    the currently-displayed row's own local id (task-5 brief: 'the right
+    facade call with the right row id per direction')."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        task_id = db.create_reminder_task(
+            owner_id="local",
+            title="Nightly check",
+            schedule_kind="one_time",
+            run_at="2030-01-01T00:00:00+00:00",
+        )
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+            row = detail._runs_on_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            select = row.query_one(Select)
+            select.value = "server:1"
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, ConfirmationDialog)
+            pilot.app.screen.dismiss(True)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            row_after = db.get_reminder_task(task_id)
+            assert row_after["transfer_state"] == "to_server_pending"
+            assert row_after["owner_id"] == "local"  # still local while queued
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_runs_on_cancel_button_cancels_the_dormant_copy_using_its_own_id(
+    tmp_path,
+):
+    """Same pinned mechanism `test_cancel_on_dormant_copy_uses_the_copys_
+    own_id` (`test_schedules_transfer_actions.py`) proves for the legacy
+    Cancel button -- proven again here for the NEW row-level Cancel
+    affordance (task-5 brief: 'assert it'). `_connected_service` is only
+    needed for the SETUP call below (`begin_transfer_to_local` itself
+    checks `transfer_refusal`'s server-connection gate); the actual
+    cancel path (`cancel_transfer`) never checks it."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        mirror_id = db.create_reminder_task(
+            owner_id="server:1",
+            server_id="srv-9",
+            title="Server task",
+            schedule_kind="one_time",
+            run_at="2030-01-01T00:00:00+00:00",
+        )
+        outcome = await service.begin_transfer_to_local("reminder_task", mirror_id)
+        assert outcome.status == "pending"
+        copy_id = outcome.row_id
+        assert copy_id is not None
+        assert copy_id != mirror_id
+
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+            assert table.row_count == 2
+            workbench = pilot.app.screen
+            copy_index = next(
+                index
+                for index, row in enumerate(workbench._visible_rows)
+                if row.kind == "reminder" and row.source_row.id == copy_id
+            )
+            table.cursor_coordinate = (copy_index, 0)
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+            assert detail._runs_on_cancel_button.display is True
+            detail._runs_on_cancel_button.press()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert db.get_reminder_task(copy_id) is None
+            mirror = db.get_reminder_task(mirror_id)
+            assert mirror is not None
+            assert mirror["transfer_state"] is None
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_runs_on_retry_button_rebegins_a_failed_transfer(tmp_path):
+    """`to_server_failed`: Retry = re-begin (the PR-5 retry leg) -- same
+    facade call a first-time `to_server` begin makes."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        task_id = db.create_reminder_task(
+            owner_id="local",
+            title="Nightly check",
+            schedule_kind="one_time",
+            run_at="2030-01-01T00:00:00+00:00",
+        )
+        db.set_transfer_state(
+            "reminder_task", task_id, "to_server_failed", expected=(None,)
+        )
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+            assert detail._runs_on_retry_button.display is True
+            detail._runs_on_retry_button.press()
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, ConfirmationDialog)
+            pilot.app.screen.dismiss(True)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert db.get_reminder_task(task_id)["transfer_state"] == "to_server_pending"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_runs_on_dropdown_and_legacy_transfer_buttons_coexist(tmp_path):
+    """Coexistence (task-5 brief, pinned): the PR-5 buttons stay
+    untouched until PR-4 -- both surfaces read/write the SAME underlying
+    transfer state and stay in sync with each other, side by side."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        task_id = db.create_reminder_task(
+            owner_id="local",
+            title="Nightly check",
+            schedule_kind="one_time",
+            run_at="2030-01-01T00:00:00+00:00",
+        )
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+
+            # Legacy surface: begin via the EXISTING button, untouched.
+            legacy_to_server = pilot.app.screen.query_one(
+                "#scheduling-transfer-to-server", Button
+            )
+            assert not legacy_to_server.disabled
+            legacy_to_server.press()
+            await pilot.pause()
+            assert isinstance(pilot.app.screen, ConfirmationDialog)
+            pilot.app.screen.dismiss(True)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert db.get_reminder_task(task_id)["transfer_state"] == "to_server_pending"
+            # BOTH surfaces now reflect the in-flight state.
+            legacy_cancel = pilot.app.screen.query_one(
+                "#scheduling-cancel-transfer", Button
+            )
+            assert not legacy_cancel.disabled
+            assert detail._runs_on_cancel_button.display is True
+            assert detail._runs_on_row.affordance is False
+
+            # NEW surface: cancel via the row's own affordance.
+            detail._runs_on_cancel_button.press()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert db.get_reminder_task(task_id)["transfer_state"] is None
+            # The LEGACY button reflects the SAME underlying state,
+            # refreshed via the SAME `_request_tasks_refresh` seam.
+            legacy_cancel_after = pilot.app.screen.query_one(
+                "#scheduling-cancel-transfer", Button
+            )
+            assert legacy_cancel_after.disabled
+            assert detail._runs_on_row.affordance is True
+    finally:
+        db.close()

@@ -14104,6 +14104,28 @@ DetailValueRow .detail-value-row-error {
     text-overflow: ellipsis;
 }
 
+/* schedules-redesign PR-3, Task 5: the Runs-on row's proactively-shown
+ * Cancel[/Retry] buttons -- a plain sibling `Horizontal` of the "Runs on"
+ * `DetailValueRow` inside its own `DetailGroup` (NOT nested inside the
+ * row itself: `begin_edit` would hide the row's own value `Static`,
+ * which the existing transfer-badge rendering pins verbatim -- see
+ * `task_detail.TaskDetail._configure_runs_on_row`'s docstring). Same
+ * compact single-row Button idiom `#scheduling-queue-chips .scheduling-
+ * queue-chip` already uses elsewhere in this file, so the row costs one
+ * line rather than a full 3-row Button box. Bare class selector (not
+ * scoped under `DetailValueRow`) since this widget lives outside it. */
+.detail-value-row-owner-actions {
+    height: 1;
+    align: right middle;
+}
+
+.detail-value-row-owner-actions Button {
+    height: 1;
+    min-width: 8;
+    border: none;
+    margin: 0 0 0 1;
+}
+
 DetailGroup {
     background: $ds-surface-panel;
     border-top: hkey $ds-grid-line;

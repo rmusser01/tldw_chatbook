@@ -31,12 +31,14 @@ from ....Scheduling.events import (
     CancelTransferRequested,
     DefinitionFieldEditRequested,
     DefinitionLifecycleToggleRequested,
+    DefinitionOwnerActionRequested,
     DeleteTaskRequested,
     DisableTaskRequested,
     AcknowledgeIncidentRequested,
     EditTaskRequested,
     EnableTaskRequested,
     ReminderFieldEditRequested,
+    ReminderOwnerActionRequested,
     RetryTransferRequested,
     RunReminderNowRequested,
     SyncCompleted,
@@ -1433,6 +1435,10 @@ class SchedulesWorkbench(BaseAppScreen):
                 # own Timezone selector reads (`_task_timezones`), so the
                 # pane's inline Timezone row editor offers the same zones.
                 known_timezones=self._task_timezones(),
+                # PR-3 task 5: same option source the create/edit forms'
+                # own owner selector reads, so the Runs-on row's dropdown
+                # offers the same choices.
+                runs_on_options=self._runs_on_options()[0],
             )
             self._update_transfer_actions(task_detail, task)
             self.query_one("#scheduling-task-inspector", TaskInspector).set_task(task)
@@ -2425,6 +2431,225 @@ class SchedulesWorkbench(BaseAppScreen):
             group="schedules-definition-lifecycle",
         )  # type: ignore[arg-type]
 
+    # -- Owner-row transfer dropdown (PR-3 task 5, spec §7 flow) -------------
+    #
+    # A SECOND, row-scoped surface onto the SAME PR-5 transfer facade the
+    # legacy Move/Retry/Cancel buttons (`_begin_transfer`/`_cancel_
+    # transfer`/`_begin_automation_transfer`/`_cancel_automation_transfer`
+    # above/below) already drive -- deliberately independent end to end
+    # (own events, own helpers), not a refactor of them: coexistence is a
+    # pinned requirement (task-5 brief), and the two surfaces differ in
+    # how a refusal renders (this one uses `DetailValueRow.show_error`,
+    # the legacy ones toast/write the tab's shared inline notice).
+
+    async def _run_owner_transfer(
+        self,
+        *,
+        table_kind: str,
+        row_id: str,
+        row_dict: dict[str, Any],
+        name: str,
+        direction: str,
+        row: DetailValueRow,
+        refresh,
+    ) -> None:
+        """Shared move/retry body for both panes' Runs-on row.
+
+        `transfer_refusal` runs FIRST (health-quoting preserved, since it
+        is the SAME call `_begin_transfer`/`_begin_automation_transfer`
+        make) -- a refusal renders inline via `row.show_error`, never the
+        legacy toast/notice. Allowed -> the SAME `ConfirmationDialog` +
+        `transfer_warnings` + honest-toast shape those flows already use;
+        confirmed -> `begin_transfer_to_server`/`to_local` by `direction`
+        with `row_id` (the CURRENTLY DISPLAYED row's own local id for
+        both directions -- a `to_local` release's returned dormant-copy
+        id is a DIFFERENT id, `outcome.row_id`, relevant to a later
+        Cancel on that new row, not to this call).
+        """
+        service = self._scheduling_service
+        if service is None:
+            row.show_error(
+                "Scheduling service is unavailable; cannot start a transfer."
+            )
+            return
+        reason = service.transfer_refusal(row_dict, direction)
+        if reason is not None:
+            row.show_error(reason)
+            return
+        warnings = service.transfer_warnings(row_dict, direction)
+        dialog = self._transfer_confirm_dialog(name, direction, warnings)
+        confirmed = await self.app.push_screen_wait(dialog)
+        if not confirmed:
+            return
+        try:
+            if direction == "to_server":
+                outcome = await service.begin_transfer_to_server(table_kind, row_id)
+            else:
+                outcome = await service.begin_transfer_to_local(table_kind, row_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to begin owner-row transfer for {}", row_id)
+            row.show_error(f"Failed to start the transfer for '{name}'.")
+            return
+        if outcome.status == "refused":
+            row.show_error(outcome.reason or f"Could not move '{name}'.")
+            return
+        if outcome.status == "not_found":
+            row.show_error(f"'{name}' no longer exists.")
+            return
+        row.clear_error()
+        self.app_instance.notify(
+            self._transfer_pending_toast_text(name, direction),
+            severity="information",
+        )
+        refresh()
+
+    async def _run_owner_cancel(
+        self,
+        *,
+        table_kind: str,
+        row_id: str,
+        name: str,
+        row: DetailValueRow,
+        refresh,
+    ) -> None:
+        """Shared cancel body for both panes' Runs-on row mini-bar.
+
+        No confirm dialog (same rationale `_cancel_transfer`'s own
+        docstring gives: cancel is the escape hatch). `row_id` is
+        whichever row the pane is CURRENTLY DISPLAYING -- for a release
+        leg (`from_server_pending`) that is already the DORMANT COPY's
+        own id, never the mirror's: the mirror's own `transfer_state`
+        stays untouched by `create_local_copy_from_mirror` (survey §3),
+        so this row-level Cancel affordance is only ever proactively
+        shown (`_configure_runs_on_row`) on a row whose OWN state is
+        in-flight -- which, for a release, can only be the copy itself.
+        """
+        service = self._scheduling_service
+        if service is None:
+            row.show_error(
+                "Scheduling service is unavailable; cannot cancel the transfer."
+            )
+            return
+        try:
+            outcome = await service.cancel_transfer(table_kind, row_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to cancel owner-row transfer for {}", row_id)
+            row.show_error(f"Failed to cancel the transfer for '{name}'.")
+            return
+        if outcome.status != "cancelled":
+            row.show_error(
+                outcome.reason or f"Could not cancel the transfer for '{name}'."
+            )
+            return
+        row.clear_error()
+        self.app_instance.notify(_cancel_toast_text(name), severity="information")
+        refresh()
+
+    @on(ReminderOwnerActionRequested)
+    def _on_reminder_owner_action_requested(
+        self, event: ReminderOwnerActionRequested
+    ) -> None:
+        """The reminder pane's Runs-on row dropdown/mini-bar fired
+        (PR-3 task 5)."""
+        event.stop()
+        self._reminder_owner_action(event.task, event.action, event.row)
+
+    def _reminder_owner_action(
+        self, task: ReminderTask, action: str, row: DetailValueRow
+    ) -> None:
+        def _refresh() -> None:
+            self._request_tasks_refresh(refresh_definitions=False)
+
+        if action == "cancel":
+            async def _do() -> None:
+                await self._run_owner_cancel(
+                    table_kind="reminder_task",
+                    row_id=task.id,
+                    name=task.title,
+                    row=row,
+                    refresh=_refresh,
+                )
+
+            self.run_worker(_do, exclusive=True, group="schedules-transfer")  # type: ignore[arg-type]
+            return
+
+        direction = "to_server" if action == "retry" else action
+        row_dict = transfer_row_dict(task)
+
+        async def _do() -> None:
+            await self._run_owner_transfer(
+                table_kind="reminder_task",
+                row_id=task.id,
+                row_dict=row_dict,
+                name=task.title,
+                direction=direction,
+                row=row,
+                refresh=_refresh,
+            )
+
+        self.run_worker(_do, exclusive=True, group="schedules-transfer")  # type: ignore[arg-type]
+
+    @on(DefinitionOwnerActionRequested)
+    def _on_definition_owner_action_requested(
+        self, event: DefinitionOwnerActionRequested
+    ) -> None:
+        """A definition pane's Runs-on row dropdown/mini-bar fired
+        (PR-3 task 5)."""
+        event.stop()
+        self._definition_owner_action(event.definition, event.action, event.row)
+
+    def _definition_owner_action(
+        self, definition: dict[str, Any], action: str, row: DetailValueRow
+    ) -> None:
+        service = self._scheduling_service
+        if service is None:
+            row.show_error(
+                "Scheduling service is unavailable; cannot start a transfer."
+            )
+            return
+        name = str(definition.get("name") or definition.get("id") or "")
+
+        def _refresh() -> None:
+            self._definitions_stale = True
+            self._request_automations_refresh()
+
+        async def _do() -> None:
+            local_id = await self._resolve_local_definition_id(service, definition)
+            if local_id is None:
+                row.show_error(
+                    "Could not prepare this automation for transfer — see "
+                    "the log."
+                )
+                return
+            if action == "cancel":
+                await self._run_owner_cancel(
+                    table_kind="automation_definition",
+                    row_id=local_id,
+                    name=name,
+                    row=row,
+                    refresh=_refresh,
+                )
+                return
+            direction = "to_server" if action == "retry" else action
+            # A fresh read, like `_begin_automation_transfer`'s own
+            # precedent -- `self._definition` may be a raw server-fetch
+            # dict without the local row's `transfer_state`/`lifecycle`.
+            db_row = await asyncio.to_thread(
+                service.db.get_automation_definition, local_id
+            )
+            row_dict = db_row if db_row is not None else definition
+            await self._run_owner_transfer(
+                table_kind="automation_definition",
+                row_id=local_id,
+                row_dict=row_dict,
+                name=name,
+                direction=direction,
+                row=row,
+                refresh=_refresh,
+            )
+
+        self.run_worker(_do, exclusive=True, group="schedules-automation-transfer")  # type: ignore[arg-type]
+
     @on(RunReminderNowRequested)
     def _on_run_reminder_now_requested(self, event: RunReminderNowRequested) -> None:
         """Dispatch the requested reminder immediately."""
@@ -2963,6 +3188,9 @@ class SchedulesWorkbench(BaseAppScreen):
             unread_count=unread_count,
             history_error=history_error,
             known_timezones=self._task_timezones(),
+            # PR-3 task 5: same option source the Queue reminder pane's
+            # own Runs-on row reads (`_update_detail_for_index`).
+            runs_on_options=self._runs_on_options()[0],
         )
         # PR-3 task 4: `DefinitionDetail` gains the SAME transfer-lock
         # wiring `TaskDetail` has (survey point 10) -- `reason` comes from
@@ -3066,6 +3294,9 @@ class SchedulesWorkbench(BaseAppScreen):
             unread_count=unread_count,
             history_error=history_error,
             known_timezones=self._task_timezones(),
+            # PR-3 task 5: same option source the Automations-tab sibling
+            # instance's own Runs-on row reads (`_load_automation_detail`).
+            runs_on_options=self._runs_on_options()[0],
         )
         # PR-3 task 4: same transfer-lock wiring as `_load_automation_
         # detail`'s Automations-tab pane -- this is the Queue tab's own

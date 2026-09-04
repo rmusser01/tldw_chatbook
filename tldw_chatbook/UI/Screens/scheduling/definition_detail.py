@@ -70,7 +70,12 @@ from ....Scheduling.schedule_input_parsing import parse_forgiving_datetime
 from ....Scheduling.events import (
     DefinitionFieldEditRequested,
     DefinitionLifecycleToggleRequested,
+    DefinitionOwnerActionRequested,
 )
+# PR-3 task 5: same lock/failed-state gating `task_detail.py`'s own
+# Runs-on row uses (survey §3) -- see that module's import comment for
+# why this is a plain, no-new-boot-cost constant import.
+from ....Scheduling.db.scheduled_tasks_db import IN_FLIGHT_TRANSFER_STATES
 from ....Widgets.detail_value_row import DetailGroup, DetailValueRow
 from .forms.automation_definition_form import (
     _FINDING_POLICY_OPTIONS,
@@ -115,6 +120,12 @@ _AT_EDITOR_ID = "scheduling-automation-detail-at-editor"
 _TIMEZONE_EDITOR_ID = "scheduling-automation-detail-timezone-editor"
 _SOURCES_EDITOR_ID = "scheduling-automation-detail-sources-editor"
 _SOURCES_APPLY_ID = "scheduling-automation-detail-sources-apply"
+#: PR-3 task 5: the owner-row transfer dropdown and its proactively-shown
+#: Cancel/Retry mini-bar -- same stable-id routing idiom as the rest of
+#: this file's row editors.
+_RUNS_ON_EDITOR_ID = "scheduling-automation-detail-runs-on-editor"
+_RUNS_ON_CANCEL_ID = "scheduling-automation-detail-runs-on-cancel"
+_RUNS_ON_RETRY_ID = "scheduling-automation-detail-runs-on-retry"
 _SOURCES_CHECKBOX_IDS: dict[str, str] = {
     value: f"scheduling-automation-detail-sources-{value}"
     for _label, value in _SCOPE_SOURCE_CHECKBOXES
@@ -506,6 +517,16 @@ class DefinitionDetail(Vertical):
         #: as `TaskDetail.set_task`'s own `known_timezones` param -- empty
         #: by default so every pre-task-4 caller/test keeps working.
         self._known_timezones: Sequence[str] = ()
+        #: PR-3 task 5: same threaded-in-by-the-workbench shape as
+        #: `_known_timezones` above, for the Runs-on row's owner-picker.
+        self._runs_on_options: Sequence[tuple[str, str]] = ()
+        #: PR-3 task 5: the Runs-on row's proactive Cancel/Retry
+        #: affordances -- see `task_detail.py`'s own
+        #: `_runs_on_cancel_button`/`_runs_on_retry_button` for the full
+        #: rationale (shared design, duplicated per-pane like every
+        #: other small helper in this file's own Frequency-row editors).
+        self._runs_on_cancel_button: Button | None = None
+        self._runs_on_retry_button: Button | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the empty pane skeleton (populated by `set_definition`).
@@ -567,8 +588,25 @@ class DefinitionDetail(Vertical):
             self._sources_row = DetailValueRow(
                 "Sources", "-", value_id="scheduling-automation-detail-sources"
             )
+            # PR-3 task 5: the Runs-on row's own proactive Cancel/Retry
+            # affordances -- see `task_detail.py`'s own compose()
+            # comment for why these are plain, always-mounted siblings
+            # (`.display`-toggled) rather than `begin_edit`-mounted into
+            # the row itself.
+            self._runs_on_cancel_button = Button(
+                "Cancel transfer", id=_RUNS_ON_CANCEL_ID, variant="warning"
+            )
+            self._runs_on_retry_button = Button(
+                "Retry transfer", id=_RUNS_ON_RETRY_ID, variant="warning"
+            )
+            runs_on_actions = Horizontal(
+                self._runs_on_cancel_button,
+                self._runs_on_retry_button,
+                classes="detail-value-row-owner-actions",
+            )
             yield DetailGroup(
                 self._runs_on_row,
+                runs_on_actions,
                 self._model_row,
                 self._generation_row,
                 self._finding_policy_row,
@@ -637,6 +675,7 @@ class DefinitionDetail(Vertical):
         unread_count: int = 0,
         history_error: bool = False,
         known_timezones: Sequence[str] = (),
+        runs_on_options: Sequence[tuple[str, str]] = (),
     ) -> None:
         """Paint the pane for `definition` (or the empty state for `None`).
 
@@ -659,9 +698,14 @@ class DefinitionDetail(Vertical):
                 source (`timezone_options`), same param `TaskDetail.
                 set_task` already threads for its own Timezone row. Every
                 pre-task-4 caller/test omits this and is unaffected.
+            runs_on_options: PR-3 task 5 -- the workbench's own
+                `_runs_on_options()[0]`, threaded in the same shape
+                `known_timezones` already is. Every pre-task-5
+                caller/test omits this and is unaffected.
         """
         self._definition = definition
         self._known_timezones = known_timezones
+        self._runs_on_options = runs_on_options
         empty_state = self.query_one(
             "#scheduling-automation-detail-empty-state", Static
         )
@@ -675,6 +719,12 @@ class DefinitionDetail(Vertical):
             self._lifecycle_lock_reason = None
             if self._why_static is not None:
                 self._why_static.update("")
+            # PR-3 task 5: the Runs-on row's Cancel/Retry buttons from a
+            # PREVIOUS selection must not stay visible in a cleared pane.
+            if self._runs_on_cancel_button is not None:
+                self._runs_on_cancel_button.display = False
+            if self._runs_on_retry_button is not None:
+                self._runs_on_retry_button.display = False
             return
         empty_state.display = False
         body.display = True
@@ -722,6 +772,7 @@ class DefinitionDetail(Vertical):
         )
 
         self._configure_row_editability(schedule)
+        self._configure_runs_on_row(definition)
         self._refresh_lifecycle_button()
 
     # -- In-pane row editing (PR-3 task 4) -----------------------------------
@@ -761,11 +812,32 @@ class DefinitionDetail(Vertical):
             row.affordance = editable
             row.can_focus = editable
 
+    def _configure_runs_on_row(self, definition: dict[str, Any]) -> None:
+        """Definition-pane counterpart of `task_detail.TaskDetail._
+        configure_runs_on_row` (PR-3 task 5) -- see that method's
+        docstring for the full three-state rationale (normal / in-flight
+        / `to_server_failed`) and for why the Cancel/Retry buttons are
+        plain `.display`-toggled siblings rather than `begin_edit`-
+        mounted into the row; only the state-read (dict key vs.
+        attribute) differs here."""
+        row = self._runs_on_row
+        assert row is not None
+        state = definition.get("transfer_state")
+        failed = state == "to_server_failed"
+        locked = failed or state in IN_FLIGHT_TRANSFER_STATES
+        row.affordance = not locked
+        row.can_focus = not locked
+        assert self._runs_on_cancel_button is not None
+        assert self._runs_on_retry_button is not None
+        self._runs_on_cancel_button.display = locked
+        self._runs_on_retry_button.display = failed
+
     def on_detail_value_row_activated(self, event: DetailValueRow.Activated) -> None:
         """Open the activated row's editor, or -- locked -- show why
         editing is refused instead of doing nothing (ruling 2)."""
         row = event.row
         editable_rows = (
+            self._runs_on_row,
             self._model_row,
             self._generation_row,
             self._finding_policy_row,
@@ -786,7 +858,23 @@ class DefinitionDetail(Vertical):
             return
         row.clear_error()
 
-        if row is self._model_row:
+        if row is self._runs_on_row:
+            # `_configure_runs_on_row` already refused this row's
+            # affordance for an in-flight/failed transfer -- reaching
+            # here means a normal, unlocked owner pick (spec §7 flow).
+            current_owner = str(definition.get("owner_id") or "local")
+            options = list(self._runs_on_options)
+            if current_owner not in {value for _, value in options}:
+                options = [*options, (owner_display_label(current_owner), current_owner)]
+            row.begin_edit(
+                Select(
+                    options,
+                    allow_blank=False,
+                    value=current_owner,
+                    id=_RUNS_ON_EDITOR_ID,
+                )
+            )
+        elif row is self._model_row:
             input_fields = (
                 definition.get("input")
                 if isinstance(definition.get("input"), dict)
@@ -958,6 +1046,8 @@ class DefinitionDetail(Vertical):
             self._commit_finding_policy_edit(event)
         elif editor_id == _NOTIFICATIONS_EDITOR_ID:
             self._commit_notifications_edit(event)
+        elif editor_id == _RUNS_ON_EDITOR_ID:
+            self._commit_runs_on_edit(event)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Route a row Input editor's commit (Enter submits) by its id."""
@@ -973,6 +1063,12 @@ class DefinitionDetail(Vertical):
         elif button_id == "scheduling-automation-pause-resume":
             event.stop()
             self._toggle_lifecycle()
+        elif button_id == _RUNS_ON_CANCEL_ID:
+            event.stop()
+            self._request_runs_on_cancel()
+        elif button_id == _RUNS_ON_RETRY_ID:
+            event.stop()
+            self._request_runs_on_retry()
 
     def _commit_generation_edit(self, event: Select.Changed) -> None:
         definition = self._definition
@@ -1170,6 +1266,44 @@ class DefinitionDetail(Vertical):
         new_schedule = {**schedule, "kind": "one_time", "run_at": parsed.isoformat()}
         payload = _definition_edit_payload(definition, schedule=new_schedule)
         self.post_message(DefinitionFieldEditRequested(definition, payload, row))
+
+    def _commit_runs_on_edit(self, event: Select.Changed) -> None:
+        """Commit the owner-picker Select (PR-3 task 5, spec §7 flow) --
+        definition-pane counterpart of `task_detail.TaskDetail._commit_
+        runs_on_edit`; see that method's docstring for the full
+        same-owner-no-op / direction rationale."""
+        definition = self._definition
+        row = self._runs_on_row
+        if definition is None or row is None:
+            return
+        event.stop()
+        current_owner = str(definition.get("owner_id") or "local")
+        new_owner = str(event.value)
+        if new_owner == current_owner:
+            return
+        row.end_edit()
+        direction = "to_server" if new_owner.startswith("server:") else "to_local"
+        self.post_message(DefinitionOwnerActionRequested(definition, direction, row))
+
+    def _request_runs_on_cancel(self) -> None:
+        """Post a cancel request from the Runs-on row's own mini-bar
+        (PR-3 task 5) -- a SEPARATE surface from the Automations tab's
+        `k`-key `_cancel_automation_transfer` (coexistence, task-5
+        brief): this one renders a refusal via `row.show_error`, not the
+        tab's shared inline-notice Static."""
+        definition = self._definition
+        row = self._runs_on_row
+        if definition is not None and row is not None:
+            self.post_message(DefinitionOwnerActionRequested(definition, "cancel", row))
+
+    def _request_runs_on_retry(self) -> None:
+        """Post a retry request from the Runs-on row's own mini-bar
+        (PR-3 task 5) -- the PR-5 retry leg (re-begin), same SEPARATE
+        row-scoped surface as `_request_runs_on_cancel` above."""
+        definition = self._definition
+        row = self._runs_on_row
+        if definition is not None and row is not None:
+            self.post_message(DefinitionOwnerActionRequested(definition, "retry", row))
 
     # -- Header lifecycle toggle (PR-3 task 4) -------------------------------
 
