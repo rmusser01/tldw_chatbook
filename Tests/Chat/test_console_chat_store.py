@@ -3,7 +3,7 @@ import json
 from copy import deepcopy
 from dataclasses import FrozenInstanceError, replace
 from datetime import datetime
-from threading import Event, Thread, get_ident
+from threading import Event, Thread, current_thread, get_ident
 from types import SimpleNamespace
 
 import pytest
@@ -8931,9 +8931,9 @@ def test_canvas_promotion_reservation_refuses_close_and_same_id_recreate(
     thread.start()
     try:
         assert entered.wait(timeout=5)
-        with pytest.raises(RuntimeError, match="promotion.*in progress"):
+        with pytest.raises(RuntimeError, match="Temporary chat save.*in progress"):
             store.close_session(session.id)
-        with pytest.raises(RuntimeError, match="promotion.*in progress"):
+        with pytest.raises(RuntimeError, match="Temporary chat save.*in progress"):
             store.create_session(session_id=session.id, ephemeral=True)
     finally:
         release.set()
@@ -9008,12 +9008,12 @@ def test_canvas_promotion_reservation_refuses_restore_and_runtime_teardown(
     thread.start()
     try:
         assert entered.wait(timeout=5)
-        with pytest.raises(RuntimeError, match="promotion.*in progress"):
+        with pytest.raises(RuntimeError, match="Temporary chat save.*in progress"):
             store.restore_state(
                 sessions=[replacement],
                 messages_by_session={replacement.id: ()},
             )
-        with pytest.raises(RuntimeError, match="promotion.*in progress"):
+        with pytest.raises(RuntimeError, match="Temporary chat save.*in progress"):
             store.end_app_runtime()
     finally:
         release.set()
@@ -9025,6 +9025,90 @@ def test_canvas_promotion_reservation_refuses_restore_and_runtime_teardown(
         assert store._sessions[session.id] is session
         assert session.ephemeral is False
         assert replacement.ephemeral is True
+        assert staging.staged_revision_count(session.id) == 0
+        assert (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM conversations")
+            .fetchone()[0]
+            == 1
+        )
+    finally:
+        db.close_connection()
+
+
+def test_delayed_second_promotion_returns_idempotently_before_any_write(
+    tmp_path,
+) -> None:
+    """A caller delayed before reservation must recheck the durable decision."""
+
+    class WriteProbe:
+        def __init__(self) -> None:
+            self.write_count = 0
+
+        def write(self, *, writer, conversation_id, message_ids) -> None:
+            self.write_count += 1
+
+    db = CharactersRAGDB(
+        tmp_path / "canvas-promotion-delayed-entrant.sqlite",
+        "delayed-entrant",
+    )
+    staging = CanvasStagingStore()
+    store = ConsoleChatStore(
+        persistence=ChatPersistenceService(db),
+        canvas_promotion_participant=staging,
+    )
+    session = store.create_session(session_id="same-id", ephemeral=True)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Canvas created.",
+    )
+    staging.create_canvas(
+        owner=staging.session_owner(session.id),
+        run_id="run-create",
+        tool_call_id="call-create",
+        title="Planner",
+        source="<!doctype html><html><body>planner</body></html>",
+        origin_message_id=assistant.id,
+    )
+    delayed_at_reservation = Event()
+    release_delayed = Event()
+    original_reserve = store._reserve_ephemeral_promotion
+    probe = WriteProbe()
+    outcome: dict[str, object] = {}
+
+    def pause_delayed(session_to_reserve):
+        if current_thread().name == "promotion-b":
+            delayed_at_reservation.set()
+            assert release_delayed.wait(timeout=5)
+        return original_reserve(session_to_reserve)
+
+    store._reserve_ephemeral_promotion = pause_delayed
+
+    def promote_delayed() -> None:
+        try:
+            outcome["result"] = store.promote_ephemeral_session(
+                session.id,
+                contributions=(probe,),
+            )
+        except Exception as exc:
+            outcome["error"] = exc
+
+    delayed = Thread(target=promote_delayed, name="promotion-b")
+    delayed.start()
+    try:
+        assert delayed_at_reservation.wait(timeout=5)
+        first_conversation_id = store.promote_ephemeral_session(session.id)
+    finally:
+        release_delayed.set()
+        delayed.join(timeout=5)
+
+    try:
+        assert not delayed.is_alive()
+        assert "error" not in outcome
+        assert outcome["result"] is None
+        assert first_conversation_id == session.persisted_conversation_id
+        assert probe.write_count == 0
         assert staging.staged_revision_count(session.id) == 0
         assert (
             db.get_connection()

@@ -274,7 +274,7 @@ def _fork_session_transition(method: Callable[..., Any]) -> Callable[..., Any]:
 def _ephemeral_promotion_session_lifecycle(
     method: Callable[..., Any],
 ) -> Callable[..., Any]:
-    """Exclude exact-session lifecycle changes from temporary promotion."""
+    """Exclude exact-session lifecycle changes from a temporary-chat save."""
 
     @wraps(method)
     def transitioned(
@@ -282,7 +282,7 @@ def _ephemeral_promotion_session_lifecycle(
     ) -> Any:
         with self._ephemeral_promotion_lock:
             if session_id in self._ephemeral_promotion_reservations:
-                raise RuntimeError("Canvas promotion is already in progress.")
+                raise RuntimeError("Temporary chat save is already in progress.")
             return method(self, session_id, *args, **kwargs)
 
     return transitioned
@@ -291,14 +291,14 @@ def _ephemeral_promotion_session_lifecycle(
 def _ephemeral_promotion_creation_lifecycle(
     method: Callable[..., Any],
 ) -> Callable[..., Any]:
-    """Exclude explicit same-ID creation from temporary promotion."""
+    """Exclude explicit same-ID creation from a temporary-chat save."""
 
     @wraps(method)
     def transitioned(self: "ConsoleChatStore", *args: Any, **kwargs: Any) -> Any:
         session_id = kwargs.get("session_id")
         with self._ephemeral_promotion_lock:
             if session_id in self._ephemeral_promotion_reservations:
-                raise RuntimeError("Canvas promotion is already in progress.")
+                raise RuntimeError("Temporary chat save is already in progress.")
             return method(self, *args, **kwargs)
 
     return transitioned
@@ -307,13 +307,13 @@ def _ephemeral_promotion_creation_lifecycle(
 def _ephemeral_promotion_global_lifecycle(
     method: Callable[..., Any],
 ) -> Callable[..., Any]:
-    """Exclude whole-store replacement or shutdown from promotion."""
+    """Exclude whole-store replacement or shutdown from a temporary-chat save."""
 
     @wraps(method)
     def transitioned(self: "ConsoleChatStore", *args: Any, **kwargs: Any) -> Any:
         with self._ephemeral_promotion_lock:
             if self._ephemeral_promotion_reservations:
-                raise RuntimeError("Canvas promotion is already in progress.")
+                raise RuntimeError("Temporary chat save is already in progress.")
             return method(self, *args, **kwargs)
 
     return transitioned
@@ -16535,14 +16535,16 @@ class ConsoleChatStore:
 
     def _reserve_ephemeral_promotion(
         self, session: ConsoleChatSession
-    ) -> _ConsoleEphemeralPromotionReservation:
-        """Fence one exact live session incarnation through postcommit cleanup."""
+    ) -> _ConsoleEphemeralPromotionReservation | None:
+        """Fence an exact temporary-chat incarnation through save cleanup."""
 
         with self._ephemeral_promotion_lock:
             if self._sessions.get(session.id) is not session:
-                raise RuntimeError("Temporary chat identity changed before promotion.")
+                raise RuntimeError("Temporary chat identity changed before save.")
             if session.id in self._ephemeral_promotion_reservations:
-                raise RuntimeError("Canvas promotion is already in progress.")
+                raise RuntimeError("Temporary chat save is already in progress.")
+            if not session.ephemeral:
+                return None
             reservation = _ConsoleEphemeralPromotionReservation(
                 session_id=session.id,
                 session=session,
@@ -16644,6 +16646,9 @@ class ConsoleChatStore:
         if not callable(atomic_promote):
             raise RuntimeError("Persistence adapter cannot perform atomic promotion.")
         reservation = self._reserve_ephemeral_promotion(session)
+        if reservation is None:
+            self.retry_pending_workspace_projection(session_id)
+            return None
         canvas_contribution: CanvasPromotionContribution | None = None
         try:
             activity_contribution = (
@@ -16919,7 +16924,7 @@ class ConsoleChatStore:
                 or reservation.session is not session
                 or self._sessions.get(session_id) is not session
             ):
-                raise RuntimeError("Temporary chat identity changed during promotion.")
+                raise RuntimeError("Temporary chat identity changed during save.")
             session.ephemeral = False
             self.publish_committed_identity(session_id, identity)
             if staged_generation_snapshot is not None:
