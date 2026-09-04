@@ -4,9 +4,11 @@ title: >-
   Command palette test
   test_palette_library_skills_command_opens_hidden_starter_route fails on clean
   dev
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-09-04 13:47'
+updated_date: '2026-09-04 21:15'
 labels:
   - tests
   - tech-debt
@@ -22,6 +24,12 @@ Tests/UI/test_command_palette_providers.py::TestTabNavigationProvider::test_pale
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The test passes on dev, or is rewritten/removed with the reason recorded in this task (no bare skip markers)
-- [ ] #2 Root cause identified and recorded (production code vs test contract)
+- [x] #1 The test passes on dev, or is rewritten/removed with the reason recorded in this task (no bare skip markers)
+- [x] #2 Root cause identified and recorded (production code vs test contract)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+ADDENDUM: the test also carried a second, independent defect — its setup boots the real splash screen (7s wall-clock) while waiting with a wall-clock-free 200-pause loop, so under host load setup flaked with 'did not finish initial navigation' (this also explains the first bisect's inconsistent verdicts). Hardened: splash disabled via config_overrides for this test and both wait loops converted to 30s monotonic deadlines. Triple-run green under load.
+<!-- SECTION:NOTES:END -->
