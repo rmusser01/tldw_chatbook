@@ -99,7 +99,7 @@ async def test_media_row_open_and_detail_arrival_are_canvas_scoped() -> None:
         calls, spy = _screen_recompose_spy()
         with patch.object(BaseAppScreen, "refresh", spy):
             screen.query_one("#library-media-row-0", Button).press()
-            await _wait_for_selector(screen, pilot, "#library-media-content-search")
+            await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
         assert calls == []
         assert screen.query_one("#library-rail") is rail_before
         assert screen.query_one("#library-media-viewer", LibraryMediaViewer)
@@ -112,7 +112,7 @@ async def test_media_viewer_back_is_canvas_scoped_and_restores_list_focus() -> N
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _boot_media_library(host, pilot)
         screen.query_one("#library-media-row-0", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-media-content-search")
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
         rail_before = screen.query_one("#library-rail")
         calls, spy = _screen_recompose_spy()
         with patch.object(BaseAppScreen, "refresh", spy):
@@ -179,7 +179,7 @@ async def test_open_item_by_id_media_is_canvas_scoped() -> None:
         calls, spy = _screen_recompose_spy()
         with patch.object(BaseAppScreen, "refresh", spy):
             await screen._open_library_item_by_id("media", "media-1")
-            await _wait_for_selector(screen, pilot, "#library-media-content-search")
+            await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
         assert calls == []
         assert screen.query_one("#library-rail") is rail_before
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
@@ -347,7 +347,7 @@ async def test_media_row_open_latency_probe() -> None:
         for _ in range(12):
             started = perf_counter()
             screen.query_one("#library-media-row-0", Button).press()
-            await _wait_for_selector(screen, pilot, "#library-media-content-search")
+            await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
             samples.append((perf_counter() - started) * 1000.0)
             screen.query_one("#library-media-back", Button).press()
             await _wait_for_selector(screen, pilot, "#library-media-row-0")

@@ -2695,6 +2695,10 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_generating_analysis: bool = False
         self._library_media_content_query: str = ""
         self._library_media_content_match_index: int = 0
+        # task-31237: the content Find bar is collapsed until the Find
+        # action opens it -- a permanently open "Search content…" input
+        # duplicated the Find button and spent 3 rows on every fresh item.
+        self._library_media_find_open: bool = False
         # task-22209: in-content match list for the open item, memoized on
         # (detail object identity, query). Both the query submit and every
         # Prev/Next click need it, and deriving it costs a full content
@@ -23494,8 +23498,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_confirming_delete = False
         self._library_media_highlights = []
         self._library_media_editing_analysis = False
-        self._library_media_content_query = ""
-        self._library_media_content_match_index = 0
+        self._close_library_media_find()
         self._library_media_content_mode = "raw"
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
@@ -24003,30 +24006,43 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_sort_choices_visible = (
             not self._library_media_sort_choices_visible
         )
-        _sync_library_canvas(self, "media")
-        if self._library_media_sort_choices_visible:
-            current = self._library_media_browse_controller.mutation_refresh_scope.sort_by
-            self.call_after_refresh(
-                self._focus_library_choice_strip_active,
-                ".library-media-sort-choice",
-                current,
-            )
-        else:
-            self.call_after_refresh(
-                self._focus_library_control, "#library-media-sort"
-            )
+        # task-31235: the chooser is a vertical OptionList (like the type
+        # chooser) with the active value pre-highlighted at compose time,
+        # so focusing the list is enough. The focus rides the sync's
+        # ``then`` hook -- ``call_after_refresh`` has no ordering against
+        # a canvas-scoped recompose (see ``_sync_library_canvas``).
+        def focus_open_chooser() -> None:
+            self._focus_library_control("#library-media-sort-choices")
 
-    @on(Button.Pressed, ".library-media-sort-choice")
-    def handle_library_media_sort_choice(self, event: Button.Pressed) -> None:
-        """Apply the exact sort value carried by one strip choice (task-28013).
+        def focus_sort_opener() -> None:
+            self._focus_library_control("#library-media-sort")
 
-        Picking the already-active sort only closes the strip -- no service
-        request. Any other value re-fetches page one under the new order.
+        _sync_library_canvas(
+            self,
+            "media",
+            then=(
+                focus_open_chooser
+                if self._library_media_sort_choices_visible
+                else focus_sort_opener
+            ),
+        )
+
+    @on(OptionList.OptionSelected, "#library-media-sort-choices")
+    def handle_library_media_sort_choice(
+        self, event: OptionList.OptionSelected
+    ) -> None:
+        """Apply the exact sort value carried by one chooser option.
+
+        task-31235: the horizontal strip (task-28013) became a vertical
+        OptionList -- it clipped options off-pane at the items pane's real
+        width. Picking the already-active sort only closes the chooser --
+        no service request. Any other value re-fetches page one under the
+        new order.
         """
         event.stop()
         if self._library_media_bulk_delete_in_flight:
             return
-        requested = str(getattr(event.button, "choice_value", "") or "")
+        requested = str(getattr(event.option, "choice_value", "") or "")
         self._library_media_sort_choices_visible = False
         current = self._library_media_browse_controller.mutation_refresh_scope.sort_by
         valid = {value for value, _ in MEDIA_SORT_CHOICES}
@@ -25354,8 +25370,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_confirming_delete = False
         self._library_media_highlights = []
         self._library_media_editing_analysis = False
-        self._library_media_content_query = ""
-        self._library_media_content_match_index = 0
+        self._close_library_media_find()
         self._library_media_content_mode = "raw"
         self._sync_library_media_viewer_or_recompose()
 
@@ -25370,8 +25385,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_highlights = []
         self._library_media_editing = False
         self._library_media_editing_analysis = False
-        self._library_media_content_query = ""
-        self._library_media_content_match_index = 0
+        self._close_library_media_find()
         self._library_media_content_mode = "raw"
         self._library_media_view = "viewer"
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
@@ -38543,8 +38557,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_editing = False
         self._library_media_confirming_delete = False
         self._library_media_editing_analysis = False
-        self._library_media_content_query = ""
-        self._library_media_content_match_index = 0
+        self._close_library_media_find()
         self._library_media_content_mode = "raw"
         self._load_library_media_list_if_needed()
         # task-21116: the exit is a canvas-child swap (viewer -> list), not
@@ -38611,8 +38624,7 @@ class LibraryScreen(BaseAppScreen):
             and focused is not None
             and (focused is find_controls or find_controls in focused.ancestors)
         ):
-            self._library_media_content_query = ""
-            self._library_media_content_match_index = 0
+            self._close_library_media_find()
             self._sync_library_media_viewer_or_recompose()
             self.call_after_refresh(
                 self._focus_library_control, "#library-media-reader-find"
@@ -40052,8 +40064,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_media_composed_detail = None
                 self._library_media_highlights = []
                 self._library_media_editing_analysis = False
-                self._library_media_content_query = ""
-                self._library_media_content_match_index = 0
+                self._close_library_media_find()
                 self._library_media_content_mode = "raw"
                 if adjacent is None:
                     self._selected_media_id = ""
@@ -40358,6 +40369,7 @@ class LibraryScreen(BaseAppScreen):
             content_query=self._library_media_content_query,
             content_match_index=self._library_media_content_match_index,
             content_mode=self._library_media_content_mode,
+            find_open=self._library_media_find_open,
             loading=(
                 self._library_media_reader_session.pending_request is not None
                 and self._library_media_reader_session.error is None
@@ -40601,6 +40613,7 @@ class LibraryScreen(BaseAppScreen):
             and viewer.content_query == self._library_media_content_query
             and viewer.content_match_index == self._library_media_content_match_index
             and viewer.content_mode == self._library_media_content_mode
+            and viewer.find_open == self._library_media_find_open
             and viewer.error_message == (self._library_media_reader_session.error or "")
             and viewer.reader_mode == self._library_media_reader_session.mode
             and viewer.more_open == self._library_media_reader_session.more_open
@@ -40645,6 +40658,7 @@ class LibraryScreen(BaseAppScreen):
             viewer.content_query = self._library_media_content_query
             viewer.content_match_index = self._library_media_content_match_index
             viewer.content_mode = self._library_media_content_mode
+            viewer.find_open = self._library_media_find_open
             viewer.loading = loading
             viewer.loading_message = loading_message
             viewer.error_message = self._library_media_reader_session.error or ""
@@ -40774,8 +40788,7 @@ class LibraryScreen(BaseAppScreen):
             new_mode: The Reader mode being switched to.
         """
         if new_mode != self._library_media_reader_session.mode:
-            self._library_media_content_query = ""
-            self._library_media_content_match_index = 0
+            self._close_library_media_find()
             self._library_media_content_match_memo = None
 
     def _capture_library_media_loaded_progress(self) -> None:
@@ -40926,6 +40939,18 @@ class LibraryScreen(BaseAppScreen):
             return
         body.scroller.scroll_to(x=offset[0], y=offset[1], animate=False, force=True)
 
+    def _close_library_media_find(self) -> None:
+        """Reset the content Find bar: collapsed, no query, first match.
+
+        task-31237: one seam for every reset path (item open, viewer exit,
+        rail switch, delete, mode change, Escape) so a stale ``find_open``
+        can never hold the bar open across a context the query reset
+        already abandoned.
+        """
+        self._library_media_find_open = False
+        self._library_media_content_query = ""
+        self._library_media_content_match_index = 0
+
     @on(Button.Pressed, "#library-media-reader-find")
     def handle_library_media_reader_find(self, event: Button.Pressed) -> None:
         """Take Find to the loaded item's content body.
@@ -40938,6 +40963,9 @@ class LibraryScreen(BaseAppScreen):
         # clears any active analysis search before focusing the transcript
         # find bar -- the same reset the Reader mode buttons apply.
         self._reset_library_media_search_on_mode_change("read")
+        # task-31237: the bar is collapsed until this gesture opens it
+        # (AFTER the reset above, which closes it as part of the mode seam).
+        self._library_media_find_open = True
         self._library_media_reader_session = set_mode(
             self._library_media_reader_session, "read"
         )
@@ -41014,12 +41042,27 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return None
 
-    def _focus_library_media_content_search_input(self) -> None:
-        """Focus the mounted content search box after controls synchronize."""
+    def _focus_library_media_content_search_input(
+        self, *, _retries: int = 4
+    ) -> None:
+        """Focus the mounted content search box after controls synchronize.
+
+        task-31237: the input now MOUNTS during the viewer's recompose
+        (the bar is collapsed until Find opens it), and screen-level
+        ``call_after_refresh`` callbacks can flush before the widget-level
+        recompose lands its children -- a short bounded re-defer chain
+        covers the mount latency instead of silently losing the focus.
+        """
         try:
             self.query_one("#library-media-content-search", Input).focus()
         except (NoMatches, QueryError):
-            pass
+            if _retries > 0:
+                self.call_after_refresh(
+                    partial(
+                        self._focus_library_media_content_search_input,
+                        _retries=_retries - 1,
+                    )
+                )
 
     @on(Button.Pressed, "#library-media-content-mode-rendered")
     async def handle_library_media_content_mode_rendered(
@@ -42535,8 +42578,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_confirming_delete = False
             self._library_media_highlights = []
             self._library_media_editing_analysis = False
-            self._library_media_content_query = ""
-            self._library_media_content_match_index = 0
+            self._close_library_media_find()
             self._library_media_content_mode = "raw"
             self.run_worker(
                 self._refresh_library_media_detail(

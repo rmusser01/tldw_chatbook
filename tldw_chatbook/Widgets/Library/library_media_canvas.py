@@ -20,9 +20,6 @@ from tldw_chatbook.Library.library_media_state import (
     LibraryMediaCanvasState,
     MEDIA_SORT_CHOICES,
 )
-from tldw_chatbook.Widgets.Library.library_choice_strip import (
-    compose_library_choice_strip,
-)
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_DELETE_SELECTED_TOOLTIP,
@@ -688,17 +685,31 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             choices.styles.height = min(8, max(1, len(options)))
             yield choices
         if sort_choices_visible:
-            # task-28013: the sort chooser's direct-pick strip, replacing the
-            # toolbar row exactly like the type chooser (shared helper).
-            yield from compose_library_choice_strip(
-                strip_id="library-media-sort-choices",
-                choice_class="library-media-sort-choice",
-                options=tuple(
-                    (f"library-media-sort-{value}", value, label)
-                    for value, label in MEDIA_SORT_CHOICES
-                ),
-                active_value=current_sort,
+            # task-31235 (critique #3 P1): a vertical OptionList exactly like
+            # the type chooser above -- the horizontal choice strip clipped
+            # "Title A-Z" and rendered "Title Z-A" nowhere at the items
+            # pane's real width, while keyboard selection could still pick
+            # the invisible option.
+            sort_options: list[Option] = []
+            sort_highlighted = 0
+            for index, (value, label) in enumerate(MEDIA_SORT_CHOICES):
+                option = Option(
+                    f"✓ {label}" if value == current_sort else label,
+                    id=f"library-media-sort-option-{index}",
+                )
+                option.choice_value = value
+                sort_options.append(option)
+                if value == current_sort:
+                    sort_highlighted = index
+            sort_choices = OptionList(
+                *sort_options,
+                id="library-media-sort-choices",
+                compact=True,
+                markup=False,
             )
+            sort_choices.highlighted = sort_highlighted
+            sort_choices.styles.height = min(8, max(1, len(sort_options)))
+            yield sort_choices
         confirming_bulk_delete = getattr(self.canvas, "confirming_bulk_delete", False)
         if select_mode:
             if confirming_bulk_delete:
@@ -1009,6 +1020,14 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     classes="library-source-pager-status",
                     markup=False,
                 )
+            # task-31237 (supersedes task-28016's keep-the-disabled-controls
+            # choice, critique #3 ruling): a single-page result renders NO
+            # pager controls -- two dead "○ Previous ○ Next" forms under
+            # every short list were pure noise. The range Static above
+            # stays; the controls return the moment a second page exists.
+            # A failed fetch still needs its Retry even on one page.
+            if pager.single_page and not pager.retry_visible:
+                return
             with Horizontal(classes="library-source-pager-controls"):
                 previous = Button(
                     library_disabled_action_label(

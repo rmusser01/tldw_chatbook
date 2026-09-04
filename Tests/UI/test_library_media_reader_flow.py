@@ -1135,6 +1135,10 @@ def _escape_fake(*, region: str, more_open: bool = False):
         _register_footer_shortcuts=lambda: calls.append("footer"),
         call_after_refresh=lambda callback, *args: callback(*args),
     )
+    # task-31237: Escape's find branch routes through the shared close seam.
+    fake._close_library_media_find = MethodType(
+        LibraryScreen._close_library_media_find, fake
+    )
     return fake, calls, shell, find
 
 
@@ -1427,6 +1431,10 @@ def test_find_from_analysis_clears_the_search_before_reading_the_transcript():
     )
     fake._reset_library_media_search_on_mode_change = MethodType(
         LibraryScreen._reset_library_media_search_on_mode_change, fake
+    )
+    # task-31237: the reset seam routes through the shared find-close helper.
+    fake._close_library_media_find = MethodType(
+        LibraryScreen._close_library_media_find, fake
     )
 
     LibraryScreen.handle_library_media_reader_find(

@@ -171,7 +171,18 @@ async def _traverse_to_row(screen, pilot, service, *, from_index: int, to_index:
 
 
 async def _submit_query(screen, pilot, query: str) -> None:
-    """Type ``query`` into the mounted content search box and press Enter."""
+    """Type ``query`` into the content search box and press Enter.
+
+    task-31237: the Find bar is collapsed until the Find action opens it,
+    so the helper presses Find first when the input is not yet mounted.
+    """
+    if not screen.query("#library-media-content-search"):
+        screen.query_one("#library-media-reader-find", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(screen.query("#library-media-content-search")),
+            message="Find never mounted the search input.",
+        )
     search_input = screen.query_one("#library-media-content-search", Input)
     search_input.focus()
     await pilot.pause()

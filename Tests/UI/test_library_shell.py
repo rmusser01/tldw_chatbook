@@ -10636,11 +10636,15 @@ def _large_markdown_media_item():
 
 
 async def _open_media_viewer(screen, pilot):
-    """Navigate to the media list and open the first row's viewer."""
+    """Navigate to the media list and open the first row's viewer.
+
+    task-31237: the content Find bar no longer mounts until the Find
+    action opens it, so the viewer-loaded sentinel is the content body.
+    """
     screen.query_one("#library-row-browse-media").press()
     await _wait_for_selector(screen, pilot, "#library-media-row-1")
     screen.query_one("#library-media-row-1").press()
-    await _wait_for_selector(screen, pilot, "#library-media-content-search")
+    await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
 
 
 @pytest.mark.asyncio
@@ -10658,14 +10662,23 @@ async def test_library_media_sort_chooser_applies_the_selected_order():
         await _wait_for_selector(screen, pilot, "#library-media-sort")
         service = app.media_reading_scope_service
 
-        # Open the sort chooser; its direct-pick strip replaces the toolbar.
+        # Open the sort chooser; its vertical OptionList replaces the
+        # toolbar (task-31235: the horizontal strip clipped options).
         screen.query_one("#library-media-sort", Button).press()
-        await _wait_for_selector(screen, pilot, ".library-media-sort-choice")
+        chooser = await _wait_for_selector(
+            screen, pilot, "#library-media-sort-choices"
+        )
+        assert isinstance(chooser, OptionList)
         assert screen._library_media_sort_choices_visible is True
 
-        # Pick "Title A-Z" -> the strip closes and a page-one fetch runs
+        # Pick "Title A-Z" -> the chooser closes and a page-one fetch runs
         # under sort_by=title_asc.
-        screen.query_one("#library-media-sort-title_asc", Button).press()
+        chooser.highlighted = next(
+            index
+            for index, option in enumerate(chooser.options)
+            if getattr(option, "choice_value", None) == "title_asc"
+        )
+        chooser.action_select()
         for _ in range(150):
             if service.search_calls and service.search_calls[-1].get(
                 "sort_by"
@@ -10700,24 +10713,33 @@ async def test_library_media_sort_and_type_choosers_are_mutually_exclusive():
         screen.query_one("#library-media-type-filter", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-type-choices")
         screen.query_one("#library-media-sort", Button).press()
-        await _wait_for_selector(screen, pilot, ".library-media-sort-choice")
+        await _wait_for_selector(screen, pilot, "#library-media-sort-choices")
         assert screen._library_media_sort_choices_visible is True
         assert screen._library_media_type_choices_visible is False
 
-        # The open strip advertises its own footer keys through the shared seam.
+        # The open chooser advertises its own footer keys through the shared seam.
         footer = screen._library_footer_shortcuts_for_current_state()
         assert ("enter", "choose sort") in footer
         assert ("esc", "cancel") in footer
 
-        # Escape closes the strip.
+        # Escape closes the chooser.
         await pilot.press("escape")
         await pilot.pause()
         assert screen._library_media_sort_choices_visible is False
-        assert not screen.query(".library-media-sort-choice")
+        assert not screen.query("#library-media-sort-choices")
 
 
 async def _submit_content_search_query(screen, pilot, query):
-    """Type ``query`` into the open viewer's content search box and press Enter."""
+    """Type ``query`` into the open viewer's content search box and press Enter.
+
+    task-31237: the Find bar is collapsed until the Find action opens it,
+    so the helper presses Find first when the input is not yet mounted.
+    """
+    if not screen.query("#library-media-content-search"):
+        screen.query_one("#library-media-reader-find", Button).press()
+        await _wait_for_selector(
+            screen, pilot, "#library-media-content-search"
+        )
     search_input = screen.query_one("#library-media-content-search", Input)
     search_input.value = query
     search_input.focus()
@@ -10748,10 +10770,15 @@ async def test_library_shell_media_content_search_no_query_hides_status_and_nav(
 
         await _open_media_viewer(screen, pilot)
 
-        assert screen.query_one("#library-media-content-search")
-        # task-28002: the status line and the prev/next nav container persist
-        # display-gated (tearing them down recomposed away the focused Input)
-        # -- with no active query they are hidden, not removed.
+        # task-31237: a fresh item renders NO find bar at all -- it mounts
+        # when the Find action opens it.
+        assert not screen.query("#library-media-content-search")
+        screen.query_one("#library-media-reader-find", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-content-search")
+        # task-28002: once open, the status line and the prev/next nav
+        # container persist display-gated (tearing them down recomposed away
+        # the focused Input) -- with no active query they are hidden, not
+        # removed.
         assert not screen.query_one("#library-media-content-search-status").display
         assert not screen.query_one("#library-media-content-search-nav").display
 
@@ -12019,7 +12046,11 @@ async def test_library_shell_media_content_search_placeholder_states_raw_text_fo
         await _wait_for_library_shell(screen, pilot)
         await _open_media_viewer(screen, pilot)
 
-        search_input = screen.query_one("#library-media-content-search", Input)
+        # task-31237: the Find bar mounts on the Find action.
+        screen.query_one("#library-media-reader-find", Button).press()
+        search_input = await _wait_for_selector(
+            screen, pilot, "#library-media-content-search"
+        )
         assert search_input.placeholder == "Search content (raw text)…"
 
 
