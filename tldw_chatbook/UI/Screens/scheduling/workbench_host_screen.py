@@ -16,10 +16,11 @@ with no shared state, is architecturally normal here.
 
 from __future__ import annotations
 
-from typing import Callable, Optional
+from typing import Callable
 
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.message import Message
 from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import Footer, Header
@@ -42,7 +43,8 @@ class WorkbenchHostScreen(Screen):
         widget_factory: Callable[[], Widget],
         *,
         title: str,
-        dismissed: Optional[Callable[[], None]] = None,
+        dismissed: Callable[[], None] | None = None,
+        route_message: Callable[[Message], None] | None = None,
     ) -> None:
         """Initialize the host.
 
@@ -54,11 +56,22 @@ class WorkbenchHostScreen(Screen):
             title: Shown in the screen's ``Header``.
             dismissed: Optional hook run once when this screen pops
                 (``Esc``), before the pop completes.
+            route_message: Optional hook called with EVERY message this
+                screen processes (task 6). A hosted pane that posts
+                request messages for a handler living on the screen
+                BEHIND needs them relayed: Textual bubbles a message
+                widget -> parent -> Screen -> App, and the pane behind is
+                on a different screen, so those messages would otherwise
+                die here. The hook is deliberately unfiltered -- which
+                messages are worth relaying is the caller's business, not
+                a generic host's (`SchedulesWorkbench._route_pushed_
+                detail_message` allowlists its own).
         """
         super().__init__()
         self._widget_factory = widget_factory
         self.title = title
         self._dismissed = dismissed
+        self._route_message = route_message
 
     def compose(self) -> ComposeResult:
         """Header (title) + the hosted widget (fills remaining space) + Footer (Esc hint)."""
@@ -67,6 +80,20 @@ class WorkbenchHostScreen(Screen):
         body.add_class("workbench-host-body")
         yield body
         yield Footer()
+
+    async def _on_message(self, message: Message) -> None:
+        """Dispatch normally, then hand the message to ``route_message``.
+
+        `MessagePump._on_message` is the only seam that sees a message
+        AFTER this screen's own handlers and its bubble to `App`; Textual
+        exposes no public "unhandled message" hook on `Screen` (verified
+        against `textual/message_pump.py` -- neither `Screen` nor
+        `Widget` overrides it, so the `super()` call is the whole of the
+        normal path).
+        """
+        await super()._on_message(message)
+        if self._route_message is not None:
+            self._route_message(message)
 
     def action_dismiss_screen(self) -> None:
         """``Esc``: run the on-dismiss hook (if any), then pop.

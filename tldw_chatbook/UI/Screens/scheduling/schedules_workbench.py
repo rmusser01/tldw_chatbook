@@ -14,6 +14,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.message import Message
 from textual.timer import Timer
 from textual.widgets import Button, DataTable, Input, Static
 
@@ -145,6 +146,37 @@ RESULTS_PULL_DEBOUNCE_SECONDS = 0.3
 #: could not. Beyond the cap the view says so out loud (`ResultsTab.
 #: populate`'s `total`); deliberately no pagination machinery.
 RESULTS_INBOX_LIMIT = _RESULTS_PAGE_SIZE * _SYNC_MAX_PAGES
+
+#: redesign PR-4, task 6 (spec §11): the messages a PUSHED detail pane can
+#: post whose handler lives on THIS screen rather than on the
+#: `WorkbenchHostScreen` hosting it. Textual bubbles a message
+#: widget -> parent -> Screen -> App, and the workbench is a different
+#: screen, so without relaying these the pushed pane would render
+#: correctly and do nothing (`WorkbenchHostScreen(route_message=...)`).
+#: An allowlist rather than "relay everything": Textual's own internal
+#: `messages.Update`/`Layout` bubble too and carry a widget belonging to
+#: another screen.
+_PUSHED_DETAIL_MESSAGES: tuple[type[Message], ...] = (
+    AcknowledgeIncidentRequested,
+    DefinitionFieldEditRequested,
+    DefinitionLifecycleToggleRequested,
+    DefinitionOwnerActionRequested,
+    DefinitionRunNowRequested,
+    DeleteTaskRequested,
+    DisableTaskRequested,
+    EditTaskRequested,
+    EnableTaskRequested,
+    ReminderFieldEditRequested,
+    ReminderOwnerActionRequested,
+    RunReminderNowRequested,
+    ViewDefinitionAuditRequested,
+    ViewDefinitionResultsRequested,
+    #: `#schedules-follow-in-console` sits INSIDE `TaskDetail` while its
+    #: handler is on this screen. Every other `Button.Pressed` handler
+    #: here is id/class-scoped to a control the panes do not contain, so
+    #: relaying the type wholesale cannot misfire.
+    Button.Pressed,
+)
 
 #: How many transport reconnects `EventObserver.run()` absorbs internally
 #: (its own built-in exponential backoff, capped at 5s per attempt) before
@@ -389,6 +421,13 @@ class SchedulesWorkbench(BaseAppScreen):
         # `_selected_task_id` above stays reminder-only for the existing
         # action code that reads it directly.
         self._selected_row_id: str | None = None
+        #: redesign PR-4, task 6 (spec §11): the FRESH `TaskDetail`/
+        #: `DefinitionDetail` instance currently hosted by a pushed
+        #: `WorkbenchHostScreen` at narrow widths, or None. Held only so
+        #: the docked panes' own paint seams can feed it the same data
+        #: (`_detail_panes`) -- never to reparent or reuse it; the next
+        #: push builds another instance.
+        self._pushed_detail: TaskDetail | DefinitionDetail | None = None
         #: One `asyncio.Lock` per definition an in-pane row edit has
         #: touched, serializing that definition's read-merge-write saves
         #: (Qodo finding 7) -- see `_edit_definition_field`.
@@ -534,6 +573,21 @@ class SchedulesWorkbench(BaseAppScreen):
                             id="scheduling-chip-completed",
                             classes="scheduling-queue-chip",
                         )
+                        # redesign PR-4, task 6 (spec §11): below the
+                        # 84-column threshold the four chips above
+                        # collapse into this one cycling control rather
+                        # than vanishing, so a mouse user keeps a filter
+                        # affordance at the 80x24 floor. Purely
+                        # CSS-driven (`.compact`, `_scheduling.tcss`) and
+                        # deliberately NOT `.scheduling-queue-chip`: that
+                        # class is what the compact rule hides, and this
+                        # button drives `action_cycle_chip` rather than
+                        # selecting one named chip.
+                        yield Button(
+                            "Filter: All",
+                            id="scheduling-chip-cycle",
+                            tooltip="Cycle the queue filter (f).",
+                        )
                     yield Input(
                         # Says what ruling 5's search actually
                         # matches -- title + question/body (final
@@ -607,6 +661,7 @@ class SchedulesWorkbench(BaseAppScreen):
         self._refresh_owner_select()
         self._refresh_conflicts_badge()
         self._refresh_results_badge()
+        self._sync_chip_cycle_label()
         # redesign PR-2, Task 3: hidden until `load_tasks` finds unread
         # rows (mirrors `SyncStatusWidget`'s own Clear-button idiom of
         # starting hidden rather than flashing visible-then-hidden).
@@ -1263,27 +1318,64 @@ class SchedulesWorkbench(BaseAppScreen):
                         "Clear the filter to see the queue."
                     )
                 else:
-                    # The chip row is hidden below width 84 (the `compact`
-                    # class this same threshold sets), while the selected
-                    # chip persists -- so don't point at a control that is
-                    # not on screen (final review F10).
+                    # Point at the control that is actually on screen
+                    # (final review F10): the four chips below width 84
+                    # are collapsed into the cycling control, which is
+                    # what the user has to reach for there (redesign
+                    # PR-4, task 6 -- the copy used to go silent because
+                    # the row vanished entirely).
                     notice = "No tasks in this view."
-                    if not self._chips_hidden():
-                        notice += " Choose a different chip to see the queue."
+                    notice += (
+                        " Cycle the filter (f) to see the queue."
+                        if self._chips_hidden()
+                        else " Choose a different chip to see the queue."
+                    )
                 self._update_static_content(
                     self.query_one("#scheduling-task-detail-empty-state", Static),
                     notice,
                 )
 
     def _chips_hidden(self) -> bool:
-        """True when the chip row is off screen (`_scheduling.tcss`:
-        `#scheduling-workbench.compact #scheduling-queue-chips { display:
-        none }`). Reads the class `on_resize` actually set rather than
+        """True when the four named chips are off screen (`_scheduling.
+        tcss`: `#scheduling-workbench.compact #scheduling-queue-chips
+        .scheduling-queue-chip { display: none }`), i.e. when the
+        collapsed cycling control is standing in for them (redesign PR-4,
+        task 6). Reads the class `on_resize` actually set rather than
         re-deriving its width threshold here."""
         try:
             return self.query_one("#scheduling-workbench").has_class("compact")
         except Exception:  # noqa: BLE001 - not mounted yet
             return False
+
+    def _detail_hidden(self) -> bool:
+        """True when `on_resize` has hidden the docked detail region.
+
+        The same read-the-class-not-the-width discipline `_chips_hidden`
+        uses: the threshold lives in `on_resize` alone, and this is what
+        routes `Enter` to the pushed detail (redesign PR-4, task 6).
+        """
+        try:
+            return self.query_one("#scheduling-detail-pane").has_class("pane-hidden")
+        except Exception:  # noqa: BLE001 - not mounted yet
+            return False
+
+    def _detail_panes(
+        self, pane_id: str, pane_type: type[TaskDetail | DefinitionDetail]
+    ) -> list[Any]:
+        """Every live instance of one detail pane class to paint.
+
+        The docked pane always, plus the pushed instance whenever the
+        narrow layout has one of the SAME class open (redesign PR-4, task
+        6). Routing both through one list is what makes "the pushed pane
+        is fed by the same service-backed loads the docked pane is" true
+        by construction rather than by a parallel code path -- a mutation
+        that repaints the pane behind repaints the one on screen too.
+        """
+        panes: list[Any] = [self.query_one(pane_id, pane_type)]
+        pushed = self._pushed_detail
+        if isinstance(pushed, pane_type) and pushed.is_mounted:
+            panes.append(pushed)
+        return panes
 
     def _show_queue_detail_pane(self, kind: RowKind) -> None:
         """Toggle which Queue detail widget is visible (redesign PR-2,
@@ -1337,6 +1429,34 @@ class SchedulesWorkbench(BaseAppScreen):
         if chip is not None:
             self._set_queue_chip(chip)
 
+    @on(Button.Pressed, "#scheduling-chip-cycle")
+    def _on_queue_chip_cycle_pressed(self, event: Button.Pressed) -> None:
+        """The collapsed-chip control (redesign PR-4, task 6): the mouse
+        route into the SAME `f` cycle, so the narrow layout loses no
+        filter capability -- only the four-button row."""
+        event.stop()
+        self.action_cycle_chip()
+
+    def _sync_chip_cycle_label(self) -> None:
+        """Name the current chip on the collapsed control.
+
+        Reads the selected chip button's own label rather than restating
+        the four names here -- one source for the chip vocabulary.
+        """
+        try:
+            chip_button = self.query_one(
+                f"#scheduling-chip-{self._chip}", Button
+            )
+            cycle = self.query_one("#scheduling-chip-cycle", Button)
+        except Exception:  # noqa: BLE001 - not mounted yet
+            return
+        cycle.label = f"Filter: {chip_button.label}"
+        # `Button.label` refreshes the widget but not the LAYOUT, and this
+        # button is `width: auto` -- without this the box keeps the width
+        # it was measured at ("Filter: All") and every longer chip name
+        # paints clipped.
+        cycle.refresh(layout=True)
+
     def _set_queue_chip(self, chip: Chip) -> None:
         if chip == self._chip:
             return
@@ -1345,6 +1465,7 @@ class SchedulesWorkbench(BaseAppScreen):
             self.query_one(f"#{button_id}", Button).variant = (
                 "primary" if candidate == chip else "default"
             )
+        self._sync_chip_cycle_label()
         self._render_table()
 
     # -- redesign PR-4, task 4: spec §12 keyboard map ------------------------
@@ -1424,6 +1545,85 @@ class SchedulesWorkbench(BaseAppScreen):
         if self._visible_rows[event.cursor_row].row_id == self._selected_row_id:
             return
         self._update_detail_for_index(event.cursor_row)
+
+    @on(DataTable.RowSelected, "#scheduling-task-table")
+    async def _on_task_row_selected(self, event: DataTable.RowSelected) -> None:
+        """`Enter` on a queue row: at the narrow floor, push the detail.
+
+        redesign PR-4, task 6 (spec §11, ruling 6). Above the threshold
+        the detail pane is docked beside the queue and already shows this
+        row, so `Enter` keeps being the no-op it has always been -- the
+        push exists to replace the blank-hide, not to add a second way of
+        seeing what is already on screen.
+        """
+        event.stop()
+        if not self._detail_hidden():
+            return
+        await self._push_row_detail(event.cursor_row)
+
+    async def _push_row_detail(self, index: int) -> None:
+        """Host a FRESH detail pane for one queue row, full-screen.
+
+        The same widget CLASS the docked pane uses, built by a factory
+        per push (Task 1's contract -- never the docked instance
+        reparented), then fed through `_update_detail_for_index`: the
+        SAME service-backed loads the docked pane gets, so there is no
+        second data path to keep in step. The push is awaited because
+        that is what guarantees the hosted widget is mounted (and has
+        composed its own children) before it is painted -- `App.push_
+        screen`'s awaitable "waits for the screen to be mounted", and
+        `TaskDetail.set_task`/`DefinitionDetail.set_definition` both
+        query their children.
+        """
+        if not (0 <= index < len(self._visible_rows)):
+            return
+        row = self._visible_rows[index]
+        built: list[TaskDetail | DefinitionDetail] = []
+
+        def _factory() -> TaskDetail | DefinitionDetail:
+            pane: TaskDetail | DefinitionDetail = (
+                TaskDetail(id="scheduling-task-detail-overlay")
+                if row.kind == "reminder"
+                else DefinitionDetail(id="scheduling-definition-detail-overlay")
+            )
+            built.append(pane)
+            return pane
+
+        await self.app.push_screen(
+            WorkbenchHostScreen(
+                _factory,
+                title=row.title,
+                dismissed=self._pushed_detail_dismissed,
+                route_message=self._route_pushed_detail_message,
+            )
+        )
+        if not built:
+            return
+        self._pushed_detail = built[0]
+        self._update_detail_for_index(index)
+
+    def _pushed_detail_dismissed(self) -> None:
+        """Drop the pushed pane and re-read the queue behind it.
+
+        Anything the overlay changed (an in-pane edit, a pause, a
+        transfer) already refreshed through its own mutation path; this
+        covers the rest -- and, more importantly, clears the reference so
+        `_detail_panes` stops feeding a widget that is about to be
+        pruned.
+        """
+        self._pushed_detail = None
+        self._request_tasks_refresh()
+
+    def _route_pushed_detail_message(self, message: Message) -> None:
+        """Relay a pushed pane's request messages back to this screen.
+
+        See `_PUSHED_DETAIL_MESSAGES`: a pushed pane's messages bubble to
+        the host screen and then to `App`, never sideways to the screen
+        underneath, so without this the pane would paint correctly and do
+        nothing.
+        """
+        if isinstance(message, _PUSHED_DETAIL_MESSAGES):
+            self.post_message(message)
 
     def _incidents_for(self, task_id) -> list:
         """TASK-26027: the selected task's failure incidents (fail-safe).
@@ -1508,21 +1708,31 @@ class SchedulesWorkbench(BaseAppScreen):
                 # still re-feed unconditionally: the DATA can change
                 # while the selection stands still.
                 return
-            task_detail = self.query_one("#scheduling-task-detail", TaskDetail)
-            task_detail.set_task(
-                task,
-                run_history=self._run_history_for(task.id),
-                incidents=self._incidents_for(task.id),
-                # PR-3 task 3: same option source the create/edit modal's
-                # own Timezone selector reads (`_task_timezones`), so the
-                # pane's inline Timezone row editor offers the same zones.
-                known_timezones=self._task_timezones(),
-                # PR-3 task 5: same option source the create/edit forms'
-                # own owner selector reads, so the Runs-on row's dropdown
-                # offers the same choices.
-                runs_on_options=self._runs_on_options()[0],
-            )
-            self._update_transfer_actions(task_detail, task)
+            # One read of each source, fed to every live instance of this
+            # pane (redesign PR-4 task 6: the docked one, plus a pushed
+            # one at narrow widths).
+            run_history = self._run_history_for(task.id)
+            incidents = self._incidents_for(task.id)
+            known_timezones = self._task_timezones()
+            runs_on_options = self._runs_on_options()[0]
+            for task_detail in self._detail_panes(
+                "#scheduling-task-detail", TaskDetail
+            ):
+                task_detail.set_task(
+                    task,
+                    run_history=run_history,
+                    incidents=incidents,
+                    # PR-3 task 3: same option source the create/edit
+                    # modal's own Timezone selector reads
+                    # (`_task_timezones`), so the pane's inline Timezone
+                    # row editor offers the same zones.
+                    known_timezones=known_timezones,
+                    # PR-3 task 5: same option source the create/edit
+                    # forms' own owner selector reads, so the Runs-on
+                    # row's dropdown offers the same choices.
+                    runs_on_options=runs_on_options,
+                )
+                self._update_transfer_actions(task_detail, task)
             self.query_one("#scheduling-task-inspector", TaskInspector).set_task(task)
         else:
             # `_selected_task_id = None` keeps every reminder-only
@@ -1711,12 +1921,12 @@ class SchedulesWorkbench(BaseAppScreen):
         self._update_follow_button_state()
 
     def _update_follow_button_state(self) -> None:
-        task_detail = self.query_one("#scheduling-task-detail", TaskDetail)
         available = (
             self._latest_console_follow_item_id is not None
             or self._latest_console_launch_kwargs is not None
         )
-        task_detail.set_follow_available(available)
+        for task_detail in self._detail_panes("#scheduling-task-detail", TaskDetail):
+            task_detail.set_follow_available(available)
 
     @on(DeleteTaskRequested)
     def _on_delete_task_requested(self, event: DeleteTaskRequested) -> None:
@@ -3234,18 +3444,21 @@ class SchedulesWorkbench(BaseAppScreen):
         definition row (redesign PR-2, Task 2), reading its counts off
         the event loop.
         """
-        detail = self.query_one(
-            "#scheduling-queue-definition-detail", DefinitionDetail
-        )
+        # Every live instance of this pane (redesign PR-4 task 6: the
+        # docked one, plus a pushed one at narrow widths) -- re-queried
+        # after the await, since a push/pop can land while it runs.
         definition_id = str(definition.get("id") or "")
         service = self._scheduling_service
         if service is None:
             if row_id == self._selected_row_id:
-                detail.set_definition(
-                    definition, run_count=0, last_run=None, unread_count=0
-                )
-                detail.set_lifecycle_lock(None)
-                detail.set_runs_on_transfer_errors([])
+                for detail in self._detail_panes(
+                    "#scheduling-queue-definition-detail", DefinitionDetail
+                ):
+                    detail.set_definition(
+                        definition, run_count=0, last_run=None, unread_count=0
+                    )
+                    detail.set_lifecycle_lock(None)
+                    detail.set_runs_on_transfer_errors([])
             return
         run_count, last_run, unread_count, history_error = (
             await self._fetch_definition_detail_counts(
@@ -3256,28 +3469,33 @@ class SchedulesWorkbench(BaseAppScreen):
         # nothing for a stale row (same guard `_load_automation_detail` uses).
         if row_id != self._selected_row_id:
             return
-        detail.set_definition(
-            definition,
-            run_count=run_count,
-            last_run=last_run,
-            unread_count=unread_count,
-            history_error=history_error,
-            known_timezones=self._task_timezones(),
-            # PR-3 task 5: same option source the reminder pane's own
-            # Runs-on row reads (`_update_detail_for_index`).
-            runs_on_options=self._runs_on_options()[0],
-        )
-        # PR-3 task 4: `reason` comes from `SchedulingService.transfer_
-        # lock_reason` (never re-derived in the widget), fed right after
-        # `set_definition` per that method's own docstring -- the same
-        # discipline `_update_transfer_actions` follows for the reminder
-        # pane.
-        detail.set_lifecycle_lock(service.transfer_lock_reason(definition))
-        # PR-3 task 5 fix round 1 (finding 2): the Runs-on row's own
-        # failure text, from the same source.
-        detail.set_runs_on_transfer_errors(
-            _definition_transfer_errors(service, definition)
-        )
+        known_timezones = self._task_timezones()
+        # PR-3 task 5: same option source the reminder pane's own Runs-on
+        # row reads (`_update_detail_for_index`).
+        runs_on_options = self._runs_on_options()[0]
+        lifecycle_lock = service.transfer_lock_reason(definition)
+        transfer_errors = _definition_transfer_errors(service, definition)
+        for detail in self._detail_panes(
+            "#scheduling-queue-definition-detail", DefinitionDetail
+        ):
+            detail.set_definition(
+                definition,
+                run_count=run_count,
+                last_run=last_run,
+                unread_count=unread_count,
+                history_error=history_error,
+                known_timezones=known_timezones,
+                runs_on_options=runs_on_options,
+            )
+            # PR-3 task 4: `reason` comes from `SchedulingService.
+            # transfer_lock_reason` (never re-derived in the widget), fed
+            # right after `set_definition` per that method's own
+            # docstring -- the same discipline `_update_transfer_actions`
+            # follows for the reminder pane.
+            detail.set_lifecycle_lock(lifecycle_lock)
+            # PR-3 task 5 fix round 1 (finding 2): the Runs-on row's own
+            # failure text, from the same source.
+            detail.set_runs_on_transfer_errors(transfer_errors)
 
     def _run_automation_now(self, definition: dict[str, Any]) -> None:
         """Dispatch one automation definition now, routed by its owner.
@@ -3796,7 +4014,16 @@ class SchedulesWorkbench(BaseAppScreen):
         )
 
     def on_resize(self) -> None:
-        """Hide side panes (with a notice) instead of clipping them."""
+        """Degrade the side panes instead of clipping them.
+
+        redesign PR-4, task 6 (spec §11, ruling 6): below 84 columns the
+        detail region no longer just disappears behind a "widen the
+        window" apology -- the queue takes the full width and `Enter` on
+        a row PUSHES the same pane class full-screen
+        (`_on_task_row_selected`), so every operation stays reachable at
+        the 80x24 floor. The inspector, which is a read-only summary of
+        what the detail pane already shows, still simply yields.
+        """
         self._sync_responsive_workbench()
         try:
             width = self.size.width
@@ -3810,20 +4037,42 @@ class SchedulesWorkbench(BaseAppScreen):
         detail.set_class(hide_detail, "pane-hidden")
         # At detail-hiding widths the pane chrome also gets too tall to fit:
         # the screen header already names this pane, so the in-pane title
-        # yields its row to the table + notice (see _scheduling.tcss).
+        # yields its row to the table + notice, the chip row collapses to
+        # its cycling control, and the queue rail takes the whole width
+        # (see _scheduling.tcss).
         self.query_one("#scheduling-workbench").set_class(hide_detail, "compact")
-        if hide_detail:
-            # The create CTA normally lives in the (now hidden) detail pane;
-            # keep it reachable at compact widths when the queue is empty.
-            base = "Detail and inspector hidden — widen the window to see them."
-            if not self._tasks:
-                base += " Press n to schedule your first task."
-            self._resize_notice = base
-        elif hide_inspector:
+        self._sync_resize_notice()
+        self._update_pane_notice()
+
+    def _sync_resize_notice(self) -> None:
+        """Recompute the width-driven half of the queue-pane notice.
+
+        Reads the classes `on_resize` set rather than the width, and is
+        called from `_update_pane_notice` as well as from the resize
+        itself: the compact copy branches on whether the queue has any
+        tasks, which a resize handler alone cannot keep current (a
+        first-run screen mounts, resizes with zero tasks, and only then
+        loads them -- redesign PR-4, task 6).
+        """
+        if self._detail_hidden():
+            self._resize_notice = (
+                "Press n to schedule your first task."
+                if not self._tasks
+                else "Press Enter on a row to open its details."
+            )
+        elif self._inspector_hidden():
             self._resize_notice = "Inspector hidden — widen the window to see it."
         else:
             self._resize_notice = ""
-        self._update_pane_notice()
+
+    def _inspector_hidden(self) -> bool:
+        """True when `on_resize` has hidden the inspector pane."""
+        try:
+            return self.query_one("#scheduling-inspector-pane").has_class(
+                "pane-hidden"
+            )
+        except Exception:  # noqa: BLE001 - not mounted yet
+            return False
 
     def _update_pane_notice(self) -> None:
         """Compose the queue-pane notice: hidden panes, marks, glyph legend.
@@ -3837,6 +4086,7 @@ class SchedulesWorkbench(BaseAppScreen):
             notice = self.query_one("#scheduling-pane-notice", Static)
         except Exception:  # noqa: BLE001 - not mounted yet
             return
+        self._sync_resize_notice()
         parts: list[str] = []
         if self._resize_notice:
             parts.append(self._resize_notice)

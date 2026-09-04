@@ -69,6 +69,7 @@ from Tests.UI.schedules_test_helpers import (
     MockSchedulingServiceMixin as _MockSchedulingServiceMixin,
     MockServerClient as _MockServerClient,
     rendered_row_cells,
+    settle_schedules_workbench,
 )
 
 
@@ -4564,15 +4565,14 @@ async def test_runs_on_dropdown_refusal_renders_inline_with_health_reason(tmp_pa
             # the hand-painted definition and closing the open editor
             # mid-test. The mount-time catch-up results pull is exactly
             # such a reload (a 0.3s debounce timer, so `wait_for_complete`
-            # does not cover it), and it is stopped here. The retired
-            # Automations-tab `DefinitionDetail` sat outside that loader's
-            # reach, which is why none of this was needed before.
-            await pilot.app.workers.wait_for_complete()
+            # does not cover it). The retired Automations-tab
+            # `DefinitionDetail` sat outside that loader's reach, which is
+            # why none of this was needed before. redesign PR-4 task 6 hit
+            # the same race with its pushed panes, which is where the
+            # inline fix this test used to carry graduated into the shared
+            # `settle_schedules_workbench` helper.
             workbench = pilot.app.screen
-            if workbench._results_pull_debounce_timer is not None:
-                workbench._results_pull_debounce_timer.stop()
-                workbench._results_pull_debounce_timer = None
-            await pilot.pause()
+            await settle_schedules_workbench(pilot, workbench)
 
             # A server-fetch-shaped dict (Task 4's own documented trap,
             # its report's "trap hit while writing the lifecycle/offline
