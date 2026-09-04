@@ -445,20 +445,33 @@ def _revalidate_profile(profile: VllmLaunchProfileV1) -> VllmLaunchProfileV1:
     )
 
 
-def _verify_open_regular_file(path: Path, descriptor: int) -> None:
-    """Verify one private user-owned leaf or fail on unsupported platforms."""
+def _effective_user_id() -> int:
+    """Resolve an owner identity before I/O, or raise a cause-free safe error."""
+
+    get_effective_uid = getattr(os, "geteuid", None)
+    if not callable(get_effective_uid):
+        raise VllmProfileCorrupt("vLLM profile storage is unavailable") from None
+    try:
+        effective_uid = get_effective_uid()
+    except Exception:  # noqa: BLE001 - normalize an untrusted OS capability hook
+        raise VllmProfileCorrupt("vLLM profile storage is unavailable") from None
+    if type(effective_uid) is not int or effective_uid < 0:
+        raise VllmProfileCorrupt("vLLM profile storage is unavailable") from None
+    return effective_uid
+
+
+def _verify_open_regular_file(
+    path: Path,
+    descriptor: int,
+    effective_uid: int,
+) -> None:
+    """Verify one private regular leaf against the preflighted owner."""
 
     opened = os.fstat(descriptor)
     if not stat.S_ISREG(opened.st_mode):
         raise OSError("profile storage leaf is not a regular file")
     if stat.S_IMODE(opened.st_mode) & 0o077:
         raise OSError("profile storage leaf permissions are not private")
-    get_effective_uid = getattr(os, "geteuid", None)
-    if get_effective_uid is None:
-        raise OSError("profile storage ownership cannot be verified")
-    effective_uid = get_effective_uid()
-    if type(effective_uid) is not int or effective_uid < 0:
-        raise OSError("profile storage ownership cannot be verified")
     if opened.st_uid != effective_uid:
         raise OSError("profile storage leaf has a different owner")
     named = path.lstat()
@@ -469,20 +482,20 @@ def _verify_open_regular_file(path: Path, descriptor: int) -> None:
         raise OSError("profile storage leaf changed during open")
 
 
-def _open_existing_regular_file(path: Path, flags: int) -> int:
+def _open_existing_regular_file(path: Path, flags: int, effective_uid: int) -> int:
     descriptor = os.open(
         path,
         flags | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0),
     )
     try:
-        _verify_open_regular_file(path, descriptor)
+        _verify_open_regular_file(path, descriptor, effective_uid)
     except BaseException:
         os.close(descriptor)
         raise
     return descriptor
 
 
-def _create_regular_file(path: Path) -> int:
+def _create_regular_file(path: Path, effective_uid: int) -> int:
     descriptor = os.open(
         path,
         os.O_CREAT
@@ -494,7 +507,7 @@ def _create_regular_file(path: Path) -> int:
     )
     try:
         os.fchmod(descriptor, 0o600)
-        _verify_open_regular_file(path, descriptor)
+        _verify_open_regular_file(path, descriptor, effective_uid)
     except BaseException:
         os.close(descriptor)
         raise
@@ -520,16 +533,21 @@ class VllmProfileRepository:
         """Load exact V1 state, returning a virtual Default for a missing file."""
 
         with _REPOSITORY_LOCK:
-            return self._load_locked()
+            return self._load_locked(_effective_user_id())
 
-    def _load_locked(self) -> VllmProfileDocumentV1:
-        return self._load_locked_with_presence()[0]
+    def _load_locked(self, effective_uid: int) -> VllmProfileDocumentV1:
+        return self._load_locked_with_presence(effective_uid)[0]
 
     def _load_locked_with_presence(
         self,
+        effective_uid: int,
     ) -> tuple[VllmProfileDocumentV1, bool]:
         try:
-            descriptor = _open_existing_regular_file(self.path, os.O_RDONLY)
+            descriptor = _open_existing_regular_file(
+                self.path,
+                os.O_RDONLY,
+                effective_uid,
+            )
         except FileNotFoundError:
             profile = default_vllm_profile()
             return VllmProfileDocumentV1(1, 0, profile.profile_id, (profile,)), False
@@ -550,7 +568,7 @@ class VllmProfileRepository:
             raise VllmProfileCorrupt("vLLM profile document is unavailable") from error
 
     @contextmanager
-    def _exclusive_transaction(self) -> Iterator[Callable[[], None]]:
+    def _exclusive_transaction(self) -> Iterator[tuple[int, Callable[[], None]]]:
         """Serialize read/CAS/replace across threads and separate app processes.
 
         The app's private user-data directory is the trusted parent boundary. If
@@ -559,14 +577,19 @@ class VllmProfileRepository:
         still replaces rather than follows a last-instant destination symlink.
         """
 
+        effective_uid = _effective_user_id()
         _reject_symlink_leaf(self.path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         lock_path = self.path.with_name(f"{self.path.name}.lock")
         try:
-            descriptor = _create_regular_file(lock_path)
+            descriptor = _create_regular_file(lock_path, effective_uid)
         except FileExistsError:
             try:
-                descriptor = _open_existing_regular_file(lock_path, os.O_RDWR)
+                descriptor = _open_existing_regular_file(
+                    lock_path,
+                    os.O_RDWR,
+                    effective_uid,
+                )
             except OSError as error:
                 raise VllmProfileCorrupt(
                     "vLLM profile storage is unavailable"
@@ -581,13 +604,17 @@ class VllmProfileRepository:
 
             def verify_held_lock() -> None:
                 try:
-                    _verify_open_regular_file(lock_path, stream.fileno())
+                    _verify_open_regular_file(
+                        lock_path,
+                        stream.fileno(),
+                        effective_uid,
+                    )
                 except OSError as error:
                     raise VllmProfileCorrupt(
                         "vLLM profile storage is unavailable"
                     ) from error
 
-            yield verify_held_lock
+            yield effective_uid, verify_held_lock
         finally:
             if locked:
                 portalocker.unlock(stream)
@@ -639,9 +666,10 @@ class VllmProfileRepository:
         if type(profile) is not VllmLaunchProfileV1:
             raise VllmProfileValidationError("profile must be an exact V1 profile")
         expected = self._expected_revision(expected_revision)
-        with _REPOSITORY_LOCK, self._exclusive_transaction() as verify_held_lock:
+        with _REPOSITORY_LOCK, self._exclusive_transaction() as transaction:
+            effective_uid, verify_held_lock = transaction
             verify_held_lock()
-            current, existed = self._load_locked_with_presence()
+            current, existed = self._load_locked_with_presence(effective_uid)
             if current.revision != expected:
                 raise VllmProfileConflict("profile revision changed")
             positions = {
@@ -671,9 +699,10 @@ class VllmProfileRepository:
         """Persist selection without changing launch or process state."""
 
         expected = self._expected_revision(expected_revision)
-        with _REPOSITORY_LOCK, self._exclusive_transaction() as verify_held_lock:
+        with _REPOSITORY_LOCK, self._exclusive_transaction() as transaction:
+            effective_uid, verify_held_lock = transaction
             verify_held_lock()
-            current = self._load_locked()
+            current = self._load_locked(effective_uid)
             if current.revision != expected:
                 raise VllmProfileConflict("profile revision changed")
             profile = next(
@@ -700,9 +729,10 @@ class VllmProfileRepository:
         """Rename one profile under the canonical uniqueness boundary."""
 
         expected = self._expected_revision(expected_revision)
-        with _REPOSITORY_LOCK, self._exclusive_transaction() as verify_held_lock:
+        with _REPOSITORY_LOCK, self._exclusive_transaction() as transaction:
+            effective_uid, verify_held_lock = transaction
             verify_held_lock()
-            current = self._load_locked()
+            current = self._load_locked(effective_uid)
             if current.revision != expected:
                 raise VllmProfileConflict("profile revision changed")
             mutable = list(current.profiles)
@@ -725,9 +755,10 @@ class VllmProfileRepository:
         """Duplicate one profile using the first deterministic free copy suffix."""
 
         expected = self._expected_revision(expected_revision)
-        with _REPOSITORY_LOCK, self._exclusive_transaction() as verify_held_lock:
+        with _REPOSITORY_LOCK, self._exclusive_transaction() as transaction:
+            effective_uid, verify_held_lock = transaction
             verify_held_lock()
-            current = self._load_locked()
+            current = self._load_locked(effective_uid)
             if current.revision != expected:
                 raise VllmProfileConflict("profile revision changed")
             if len(current.profiles) >= MAX_VLLM_PROFILES:
@@ -767,9 +798,10 @@ class VllmProfileRepository:
         """Delete one profile, recreating Default vLLM when it was the last."""
 
         expected = self._expected_revision(expected_revision)
-        with _REPOSITORY_LOCK, self._exclusive_transaction() as verify_held_lock:
+        with _REPOSITORY_LOCK, self._exclusive_transaction() as transaction:
+            effective_uid, verify_held_lock = transaction
             verify_held_lock()
-            current = self._load_locked()
+            current = self._load_locked(effective_uid)
             if current.revision != expected:
                 raise VllmProfileConflict("profile revision changed")
             profiles = tuple(

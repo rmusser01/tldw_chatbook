@@ -580,6 +580,75 @@ def test_unavailable_ownership_api_fails_closed_without_mutating_document(
     assert path.stat().st_mode & 0o777 == original_mode
 
 
+@pytest.mark.parametrize("data_directory_exists", [False, True])
+@pytest.mark.parametrize(
+    "capability",
+    ["missing", "non_callable", "raises", "invalid_result"],
+)
+def test_fresh_save_ownership_failure_precedes_all_filesystem_mutation(
+    monkeypatch,
+    tmp_path: Path,
+    data_directory_exists: bool,
+    capability: str,
+):
+    data_dir = tmp_path / "device-data"
+    path = data_dir / "profiles.json"
+    lock_path = data_dir / "profiles.json.lock"
+    sentinel = data_dir / "sentinel"
+    sentinel_bytes = b"DATA_DIRECTORY_SENTINEL"
+    original_directory_stat = None
+    if data_directory_exists:
+        data_dir.mkdir()
+        sentinel.write_bytes(sentinel_bytes)
+        sentinel.chmod(0o600)
+        original_directory_stat = data_dir.stat()
+
+    if capability == "missing":
+        monkeypatch.delattr(profile_storage.os, "geteuid")
+    elif capability == "non_callable":
+        monkeypatch.setattr(profile_storage.os, "geteuid", None)
+    elif capability == "raises":
+
+        def fail_ownership_probe() -> int:
+            raise RuntimeError("OWNERSHIP_SECRET_CANARY")
+
+        monkeypatch.setattr(
+            profile_storage.os,
+            "geteuid",
+            fail_ownership_probe,
+        )
+    else:
+        monkeypatch.setattr(
+            profile_storage.os,
+            "geteuid",
+            lambda: "OWNERSHIP_SECRET_CANARY",
+        )
+
+    with pytest.raises(VllmProfileCorrupt) as caught:
+        VllmProfileRepository(path).save(
+            profile_named("PROFILE_SECRET_CANARY"),
+            expected_revision=0,
+        )
+
+    assert type(caught.value) is VllmProfileCorrupt
+    assert "SECRET_CANARY" not in str(caught.value)
+    assert not path.exists()
+    assert not lock_path.exists()
+    if data_directory_exists:
+        assert sorted(candidate.name for candidate in data_dir.iterdir()) == [
+            "sentinel"
+        ]
+        assert sentinel.read_bytes() == sentinel_bytes
+        assert sentinel.stat().st_mode & 0o777 == 0o600
+        current_directory_stat = data_dir.stat()
+        assert current_directory_stat.st_ino == original_directory_stat.st_ino
+        assert current_directory_stat.st_mode == original_directory_stat.st_mode
+        assert current_directory_stat.st_mtime_ns == original_directory_stat.st_mtime_ns
+    else:
+        assert not data_dir.exists()
+    assert caught.value.__cause__ is None
+
+
 def test_lock_path_replacement_after_acquisition_fails_before_cas_write(
     monkeypatch,
     tmp_path: Path,
