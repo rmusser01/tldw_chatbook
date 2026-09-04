@@ -110,6 +110,40 @@ contains private text; its expanded notice is
 `Proprietary thinking obfuscated - not available`. This distinction describes
 observable provider events and does not promise hidden chain-of-thought.
 
+### Task panel — the agent's task list stays in view
+
+When the agent keeps a task list (the `todo_create` / `todo_update` tools),
+a **Tasks** panel sits pinned above the transcript for as long as the list
+has entries:
+
+```
+▾ Tasks · 3 of 7 done · Writing the migration
+[x] Read the schema
+[x] Draft the migration plan
+[x] Add the version bump
+[~] Writing the migration
+[ ] Run the DB tests
+[ ] Update the docs
+[ ] Open the PR
+```
+
+- The header always shows how many tasks are done and what the agent is
+  working on right now. `[~]` marks the in-progress task, `[x]` a finished
+  one, `[ ]` one still waiting.
+- The panel updates the instant the agent changes the list. The transcript
+  still gets its `☰ Tasks` marker on every change, so the history stays
+  intact; the panel is the copy that does not scroll away.
+- Click the header to collapse the panel to its one-line summary, and click
+  again to expand it. Each tab remembers its own collapsed state.
+- Long lists scroll inside the panel rather than pushing the transcript
+  down.
+- The list belongs to the tab: switching tabs switches the panel, and a tab
+  with no tasks shows no panel at all. Like the rest of a run, the list
+  lives only while Console stays open.
+
+The panel is read-only — it shows the agent's plan; it is not a place to
+edit it.
+
 ### Approvals — tools ask before they run
 
 Nothing is ever auto-approved, and built-in tools always ask first. When the

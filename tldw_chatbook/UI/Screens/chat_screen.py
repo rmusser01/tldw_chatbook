@@ -8415,6 +8415,8 @@ class ChatScreen(BaseAppScreen):
             "set_pending_skill_script": getattr(
                 skill, "_set_console_pending_skill_script", None
             ),
+            # PRD Feature B: the pinned task panel above the transcript.
+            "set_task_panel": self._set_console_task_panel,
             # PR3a-2 Task 5, user-wins-ties.
             "wake_user_priority_probe": self._fleet._console_wake_user_priority,
             # task-15971: the delivery COMMIT's visibility probe -- a wake
@@ -20710,6 +20712,57 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return
         card.set_summary(round_id, text)
+
+    def _set_console_task_panel(
+        self, session_id: str | None, tasks: list[dict[str, object]]
+    ) -> None:
+        """PRD Feature B: mirror ``session_id``'s task list into the pinned panel.
+
+        UI-thread target of the controller's ``set_task_panel`` hook. Ignores
+        snapshots for any session other than the viewed one -- a background
+        session's ``todo_*`` calls must not repaint the panel the user is
+        looking at; ``switch_session`` re-derives it on arrival (AC-B5).
+
+        The panel is NOT part of the session surface's ``compose``: the
+        Console surface composes during boot, and ADR-097's module census
+        ratchet counts every module resident at UI-ready. The first
+        non-empty snapshot mounts it after the task cards, so nothing about
+        the panel loads until an agent actually keeps a list.
+
+        Args:
+            session_id: The session the snapshot belongs to.
+            tasks: That session's full task list; empty hides the panel.
+        """
+        controller = self._console_chat_controller
+        if controller is None or controller.store.active_session_id != session_id:
+            return
+        try:
+            panel = self.query_one("#console-task-panel")
+        except QueryError:
+            if not tasks:
+                return
+            panel = self._mount_console_task_panel()
+            if panel is None:
+                return
+        panel.set_tasks(session_id, tasks)
+
+    def _mount_console_task_panel(self):
+        """Mount the task panel right after the Console task cards.
+
+        Returns:
+            The new ``ConsoleTaskPanel``, or None when the Console surface is
+            not composed (no ``#console-task-surface`` to anchor to).
+        """
+        # Local import by design -- see `_set_console_task_panel`.
+        from ...Widgets.Console.console_task_panel import ConsoleTaskPanel
+
+        try:
+            cards = self.query_one("#console-task-surface", ChatTaskCards)
+        except QueryError:
+            return None
+        panel = ConsoleTaskPanel(id="console-task-panel")
+        cards.parent.mount(panel, after=cards)
+        return panel
 
     def _park_console_approval(self, session_id: str) -> None:
         """PA-T9 (parked background approvals): badge a NON-viewed session's

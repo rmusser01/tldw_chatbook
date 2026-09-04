@@ -3608,6 +3608,9 @@ class ConsoleChatController:
         #: request_skill_script_confirm. Mirrors set_pending_skill_install,
         #: but the round-trip decision carries a "remember" flag too.
         self.set_pending_skill_script: Callable[[dict | None], None] | None = None
+        #: PRD Feature B: UI-thread sink for the pinned task panel --
+        #: ``(session_id, tasks)``. Bound by `attach_view`; None = no view.
+        self.set_task_panel: Callable[[str | None, list[dict[str, object]]], None] | None = None
         #: Optional test override for the confirm timeout, mirroring
         #: `skill_install_confirm_timeout_seconds`.
         self.skill_script_confirm_timeout_seconds: Callable[[], float] | None = None
@@ -10180,6 +10183,7 @@ class ConsoleChatController:
         self._remount_parked_skill_install(session.id)
         self._remount_parked_skill_script(session.id)
         self._remount_parked_worktree_merge(session.id)
+        self._remount_task_panel(session.id)
         return session
 
     def _ensure_default_session(self) -> ConsoleChatSession:
@@ -10565,6 +10569,7 @@ class ConsoleChatController:
         self._remount_parked_skill_install(session_id)
         self._remount_parked_skill_script(session_id)
         self._remount_parked_worktree_merge(session_id)
+        self._remount_task_panel(session_id)
         return session
 
     def close_session(self, session_id: str) -> ConsoleChatSession | None:
@@ -10739,6 +10744,11 @@ class ConsoleChatController:
             self._remount_parked_skill_install(new_active_id)
             self._remount_parked_skill_script(new_active_id)
             self._remount_parked_worktree_merge(new_active_id)
+        # Unconditional: closing the LAST session leaves no neighbour to
+        # activate (`new_active_id` is None) and the screen's follow-up sync
+        # creates the blank replacement straight through the store, so this
+        # is the only place the departed session's tasks get cleared.
+        self._remount_task_panel(new_active_id)
         return closed
 
     def original_attempt_for_message(self, message_id: str) -> str | None:
@@ -12746,6 +12756,7 @@ class ConsoleChatController:
 
         def _on_todo_change(tasks: list[dict[str, object]]) -> None:
             bridge.append_todo_marker(session_id, tasks)
+            self._marshal_task_panel(session_id, tasks)
 
         return {
             "todo_store": session.todo_store,
@@ -13722,6 +13733,41 @@ class ConsoleChatController:
         """
         if self.app is not None and self.set_pending_skill_script is not None:
             self.app.call_from_thread(self.set_pending_skill_script, payload)
+
+    def _marshal_task_panel(
+        self, session_id: str, tasks: list[dict[str, object]]
+    ) -> None:
+        """WORKER THREAD: hand a session's task snapshot to the pinned panel.
+
+        PRD Feature B (AC-B4): fires on every ``todo_*`` change alongside
+        the transcript marker. The screen-side setter ignores snapshots
+        for sessions that are not the viewed one.
+
+        Args:
+            session_id: The session whose todo store changed.
+            tasks: Its full task list after the change.
+        """
+        if self.app is not None and self.set_task_panel is not None:
+            self.app.call_from_thread(self.set_task_panel, session_id, tasks)
+
+    def _remount_task_panel(self, session_id: str | None) -> None:
+        """UI THREAD: re-derive the pinned task panel for ``session_id``.
+
+        Called from `switch_session`/`new_session`/`close_session` next to
+        the card re-derives, and from `ConsoleRuntime.attach_view` when a
+        new screen claims the surviving runtime, so the panel always shows
+        the VIEWED session's tasks (AC-B5) and hides when that session has
+        none -- or when there is no session at all.
+
+        Args:
+            session_id: The session now being activated/viewed, or None
+                when none is (the last session was just closed).
+        """
+        if self.set_task_panel is None:
+            return
+        session = next((s for s in self.store.sessions() if s.id == session_id), None)
+        tasks = session.todo_store.list_after(None) if session is not None else []
+        self.set_task_panel(session_id, tasks)
 
     def resolve_pending_skill_script(
         self, allow: bool, remember: bool, request_id: str | None = None
