@@ -61,6 +61,7 @@ class VllmSetupView(VerticalScroll):
         self._state = VllmReadinessState.NOT_CONFIGURED
         self._preflight: VllmPreflightResult | None = None
         self._connection: VllmConnectionSnapshot | None = None
+        self._runtime_active = False
         self._rendering = False
 
     def compose(self) -> ComposeResult:
@@ -140,11 +141,14 @@ class VllmSetupView(VerticalScroll):
         state: VllmReadinessState,
         preflight: VllmPreflightResult | None,
         connection: VllmConnectionSnapshot | None = None,
+        runtime_active: bool | None = None,
     ) -> None:
         self._draft = draft
         self._state = state
         self._preflight = preflight
         self._connection = connection
+        if runtime_active is not None:
+            self._runtime_active = runtime_active
         if self.is_mounted:
             self._render_projection()
 
@@ -174,11 +178,29 @@ class VllmSetupView(VerticalScroll):
         if owner is not None and callable(getattr(owner, "snapshot", None)):
             connection = owner.snapshot()
             state = connection.state
+            try:
+                from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
+                    process_is_running,
+                    server_lifecycle_snapshot,
+                )
+
+                claim, process = server_lifecycle_snapshot(self.app, "vllm")
+                active = bool(
+                    active
+                    and owner.owns_launch_claim(claim)
+                    and (
+                        process_is_running(process)
+                        or (process is None and not claim.cancel_event.is_set())
+                    )
+                )
+            except (AttributeError, RuntimeError, ValueError):
+                active = False
         self.apply_state(
             draft=self._draft,
             state=state,
             preflight=self._preflight,
             connection=connection,
+            runtime_active=active,
         )
 
     def on_mount(self) -> None:
@@ -240,12 +262,7 @@ class VllmSetupView(VerticalScroll):
             stop = self.query_one("#vllm-stop-button", Button)
             retry = self.query_one("#vllm-retry-button", Button)
             start.disabled = not (local and is_current_success)
-            stop.disabled = not local or self._state not in {
-                VllmReadinessState.LAUNCHING,
-                VllmReadinessState.LOADING_MODEL,
-                VllmReadinessState.READY,
-                VllmReadinessState.NEEDS_ATTENTION,
-            }
+            stop.disabled = not self._runtime_active
             retry.disabled = self._state is not VllmReadinessState.NEEDS_ATTENTION
             self._render_readiness()
             blocker = self.query_one("#vllm-start-blocker", Label)
@@ -306,6 +323,7 @@ class VllmSetupView(VerticalScroll):
             "model_missing": "Expected chat model is unavailable",
             "process_alive": "Server process is running",
             "process_exited": "Server process exited",
+            "preflight_failed": "Setup check needs attention",
             "ready": "API and model are ready",
             "recomposed": "View changed; readiness reset",
             "screen_detached": "Models screen closed; check cancelled",

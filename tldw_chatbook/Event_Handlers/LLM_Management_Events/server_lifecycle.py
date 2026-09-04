@@ -389,10 +389,14 @@ async def stop_server_process(
     app: Any,
     provider: str,
     label: str,
+    *,
+    expected_claim: ServerLaunchClaim | None = None,
 ) -> bool:
     """Cancel or stop one provider without blocking Textual's event loop."""
 
     claim, process = server_lifecycle_snapshot(app, provider)
+    if expected_claim is not None and claim is not expected_claim:
+        return False
     if claim is not None:
         claim.cancel_event.set()
     if process is None:

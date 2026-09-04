@@ -24,6 +24,9 @@ from tldw_chatbook.UI.LLM_Management.vllm_setup import (
     VllmModelSource,
     VllmReadinessState,
 )
+from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
+    ServerLaunchClaim,
+)
 
 
 pytestmark = pytest.mark.loopback_network
@@ -170,6 +173,137 @@ def test_older_generation_cannot_replace_newer_owner_state():
 
     assert owner.settle(old, ready_result(old)) is False
     assert owner.snapshot().generation == current.generation
+    assert owner.snapshot().target is None
+
+
+def test_live_claim_retry_keeps_exact_launch_after_non_network_draft_edit():
+    """Catch a Retry binding an old process to the newly edited draft."""
+
+    owner = VllmConnectionOwner()
+    launched_draft = local_draft(port=8000)
+    edited_draft = replace(launched_draft, port=8001)
+    launched = owner.begin(launched_draft, runtime_owner="chatbook")
+    claim = ServerLaunchClaim(provider="vllm", authority="chatbook-vllm")
+    assert owner.bind_launch_claim(launched, claim)
+
+    owner.invalidate("target_changed")
+    retry = owner.begin_claim_retry(claim)
+
+    assert retry is not None
+    assert retry.fingerprint == launched.fingerprint
+    assert retry.fingerprint != owner.begin(
+        edited_draft, runtime_owner="chatbook"
+    ).fingerprint
+
+    # Restore the exact live-claim retry after the comparison generation.
+    retry = owner.begin_claim_retry(claim)
+    assert retry is not None
+    snapshot = owner.snapshot()
+    assert snapshot.launch_snapshot is not None
+    assert snapshot.launch_snapshot.client_api_url == "http://127.0.0.1:8000/v1"
+    assert owner.settle(retry, ready_result(retry))
+    assert owner.snapshot().target is not None
+    assert owner.snapshot().target.api_url == (
+        "http://127.0.0.1:8000/v1/chat/completions"
+    )
+
+
+def test_cancelled_live_claim_cannot_begin_retry_generation():
+    owner = VllmConnectionOwner()
+    token = owner.begin(local_draft(), runtime_owner="chatbook")
+    claim = ServerLaunchClaim(provider="vllm", authority="chatbook-vllm")
+    assert owner.bind_launch_claim(token, claim)
+    claim.cancel_event.set()
+
+    assert owner.begin_claim_retry(claim) is None
+
+
+def test_ready_result_requires_a_target():
+    token = VllmConnectionOwner().begin(local_draft(), runtime_owner="chatbook")
+
+    with pytest.raises(ValueError, match="ready result"):
+        VllmProbeResult(
+            token=token,
+            state=VllmReadinessState.READY,
+            target=None,
+            issue=None,
+        )
+
+
+def test_chatbook_owned_ready_result_requires_exact_served_alias():
+    token = VllmConnectionOwner().begin(local_draft(), runtime_owner="chatbook")
+
+    with pytest.raises(ValueError, match="target"):
+        VllmProbeResult(
+            token=token,
+            state=VllmReadinessState.READY,
+            target=VllmConnectionTarget(
+                provider_key="vllm",
+                api_url="http://127.0.0.1:8000/v1/chat/completions",
+                model_id="other-model",
+                runtime_owner="chatbook",
+                generation=token.generation,
+                credential_source="none",
+            ),
+            issue=None,
+        )
+
+
+@pytest.mark.parametrize(
+    "unsafe_url",
+    [
+        "http://user:CREDENTIAL_CANARY@127.0.0.1:8000/v1/chat/completions",
+        "http://127.0.0.1:8000/v1/chat/completions?api_key=CREDENTIAL_CANARY",
+        "http://127.0.0.1:8000/v1",
+    ],
+)
+def test_ready_result_requires_canonical_credential_free_target(unsafe_url):
+    token = VllmConnectionOwner().begin(local_draft(), runtime_owner="chatbook")
+
+    with pytest.raises(ValueError, match="target"):
+        VllmProbeResult(
+            token=token,
+            state=VllmReadinessState.READY,
+            target=VllmConnectionTarget(
+                provider_key="vllm",
+                api_url=unsafe_url,
+                model_id="chatbook-vllm",
+                runtime_owner="chatbook",
+                generation=token.generation,
+                credential_source="none",
+            ),
+            issue=None,
+        )
+
+
+def test_owner_settlement_revalidates_a_mutated_result_fail_closed():
+    owner = VllmConnectionOwner()
+    token = owner.begin(local_draft(), runtime_owner="chatbook")
+    result = ready_result(token)
+    assert result.target is not None
+    object.__setattr__(
+        result,
+        "target",
+        replace(
+            result.target,
+            api_url=(
+                "http://user:CREDENTIAL_CANARY@127.0.0.1:8000/"
+                "v1/chat/completions"
+            ),
+        ),
+    )
+
+    assert owner.settle(token, result) is False
+    assert owner.snapshot().target is None
+
+
+def test_owner_settlement_rejects_wrong_target_type_without_raising():
+    owner = VllmConnectionOwner()
+    token = owner.begin(local_draft(), runtime_owner="chatbook")
+    result = ready_result(token)
+    object.__setattr__(result, "target", object())
+
+    assert owner.settle(token, result) is False
     assert owner.snapshot().target is None
 
 

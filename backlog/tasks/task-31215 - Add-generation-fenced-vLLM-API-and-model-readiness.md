@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-03 22:32'
-updated_date: '2026-09-04 01:38'
+updated_date: '2026-09-04 02:08'
 labels:
   - vllm
   - lab
@@ -48,4 +48,6 @@ Reason: ADR-115 already fixes the connection owner, generation fencing, privacy 
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented an app-scoped immutable vLLM connection owner with exact generation/fingerprint/runtime fencing, bounded allowlisted Activity, credential-aware bounded health and model-list probes, exact local alias verification, admissible existing-server model IDs, and sanitized failure categories. Moved Check/Start/Retry/Stop orchestration to LLMScreen while retaining shared server-lifecycle claims and reducing the legacy event module to picker/compatibility glue. Added readiness/Activity UI projection plus source-side suppression for programmatic Textual field updates, and covered draft edits, raw arguments, cancellation, process death, screen detach, recomposition, response bounds, privacy canaries, and stale settlement. Focused evidence: readiness/UI 33 passed; prescribed filtered readiness 7 passed/26 deselected; incumbent lifecycle 31 passed; incumbent vLLM setup/action 34 passed/17 deselected; Ruff and focused mypy passed; git diff --check passed. ADR required: no. ADR path: backlog/decisions/115-vllm-lab-console-readiness-and-profiles.md. ADR-115 already fixes ownership, fencing, privacy, lifecycle, and rollback.
+
+Fix Round 1 binds the immutable launch snapshot to the exact shared lifecycle claim, retries live processes only from that binding, rejects cancelled claims, and restores exact runtime ownership across draft invalidation and screen replacement. READY results now require a canonical credential-free target, exact `chatbook-vllm` identity for owned launches, and fail-closed owner revalidation. Stop-before-publication settles as cancellation, preflight failures settle into the authoritative owner, and Stop enablement is derived independently from exact live process ownership. Final focused evidence: readiness/workflow 45 passed; lifecycle/status 31 passed; Task 1 setup compatibility 34 passed; deferred-view compatibility 2 passed/7 deselected; Ruff, focused mypy, and `git diff --check` passed.
 <!-- SECTION:NOTES:END -->

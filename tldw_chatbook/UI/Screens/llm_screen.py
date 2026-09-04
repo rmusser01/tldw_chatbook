@@ -96,8 +96,9 @@ from ..LLM_Management.vllm_setup import (
 from ..LLM_Management.vllm_setup_view import VllmSetupView
 from ...Event_Handlers.LLM_Management_Events.server_lifecycle import (
     ServerLaunchClaim,
-    claim_is_current,
+    current_server_claim,
     process_is_running,
+    release_server_claim,
     reserve_server_launch,
     run_server_subprocess,
     server_lifecycle_snapshot,
@@ -266,7 +267,22 @@ class LLMScreen(LabScreen):
         self._vllm_preflight_worker: Worker | None = None
         self._vllm_probe_worker: Worker | None = None
         self._vllm_server_worker: Worker | None = None
-        self._vllm_claim: ServerLaunchClaim | None = None
+        current_vllm_claim, current_vllm_process = server_lifecycle_snapshot(
+            app_instance, "vllm"
+        )
+        self._vllm_claim: ServerLaunchClaim | None = (
+            current_vllm_claim
+            if current_vllm_claim is not None
+            and self._vllm_owner.owns_launch_claim(current_vllm_claim)
+            and (
+                process_is_running(current_vllm_process)
+                or (
+                    current_vllm_process is None
+                    and not current_vllm_claim.cancel_event.is_set()
+                )
+            )
+            else None
+        )
         self._vllm_body_mounts = 0
         self._vllm_probe_window_seconds = 30.0
         self._model_install_active = False
@@ -2480,6 +2496,17 @@ class LLMScreen(LabScreen):
         if view is None:
             return
         snapshot = self._vllm_owner.snapshot()
+        claim, process = server_lifecycle_snapshot(self.app_instance, "vllm")
+        runtime_active = bool(
+            claim is not None
+            and self._vllm_owner.owns_launch_claim(claim)
+            and (
+                process_is_running(process)
+                or (process is None and not claim.cancel_event.is_set())
+            )
+        )
+        if runtime_active:
+            self._vllm_claim = claim
         state = snapshot.state
         preflight = self._vllm_preflight
         if (
@@ -2495,6 +2522,7 @@ class LLMScreen(LabScreen):
             state=state,
             preflight=preflight,
             connection=snapshot,
+            runtime_active=runtime_active,
         )
         if not focus:
             return
@@ -2548,6 +2576,17 @@ class LLMScreen(LabScreen):
             return
         self._vllm_preflight = result
         if result.fingerprint != token.fingerprint or result.issues:
+            issue = (
+                VllmIssue(result.issues[0].code, result.issues[0].field)
+                if result.issues
+                else VllmIssue("launch_failed", "preflight")
+            )
+            self._settle_vllm_state(
+                token,
+                VllmReadinessState.NEEDS_ATTENTION,
+                activity_code="preflight_failed",
+                issue=issue,
+            )
             self._apply_vllm_view_state(focus=True)
             return
         if draft.mode is VllmMode.LOCAL:
@@ -2596,6 +2635,16 @@ class LLMScreen(LabScreen):
             )
             self._apply_vllm_view_state(focus=True)
             return
+        if not self._vllm_owner.bind_launch_claim(token, claim):
+            release_server_claim(self.app_instance, "vllm", claim)
+            self._settle_vllm_state(
+                token,
+                VllmReadinessState.NEEDS_ATTENTION,
+                activity_code="launch_failed",
+                issue=VllmIssue("launch_failed", "process"),
+            )
+            self._apply_vllm_view_state(focus=True)
+            return
         self._vllm_claim = claim
         self._settle_vllm_state(
             token,
@@ -2636,10 +2685,19 @@ class LLMScreen(LabScreen):
     def _settle_vllm_process_exit(
         self, token: VllmOperationToken, claim: ServerLaunchClaim
     ) -> None:
-        if (
-            claim.cancel_event.is_set()
-            or self._vllm_owner.snapshot().current_token != token
-        ):
+        if self._vllm_owner.snapshot().current_token != token:
+            self._vllm_owner.release_launch_claim(claim)
+            self._apply_vllm_view_state(focus=False)
+            return
+        if claim.cancel_event.is_set():
+            self._settle_vllm_state(
+                token,
+                VllmReadinessState.NEEDS_ATTENTION,
+                activity_code="cancelled",
+                issue=VllmIssue("cancelled", "process"),
+            )
+            self._vllm_owner.release_launch_claim(claim)
+            self._apply_vllm_view_state(focus=True)
             return
         self._settle_vllm_state(
             token,
@@ -2647,6 +2705,7 @@ class LLMScreen(LabScreen):
             activity_code="process_exited",
             issue=VllmIssue("process_exited", "process"),
         )
+        self._vllm_owner.release_launch_claim(claim)
         self._apply_vllm_view_state(focus=True)
 
     def _start_vllm_probe(
@@ -2686,7 +2745,16 @@ class LLMScreen(LabScreen):
                 current_claim, process = server_lifecycle_snapshot(
                     self.app_instance, "vllm"
                 )
-                if current_claim is not claim or claim.cancel_event.is_set():
+                if claim.cancel_event.is_set():
+                    self._settle_vllm_state(
+                        token,
+                        VllmReadinessState.NEEDS_ATTENTION,
+                        activity_code="cancelled",
+                        issue=VllmIssue("cancelled", "process"),
+                    )
+                    self._apply_vllm_view_state(focus=True)
+                    return
+                if current_claim is not claim:
                     return
                 if process is None:
                     await asyncio.sleep(0.05)
@@ -2708,10 +2776,23 @@ class LLMScreen(LabScreen):
                     activity_code="process_alive",
                 )
                 self._apply_vllm_view_state(focus=False)
-            snapshot = self._vllm_owner.snapshot()
+            launch_snapshot = (
+                self._vllm_owner.bound_launch_snapshot(claim)
+                if claim is not None
+                else None
+            )
+            if claim is not None and launch_snapshot is None:
+                self._settle_vllm_state(
+                    token,
+                    VllmReadinessState.NEEDS_ATTENTION,
+                    activity_code="claim_unavailable",
+                    issue=VllmIssue("claim_unavailable", "process"),
+                )
+                self._apply_vllm_view_state(focus=True)
+                return
             api_url = (
-                snapshot.launch_snapshot.client_api_url
-                if claim is not None and snapshot.launch_snapshot is not None
+                launch_snapshot.client_api_url
+                if launch_snapshot is not None
                 else draft.existing_server_url
             )
             result = await probe_vllm_target(
@@ -2788,19 +2869,44 @@ class LLMScreen(LabScreen):
 
         event.stop()
         self._cancel_vllm_workers()
-        runtime_owner = (
-            "chatbook" if self._vllm_draft.mode is VllmMode.LOCAL else "external"
-        )
-        token = self._vllm_owner.begin(self._vllm_draft, runtime_owner=runtime_owner)
-        claim = self._vllm_claim if runtime_owner == "chatbook" else None
-        if claim is not None and claim_is_current(self.app_instance, "vllm", claim):
+        current_claim = current_server_claim(self.app_instance, "vllm")
+        if (
+            current_claim is not None
+            and self._vllm_owner.owns_launch_claim(current_claim)
+            and current_claim.cancel_event.is_set()
+        ):
+            token = self._vllm_owner.snapshot().current_token
+            if token is not None:
+                self._settle_vllm_state(
+                    token,
+                    VllmReadinessState.NEEDS_ATTENTION,
+                    activity_code="cancelled",
+                    issue=VllmIssue("cancelled", "process"),
+                )
+            self._apply_vllm_view_state(focus=True)
+            return
+        if (
+            current_claim is not None
+            and self._vllm_owner.owns_launch_claim(current_claim)
+        ):
+            token = self._vllm_owner.begin_claim_retry(current_claim)
+            if token is None:
+                self._apply_vllm_view_state(focus=True)
+                return
+            self._vllm_claim = current_claim
             self._settle_vllm_state(
                 token,
                 VllmReadinessState.LOADING_MODEL,
                 activity_code="loading_model",
             )
-            self._start_vllm_probe(token, self._vllm_draft, claim=claim)
-        elif runtime_owner == "chatbook":
+            self._start_vllm_probe(token, self._vllm_draft, claim=current_claim)
+            self._apply_vllm_view_state(focus=True)
+            return
+        runtime_owner = (
+            "chatbook" if self._vllm_draft.mode is VllmMode.LOCAL else "external"
+        )
+        token = self._vllm_owner.begin(self._vllm_draft, runtime_owner=runtime_owner)
+        if runtime_owner == "chatbook":
             self._vllm_preflight = None
             self._vllm_preflight_worker = self.run_worker(
                 self._run_vllm_preflight_generation(token, self._vllm_draft),
@@ -2818,6 +2924,14 @@ class LLMScreen(LabScreen):
         """Stop only the exact app-owned vLLM claim."""
 
         event.stop()
+        claim, process = server_lifecycle_snapshot(self.app_instance, "vllm")
+        if (
+            claim is None
+            or not self._vllm_owner.owns_launch_claim(claim)
+            or (process is None and claim.cancel_event.is_set())
+        ):
+            self._apply_vllm_view_state(focus=False)
+            return
         snapshot = self._vllm_owner.snapshot()
         token = snapshot.current_token
         if token is not None:
@@ -2827,17 +2941,28 @@ class LLMScreen(LabScreen):
                 activity_code="stopping",
             )
         self._apply_vllm_view_state(focus=False)
-        stopped = await stop_server_process(self.app_instance, "vllm", "vLLM server")
+        stopped = await stop_server_process(
+            self.app_instance,
+            "vllm",
+            "vLLM server",
+            expected_claim=claim,
+        )
         if stopped:
             self._vllm_owner.invalidate("stopped")
+            self._vllm_owner.release_launch_claim(claim)
             self._vllm_claim = None
             self._vllm_preflight = None
         elif token is not None and self._vllm_owner.snapshot().current_token == token:
             self._settle_vllm_state(
                 token,
                 VllmReadinessState.NEEDS_ATTENTION,
-                activity_code="process_exited",
-                issue=VllmIssue("process_exited", "process"),
+                activity_code=(
+                    "cancelled" if claim.cancel_event.is_set() else "process_exited"
+                ),
+                issue=VllmIssue(
+                    "cancelled" if claim.cancel_event.is_set() else "process_exited",
+                    "process",
+                ),
             )
         self._apply_vllm_view_state(focus=not stopped)
 

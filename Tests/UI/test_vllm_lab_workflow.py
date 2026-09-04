@@ -17,10 +17,17 @@ from tldw_chatbook.UI.LLM_Management.vllm_setup import (
     VllmLaunchDraft,
     VllmMode,
     VllmModelSource,
+    VllmPreflightResult,
     VllmReadinessState,
 )
 from tldw_chatbook.UI.LLM_Management.vllm_setup_view import VllmSetupView
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
+from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
+    clear_server_process,
+    publish_server_process,
+    release_server_claim,
+    reserve_server_launch,
+)
 from Tests.UI.app_factory import _build_test_app
 
 
@@ -40,6 +47,26 @@ def _no_splash(monkeypatch):
 class _VllmHost(App[None]):
     def compose(self) -> ComposeResult:
         yield VllmSetupView(id="vllm-setup")
+
+
+class _RunningProcess:
+    pid = 12345
+
+    def __init__(self) -> None:
+        self.running = True
+
+    def poll(self):
+        return None if self.running else 0
+
+    def terminate(self) -> None:
+        self.running = False
+
+    def wait(self, timeout=None) -> int:
+        self.running = False
+        return 0
+
+    def kill(self) -> None:
+        self.running = False
 
 
 async def test_initial_vllm_setup_is_guided_and_blocks_start():
@@ -101,14 +128,14 @@ async def test_preflight_blocker_is_adjacent_and_start_enables_only_for_current_
         )
 
 
-async def test_lifecycle_projection_survives_remount_and_process_exit():
+async def test_lifecycle_projection_enables_stop_only_while_runtime_is_active():
     app = _VllmHost()
     async with app.run_test(size=(120, 40)):
         view = app.query_one(VllmSetupView)
         view.project_lifecycle(active=True)
         assert not app.query_one("#vllm-stop-button", Button).disabled
         view.project_lifecycle(active=False, status="process exited")
-        assert app.query_one("#vllm-stop-button", Button).disabled is False
+        assert app.query_one("#vllm-stop-button", Button).disabled
 
 
 def _ready_result(token) -> VllmProbeResult:
@@ -254,3 +281,153 @@ async def test_mounted_recomposition_and_detach_invalidate_readiness_generation(
         assert detached.generation == token.generation + 1
         assert detached.target is None
         assert detached.activity[-1].code == "screen_detached"
+
+
+async def test_stop_before_process_publication_settles_cancel_and_retry_refuses_claim():
+    """Catch a cancelled reservation leaving Retry indefinitely loading."""
+
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, _ = await _mount_vllm_screen(app, pilot)
+        draft = VllmLaunchDraft(
+            mode=VllmMode.LOCAL,
+            python_environment="python",
+            model_source=VllmModelSource.HUGGING_FACE,
+            model_value="org/model",
+        )
+        token = screen._vllm_owner.begin(draft, runtime_owner="chatbook")
+        claim = reserve_server_launch(app, "vllm", authority="chatbook-vllm")
+        assert claim is not None
+        assert screen._vllm_owner.bind_launch_claim(token, claim)
+        screen._vllm_claim = claim
+        screen._vllm_draft = draft
+        screen._settle_vllm_state(
+            token,
+            VllmReadinessState.LAUNCHING,
+            activity_code="launch_reserved",
+        )
+        screen._apply_vllm_view_state()
+
+        await screen._on_vllm_stop_requested(VllmSetupView.StopRequested())
+        stopped = screen._vllm_owner.snapshot()
+        assert stopped.state is VllmReadinessState.NEEDS_ATTENTION
+        assert stopped.issue == VllmIssue("cancelled", "process")
+
+        screen._on_vllm_retry_requested(VllmSetupView.RetryRequested())
+        await pilot.pause()
+        retried = screen._vllm_owner.snapshot()
+        assert retried.state is VllmReadinessState.NEEDS_ATTENTION
+        assert retried.issue == VllmIssue("cancelled", "process")
+        assert screen._vllm_probe_worker is None
+        assert release_server_claim(app, "vllm", claim)
+
+
+async def test_live_owned_claim_keeps_stop_enabled_across_edit_and_screen_replacement():
+    """Catch editable connection state hiding an app-owned live process."""
+
+    app = _build_test_app()
+    process = _RunningProcess()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+        draft = VllmLaunchDraft(
+            mode=VllmMode.LOCAL,
+            python_environment="python",
+            model_source=VllmModelSource.HUGGING_FACE,
+            model_value="org/model",
+        )
+        token = screen._vllm_owner.begin(draft, runtime_owner="chatbook")
+        claim = reserve_server_launch(app, "vllm", authority="chatbook-vllm")
+        assert claim is not None
+        assert screen._vllm_owner.bind_launch_claim(token, claim)
+        assert publish_server_process(app, "vllm", claim, process)
+        screen._vllm_claim = claim
+        screen._vllm_draft = draft
+        assert screen._vllm_owner.settle(token, _ready_result(token))
+        screen._apply_vllm_view_state()
+        assert not view.query_one("#vllm-stop-button", Button).disabled
+
+        view.query_one("#vllm-hf-model", Input).value = "org/edited-model"
+        await pilot.pause()
+        assert screen._vllm_owner.snapshot().state is (
+            VllmReadinessState.NOT_CONFIGURED
+        )
+        assert not view.query_one("#vllm-stop-button", Button).disabled
+
+        await app.pop_screen()
+        await pilot.pause()
+        replacement = LLMScreen(app)
+        assert replacement._vllm_claim is claim
+        await app.push_screen(replacement)
+        for _ in range(8):
+            await pilot.pause()
+        replacement_window = replacement.query_one(LLMManagementWindow)
+        replacement_window.active_view = "vllm"
+        for _ in range(12):
+            await pilot.pause()
+            replacement_views = list(replacement.query(VllmSetupView))
+            if replacement_views:
+                break
+        else:
+            raise AssertionError("replacement vLLM setup view did not mount")
+        replacement._apply_vllm_view_state()
+        assert not replacement_views[0].query_one(
+            "#vllm-stop-button", Button
+        ).disabled
+
+        process.running = False
+        assert clear_server_process(app, "vllm", claim, process)
+
+
+async def test_preflight_issue_settles_owner_view_and_recovery(monkeypatch):
+    """Catch a preflight failure existing only in the mounted view."""
+
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+        draft = VllmLaunchDraft(
+            mode=VllmMode.LOCAL,
+            python_environment="python",
+            model_source=VllmModelSource.HUGGING_FACE,
+            model_value="org/model",
+        )
+        token = screen._vllm_owner.begin(draft, runtime_owner="chatbook")
+        failure = VllmPreflightResult(
+            generation=token.generation,
+            fingerprint=token.fingerprint,
+            issues=(VllmIssue("python_unavailable", "python_environment"),),
+        )
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Screens.llm_screen.run_vllm_preflight",
+            lambda candidate, generation: failure,
+        )
+
+        await screen._run_vllm_preflight_generation(token, draft)
+
+        snapshot = screen._vllm_owner.snapshot()
+        assert snapshot.state is VllmReadinessState.NEEDS_ATTENTION
+        assert snapshot.issue == VllmIssue(
+            "python_unavailable", "python_environment"
+        )
+        assert snapshot.activity[-1].code == "preflight_failed"
+        assert "Needs attention" in str(
+            view.query_one("#vllm-readiness-state", Label).renderable
+        )
+        assert not view.query_one("#vllm-retry-button", Button).disabled
+
+        retry = screen._vllm_owner.begin(draft, runtime_owner="chatbook")
+        success = VllmPreflightResult(
+            generation=retry.generation,
+            fingerprint=retry.fingerprint,
+            issues=(),
+        )
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Screens.llm_screen.run_vllm_preflight",
+            lambda candidate, generation: success,
+        )
+        await screen._run_vllm_preflight_generation(retry, draft)
+        recovered = screen._vllm_owner.snapshot()
+        assert recovered.state is VllmReadinessState.READY_TO_START
+        assert recovered.issue is None
+        assert "Ready to start" in str(
+            view.query_one("#vllm-readiness-state", Label).renderable
+        )

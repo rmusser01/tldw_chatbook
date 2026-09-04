@@ -55,6 +55,7 @@ _ACTIVITY_CODES = frozenset(
         "model_missing",
         "process_alive",
         "process_exited",
+        "preflight_failed",
         "ready",
         "recomposed",
         "screen_detached",
@@ -77,6 +78,21 @@ _ISSUE_CODES = frozenset(
         "launch_failed",
         "model_missing",
         "process_exited",
+        "arguments_conflict",
+        "invalid_arguments",
+        "invalid_bind_address",
+        "invalid_existing_server_url",
+        "invalid_gpu_memory_utilization",
+        "invalid_hugging_face_model",
+        "invalid_maximum_model_length",
+        "invalid_model_directory",
+        "invalid_port",
+        "invalid_tensor_parallel_size",
+        "missing_python_environment",
+        "port_unavailable",
+        "python_unavailable",
+        "vllm_cli_unavailable",
+        "vllm_import_unavailable",
     }
 )
 
@@ -206,25 +222,42 @@ class VllmProbeResult:
             raise TypeError("token must be a VllmOperationToken")
         if not isinstance(self.state, VllmReadinessState):
             raise TypeError("state must be a VllmReadinessState")
-        if self.issue is not None and (
-            self.issue.code not in _ISSUE_CODES
-            or self.issue.detail
-            or not isinstance(self.issue.field, str)
-            or len(self.issue.field) > 32
-        ):
-            raise ValueError("issue must use a bounded allowlisted classification")
+        if self.issue is not None:
+            if not isinstance(self.issue, VllmIssue):
+                raise TypeError("issue must be a VllmIssue")
+            if (
+                self.issue.code not in _ISSUE_CODES
+                or self.issue.detail
+                or not isinstance(self.issue.field, str)
+                or len(self.issue.field) > 32
+            ):
+                raise ValueError("issue must use a bounded allowlisted classification")
         if not isinstance(self.activity, tuple) or len(self.activity) > _ACTIVITY_LIMIT:
             raise ValueError("activity must be a bounded tuple")
         if any(not isinstance(event, VllmActivityEvent) for event in self.activity):
             raise TypeError("activity contains an invalid event")
+        ready = self.state is VllmReadinessState.READY
+        if ready != (self.target is not None):
+            raise ValueError("a ready result requires exactly one target")
+        if ready and self.issue is not None:
+            raise ValueError("a ready result cannot include an issue")
         if self.target is not None:
-            if self.state is not VllmReadinessState.READY:
-                raise ValueError("only ready results may publish a target")
+            if not isinstance(self.target, VllmConnectionTarget):
+                raise TypeError("target must be a VllmConnectionTarget")
+            endpoint = resolve_provider_endpoint("vllm", self.target.api_url)
             if (
                 self.target.provider_key != "vllm"
                 or self.target.generation != self.token.generation
                 or self.target.runtime_owner != self.token.runtime_owner
                 or not _is_admissible_model_id(self.target.model_id)
+                or self.target.credential_source
+                not in {"none", "configured", "environment"}
+                or endpoint.errors
+                or endpoint.persisted_endpoint != self.target.api_url
+                or (
+                    self.token.runtime_owner == "chatbook"
+                    and self.target.model_id != SERVED_MODEL_NAME
+                )
             ):
                 raise ValueError("target does not match the operation token")
 
@@ -255,6 +288,8 @@ class VllmConnectionOwner:
     def __init__(self) -> None:
         self._lock = RLock()
         self._generation = 0
+        self._launch_claim: object | None = None
+        self._claim_launch_snapshot: VllmLaunchSnapshot | None = None
         self._snapshot = VllmConnectionSnapshot(
             current_token=None,
             state=VllmReadinessState.NOT_CONFIGURED,
@@ -293,6 +328,80 @@ class VllmConnectionOwner:
             )
             return token
 
+    def bind_launch_claim(self, token: VllmOperationToken, claim: object) -> bool:
+        """Bind an exact lifecycle claim to the snapshot that it launches."""
+
+        cancel_event = getattr(claim, "cancel_event", None)
+        with self._lock:
+            if (
+                token != self._snapshot.current_token
+                or token.runtime_owner != "chatbook"
+                or self._snapshot.launch_snapshot is None
+                or getattr(claim, "provider", None) != "vllm"
+                or getattr(claim, "authority", None) != SERVED_MODEL_NAME
+                or cancel_event is None
+                or not callable(getattr(cancel_event, "is_set", None))
+                or cancel_event.is_set()
+            ):
+                return False
+            self._launch_claim = claim
+            self._claim_launch_snapshot = self._snapshot.launch_snapshot
+            return True
+
+    def begin_claim_retry(self, claim: object) -> VllmOperationToken | None:
+        """Begin verification against only an uncancelled bound live claim."""
+
+        cancel_event = getattr(claim, "cancel_event", None)
+        with self._lock:
+            launch_snapshot = self._claim_launch_snapshot
+            if (
+                self._launch_claim is not claim
+                or launch_snapshot is None
+                or cancel_event is None
+                or not callable(getattr(cancel_event, "is_set", None))
+                or cancel_event.is_set()
+            ):
+                return None
+            self._generation += 1
+            token = VllmOperationToken(
+                self._generation,
+                launch_snapshot.fingerprint,
+                "chatbook",
+            )
+            self._snapshot = VllmConnectionSnapshot(
+                current_token=token,
+                state=VllmReadinessState.CHECKING,
+                launch_snapshot=launch_snapshot,
+                target=None,
+                issue=None,
+                activity=(VllmActivityEvent("checking", "under_1s"),),
+            )
+            return token
+
+    def owns_launch_claim(self, claim: object) -> bool:
+        """Return whether ``claim`` is the exact bound launch identity."""
+
+        with self._lock:
+            return self._launch_claim is claim
+
+    def bound_launch_snapshot(self, claim: object) -> VllmLaunchSnapshot | None:
+        """Return the immutable snapshot bound to one exact launch claim."""
+
+        with self._lock:
+            if self._launch_claim is not claim:
+                return None
+            return self._claim_launch_snapshot
+
+    def release_launch_claim(self, claim: object) -> bool:
+        """Forget launch evidence only for the exact bound lifecycle claim."""
+
+        with self._lock:
+            if self._launch_claim is not claim:
+                return False
+            self._launch_claim = None
+            self._claim_launch_snapshot = None
+            return True
+
     def invalidate(self, reason: str) -> int:
         """Advance the generation and clear all connection evidence."""
 
@@ -321,14 +430,32 @@ class VllmConnectionOwner:
         """Publish a result only when both tokens are the current generation."""
 
         with self._lock:
-            if token != self._snapshot.current_token or result.token != token:
+            if type(result) is not VllmProbeResult:
                 return False
-            activity = (self._snapshot.activity + result.activity)[-_ACTIVITY_LIMIT:]
+            try:
+                validated = VllmProbeResult(
+                    token=result.token,
+                    state=result.state,
+                    target=result.target,
+                    issue=result.issue,
+                    activity=result.activity,
+                )
+            except (TypeError, ValueError):
+                return False
+            if (
+                token != self._snapshot.current_token
+                or validated.token != token
+                or validated != result
+            ):
+                return False
+            activity = (self._snapshot.activity + validated.activity)[
+                -_ACTIVITY_LIMIT:
+            ]
             self._snapshot = replace(
                 self._snapshot,
-                state=result.state,
-                target=result.target,
-                issue=result.issue,
+                state=validated.state,
+                target=validated.target,
+                issue=validated.issue,
                 activity=activity,
             )
             return True
