@@ -29,6 +29,8 @@ from ....runtime_policy.bootstrap import set_authoritative_runtime_source
 from ....Scheduling.automation_health import compute_local_health
 from ....Scheduling.events import (
     CancelTransferRequested,
+    DefinitionFieldEditRequested,
+    DefinitionLifecycleToggleRequested,
     DeleteTaskRequested,
     DisableTaskRequested,
     AcknowledgeIncidentRequested,
@@ -76,6 +78,7 @@ from ....Widgets.detail_value_row import DetailValueRow
 from .definition_detail import (
     DefinitionDetail,
     _definition_transfer_suffix,
+    _LIFECYCLE_TOGGLE_RESULTS,
     automation_execution_target_label,
     automation_name_cell,
 )
@@ -2264,6 +2267,164 @@ class SchedulesWorkbench(BaseAppScreen):
             group="schedules-edit-reminder-field",
         )  # type: ignore[arg-type]
 
+    @on(DefinitionFieldEditRequested)
+    def _on_definition_field_edit_requested(
+        self, event: DefinitionFieldEditRequested
+    ) -> None:
+        """A Details/Frequency row's inline editor committed a value
+        (PR-3 task 4)."""
+        event.stop()
+        self._edit_definition_field(event.definition, event.payload, event.row)
+
+    def _edit_definition_field(
+        self,
+        definition: dict[str, Any],
+        payload: dict[str, Any],
+        row: DetailValueRow,
+    ) -> None:
+        """Persist one Details/Frequency row's edit via `save_definition`.
+
+        `DefinitionDetail` has already closed the row's editor (`end_
+        edit`, restoring the OLD display) before posting the request --
+        a failure needs no separate "restore" step here, only `show_
+        error`. `definition["id"]` may be a LOCAL row id or, for a row
+        shown from a pure server fetch with no local shadow yet, the
+        SERVER's id -- resolved to a real local id the same way the
+        existing full-modal Edit action already does (`_resolve_local_
+        definition_id`, `_edit_selected_automation`'s own precedent).
+        Success repaints authoritatively via the SAME staleness-plus-
+        refresh seam every other definition mutation in this file uses
+        (run-now, transfer begin/cancel) -- `_definitions_stale = True`
+        + `_request_automations_refresh()`, which reloads the Automations
+        tab's own table+detail immediately and marks the Queue's unified
+        list stale for its own next (lazy, tab-activation-gated) refresh.
+        """
+        service = self._scheduling_service
+        if service is None:
+            row.show_error(
+                "Scheduling service is unavailable; cannot save this edit."
+            )
+            return
+
+        async def _edit_and_refresh() -> None:
+            local_id = await self._resolve_local_definition_id(service, definition)
+            if local_id is None:
+                row.show_error(
+                    "Could not prepare this automation for editing — see "
+                    "the log."
+                )
+                return
+            owner_id = str(definition.get("owner_id") or "local")
+            try:
+                outcome = await service.save_definition(
+                    payload, owner_id, definition_id=local_id
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Failed to edit automation definition field for {}", local_id
+                )
+                row.show_error("Failed to save this edit.")
+                return
+            if outcome.status not in ("saved", "queued"):
+                message = "; ".join(
+                    str(err.get("message") or "")
+                    for err in outcome.errors
+                    if err.get("message")
+                ) or "This edit could not be saved."
+                row.show_error(message)
+                return
+            row.clear_error()
+            self._definitions_stale = True
+            self._request_automations_refresh()
+
+        self.run_worker(
+            _edit_and_refresh,
+            exclusive=True,
+            group="schedules-edit-definition-field",
+        )  # type: ignore[arg-type]
+
+    @on(DefinitionLifecycleToggleRequested)
+    def _on_definition_lifecycle_toggle_requested(
+        self, event: DefinitionLifecycleToggleRequested
+    ) -> None:
+        """The header Pause/Resume button was pressed (PR-3 task 4 --
+        `set_definition_lifecycle`'s first UI caller)."""
+        event.stop()
+        self._toggle_definition_lifecycle(event.definition, event.action)
+
+    def _toggle_definition_lifecycle(
+        self, definition: dict[str, Any], action: str
+    ) -> None:
+        """Pause/resume one automation via `set_definition_lifecycle`.
+
+        Optimistic repaint (task-4 brief): on success, every mounted
+        `DefinitionDetail` instance currently showing this definition is
+        patched + repainted in place (`apply_lifecycle`) BEFORE the
+        slower background refresh below runs, so neither pane shows a
+        stale label while that worker is still fetching. Task 2's own
+        DB-level pull-guard (`ScheduledTasksDB.upsert_automation_
+        definitions_from_server`'s lifecycle skip) is what then keeps a
+        sync pull racing that background refresh from reverting the
+        value it eventually reads back -- this method does not need to
+        know about that guard, only rely on it already existing.
+        """
+        service = self._scheduling_service
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot update the "
+                "automation.",
+                severity="warning",
+            )
+            return
+        name = str(definition.get("name") or definition.get("id") or "")
+        definition_id = str(definition.get("id") or "")
+
+        async def _toggle_and_refresh() -> None:
+            local_id = await self._resolve_local_definition_id(service, definition)
+            if local_id is None:
+                self.app_instance.notify(
+                    f"Could not prepare '{name}' — see the log.",
+                    severity="error",
+                )
+                return
+            try:
+                outcome = await service.set_definition_lifecycle(local_id, action)
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Failed to toggle lifecycle for automation {}", local_id
+                )
+                self.app_instance.notify(
+                    f"Failed to update '{name}'.", severity="error"
+                )
+                return
+            if outcome.status != "saved":
+                message = (
+                    outcome.errors[0]["message"]
+                    if outcome.errors
+                    else f"Could not update '{name}'."
+                )
+                self.app_instance.notify(message, severity="warning")
+                return
+            new_lifecycle = _LIFECYCLE_TOGGLE_RESULTS[action]
+            definition["lifecycle"] = new_lifecycle
+            for widget_id in (
+                "#scheduling-automation-detail",
+                "#scheduling-queue-definition-detail",
+            ):
+                try:
+                    detail = self.query_one(widget_id, DefinitionDetail)
+                except Exception:  # noqa: BLE001 - not mounted yet
+                    continue
+                detail.apply_lifecycle(definition_id, new_lifecycle)
+            self._definitions_stale = True
+            self._request_automations_refresh()
+
+        self.run_worker(
+            _toggle_and_refresh,
+            exclusive=True,
+            group="schedules-definition-lifecycle",
+        )  # type: ignore[arg-type]
+
     @on(RunReminderNowRequested)
     def _on_run_reminder_now_requested(self, event: RunReminderNowRequested) -> None:
         """Dispatch the requested reminder immediately."""
@@ -2783,6 +2944,9 @@ class SchedulesWorkbench(BaseAppScreen):
             detail.set_definition(
                 definition, run_count=0, last_run=None, unread_count=0
             )
+            # Same fallback `_update_transfer_actions` uses for `TaskDetail`
+            # when there is no service to derive a real reason from.
+            detail.set_lifecycle_lock(None)
             return
 
         run_count, last_run, unread_count, history_error = (
@@ -2798,7 +2962,15 @@ class SchedulesWorkbench(BaseAppScreen):
             last_run=last_run,
             unread_count=unread_count,
             history_error=history_error,
+            known_timezones=self._task_timezones(),
         )
+        # PR-3 task 4: `DefinitionDetail` gains the SAME transfer-lock
+        # wiring `TaskDetail` has (survey point 10) -- `reason` comes from
+        # `SchedulingService.transfer_lock_reason` (never re-derived in
+        # the widget), fed right after `set_definition` per that
+        # method's own docstring, same as `_update_transfer_actions` does
+        # for the reminder pane.
+        detail.set_lifecycle_lock(service.transfer_lock_reason(definition))
 
     async def _fetch_definition_detail_counts(
         self,
@@ -2876,6 +3048,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 detail.set_definition(
                     definition, run_count=0, last_run=None, unread_count=0
                 )
+                detail.set_lifecycle_lock(None)
             return
         run_count, last_run, unread_count, history_error = (
             await self._fetch_definition_detail_counts(
@@ -2892,7 +3065,14 @@ class SchedulesWorkbench(BaseAppScreen):
             last_run=last_run,
             unread_count=unread_count,
             history_error=history_error,
+            known_timezones=self._task_timezones(),
         )
+        # PR-3 task 4: same transfer-lock wiring as `_load_automation_
+        # detail`'s Automations-tab pane -- this is the Queue tab's own
+        # sibling instance of the SAME widget class, so it needs the
+        # same call, independently (each `DefinitionDetail` instance
+        # locks itself; there's no shared state between them).
+        detail.set_lifecycle_lock(service.transfer_lock_reason(definition))
 
     @on(DataTable.RowHighlighted, "#scheduling-automations-table")
     def _on_automations_row_highlighted(

@@ -291,6 +291,27 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     padding: 0 1;
 }
 
+/* schedules-redesign PR-3, Task 4: the definitions pane's header
+ * Pause/Resume row -- same one-Button lifecycle-row shape as
+ * `#scheduling-task-detail-lifecycle` above. `DefinitionDetail` mounts
+ * under two different ids (Automations tab + Queue tab sibling), so both
+ * selectors share this declaration rather than one id-scoped rule. */
+#scheduling-automation-detail-lifecycle {
+    height: auto;
+    padding: 0 0 1 0;
+}
+
+#scheduling-automation-detail-lifecycle Button {
+    margin: 0 1 0 0;
+}
+
+#scheduling-automation-detail .follow-why,
+#scheduling-queue-definition-detail .follow-why {
+    color: $text-muted;
+    height: auto;
+    padding: 0 1;
+}
+
 /* Status badge base (detail pane) */
 #scheduling-task-status-badge {
     width: auto;

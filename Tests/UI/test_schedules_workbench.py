@@ -10,7 +10,15 @@ import pytest
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
-from textual.widgets import Button, DataTable, Input, Select, Static, TabbedContent
+from textual.widgets import (
+    Button,
+    Checkbox,
+    DataTable,
+    Input,
+    Select,
+    Static,
+    TabbedContent,
+)
 from textual.widgets._collapsible import CollapsibleTitle
 
 from tldw_chatbook.Scheduling.events import (
@@ -26,6 +34,7 @@ from tldw_chatbook.Scheduling.models import (
 )
 from tldw_chatbook.UI.Screens.scheduling.conflicts_tab import ConflictsTab
 from tldw_chatbook.UI.Screens.scheduling.definition_detail import (
+    DefinitionDetail,
     _definition_owner_label,
 )
 from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import ReminderForm
@@ -858,6 +867,946 @@ async def test_locked_row_via_real_service_refuses_edit_and_leaves_row_unchanged
             assert error.display is True
             assert "moving between this device and the server" in error.render_line(0).text
             assert db.get_reminder_task(task_id)["cron"] == "0 9 * * 1"
+    finally:
+        db.close()
+
+
+# --- redesign PR-3, task 4: definition-pane in-pane editing + lifecycle ----
+
+
+class _BareDefinitionDetailApp(ConsolidatedCSSApp):
+    """Bare app mounting one `DefinitionDetail` (schedules-redesign PR-3,
+    task 4), matching `_BareTaskDetailApp`'s own pattern."""
+
+    CSS_PATH = str(BUNDLED_STYLESHEET)
+
+    def compose(self):
+        yield DefinitionDetail()
+
+
+def _editable_definition(**overrides) -> dict:
+    """A representative local `recurring_question` definition dict
+    covering every task-4 editable Details/Frequency row: a recurring
+    cron schedule, a pinned model, a non-default generation mode, an
+    explicit sources scope, and an on notification policy."""
+    base: dict = {
+        "id": "def-1",
+        "owner_id": "local",
+        "family": "recurring_question",
+        "name": "Daily standup question",
+        "lifecycle": "configured",
+        "schedule": {
+            "kind": "cron",
+            "cron": "0 9 * * 1",
+            "timezone": "America/New_York",
+        },
+        "input": {
+            "question": "What shipped?",
+            "provider": "openai",
+            "model": "gpt-5",
+        },
+        "config": {
+            "generation_mode": "required",
+            "scope": {"mode": "sources", "sources": ["media_db", "notes"]},
+            "finding_policy": {"preset": "high_confidence_only"},
+        },
+        "finding_policy": {"preset": "high_confidence_only"},
+        "notification_policy": {"on_success": True, "on_failure": True},
+    }
+    base.update(overrides)
+    return base
+
+
+@pytest.mark.asyncio
+async def test_definition_details_rows_are_always_editable_regardless_of_schedule_kind():
+    """Model/Generation/Finding policy/Sources/Notifications don't depend
+    on schedule kind (unlike Repeat/At/Timezone) -- affordance stays on
+    for both kinds."""
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())
+        await pilot.pause()
+        for row in (
+            detail._model_row,
+            detail._generation_row,
+            detail._finding_policy_row,
+            detail._sources_row,
+            detail._notifications_row,
+        ):
+            assert row.affordance is True
+
+        detail.set_definition(
+            _editable_definition(
+                schedule={"kind": "one_time", "run_at": "2030-01-01T09:00:00+00:00"}
+            )
+        )
+        await pilot.pause()
+        for row in (
+            detail._model_row,
+            detail._generation_row,
+            detail._finding_policy_row,
+            detail._sources_row,
+            detail._notifications_row,
+        ):
+            assert row.affordance is True
+
+
+@pytest.mark.asyncio
+async def test_definition_frequency_row_affordance_gated_by_schedule_kind():
+    """Repeat/Timezone only apply to a cron schedule, At only to a
+    one_time one -- same reasoning `task_detail.py`'s reminder Frequency
+    rows already use."""
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())  # cron
+        await pilot.pause()
+        assert detail._repeat_row.affordance is True
+        assert detail._at_row.affordance is False
+        assert detail._timezone_row.affordance is True
+
+        detail.set_definition(
+            _editable_definition(
+                schedule={"kind": "one_time", "run_at": "2030-01-01T09:00:00+00:00"}
+            )
+        )
+        await pilot.pause()
+        assert detail._repeat_row.affordance is False
+        assert detail._at_row.affordance is True
+        assert detail._timezone_row.affordance is False
+
+
+@pytest.mark.asyncio
+async def test_model_row_editor_preselects_provider_slash_model_and_is_blank_when_not_set():
+    """Task-4 brief: 'blank = provider default, the "Not set" honesty
+    preserved' -- the Input opens blank, not literal 'auto'."""
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())
+        await pilot.pause()
+
+        model_row = detail._model_row
+        await pilot.click(model_row)
+        await pilot.pause()
+        editor = model_row.query_one(Input)
+        assert editor.value == "openai/gpt-5"
+        await pilot.press("escape")
+        await pilot.pause()
+
+        detail.set_definition(_editable_definition(input={"question": "What shipped?"}))
+        await pilot.pause()
+        model_row = detail._model_row
+        await pilot.click(model_row)
+        await pilot.pause()
+        editor = model_row.query_one(Input)
+        assert editor.value == ""
+
+
+@pytest.mark.asyncio
+async def test_generation_row_editor_preselects_current_value_defaulting_to_optional():
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())  # generation_mode="required"
+        await pilot.pause()
+        row = detail._generation_row
+        await pilot.click(row)
+        await pilot.pause()
+        editor = row.query_one(Select)
+        assert editor.value == "required"
+        await pilot.press("escape")
+        await pilot.pause()
+
+        detail.set_definition(
+            _editable_definition(config={"scope": {"mode": "all_searchable_library"}})
+        )
+        await pilot.pause()
+        row = detail._generation_row
+        await pilot.click(row)
+        await pilot.pause()
+        editor = row.query_one(Select)
+        assert editor.value == "optional"
+
+
+@pytest.mark.asyncio
+async def test_finding_policy_row_editor_preselects_current_value():
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())  # high_confidence_only
+        await pilot.pause()
+        row = detail._finding_policy_row
+        await pilot.click(row)
+        await pilot.pause()
+        editor = row.query_one(Select)
+        assert editor.value == "high_confidence_only"
+
+
+@pytest.mark.asyncio
+async def test_sources_row_editor_checks_stored_sources_and_all_when_library_wide():
+    """The 3-checkbox mini-editor (task-4 brief's own suggested Sources
+    shape) prechecks the stored subset, or every box when the scope is
+    library-wide/unset -- visually 'everything', matching the row's own
+    displayed value."""
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())  # sources: media_db, notes
+        await pilot.pause()
+        row = detail._sources_row
+        await pilot.click(row)
+        await pilot.pause()
+        checkboxes = {cb.id: cb.value for cb in row.query(Checkbox)}
+        assert checkboxes["scheduling-automation-detail-sources-media_db"] is True
+        assert checkboxes["scheduling-automation-detail-sources-notes"] is True
+        assert checkboxes["scheduling-automation-detail-sources-chats"] is False
+        await pilot.press("escape")
+        await pilot.pause()
+
+        detail.set_definition(
+            _editable_definition(config={"scope": {"mode": "all_searchable_library"}})
+        )
+        await pilot.pause()
+        row = detail._sources_row
+        await pilot.click(row)
+        await pilot.pause()
+        checkboxes = {cb.id: cb.value for cb in row.query(Checkbox)}
+        assert all(checkboxes.values())
+
+
+@pytest.mark.asyncio
+async def test_notifications_row_editor_preselects_on_off():
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())  # on
+        await pilot.pause()
+        row = detail._notifications_row
+        await pilot.click(row)
+        await pilot.pause()
+        editor = row.query_one(Select)
+        assert editor.value == "on"
+        await pilot.press("escape")
+        await pilot.pause()
+
+        detail.set_definition(
+            _editable_definition(
+                notification_policy={"on_success": False, "on_failure": False}
+            )
+        )
+        await pilot.pause()
+        row = detail._notifications_row
+        await pilot.click(row)
+        await pilot.pause()
+        editor = row.query_one(Select)
+        assert editor.value == "off"
+
+
+@pytest.mark.asyncio
+async def test_definition_repeat_row_editor_preselects_current_preset():
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())  # "0 9 * * 1" == monday
+        await pilot.pause()
+        row = detail._repeat_row
+        await pilot.click(row)
+        await pilot.pause()
+        editor = row.query_one(Select)
+        assert editor.value == "monday"
+
+
+@pytest.mark.asyncio
+async def test_definition_at_row_editor_preselects_current_run_at():
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(
+            _editable_definition(
+                schedule={"kind": "one_time", "run_at": "2030-01-01T09:00:00+00:00"}
+            )
+        )
+        await pilot.pause()
+        row = detail._at_row
+        await pilot.click(row)
+        await pilot.pause()
+        editor = row.query_one(Input)
+        assert editor.value == "2030-01-01T09:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_definition_timezone_row_editor_preselects_current_zone():
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())  # America/New_York
+        await pilot.pause()
+        row = detail._timezone_row
+        await pilot.click(row)
+        await pilot.pause()
+        editor = row.query_one(Select)
+        assert editor.value == "America/New_York"
+
+
+@pytest.mark.asyncio
+async def test_definition_escape_cancels_open_editor_without_committing():
+    class _CapturingApp(_BareDefinitionDetailApp):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.requests: list = []
+
+        def on_definition_field_edit_requested(self, event) -> None:
+            self.requests.append(event)
+
+    async with _CapturingApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())
+        await pilot.pause()
+
+        row = detail._generation_row
+        await pilot.click(row)
+        await pilot.pause()
+        assert row.query(Select)
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert not row.query(Select)
+        assert pilot.app.requests == []
+
+
+@pytest.mark.asyncio
+async def test_definition_repeat_row_custom_target_refuses_client_side_without_bridge_call():
+    class _CapturingApp(_BareDefinitionDetailApp):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.requests: list = []
+
+        def on_definition_field_edit_requested(self, event) -> None:
+            self.requests.append(event)
+
+    async with _CapturingApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())
+        await pilot.pause()
+
+        row = detail._repeat_row
+        await pilot.click(row)
+        await pilot.pause()
+        editor = row.query_one(Select)
+        editor.value = "custom"
+        await pilot.pause()
+
+        assert not row.query(Select)
+        assert pilot.app.requests == []
+        error = row.query_one(".detail-value-row-error", Static)
+        assert error.display is True
+        assert "full Edit form" in error.render_line(0).text
+
+
+@pytest.mark.asyncio
+async def test_sources_editor_apply_with_nothing_checked_refuses_client_side():
+    """Sources editor honesty (task-4 brief): unchecking every box and
+    applying is refused inline rather than sent to the bridge -- an
+    empty scope is a guaranteed `scope_empty` server refusal anyway."""
+
+    class _CapturingApp(_BareDefinitionDetailApp):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.requests: list = []
+
+        def on_definition_field_edit_requested(self, event) -> None:
+            self.requests.append(event)
+
+    async with _CapturingApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())
+        await pilot.pause()
+
+        row = detail._sources_row
+        await pilot.click(row)
+        await pilot.pause()
+        for checkbox in row.query(Checkbox):
+            checkbox.value = False
+        await pilot.pause()
+        apply_button = row.query_one(
+            "#scheduling-automation-detail-sources-apply", Button
+        )
+        await pilot.click(apply_button)
+        await pilot.pause()
+
+        assert not row.query(Checkbox)  # editor closed
+        assert pilot.app.requests == []
+        error = row.query_one(".detail-value-row-error", Static)
+        assert error.display is True
+        assert "at least one source" in error.render_line(0).text
+
+
+@pytest.mark.asyncio
+async def test_definition_locked_row_activation_shows_lock_reason_and_opens_no_editor():
+    """Survey point 10: `DefinitionDetail` gains the SAME transfer-lock
+    wiring `TaskDetail` has -- a locked row keeps its affordance ON so
+    activation still responds, with the lock reason, never an editor."""
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())
+        detail.set_lifecycle_lock(
+            "This row is moving between this device and the server -- it "
+            "is read-only until the move finishes. Cancel the transfer first."
+        )
+        await pilot.pause()
+
+        row = detail._generation_row
+        assert row.affordance is True  # still responsive, not silently off
+        await pilot.click(row)
+        await pilot.pause()
+
+        assert not row.query(Select)
+        error = row.query_one(".detail-value-row-error", Static)
+        assert error.display is True
+        assert "moving between this device and the server" in error.render_line(0).text
+
+
+class _LifecycleCapturingApp(_BareDefinitionDetailApp):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.requests: list = []
+
+    def on_definition_lifecycle_toggle_requested(self, event) -> None:
+        self.requests.append(event)
+
+
+@pytest.mark.asyncio
+async def test_pause_resume_button_shows_pause_and_posts_pause_when_configured():
+    async with _LifecycleCapturingApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition(lifecycle="configured"))
+        await pilot.pause()
+        button = detail.query_one("#scheduling-automation-pause-resume", Button)
+        assert button.label.plain == "Pause"
+        await pilot.click(button)
+        await pilot.pause()
+        assert len(pilot.app.requests) == 1
+        assert pilot.app.requests[0].action == "pause"
+
+
+@pytest.mark.asyncio
+async def test_pause_resume_button_shows_resume_and_posts_resume_when_paused():
+    async with _LifecycleCapturingApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition(lifecycle="paused"))
+        await pilot.pause()
+        button = detail.query_one("#scheduling-automation-pause-resume", Button)
+        assert button.label.plain == "Resume"
+        await pilot.click(button)
+        await pilot.pause()
+        assert len(pilot.app.requests) == 1
+        assert pilot.app.requests[0].action == "resume"
+
+
+@pytest.mark.asyncio
+async def test_pause_resume_button_disabled_and_reason_shown_when_locked():
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())
+        detail.set_lifecycle_lock("Read-only mid-transfer.")
+        await pilot.pause()
+        button = detail.query_one("#scheduling-automation-pause-resume", Button)
+        assert button.disabled is True
+        assert button.tooltip == "Read-only mid-transfer."
+        why = detail.query_one("#scheduling-automation-detail-why", Static)
+        assert why.render_line(0).text.strip() == "Read-only mid-transfer."
+
+        detail.set_lifecycle_lock(None)
+        await pilot.pause()
+        assert button.disabled is False
+
+
+# --- integration: real DB + service + full workbench -----------------------
+
+
+@pytest.mark.asyncio
+async def test_committing_generation_edit_persists_and_repaints_automations_pane(
+    tmp_path,
+):
+    """Commit persists via `save_definition`; success repaints the
+    Automations-tab pane from a fresh read AND arms the unified Queue
+    list's own (lazy, tab-activation-gated) refresh -- the same
+    `_definitions_stale` seam every other definition mutation in this
+    file uses (run-now, transfer begin/cancel)."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Daily standup question",
+            schedule={
+                "kind": "cron",
+                "cron": "0 9 * * 1",
+                "timezone": "America/New_York",
+            },
+            input={"question": "What shipped?"},
+            config={
+                "generation_mode": "optional",
+                "scope": {"mode": "all_searchable_library"},
+            },
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            assert table.row_count == 1
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            row = detail._generation_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            select = row.query_one(Select)
+            select.value = "required"
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert (
+                db.get_automation_definition(definition_id)["config"][
+                    "generation_mode"
+                ]
+                == "required"
+            )
+            generation_static = detail.query_one(
+                "#scheduling-automation-detail-generation", Static
+            )
+            assert (
+                generation_static.render_line(0).text.strip()
+                == "Always generate a draft"
+            )
+            # The unified Queue list's own next (lazy) refresh is armed.
+            assert workbench._definitions_stale is True
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_committing_repeat_edit_resends_whole_schedule_preserving_timezone(
+    tmp_path,
+):
+    """Pinned (task-4 brief): schedule edits RESEND THE WHOLE schedule
+    dict -- an edited Repeat (cron) must not drop the recurring
+    schedule's own timezone."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Weekly digest",
+            schedule={
+                "kind": "cron",
+                "cron": "0 9 * * 1",
+                "timezone": "America/New_York",
+            },
+            input={"question": "What shipped?"},
+            config={},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            row = detail._repeat_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            select = row.query_one(Select)
+            select.value = "daily"
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            stored = db.get_automation_definition(definition_id)
+            assert stored["schedule"]["cron"] == "0 9 * * *"
+            assert stored["schedule"]["kind"] == "cron"
+            assert stored["schedule"]["timezone"] == "America/New_York"  # not dropped
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_committing_timezone_edit_preserves_cron(tmp_path):
+    """Companion pin: a Timezone edit must not drop the schedule's cron."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Weekly digest",
+            schedule={
+                "kind": "cron",
+                "cron": "0 9 * * 1",
+                "timezone": "America/New_York",
+            },
+            input={"question": "What shipped?"},
+            config={},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            row = detail._timezone_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            select = row.query_one(Select)
+            select.value = "UTC"
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            stored = db.get_automation_definition(definition_id)
+            assert stored["schedule"]["timezone"] == "UTC"
+            assert stored["schedule"]["cron"] == "0 9 * * 1"  # not dropped
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_not_set_model_preserved_across_an_unrelated_edit(tmp_path):
+    """The Model row's 'Not set'/blank honesty (task-4 brief AC) survives
+    an edit to an UNRELATED row: `_definition_edit_payload`'s empty-dict
+    `input`/`notification_policy` groups round-trip through `save_
+    definition`'s one-level merge untouched.
+
+    Scoped to `input`/`notification_policy` deliberately, NOT `config`'s
+    own generation_mode/scope/finding_policy trio: traced (empirically,
+    via `preview_automation_definition` -> `validate_recurring_question_
+    config`) that those three are unconditionally NORMALIZED WITH
+    DEFAULTS on every local save regardless of which row was actually
+    edited -- a PRE-EXISTING behavior of the shared preview pipeline the
+    create/edit modal never exercises (it always sends explicit values),
+    now newly reachable because task 4 is the first caller that can send
+    a payload leaving them genuinely absent. Not a task-4 regression and
+    out of this task's scope to change; flagged in the report instead."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Bare-model digest",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What shipped?"},  # no provider/model
+            config={"generation_mode": "optional"},
+            notification_policy={"on_success": True, "on_failure": False},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            model_static = detail.query_one(
+                "#scheduling-automation-detail-model", Static
+            )
+            assert model_static.render_line(0).text.strip() == "auto"
+
+            row = detail._generation_row
+            row.post_message(DetailValueRow.Activated(row))
+            await pilot.pause()
+            select = row.query_one(Select)
+            select.value = "required"
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            stored = db.get_automation_definition(definition_id)
+            assert stored["config"]["generation_mode"] == "required"
+            assert "provider" not in stored["input"]
+            assert "model" not in stored["input"]
+            assert stored["notification_policy"] == {
+                "on_success": True,
+                "on_failure": False,
+            }
+            assert model_static.render_line(0).text.strip() == "auto"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_edit_on_server_owned_row_with_unreachable_seam_queues_a_mutation(
+    tmp_path,
+):
+    """A server-owned row whose seam is unreachable still writes locally
+    and queues ONE pending mutation, under the ROW's OWN owner -- never
+    the service's active owner (mirrors Task 2's reminder-side row-owner
+    threading test) -- and `outcome.status == "queued"` is treated as UI
+    success (no inline error), same as `"saved"`."""
+    from tldw_chatbook.Scheduling.services.server_client import ServerUnavailableError
+    from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+    from tldw_chatbook.Scheduling.services.scheduling_service import (
+        SchedulingService,
+    )
+    from tldw_chatbook.UI.Screens.scheduling.definition_detail import (
+        _definition_edit_payload,
+    )
+
+    db = ScheduledTasksDB(tmp_path / "scheduled_tasks.db")
+    try:
+        server_client = AsyncMock()
+        server_client.preview_automation_definition.side_effect = (
+            ServerUnavailableError("offline")
+        )
+        service = SchedulingService(
+            db=db, server_client=server_client, runtime_source="local"
+        )
+        # Shaped like a genuine `_load_server_automations` item (`id` is
+        # the SERVER's own id) -- the shape `_resolve_local_definition_id`
+        # expects. A row read back via `db.get_automation_definition`
+        # instead (LOCAL id in `id`) is a DIFFERENT shape and trips
+        # `_resolve_local_definition_id`'s server/local branch into
+        # mirroring a SECOND, bogus row (its own "server_id" would be
+        # the already-local uuid) instead of resolving the real one.
+        server_item = {
+            "id": "srv-def-1",
+            "owner_id": "server:1",
+            "family": "recurring_question",
+            "name": "Server automation",
+            "lifecycle": "configured",
+            "schedule": {
+                "kind": "cron",
+                "cron": "0 9 * * 1",
+                "timezone": "UTC",
+            },
+            "input": {"question": "What shipped?"},
+            "config": {"generation_mode": "optional"},
+            "version": 3,
+        }
+        db.upsert_automation_definitions_from_server("server:1", [server_item])
+        definition_id = db.get_automation_definition_by_server_id(
+            "server:1", "srv-def-1"
+        )["id"]
+
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            workbench = SchedulesWorkbench(app_instance=pilot.app)
+            await pilot.app.push_screen(workbench)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            detail.set_definition(server_item)
+            await pilot.pause()
+
+            row = detail._generation_row
+            payload = _definition_edit_payload(
+                server_item, config={"generation_mode": "required"}
+            )
+            workbench._edit_definition_field(server_item, payload, row)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            stored = db.get_automation_definition(definition_id)
+            assert stored["config"]["generation_mode"] == "required"
+            # Final review C1 precedent: the mirror's `version` must not
+            # drift locally -- the server checks it for exact equality.
+            assert stored["version"] == 3
+            assert service.owner_id == "local"  # never repointed by the edit
+            mutation = db.get_pending_mutation_for_local_id(
+                definition_id, "automation_definition"
+            )
+            assert mutation is not None
+            assert mutation["payload"]["action"] == "update"
+            pending = db.get_pending_mutations(
+                "server:1", primitive="automation_definition"
+            )
+            assert len(pending) == 1  # queued under the ROW's own owner
+
+            error = row.query_one(".detail-value-row-error", Static)
+            assert error.display is False  # "queued" treated as success
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_toggle_pauses_a_local_automation_and_the_button_flips(
+    tmp_path,
+):
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Local automation",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What shipped?"},
+            config={},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            workbench = pilot.app.screen
+            workbench.query_one("#scheduling-tabs", TabbedContent).active = (
+                "scheduling-automations-tab"
+            )
+            await pilot.pause()
+            table = workbench.query_one("#scheduling-automations-table", DataTable)
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = workbench.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            button = detail.query_one("#scheduling-automation-pause-resume", Button)
+            assert button.label.plain == "Pause"
+            await pilot.click(button)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert db.get_automation_definition(definition_id)["lifecycle"] == "paused"
+            assert button.label.plain == "Resume"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_toggle_on_server_owned_row_survives_a_racing_pull(tmp_path):
+    """Pinned (task-4 brief): the pause/resume toggle's DB write races a
+    sync pull -- Task 2's own `upsert_automation_definitions_from_server`
+    lifecycle pull-guard must keep that pull from reverting the pause,
+    and that guarantee must be VISIBLE at the UI level (this pane's own
+    button) after the next paint, not merely true in the DB."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        # Shaped like a genuine `_load_server_automations` item (`id` is
+        # the SERVER's own id, `owner_id` stamped by that fetch) -- the
+        # shape `_resolve_local_definition_id` expects and the shape
+        # `DefinitionDetail._definition`/the toggle event actually carry
+        # in real usage. A row read back via `db.get_automation_
+        # definition` instead (LOCAL id in `id`) is a DIFFERENT shape and
+        # trips `_resolve_local_definition_id`'s own server/local branch.
+        server_item = {
+            "id": "srv-def-1",
+            "owner_id": "server:1",
+            "family": "recurring_question",
+            "name": "Server automation",
+            "lifecycle": "configured",
+            "schedule": {"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            "input": {"question": "What shipped?"},
+            "config": {},
+            "version": 1,
+        }
+        db.upsert_automation_definitions_from_server("server:1", [server_item])
+        definition_id = db.get_automation_definition_by_server_id(
+            "server:1", "srv-def-1"
+        )["id"]
+
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            workbench = SchedulesWorkbench(app_instance=pilot.app)
+            await pilot.app.push_screen(workbench)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one(
+                "#scheduling-automation-detail", DefinitionDetail
+            )
+            detail.set_definition(server_item)
+            await pilot.pause()
+
+            workbench._toggle_definition_lifecycle(server_item, "pause")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert db.get_automation_definition(definition_id)["lifecycle"] == "paused"
+            # Optimistic repaint already applied, ahead of/independent of
+            # the background `_request_automations_refresh` reload.
+            button = detail.query_one("#scheduling-automation-pause-resume", Button)
+            assert button.label.plain == "Resume"
+
+            mutation = db.get_pending_mutation_for_local_id(
+                definition_id, "automation_definition"
+            )
+            assert mutation is not None
+            assert mutation["payload"]["action"] == "pause"
+
+            # A racing pull that still thinks the row is "configured" --
+            # nothing has replayed the pending mutation yet, so Task 2's
+            # guard is live for it.
+            db.upsert_automation_definitions_from_server("server:1", [server_item])
+            assert (
+                db.get_automation_definition(definition_id)["lifecycle"] == "paused"
+            )  # guarded, not reverted
+
+            # The UI-visible check: a fresh paint from this (guarded) DB
+            # state still shows Resume -- no flicker back to Pause.
+            detail.set_definition(db.get_automation_definition(definition_id))
+            await pilot.pause()
+            assert button.label.plain == "Resume"
     finally:
         db.close()
 

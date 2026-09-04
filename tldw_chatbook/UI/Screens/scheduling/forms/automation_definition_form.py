@@ -38,21 +38,16 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Label, Select, Static, TextArea
 
 from tldw_chatbook.Scheduling.models import PreviewStatus, ScheduleKind
-from tldw_chatbook.Scheduling.schedule_input_parsing import (
-    is_valid_zone,
-    parse_forgiving_datetime,
-)
+from tldw_chatbook.Scheduling.schedule_input_parsing import parse_forgiving_datetime
 
 from ..task_detail import definition_cron_expression
 
 from .reminder_form import (
-    _CURATED_TIMEZONES,
-    _DEFAULT_TIMEZONE,
     _TIME_OF_DAY_PRESETS,
     cron_to_preset,
-    detect_system_timezone,
     preset_to_cron,
     system_timezone_name,
+    timezone_options,
 )
 
 if TYPE_CHECKING:
@@ -543,19 +538,23 @@ class AutomationDefinitionForm(ModalScreen):
         but non-curated zone (`Pacific/Apia`) assigned a value outside the
         Select's own options and raised `InvalidSelectValueError`, taking
         the whole edit modal down.
+
+        Delegates to the module-level `timezone_options()` (redesign PR-3
+        task 3 hoisted this same body out of `ReminderForm._timezone_
+        options` for a bare-function inline-row editor to reuse; task 4's
+        review flagged this method as a third, still-independent copy --
+        folded in here, no test pins either difference below). Two small
+        observable differences from the pre-consolidation body: the
+        unrecognized-zone label's wording (generic "stored on this task,
+        not recognized here" -> this method's own former "stored on this
+        automation..."), and an UNDETECTED machine zone (`detect_system_
+        timezone()` returning `None`) now gets an honest "machine zone
+        not detected" label on the fallback entry instead of silently
+        offering the bare default zone -- a strict improvement, not a
+        behavior this form deliberately avoided. Option VALUES/ordering
+        are unchanged.
         """
-        detected = detect_system_timezone()
-        zones = [detected or _DEFAULT_TIMEZONE]
-        stored = self._stored_timezone()
-        for zone in list(_CURATED_TIMEZONES) + ([stored] if stored else []):
-            if zone not in zones and is_valid_zone(zone):
-                zones.append(zone)
-        options = [(zone, zone) for zone in zones]
-        if stored and stored not in zones:
-            options.append(
-                (f"{stored} — stored on this automation, not recognized here", stored)
-            )
-        return options
+        return timezone_options(self._stored_timezone())
 
     def _initial_timezone(self) -> str:
         return self._stored_timezone() or system_timezone_name()

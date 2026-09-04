@@ -127,6 +127,56 @@ class ReminderFieldEditRequested(Message):
         self.row = row
 
 
+class DefinitionFieldEditRequested(Message):
+    """Posted when a definition-pane Details/Frequency row's inline editor
+    commits an edit (redesign PR-3, task 4).
+
+    ``definition`` is the raw definition dict `DefinitionDetail.set_
+    definition` was last painted with (a local DB row or a raw server
+    list-response dict -- either shape). Its own ``id`` may be a LOCAL row
+    id or, for a row shown from a pure server fetch that has no local
+    shadow yet, the SERVER's id -- the handler resolves the actual local
+    id `SchedulingService.save_definition` needs the same way the
+    existing full-modal Edit action already does
+    (`SchedulesWorkbench._resolve_local_definition_id`), rather than
+    assuming ``id`` is always local.
+
+    ``payload`` is already shaped for `save_definition` (family/name/
+    schedule resent verbatim per `definition_detail._definition_edit_
+    payload`'s own docstring -- `_merge_definition_payload` does not
+    default those from storage the way its docstring implies). ``row``
+    travels with it (same "carry the widget the handler needs" idiom
+    `DetailValueRow.Activated`/`ReminderFieldEditRequested` already use)
+    so the workbench can call `row.show_error(...)` directly on failure.
+    `DefinitionDetail` has already called `row.end_edit()` before posting
+    this.
+    """
+
+    def __init__(
+        self, definition: dict[str, Any], payload: dict[str, Any], row: DetailValueRow
+    ) -> None:
+        super().__init__()
+        self.definition = definition
+        self.payload = payload
+        self.row = row
+
+
+class DefinitionLifecycleToggleRequested(Message):
+    """Posted when the definition pane's header Pause/Resume button is
+    pressed (redesign PR-3, task 4 -- `SchedulingService.set_definition_
+    lifecycle`'s first UI caller).
+
+    ``action`` is ``"pause"`` or ``"resume"`` (`DefinitionDetail` decides
+    which, from the definition's current ``lifecycle``) -- the same two
+    action strings `SchedulingService._LIFECYCLE_ACTIONS` accepts.
+    """
+
+    def __init__(self, definition: dict[str, Any], action: str) -> None:
+        super().__init__()
+        self.definition = definition
+        self.action = action
+
+
 class SyncCompleted(Message):
     """Posted when a non-failing sync attempt completes.
 
