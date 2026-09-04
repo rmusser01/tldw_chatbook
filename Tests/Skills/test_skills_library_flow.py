@@ -1303,6 +1303,115 @@ async def test_orphaned_manifest_is_one_click_resetup(tmp_path):
         assert action.trust_action == "resetup"
 
 
+# ---------------------------------------------------------------------------
+# Library decomposition wave-4 task 1 (skills state PR): characterization
+# spot-check pins. `handle_library_skills_trust_reset_cancel`/`_confirm` had
+# ZERO test coverage anywhere across Tests/UI, Tests/Library, Tests/Live, and
+# Tests/Skills before these two -- a repo-wide grep for both the method names
+# and their `#library-skills-trust-reset-cancel`/`-confirm` CSS selectors
+# found no hits. (Their sibling, `handle_library_skills_trust_reset_request`
+# -- the button that ARMS this confirm gate -- has SOME coverage already,
+# but only via an unbound-fake-`self` direct call,
+# `test_reset_requires_confirmation` in Tests/UI/test_library_skills_canvas.py
+# -- not the `.press()`-standard evidence this pin uses.) Both reuse the
+# `needs_resetup`-posture setup `test_orphaned_manifest_is_one_click_resetup`
+# above already establishes -- that posture renders BOTH the one-click
+# "resetup" action button (already covered by that test) and the standalone
+# confirm-gated Reset button this pin's flow exercises; the two are
+# independent code paths (`handle_library_skills_trust_action` vs
+# `handle_library_skills_trust_reset_request`/`_cancel`/`_confirm`), not the
+# same handler under two names.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_trust_reset_cancel_backs_out_without_touching_trust_state(tmp_path):
+    """Pressing Cancel on the confirm-gated Reset row dismisses the row and
+    performs no destructive action -- the standalone Reset button is still
+    there afterward and the trust store's posture is unchanged."""
+    trust = _real_uninitialized_trust_service(tmp_path)
+    local_service, service = _real_skills_scope_service(tmp_path, trust_service=trust)
+    await local_service.create_skill(
+        name="demo", content=_skill_content(title="D", description="d"),
+    )
+    trust.bootstrap_trust("pw", salt=b"7" * 32)
+    trust.trust_store.marker_store.clear()
+    trust._keys = None  # fresh session
+    assert trust.trust_posture() == "needs_resetup"
+
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    app.local_skill_trust_service = trust
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-skills").press()
+        reset_button = await _wait_for_selector(
+            screen, pilot, "#library-skills-trust-reset"
+        )
+        assert isinstance(reset_button, Button)
+        reset_button.press()
+        cancel_button = await _wait_for_selector(
+            screen, pilot, "#library-skills-trust-reset-cancel"
+        )
+        assert isinstance(cancel_button, Button)
+        cancel_button.press()
+        await pilot.pause()
+        assert screen._library_skill_trust_confirming_reset is False
+        assert not list(screen.query("#library-skills-trust-reset-cancel"))
+        assert not list(screen.query("#library-skills-trust-reset-confirm"))
+        # The standalone Reset button is still present -- Cancel only backs
+        # out of the confirm row, it never runs the destructive reset.
+        assert screen.query_one("#library-skills-trust-reset", Button)
+        assert trust.trust_posture() == "needs_resetup"
+
+
+@pytest.mark.asyncio
+async def test_trust_reset_confirm_wipes_trust_state(tmp_path):
+    """Pressing the confirm row's own Reset button actually runs the
+    destructive reset -- the trust store drops back to a genuine first-run
+    posture (``needs_setup``: no manifest, no marker) and the confirm row
+    is dismissed once the worker settles."""
+    trust = _real_uninitialized_trust_service(tmp_path)
+    local_service, service = _real_skills_scope_service(tmp_path, trust_service=trust)
+    await local_service.create_skill(
+        name="demo", content=_skill_content(title="D", description="d"),
+    )
+    trust.bootstrap_trust("pw", salt=b"7" * 32)
+    trust.trust_store.marker_store.clear()
+    trust._keys = None  # fresh session
+    assert trust.trust_posture() == "needs_resetup"
+
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    app.local_skill_trust_service = trust
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-skills").press()
+        reset_button = await _wait_for_selector(
+            screen, pilot, "#library-skills-trust-reset"
+        )
+        assert isinstance(reset_button, Button)
+        reset_button.press()
+        confirm_button = await _wait_for_selector(
+            screen, pilot, "#library-skills-trust-reset-confirm"
+        )
+        assert isinstance(confirm_button, Button)
+        confirm_button.press()
+        for _ in range(150):
+            if trust.trust_posture() == "needs_setup":
+                break
+            await pilot.pause(0.02)
+        assert trust.trust_posture() == "needs_setup"
+        await pilot.pause()
+        assert screen._library_skill_trust_confirming_reset is False
+
+
 @pytest.mark.asyncio
 async def test_list_mode_unlock_refreshes_snapshot_not_just_posture(tmp_path):
     """Qodo review: a list-header Unlock refreshed only the trust posture, but

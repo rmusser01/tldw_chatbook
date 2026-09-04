@@ -1462,6 +1462,124 @@ async def test_library_skills_45_item_pager_is_visible_and_reaches_middle_page(
         assert screen.query_one("#library-skills-page-next", Button).disabled
 
 
+# ---------------------------------------------------------------------------
+# Library decomposition wave-4 task 1 (skills state PR): characterization
+# spot-check pins. `handle_library_skills_page_previous` had NO `.press()`
+# coverage anywhere across Tests/UI, Tests/Library, Tests/Live, and
+# Tests/Skills before this pin -- the two existing widget-only references to
+# `#library-skills-page-previous` (above, `test_skills_canvas_page_two_of_two...`
+# and `test_skills_canvas_stale_page_hides_totals_and_disables_actions`) only
+# ever assert its `disabled` state on a hand-built `SkillsListState`, never
+# press it against a real, fully-mounted `LibraryScreen`. This pin reuses
+# the 45-item real-service setup immediately above (already exercises
+# `handle_library_skills_page_next` genuinely) one page further back.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_library_skills_page_previous_returns_to_the_prior_exact_page():
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = _FakeSkillsScopeService(
+        available=[
+            {"name": f"skill-{index:03d}", "description": f"Skill {index}"}
+            for index in range(45)
+        ]
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-skills").press()
+        for _ in range(12):
+            await pilot.pause()
+            if len(screen.query(".library-skill-row")) == 20:
+                break
+
+        screen.query_one("#library-skills-page-next", Button).press()
+        for _ in range(12):
+            await pilot.pause()
+            if "Page 2 of 3" in str(
+                screen.query_one("#library-skills-page", Static).renderable
+            ):
+                break
+        assert "21-40 of 45" in str(
+            screen.query_one("#library-skills-range", Static).renderable
+        )
+
+        screen.query_one("#library-skills-page-previous", Button).press()
+        for _ in range(12):
+            await pilot.pause()
+            if "Page 1 of 3" in str(
+                screen.query_one("#library-skills-page", Static).renderable
+            ):
+                break
+        assert screen.query_one("#library-skill-row-skill-000", Button)
+        assert not screen.query("#library-skill-row-skill-020")
+        assert "1-20 of 45" in str(
+            screen.query_one("#library-skills-range", Static).renderable
+        )
+        assert screen.query_one("#library-skills-page-previous", Button).disabled
+
+
+class _FailOnceSkillsScopeService(_FakeSkillsScopeService):
+    """Raises on the FIRST `list_skills` call, then delegates to the real
+    fake for every call after -- mirrors `_RecoveringLibraryNoteDetailService`
+    in `Tests/UI/test_library_shell.py` (same "fail once, then recover"
+    shape for a retry pin)."""
+
+    def __init__(self, *, available, blocked=()):
+        super().__init__(available=available, blocked=blocked)
+        self.failures_remaining = 1
+
+    async def list_skills(self, **kwargs):
+        if self.failures_remaining:
+            self.failures_remaining -= 1
+            raise RuntimeError("temporary skills list outage")
+        return await super().list_skills(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_library_skills_retry_recovers_transient_list_failure():
+    """`handle_library_skills_retry` had ZERO coverage anywhere in the four
+    test roots before this pin -- the one existing widget-only reference to
+    `#library-skills-retry` (`test_skills_canvas_stale_page_hides_totals_
+    and_disables_actions` above) only asserts the button exists on a
+    hand-built `SkillsListState`, never presses it against a real screen."""
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = _FailOnceSkillsScopeService(
+        available=[{"name": "code-review", "description": "Reviews a diff"}]
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-skills").press()
+        retry_button = None
+        for _ in range(30):
+            await pilot.pause()
+            matches = list(screen.query("#library-skills-retry"))
+            if matches:
+                retry_button = matches[0]
+                break
+        assert isinstance(retry_button, Button)
+
+        retry_button.press()
+        for _ in range(30):
+            await pilot.pause()
+            if screen.query("#library-skill-row-code-review"):
+                break
+        assert screen.query_one("#library-skill-row-code-review", Button)
+        assert not screen.query("#library-skills-retry")
+
+
 @pytest.mark.asyncio
 async def test_library_skills_manual_items_priority_survives_compact_layout_sync(
     monkeypatch: pytest.MonkeyPatch,
@@ -1946,6 +2064,155 @@ async def test_library_skill_tool_filter_is_read_only_until_keyboard_selection(
             "mystery-tool, get_current_datetime"
         )
         assert screen._library_skill_dirty is True
+
+
+# ---------------------------------------------------------------------------
+# Library decomposition wave-4 task 1 (skills state PR): characterization
+# spot-check pins. `handle_library_skill_tool_filter`, `handle_library_skill_
+# user_invocable_toggle`, `handle_library_skill_disable_model_toggle`, and
+# `handle_library_skill_discard` had ZERO `.press()`/keystroke-dispatch
+# coverage anywhere across Tests/UI, Tests/Library, Tests/Live, and
+# Tests/Skills before this pin -- every existing reference to their
+# selectors only asserted a WIDGET-only host's structure (`_EditorHost`, no
+# real `LibraryScreen` behind it) or a hand-built `SkillsListState`'s
+# display, never pressed/typed against a real, fully-mounted screen. All
+# four are exercised together in one continuous editor session (this
+# file's own established walkthrough-style pattern, same shape as
+# `test_library_skill_tool_filter_is_read_only_until_keyboard_selection`
+# immediately above).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_tool_filter_toggles_and_discard_are_genuinely_pressed(
+    tmp_path,
+):
+    local_service = LocalSkillsService(
+        store_dir=tmp_path,
+        trust_service=None,
+        allow_untrusted_without_trust_service=True,
+        policy_enforcer=None,
+    )
+    await local_service.create_skill(
+        name="demo",
+        content=(
+            "---\nname: demo\ndescription: Demo\nallowed_tools:\n"
+            "  - calculator\n---\nDo the work."
+        ),
+    )
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = SkillsScopeService(
+        local_service=local_service,
+        server_service=None,
+        policy_enforcer=None,
+    )
+    app.app_config.setdefault("library", {})["skill_editor_mode"] = "advanced"
+    host = LibraryHarness(app)
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = await _open_real_skill_editor(host, pilot, "demo")
+
+        # handle_library_skill_tool_filter: typing into the filter Input
+        # never touches the allowlist content itself, only the picker's
+        # own visible-row filtering.
+        tool_filter = screen.query_one("#library-skill-tool-filter", Input)
+        tool_filter.value = "calc"
+        await pilot.pause()
+        assert screen._library_skill_tool_filter == "calc"
+        assert screen._library_skill_dirty is False
+        picker = screen.query_one("#library-skill-tool-picker", SelectionList)
+        assert picker.options
+        assert all("calc" in str(option.value).lower() for option in picker.options)
+        tool_filter.value = ""
+        await pilot.pause()
+
+        # handle_library_skill_user_invocable_toggle
+        user_invocable_button = screen.query_one(
+            "#library-skill-user-invocable", Button
+        )
+        before = screen._library_skill_editor_state.user_invocable
+        user_invocable_button.press()
+        await pilot.pause()
+        assert screen._library_skill_editor_state.user_invocable is not before
+        assert screen._library_skill_dirty is True
+
+        # handle_library_skill_disable_model_toggle
+        disable_model_button = screen.query_one(
+            "#library-skill-disable-model", Button
+        )
+        before = screen._library_skill_editor_state.disable_model_invocation
+        disable_model_button.press()
+        await pilot.pause()
+        assert (
+            screen._library_skill_editor_state.disable_model_invocation
+            is not before
+        )
+        assert screen._library_skill_dirty is True
+
+        # handle_library_skill_discard: the dirty edit from the two toggles
+        # above is dropped and the screen returns to the skills list.
+        discard_button = screen.query_one("#library-skill-discard", Button)
+        assert discard_button.disabled is False
+        discard_button.press()
+        for _ in range(150):
+            if screen._library_skills_view == "list":
+                break
+            await pilot.pause(0.02)
+        assert screen._library_skills_view == "list"
+        assert screen._library_skill_dirty is False
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_conflict_reload_clears_conflict_and_refetches(tmp_path):
+    """`handle_library_skill_conflict_reload` had ZERO `.press()` coverage
+    anywhere in the four test roots -- every existing reference to
+    `#library-skill-conflict-reload` only asserts a WIDGET-only host's
+    display, never presses it against a real screen. Driving the real
+    update-conflict path (a genuine `expected_version` mismatch from the
+    service) is out of this pin's scope -- the conflict flag is set
+    directly on a real, fully-mounted screen instance instead (the same
+    flag `_enter_library_skill_conflict` sets, whatever produced it), which
+    is enough to characterize the BUTTON's own current behavior: clear the
+    flag and re-fetch the open skill's detail."""
+    local_service = LocalSkillsService(
+        store_dir=tmp_path,
+        trust_service=None,
+        allow_untrusted_without_trust_service=True,
+        policy_enforcer=None,
+    )
+    await local_service.create_skill(
+        name="demo", content="---\nname: demo\ndescription: Demo\n---\nBody."
+    )
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = SkillsScopeService(
+        local_service=local_service,
+        server_service=None,
+        policy_enforcer=None,
+    )
+    host = LibraryHarness(app)
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = await _open_real_skill_editor(host, pilot, "demo")
+        screen._library_skill_conflict = True
+        screen._sync_library_skill_lifecycle_actions()
+        await pilot.pause()
+        reload_button = screen.query_one("#library-skill-conflict-reload", Button)
+        assert reload_button.display is True
+
+        reload_button.press()
+        for _ in range(150):
+            if screen._library_skill_conflict is False:
+                break
+            await pilot.pause(0.02)
+        assert screen._library_skill_conflict is False
+        assert screen._library_skill_detail is not None
+        assert screen._library_skill_detail.get("name") == "demo"
 
 
 async def _wait_for_revoke_button_disabled(screen, pilot, *, expected: bool) -> Button:
