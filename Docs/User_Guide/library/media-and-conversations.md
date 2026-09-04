@@ -168,9 +168,18 @@ Reader stays mounted beside Items and keeps one mode visible at a time:
 while you move through items. Missing analysis or highlights produces an
 item-specific empty state; it does not silently switch modes.
 
+Its header is deliberately short: **‹ Back**, the title, the action row, and
+the mode row — five rows above the reading surface, border included. A byline
+row appears only when the item actually has an author or a URL, and an
+identity line ("Server item · not in local Media list") only for a server
+item a local Media list cannot show. The mode row is the only label for the
+open mode; no section header repeats it. Body text wraps at a reading measure
+of about 90 columns however wide the terminal is, while the box around it
+still spans the pane.
+
 - **Read** — the complete stored text ("No stored content." when empty). For
-  markdown-flavored media (a `.md`/Obsidian-style item whose content has a
-  real heading, table, or fenced code block), a "Rendered (selected) |
+  markdown-flavored media (a `.md`/Obsidian-style item, or a video/audio
+  transcript, whose content has a real heading, table, or fenced code block), a "Rendered (selected) |
   Raw" toggle appears above the box and defaults to **Rendered** — headings,
   tables, and code render properly instead of showing literal `#`/`##`/`|`
   characters, using the same renderer as Notes' own "Preview". Press
@@ -256,6 +265,11 @@ them one by one, with your place and progress saved between visits.
 *Verified against fix/media-wave4-c — 2026-09-04 (task-31276: Find opened, "item"
 submitted, "Next ▶" stepped and Escape closed, live in tmux 235x52 and 100x30 — the bar
 holds its row under the mode toolbar through every step and the pane join stays clean.)*
+
+*Verified against fix/media-wave4-c — 2026-09-04 (task-31277: a local audio item with
+no author or URL and a `## `-sectioned video transcript, both opened live in tmux 235x52
+— chrome above the first content line went from 9 rows to 5, prose wraps at ~88 cells
+instead of ~136, and the transcript renders its headings instead of literal `##`.)*
 
 *Verified against fix/media-wave4-a — 2026-09-04 (task-31269: Analysis-mode [ ] walk over
 three items, Find on the Analysis tab, Escape, Find toggle, all live in tmux 235x52; the earlier

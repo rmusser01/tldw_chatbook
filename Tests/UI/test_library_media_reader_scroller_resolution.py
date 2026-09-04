@@ -184,8 +184,16 @@ async def test_match_scroll_moves_the_visible_scroller_after_a_mode_round_trip()
 
     async with host.run_test(size=WIDE_SIZE) as pilot:
         screen = await _open_media_list(host, pilot)
+        # task-31277 shed five rows of Reader chrome, so the reading surface
+        # grew by four rows and this fixture's rendered height (30 rows --
+        # every filler line joins ONE markdown paragraph) stopped overflowing
+        # it: max_scroll_y went to 0 and the visible scroller had nowhere to
+        # move. The trailing filler is sized so the document overflows with
+        # room to spare; the precondition below fails loudly if it ever
+        # stops overflowing again.
         canonical_id, backing_id, _title = _seed_row_document(
-            screen, service, 0, _markdown_wrapping_document(target_line)
+            screen, service, 0,
+            _markdown_wrapping_document(target_line, trailing_lines=200),
         )
         # The fixture's media items are all video/audio/PDF, none of which
         # `_is_markdown_media` ever considers -- force this one row's type
@@ -231,6 +239,10 @@ async def test_match_scroll_moves_the_visible_scroller_after_a_mode_round_trip()
         raw_before = raw_view.scroll_offset.y
         assert raw_before > 0, "Fixture scroll did not move -- test setup is broken."
         assert markdown_scroll.scroll_y == 0, "Rendered scroller must start unscrolled."
+        assert markdown_scroll.max_scroll_y > 0, (
+            "Fixture document no longer overflows the reading surface -- "
+            "there is nothing for a match scroll to move."
+        )
 
         screen._scroll_library_media_content_to_line(target_line)
         await _wait_for_condition(

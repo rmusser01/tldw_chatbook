@@ -433,10 +433,14 @@ async def test_find_bar_keeps_its_place_through_submit_and_next():
     """task-31276 (critique #4 P2): submitting must not relocate the bar.
 
     task-15774 docked an ACTIVE search to the top of the viewer, so Enter
-    teleported the whole bar from under the mode row to above the "Local
-    Media item" identity line and shoved the Reader header down six rows
-    (live cap_20). The bar's anchor is the mode row, at every stage of the
-    gesture: open, submit, match navigation.
+    teleported the whole bar from under the mode row to above the Reader
+    header and shoved that header down six rows (live cap_20). The bar's
+    anchor is the mode row, at every stage of the gesture: open, submit,
+    match navigation.
+
+    The header row this pins used to be the "Local Media item" identity
+    line; task-31277 made that line server-only, so the title -- now the
+    Reader header's own top text row -- is the anchor.
     """
     host = _find_host()
     async with host.run_test(size=(235, 52)) as pilot:
@@ -445,10 +449,10 @@ async def test_find_bar_keeps_its_place_through_submit_and_next():
         await _open_media_find(screen, pilot)
         controls = screen.query_one("#library-media-content-search-controls")
         mode_row = screen.query_one("#library-media-reader-mode-toolbar")
-        identity = screen.query_one("#library-media-reader-identity")
+        header = screen.query_one("#library-media-viewer-title")
         opened_y = controls.region.y
         assert mode_row.region.y < opened_y
-        assert identity.region.y < opened_y
+        assert header.region.y < opened_y
 
         await _submit_content_search_query(screen, pilot, "item")
         status = screen.query_one("#library-media-content-search-status")
@@ -463,8 +467,8 @@ async def test_find_bar_keeps_its_place_through_submit_and_next():
             == mode_row.region.y
         )
         assert (
-            screen.query_one("#library-media-reader-identity").region.y
-            == identity.region.y
+            screen.query_one("#library-media-viewer-title").region.y
+            == header.region.y
         )
 
         screen.query_one("#library-media-content-search-next", Button).press()
@@ -480,31 +484,33 @@ async def test_no_join_artifact_after_find_closes():
     """task-31276 (critique #4 P2): no `┐─────` run at the pane join.
 
     After Escape closed Find, a five-cell rule appeared immediately left of
-    "Local Media item" at the pane join and persisted across later
-    interactions (14 live captures; absent on a fresh open). The fresh-open
-    row is the reference: nothing the Find gesture does may change it.
+    the Reader header's first text row ("Local Media item" then; the title
+    since task-31277 made that identity line server-only) at the pane join,
+    and persisted across later interactions (14 live captures; absent on a
+    fresh open). The fresh-open row is the reference: nothing the Find
+    gesture does may change it.
     """
     host = _find_host()
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_media_list(host, pilot)
         await _open_first_reader_row(screen, pilot)
-        identity = screen.query_one("#library-media-reader-identity")
-        fresh_row = _painted_row(host, identity.region.y)
-        assert "Local Media item" in fresh_row, fresh_row
+        header = screen.query_one("#library-media-viewer-title")
+        fresh_row = _painted_row(host, header.region.y)
+        assert "Product Demo Video" in fresh_row, fresh_row
 
         async def _identity_row() -> str:
             await pilot.pause()
             await pilot.pause()
-            widget = screen.query_one("#library-media-reader-identity")
+            widget = screen.query_one("#library-media-viewer-title")
             return _painted_row(host, widget.region.y)
 
         # Find opened then closed. The stray rule lands in the five pane-grip
-        # columns immediately LEFT of the identity Static, so the identity
-        # region alone cannot see it -- the whole row is the assertion.
+        # columns immediately LEFT of the header Static, so the header's own
+        # region cannot see it -- the whole row is the assertion.
         await _open_media_find(screen, pilot)
         await pilot.press("escape")
         after_find = await _identity_row()
-        widget = screen.query_one("#library-media-reader-identity")
+        widget = screen.query_one("#library-media-viewer-title")
         assert "─" not in _painted(host, widget.region)
         join = after_find[widget.region.x - 5 : widget.region.x]
         assert "─" not in join, join
@@ -521,3 +527,153 @@ async def test_no_join_artifact_after_find_closes():
         await pilot.press("escape")
         after_more = await _identity_row()
         assert after_more == fresh_row, (fresh_row, after_more)
+
+
+def _plain_local_host() -> LibraryProductionCSSHarness:
+    """Two local items with neither an author nor a URL.
+
+    ``_two_media_items`` carries an author on both rows, so it can never
+    show the empty byline row task-31277 collapses. Content is plain prose
+    (no markdown syntax) so the Rendered|Raw strip stays out of the chrome
+    count, and one deliberately long line proves the reading measure.
+    """
+    app = _build_media_test_app()
+    long_line = (
+        "The recorded discussion ran long and this single unbroken sentence "
+        "exists to prove that the reading measure wraps the body well before "
+        "the full width of a 235 column terminal ever gets used up by prose."
+    )
+    items = [
+        {
+            "id": f"media-{index}",
+            "title": f"Roadmap Recording {index}",
+            "type": "audio",
+            "last_modified": "2026-07-06T08:00:00Z",
+            "keywords": ["roadmap"],
+            "content": "\n".join(
+                [f"Line 1 of recording {index}.", long_line]
+                + [f"Line {number} of recording {index}." for number in range(2, 40)]
+            ),
+            "version": 1,
+        }
+        for index in (1, 2)
+    ]
+    _seed_conversations(app, _two_conversations(), media=items)
+    return LibraryProductionCSSHarness(app)
+
+
+@pytest.mark.asyncio
+async def test_local_reader_chrome_stops_before_the_sixth_row():
+    """task-31277 (critique #4 P2): eight rows of chrome before the first
+    content line. The identity line restates what the Media list already
+    said, the byline row paints empty when an item has no author or URL,
+    and the section header repeats the selected mode tab. Counted from the
+    reader pane's top edge to the first content line, inclusive of the
+    content box's top border: Back, title, toolbar, mode row, border."""
+    host = _plain_local_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        viewer = screen.query_one("#library-media-viewer")
+        body = screen.query_one("#library-media-viewer-content-text")
+        chrome = body.region.y - viewer.region.y
+        painted = _painted(host, viewer.region)
+        assert chrome <= 5, (chrome, painted.splitlines()[:10])
+        # An identity line only a server item needs, and a byline row with
+        # nothing to say, are simply not composed.
+        assert not screen.query("#library-media-reader-identity")
+        assert not screen.query("#library-media-reader-byline")
+        assert "Local Media item" not in painted, painted
+        assert "Roadmap Recording 1" in painted, painted
+        assert "Line 1 of recording 1." in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_reader_bodies_do_not_repeat_the_selected_mode_tab():
+    """task-31277 AC#3: the mode row is the label; a `Read`/`Analysis`
+    section header directly beneath it says the same word twice and costs
+    four rows (bold text + top rule + padding + margin)."""
+    host = _plain_local_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        read_body = screen.query_one("#library-media-reader-mode-read")
+        assert not read_body.query(".destination-section"), list(
+            read_body.query(".destination-section")
+        )
+        assert "Read" not in _painted(
+            host, screen.query_one("#library-media-viewer-content").region
+        )
+
+        screen.query_one("#library-media-reader-select-analysis", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-reader-mode-analysis")
+        await pilot.pause()
+        title = screen.query_one("#library-media-viewer-analysis-title")
+        assert title.display is False, title.display
+        # Re-queried after the recompose: the press replaces these widgets.
+        analysis_body = screen.query_one("#library-media-reader-mode-analysis")
+        mode_row = screen.query_one("#library-media-reader-mode-toolbar")
+        assert analysis_body.region.y == mode_row.region.bottom, (
+            analysis_body.region,
+            mode_row.region,
+        )
+
+
+@pytest.mark.asyncio
+async def test_reader_body_wraps_at_a_reading_measure():
+    """task-31277 AC#4: prose ran ~150 cells at 235 columns, against
+    DESIGN.md's 65-75. The body caps at ~90 cells; the bordered box keeps
+    the full pane width so its border still spans the pane."""
+    host = _plain_local_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        box = screen.query_one("#library-media-viewer-content")
+        body = screen.query_one("#library-media-viewer-content-text")
+        assert box.region.width > 120, box.region
+        assert body.region.width <= 92, (body.region, box.region)
+        # Painted proof the wrap index was built at the capped width: the
+        # long line's tail lands on the row below it, not off at column 150.
+        rows = _painted(host, body.region).splitlines()
+        assert "The recorded discussion ran long" in rows[1], rows[:4]
+        assert "terminal ever gets used up by prose." not in rows[1], rows[:4]
+
+
+def _transcript_host() -> LibraryProductionCSSHarness:
+    """Two video items whose transcripts are sectioned with `##` headings."""
+    app = _build_media_test_app()
+    items = [
+        {
+            "id": f"media-{index}",
+            "title": f"Product Demo {index}",
+            "type": "video",
+            "last_modified": "2026-07-06T10:00:00Z",
+            "content": (
+                "## Section 1\n\nThe host opens the demo.\n\n"
+                "## Section 2\n\nThe dashboard walkthrough begins.\n"
+            ),
+            "version": 1,
+        }
+        for index in (1, 2)
+    ]
+    _seed_conversations(app, _two_conversations(), media=items)
+    return LibraryProductionCSSHarness(app)
+
+
+@pytest.mark.asyncio
+async def test_video_transcript_headings_render_instead_of_painting_hashes():
+    """task-31277 AC#5: `_is_markdown_media` gated the content sniff on a
+    media-type allowlist that excluded video/audio, so a transcript whose
+    sections are `## Section 1` painted the hashes literally."""
+    host = _transcript_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        assert screen.query("#library-media-viewer-content-markdown"), list(
+            screen.query_one("#library-media-viewer-content").children
+        )
+        painted = _painted(
+            host, screen.query_one("#library-media-viewer-content").region
+        )
+        assert "Section 1" in painted, painted
+        assert "##" not in painted, painted

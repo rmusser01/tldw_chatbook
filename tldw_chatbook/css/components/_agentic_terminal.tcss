@@ -3472,7 +3472,12 @@ with stray left-edge border fragments), and padding 0 1 so the full
     width: 100%;
     text-style: bold;
     color: $ds-text-primary;
-    margin: 0 0 1 0;
+    /* task-31277 (critique #4 P2): no bottom margin. It bought separation
+       from a byline row that is now composed only when the item HAS an
+       author or URL, so on every other item it paid one blank row of the
+       reading surface for nothing -- and a byline reads better hugging
+       the title it belongs to anyway. */
+    margin: 0;
 }
 
 #library-media-viewer-meta {
@@ -3642,11 +3647,22 @@ with stray left-edge border fragments), and padding 0 1 so the full
     padding: 0 1;
 }
 
+/* task-31277 (critique #4 P2, AC#4): the reading measure. The bodies used
+   the whole pane, so prose ran ~150 cells at 235 columns against DESIGN.md's
+   65-75. The cap is on the TEXT bodies only -- #library-media-viewer-content
+   keeps its full width so its border still spans the pane. */
+#library-media-viewer-content-text,
+#library-media-viewer-content-markdown {
+    max-width: 92;
+}
+
 #library-media-viewer-content-text {
     /* task-22500: the widget sets its own height from the wrap index,
        bounded by the room its parent actually has (the parent's max-height
        is an OUTER bound, so its border rows are not available to us);
-       width must fill so the index is built at the real render width. */
+       width must fill so the index is built at the real render width
+       (task-31277 caps that width; the index is rebuilt from the widget's
+       own scrollable content region, so the cap is what it indexes at). */
     width: 100%;
     /* The reader wraps, so horizontal scrolling has nothing to reach. A
        horizontal scrollbar here would also shrink the render width below
