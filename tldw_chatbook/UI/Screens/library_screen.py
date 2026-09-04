@@ -27879,16 +27879,28 @@ class LibraryScreen(BaseAppScreen):
             return self._library_media_select_enter_available()
         if action == "library_media_toggle_row_selection":
             # task-28012: Space is the selection key. task-31271 seam (b):
-            # it is claimed for the WHOLE of select mode, because the
-            # narrower "only with a row focused" gate let the key fall
-            # through to whatever Button held focus -- on the pane grip
-            # that collapsed the Library pane while the footer said
-            # "toggle selection" (B cap_69). The priority binding wins over
-            # the focused widget; a focused Input still swallows the space
-            # first (Textual filters consumed keys out of the chain), and
-            # the freshness/confirm/in-flight guards stay inside the action
+            # the old gate let a False fall THROUGH to the focused widget,
+            # and on a pane grip that collapsed the Library pane while the
+            # footer said "toggle selection" (B cap_69). The binding is
+            # priority now, so it outranks the focused Button -- which
+            # means the gate must claim only what Space should own:
+            # a media row (toggle it) and the reader shell's pane GRIPS
+            # (chrome; swallow it). Every other button in select mode --
+            # Done, Select all, Clear, Export, Delete -- keeps its own
+            # Space press. A focused Input still swallows the space first
+            # (Textual filters consumed keys out of the binding chain), and
+            # the freshness/confirm/in-flight guards live inside the action
             # so those states no-op rather than firing something else.
-            return self._library_media_select_mode
+            if not self._library_media_select_mode:
+                return False
+            focused = self.focused
+            return bool(
+                focused is not None
+                and (
+                    focused.has_class("library-media-row")
+                    or focused.has_class("library-adaptive-reader-pane-grip")
+                )
+            )
         if action in ("library_media_next_item", "library_media_prev_item"):
             # task-28005: active only in the plain Reader with a neighbour in
             # that direction, so the key no-ops (and drops from the footer)

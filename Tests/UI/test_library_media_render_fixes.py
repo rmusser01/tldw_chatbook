@@ -543,3 +543,51 @@ async def test_reader_footer_advertises_l_c_t():
         assert "l read later" in painted, painted
         assert "c use in Console" in painted, painted
         assert "t trash" in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_space_in_select_mode_is_claimed_from_rows_and_grips_only():
+    """Seam (b), third half: Space is taken from the GRIP, not from every
+    button.
+
+    The priority binding outranks the focused widget, so the gate has to
+    claim exactly what Space should own: a media row (toggle it) and the
+    reader shell's pane grips (chrome -- swallow the collapse the footer
+    never promised). "Done" and the other select-mode buttons keep their
+    own key handling; asserted on the gate itself because Textual 8's
+    ``Button.BINDINGS`` is ``enter`` only -- Space does nothing on a plain
+    Button either way, so a "press Done with Space" assertion would pass
+    without the narrowing. Enter still presses Done, end to end.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await pilot.press("s")
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_media_select_mode is True
+
+        def claim() -> bool | None:
+            return screen.check_action("library_media_toggle_row_selection", ())
+
+        # Entry lands on a row: Space is the selection key there.
+        assert screen.focused.has_class("library-media-row"), screen.focused
+        assert claim() is True
+
+        shell = screen.query_one(
+            "#library-media-reader-shell", LibraryMediaReaderShell
+        )
+        shell.library_grip.focus()
+        await pilot.pause()
+        assert claim() is True  # swallowed, so the pane never collapses
+
+        done = screen.query_one("#library-media-select-toggle", Button)
+        assert str(done.label) == "Done"
+        done.focus()
+        await pilot.pause()
+        assert claim() is False  # the button keeps its own key handling
+
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_media_select_mode is False
