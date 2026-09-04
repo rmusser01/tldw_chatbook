@@ -8,7 +8,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-04 13:47'
-updated_date: '2026-09-04 20:51'
+updated_date: '2026-09-04 21:15'
 labels:
   - tests
   - tech-debt
@@ -31,5 +31,5 @@ Tests/UI/test_command_palette_providers.py::TestTabNavigationProvider::test_pale
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Root-caused by verified bisect (first bisect run was polluted by a lost transcript + wrong first-bad; re-bisected the dev-only range and verified parent-good/child-bad by hand): 45a13eb2c8 'feat(library): migrate Skills to adaptive reader (#2134)' (2026-08-27). The migration left _reconcile_library_entry_state gating the Skills canvas behind the Library SOURCE snapshot: with _library_lookup_error set, the reconciler swapped in the #library-canvas-error Static, so the palette deep-link never mounted #library-skills-canvas. compose_content's Skills mount had already been un-gated with a comment recording exactly this decision (Skills state is registry/trust-worker owned, independent of the source snapshot); the reconciler was the un-fixed twin. Fix: drop the lookup-error guard in the reconciler's skills branch and exclude skills from the error-surface swap. Test env note: app_factory stubs make the source lookup FAIL, which is why the test (and a real user with a broken source DB) hit this. Evidence: pinning test green; sibling suites' failure set identical to clean-dev baseline (heals 1, breaks 0).
+ADDENDUM: the test also carried a second, independent defect — its setup boots the real splash screen (7s wall-clock) while waiting with a wall-clock-free 200-pause loop, so under host load setup flaked with 'did not finish initial navigation' (this also explains the first bisect's inconsistent verdicts). Hardened: splash disabled via config_overrides for this test and both wait loops converted to 30s monotonic deadlines. Triple-run green under load.
 <!-- SECTION:NOTES:END -->
