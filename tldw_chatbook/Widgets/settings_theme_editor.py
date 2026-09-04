@@ -134,7 +134,7 @@ class SettingsThemeEditor(Vertical):
             yield Checkbox("On", value=True, id="settings-theme-dark-mode")
         # `theme-editor-action` keys the compact-mode width rule to these
         # buttons only (the CSS fast-path ratchet forbids a bare `Button`
-        # subject, TASK-31260).
+        # subject, TASK-31279).
         with Horizontal(classes="settings-action-row"):
             yield Button("New", id="settings-theme-new", classes="theme-editor-action")
             yield Button("Clone", id="settings-theme-clone", classes="theme-editor-action")
@@ -669,7 +669,7 @@ class SettingsThemeEditor(Vertical):
         if self._require_theme_name() is None:
             return
         if not self.is_modified:
-            # TASK-31261: nothing to discard -- say so instead of claiming a
+            # TASK-31280: nothing to discard -- say so instead of claiming a
             # reset happened (still no confirmation dialog, task-1371).
             self.app.notify("No changes to reset", severity="information")
             return

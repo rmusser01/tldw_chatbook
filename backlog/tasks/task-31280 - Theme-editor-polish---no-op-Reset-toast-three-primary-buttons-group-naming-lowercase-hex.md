@@ -1,5 +1,5 @@
 ---
-id: TASK-31261
+id: TASK-31280
 title: Theme editor polish - no-op Reset toast, three primary buttons, group naming,
   lowercase hex
 status: Done
@@ -43,3 +43,14 @@ Reset with no edits now says 'No changes to reset' (still no dialog; pinned test
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Renumbering provenance
+
+This task previously held id TASK-31261, colliding with the older
+"canvas_sync-search-kind-screen-caller-AST-census-guard" task that arrived on dev first (created 2026-09-04 05:24 vs this
+task's 05:44; found by the backlog id guard on PR #2375 after a rebase).
+Per the owner rule decided 2026-08-21 in TASK-19601 (**older id keeps it;
+the younger task renumbers with a provenance note, regardless of Done
+status**), it renumbered to TASK-31280. Citations to TASK-31261 in the
+theme-editor commit messages on PR #2375 (fix/theme-editor-ux, 2026-09-04)
+refer to THIS task; the other TASK-31261 holder is the AST census guard.

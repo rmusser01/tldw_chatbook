@@ -1,4 +1,4 @@
-"""Painted-frame checks for the Settings theme editor (TASK-31254, TASK-31260).
+"""Painted-frame checks for the Settings theme editor (TASK-31254, TASK-31279).
 
 These tests load the PRODUCTION bundle (`tldw_cli_modular.tcss`) on a bare
 harness, because the defects live in app-level CSS: a bare `App` with widget
@@ -94,7 +94,7 @@ async def test_invalid_hex_does_not_paint_a_black_swatch(tmp_path):
 
 @pytest.mark.asyncio
 async def test_compact_mode_keeps_every_button_inside_the_card(tmp_path):
-    """TASK-31260: below the compact-workbench width the detail pane is ~45
+    """TASK-31279: below the compact-workbench width the detail pane is ~45
     cells; four 16-cell buttons overflowed and Delete/Export were clipped."""
     app = _BundleHarness(
         tmp_path,

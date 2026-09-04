@@ -1,5 +1,5 @@
 ---
-id: TASK-31260
+id: TASK-31279
 title: Theme editor - at 110 columns the button row clips Delete/Export and the inspector
   prints the save path twice
 status: Done
@@ -42,3 +42,14 @@ Compact workbench (<=100 cols) stacks the editor's action rows and gives each bu
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Renumbering provenance
+
+This task previously held id TASK-31260, colliding with the older
+"Library-wiring-cluster-membership-AST-re-census-guard" task that arrived on dev first (created 2026-09-04 05:24 vs this
+task's 05:44; found by the backlog id guard on PR #2375 after a rebase).
+Per the owner rule decided 2026-08-21 in TASK-19601 (**older id keeps it;
+the younger task renumbers with a provenance note, regardless of Done
+status**), it renumbered to TASK-31279. Citations to TASK-31260 in the
+theme-editor commit messages on PR #2375 (fix/theme-editor-ux, 2026-09-04)
+refer to THIS task; the other TASK-31260 holder is the AST census guard.

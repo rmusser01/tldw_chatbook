@@ -775,7 +775,7 @@ profile, fixing a rendering defect on the Name/Description/Model
 override/Tools fields found along the way; the rest of this page's content
 unchanged from the prior stamp).*
 *Interface — Theme rewritten against fix/theme-editor-ux @ 9997d086b4 —
-2026-09-04 (tasks 31250-31261: driven live in a scratch profile — a theme
+2026-09-04 (tasks 31250-31259, 31279 and 31280: driven live in a scratch profile — a theme
 saved in the editor now registers at once, appears in Appearance → Theme and
 the palette, and loads at the next launch via **Set as launch default**;
 swatches, the Dark toggle and the preset target are painted; Actions sit above

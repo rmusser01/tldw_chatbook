@@ -849,7 +849,7 @@ async def test_settings_theme_editor_preview_repaints_from_edits_without_apply(t
 
 @pytest.mark.asyncio
 async def test_settings_theme_editor_one_primary_button_per_action_row(tmp_path):
-    """TASK-31261: Apply is the one primary action; New and Generate were also
+    """TASK-31280: Apply is the one primary action; New and Generate were also
     variant=primary, so three buttons competed for the eye."""
     from textual.widgets import Button
 

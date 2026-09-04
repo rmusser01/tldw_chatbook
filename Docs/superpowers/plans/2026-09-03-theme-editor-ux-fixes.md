@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Close the twelve defects found in the 2026-09-03 Settings ▸ Theme editor review (backlog TASK-31250 … TASK-31261) so a saved theme actually persists, every action names the right theme, and every state the code sets is visible.
+**Goal:** Close the twelve defects found in the 2026-09-03 Settings ▸ Theme editor review (backlog TASK-31250 … TASK-31280) so a saved theme actually persists, every action names the right theme, and every state the code sets is visible.
 
 **Architecture:** All fixes stay inside the existing Settings-native editor (`tldw_chatbook/Widgets/settings_theme_editor.py`) plus three small seams it already touches: the theme catalog module (`css/Themes/themes.py`, gains one loader), app startup registration (`app.py`), and the Settings screen's Appearance options / dirty flag / inspector rows (`UI/Screens/settings_screen.py`). No new widgets, no new dependencies. The one new runtime concept is that user TOML themes are registered with the app like shipped ones.
 
 **Tech Stack:** Python 3.12, Textual 8.2.8 (`App.available_themes`, `Theme`, `Select`, `Tree`), pytest + `app.run_test()`, toml.
 
-**Spec:** `.impeccable/critique/2026-09-04T04-45-47Z__tldw-chatbook-widgets-settings-theme-editor-py.md` (critique snapshot) and the twelve task files `backlog/tasks/task-3125[0-9]*.md`, `task-31260*.md`, `task-31261*.md`. Each task below names the backlog id it closes; tick its ACs and add Implementation Notes when done.
+**Spec:** `.impeccable/critique/2026-09-04T04-45-47Z__tldw-chatbook-widgets-settings-theme-editor-py.md` (critique snapshot) and the twelve task files `backlog/tasks/task-3125[0-9]*.md`, `task-31279*.md`, `task-31280*.md`. Each task below names the backlog id it closes; tick its ACs and add Implementation Notes when done.
 
 ## Global Constraints
 
@@ -574,7 +574,7 @@ and use `target = self._preset_target()` in `_apply_preset_swatch`. Give the Dar
 
 ---
 
-### Task 7: Actions above presets, User Themes first, stable preset target under Tab (TASK-31256, plus the group naming from TASK-31261)
+### Task 7: Actions above presets, User Themes first, stable preset target under Tab (TASK-31256, plus the group naming from TASK-31280)
 
 **Files:**
 - Modify: `tldw_chatbook/Widgets/settings_theme_editor.py` (`compose` order, `_populate_theme_tree`, `_load_user_themes`, `on_theme_selected`, tree hint copy, `on_save_theme`/`_delete_user_theme` tree bookkeeping)
@@ -840,7 +840,7 @@ Call `self._refresh_preview()` at the end of `_update_color_inputs`, in `on_colo
 
 ---
 
-### Task 11: Compact layout at ≤100 columns and a readable save path (TASK-31260)
+### Task 11: Compact layout at ≤100 columns and a readable save path (TASK-31279)
 
 **Files:** `tldw_chatbook/css/components/_settings_splash_theme.tcss`, bundle, `tldw_chatbook/UI/Screens/settings_screen.py` (`_theme_save_target` display sites ~4607, ~13607, ~18615 → new `_display_path`), `Tests/UI/test_settings_theme_editor_render.py`.
 
@@ -849,7 +849,7 @@ Call `self._refresh_preview()` at the end of `_update_color_inputs`, in `on_colo
 - [ ] **Step 3: Implement.** CSS:
 
 ```css
-/* TASK-31260: below SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH (100 cols) the
+/* TASK-31279: below SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH (100 cols) the
    detail pane is ~45 cells; four 16-cell buttons cannot share a row. */
 #settings-workbench.settings-workbench-compact #settings-theme-card .settings-action-row {
     layout: vertical;
@@ -867,7 +867,7 @@ Because the render harness has no `#settings-workbench`, wrap the editor in the 
 
 ```python
 def _display_path(path: Path) -> str:
-    """Shorten a path for the inspector: ~ for home (TASK-31260)."""
+    """Shorten a path for the inspector: ~ for home (TASK-31279)."""
     try:
         return "~" + os.sep + str(path.relative_to(Path.home()))
     except ValueError:
@@ -876,11 +876,11 @@ def _display_path(path: Path) -> str:
 
 and use `_display_path(_theme_save_target())` at the three sites, dropping the duplicate "Affected config" path row (keep the "Save target" row).
 
-- [ ] **Step 4: Rebuild bundle, run render + hub tests (`test_theme_category_opens_without_crashing`), expect PASS.** Commit `fix(theme-editor): stack action rows in compact mode, shorten inspector path (TASK-31260)`.
+- [ ] **Step 4: Rebuild bundle, run render + hub tests (`test_theme_category_opens_without_crashing`), expect PASS.** Commit `fix(theme-editor): stack action rows in compact mode, shorten inspector path (TASK-31279)`.
 
 ---
 
-### Task 12: Polish, docs stamp, full verification (TASK-31261 remainder + Definition of Done)
+### Task 12: Polish, docs stamp, full verification (TASK-31280 remainder + Definition of Done)
 
 **Files:** `tldw_chatbook/Widgets/settings_theme_editor.py` (`on_reset_theme`, button variants), `Tests/UI/test_settings_theme_editor.py`, `Docs/User_Guide/settings.md`, all twelve task files.
 
@@ -889,4 +889,4 @@ and use `_display_path(_theme_save_target())` at the three sites, dropping the d
 - [ ] **Step 3:** Run the full related suites: `Tests/UI/test_settings_theme_editor.py Tests/UI/test_settings_theme_editor_render.py Tests/UI/test_settings_configuration_hub.py Tests/UI/test_css_build_integrity.py Tests/Utils/test_user_theme_loader.py Tests/UI/test_command_palette_shell_routes.py Tests/Performance/test_textual_css_fastpath.py Tests/UI/test_non_obscuring_focus_contract.py` and `python3 Helper_Scripts/check_backlog_task_ids.py` equivalent `python3 scripts/check_backlog_task_ids.py`.
 - [ ] **Step 4:** Live verification (verify skill): launch with a scratch `TLDW_CONFIG_PATH`, walk New → rename → edit → Apply → Save → Set as launch default → quit → relaunch, confirm the theme is applied at launch and the editor reopens on it. Record the capture paths in the task notes.
 - [ ] **Step 5:** Docs stamp: update `Docs/User_Guide/settings.md` "Verified against" line for the Theme section to the branch sha and date.
-- [ ] **Step 6:** Backlog: for each of 31250-31261 tick ACs, add Implementation Notes, set Done. Commit `docs(backlog): close Theme editor UX tasks 31250-31261`.
+- [ ] **Step 6:** Backlog: for each of 31250-31259, 31279, 31280 tick ACs, add Implementation Notes, set Done. Commit `docs(backlog): close Theme editor UX tasks 31250-31259, 31279 and 31280`.

@@ -13010,7 +13010,7 @@ async def test_theme_dirty_flag_clears_when_leaving_the_category():
 
 
 def test_display_path_abbreviates_home_and_leaves_other_paths_alone(tmp_path):
-    """TASK-31260: the inspector's themes directory reads '~/...', not a
+    """TASK-31279: the inspector's themes directory reads '~/...', not a
     five-line absolute path; paths outside home are untouched."""
     import os
     from pathlib import Path

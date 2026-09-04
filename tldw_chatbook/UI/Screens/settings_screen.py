@@ -596,7 +596,7 @@ def _theme_save_target() -> Path:
 
 
 def _display_path(path: Path) -> str:
-    """Shorten a path for inspector copy: ``~`` for the home directory (TASK-31260).
+    """Shorten a path for inspector copy: ``~`` for the home directory (TASK-31279).
 
     The absolute themes directory wrapped over five inspector lines, twice.
     """
