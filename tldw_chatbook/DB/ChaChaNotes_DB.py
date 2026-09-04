@@ -591,7 +591,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 65  # Content-free physical trace-compaction status (after v64 auxiliary timeout).
+    _CURRENT_SCHEMA_VERSION = 66  # Character-conversation selected-branch Keyword projection.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -3541,6 +3541,65 @@ UPDATE db_schema_version
                 "Local authority identity is unavailable or invalid."
             ) from exc
         return self._local_authority_from_rows(rows)
+
+    def get_character_conversation_search_revision(self) -> int:
+        """Return the current selected-branch search source revision."""
+
+        with self.transaction() as cursor:
+            row = cursor.execute(
+                "SELECT data_revision FROM character_conversation_search_revision "
+                "WHERE singleton_id = 1"
+            ).fetchone()
+        if row is None:
+            raise CharactersRAGDBError(
+                "Character conversation search revision is unavailable."
+            )
+        return int(row[0])
+
+    def increment_character_conversation_search_revision(self) -> int:
+        """Advance and return the search revision in one owned transaction."""
+
+        with self.transaction(immediate=True) as cursor:
+            updated = cursor.execute(
+                "UPDATE character_conversation_search_revision "
+                "SET data_revision = data_revision + 1, "
+                "updated_at = CURRENT_TIMESTAMP WHERE singleton_id = 1"
+            )
+            if updated.rowcount != 1:
+                raise CharactersRAGDBError(
+                    "Character conversation search revision is unavailable."
+                )
+            row = cursor.execute(
+                "SELECT data_revision FROM character_conversation_search_revision "
+                "WHERE singleton_id = 1"
+            ).fetchone()
+        return int(row[0])
+
+    def backfill_character_conversation_legacy_links(self) -> int:
+        """Backfill only exact local legacy character identities."""
+
+        authority = self.get_local_authority_id()
+        with self.transaction(immediate=True) as cursor:
+            result = cursor.execute(
+                """
+                UPDATE conversations
+                   SET assistant_authority_id = ?
+                 WHERE deleted = 0
+                   AND runtime_backend = 'local'
+                   AND assistant_kind = 'character'
+                   AND assistant_authority_id IS NULL
+                   AND typeof(character_id) = 'integer'
+                   AND character_id > 0
+                   AND assistant_id = CAST(character_id AS TEXT)
+                   AND EXISTS (
+                       SELECT 1 FROM character_cards AS card
+                        WHERE card.id = conversations.character_id
+                          AND card.deleted = 0
+                   )
+                """,
+                (authority,),
+            )
+            return int(result.rowcount)
 
     def close_connection(self):
         """
@@ -7677,6 +7736,46 @@ UPDATE db_schema_version
                 f"Migration from V64 to V65 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _migrate_from_v65_to_v66(self, conn: sqlite3.Connection) -> None:
+        """Install the dormant selected-branch character Keyword projection."""
+
+        self._require_migration_entry_version(conn, 65, "V65→V66")
+        from tldw_chatbook.DB.character_conversation_search import (
+            CHARACTER_CONVERSATION_SEARCH_SCHEMA_SQL,
+        )
+
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    CHARACTER_CONVERSATION_SEARCH_SCHEMA_SQL,
+                    "V65→V66",
+                )
+                self.backfill_character_conversation_legacy_links()
+                if cursor.execute("PRAGMA foreign_key_check").fetchall():
+                    raise SchemaError(
+                        "Character conversation search migration foreign key audit failed"
+                    )
+                version_cursor = cursor.execute(
+                    "UPDATE db_schema_version SET version = 66 "
+                    "WHERE schema_name = ? AND version = 65",
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V65→V66] Migration version update was not applied"
+                    )
+            if self._get_db_version(conn) != 66:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V65→V66] Migration version check failed"
+                )
+        except SchemaError:
+            raise
+        except Exception as exc:
+            raise SchemaError(
+                f"Migration from V65 to V66 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -7894,6 +7993,7 @@ UPDATE db_schema_version
                     62: self._migrate_from_v62_to_v63,
                     63: self._migrate_from_v63_to_v64,
                     64: self._migrate_from_v64_to_v65,
+                    65: self._migrate_from_v65_to_v66,
                 }
 
                 if current_db_version == 0:
