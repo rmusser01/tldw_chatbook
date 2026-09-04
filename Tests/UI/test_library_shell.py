@@ -9677,7 +9677,9 @@ async def test_library_shell_media_edit_save_refreshes_authoritative_page():
 
         service = screen.app_instance.media_reading_scope_service
         assert service.search_calls[-1]["offset"] == 0
-        screen.query_one("#library-media-back").press()
+        # task-31272: "‹ Back" is compact-only; this drives the exit seam
+        # it shares with Escape's compact branch.
+        screen._exit_library_media_viewer()
         await _wait_for_condition(
             pilot,
             lambda: "Renamed In List" in _visible_text(screen),
@@ -12088,7 +12090,8 @@ async def test_library_shell_media_viewer_content_mode_resets_on_back_and_next_o
         await _open_media_viewer(screen, pilot)
         assert screen._library_media_content_mode == "rendered"
 
-        screen.query_one("#library-media-back").press()
+        # task-31272: "‹ Back" is compact-only; the exit seam is shared.
+        screen._exit_library_media_viewer()
         await pilot.pause()
         await pilot.pause()
         assert screen._library_media_content_mode == "raw"

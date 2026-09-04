@@ -3584,6 +3584,19 @@ class LibraryScreen(BaseAppScreen):
                 # (``action_library_media_trash_back``) genuinely returns
                 # to the media list, exactly what this set advertises.
                 and self._library_media_view in ("viewer", "trash")
+                # task-31272 review: ...unless the Items pane beside the
+                # three-pane Reader has genuinely TAKEN the keys -- select
+                # mode (Space toggles, Done exits) or an open type/sort
+                # strip. Merely standing on a list row keeps the Reader
+                # set, whose ] / [ / l / c / t are all still live from
+                # there; "s" joins that set through its own gate below.
+                and not (
+                    self._library_media_list_surface_active()
+                    and (
+                        self._library_media_select_mode
+                        or self._library_open_choice_strip() is not None
+                    )
+                )
             )
             or self._library_note_editor_active()
             or self._library_prompt_editor_active()
@@ -3642,6 +3655,15 @@ class LibraryScreen(BaseAppScreen):
                     ("l", "library_media_read_later", "read later"),
                     ("c", "library_media_use_in_console", "use in Console"),
                     ("t", "library_media_move_to_trash", "trash"),
+                    # task-31272 review: "s" is live from a focused list
+                    # row beside the three-pane Reader, and its own gate
+                    # says exactly when -- so it is advertised there and
+                    # nowhere else, the same way l/c/t are.
+                    (
+                        _MEDIA_SELECT_MODE_KEY,
+                        "library_media_toggle_select_mode",
+                        "select",
+                    ),
                 ):
                     if self.check_action(gated_action, ()):
                         shortcuts.append((key, label))
@@ -3675,11 +3697,7 @@ class LibraryScreen(BaseAppScreen):
         open_strip = self._library_open_choice_strip()
         if open_strip is not None:
             return (("enter", f"choose {open_strip[0]}"), ("esc", "cancel"))
-        if (
-            self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
-            and self._library_media_view == "list"
-            and self._library_list_canvas_showing_list()
-        ):
+        if self._library_media_list_surface_active():
             # task-28012: teach the bulk-selection keys on the media list.
             if self._library_media_select_mode:
                 return self.LIBRARY_MEDIA_SELECT_SHORTCUTS
@@ -7628,8 +7646,14 @@ class LibraryScreen(BaseAppScreen):
             # both derive from this layout, and the first settled
             # measurement always arrives AFTER the viewer was composed
             # against __init__'s zero-width sentinel. The viewer sync is a
-            # no-op unless a compose input genuinely changed.
-            if self._library_media_view == "viewer":
+            # no-op unless a compose input genuinely changed. Gated on the
+            # viewer being MOUNTED: ``_sync_library_media_viewer_or_
+            # recompose`` falls back to a whole-screen recompose when it is
+            # not, which task-21116 pins to zero on this path.
+            if (
+                self._library_media_view == "viewer"
+                and self._mounted_library_media_viewer() is not None
+            ):
                 self._sync_library_media_viewer_or_recompose()
         if hidden_focus_target is not None:
             self._focus_library_media_grip_if_current(
@@ -9428,8 +9452,7 @@ class LibraryScreen(BaseAppScreen):
                 self._conversations_state.requested_query,
             )
         if (
-            self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
-            and self._library_media_view == "list"
+            self._library_media_list_surface_active(require_focus=False)
             and self._pending_library_source_open is None
         ):
             self._request_library_media_browse(
@@ -24207,7 +24230,12 @@ class LibraryScreen(BaseAppScreen):
             return
         if self._library_media_select_mode:
             self._exit_library_media_select_mode(announce_discard=True)
-            _sync_library_canvas(self, "media")
+            # task-31272 review: re-register the footer once the rows are
+            # back. Leaving select mode beside the three-pane Reader put
+            # the Reader's own set back, and its ] / [ chips derive from
+            # the mounted rows -- registered mid-swap they read as absent
+            # while the keys themselves still worked (live-verified).
+            _sync_library_canvas(self, "media", then=self._register_footer_shortcuts)
             return
         cancel_settlement = getattr(
             self, "_cancel_library_media_selection_settlement", None
@@ -27779,6 +27807,12 @@ class LibraryScreen(BaseAppScreen):
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
                 and getattr(self, "_library_media_view", "list") == "viewer"
                 and not self._library_media_bulk_delete_in_flight
+                # task-31272: the same seam the footer chip reads (cf. the
+                # Conversations gate below). "" means Escape does nothing
+                # here -- at the three-pane rail terminus -- so leave the
+                # key un-gated rather than swallow it, exactly as the
+                # footer advertises no chip there.
+                and bool(self._library_media_escape_label())
             )
         if action == "library_media_trash_back":
             # task-4025: only while the media canvas genuinely shows its
@@ -27879,9 +27913,12 @@ class LibraryScreen(BaseAppScreen):
         if action == "library_media_toggle_select_mode":
             # task-28012: only on the media LIST (not viewer/trash), and not
             # while a bulk-delete confirm is armed or a delete is in flight.
+            # task-31272: the live LIST SURFACE, not the view flag -- in
+            # the three-pane shell the Reader never leaves "viewer", so
+            # this gate stayed off for the whole visit while the user was
+            # standing on a list row.
             if (
-                self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
-                or self._library_media_view != "list"
+                not self._library_media_list_surface_active()
                 or self._library_media_confirming_bulk_delete
                 or self._library_media_bulk_delete_in_flight
             ):
@@ -31790,8 +31827,7 @@ class LibraryScreen(BaseAppScreen):
             strip, or ``None`` when no converged strip is showing.
         """
         if (
-            self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
-            and self._library_media_view == "list"
+            self._library_media_list_surface_active()
             and self._library_media_type_choices_visible
         ):
             return (
@@ -31800,8 +31836,7 @@ class LibraryScreen(BaseAppScreen):
                 "_library_media_type_choices_visible",
             )
         if (
-            self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
-            and self._library_media_view == "list"
+            self._library_media_list_surface_active()
             and self._library_media_sort_choices_visible
         ):
             return (
@@ -38695,6 +38730,13 @@ class LibraryScreen(BaseAppScreen):
                 self._focus_library_control, "#library-media-reader-more"
             )
             return
+        # task-31272: the Items pane's own type/sort strips open over the
+        # three-pane Reader too, and this action owns Escape there (the
+        # list canvas's ``library_list_focus_rail`` is gated to the "list"
+        # view). Close the strip first, exactly as its "esc cancel" chip
+        # promises -- the same one-transient-at-a-time shape as Find/More.
+        if self._close_open_library_choice_strip():
+            return
         try:
             shell = self.query_one(
                 "#library-media-reader-shell", LibraryMediaReaderShell
@@ -39970,6 +40012,51 @@ class LibraryScreen(BaseAppScreen):
             except (NoMatches, QueryError):
                 layout = self._library_media_reader_layout
         return not (layout.library_open and layout.items_open)
+
+    def _library_media_list_surface_active(self, *, require_focus: bool = True) -> bool:
+        """Whether the media LIST surface is live, Reader open or not.
+
+        task-31272: with "‹ Back" gone from the three-pane shell,
+        ``_library_media_view`` stays ``"viewer"`` for the whole visit, so
+        every behaviour keyed on that flag (the ``s`` select gate, the list
+        footer set, the type/sort choice strips, the background list
+        refresh) would stay off while the Items pane is plainly on screen
+        beside the Reader. In that layout the list is live too -- and for
+        the KEY-owning behaviours only while the Items region actually
+        holds focus, so the Reader keeps its own keys while the Reader is
+        where the user is. ``require_focus=False`` asks the
+        visibility-only question, for callers with no focus semantics
+        (a background refresh of the list the user can see).
+
+        Args:
+            require_focus: Whether the Items region must hold focus for
+                the three-pane Reader to count.
+
+        Returns:
+            True when the media list surface owns this behaviour.
+        """
+        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA:
+            return False
+        if self._library_media_view == "list":
+            return True
+        if self._library_media_view != "viewer":
+            return False
+        try:
+            shell = self.query_one(
+                "#library-media-reader-shell", LibraryMediaReaderShell
+            )
+        except (NoMatches, QueryError):
+            return False
+        if self._library_media_reader_exit_available(shell.effective_layout):
+            # Not the three-pane shell: this Reader has a real exit, and
+            # "list" is reachable again through it.
+            return False
+        if not require_focus:
+            return True
+        focused = self.focused
+        return focused is not None and (
+            focused is shell.items or shell.items in focused.ancestors
+        )
 
     def _library_media_escape_label(self) -> str:
         """Describe the action Escape will take from the current effective role.

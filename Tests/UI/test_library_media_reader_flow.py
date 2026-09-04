@@ -1162,6 +1162,10 @@ def _escape_fake(
         _focus_library_media_items_pane=lambda: calls.append(("items-pane",)),
         _focus_library_rail_action=lambda selector: calls.append(("rail", selector)),
         _exit_library_media_viewer=lambda: calls.append("back"),
+        # task-31272 review: the Items pane's type/sort strips open over
+        # the three-pane Reader, so Escape closes one first; no strip is
+        # open in these fakes.
+        _close_open_library_choice_strip=lambda: False,
         _register_footer_shortcuts=lambda: calls.append("footer"),
         call_after_refresh=lambda callback, *args: callback(*args),
     )

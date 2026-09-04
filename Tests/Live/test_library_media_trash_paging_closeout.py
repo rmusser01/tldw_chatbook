@@ -739,11 +739,19 @@ async def _walk_size(
                 target_id=selected_normal_id,
                 scroll_offset=saved_scroll,
             )
-            viewer_back = await _current_widget(
-                screen, pilot, "#library-media-back", Button
-            )
-            viewer_back.focus()
-            await pilot.press("enter")
+            # task-31272: "‹ Back" composes only where a "back to list"
+            # exit is real -- not in the three-pane shell, whose Items pane
+            # is already showing the list. Where it renders, this is still
+            # the keyboard gesture; where it does not, the exit seam the
+            # button and Escape share stands in for it.
+            if screen.query("#library-media-back"):
+                viewer_back = await _current_widget(
+                    screen, pilot, "#library-media-back", Button
+                )
+                viewer_back.focus()
+                await pilot.press("enter")
+            else:
+                screen._exit_library_media_viewer()
             await _wait_for_condition(
                 pilot,
                 lambda: (

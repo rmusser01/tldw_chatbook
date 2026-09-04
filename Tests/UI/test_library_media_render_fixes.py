@@ -672,7 +672,10 @@ async def test_escape_closes_the_more_menu_from_any_reader_focus():
         await pilot.pause()
         await pilot.pause()
         assert screen._library_media_view == "viewer"
-        assert screen.check_action("library_media_viewer_back", ()) is True
+        # The terminus leaves Escape UN-GATED rather than swallowing it
+        # (the Conversations seam): no chip, no action, no strand.
+        assert screen._library_media_escape_label() == ""
+        assert screen.check_action("library_media_viewer_back", ()) is False
 
         screen.query_one("#library-media-reader-more", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-reader-more-actions")
@@ -812,3 +815,88 @@ async def test_escape_labels_are_one_of_four():
         # there, so the footer advertises no chip rather than a "back"
         # the three-pane shell cannot perform.
         assert seen["rail focus"] == "", seen
+
+
+@pytest.mark.asyncio
+async def test_escape_to_the_row_restores_the_list_keys_beside_the_reader():
+    """The Items pane keeps its own keys while the three-pane Reader is open.
+
+    task-31272 review: with "‹ Back" gone, ``_library_media_view`` never
+    leaves "viewer" for the whole visit, so everything keyed on that flag
+    (the ``s`` select gate, the list/select footer sets, the type/sort
+    strips) would stay dead while the user is standing on a list row.
+    They key on the live list SURFACE instead -- the Items region holding
+    focus -- and hand the keys straight back on F6 into the Reader.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        screen.query_one("#library-media-viewer-content").focus()
+        await pilot.pause()
+        assert screen.check_action("library_media_toggle_select_mode", ()) is False
+        assert dict(screen._library_footer_shortcuts_for_current_state())["esc"] == (
+            "focus Items"
+        )
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen.focused is not None
+        assert screen.focused.has_class("library-media-row"), screen.focused
+        assert screen.check_action("library_media_toggle_select_mode", ()) is True
+        # The Reader keeps the footer from a list row -- ] / l / c / t are
+        # all still live from there -- and "s" joins it through its gate.
+        row_labels = _footer_labels(screen)
+        assert "select" in row_labels, row_labels
+        assert "read later" in row_labels, row_labels
+
+        await pilot.press("s")
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_media_select_mode is True
+        # Select mode is the Items pane genuinely taking the keys.
+        assert screen._library_footer_shortcuts_for_current_state() == (
+            screen.LIBRARY_MEDIA_SELECT_SHORTCUTS
+        )
+
+        # Leaving select mode puts the Reader's own set back -- REGISTERED,
+        # not just computed: the ] / [ chips derive from the mounted rows,
+        # and a registration mid-swap dropped them while the keys worked.
+        await pilot.press("s")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_media_select_mode is False
+                and "next item"
+                in [label for _key, label in screen._footer_shortcut_registration[1]]
+            ),
+            message="Leaving select mode left a stale footer registration.",
+        )
+
+        # F6 back into the Reader hands the Reader its own set again.
+        screen.query_one("#library-media-viewer-content").focus()
+        await pilot.pause()
+        labels = _footer_labels(screen)
+        assert "focus Items" in labels, labels
+        assert "toggle selection" not in labels, labels
+
+
+@pytest.mark.asyncio
+async def test_escape_cancels_an_items_choice_strip_over_the_reader():
+    """A type/sort strip opened beside the Reader owns Escape, as advertised."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        screen.query_one("#library-media-type-filter", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-type-choices")
+        await pilot.pause()
+        assert dict(screen._library_footer_shortcuts_for_current_state())["esc"] == (
+            "cancel"
+        )
+
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.pause()
+        assert not screen.query("#library-media-type-choices")
+        assert screen._library_media_view == "viewer"
