@@ -67,6 +67,26 @@ def _owner(db: CharactersRAGDB, title: str = "owner") -> tuple[str, str]:
     return conversation_id, message_id
 
 
+def _message(
+    db: CharactersRAGDB,
+    conversation_id: str,
+    content: str,
+    *,
+    parent_message_id: str | None = None,
+) -> str:
+    message_id = db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "parent_message_id": parent_message_id,
+            "sender": "assistant",
+            "role": "assistant",
+            "content": content,
+        }
+    )
+    assert message_id is not None
+    return message_id
+
+
 def _create(
     repository: CanvasRepository,
     conversation_id: str,
@@ -1167,3 +1187,121 @@ def test_parameter_values_remain_inert_and_query_plans_use_canvas_indexes(db) ->
     assert "idx_canvas_revisions_origin_message" in " ".join(
         str(row[3]) for row in revision_plan
     )
+
+
+def test_repository_scoped_mutations_accept_one_exact_durable_path(db) -> None:
+    """Removing the scoped mutation parameter must break this repository contract."""
+
+    conversation_id, root_message_id = _owner(db)
+    leaf_message_id = _message(
+        db,
+        conversation_id,
+        "leaf",
+        parent_message_id=root_message_id,
+    )
+    active_message_ids = (root_message_id, leaf_message_id)
+    repository = CanvasRepository(db)
+
+    created = repository.create_canvas(
+        conversation_id,
+        title="Scoped create",
+        source="<main>create</main>",
+        runtime_profile="canvas-v1",
+        actor_kind="assistant",
+        origin_message_id=leaf_message_id,
+        origin_turn_id="run-create",
+        active_message_ids=active_message_ids,
+    )
+    appended = repository.append_revision(
+        conversation_id,
+        created.identity.canvas_id,
+        parent_revision_id=created.revision.revision_id,
+        title="Scoped append",
+        source="<main>append</main>",
+        runtime_profile="canvas-v1",
+        actor_kind="assistant",
+        origin_message_id=leaf_message_id,
+        origin_turn_id="run-append",
+        active_message_ids=active_message_ids,
+    )
+
+    assert created.revision.origin_message_id == leaf_message_id
+    assert appended.parent_revision_id == created.revision.revision_id
+    assert appended.origin_message_id == leaf_message_id
+
+
+@pytest.mark.parametrize(
+    "invalid_path_kind",
+    ("duplicate", "foreign", "deleted", "reparented"),
+)
+def test_repository_scoped_create_rejects_invalid_path_before_any_canvas_write(
+    db,
+    invalid_path_kind,
+) -> None:
+    """Skipping any complete-path invariant must authorize one malformed case."""
+
+    conversation_id, root_message_id = _owner(db)
+    other_root_id = _message(db, conversation_id, "other root")
+    middle_message_id = _message(
+        db,
+        conversation_id,
+        "middle",
+        parent_message_id=root_message_id,
+    )
+    leaf_message_id = _message(
+        db,
+        conversation_id,
+        "leaf",
+        parent_message_id=middle_message_id,
+    )
+    foreign_conversation_id, foreign_message_id = _owner(db, "foreign")
+    assert foreign_conversation_id != conversation_id
+
+    if invalid_path_kind == "duplicate":
+        active_message_ids = (
+            root_message_id,
+            middle_message_id,
+            middle_message_id,
+            leaf_message_id,
+        )
+    elif invalid_path_kind == "foreign":
+        active_message_ids = (
+            root_message_id,
+            middle_message_id,
+            foreign_message_id,
+        )
+    else:
+        active_message_ids = (
+            root_message_id,
+            middle_message_id,
+            leaf_message_id,
+        )
+        with db.transaction(immediate=True) as cursor:
+            if invalid_path_kind == "deleted":
+                cursor.execute(
+                    "UPDATE messages SET deleted = 1 WHERE id = ?",
+                    (middle_message_id,),
+                )
+        if invalid_path_kind == "reparented":
+            assert db.update_message(
+                middle_message_id,
+                {"parent_message_id": other_root_id},
+                expected_version=1,
+                preserve_descendants=True,
+            )
+
+    repository = CanvasRepository(db)
+    with pytest.raises(CanvasValidationError) as invalid_path:
+        repository.create_canvas(
+            conversation_id,
+            title="Must not exist",
+            source="<main>blocked</main>",
+            runtime_profile="canvas-v1",
+            actor_kind="assistant",
+            origin_message_id=leaf_message_id,
+            origin_turn_id="run-blocked",
+            active_message_ids=active_message_ids,
+        )
+
+    assert invalid_path.value.code == "invalid_active_path"
+    assert repository.list_identities(conversation_id) == ()

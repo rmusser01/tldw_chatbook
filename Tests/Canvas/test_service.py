@@ -8,11 +8,14 @@ from uuid import uuid4
 
 import pytest
 
-from tldw_chatbook.Canvas.limits import CanvasRepositoryLimits
+from tldw_chatbook.Canvas.limits import (
+    MAX_CANVAS_DURABLE_ACTIVE_PATH_MESSAGES,
+    CanvasRepositoryLimits,
+)
 from tldw_chatbook.Canvas.models import CanvasConflictResult, CanvasScope
 from tldw_chatbook.Canvas.repository import CanvasRepository
 from tldw_chatbook.Canvas.service import CanvasService, CanvasServiceError
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 
 
 @pytest.fixture
@@ -146,6 +149,27 @@ def _revision_count(db: CharactersRAGDB, canvas_id: str | None = None) -> int:
         )
     assert row is not None
     return int(row[0])
+
+
+def _canvas_count(db: CharactersRAGDB) -> int:
+    row = (
+        db.get_connection().execute("SELECT COUNT(*) FROM canvas_documents").fetchone()
+    )
+    assert row is not None
+    return int(row[0])
+
+
+def _assert_sanitized_service_error(
+    error: CanvasServiceError,
+    *,
+    code: str,
+    sentinel: str,
+) -> None:
+    assert error.code == code
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    for projection in (str(error), repr(error), repr(error.issues)):
+        assert sentinel not in projection
 
 
 def test_list_resolves_only_revisions_on_the_supplied_active_message_branch(db) -> None:
@@ -823,3 +847,319 @@ def test_list_uses_one_metadata_snapshot_and_only_exact_read_exposes_source(
     assert read.source == _html("first private")
     assert read.revision.canvas_id == first.identity.canvas_id
     assert metadata_calls == 2
+
+
+@pytest.mark.parametrize("operation", ("create", "update", "rename"))
+@pytest.mark.parametrize("invalidation", ("delete", "reparent"))
+def test_mutations_atomically_revalidate_the_captured_durable_path(
+    db,
+    monkeypatch,
+    operation,
+    invalidation,
+) -> None:
+    """Leaf-only repository checks must not authorize a changed ancestor."""
+
+    conversation_id = _conversation(db)
+    root_message_id = _message(db, conversation_id, "captured root")
+    alternate_root_id = _message(db, conversation_id, "alternate root")
+    ancestor_message_id = _message(
+        db,
+        conversation_id,
+        "captured ancestor",
+        parent_message_id=root_message_id,
+    )
+    leaf_message_id = _message(
+        db,
+        conversation_id,
+        "captured leaf",
+        parent_message_id=ancestor_message_id,
+    )
+    repository = CanvasRepository(db)
+    scope = _scope(
+        conversation_id,
+        root_message_id,
+        ancestor_message_id,
+        leaf_message_id,
+        run_id=f"run-{operation}-{invalidation}",
+    )
+
+    created = None
+    if operation != "create":
+        created = _create_canvas(
+            repository,
+            conversation_id,
+            leaf_message_id,
+            title="Captured base",
+            source=_html("captured base"),
+            run_id="run-base",
+        )
+        scope = replace(
+            scope,
+            selected_canvas_id=created.identity.canvas_id,
+            selected_revision_id=created.revision.revision_id,
+        )
+
+    def invalidate_captured_path() -> None:
+        with db.transaction(immediate=True) as cursor:
+            if invalidation == "delete":
+                cursor.execute(
+                    "UPDATE messages SET deleted = 1 WHERE id = ?",
+                    (ancestor_message_id,),
+                )
+                return
+        assert db.update_message(
+            ancestor_message_id,
+            {"parent_message_id": alternate_root_id},
+            expected_version=1,
+            preserve_descendants=True,
+        )
+
+    repository_method = "create_canvas" if operation == "create" else "append_revision"
+    real_mutation = getattr(repository, repository_method)
+
+    def interleaved_mutation(*args, **kwargs):
+        invalidate_captured_path()
+        return real_mutation(*args, **kwargs)
+
+    monkeypatch.setattr(repository, repository_method, interleaved_mutation)
+    service = CanvasService(db, repository=repository)
+    before_canvases = _canvas_count(db)
+    before_revisions = _revision_count(db)
+
+    with pytest.raises(CanvasServiceError) as invalidated:
+        if operation == "create":
+            service.create_canvas(scope, title="Must not exist", source=_html("create"))
+        elif operation == "update":
+            assert created is not None
+            service.update_canvas(
+                scope,
+                created.identity.canvas_id,
+                expected_parent_revision_id=created.revision.revision_id,
+                source=_html("update"),
+            )
+        else:
+            assert created is not None
+            service.rename_canvas(
+                scope,
+                created.identity.canvas_id,
+                expected_parent_revision_id=created.revision.revision_id,
+                title="Must not be renamed",
+            )
+
+    assert invalidated.value.code == "invalid_scope"
+    assert _canvas_count(db) == before_canvases
+    assert _revision_count(db) == before_revisions
+
+
+def test_update_keeps_captured_historical_parent_when_a_new_revision_interleaves(
+    db, monkeypatch
+) -> None:
+    """Repository path checks must not silently turn into latest-head checks."""
+
+    conversation_id = _conversation(db)
+    root_message_id = _message(db, conversation_id, "root")
+    leaf_message_id = _message(
+        db, conversation_id, "leaf", parent_message_id=root_message_id
+    )
+    repository = CanvasRepository(db)
+    created = _create_canvas(
+        repository,
+        conversation_id,
+        root_message_id,
+        title="Captured title",
+        source=_html("captured root"),
+        run_id="run-root",
+    )
+    scope = _scope(
+        conversation_id,
+        root_message_id,
+        leaf_message_id,
+        selected_canvas_id=created.identity.canvas_id,
+        selected_revision_id=created.revision.revision_id,
+        run_id="run-captured",
+    )
+    real_append = repository.append_revision
+    competing_revision_ids: list[str] = []
+
+    def append_after_competing_revision(*args, **kwargs):
+        competing = real_append(
+            conversation_id,
+            created.identity.canvas_id,
+            parent_revision_id=created.revision.revision_id,
+            title="Competing title",
+            source=_html("competing"),
+            runtime_profile="canvas-v1",
+            actor_kind="assistant",
+            origin_message_id=leaf_message_id,
+            origin_turn_id="run-competing",
+        )
+        competing_revision_ids.append(competing.revision_id)
+        return real_append(*args, **kwargs)
+
+    monkeypatch.setattr(repository, "append_revision", append_after_competing_revision)
+
+    result = CanvasService(db, repository=repository).update_canvas(
+        scope,
+        created.identity.canvas_id,
+        expected_parent_revision_id=created.revision.revision_id,
+        source=_html("captured update"),
+    )
+
+    assert not isinstance(result, CanvasConflictResult)
+    assert len(competing_revision_ids) == 1
+    assert result.revision.parent_revision_id == created.revision.revision_id
+    assert result.revision.revision_id != competing_revision_ids[0]
+    assert _revision_count(db, created.identity.canvas_id) == 3
+
+
+def test_active_path_limit_plus_one_fails_before_connection_acquisition(
+    db, monkeypatch
+) -> None:
+    """Unbounded path input must not reach SQLite or allocate SQL placeholders."""
+
+    conversation_id = _conversation(db)
+    path = tuple(
+        f"persisted-message-{index}"
+        for index in range(MAX_CANVAS_DURABLE_ACTIVE_PATH_MESSAGES + 1)
+    )
+    acquisition_calls = 0
+
+    def forbidden_connection_acquisition():
+        nonlocal acquisition_calls
+        acquisition_calls += 1
+        raise AssertionError("oversized Canvas path acquired a database connection")
+
+    monkeypatch.setattr(db, "get_connection", forbidden_connection_acquisition)
+
+    with pytest.raises(CanvasServiceError) as oversized:
+        CanvasService(db).list_canvases(_scope(conversation_id, *path))
+
+    assert oversized.value.code == "invalid_scope"
+    assert acquisition_calls == 0
+
+
+def test_exact_active_path_limit_reaches_normal_durable_validation(
+    db, monkeypatch
+) -> None:
+    """The documented 4,096-message boundary itself remains accepted."""
+
+    assert MAX_CANVAS_DURABLE_ACTIVE_PATH_MESSAGES == 4_096
+    conversation_id = _conversation(db)
+    path = tuple(
+        f"persisted-message-{index}"
+        for index in range(MAX_CANVAS_DURABLE_ACTIVE_PATH_MESSAGES)
+    )
+    real_get_connection = db.get_connection
+    acquisition_calls = 0
+
+    def counted_connection_acquisition():
+        nonlocal acquisition_calls
+        acquisition_calls += 1
+        return real_get_connection()
+
+    monkeypatch.setattr(db, "get_connection", counted_connection_acquisition)
+
+    with pytest.raises(CanvasServiceError) as nonexistent_path:
+        CanvasService(db).list_canvases(_scope(conversation_id, *path))
+
+    assert nonexistent_path.value.code == "invalid_scope"
+    assert acquisition_calls == 1
+
+
+def test_database_owner_failure_is_sanitized_without_exception_chaining(
+    db, monkeypatch
+) -> None:
+    """CharactersRAGDB acquisition details must stop at the service boundary."""
+
+    conversation_id = _conversation(db)
+    sentinel = "db-owner-secret-sentinel"
+
+    def failed_connection_acquisition():
+        raise CharactersRAGDBError(sentinel)
+
+    monkeypatch.setattr(db, "get_connection", failed_connection_acquisition)
+
+    with pytest.raises(CanvasServiceError) as failed:
+        CanvasService(db).list_canvases(_scope(conversation_id))
+
+    _assert_sanitized_service_error(
+        failed.value,
+        code="storage_failure",
+        sentinel=sentinel,
+    )
+
+
+def test_repository_acquisition_failure_is_sanitized_without_exception_chaining(
+    db, monkeypatch
+) -> None:
+    """A repository read failure must not retain its database exception context."""
+
+    conversation_id = _conversation(db)
+    message_id = _message(db, conversation_id, "root")
+    repository = CanvasRepository(db)
+    sentinel = "repository-acquisition-secret-sentinel"
+
+    def failed_metadata_acquisition(_conversation_id: str):
+        raise CharactersRAGDBError(sentinel)
+
+    monkeypatch.setattr(
+        repository,
+        "list_revision_metadata",
+        failed_metadata_acquisition,
+    )
+
+    with pytest.raises(CanvasServiceError) as failed:
+        CanvasService(db, repository=repository).list_canvases(
+            _scope(conversation_id, message_id)
+        )
+
+    _assert_sanitized_service_error(
+        failed.value,
+        code="storage_failure",
+        sentinel=sentinel,
+    )
+
+
+def test_unexpected_compiler_failure_is_sanitized_and_makes_no_write(db) -> None:
+    """Unexpected compiler text must not survive on any service exception link."""
+
+    conversation_id = _conversation(db)
+    message_id = _message(db, conversation_id, "root")
+    source = _html("compiler-runtime-secret-sentinel")
+
+    def failed_compiler(compiled_source: str):
+        raise RuntimeError(compiled_source)
+
+    with pytest.raises(CanvasServiceError) as failed:
+        CanvasService(db, compiler=failed_compiler).create_canvas(
+            _scope(conversation_id, message_id),
+            title="No write",
+            source=source,
+        )
+
+    _assert_sanitized_service_error(
+        failed.value,
+        code="document_incompatible",
+        sentinel=source,
+    )
+    assert _canvas_count(db) == 0
+    assert _revision_count(db) == 0
+
+
+@pytest.mark.parametrize("terminal_error", (KeyboardInterrupt, SystemExit))
+def test_compiler_preserves_terminal_base_exceptions(db, terminal_error) -> None:
+    """Compiler sanitization must not swallow process-control exceptions."""
+
+    conversation_id = _conversation(db)
+    message_id = _message(db, conversation_id, "root")
+
+    def interrupted_compiler(_source: str):
+        raise terminal_error("stop")
+
+    with pytest.raises(terminal_error):
+        CanvasService(db, compiler=interrupted_compiler).create_canvas(
+            _scope(conversation_id, message_id),
+            title="Interrupted",
+            source=_html("unused"),
+        )
+    assert _canvas_count(db) == 0

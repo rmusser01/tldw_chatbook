@@ -19,6 +19,9 @@ MAX_DURABLE_SOURCE_BYTES_PER_CONVERSATION = 50 * 1024 * 1024
 MAX_DURABLE_SOURCE_BYTES_PER_REVISION = 512 * 1024
 MAX_CANVAS_TITLE_BYTES = 4 * 1024
 MAX_CANVAS_ORIGIN_TURN_ID_BYTES = 256
+# One placeholder is used per durable path node; 4,096 stays well below the
+# supported SQLite MAX_VARIABLE_NUMBER while bounding validation work.
+MAX_CANVAS_DURABLE_ACTIVE_PATH_MESSAGES = 4_096
 _DATA_MIME_PATTERN = re.compile(r"^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$")
 JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 

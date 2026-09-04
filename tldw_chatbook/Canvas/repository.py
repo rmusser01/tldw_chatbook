@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 from .limits import (
+    MAX_CANVAS_DURABLE_ACTIVE_PATH_MESSAGES,
     CanvasLimitError,
     CanvasRepositoryLimits,
     sha256_utf8,
@@ -220,6 +221,7 @@ class CanvasRepository:
         canvas_id: str | None = None,
         revision_id: str | None = None,
         created_at: str | None = None,
+        active_message_ids: tuple[str, ...] | None = None,
     ) -> CanvasCreateResult:
         """Append one identity and its root revision in one immediate transaction."""
 
@@ -234,6 +236,7 @@ class CanvasRepository:
             canvas_id=canvas_id,
             revision_id=revision_id,
             created_at=created_at,
+            active_message_ids=active_message_ids,
         )
 
     def append_first_revision(
@@ -249,6 +252,7 @@ class CanvasRepository:
         canvas_id: str | None = None,
         revision_id: str | None = None,
         created_at: str | None = None,
+        active_message_ids: tuple[str, ...] | None = None,
     ) -> CanvasCreateResult:
         """Append one identity and root revision, recomputing source identity."""
 
@@ -268,9 +272,6 @@ class CanvasRepository:
         try:
             with self._owned_immediate_transaction() as cursor:
                 self._require_active_owner(cursor, conversation_id)
-                self._require_origin_owner(
-                    cursor, conversation_id, values.origin_message_id
-                )
                 canvas_count = int(
                     cursor.execute(
                         "SELECT COUNT(*) FROM canvas_documents WHERE conversation_id = ?",
@@ -283,6 +284,17 @@ class CanvasRepository:
                     cursor, conversation_id, values.source_bytes
                 )
                 self._require_ids_available(cursor, (canvas_id,), (revision_id,))
+                if active_message_ids is None:
+                    self._require_origin_owner(
+                        cursor, conversation_id, values.origin_message_id
+                    )
+                else:
+                    self._require_durable_active_path(
+                        cursor,
+                        conversation_id,
+                        active_message_ids,
+                        origin_message_id=values.origin_message_id,
+                    )
                 cursor.execute(
                     "INSERT INTO canvas_documents "
                     "(id, conversation_id, created_at, deleted, deleted_at) "
@@ -346,6 +358,7 @@ class CanvasRepository:
         origin_turn_id: str,
         revision_id: str | None = None,
         created_at: str | None = None,
+        active_message_ids: tuple[str, ...] | None = None,
     ) -> CanvasRevision:
         """Append an immutable child and allocate its sequence under a write lock."""
 
@@ -366,9 +379,6 @@ class CanvasRepository:
         try:
             with self._owned_immediate_transaction() as cursor:
                 self._require_active_document(cursor, conversation_id, canvas_id)
-                self._require_origin_owner(
-                    cursor, conversation_id, values.origin_message_id
-                )
                 parent = cursor.execute(
                     "SELECT canvas_id FROM canvas_revisions WHERE id = ?",
                     (parent_revision_id,),
@@ -386,6 +396,17 @@ class CanvasRepository:
                     cursor, conversation_id, values.source_bytes
                 )
                 self._require_ids_available(cursor, (), (revision_id,))
+                if active_message_ids is None:
+                    self._require_origin_owner(
+                        cursor, conversation_id, values.origin_message_id
+                    )
+                else:
+                    self._require_durable_active_path(
+                        cursor,
+                        conversation_id,
+                        active_message_ids,
+                        origin_message_id=values.origin_message_id,
+                    )
                 sequence = int(max_sequence) + 1
                 cursor.execute(
                     _INSERT_REVISION_SQL,
@@ -973,6 +994,54 @@ class CanvasRepository:
         ).fetchone()
         if row is None:
             raise CanvasValidationError("origin_owner_mismatch")
+
+    @staticmethod
+    def _require_durable_active_path(
+        cursor: sqlite3.Cursor,
+        conversation_id: str,
+        active_message_ids: tuple[str, ...],
+        *,
+        origin_message_id: str,
+    ) -> None:
+        """Revalidate one complete persisted path under the owned write lock."""
+
+        if (
+            type(active_message_ids) is not tuple
+            or not active_message_ids
+            or len(active_message_ids) > MAX_CANVAS_DURABLE_ACTIVE_PATH_MESSAGES
+        ):
+            raise CanvasValidationError("invalid_active_path")
+        if len(set(active_message_ids)) != len(active_message_ids):
+            raise CanvasValidationError("invalid_active_path")
+        try:
+            for message_id in active_message_ids:
+                _validated_opaque_id(message_id, "active_message_id", 256)
+        except CanvasValidationError:
+            raise CanvasValidationError("invalid_active_path") from None
+        if active_message_ids[-1] != origin_message_id:
+            raise CanvasValidationError("invalid_active_path")
+
+        placeholders = ", ".join("?" for _ in active_message_ids)
+        rows = cursor.execute(
+            "SELECT id, parent_message_id, conversation_id, deleted FROM messages "
+            f"WHERE id IN ({placeholders})",
+            active_message_ids,
+        ).fetchall()
+        by_id = {str(row[0]): row for row in rows}
+        if len(by_id) != len(active_message_ids):
+            raise CanvasValidationError("invalid_active_path")
+
+        previous_id: str | None = None
+        for message_id in active_message_ids:
+            row = by_id[message_id]
+            parent_id = str(row[1]) if row[1] is not None else None
+            if (
+                str(row[2]) != conversation_id
+                or int(row[3]) != 0
+                or parent_id != previous_id
+            ):
+                raise CanvasValidationError("invalid_active_path")
+            previous_id = message_id
 
     def _require_conversation_source_capacity(
         self,

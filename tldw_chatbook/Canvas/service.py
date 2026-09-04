@@ -7,10 +7,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import UUID
 
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 
 from .compiler import CanvasCompileError, compile_canvas_document
-from .limits import CanvasLimitError, validate_opaque_identifier
+from .limits import (
+    MAX_CANVAS_DURABLE_ACTIVE_PATH_MESSAGES,
+    CanvasLimitError,
+    validate_opaque_identifier,
+)
 from .models import (
     CanvasCompatibilityIssue,
     CanvasConflictResult,
@@ -91,10 +95,15 @@ class CanvasService:
                 defaults[revision.canvas_id] = revision
 
         selected = self._reachable_selection(scope, eligible)
+        repository_error: CanvasServiceError | None = None
         try:
             reopen_hint = self._repository.get_reopen_hint(scope.conversation_id)
         except CanvasRepositoryError as exc:
-            raise self._mapped_repository_error(exc) from exc
+            repository_error = self._mapped_repository_error(exc)
+        except (CharactersRAGDBError, sqlite3.Error):
+            repository_error = CanvasServiceError("storage_failure")
+        if repository_error is not None:
+            raise repository_error
         if reopen_hint not in defaults:
             reopen_hint = None
 
@@ -162,6 +171,7 @@ class CanvasService:
 
         self._validate_scope(scope, require_active_path=True)
         plan = self._compile(source)
+        repository_error: CanvasServiceError | None = None
         try:
             created = self._repository.create_canvas(
                 scope.conversation_id,
@@ -171,9 +181,14 @@ class CanvasService:
                 actor_kind="assistant",
                 origin_message_id=scope.active_message_ids[-1],
                 origin_turn_id=scope.run_id,
+                active_message_ids=scope.active_message_ids,
             )
         except CanvasRepositoryError as exc:
-            raise self._mapped_repository_error(exc) from exc
+            repository_error = self._mapped_repository_error(exc)
+        except (CharactersRAGDBError, sqlite3.Error):
+            repository_error = CanvasServiceError("storage_failure")
+        if repository_error is not None:
+            raise repository_error
         return CanvasCreateResult(
             revision=self._revision_info(created.revision),
             source=created.revision.source,
@@ -201,6 +216,7 @@ class CanvasService:
             return self._conflict(base)
 
         plan = self._compile(source)
+        repository_error: CanvasServiceError | None = None
         try:
             revision = self._repository.append_revision(
                 scope.conversation_id,
@@ -212,9 +228,14 @@ class CanvasService:
                 actor_kind="assistant",
                 origin_message_id=scope.active_message_ids[-1],
                 origin_turn_id=scope.run_id,
+                active_message_ids=scope.active_message_ids,
             )
         except CanvasRepositoryError as exc:
-            raise self._mapped_repository_error(exc) from exc
+            repository_error = self._mapped_repository_error(exc)
+        except (CharactersRAGDBError, sqlite3.Error):
+            repository_error = CanvasServiceError("storage_failure")
+        if repository_error is not None:
+            raise repository_error
         return CanvasMutationResult(
             revision=self._revision_info(revision),
             compatibility_issues=plan.compatibility_issues,
@@ -241,6 +262,7 @@ class CanvasService:
             return self._conflict(base)
 
         exact = self._read_revision(scope.conversation_id, base.revision_id)
+        repository_error: CanvasServiceError | None = None
         try:
             revision = self._repository.append_revision(
                 scope.conversation_id,
@@ -252,9 +274,14 @@ class CanvasService:
                 actor_kind="user_rename",
                 origin_message_id=scope.active_message_ids[-1],
                 origin_turn_id=scope.run_id,
+                active_message_ids=scope.active_message_ids,
             )
         except CanvasRepositoryError as exc:
-            raise self._mapped_repository_error(exc) from exc
+            repository_error = self._mapped_repository_error(exc)
+        except (CharactersRAGDBError, sqlite3.Error):
+            repository_error = CanvasServiceError("storage_failure")
+        if repository_error is not None:
+            raise repository_error
         return CanvasMutationResult(revision=self._revision_info(revision))
 
     def _validate_scope(
@@ -273,6 +300,8 @@ class CanvasService:
             self._validate_scope_id(value, field_name)
         if type(scope.active_message_ids) is not tuple:
             raise CanvasServiceError("invalid_scope")
+        if len(scope.active_message_ids) > MAX_CANVAS_DURABLE_ACTIVE_PATH_MESSAGES:
+            raise CanvasServiceError("invalid_scope")
         if (scope.selected_canvas_id is None) != (scope.selected_revision_id is None):
             raise CanvasServiceError("invalid_scope")
         if scope.selected_canvas_id is not None:
@@ -288,6 +317,7 @@ class CanvasService:
         if require_active_path and not scope.active_message_ids:
             raise CanvasServiceError("invalid_scope")
 
+        storage_failed = False
         try:
             connection = self._db.get_connection()
             owner = connection.execute(
@@ -306,8 +336,10 @@ class CanvasService:
             ).fetchall()
         except CanvasServiceError:
             raise
-        except sqlite3.Error as exc:
-            raise CanvasServiceError("storage_failure") from exc
+        except (CharactersRAGDBError, sqlite3.Error):
+            storage_failed = True
+        if storage_failed:
+            raise CanvasServiceError("storage_failure")
 
         by_id = {str(row[0]): row for row in rows}
         if len(by_id) != len(scope.active_message_ids):
@@ -359,6 +391,7 @@ class CanvasService:
         return default
 
     def _compile(self, source: str) -> CanvasRenderPlan:
+        failure_issues: tuple[CanvasCompatibilityIssue, ...] | None = None
         try:
             plan = self._compiler(source)
             if not isinstance(plan, CanvasRenderPlan):
@@ -366,25 +399,40 @@ class CanvasService:
             plan.source_identity.verify_source(source)
             return plan
         except CanvasCompileError as exc:
-            raise CanvasServiceError(
-                "document_incompatible", issues=exc.issues
-            ) from None
+            failure_issues = exc.issues
         except (CanvasLimitError, TypeError):
-            raise CanvasServiceError("document_incompatible") from None
+            failure_issues = ()
+        except Exception:  # noqa: BLE001 - third-party compiler failures are untrusted
+            failure_issues = ()
+        if failure_issues is not None:
+            raise CanvasServiceError("document_incompatible", issues=failure_issues)
+        raise CanvasServiceError("document_incompatible")
 
     def _read_revision(self, conversation_id: str, revision_id: str) -> CanvasRevision:
+        repository_error: CanvasServiceError | None = None
         try:
-            return self._repository.read_revision(conversation_id, revision_id)
+            revision = self._repository.read_revision(conversation_id, revision_id)
         except CanvasRepositoryError as exc:
-            raise self._mapped_repository_error(exc) from exc
+            repository_error = self._mapped_repository_error(exc)
+        except (CharactersRAGDBError, sqlite3.Error):
+            repository_error = CanvasServiceError("storage_failure")
+        if repository_error is not None:
+            raise repository_error
+        return revision
 
     def _list_metadata(
         self, conversation_id: str
     ) -> tuple[CanvasRevisionMetadata, ...]:
+        repository_error: CanvasServiceError | None = None
         try:
-            return self._repository.list_revision_metadata(conversation_id)
+            metadata = self._repository.list_revision_metadata(conversation_id)
         except CanvasRepositoryError as exc:
-            raise self._mapped_repository_error(exc) from exc
+            repository_error = self._mapped_repository_error(exc)
+        except (CharactersRAGDBError, sqlite3.Error):
+            repository_error = CanvasServiceError("storage_failure")
+        if repository_error is not None:
+            raise repository_error
+        return metadata
 
     @staticmethod
     def _reachable_selection(
@@ -510,6 +558,7 @@ _QUOTA_ERROR_CODES = {
 }
 
 _VALIDATION_ERROR_CODES = {
+    "invalid_active_path": "invalid_scope",
     "invalid_title": "invalid_title",
     "invalid_source": "invalid_source",
 }
