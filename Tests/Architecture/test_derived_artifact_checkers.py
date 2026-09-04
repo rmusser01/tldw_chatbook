@@ -636,6 +636,36 @@ def test_unreadable_task_files_catch_the_shapes_that_broke_dev(tmp_path):
     assert backlog_files.main(["--tasks-dir", str(tasks)]) == 1
 
 
+RESERVED_SEQUENCE_ITEM = """---
+id: TASK-5
+title: Fine
+status: Done
+assignee:
+  - @zcode
+labels:
+  - console
+---
+
+x
+"""
+
+
+def test_a_bare_at_sign_in_a_list_is_caught(tmp_path):
+    """`- @zcode` stops the whole file loading; every other file quotes it.
+
+    Three task files on dev were written this way and were invisible to every
+    reader until the real parser was asked. The first version of this checker
+    passed them, which is why it now judges sequence items too.
+    """
+    tasks = tmp_path / "tasks"
+    _task_file(tasks, "task-5 - Reserved.md", RESERVED_SEQUENCE_ITEM)
+
+    unreadable = backlog_files.unreadable_task_files(tasks)
+
+    assert list(unreadable) == [(tasks / "task-5 - Reserved.md").resolve().as_posix()]
+    assert "reserved character" in unreadable[(tasks / "task-5 - Reserved.md").resolve().as_posix()][0]
+
+
 def test_readable_task_file_shapes_are_not_flagged(tmp_path):
     """No false positives on the shapes dev actually carries.
 

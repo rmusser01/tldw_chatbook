@@ -5,7 +5,7 @@ title: >-
   guard, undo-safe accept
 status: Done
 assignee:
-  - @zcode
+  - '@zcode'
 created_date: '2026-08-29'
 updated_date: '2026-08-29'
 labels:

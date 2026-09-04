@@ -46,6 +46,12 @@ TASK_DIRS = (
 FRONTMATTER_DELIMITER = "---"
 # A frontmatter mapping line: an unindented key, then the value.
 MAPPING_LINE_RE = re.compile(r"^(?P<key>[A-Za-z_][A-Za-z0-9_-]*):(?P<value>.*)$")
+SEQUENCE_ITEM_RE = re.compile(r"^\s+-\s+(?P<value>\S.*)$")
+# YAML reserves these as the first character of a plain scalar. `@` is the one
+# that bites here: three task files were written with `- @zcode` for an
+# assignee, which every other file spells `- '@zcode'`, and the whole file
+# stopped loading.
+RESERVED_SCALAR_STARTS = "@`"
 SECTION_BEGIN_RE = re.compile(r"^<!-- SECTION:(?P<name>[A-Z0-9_ -]+):BEGIN -->\s*$")
 SECTION_END_RE = re.compile(r"^<!-- SECTION:(?P<name>[A-Z0-9_ -]+):END -->\s*$")
 
@@ -141,6 +147,29 @@ def frontmatter_problems(text: str) -> list[str]:
         problem = _scalar_problem(value)
         if problem is not None:
             problems.append(f"{match.group('key')}: {problem}")
+
+    problems.extend(_sequence_item_problems(lines, closing))
+    return problems
+
+
+def _sequence_item_problems(lines: list[str], closing: int) -> list[str]:
+    """Block-sequence items that YAML cannot read as plain scalars.
+
+    Only the reserved first characters are judged. Everything else in a sequence
+    item -- colons, quotes, punctuation -- is the caller's business and loads
+    fine, so it is left alone.
+    """
+    problems: list[str] = []
+    for index in range(1, closing):
+        match = SEQUENCE_ITEM_RE.match(lines[index])
+        if match is None:
+            continue
+        value = match.group("value").strip()
+        if value[:1] in RESERVED_SCALAR_STARTS:
+            problems.append(
+                f"list item starts with the reserved character {value[0]!r} "
+                f"and must be quoted: {value[:60]}"
+            )
     return problems
 
 
