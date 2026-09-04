@@ -1274,3 +1274,25 @@ def test_review_set_active_reflects_the_service(tmp_path):
     assert LibraryScreen._review_set_active(fake) is False
     service.create_review_set("X", origin="browse", items=[(1, "a")])
     assert LibraryScreen._review_set_active(fake) is True
+
+
+def test_cancel_pending_resume_targets_the_resume_worker_group():
+    """task-31273: explicit opens cancel an in-flight auto-resume so the
+    landing worker cannot yank the Reader away from what the user chose."""
+    calls = []
+    fake = SimpleNamespace(
+        workers=SimpleNamespace(cancel_group=lambda owner, group: calls.append(group))
+    )
+    LibraryScreen._cancel_pending_review_set_resume(fake)
+    assert calls == ["library_review_set_resume"]
+
+
+def test_row_press_and_open_by_id_cancel_a_pending_resume():
+    """The two explicit-open seams both route through the cancel helper --
+    pinned at the source level because the handlers need a live screen."""
+    import inspect
+
+    row_src = inspect.getsource(LibraryScreen.handle_library_media_row)
+    open_src = inspect.getsource(LibraryScreen._open_library_item_by_id)
+    assert "_cancel_pending_review_set_resume()" in row_src
+    assert "_cancel_pending_review_set_resume()" in open_src

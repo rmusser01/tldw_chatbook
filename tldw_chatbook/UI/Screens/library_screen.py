@@ -24117,6 +24117,8 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_row_selection.toggle(media_id)
             _apply_library_row_toggle(self, "media", event.button, media_id)
             return
+        # task-31273: an explicit row open wins over a pending auto-resume.
+        self._cancel_pending_review_set_resume()
         self._open_library_media_viewer(media_id)
 
     @on(Button.Pressed, "#library-media-select-toggle")
@@ -38965,6 +38967,10 @@ class LibraryScreen(BaseAppScreen):
                 item_state = (
                     " · ✓ reviewed" if current.done else " · not yet reviewed"
                 )
+            elif loaded is not None and current is None:
+                # task-31273: an explicit open outside the set keeps the
+                # set's banner but never claims a state for this item.
+                item_state = " · this item is not in the set"
             return f"Reviewing: {review_set.name} — {progress}{item_state}"
         except Exception:
             logger.opt(exception=True).warning(
@@ -39629,6 +39635,15 @@ class LibraryScreen(BaseAppScreen):
         return landing.backing_media_id
 
     # -- auto-resume on media entry (task-28245) ------------------------------
+
+    def _cancel_pending_review_set_resume(self) -> None:
+        """Drop an in-flight auto-resume when the user opens something explicitly.
+
+        task-31273 (user ruling at the critique #4 close): an explicit open --
+        a row press, a deep link, open-by-id -- wins over the entry-time
+        auto-resume; plain rail entry with no target still resumes.
+        """
+        self.workers.cancel_group(self, "library_review_set_resume")
 
     def _maybe_auto_resume_review_set(self) -> None:
         """Kick the once-per-set auto-resume of an active review set.
@@ -42320,6 +42335,7 @@ class LibraryScreen(BaseAppScreen):
                 )
             self._selected_media_id = record_id
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+            self._cancel_pending_review_set_resume()
             self._library_media_view = "viewer"
             reader_identity = self._library_media_reader_identity(record_id)
             if reader_identity is not None:
