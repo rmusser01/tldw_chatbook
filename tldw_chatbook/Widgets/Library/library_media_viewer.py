@@ -81,6 +81,7 @@ class LibraryMediaViewer(Vertical):
         content_query: str = "",
         content_match_index: int = 0,
         content_mode: str = "raw",
+        find_open: bool = False,
         loading: bool = False,
         loading_message: str = "Loading media…",
         error_message: str = "",
@@ -100,6 +101,9 @@ class LibraryMediaViewer(Vertical):
 
         Args:
             viewer: Pure display state for the loaded item.
+            find_open: Whether the content Find bar renders (task-31237:
+                collapsed until the Find action opens it -- a permanently
+                open input duplicated Find and spent 3 rows per item).
             review_banner: One-line active review-set banner ("Reviewing:
                 <name> — X of M · N reviewed · ✓ reviewed"), or "" when no
                 set is active (task-30045). Rendered as literal text (set
@@ -115,6 +119,7 @@ class LibraryMediaViewer(Vertical):
         self.content_query = content_query
         self.content_match_index = content_match_index
         self.content_mode = content_mode
+        self.find_open = find_open
         self.loading = loading
         self.loading_message = loading_message
         self.error_message = error_message
@@ -328,14 +333,21 @@ class LibraryMediaViewer(Vertical):
             # the scrolling Reader. Textual docks relative to the immediate
             # container, so nesting these under the mode marker pins an active
             # Find bar below the Reader header instead of at the viewport top.
-            matches = find_content_matches(self.viewer.content, self.content_query)
-            yield LibraryMediaContentSearchControls(
-                is_markdown=self.viewer.is_markdown,
-                query=self.content_query,
-                matches=matches,
-                match_index=self.content_match_index,
-                id="library-media-content-search-controls",
-            )
+            # task-31237: the Find bar is collapsed until the Find action
+            # opens it (or a query is applied); a permanently open
+            # "Search content…" input duplicated Find and spent 3 rows on
+            # every fresh item.
+            if self.find_open or self.content_query:
+                matches = find_content_matches(
+                    self.viewer.content, self.content_query
+                )
+                yield LibraryMediaContentSearchControls(
+                    is_markdown=self.viewer.is_markdown,
+                    query=self.content_query,
+                    matches=matches,
+                    match_index=self.content_match_index,
+                    id="library-media-content-search-controls",
+                )
             yield LibraryMediaContentBody(
                 content=self.viewer.content,
                 is_markdown=self.viewer.is_markdown,

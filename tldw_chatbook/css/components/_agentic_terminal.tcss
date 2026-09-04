@@ -3476,6 +3476,14 @@ with stray left-edge border fragments), and padding 0 1 so the full
     outline: none;
 }
 
+/* task-31235: the sort chooser became the type chooser's OptionList twin
+   (its horizontal strip clipped options off-pane), so it inherits the same
+   focus-outline suppression -- at option-count height the outline's
+   top+bottom rows would overwrite "Newest" and "Title Z-A". */
+#library-media-sort-choices:focus {
+    outline: none;
+}
+
 /* task-31222: the Read-mode wrapper held only a heading yet defaulted to
    1fr, inserting a blank band above the Find bar while the content sat in
    a fixed 18-row box below -- the Reader's product got ~1/3 of its pane. */
@@ -3484,13 +3492,17 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #library-media-viewer-content {
-    /* Bounded so short content stays compact and long content scrolls inside
-       this region; height:1fr here ballooned the pane and split the sections.
-       task-31222: the bound scales with the terminal instead of a fixed 18
-       rows, so a tall window reads tall (only long content engages the
-       inner scroll). */
-    height: auto;
-    max-height: 75vh;
+    /* task-31237 (evolves task-31222's 75vh cap into a true fill): the
+       content box takes exactly the pane's remaining height -- 75vh could
+       overrun the remainder (double scroll: viewer AND box) or undershoot
+       it (a stranded blank band below the reading surface, critique #3
+       P2). With the 31222 height:auto wrappers above it in place, 1fr now
+       resolves against the viewer's viewport remainder, so chrome stays
+       pinned and overflow belongs to this box's own scroll (measured:
+       viewer virtual == container at 200x52 with a 300-line document; the
+       pre-31222 balloon came from the then-unstyled 1fr mode wrapper, not
+       from 1fr here). */
+    height: 1fr;
     min-height: 3;
     margin: 0 0 1 0;
     border: solid $ds-grid-line;
