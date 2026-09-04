@@ -4,7 +4,7 @@ title: Library media Trash - Restore action renders detached far below the item 
 status: To Do
 assignee: []
 created_date: '2026-09-02 04:11'
-updated_date: '2026-09-02 21:08'
+updated_date: '2026-09-04 13:54'
 labels:
   - library
   - bug
@@ -25,6 +25,7 @@ Re-verified 2026-09-02 live on dev tip (worktree media-ux-fixes @ b7e89b6de, tmu
 <!-- AC:BEGIN -->
 - [ ] #1 Restore is visually associated with the trashed item list (no dead gap)
 - [ ] #2 A keyboard path from a trash row to Restore exists
+- [ ] #3 The Trash header no longer clips (Local Trash · 1 i) at the shell's pane width — critique #4 B cap_102
 <!-- AC:END -->
 
 ## Implementation Notes

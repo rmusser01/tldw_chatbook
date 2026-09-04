@@ -4,6 +4,7 @@ title: Library import queue - batch re-analyze a run's analysis-skipped items
 status: To Do
 assignee: []
 created_date: '2026-09-02 04:10'
+updated_date: '2026-09-04 13:54'
 labels:
   - library
   - media-ux
@@ -25,4 +26,7 @@ When Analyze-after-import is on but the provider is unready, every imported row 
 - [ ] #1 A completed import run with analysis-skipped items offers a single action that generates analyses for all of them
 - [ ] #2 Per-item success and failure are reported in the same receipt style as import rows
 - [ ] #3 Items that already have an analysis are not overwritten without an explicit choice
+- [ ] #4 Select mode offers a bulk Analyze action that runs the per-item generator over the selection in one worker group with an in-list receipt (Analyzing N of M · K failed · Retry) — critique #4 P1
+- [ ] #5 Generate in the Reader is disabled with the resolver's reason in its label when no provider is configured, instead of a post-click toast
+- [ ] #6 The collapsed Import behavior header summarises its analysis state (e.g. Import behavior · analysis off)
 <!-- AC:END -->
