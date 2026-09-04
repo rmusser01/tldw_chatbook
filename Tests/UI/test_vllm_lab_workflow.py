@@ -32,6 +32,7 @@ from tldw_chatbook.UI.LLM_Management.vllm_connection import (
     VllmProbeResult,
 )
 from tldw_chatbook.UI.LLM_Management.vllm_profiles import (
+    VllmLaunchProfileV1,
     VllmProfileCorrupt,
     VllmProfileDocumentV1,
     VllmProfileRepository,
@@ -940,10 +941,15 @@ async def test_invalid_nonselected_profile_can_be_saved_or_deleted_from_repair_s
         await pilot.pause()
 
         if repair_action == "save":
+            repaired_draft = replace(
+                screen._vllm_draft,
+                bind_address="127.0.0.1",
+            )
+            screen._on_vllm_draft_changed(VllmSetupView.DraftChanged(repaired_draft))
             screen._on_vllm_save_profile(
                 VllmSetupView.SaveProfileRequested(
                     invalid.profile_id,
-                    replace(screen._vllm_draft, bind_address="127.0.0.1"),
+                    repaired_draft,
                 )
             )
         else:
@@ -963,6 +969,217 @@ async def test_invalid_nonselected_profile_can_be_saved_or_deleted_from_repair_s
         else:
             assert reopened.selected_profile_id == valid.profile_id
             assert reopened.profiles == (valid,)
+
+
+def _write_two_invalid_profile_store(
+    path: Path,
+) -> tuple[
+    VllmProfileRepository,
+    VllmProfileDocumentV1,
+    VllmLaunchProfileV1,
+    VllmLaunchProfileV1,
+    VllmLaunchProfileV1,
+]:
+    valid = default_vllm_profile()
+    first = replace(
+        valid,
+        profile_id="00000000-0000-4000-8000-000000000002",
+        name="Repair first",
+        bind_address="not a host",
+    )
+    second = replace(
+        valid,
+        profile_id="00000000-0000-4000-8000-000000000003",
+        name="Repair second",
+        bind_address="https://example.test",
+    )
+
+    def payload(profile) -> dict[str, object]:
+        return {
+            "profile_id": profile.profile_id,
+            "name": profile.name,
+            "python_environment": profile.python_environment,
+            "model_source": profile.model_source.value,
+            "model_value": profile.model_value,
+            "bind_address": profile.bind_address,
+            "port": profile.port,
+            "dtype": profile.dtype,
+            "tensor_parallel_size": profile.tensor_parallel_size,
+            "maximum_model_length": profile.maximum_model_length,
+            "gpu_memory_utilization": profile.gpu_memory_utilization,
+            "trust_remote_code": profile.trust_remote_code,
+        }
+
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "revision": 11,
+                "selected_profile_id": valid.profile_id,
+                "profiles": [payload(valid), payload(first), payload(second)],
+            }
+        ),
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+    repository = VllmProfileRepository(path)
+    return repository, repository.load(), valid, first, second
+
+
+async def test_multiple_invalid_profiles_can_be_repaired_one_at_a_time_without_probe(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    repository, document, valid, first, second = _write_two_invalid_profile_store(
+        tmp_path / "profiles.json"
+    )
+    runtime_calls: list[str] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.llm_screen.run_vllm_preflight",
+        lambda *_args, **_kwargs: runtime_calls.append("preflight"),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.llm_screen.probe_vllm_target",
+        lambda *_args, **_kwargs: runtime_calls.append("probe"),
+    )
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, view = await _mount_vllm_screen(app, pilot)
+        screen._vllm_profile_repository = repository
+        screen._accept_vllm_profiles(document)
+
+        screen._on_vllm_profile_selected(
+            VllmSetupView.ProfileSelected(first.profile_id)
+        )
+        await pilot.pause()
+        repaired_first = replace(screen._vllm_draft, bind_address="127.0.0.1")
+        screen._on_vllm_draft_changed(VllmSetupView.DraftChanged(repaired_first))
+        screen._on_vllm_save_profile(
+            VllmSetupView.SaveProfileRequested(first.profile_id, repaired_first)
+        )
+        await _wait_for_profile_mutation_idle(screen, pilot)
+
+        reopened_after_first = VllmProfileRepository(repository.path).load()
+        assert reopened_after_first.revision == 12
+        assert reopened_after_first.selected_profile_id == first.profile_id
+        assert reopened_after_first.profiles[0] == valid
+        assert reopened_after_first.profiles[2] == second
+        assert screen._vllm_profiles_require_repair()
+
+        screen._on_vllm_profile_selected(
+            VllmSetupView.ProfileSelected(second.profile_id)
+        )
+        await pilot.pause()
+        assert screen._vllm_repair_profile_id == second.profile_id
+        assert view.query_one("#vllm-profile-select", Select).value == second.profile_id
+        repaired_second = replace(screen._vllm_draft, bind_address="localhost")
+        screen._on_vllm_draft_changed(VllmSetupView.DraftChanged(repaired_second))
+        screen._on_vllm_save_profile(
+            VllmSetupView.SaveProfileRequested(second.profile_id, repaired_second)
+        )
+        await _wait_for_profile_mutation_idle(screen, pilot)
+
+        final = VllmProfileRepository(repository.path).load()
+        assert final.revision == 13
+        assert final.selected_profile_id == second.profile_id
+        assert not screen._vllm_profiles_require_repair()
+        assert screen._vllm_repair_profile_id is None
+        assert runtime_calls == []
+
+
+async def test_multiple_invalid_profiles_can_be_deleted_sequentially_after_reopen(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    repository, document, valid, first, second = _write_two_invalid_profile_store(
+        tmp_path / "profiles.json"
+    )
+    runtime_calls: list[str] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.llm_screen.run_vllm_preflight",
+        lambda *_args, **_kwargs: runtime_calls.append("preflight"),
+    )
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, _ = await _mount_vllm_screen(app, pilot)
+        screen._vllm_profile_repository = repository
+        screen._accept_vllm_profiles(document)
+        screen._on_vllm_profile_selected(
+            VllmSetupView.ProfileSelected(first.profile_id)
+        )
+        screen._on_vllm_delete_profile(
+            VllmSetupView.DeleteProfileRequested(first.profile_id)
+        )
+        await _wait_for_profile_confirmation(app, pilot)
+        await pilot.click("#confirm-button")
+        await _wait_for_profile_mutation_idle(screen, pilot)
+
+        reopened_after_first = VllmProfileRepository(repository.path).load()
+        assert reopened_after_first.selected_profile_id == valid.profile_id
+        assert reopened_after_first.profiles == (valid, second)
+        screen._accept_vllm_profiles(reopened_after_first)
+        screen._on_vllm_profile_selected(
+            VllmSetupView.ProfileSelected(second.profile_id)
+        )
+        screen._on_vllm_delete_profile(
+            VllmSetupView.DeleteProfileRequested(second.profile_id)
+        )
+        await _wait_for_profile_confirmation(app, pilot)
+        await pilot.click("#confirm-button")
+        await _wait_for_profile_mutation_idle(screen, pilot)
+
+        final = VllmProfileRepository(repository.path).load()
+        assert final.selected_profile_id == valid.profile_id
+        assert final.profiles == (valid,)
+        assert runtime_calls == []
+
+
+async def test_forged_repair_save_draft_is_rejected_before_worker_or_write(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    repository, document, valid, invalid, original = (
+        _write_multi_profile_legacy_bind_store(tmp_path / "profiles.json")
+    )
+    runtime_calls: list[str] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.llm_screen.run_vllm_preflight",
+        lambda *_args, **_kwargs: runtime_calls.append("preflight"),
+    )
+    app = _build_test_app()
+    async with app.run_test(size=(235, 52)) as pilot:
+        screen, _, _ = await _mount_vllm_screen(app, pilot)
+        screen._vllm_profile_repository = repository
+        screen._accept_vllm_profiles(document)
+        screen._on_vllm_profile_selected(
+            VllmSetupView.ProfileSelected(invalid.profile_id)
+        )
+        await pilot.pause()
+        worker_before = screen._vllm_profile_worker
+        forged = replace(screen._vllm_draft, bind_address="127.0.0.1")
+
+        screen._on_vllm_save_profile(
+            VllmSetupView.SaveProfileRequested(invalid.profile_id, forged)
+        )
+        await pilot.pause()
+
+        assert screen._vllm_profile_worker is worker_before
+        assert repository.path.read_bytes() == original
+        unchanged = VllmProfileRepository(repository.path).load()
+        assert unchanged.revision == document.revision
+        assert unchanged.selected_profile_id == valid.profile_id
+
+        screen._on_vllm_draft_changed(VllmSetupView.DraftChanged(forged))
+        screen._on_vllm_save_profile(
+            VllmSetupView.SaveProfileRequested(invalid.profile_id, forged)
+        )
+        await _wait_for_profile_mutation_idle(screen, pilot)
+
+        repaired = VllmProfileRepository(repository.path).load()
+        assert repaired.revision == document.revision + 1
+        assert repaired.selected_profile_id == invalid.profile_id
+        assert repaired.profiles[1].bind_address == "127.0.0.1"
+        assert runtime_calls == []
 
 
 async def test_preflight_exception_settles_current_generation_for_retry(

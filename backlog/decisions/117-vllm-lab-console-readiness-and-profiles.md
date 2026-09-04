@@ -249,6 +249,16 @@ setup**, preserves the stored value for repair, and blocks Start. Corrupt/future
 profile documents fail closed, remain recoverable, and are not overwritten by an
 older reader without explicit reset.
 
+Legacy profiles that decode safely but fail current field validation use one
+explicit monotonic-repair exception to the otherwise strict whole-document write
+boundary. A repair-only CAS may correct exactly one invalid profile or delete one
+that is nonselected while requiring every unrelated profile to remain identical
+and the invalid set to decrease by that target alone. Correcting may select the
+repaired profile; deleting preserves the durable selection. Ordinary selection,
+create, save, rename, duplicate, and delete still require the complete document to be
+valid. Repair selection is UI-local, performs no write, and grants no launch or
+probe authority.
+
 Raw advanced arguments remain launch-draft-only and are never written to a profile.
 The UI states this adjacent to the editor. Common durable expert needs use the
 structured fields above.

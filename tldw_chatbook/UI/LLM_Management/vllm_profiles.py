@@ -571,6 +571,13 @@ class VllmProfileRepository:
         self,
         effective_uid: int,
     ) -> tuple[VllmProfileDocumentV1, bool]:
+        document, present, _ = self._load_locked_with_identity(effective_uid)
+        return document, present
+
+    def _load_locked_with_identity(
+        self,
+        effective_uid: int,
+    ) -> tuple[VllmProfileDocumentV1, bool, tuple[int, int] | None]:
         try:
             descriptor = _open_existing_regular_file(
                 self.path,
@@ -579,12 +586,18 @@ class VllmProfileRepository:
             )
         except FileNotFoundError:
             profile = default_vllm_profile()
-            return VllmProfileDocumentV1(1, 0, profile.profile_id, (profile,)), False
+            return (
+                VllmProfileDocumentV1(1, 0, profile.profile_id, (profile,)),
+                False,
+                None,
+            )
         except OSError as error:
             raise VllmProfileCorrupt("vLLM profile document is unavailable") from error
         try:
             with os.fdopen(descriptor, "rb") as stream:
-                if os.fstat(stream.fileno()).st_size > MAX_PROFILE_DOCUMENT_BYTES:
+                opened = os.fstat(stream.fileno())
+                identity = (opened.st_dev, opened.st_ino)
+                if opened.st_size > MAX_PROFILE_DOCUMENT_BYTES:
                     raise VllmProfileValidationError("profile document is too large")
                 encoded = stream.read(MAX_PROFILE_DOCUMENT_BYTES + 1)
                 if len(encoded) > MAX_PROFILE_DOCUMENT_BYTES:
@@ -593,7 +606,7 @@ class VllmProfileRepository:
                     encoded.decode("utf-8"),
                     object_pairs_hook=_reject_duplicate_json_keys,
                 )
-            return _decode_document(value), True
+            return _decode_document(value), True, identity
         except VllmProfileFutureVersion:
             raise
         except (
@@ -738,6 +751,141 @@ class VllmProfileRepository:
                 profile,
                 verify_held_lock,
             )
+
+    def repair_invalid(
+        self,
+        profile_id: str,
+        replacement: VllmLaunchProfileV1 | None,
+        *,
+        expected_revision: int,
+    ) -> VllmProfileMutation:
+        """Correct one legacy-invalid profile or delete one that is nonselected.
+
+        This is intentionally separate from ``_commit``: ordinary mutations keep
+        requiring a fully valid document, while this CAS may only make one
+        already-invalid profile valid or remove it. Every unrelated profile must
+        remain exactly unchanged and the remaining invalid set must decrease by
+        that target alone.
+        """
+
+        target_id = _profile_id(profile_id)
+        validated_replacement: VllmLaunchProfileV1 | None = None
+        if replacement is not None:
+            if type(replacement) is not VllmLaunchProfileV1:
+                raise VllmProfileValidationError(
+                    "replacement must be an exact V1 profile"
+                )
+            if replacement.profile_id != target_id:
+                raise VllmProfileValidationError(
+                    "replacement must preserve the repaired profile_id"
+                )
+            validated_replacement = _revalidate_profile(replacement)
+        expected = self._expected_revision(expected_revision)
+        with _REPOSITORY_LOCK, self._exclusive_transaction() as transaction:
+            effective_uid, verify_held_lock = transaction
+            verify_held_lock()
+            current, present, document_identity = self._load_locked_with_identity(
+                effective_uid
+            )
+            if current.revision != expected:
+                raise VllmProfileConflict("profile revision changed")
+            if not present or document_identity is None:
+                raise VllmProfileConflict("profile document changed")
+            target = next(
+                (
+                    candidate
+                    for candidate in current.profiles
+                    if candidate.profile_id == target_id
+                ),
+                None,
+            )
+            if target is None:
+                raise VllmProfileValidationError("profile is unavailable")
+            invalid_before = {
+                candidate.profile_id
+                for candidate in current.profiles
+                if profile_requires_repair(candidate)
+            }
+            if target_id not in invalid_before:
+                raise VllmProfileValidationError(
+                    "repair target must be invalid in the current document"
+                )
+
+            if validated_replacement is None:
+                if current.selected_profile_id == target_id:
+                    raise VllmProfileValidationError(
+                        "selected repair target must be corrected before deletion"
+                    )
+                profiles = tuple(
+                    candidate
+                    for candidate in current.profiles
+                    if candidate.profile_id != target_id
+                )
+                selected_profile_id = current.selected_profile_id
+                affected = next(
+                    candidate
+                    for candidate in profiles
+                    if candidate.profile_id == selected_profile_id
+                )
+            else:
+                profiles = tuple(
+                    validated_replacement
+                    if candidate.profile_id == target_id
+                    else candidate
+                    for candidate in current.profiles
+                )
+                selected_profile_id = target_id
+                affected = validated_replacement
+
+            before_by_id = {
+                candidate.profile_id: candidate for candidate in current.profiles
+            }
+            after_by_id = {candidate.profile_id: candidate for candidate in profiles}
+            for unrelated_id, before in before_by_id.items():
+                if unrelated_id == target_id:
+                    continue
+                after = after_by_id.get(unrelated_id)
+                if after != before or (
+                    after is not None
+                    and _profile_payload(after) != _profile_payload(before)
+                ):
+                    raise VllmProfileValidationError(
+                        "repair must preserve every unrelated profile"
+                    )
+            invalid_after = {
+                candidate.profile_id
+                for candidate in profiles
+                if profile_requires_repair(candidate)
+            }
+            if invalid_after != invalid_before - {target_id}:
+                raise VllmProfileValidationError(
+                    "repair must remove exactly one invalid profile"
+                )
+
+            document = VllmProfileDocumentV1(
+                version=1,
+                revision=current.revision + 1,
+                selected_profile_id=selected_profile_id,
+                profiles=profiles,
+            )
+            payload = _document_payload(document)
+            _decode_document(payload)
+            _reject_symlink_leaf(self.path)
+            try:
+                named = self.path.lstat()
+            except OSError:
+                raise VllmProfileConflict("profile document changed") from None
+            if (named.st_dev, named.st_ino) != document_identity:
+                raise VllmProfileConflict("profile document changed")
+            verify_held_lock()
+            atomic_write_json(
+                self.path,
+                payload,
+                mode=0o600,
+                indent=2,
+                privacy_safe_log=True,
+            )
+            return VllmProfileMutation(affected, document)
 
     def select(self, profile_id: str, *, expected_revision: int) -> VllmProfileMutation:
         """Persist selection without changing launch or process state."""

@@ -125,6 +125,15 @@ Final closure:
 ADR required: no
 ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
 Reason: This completes ADR-117's existing selected-profile hydration prerequisite without changing profile storage, schema, or ownership.
+
+Final multi-profile repair closure:
+38. Add RED repository and mounted-workflow tests for two legacy-invalid nonselected profiles, sequential correction/deletion and reopen, tamper/stale-CAS rejection, no network/runtime work, and forged repair-save drafts.
+39. Add a repair-only monotonic CAS transaction that corrects or deletes exactly one currently invalid target while preserving every unrelated profile and retaining strict whole-document validation for all ordinary mutations.
+40. Require a repair Save event's exact type-safe draft to match the active screen draft, then run the complete affected profile/workflow and static qualification.
+
+ADR required: no new ADR
+ADR path: backlog/decisions/117-vllm-lab-console-readiness-and-profiles.md
+Reason: ADR-117 remains the accepted local profile/CAS boundary; its recovery contract is clarified with a narrowly constrained monotonic legacy-repair transaction rather than weakened general validation.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -274,6 +283,23 @@ may then select the repaired profile, while deletion preserves the prior valid
 selection. Reopening restores durable selection truth because repair selection
 is never stored. This is direct hardening under ADR-117; no new ADR, schema, or
 generalized lesson is required.
+
+Final multi-profile repair closure adds an explicitly separate monotonic CAS
+transaction to correct one legacy-invalid profile or delete one that is
+nonselected. It verifies the current revision and document inode, requires the
+target to be invalid in the durable
+document, accepts only a fully valid same-ID replacement or deletion, proves the
+invalid set decreased by exactly that target, and preserves every unrelated
+profile. The existing restrictive lock and atomic writer remain unchanged;
+ordinary mutations still use strict whole-document validation. Repair Save also
+requires the exact active type-safe screen draft, so a forged message cannot
+schedule repository work. RED reproduced the two-invalid deadlock, forged Save,
+and inode-swap gap. GREEN evidence: repair repository `7`, mounted repair flows
+`5`, affected setup/connection/profile/workflow matrix `324`, URL/bind settlement
+`26`, production destination contract `17`, and privacy `18`; profile-owned and
+persistent-diagnostic inventories, task-ID CLI/CI checks, Ruff, formatting,
+`py_compile`, and diff checks pass. ADR-117 was clarified; no new ADR or schema
+change is required.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

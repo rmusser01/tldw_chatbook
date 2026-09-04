@@ -508,6 +508,164 @@ def test_legacy_invalid_nonselected_profile_can_be_repaired_atomically(
     assert VllmProfileRepository(path).load() == receipt.document
 
 
+def _write_two_invalid_legacy_profiles(
+    path: Path,
+) -> tuple[
+    VllmProfileRepository,
+    VllmLaunchProfileV1,
+    VllmLaunchProfileV1,
+    VllmLaunchProfileV1,
+]:
+    valid = profile_named("Selected")
+    first = profile_named("Repair first", bind_address="not a host")
+    second = profile_named("Repair second", bind_address="https://example.test")
+    payload = {
+        "version": 1,
+        "revision": 11,
+        "selected_profile_id": valid.profile_id,
+        "profiles": [
+            profile_storage._profile_payload(valid),
+            profile_storage._profile_payload(first),
+            profile_storage._profile_payload(second),
+        ],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    path.chmod(0o600)
+    return VllmProfileRepository(path), valid, first, second
+
+
+def test_repair_invalid_profile_monotonically_preserves_other_invalid_profile(
+    tmp_path: Path,
+) -> None:
+    repository, valid, first, second = _write_two_invalid_legacy_profiles(
+        tmp_path / "profiles.json"
+    )
+    original_second_payload = profile_storage._profile_payload(second)
+
+    receipt = repository.repair_invalid(
+        first.profile_id,
+        replace(first, bind_address="127.0.0.1"),
+        expected_revision=11,
+    )
+
+    assert receipt.document.revision == 12
+    assert receipt.document.selected_profile_id == first.profile_id
+    assert receipt.document.profiles[0] == valid
+    assert receipt.document.profiles[1].bind_address == "127.0.0.1"
+    assert receipt.document.profiles[2] == second
+    assert (
+        profile_storage._profile_payload(receipt.document.profiles[2])
+        == original_second_payload
+    )
+    reopened = VllmProfileRepository(repository.path).load()
+    assert reopened == receipt.document
+    assert profile_storage.profile_requires_repair(reopened.profiles[2])
+
+
+def test_repair_invalid_profiles_can_be_deleted_sequentially_without_reselection(
+    tmp_path: Path,
+) -> None:
+    repository, valid, first, second = _write_two_invalid_legacy_profiles(
+        tmp_path / "profiles.json"
+    )
+
+    first_receipt = repository.repair_invalid(
+        first.profile_id,
+        None,
+        expected_revision=11,
+    )
+    assert first_receipt.document.selected_profile_id == valid.profile_id
+    assert first_receipt.document.profiles == (valid, second)
+    assert repository.load() == first_receipt.document
+
+    second_receipt = repository.repair_invalid(
+        second.profile_id,
+        None,
+        expected_revision=first_receipt.document.revision,
+    )
+    assert second_receipt.document.selected_profile_id == valid.profile_id
+    assert second_receipt.document.profiles == (valid,)
+    assert repository.load() == second_receipt.document
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["stale", "wrong_id", "invalid_replacement", "valid_target", "inode_swap"],
+)
+def test_repair_invalid_profile_rejects_tampering_and_stale_cas(
+    tmp_path: Path,
+    failure: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository, valid, first, _ = _write_two_invalid_legacy_profiles(
+        tmp_path / "profiles.json"
+    )
+    original = repository.path.read_bytes()
+
+    if failure == "stale":
+        with pytest.raises(VllmProfileConflict):
+            repository.repair_invalid(
+                first.profile_id,
+                replace(first, bind_address="127.0.0.1"),
+                expected_revision=10,
+            )
+    elif failure == "wrong_id":
+        with pytest.raises(VllmProfileValidationError):
+            repository.repair_invalid(
+                first.profile_id,
+                replace(
+                    first,
+                    profile_id=str(uuid4()),
+                    bind_address="127.0.0.1",
+                ),
+                expected_revision=11,
+            )
+    elif failure == "invalid_replacement":
+        with pytest.raises(VllmProfileValidationError):
+            repository.repair_invalid(
+                first.profile_id,
+                replace(first, bind_address="still not a host"),
+                expected_revision=11,
+            )
+    elif failure == "valid_target":
+        with pytest.raises(VllmProfileValidationError):
+            repository.repair_invalid(
+                valid.profile_id,
+                replace(valid, port=8001),
+                expected_revision=11,
+            )
+    else:
+        original_reject = profile_storage._reject_symlink_leaf
+        checks = 0
+
+        def replace_document_on_final_check(path: Path) -> None:
+            nonlocal checks
+            checks += 1
+            if checks == 2:
+                replacement_path = path.with_suffix(".replacement")
+                replacement_path.write_bytes(original)
+                replacement_path.chmod(0o600)
+                replacement_path.replace(path)
+            original_reject(path)
+
+        monkeypatch.setattr(
+            profile_storage,
+            "_reject_symlink_leaf",
+            replace_document_on_final_check,
+        )
+        with pytest.raises(VllmProfileConflict):
+            repository.repair_invalid(
+                first.profile_id,
+                replace(first, bind_address="127.0.0.1"),
+                expected_revision=11,
+            )
+
+    assert repository.path.read_bytes() == original
+    reopened = repository.load()
+    assert reopened.revision == 11
+    assert reopened.selected_profile_id == valid.profile_id
+
+
 def test_decode_revalidates_model_source_without_disclosing_rejected_value(
     tmp_path: Path,
 ):

@@ -3147,7 +3147,11 @@ class LLMScreen(LabScreen):
     @on(VllmSetupView.SaveProfileRequested)
     def _on_vllm_save_profile(self, event: VllmSetupView.SaveProfileRequested) -> None:
         event.stop()
-        if not self._vllm_profile_mutations_allowed():
+        if (
+            not self._vllm_profile_mutations_allowed()
+            or type(event.draft) is not VllmLaunchDraft
+            or event.draft != self._vllm_draft
+        ):
             return
         if (
             self._vllm_profiles_require_repair()
@@ -3177,13 +3181,22 @@ class LLMScreen(LabScreen):
                 view.show_profile_validation_error(field, classification)
             self.notify("Profile fields need repair before saving.", severity="error")
             return
-        self._start_vllm_profile_mutation(
+        requires_repair = self._vllm_profiles_require_repair()
+        operation = (
             partial(
+                self._vllm_profile_repository.repair_invalid,
+                selected.profile_id,
+                profile,
+                expected_revision=self._vllm_profiles.revision,
+            )
+            if requires_repair
+            else partial(
                 self._vllm_profile_repository.save,
                 profile,
                 expected_revision=self._vllm_profiles.revision,
             )
         )
+        self._start_vllm_profile_mutation(operation)
 
     @on(VllmSetupView.RenameProfileRequested)
     def _on_vllm_rename_profile(
@@ -3279,13 +3292,21 @@ class LLMScreen(LabScreen):
                 delete = view.query_one("#vllm-profile-delete-button", Button)
                 self.call_after_refresh(delete.focus)
             return
-        self._start_vllm_profile_mutation(
+        operation = (
             partial(
+                self._vllm_profile_repository.repair_invalid,
+                profile_id,
+                None,
+                expected_revision=revision,
+            )
+            if self._vllm_profiles_require_repair()
+            else partial(
                 self._vllm_profile_repository.delete,
                 profile_id,
                 expected_revision=revision,
             )
         )
+        self._start_vllm_profile_mutation(operation)
 
     @on(VllmSetupView.DraftChanged)
     def _on_vllm_draft_changed(self, event: VllmSetupView.DraftChanged) -> None:
