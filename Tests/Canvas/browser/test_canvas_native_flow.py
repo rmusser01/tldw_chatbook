@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 from dataclasses import dataclass, field
@@ -542,7 +543,7 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
     <button id="submit-exponent">Submit exponent</button>
     <button id="submit-key-order">Submit key order</button>
     <button id="submit-negative-zero">Submit negative zero</button>
-    <button id="submit-threshold">Submit threshold countdown</button>
+    <button id="submit-recovery-threshold">Submit recovery threshold</button>
     <button id="submit-final-expiry">Submit final expiry</button>
     <button id="submit-mismatch">Submit mismatched presentation</button>
     <button id="download-text">Download text</button>
@@ -558,7 +559,7 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
         canvas.submit(value);
       });
       document.getElementById("submit-negative-zero").addEventListener("click", () => canvas.submit(-0));
-      document.getElementById("submit-threshold").addEventListener("click", () => canvas.submit("threshold countdown"));
+      document.getElementById("submit-recovery-threshold").addEventListener("click", () => canvas.submit("recovery threshold"));
       document.getElementById("submit-final-expiry").addEventListener("click", () => canvas.submit("final expiry"));
       document.getElementById("submit-mismatch").addEventListener("click", () => canvas.submit({mismatch: 1}));
       document.getElementById("download-text").addEventListener("click", () => canvas.download({filename: " result.txt ", mime_type: "text/plain", data: "full result\\n"}));
@@ -593,7 +594,7 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
         async def shape_preparation(route) -> None:
             response = await route.fetch()
             presentation = await response.json()
-            if presentation.get("complete_text") == "threshold countdown":
+            if presentation.get("complete_text") == "recovery threshold":
                 presentation["expires_in_seconds"] = 11
             elif presentation.get("complete_text") == "final expiry":
                 presentation["expires_in_seconds"] = 0.25
@@ -726,20 +727,24 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
         assert download.suggested_filename == "result.txt"
         assert await page.evaluate("window.__canvasLastObjectUrlRevoked === true")
 
-        await frame.get_by_role("button", name="Submit threshold countdown").click()
+        await frame.get_by_role("button", name="Submit recovery threshold").click()
         await page.get_by_role("dialog", name="Send result to chat").wait_for()
+        composer["generation"] += 1
+        await page.get_by_role("button", name="Send to composer").click()
         await page.get_by_text(
             "Canvas confirmation expires in 10 seconds.", exact=True
         ).wait_for()
-        assert await page.locator("#bridge-recovery").get_attribute("role") == "status"
-        assert await page.locator("#bridge-recovery").get_attribute("aria-live") in {
-            "polite",
-            "assertive",
-        }
-        async with page.expect_response(
-            lambda response: response.url.endswith("/api/bridge")
-        ):
-            await page.keyboard.press("Escape")
+        assert await page.locator("#bridge-recovery").text_content() == (
+            "The Chatbook draft changed. Nothing was inserted."
+        )
+        assert await page.locator("#bridge-recovery").is_visible()
+        assert await page.get_by_role("button", name="Copy result").is_visible()
+        assert await page.get_by_role("button", name="Retry confirmation").is_visible()
+        assert await page.get_by_role("button", name="Close Canvas and return").is_visible()
+        assert await page.locator("#bridge-expiry-status").get_attribute("role") == "status"
+        assert await page.locator("#bridge-expiry-status").get_attribute("aria-live") == "polite"
+        composer["generation"] -= 1
+        await page.keyboard.press("Escape")
 
         capture_dir = os.environ.get("TLDW_CANVAS_CONFIRMATION_CAPTURE_DIR")
         if capture_dir:
@@ -768,6 +773,110 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
         ).wait_for()
         assert await page.locator("#notice").get_attribute("role") == "status"
         assert await page.locator("#notice").get_attribute("aria-live") == "polite"
+        assert await page.get_by_role("dialog").count() == 0
+        await browser.close()
+    await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("javascript_value", "process_text", "tampered_text"),
+    (
+        (
+            "{large: 9007199254740992}",
+            '{"large":9007199254740992}',
+            '{"large":9007199254740993}',
+        ),
+        (
+            "{decimal: 0.1}",
+            '{"decimal":0.1}',
+            '{"decimal":0.10000000000000001}',
+        ),
+    ),
+)
+async def test_trusted_shell_rejects_lossy_numeric_presentation_collision(
+    javascript_value: str,
+    process_text: str,
+    tampered_text: str,
+) -> None:
+    session_id = "temporary-numeric-collision-session"
+    controller = ConsoleCanvasController()
+    controller.activate_session(session_id)
+
+    def scope_resolver(requested: str) -> CanvasScope:
+        assert requested == session_id
+        return CanvasScope(
+            session_id=session_id,
+            conversation_id=session_id,
+            active_message_ids=("user-1", "assistant-1"),
+            selected_canvas_id=None,
+            selected_revision_id=None,
+            run_id="numeric-collision-run",
+        )
+
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=scope_resolver,
+        canvas_controller=controller,
+        bridge_prepare=lambda _target: lambda _text: None,
+    )
+    created = authority.import_html(
+        session_id=session_id,
+        source=(
+            "<!doctype html><button id='submit'>Submit</button><script>"
+            "document.getElementById('submit').addEventListener('click', () => "
+            f"canvas.submit({javascript_value}));"
+            "</script>"
+        ),
+        create_new=True,
+    )
+    scope = authority.gateway_scope(
+        session_id=session_id,
+        browser_session_id="browser-numeric-collision",
+        canvas_id=created.canvas_id,
+        revision_id=created.revision_id,
+    )
+    gateway = CanvasGateway(authority=authority)
+    launch = await gateway.open_shell(scope)
+
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(
+            headless=True,
+            executable_path=_chromium_executable(playwright.chromium),
+        )
+        page = await browser.new_page(viewport={"width": 900, "height": 700})
+        page.set_default_timeout(7_000)
+
+        async def tamper_preparation(route) -> None:
+            request = route.request.post_data_json["request"]
+            assert request["value"] == json.loads(process_text)
+            await route.fulfill(
+                json={
+                    "request_id": request["request_id"],
+                    "kind": "submit",
+                    "conversation_id": session_id,
+                    "canvas_id": created.canvas_id,
+                    "revision_id": created.revision_id,
+                    "canvas_title": "Canvas",
+                    "revision_number": 1,
+                    "complete_text": tampered_text,
+                    "filename": None,
+                    "mime_type": None,
+                    "byte_size": len(tampered_text.encode("utf-8")),
+                    "expires_in_seconds": 300,
+                }
+            )
+
+        await page.route("**/api/bridge/prepare", tamper_preparation)
+        await page.goto(launch.browser_url)
+        await page.get_by_text("Connected", exact=True).wait_for()
+        await page.frame_locator("#canvas-preview").get_by_role(
+            "button", name="Submit"
+        ).click()
+        await page.get_by_text(
+            "Canvas request could not be confirmed. Reload the preview and try again.",
+            exact=True,
+        ).wait_for()
         assert await page.get_by_role("dialog").count() == 0
         await browser.close()
     await gateway.aclose()

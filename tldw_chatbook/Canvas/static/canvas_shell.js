@@ -20,7 +20,7 @@
     bridgeTextRegion: byId("bridge-text-region"), bridgeText: byId("bridge-complete-text"), bridgeRecovery: byId("bridge-recovery"),
     bridgeCancel: byId("bridge-cancel-button"), bridgeCopy: byId("bridge-copy-button"), bridgeRetry: byId("bridge-retry-button"),
     bridgeReturn: byId("bridge-return-button"), bridgeConfirm: byId("bridge-confirm-button"),
-    bridgeExpiry: byId("bridge-expiry"),
+    bridgeExpiry: byId("bridge-expiry"), bridgeExpiryStatus: byId("bridge-expiry-status"),
   };
   const basePath = location.pathname;
   const api = (path) => new URL(path, location.href).href;
@@ -122,7 +122,7 @@
     ui.bridgeReturn.hidden = true;
     ui.bridgeConfirm.hidden = false;
     ui.bridgeExpiry.textContent = "";
-    ui.bridgeRecovery.classList.remove("sr-only");
+    ui.bridgeExpiryStatus.textContent = "";
     setBackgroundForDialog(false);
     if (restoreFocus && pending.returnFocus?.isConnected) pending.returnFocus.focus();
     pending.request = null;
@@ -195,18 +195,114 @@
     }
   }
 
-  function bridgeJsonSemanticallyEqual(left, right) {
-    if (left === null || right === null || typeof left !== "object" || typeof right !== "object") {
-      return typeof left === typeof right && left === right;
-    }
-    if (Array.isArray(left) || Array.isArray(right)) {
-      return Array.isArray(left) && Array.isArray(right) && left.length === right.length &&
-        left.every((item, index) => bridgeJsonSemanticallyEqual(item, right[index]));
-    }
-    const leftKeys = Object.keys(left);
-    const rightKeys = Object.keys(right);
-    return leftKeys.length === rightKeys.length && leftKeys.every((key) =>
-      Object.hasOwn(right, key) && bridgeJsonSemanticallyEqual(left[key], right[key]));
+  function normalizeBridgeNumber(token) {
+    if (token.length > 64) throw new Error("Canvas number token exceeds its trusted-shell limit.");
+    const negative = token.startsWith("-");
+    const unsigned = negative ? token.slice(1) : token;
+    const exponentIndex = unsigned.search(/[eE]/);
+    const mantissa = exponentIndex === -1 ? unsigned : unsigned.slice(0, exponentIndex);
+    const explicitExponent = exponentIndex === -1 ? 0n : BigInt(unsigned.slice(exponentIndex + 1));
+    const decimalIndex = mantissa.indexOf(".");
+    const fractionLength = decimalIndex === -1 ? 0 : mantissa.length - decimalIndex - 1;
+    let digits = mantissa.replace(".", "").replace(/^0+/, "");
+    if (!digits) return "0";
+    const trailingZeros = digits.match(/0+$/)?.[0].length || 0;
+    if (trailingZeros) digits = digits.slice(0, -trailingZeros);
+    const exponent = explicitExponent - BigInt(fractionLength) + BigInt(trailingZeros);
+    return `${negative ? "-" : ""}${digits}e${exponent}`;
+  }
+
+  function parseLosslessBridgeJson(source) {
+    let index = 0;
+    const skipWhitespace = () => {
+      while (index < source.length && /[\t\n\r ]/.test(source[index])) index += 1;
+    };
+    const parseString = () => {
+      const start = index;
+      index += 1;
+      while (index < source.length) {
+        const character = source[index];
+        if (character === '"') {
+          index += 1;
+          return JSON.parse(source.slice(start, index));
+        }
+        if (character === "\\") {
+          index += 2;
+        } else {
+          if (character.charCodeAt(0) <= 0x1f) throw new Error("Canvas JSON string is invalid.");
+          index += 1;
+        }
+      }
+      throw new Error("Canvas JSON string is unterminated.");
+    };
+    const parseValue = (depth) => {
+      if (depth > bridgeLimits.jsonDepth) throw new Error("Canvas JSON exceeds its trusted-shell depth limit.");
+      skipWhitespace();
+      const character = source[index];
+      if (character === '"') return {kind: "string", value: parseString()};
+      if (source.startsWith("null", index)) { index += 4; return {kind: "null"}; }
+      if (source.startsWith("true", index)) { index += 4; return {kind: "boolean", value: true}; }
+      if (source.startsWith("false", index)) { index += 5; return {kind: "boolean", value: false}; }
+      if (character === "[") {
+        index += 1;
+        const items = [];
+        skipWhitespace();
+        if (source[index] === "]") { index += 1; return {kind: "array", items}; }
+        while (true) {
+          items.push(parseValue(depth + 1));
+          skipWhitespace();
+          if (source[index] === "]") { index += 1; return {kind: "array", items}; }
+          if (source[index] !== ",") throw new Error("Canvas JSON array is invalid.");
+          index += 1;
+        }
+      }
+      if (character === "{") {
+        index += 1;
+        const entries = new Map();
+        skipWhitespace();
+        if (source[index] === "}") { index += 1; return {kind: "object", entries}; }
+        while (true) {
+          skipWhitespace();
+          if (source[index] !== '"') throw new Error("Canvas JSON object key is invalid.");
+          const key = parseString();
+          if (entries.has(key)) throw new Error("Canvas JSON object has duplicate keys.");
+          skipWhitespace();
+          if (source[index] !== ":") throw new Error("Canvas JSON object is invalid.");
+          index += 1;
+          entries.set(key, parseValue(depth + 1));
+          skipWhitespace();
+          if (source[index] === "}") { index += 1; return {kind: "object", entries}; }
+          if (source[index] !== ",") throw new Error("Canvas JSON object is invalid.");
+          index += 1;
+        }
+      }
+      const number = source.slice(index).match(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/);
+      if (!number) throw new Error("Canvas JSON value is invalid.");
+      index += number[0].length;
+      return {kind: "number", value: normalizeBridgeNumber(number[0])};
+    };
+    const parsed = parseValue(0);
+    skipWhitespace();
+    if (index !== source.length) throw new Error("Canvas JSON has trailing content.");
+    return parsed;
+  }
+
+  function losslessBridgeJsonEqual(leftSource, rightSource) {
+    const compare = (left, right) => {
+      if (left.kind !== right.kind) return false;
+      if (["string", "boolean", "number"].includes(left.kind)) return left.value === right.value;
+      if (left.kind === "null") return true;
+      if (left.kind === "array") {
+        return left.items.length === right.items.length &&
+          left.items.every((item, index) => compare(item, right.items[index]));
+      }
+      if (left.entries.size !== right.entries.size) return false;
+      for (const [key, value] of left.entries) {
+        if (!right.entries.has(key) || !compare(value, right.entries.get(key))) return false;
+      }
+      return true;
+    };
+    return compare(parseLosslessBridgeJson(leftSource), parseLosslessBridgeJson(rightSource));
   }
 
   function rasterSignatureMatches(mimeType, decoded) {
@@ -305,8 +401,7 @@
       let contentMatches = typeof request.value === "string" && completeText === request.value;
       if (typeof request.value !== "string" && typeof completeText === "string") {
         try {
-          const processValue = cloneBridgeJson(JSON.parse(completeText));
-          contentMatches = bridgeJsonSemanticallyEqual(request.value, processValue);
+          contentMatches = losslessBridgeJsonEqual(JSON.stringify(request.value), completeText);
         } catch (_) { contentMatches = false; }
       }
       if (!contentMatches || value.filename !== null || value.mime_type !== null ||
@@ -330,18 +425,15 @@
     for (const threshold of [60, 10]) {
       if (pending.lastCountdownSeconds > threshold && seconds <= threshold && !pending.announcedExpiry.has(threshold)) {
         pending.announcedExpiry.add(threshold);
-        showBridgeRecovery(
-          `Canvas confirmation expires in ${threshold === 60 ? "one minute" : "10 seconds"}.`,
-          {announceOnly: true},
-        );
+        ui.bridgeExpiryStatus.textContent =
+          `Canvas confirmation expires in ${threshold === 60 ? "one minute" : "10 seconds"}.`;
       }
     }
     pending.lastCountdownSeconds = seconds;
   }
 
-  function showBridgeRecovery(copy, {announceOnly = false} = {}) {
+  function showBridgeRecovery(copy) {
     ui.bridgeRecovery.textContent = copy;
-    ui.bridgeRecovery.classList.toggle("sr-only", announceOnly);
     ui.bridgeRecovery.hidden = false;
   }
 
@@ -369,6 +461,7 @@
     ui.bridgeText.value = presentation.complete_text || "";
     ui.bridgeCopy.hidden = presentation.complete_text === null;
     ui.bridgeConfirm.textContent = presentation.kind === "submit" ? "Send to composer" : "Download file";
+    ui.bridgeExpiryStatus.textContent = "";
     ui.bridgeDialog.inert = false;
     ui.bridgeDialog.hidden = false;
     setBackgroundForDialog(true);
