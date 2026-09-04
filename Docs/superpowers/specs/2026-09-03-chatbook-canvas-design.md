@@ -1,7 +1,7 @@
 # Chatbook Canvas — Design Specification
 
 - **Date:** 2026-09-03
-- **Status:** Strict-zero-egress design, pending final document review
+- **Status:** Approved
 - **ADR required:** yes
 - **ADR path:** `backlog/decisions/081-local-versioned-canvas-artifacts-and-browser-sandbox.md`
 - **Reason:** Canvas introduces durable schema, branch-aware artifact ownership,
