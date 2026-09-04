@@ -5544,14 +5544,14 @@ class TestConversationsPanel:
             )
             resume = screen.query_one("#personas-conversation-resume", Button)
 
-            await pilot.click("#personas-conversation-resume")
+            resume.press()
             await pilot.pause()
             assert len(callbacks) == 1
             callbacks[0]()
             assert resume.disabled is False
             await pilot.pause()
 
-            await pilot.click("#personas-conversation-resume")
+            resume.press()
             await pilot.pause()
             assert len(callbacks) == 2
             callbacks[0]()
