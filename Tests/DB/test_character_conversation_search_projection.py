@@ -701,6 +701,99 @@ def test_keyword_search_refills_after_snapshot_revalidation_rejects_candidate(
     assert result.keyword_status is CharacterKeywordIndexStatus.READY
 
 
+def test_keyword_exact_total_excludes_rejected_candidate_after_first_page(
+    tmp_path: Path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "after-page.sqlite", client_id="after-page")
+    character_id = _card(db, "After page")
+    for index in range(60):
+        _chat(
+            db,
+            conversation_id=f"after-page-{index:02d}",
+            character_id=character_id,
+            title=f"After page {index:02d}",
+            content="WIDE_RESULT_TERM",
+            modified=f"2026-09-03T10:00:{index:02d}Z",
+        )
+    service = CharacterConversationNavigationService(db)
+    assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+    clean = service.keyword_search("WIDE_RESULT_TERM", limit=50)
+    clean_tail = service.keyword_search("WIDE_RESULT_TERM", offset=50, limit=10)
+    clean_ids = [
+        row.target.conversation_id
+        for row in (*clean.rows, *clean_tail.rows)
+        if row.target is not None
+    ]
+    rejected_id = clean_ids[55]
+    with db.transaction() as connection:
+        connection.execute(
+            "UPDATE character_conversation_search_documents "
+            "SET eligibility_digest = 'corrupt' WHERE conversation_id = ?",
+            (rejected_id,),
+        )
+
+    pages = [
+        service.keyword_search("WIDE_RESULT_TERM", offset=offset, limit=20)
+        for offset in (0, 20, 40)
+    ]
+    returned_ids = [
+        row.target.conversation_id
+        for page in pages
+        for row in page.rows
+        if row.target is not None
+    ]
+
+    assert all(
+        page.keyword_status is CharacterKeywordIndexStatus.READY for page in pages
+    )
+    assert {page.total for page in pages} == {59}
+    assert returned_ids == [item for item in clean_ids if item != rejected_id]
+    assert len(returned_ids) == len(set(returned_ids)) == 59
+
+
+def test_keyword_nonzero_offset_uses_validated_set_when_rejection_precedes_it(
+    tmp_path: Path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "before-offset.sqlite", client_id="offset")
+    character_id = _card(db, "Before offset")
+    for index in range(60):
+        _chat(
+            db,
+            conversation_id=f"before-offset-{index:02d}",
+            character_id=character_id,
+            title=f"Before offset {index:02d}",
+            content="OFFSET_RESULT_TERM",
+            modified=f"2026-09-03T10:00:{index:02d}Z",
+        )
+    service = CharacterConversationNavigationService(db)
+    assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+    clean = service.keyword_search("OFFSET_RESULT_TERM", limit=50)
+    clean_tail = service.keyword_search("OFFSET_RESULT_TERM", offset=50, limit=10)
+    clean_ids = [
+        row.target.conversation_id
+        for row in (*clean.rows, *clean_tail.rows)
+        if row.target is not None
+    ]
+    rejected_id = clean_ids[5]
+    with db.transaction() as connection:
+        connection.execute(
+            "UPDATE character_conversation_search_documents "
+            "SET eligibility_digest = 'corrupt' WHERE conversation_id = ?",
+            (rejected_id,),
+        )
+
+    page = service.keyword_search("OFFSET_RESULT_TERM", offset=20, limit=20)
+    page_ids = [
+        row.target.conversation_id for row in page.rows if row.target is not None
+    ]
+    expected = [item for item in clean_ids if item != rejected_id][20:40]
+
+    assert page.keyword_status is CharacterKeywordIndexStatus.READY
+    assert page.total == 59
+    assert page_ids == expected
+    assert len(page_ids) == len(set(page_ids)) == 20
+
+
 def test_keyword_search_indexes_character_display_identity(tmp_path: Path) -> None:
     db = CharactersRAGDB(tmp_path / "character-name.sqlite", client_id="keyword")
     character_id = _card(db, "DISPLAY_IDENTITY_CANARY")

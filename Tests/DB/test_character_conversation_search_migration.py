@@ -126,6 +126,7 @@ def test_v66_fresh_schema_matches_migrated_tables_columns_indexes_and_triggers(
             "title",
             "body",
             "eligibility_digest",
+            "validated_eligibility_digest",
             "source_revision",
             "generation_id",
         }

@@ -90,6 +90,7 @@ CREATE TABLE character_conversation_search_documents(
   title TEXT NOT NULL,
   body TEXT NOT NULL,
   eligibility_digest TEXT NOT NULL,
+  validated_eligibility_digest TEXT NOT NULL,
   source_revision INTEGER NOT NULL CHECK(source_revision >= 0),
   generation_id TEXT NOT NULL
     REFERENCES character_conversation_search_generations(generation_id) ON DELETE CASCADE,
@@ -636,6 +637,7 @@ class CharacterConversationSearchRepository:
                      WHERE character_conversation_fts MATCH ?
                        AND d.data_authority_id = ? AND d.generation_id = ?
                        AND d.source_revision = ?
+                       AND d.eligibility_digest = d.validated_eligibility_digest
                        AND c.deleted = 0 AND card.deleted = 0
                        AND c.runtime_backend = 'local'
                        AND c.assistant_kind = 'character'
@@ -721,6 +723,7 @@ class CharacterConversationSearchRepository:
              WHERE character_conversation_fts MATCH ?
                AND d.data_authority_id = ? AND d.generation_id = ?
                AND d.source_revision = ?
+               AND d.eligibility_digest = d.validated_eligibility_digest
                AND c.deleted = 0 AND card.deleted = 0
                AND c.runtime_backend = 'local'
                AND c.assistant_kind = 'character'
@@ -1230,15 +1233,17 @@ class CharacterConversationSearchRepository:
             """
             INSERT INTO character_conversation_search_documents(
                 data_authority_id, conversation_id, character_id,
-                character_label, title, body, eligibility_digest, source_revision,
-                generation_id
-            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                character_label, title, body, eligibility_digest,
+                validated_eligibility_digest, source_revision, generation_id
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(data_authority_id, generation_id, conversation_id)
             DO UPDATE SET character_id = excluded.character_id,
                           character_label = excluded.character_label,
                           title = excluded.title,
                           body = excluded.body,
                           eligibility_digest = excluded.eligibility_digest,
+                          validated_eligibility_digest =
+                              excluded.validated_eligibility_digest,
                           source_revision = excluded.source_revision
             """,
             (
@@ -1248,6 +1253,7 @@ class CharacterConversationSearchRepository:
                 str(character["name"]),
                 document.title,
                 document.body,
+                document.eligibility_digest,
                 document.eligibility_digest,
                 document.source_revision,
                 generation_id,
