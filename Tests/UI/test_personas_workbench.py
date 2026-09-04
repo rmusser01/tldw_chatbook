@@ -10568,6 +10568,7 @@ class TestPersonaHumanIdentityRemoval:
             stub_scope_service.list_persona_profiles = AsyncMock(
                 return_value={"items": [renamed], "total": 1}
             )
+            await screen._ensure_center_view("persona-editor")
             await screen._after_profile_save({"id": "p-1", "name": "Chronicler"})
             await pilot.pause()
             assert screen.state.selected_entity_name == "Chronicler"
