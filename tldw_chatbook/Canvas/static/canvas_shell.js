@@ -122,6 +122,7 @@
     ui.bridgeReturn.hidden = true;
     ui.bridgeConfirm.hidden = false;
     ui.bridgeExpiry.textContent = "";
+    ui.bridgeRecovery.classList.remove("sr-only");
     setBackgroundForDialog(false);
     if (restoreFocus && pending.returnFocus?.isConnected) pending.returnFocus.focus();
     pending.request = null;
@@ -192,6 +193,20 @@
     } finally {
       seen.delete(value);
     }
+  }
+
+  function bridgeJsonSemanticallyEqual(left, right) {
+    if (left === null || right === null || typeof left !== "object" || typeof right !== "object") {
+      return typeof left === typeof right && left === right;
+    }
+    if (Array.isArray(left) || Array.isArray(right)) {
+      return Array.isArray(left) && Array.isArray(right) && left.length === right.length &&
+        left.every((item, index) => bridgeJsonSemanticallyEqual(item, right[index]));
+    }
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    return leftKeys.length === rightKeys.length && leftKeys.every((key) =>
+      Object.hasOwn(right, key) && bridgeJsonSemanticallyEqual(left[key], right[key]));
   }
 
   function rasterSignatureMatches(mimeType, decoded) {
@@ -285,9 +300,17 @@
       throw new Error("Canvas confirmation metadata was refused by the trusted shell.");
     }
     if (request.kind === "submit") {
-      const completeText = typeof request.value === "string" ? request.value : JSON.stringify(request.value);
-      if (value.complete_text !== completeText || value.filename !== null || value.mime_type !== null ||
-          value.byte_size !== bridgeEncoder.encode(completeText).length) {
+      const completeText = value.complete_text;
+      const completeBytes = typeof completeText === "string" ? bridgeEncoder.encode(completeText).length : -1;
+      let contentMatches = typeof request.value === "string" && completeText === request.value;
+      if (typeof request.value !== "string" && typeof completeText === "string") {
+        try {
+          const processValue = cloneBridgeJson(JSON.parse(completeText));
+          contentMatches = bridgeJsonSemanticallyEqual(request.value, processValue);
+        } catch (_) { contentMatches = false; }
+      }
+      if (!contentMatches || value.filename !== null || value.mime_type !== null ||
+          completeBytes > bridgeLimits.submitBytes || value.byte_size !== completeBytes) {
         throw new Error("Canvas confirmation content did not match its request.");
       }
     } else {
@@ -304,6 +327,22 @@
     const seconds = Math.max(0, Math.ceil((pending.expiresAt - Date.now()) / 1000));
     const minutes = Math.floor(seconds / 60);
     ui.bridgeExpiry.textContent = `Review expires in ${minutes}:${String(seconds % 60).padStart(2, "0")}`;
+    for (const threshold of [60, 10]) {
+      if (pending.lastCountdownSeconds > threshold && seconds <= threshold && !pending.announcedExpiry.has(threshold)) {
+        pending.announcedExpiry.add(threshold);
+        showBridgeRecovery(
+          `Canvas confirmation expires in ${threshold === 60 ? "one minute" : "10 seconds"}.`,
+          {announceOnly: true},
+        );
+      }
+    }
+    pending.lastCountdownSeconds = seconds;
+  }
+
+  function showBridgeRecovery(copy, {announceOnly = false} = {}) {
+    ui.bridgeRecovery.textContent = copy;
+    ui.bridgeRecovery.classList.toggle("sr-only", announceOnly);
+    ui.bridgeRecovery.hidden = false;
   }
 
   function showBridgeDialog(pending, presentation) {
@@ -350,8 +389,7 @@
       return;
     }
     if (pendingBridge) {
-      ui.bridgeRecovery.textContent = "Another request was refused while this confirmation is pending.";
-      ui.bridgeRecovery.hidden = false;
+      showBridgeRecovery("Another request was refused while this confirmation is pending.");
       return;
     }
     let request;
@@ -362,6 +400,7 @@
       mode: "bridge", request, presentation: null, prepared: false, returnFocus: ui.frame,
       timer: null, countdownTimer: null, prepareTimer: null, prepareAbort,
       source: null, frameNonce: message.nonce, expiresAt: null,
+      lastCountdownSeconds: Number.POSITIVE_INFINITY, announcedExpiry: new Set(),
     };
     pendingBridge = pending;
     pending.prepareTimer = setTimeout(() => prepareAbort.abort(), 300_000);
@@ -639,10 +678,9 @@
   ui.bridgeCancel.addEventListener("click", () => void cancelPendingBridge());
   ui.bridgeCopy.addEventListener("click", () => {
     ui.bridgeText.select();
-    ui.bridgeRecovery.textContent = document.execCommand("copy")
+    showBridgeRecovery(document.execCommand("copy")
       ? "Content copied."
-      : "Content is selected and ready to copy.";
-    ui.bridgeRecovery.hidden = false;
+      : "Content is selected and ready to copy.");
   });
   ui.bridgeConfirm.addEventListener("click", async () => {
     const pending = pendingBridge;
@@ -670,10 +708,9 @@
       }
     } catch (_) {
       if (pendingBridge !== pending) return;
-      ui.bridgeRecovery.textContent = pending.request.kind === "submit"
+      showBridgeRecovery(pending.request.kind === "submit"
         ? "The Chatbook draft changed. Nothing was inserted."
-        : "The Canvas selection changed or this confirmation expired. Nothing was downloaded.";
-      ui.bridgeRecovery.hidden = false;
+        : "The Canvas selection changed or this confirmation expired. Nothing was downloaded.");
       ui.bridgeRetry.hidden = false;
       ui.bridgeReturn.hidden = pending.request.kind !== "submit";
       ui.bridgeConfirm.hidden = true;

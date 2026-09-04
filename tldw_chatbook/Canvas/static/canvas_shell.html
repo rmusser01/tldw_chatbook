@@ -101,7 +101,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       <textarea id="source-view" readonly aria-label="Canvas revision source" spellcheck="false"></textarea>
     </aside>
 
-    <section id="bridge-dialog" class="bridge-dialog" role="dialog" aria-modal="true" aria-labelledby="bridge-heading" aria-describedby="bridge-summary" tabindex="-1" hidden>
+    <section id="bridge-dialog" class="bridge-dialog" role="dialog" aria-modal="true" aria-labelledby="bridge-heading" aria-describedby="bridge-summary bridge-expiry" tabindex="-1" hidden>
       <header class="bridge-header">
         <div>
           <h2 id="bridge-heading">Confirm Canvas action</h2>
@@ -109,7 +109,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         </div>
         <div class="bridge-status">
           <span id="bridge-kind" class="state-badge">Confirmation</span>
-          <span id="bridge-expiry" class="bridge-expiry" aria-live="polite"></span>
+          <span id="bridge-expiry" class="bridge-expiry"></span>
         </div>
       </header>
       <dl id="bridge-metadata" class="bridge-metadata">

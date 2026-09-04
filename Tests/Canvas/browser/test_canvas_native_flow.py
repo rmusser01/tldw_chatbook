@@ -539,11 +539,28 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
     <button id="submit-text">Submit text</button>
     <button id="submit-json">Submit JSON</button>
     <button id="submit-max">Submit maximum text</button>
+    <button id="submit-exponent">Submit exponent</button>
+    <button id="submit-key-order">Submit key order</button>
+    <button id="submit-negative-zero">Submit negative zero</button>
+    <button id="submit-threshold">Submit threshold countdown</button>
+    <button id="submit-final-expiry">Submit final expiry</button>
+    <button id="submit-mismatch">Submit mismatched presentation</button>
     <button id="download-text">Download text</button>
     <script>
       document.getElementById("submit-text").addEventListener("click", () => canvas.submit("  exact\\ntext  "));
       document.getElementById("submit-json").addEventListener("click", () => canvas.submit({z: 1, a: [true, null]}));
       document.getElementById("submit-max").addEventListener("click", () => canvas.submit("x".repeat(16 * 1024)));
+      document.getElementById("submit-exponent").addEventListener("click", () => canvas.submit({small: 1e-7, negative_zero: -0}));
+      document.getElementById("submit-key-order").addEventListener("click", () => {
+        const value = {};
+        value["\\u{10000}"] = "supplementary";
+        value["\\uE000"] = "bmp";
+        canvas.submit(value);
+      });
+      document.getElementById("submit-negative-zero").addEventListener("click", () => canvas.submit(-0));
+      document.getElementById("submit-threshold").addEventListener("click", () => canvas.submit("threshold countdown"));
+      document.getElementById("submit-final-expiry").addEventListener("click", () => canvas.submit("final expiry"));
+      document.getElementById("submit-mismatch").addEventListener("click", () => canvas.submit({mismatch: 1}));
       document.getElementById("download-text").addEventListener("click", () => canvas.download({filename: " result.txt ", mime_type: "text/plain", data: "full result\\n"}));
     </script></body></html>"""
     authority = NativeConsoleCanvasAuthority(
@@ -572,6 +589,20 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
         )
         page = await browser.new_page(viewport={"width": 1200, "height": 780})
         page.set_default_timeout(7_000)
+
+        async def shape_preparation(route) -> None:
+            response = await route.fetch()
+            presentation = await response.json()
+            if presentation.get("complete_text") == "threshold countdown":
+                presentation["expires_in_seconds"] = 11
+            elif presentation.get("complete_text") == "final expiry":
+                presentation["expires_in_seconds"] = 0.25
+            elif presentation.get("complete_text") == '{"mismatch":1}':
+                presentation["complete_text"] = '{"mismatch":2}'
+                presentation["byte_size"] = 14
+            await route.fulfill(response=response, json=presentation)
+
+        await page.route("**/api/bridge/prepare", shape_preparation)
         prepare_request_ids: list[str] = []
         page.on(
             "request",
@@ -640,6 +671,19 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
         await page.get_by_text("Draft inserted · Review it in Chatbook before sending.", exact=True).wait_for()
         assert drafts == ["  exact\ntext  ", '{"a":[true,null],"z":1}']
 
+        for button_name, expected_text in (
+            ("Submit key order", '{"\ue000":"bmp","\U00010000":"supplementary"}'),
+            ("Submit exponent", '{"negative_zero":0,"small":1e-07}'),
+            ("Submit negative zero", "0"),
+        ):
+            await frame.get_by_role("button", name=button_name).click()
+            await page.get_by_role("dialog", name="Send result to chat").wait_for()
+            assert await page.locator("#bridge-complete-text").input_value() == expected_text
+            async with page.expect_response(
+                lambda response: response.url.endswith("/api/bridge")
+            ):
+                await page.keyboard.press("Escape")
+
         await frame.get_by_role("button", name="Submit maximum text").click()
         await page.get_by_role("dialog", name="Send result to chat").wait_for()
         assert len(await page.locator("#bridge-complete-text").input_value()) == 16 * 1024
@@ -647,6 +691,12 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
             "Review expires in 5:00",
             "Review expires in 4:59",
         }
+        assert await page.locator("#bridge-expiry").get_attribute("aria-live") is None
+        assert await page.locator("#bridge-expiry").get_attribute("role") is None
+        described_by = (await dialog.get_attribute("aria-describedby") or "").split()
+        assert {"bridge-summary", "bridge-expiry"}.issubset(described_by)
+        await page.wait_for_timeout(1_100)
+        assert await page.locator("#bridge-recovery").is_hidden()
         async with page.expect_response(
             lambda response: response.url.endswith("/api/bridge")
         ):
@@ -676,6 +726,21 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
         assert download.suggested_filename == "result.txt"
         assert await page.evaluate("window.__canvasLastObjectUrlRevoked === true")
 
+        await frame.get_by_role("button", name="Submit threshold countdown").click()
+        await page.get_by_role("dialog", name="Send result to chat").wait_for()
+        await page.get_by_text(
+            "Canvas confirmation expires in 10 seconds.", exact=True
+        ).wait_for()
+        assert await page.locator("#bridge-recovery").get_attribute("role") == "status"
+        assert await page.locator("#bridge-recovery").get_attribute("aria-live") in {
+            "polite",
+            "assertive",
+        }
+        async with page.expect_response(
+            lambda response: response.url.endswith("/api/bridge")
+        ):
+            await page.keyboard.press("Escape")
+
         capture_dir = os.environ.get("TLDW_CANVAS_CONFIRMATION_CAPTURE_DIR")
         if capture_dir:
             output = Path(capture_dir)
@@ -685,6 +750,25 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
             await page.screenshot(path=output / "canvas-confirmation-desktop.png")
             await page.set_viewport_size({"width": 390, "height": 844})
             await page.screenshot(path=output / "canvas-confirmation-narrow.png")
+            async with page.expect_response(
+                lambda response: response.url.endswith("/api/bridge")
+            ):
+                await page.keyboard.press("Escape")
+
+        await frame.get_by_role("button", name="Submit mismatched presentation").click()
+        await page.get_by_text(
+            "Canvas request could not be confirmed. Reload the preview and try again.",
+            exact=True,
+        ).wait_for()
+        assert await page.get_by_role("dialog").count() == 0
+        await page.get_by_role("button", name="Reload").click()
+        await frame.get_by_role("button", name="Submit final expiry").click()
+        await page.get_by_text(
+            "Canvas confirmation expired. Request it again from the preview.", exact=True
+        ).wait_for()
+        assert await page.locator("#notice").get_attribute("role") == "status"
+        assert await page.locator("#notice").get_attribute("aria-live") == "polite"
+        assert await page.get_by_role("dialog").count() == 0
         await browser.close()
     await gateway.aclose()
 
