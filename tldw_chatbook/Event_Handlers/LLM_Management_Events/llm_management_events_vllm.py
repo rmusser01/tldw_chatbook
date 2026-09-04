@@ -11,8 +11,6 @@ This module isolates vLLM-specific logic from the main llm_management_events.py.
 from __future__ import annotations
 
 #
-import functools
-from loguru import logger as _loguru_fallback_logger
 import re
 import shlex
 import subprocess
@@ -21,7 +19,7 @@ from typing import TYPE_CHECKING, Any, List
 
 #
 # Third-party Libraries
-from textual.widgets import Input, RichLog, TextArea, Button
+from textual.widgets import Button
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -38,18 +36,10 @@ from tldw_chatbook.Widgets.enhanced_file_picker import (
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
 from .server_lifecycle import (
     ServerLaunchClaim,
-    release_server_claim,
-    reserve_server_launch,
     run_server_subprocess,
     stop_server_process,
 )
-from tldw_chatbook.UI.LLM_Management.vllm_setup import (
-    VllmMode,
-    VllmReadinessState,
-    build_vllm_command,
-    run_vllm_preflight,
-    semantic_fingerprint,
-)
+from tldw_chatbook.UI.LLM_Management.vllm_setup import VllmReadinessState
 #
 #
 ########################################################################################################################
@@ -252,92 +242,47 @@ async def handle_stop_vllm_server_button_pressed(
 def handle_vllm_setup_check_requested(
     window: "LLMManagementWindow", app: "TldwCli", event: Any
 ) -> None:
-    """Run the bounded setup checks off the Textual event loop."""
+    """Compatibility delegate; LLMScreen owns the readiness lifecycle."""
 
-    view = window.query_one("#vllm-setup-view")
-    draft = event.draft
-    window._vllm_preflight_generation += 1
-    generation = window._vllm_preflight_generation
-    view.apply_state(
-        draft=draft,
-        state=VllmReadinessState.CHECKING,
-        preflight=None,
+    controller = getattr(
+        getattr(window, "screen", None), "_on_vllm_check_requested", None
     )
-
-    def complete() -> None:
-        result = run_vllm_preflight(draft, generation)
-
-        def apply_result() -> None:
-            if (
-                generation != window._vllm_preflight_generation
-                or semantic_fingerprint(view.draft) != result.fingerprint
-            ):
-                return
-            state = (
-                VllmReadinessState.READY_TO_START
-                if not result.issues and draft.mode is VllmMode.LOCAL
-                else VllmReadinessState.NEEDS_ATTENTION
-            )
-            view.apply_state(draft=draft, state=state, preflight=result)
-
-        app.call_from_thread(apply_result)
-
-    app.run_worker(
-        complete,
-        group="vllm_preflight",
-        description="Checking vLLM setup",
-        exclusive=True,
-        thread=True,
-    )
+    if callable(controller):
+        controller(event)
 
 
 def handle_vllm_setup_start_requested(
     window: "LLMManagementWindow", app: "TldwCli", event: Any
 ) -> None:
-    """Reserve and launch only a current, successful local vLLM draft."""
+    """Compatibility delegate; command construction belongs to LLMScreen."""
 
+    controller = getattr(
+        getattr(window, "screen", None), "_on_vllm_start_requested", None
+    )
+    if callable(controller):
+        controller(event)
+        return
     view = window.query_one("#vllm-setup-view")
-    preflight = view.preflight
-    try:
-        command = build_vllm_command(
-            event.draft,
-            preflight,  # type: ignore[arg-type]
-            current_generation=window._vllm_preflight_generation,
-        )
-    except ValueError:
-        view.apply_state(
-            draft=event.draft,
-            state=VllmReadinessState.NEEDS_ATTENTION,
-            preflight=preflight,
-        )
-        return
-    claim = reserve_server_launch(app, "vllm")
-    if claim is None:
-        view.apply_state(
-            draft=event.draft,
-            state=VllmReadinessState.NEEDS_ATTENTION,
-            preflight=preflight,
-        )
-        app.notify("vLLM server is already starting or running.", severity="warning")
-        return
     view.apply_state(
         draft=event.draft,
-        state=VllmReadinessState.LAUNCHING,
-        preflight=preflight,
-    )
-    app.run_worker(
-        functools.partial(run_vllm_server_worker, app, list(command), claim),
-        group="vllm_server",
-        description="Running vLLM API server",
-        exclusive=True,
-        thread=True,
+        state=VllmReadinessState.NEEDS_ATTENTION,
+        preflight=view.preflight,
     )
 
 
 async def handle_vllm_setup_stop_requested(
     window: "LLMManagementWindow", app: "TldwCli", event: Any
 ) -> None:
-    """Stop only the exact Chatbook-owned vLLM claim."""
+    """Compatibility delegate for callers outside the mounted Lab screen."""
+
+    controller = getattr(
+        getattr(window, "screen", None), "_on_vllm_stop_requested", None
+    )
+    if callable(controller):
+        result = controller(event)
+        if hasattr(result, "__await__"):
+            await result
+        return
 
     view = window.query_one("#vllm-setup-view")
     view.apply_state(
@@ -348,7 +293,11 @@ async def handle_vllm_setup_stop_requested(
     stopped = await stop_server_process(app, "vllm", "vLLM server")
     view.apply_state(
         draft=view.draft,
-        state=(VllmReadinessState.NOT_CONFIGURED if stopped else VllmReadinessState.NEEDS_ATTENTION),
+        state=(
+            VllmReadinessState.NOT_CONFIGURED
+            if stopped
+            else VllmReadinessState.NEEDS_ATTENTION
+        ),
         preflight=(None if stopped else view.preflight),
     )
 

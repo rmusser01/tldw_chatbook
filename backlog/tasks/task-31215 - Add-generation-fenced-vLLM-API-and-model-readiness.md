@@ -1,9 +1,11 @@
 ---
 id: TASK-31215
 title: Add generation-fenced vLLM API and model readiness
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-09-03 22:32'
+updated_date: '2026-09-04 01:38'
 labels:
   - vllm
   - lab
@@ -22,9 +24,28 @@ Replace process-liveness completion with an explicit, privacy-bounded vLLM lifec
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Lab distinguishes not configured, checking, launching, loading model, ready, stopping, and failed states.
-- [ ] #2 Ready requires a current-generation bounded models-endpoint probe and an admissible exact served-model identity.
-- [ ] #3 Cancellation, target edits, process death, recomposition, and newer checks prevent stale results from enabling actions.
-- [ ] #4 Activity and recovery expose bounded categories without retaining credentials, raw commands, paths, or unrestricted child output outside the Lab-owned boundary.
-- [ ] #5 Unit, loopback HTTP, lifecycle, privacy, and mounted UI tests cover the state machine.
+- [x] #1 Lab distinguishes not configured, checking, launching, loading model, ready, stopping, and failed states.
+- [x] #2 Ready requires a current-generation bounded models-endpoint probe and an admissible exact served-model identity.
+- [x] #3 Cancellation, target edits, process death, recomposition, and newer checks prevent stale results from enabling actions.
+- [x] #4 Activity and recovery expose bounded categories without retaining credentials, raw commands, paths, or unrestricted child output outside the Lab-owned boundary.
+- [x] #5 Unit, loopback HTTP, lifecycle, privacy, and mounted UI tests cover the state machine.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Follow Docs/superpowers/plans/2026-09-03-vllm-lab-console-complete-redesign.md Task 2 and ADR-115.
+2. Add RED owner, loopback probe, cancellation, process-exit, privacy, and mounted recomposition tests.
+3. Implement the app-scoped VllmConnectionOwner, bounded activity, credential-aware health/models probing, and LLMScreen lifecycle orchestration.
+4. Run the focused Task 2 and incumbent lifecycle suites, self-review, and record exact evidence.
+
+ADR required: no
+ADR path: backlog/decisions/115-vllm-lab-console-readiness-and-profiles.md
+Reason: ADR-115 already fixes the connection owner, generation fencing, privacy boundary, lifecycle ownership, and rollback behavior.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented an app-scoped immutable vLLM connection owner with exact generation/fingerprint/runtime fencing, bounded allowlisted Activity, credential-aware bounded health and model-list probes, exact local alias verification, admissible existing-server model IDs, and sanitized failure categories. Moved Check/Start/Retry/Stop orchestration to LLMScreen while retaining shared server-lifecycle claims and reducing the legacy event module to picker/compatibility glue. Added readiness/Activity UI projection plus source-side suppression for programmatic Textual field updates, and covered draft edits, raw arguments, cancellation, process death, screen detach, recomposition, response bounds, privacy canaries, and stale settlement. Focused evidence: readiness/UI 33 passed; prescribed filtered readiness 7 passed/26 deselected; incumbent lifecycle 31 passed; incumbent vLLM setup/action 34 passed/17 deselected; Ruff and focused mypy passed; git diff --check passed. ADR required: no. ADR path: backlog/decisions/115-vllm-lab-console-readiness-and-profiles.md. ADR-115 already fixes ownership, fencing, privacy, lifecycle, and rollback.
+<!-- SECTION:NOTES:END -->

@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime
 from functools import partial
 from pathlib import Path
+import subprocess
 import threading
 import time
 from collections.abc import Callable
@@ -72,6 +73,36 @@ from ..Lab_Modules.lab_server_status import (
 )
 from ..Lab_Modules.lab_workbench import LAB_RAIL_ROW_CLASS
 from ..LLM_Management_Window import LLMManagementWindow
+from ..LLM_Management.vllm_connection import (
+    VllmActivityEvent,
+    VllmConnectionOwner,
+    VllmOperationToken,
+    VllmProbeRequest,
+    VllmProbeResult,
+    probe_vllm_target,
+)
+from ..LLM_Management.vllm_setup import (
+    SERVED_MODEL_NAME,
+    VllmIssue,
+    VllmLaunchDraft,
+    VllmMode,
+    VllmModelSource,
+    VllmPreflightResult,
+    VllmReadinessState,
+    build_vllm_command,
+    run_vllm_preflight,
+    semantic_fingerprint,
+)
+from ..LLM_Management.vllm_setup_view import VllmSetupView
+from ...Event_Handlers.LLM_Management_Events.server_lifecycle import (
+    ServerLaunchClaim,
+    claim_is_current,
+    process_is_running,
+    reserve_server_launch,
+    run_server_subprocess,
+    server_lifecycle_snapshot,
+    stop_server_process,
+)
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from .lab_frame import LabInspectorRow, LabScreen, LabStatusChip
 from .model_browser_state import install_failure_message
@@ -220,6 +251,24 @@ class LLMScreen(LabScreen):
         #: body -- so it already survives the teardown; starting a second
         #: one alongside it would be a real leak.
         self._status_poll_started = False
+        owner = getattr(app_instance, "_vllm_connection_owner", None)
+        if type(owner) is not VllmConnectionOwner:
+            owner = VllmConnectionOwner()
+            setattr(app_instance, "_vllm_connection_owner", owner)
+        self._vllm_owner = cast(VllmConnectionOwner, owner)
+        self._vllm_draft = VllmLaunchDraft(
+            mode=VllmMode.LOCAL,
+            python_environment="python",
+            model_source=VllmModelSource.HUGGING_FACE,
+            model_value="",
+        )
+        self._vllm_preflight: VllmPreflightResult | None = None
+        self._vllm_preflight_worker: Worker | None = None
+        self._vllm_probe_worker: Worker | None = None
+        self._vllm_server_worker: Worker | None = None
+        self._vllm_claim: ServerLaunchClaim | None = None
+        self._vllm_body_mounts = 0
+        self._vllm_probe_window_seconds = 30.0
         self._model_install_active = False
         self._model_install_phase: str | None = None
         self._model_install_succeeded: bool | None = None
@@ -2385,8 +2434,418 @@ class LLMScreen(LabScreen):
         if view is not None:
             view.finish_install(error)
 
+    def _vllm_view(self) -> VllmSetupView | None:
+        """Return the mounted vLLM projection without forcing lazy composition."""
+
+        try:
+            return self.query_one("#vllm-setup-view", VllmSetupView)
+        except Exception:
+            return None
+
+    def _cancel_vllm_workers(self) -> None:
+        """Cancel screen-owned evidence workers; the app-owned process survives."""
+
+        for worker in (self._vllm_preflight_worker, self._vllm_probe_worker):
+            if worker is not None and not worker.is_finished:
+                worker.cancel()
+        self._vllm_preflight_worker = None
+        self._vllm_probe_worker = None
+
+    def _settle_vllm_state(
+        self,
+        token: VllmOperationToken,
+        state: VllmReadinessState,
+        *,
+        activity_code: str,
+        issue: VllmIssue | None = None,
+        exit_code: int | None = None,
+    ) -> bool:
+        """Settle one sanitized state classification for the current token."""
+
+        return self._vllm_owner.settle(
+            token,
+            VllmProbeResult(
+                token=token,
+                state=state,
+                target=None,
+                issue=issue,
+                activity=(VllmActivityEvent(activity_code, "under_1s", exit_code),),
+            ),
+        )
+
+    def _apply_vllm_view_state(self, *, focus: bool = False) -> None:
+        """Hydrate a fresh or current view from screen/app-owned evidence."""
+
+        view = self._vllm_view()
+        if view is None:
+            return
+        snapshot = self._vllm_owner.snapshot()
+        state = snapshot.state
+        preflight = self._vllm_preflight
+        if (
+            preflight is not None
+            and preflight.fingerprint == semantic_fingerprint(self._vllm_draft)
+            and snapshot.current_token is not None
+            and preflight.generation == snapshot.current_token.generation
+            and preflight.issues
+        ):
+            state = VllmReadinessState.NEEDS_ATTENTION
+        view.apply_state(
+            draft=self._vllm_draft,
+            state=state,
+            preflight=preflight,
+            connection=snapshot,
+        )
+        if not focus:
+            return
+        focus_id = {
+            VllmReadinessState.LAUNCHING: "#vllm-stop-button",
+            VllmReadinessState.LOADING_MODEL: "#vllm-stop-button",
+            VllmReadinessState.NEEDS_ATTENTION: "#vllm-retry-button",
+        }.get(state)
+        if focus_id is not None:
+            try:
+                view.query_one(focus_id, Button).focus()
+            except Exception:
+                pass
+
+    @on(VllmSetupView.DraftChanged)
+    def _on_vllm_draft_changed(self, event: VllmSetupView.DraftChanged) -> None:
+        """Invalidate every semantic target edit without stealing focus."""
+
+        event.stop()
+        self._vllm_draft = event.draft
+        self._vllm_preflight = None
+        self._vllm_owner.invalidate("target_changed")
+        self._cancel_vllm_workers()
+        self._apply_vllm_view_state(focus=False)
+
+    @on(VllmSetupView.CheckRequested)
+    def _on_vllm_check_requested(self, event: VllmSetupView.CheckRequested) -> None:
+        """Start one bounded preflight generation from an immutable draft."""
+
+        event.stop()
+        self._cancel_vllm_workers()
+        self._vllm_draft = event.draft
+        self._vllm_preflight = None
+        runtime_owner = "chatbook" if event.draft.mode is VllmMode.LOCAL else "external"
+        token = self._vllm_owner.begin(event.draft, runtime_owner=runtime_owner)
+        self._apply_vllm_view_state(focus=False)
+        self._vllm_preflight_worker = self.run_worker(
+            self._run_vllm_preflight_generation(token, event.draft),
+            group="vllm_preflight",
+            description="Checking vLLM setup",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _run_vllm_preflight_generation(
+        self, token: VllmOperationToken, draft: VllmLaunchDraft
+    ) -> None:
+        result = await asyncio.to_thread(run_vllm_preflight, draft, token.generation)
+        snapshot = self._vllm_owner.snapshot()
+        if snapshot.current_token != token or not self.is_attached:
+            return
+        self._vllm_preflight = result
+        if result.fingerprint != token.fingerprint or result.issues:
+            self._apply_vllm_view_state(focus=True)
+            return
+        if draft.mode is VllmMode.LOCAL:
+            self._settle_vllm_state(
+                token,
+                VllmReadinessState.READY_TO_START,
+                activity_code="checking",
+            )
+            self._apply_vllm_view_state(focus=False)
+            return
+        self._start_vllm_probe(token, draft, claim=None)
+
+    @on(VllmSetupView.StartRequested)
+    def _on_vllm_start_requested(self, event: VllmSetupView.StartRequested) -> None:
+        """Reserve and launch only the exact successfully checked generation."""
+
+        event.stop()
+        snapshot = self._vllm_owner.snapshot()
+        token = snapshot.current_token
+        preflight = self._vllm_preflight
+        try:
+            if (
+                token is None
+                or token.runtime_owner != "chatbook"
+                or not isinstance(preflight, VllmPreflightResult)
+                or snapshot.state is not VllmReadinessState.READY_TO_START
+            ):
+                raise ValueError("missing current local generation")
+            command = build_vllm_command(
+                event.draft,
+                preflight,
+                current_generation=token.generation,
+            )
+        except ValueError:
+            self._apply_vllm_view_state(focus=True)
+            return
+        claim = reserve_server_launch(
+            self.app_instance, "vllm", authority=SERVED_MODEL_NAME
+        )
+        if claim is None:
+            self._settle_vllm_state(
+                token,
+                VllmReadinessState.NEEDS_ATTENTION,
+                activity_code="claim_unavailable",
+                issue=VllmIssue("claim_unavailable", "process"),
+            )
+            self._apply_vllm_view_state(focus=True)
+            return
+        self._vllm_claim = claim
+        self._settle_vllm_state(
+            token,
+            VllmReadinessState.LAUNCHING,
+            activity_code="launch_reserved",
+        )
+        self._apply_vllm_view_state(focus=True)
+        self._vllm_server_worker = self.run_worker(
+            partial(self._run_vllm_server, tuple(command), claim, token),
+            group="vllm_server",
+            description="Running vLLM API server",
+            exclusive=True,
+            thread=True,
+            exit_on_error=False,
+        )
+        self._start_vllm_probe(token, event.draft, claim=claim)
+
+    def _run_vllm_server(
+        self,
+        command: tuple[str, ...],
+        claim: ServerLaunchClaim,
+        token: VllmOperationToken,
+    ) -> None:
+        run_server_subprocess(
+            self.app_instance,
+            "vllm",
+            list(command),
+            claim,
+            subprocess,
+        )
+        try:
+            self.app_instance.call_from_thread(
+                self._settle_vllm_process_exit, token, claim
+            )
+        except Exception:
+            pass
+
+    def _settle_vllm_process_exit(
+        self, token: VllmOperationToken, claim: ServerLaunchClaim
+    ) -> None:
+        if (
+            claim.cancel_event.is_set()
+            or self._vllm_owner.snapshot().current_token != token
+        ):
+            return
+        self._settle_vllm_state(
+            token,
+            VllmReadinessState.NEEDS_ATTENTION,
+            activity_code="process_exited",
+            issue=VllmIssue("process_exited", "process"),
+        )
+        self._apply_vllm_view_state(focus=True)
+
+    def _start_vllm_probe(
+        self,
+        token: VllmOperationToken,
+        draft: VllmLaunchDraft,
+        *,
+        claim: ServerLaunchClaim | None,
+    ) -> None:
+        worker = self._vllm_probe_worker
+        if worker is not None and not worker.is_finished:
+            worker.cancel()
+        self._vllm_probe_worker = self.run_worker(
+            self._probe_vllm_generation(token, draft, claim),
+            group="vllm_readiness",
+            description="Checking vLLM API and model",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _probe_vllm_generation(
+        self,
+        token: VllmOperationToken,
+        draft: VllmLaunchDraft,
+        claim: ServerLaunchClaim | None,
+    ) -> None:
+        deadline = time.monotonic() + self._vllm_probe_window_seconds
+        last_result: VllmProbeResult | None = None
+        while time.monotonic() < deadline:
+            if (
+                self._vllm_owner.snapshot().current_token != token
+                or not self.is_attached
+            ):
+                return
+            process = None
+            if claim is not None:
+                current_claim, process = server_lifecycle_snapshot(
+                    self.app_instance, "vllm"
+                )
+                if current_claim is not claim or claim.cancel_event.is_set():
+                    return
+                if process is None:
+                    await asyncio.sleep(0.05)
+                    continue
+                if not process_is_running(process):
+                    result = VllmProbeResult(
+                        token=token,
+                        state=VllmReadinessState.NEEDS_ATTENTION,
+                        target=None,
+                        issue=VllmIssue("process_exited", "process"),
+                        activity=(VllmActivityEvent("process_exited", "under_1s"),),
+                    )
+                    self._vllm_owner.settle(token, result)
+                    self._apply_vllm_view_state(focus=True)
+                    return
+                self._settle_vllm_state(
+                    token,
+                    VllmReadinessState.LOADING_MODEL,
+                    activity_code="process_alive",
+                )
+                self._apply_vllm_view_state(focus=False)
+            snapshot = self._vllm_owner.snapshot()
+            api_url = (
+                snapshot.launch_snapshot.client_api_url
+                if claim is not None and snapshot.launch_snapshot is not None
+                else draft.existing_server_url
+            )
+            result = await probe_vllm_target(
+                VllmProbeRequest(
+                    token=token,
+                    api_url=api_url,
+                    expected_model_id=(
+                        SERVED_MODEL_NAME if claim is not None else None
+                    ),
+                    cancellation_requested=(
+                        claim.cancel_event.is_set if claim is not None else None
+                    ),
+                    process_alive=(
+                        (lambda current=process: process_is_running(current))
+                        if claim is not None
+                        else None
+                    ),
+                    connect_timeout_seconds=1.0,
+                    read_timeout_seconds=2.0,
+                    total_timeout_seconds=3.0,
+                )
+            )
+            if self._vllm_owner.snapshot().current_token != token:
+                return
+            last_result = result
+            if result.state is VllmReadinessState.READY:
+                self._vllm_owner.settle(token, result)
+                self._apply_vllm_view_state(focus=False)
+                return
+            if (
+                claim is None
+                or result.issue is None
+                or result.issue.code
+                not in {
+                    "health_timeout",
+                    "model_missing",
+                }
+            ):
+                self._vllm_owner.settle(token, result)
+                self._apply_vllm_view_state(focus=True)
+                return
+            progress = tuple(
+                activity
+                for activity in result.activity
+                if activity.code
+                in {"health_checking", "health_ok", "model_checking"}
+            )
+            self._vllm_owner.settle(
+                token,
+                VllmProbeResult(
+                    token=token,
+                    state=VllmReadinessState.LOADING_MODEL,
+                    target=None,
+                    issue=None,
+                    activity=progress,
+                ),
+            )
+            self._apply_vllm_view_state(focus=False)
+            await asyncio.sleep(0.25)
+        if last_result is None:
+            last_result = VllmProbeResult(
+                token=token,
+                state=VllmReadinessState.NEEDS_ATTENTION,
+                target=None,
+                issue=VllmIssue("health_timeout", "connection"),
+                activity=(VllmActivityEvent("health_timeout", "60s_or_more"),),
+            )
+        self._vllm_owner.settle(token, last_result)
+        self._apply_vllm_view_state(focus=True)
+
+    @on(VllmSetupView.RetryRequested)
+    def _on_vllm_retry_requested(self, event: VllmSetupView.RetryRequested) -> None:
+        """Retry verification as a fresh generation, never reuse old evidence."""
+
+        event.stop()
+        self._cancel_vllm_workers()
+        runtime_owner = (
+            "chatbook" if self._vllm_draft.mode is VllmMode.LOCAL else "external"
+        )
+        token = self._vllm_owner.begin(self._vllm_draft, runtime_owner=runtime_owner)
+        claim = self._vllm_claim if runtime_owner == "chatbook" else None
+        if claim is not None and claim_is_current(self.app_instance, "vllm", claim):
+            self._settle_vllm_state(
+                token,
+                VllmReadinessState.LOADING_MODEL,
+                activity_code="loading_model",
+            )
+            self._start_vllm_probe(token, self._vllm_draft, claim=claim)
+        elif runtime_owner == "chatbook":
+            self._vllm_preflight = None
+            self._vllm_preflight_worker = self.run_worker(
+                self._run_vllm_preflight_generation(token, self._vllm_draft),
+                group="vllm_preflight",
+                description="Checking vLLM setup",
+                exclusive=True,
+                exit_on_error=False,
+            )
+        else:
+            self._start_vllm_probe(token, self._vllm_draft, claim=None)
+        self._apply_vllm_view_state(focus=True)
+
+    @on(VllmSetupView.StopRequested)
+    async def _on_vllm_stop_requested(self, event: VllmSetupView.StopRequested) -> None:
+        """Stop only the exact app-owned vLLM claim."""
+
+        event.stop()
+        snapshot = self._vllm_owner.snapshot()
+        token = snapshot.current_token
+        if token is not None:
+            self._settle_vllm_state(
+                token,
+                VllmReadinessState.STOPPING,
+                activity_code="stopping",
+            )
+        self._apply_vllm_view_state(focus=False)
+        stopped = await stop_server_process(self.app_instance, "vllm", "vLLM server")
+        if stopped:
+            self._vllm_owner.invalidate("stopped")
+            self._vllm_claim = None
+            self._vllm_preflight = None
+        elif token is not None and self._vllm_owner.snapshot().current_token == token:
+            self._settle_vllm_state(
+                token,
+                VllmReadinessState.NEEDS_ATTENTION,
+                activity_code="process_exited",
+                issue=VllmIssue("process_exited", "process"),
+            )
+        self._apply_vllm_view_state(focus=not stopped)
+
     def on_unmount(self) -> None:
         """Cancel screen-owned work and release live verifier ownership."""
+
+        self._vllm_owner.invalidate("screen_detached")
+        self._cancel_vllm_workers()
 
         operation = self._audio_cpp_model_install_operation
         if operation is not None:
@@ -3162,6 +3621,10 @@ class LLMScreen(LabScreen):
         """
         if self.llm_window is None:
             return
+        if self._vllm_body_mounts:
+            self._vllm_owner.invalidate("recomposed")
+            self._cancel_vllm_workers()
+        self._vllm_body_mounts += 1
         self.watch(self.llm_window, "active_view", self._sync_rail_active, init=True)
         self.refresh_lab_status()
         if not self._status_poll_started:
@@ -3178,6 +3641,7 @@ class LLMScreen(LabScreen):
         # queries for them.
         if self._model_install_presentation_pending():
             self.call_after_refresh(self._hydrate_model_install_progress)
+        self.call_after_refresh(self._apply_vllm_view_state)
 
     @on(LLMManagementWindow.DeferredViewsMounted)
     def _on_deferred_views_mounted(self) -> None:
@@ -3201,6 +3665,7 @@ class LLMScreen(LabScreen):
         self._hydrate_remote_machine_memory()
         self._replay_remote_runtime_handoff()
         self._replay_pending_installed_reveal()
+        self._apply_vllm_view_state(focus=False)
 
     def _hydrate_model_install_progress(self) -> None:
         """Re-apply selected-model context and progress after a recompose.

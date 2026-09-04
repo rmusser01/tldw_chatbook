@@ -54,10 +54,7 @@ from ..Event_Handlers.LLM_Management_Events.llm_management_events_transformers i
 )
 from ..Event_Handlers.LLM_Management_Events.llm_management_events_vllm import (
     VLLM_BUTTON_HANDLERS,
-    handle_vllm_setup_check_requested,
     handle_vllm_local_directory_browse_requested,
-    handle_vllm_setup_start_requested,
-    handle_vllm_setup_stop_requested,
 )
 from .LLM_Management.vllm_setup_view import VllmSetupView
 from ..Event_Handlers.LLM_Management_Events.server_lifecycle import (
@@ -1963,18 +1960,6 @@ class LLMManagementWindow(Container):
                 await result
         except Exception as exc:
             self._recover_failed_action(button.id, exc)
-
-    @on(VllmSetupView.CheckRequested)
-    def _on_vllm_setup_check_requested(self, event: VllmSetupView.CheckRequested) -> None:
-        handle_vllm_setup_check_requested(self, self.app_instance, event)
-
-    @on(VllmSetupView.StartRequested)
-    def _on_vllm_setup_start_requested(self, event: VllmSetupView.StartRequested) -> None:
-        handle_vllm_setup_start_requested(self, self.app_instance, event)
-
-    @on(VllmSetupView.StopRequested)
-    async def _on_vllm_setup_stop_requested(self, event: VllmSetupView.StopRequested) -> None:
-        await handle_vllm_setup_stop_requested(self, self.app_instance, event)
 
     @on(VllmSetupView.LocalDirectoryBrowseRequested)
     async def _on_vllm_local_directory_browse_requested(
