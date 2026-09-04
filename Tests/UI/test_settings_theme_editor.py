@@ -543,3 +543,46 @@ async def test_settings_theme_editor_name_box_drives_apply_save_reset_delete(tmp
         await pilot.pause()
         assert isinstance(app.screen, ConfirmationDialog)
         assert "ocean" in app.screen.message
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_selecting_builtin_leaf_does_not_retheme_app(tmp_path):
+    """TASK-31255: browsing the tree is read-only for the running app, and the
+    palette comes from the real registered Theme, not a hardcoded table."""
+    from textual.color import Color
+
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    app = _isolated_editor_app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.theme = "textual-light"
+        await pilot.pause()
+        editor.load_theme("textual-dark")
+        await pilot.pause()
+        assert app.theme == "textual-light"
+        resolved = app.available_themes["textual-dark"].to_color_system().generate()
+        for key in ("background", "secondary", "panel"):
+            assert editor.color_inputs[key].value.upper() == Color.parse(
+                resolved[key]
+            ).hex.upper(), key
+
+
+@pytest.mark.asyncio
+async def test_settings_theme_editor_delete_keeps_app_theme(tmp_path):
+    """TASK-31255: deleting a saved theme resets the editor, not the app theme."""
+    editor = SettingsThemeEditor()
+    editor.custom_themes_path = tmp_path
+    _write_user_theme(tmp_path, "my_custom_theme")
+    app = _isolated_editor_app_with_real_screens(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.theme = "textual-light"
+        editor.load_user_theme("my_custom_theme")
+        await pilot.pause()
+        editor.on_delete_theme()
+        await pilot.pause()
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+        assert app.theme == "textual-light"
+        assert editor.current_theme_name == "textual-dark"

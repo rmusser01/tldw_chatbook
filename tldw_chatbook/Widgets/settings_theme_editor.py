@@ -248,18 +248,20 @@ class SettingsThemeEditor(Vertical):
         name_input.value = theme_name
         name_input.disabled = theme_name in ["textual-dark", "textual-light"]
 
-        if theme_name in ["textual-dark", "textual-light"]:
-            self.app.theme = theme_name
-            self.current_theme_data = self._extract_current_theme_colors()
-            self.is_dark_theme = theme_name == "textual-dark"
-        else:
-            theme = next(
-                (t for t in ALL_THEMES if hasattr(t, "name") and t.name == theme_name),
-                None,
+        # TASK-31255: loading is read-only for the running app -- Apply is the
+        # only action that changes app.theme. Colours come from the registered
+        # Theme object (built-in, shipped, or saved), not a hardcoded table.
+        theme = self.app.available_themes.get(theme_name) or next(
+            (t for t in ALL_THEMES if getattr(t, "name", None) == theme_name),
+            None,
+        )
+        if theme is None:
+            logger.warning(
+                f"Theme editor: unknown theme '{theme_name}', keeping current palette"
             )
-            if theme:
-                self.current_theme_data = self._extract_theme_colors(theme)
-                self.is_dark_theme = getattr(theme, "dark", True)
+        else:
+            self.current_theme_data = self._extract_theme_colors(theme)
+            self.is_dark_theme = bool(getattr(theme, "dark", True))
 
         self._update_color_inputs()
         self._update_dark_mode_checkbox()
@@ -295,95 +297,25 @@ class SettingsThemeEditor(Vertical):
                 logger.error(f"Failed to load user theme {theme_name}: {e}")
                 self.app.notify(f"Failed to load theme: {e}", severity="error")
 
-    def _extract_current_theme_colors(self) -> dict[str, str]:
-        """Extract colors from the current app theme."""
-        if self.app.theme == "textual-dark":
-            return {
-                "primary": "#004578",
-                "secondary": "#0178D4",
-                "accent": "#FFD700",
-                "background": "#0C0C0C",
-                "surface": "#1A1A1A",
-                "panel": "#1A1A1A",
-                "foreground": "#E0E0E0",
-                "success": "#4EBF71",
-                "warning": "#FFA62B",
-                "error": "#BA3C5B",
-            }
-        if self.app.theme == "textual-light":
-            return {
-                "primary": "#004578",
-                "secondary": "#0178D4",
-                "accent": "#FFD700",
-                "background": "#F5F5F5",
-                "surface": "#FFFFFF",
-                "panel": "#EEEEEE",
-                "foreground": "#333333",
-                "success": "#228B22",
-                "warning": "#FFA500",
-                "error": "#DC143C",
-            }
-        return {color_name: "#808080" for color_name in self.BASE_COLORS}
-
     def _extract_theme_colors(self, theme: Theme) -> dict[str, str]:
-        """Extract colors from a Theme object."""
+        """Resolve a Theme's ten base colours as uppercase hex.
+
+        Built-in Themes leave background/surface/panel/foreground unset and
+        derive them; ``to_color_system().generate()`` resolves every base
+        colour the same way the app does at runtime (TASK-31255).
+        """
+        try:
+            generated = theme.to_color_system().generate()
+        except Exception as exc:  # noqa: BLE001 - a malformed theme must not break the editor
+            logger.warning(f"Theme editor: could not resolve colours for {theme.name!r}: {exc}")
+            generated = {}
         colors: dict[str, str] = {}
-        color_mappings = {
-            "primary": "primary",
-            "secondary": "secondary",
-            "accent": "accent",
-            "background": "background",
-            "surface": "surface",
-            "panel": "panel",
-            "foreground": "foreground",
-            "success": "success",
-            "warning": "warning",
-            "error": "error",
-        }
-
-        for our_name, theme_attr in color_mappings.items():
-            color_value = getattr(theme, theme_attr, None)
-            if color_value:
-                if isinstance(color_value, Color):
-                    colors[our_name] = color_value.hex
-                elif isinstance(color_value, str):
-                    try:
-                        parsed_color = Color.parse(color_value)
-                        colors[our_name] = parsed_color.hex
-                    except Exception:
-                        colors[our_name] = "#808080"
-                else:
-                    colors[our_name] = "#808080"
-            else:
-                is_dark = getattr(theme, "dark", True)
-                if is_dark:
-                    defaults = {
-                        "primary": "#0099FF",
-                        "secondary": "#006FB3",
-                        "accent": "#FFD700",
-                        "background": "#1E1E1E",
-                        "surface": "#2C2C2C",
-                        "panel": "#252525",
-                        "foreground": "#FFFFFF",
-                        "success": "#008000",
-                        "warning": "#FFD700",
-                        "error": "#FF0000",
-                    }
-                else:
-                    defaults = {
-                        "primary": "#0066CC",
-                        "secondary": "#004499",
-                        "accent": "#FF9900",
-                        "background": "#FFFFFF",
-                        "surface": "#F5F5F5",
-                        "panel": "#EEEEEE",
-                        "foreground": "#000000",
-                        "success": "#228B22",
-                        "warning": "#FFA500",
-                        "error": "#DC143C",
-                    }
-                colors[our_name] = defaults.get(our_name, "#808080")
-
+        for our_name in self.BASE_COLORS:
+            value = generated.get(our_name)
+            try:
+                colors[our_name] = Color.parse(str(value)).hex.upper() if value else "#808080"
+            except Exception:  # noqa: BLE001
+                colors[our_name] = "#808080"
         return colors
 
     def _update_color_inputs(self) -> None:
