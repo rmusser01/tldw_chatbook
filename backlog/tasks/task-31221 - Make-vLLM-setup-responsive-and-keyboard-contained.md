@@ -84,6 +84,11 @@ Confirm/Confirm, Confirm/Cancel, and Cancel/Confirm queues settle one callback a
 one captured claim, disable the terminal controls immediately, close only the
 dialog, and leave the owning Models screen current.
 
+Fix Round 3 makes the first terminal outcome own the deletion dialog's public
+`result` as well as its callback, captured claim, repository effect, and single
+stack pop. Later queued Confirm, Cancel, Escape, or backdrop actions cannot rewrite
+that result. The guard remains private to vLLM profile deletion.
+
 ADR required: no. ADR-115 already owns the responsive, focus, runtime, persistence,
 privacy, and Console-handoff boundaries; this task adds no new architectural choice.
 
@@ -145,7 +150,7 @@ same node name).
 7. Explicit transition focus and passive refresh preservation — `test_explicit_vllm_state_transition_focuses_phase_action`, `test_background_projection_preserves_focus_but_explicit_transition_moves_it`.
 8. Provider selection remains Arrow/Enter and Escape remains the existing Lab convention — `Tests/UI/test_lab_frame_mode_keys.py` and `Tests/UI/test_lab_frame.py` in the compatibility matrix.
 9. Brackets retain Lab mode-focus ownership; provider digits/brackets are absent — `test_provider_child_has_no_bracket_or_digit_bindings`, `Tests/UI/test_lab_frame_mode_keys.py`.
-10. Profile-deletion Confirm, Cancel, and Escape are terminally one-shot — `test_profile_delete_queued_terminal_actions_settle_once`, `test_profile_delete_cancel_or_escape_preserves_exact_document`.
+10. Profile-deletion Confirm, Cancel, Escape, and backdrop outcomes are terminally one-shot, and the first terminal action owns the public dialog result — `test_profile_delete_queued_terminal_actions_settle_once`, `test_profile_delete_cancel_or_escape_preserves_exact_document`.
 
 **Testing and evidence**
 
@@ -167,7 +172,7 @@ same node name).
 
 ### Verification and trade-offs
 
-The final primary focused matrix passed 216 tests. The compatibility matrix passed
+The final primary focused matrix passed 217 tests. The compatibility matrix passed
 271 tests and retained two unrelated baseline failures. Both exact failures
 reproduce in detached worktrees at Task 5 base `0643c2713a`, original feature base
 `127cc898ab`, and the real `origin/dev` fetched at `2026-09-04T06:46:11Z`
@@ -187,6 +192,10 @@ Fix Round 1 modified only `llm_screen.py`, `test_vllm_lab_workflow.py`,
 Fix Round 2 modified only `llm_screen.py`, `test_vllm_lab_workflow.py`, and this
 task ledger. The shared `ConfirmationDialog` and its public semantics remain
 unchanged; the one-shot dismissal guard is private to vLLM profile deletion.
+
+Fix Round 3 modified only `llm_screen.py`, `test_vllm_lab_workflow.py`, and this
+task ledger. The vLLM-private guard now makes the first terminal result immutable;
+the shared `ConfirmationDialog` and every other call site remain untouched.
 
 No lesson entry was added: this task produced no new generalizable incident beyond
 the production-CSS/layout evidence rules already recorded in

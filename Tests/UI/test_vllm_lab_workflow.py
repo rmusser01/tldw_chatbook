@@ -241,7 +241,7 @@ async def _wait_for_profile_mutation_idle(screen: LLMScreen, pilot) -> None:
     raise AssertionError("profile mutation did not settle")
 
 
-@pytest.mark.parametrize("dismissal", ["cancel", "escape"])
+@pytest.mark.parametrize("dismissal", ["cancel", "escape", "backdrop"])
 async def test_profile_delete_cancel_or_escape_preserves_exact_document(
     dismissal, monkeypatch, tmp_path: Path
 ):
@@ -293,11 +293,14 @@ async def test_profile_delete_cancel_or_escape_preserves_exact_document(
 
         if dismissal == "cancel":
             await pilot.click("#cancel-button")
-        else:
+        elif dismissal == "escape":
             await pilot.press("escape")
+        else:
+            await pilot.click(offset=(0, 0))
         await pilot.pause()
 
         assert app.screen is screen
+        assert dialog.result is False
         assert repo.path.read_bytes() == before
         assert repo.load() == baseline
         assert calls == []
@@ -431,6 +434,7 @@ async def test_profile_delete_queued_terminal_actions_settle_once(
         assert callback_calls == [
             (confirmed, profile.profile_id, claim.revision)
         ]
+        assert dialog.result is confirmed
         if confirmed:
             assert delete_calls == [(profile.profile_id, claim.revision)]
             restored = repo.load()

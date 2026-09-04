@@ -154,18 +154,30 @@ class _VllmProfileDeleteConfirmationDialog(ConfirmationDialog):
     """Settle one profile-deletion presentation through exactly one outcome."""
 
     def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
         self._terminal_settled = False
+        self._terminal_result: bool | None = None
+        super().__init__(**kwargs)
+
+    @property
+    def result(self) -> bool | None:
+        """Return the first terminal result claimed by this dialog."""
+
+        return self._terminal_result
+
+    @result.setter
+    def result(self, value: bool | None) -> None:
+        if not self._terminal_settled:
+            self._terminal_result = value
 
     def dismiss(self, result: bool | None = None) -> AwaitComplete:
         """Pop this deletion dialog at most once for all terminal inputs."""
 
         if self._terminal_settled:
             return AwaitComplete.nothing()
+        self._terminal_result = result
         self._terminal_settled = True
         for button in self.query(Button):
             button.disabled = True
-        self.result = result
         return super().dismiss(result)
 
 
