@@ -351,14 +351,14 @@ if TYPE_CHECKING:
 
 
 class LibraryRagSearchController:
-    """Owns the combined top-search-bar + Search/RAG canvas cluster (43 methods).
+    """Owns the combined top-search-bar + Search/RAG canvas cluster (42 methods).
 
     Holds no state of its own beyond what it reads and writes through
     ``LibraryRagSearchState`` (via the injected accessor) and the shared
     shell/framework bindings below. ``LibraryScreen`` constructs exactly one
     of these, in ``__init__`` right after ``self._collections_controller``,
     and keeps one-line delegators for every original name this cluster
-    moved (43 -- see the module docstring for the full derivation and the 7
+    moved (42 -- see the module docstring for the full derivation and the 8
     exclusions).
     """
 
@@ -396,7 +396,7 @@ class LibraryRagSearchController:
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
-        Every one of the 43 method bodies below is a byte-for-byte copy of
+        Every one of the 42 method bodies below is a byte-for-byte copy of
         the pre-extraction ``LibraryScreen`` method: no internal line was
         edited to retarget a call or an attribute. That is possible because
         this constructor binds every name those bodies reference that is
