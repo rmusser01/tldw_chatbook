@@ -8,7 +8,9 @@
   normal audio media item with a post-meeting diarized transcript.
 - **Out of scope for phase 1:** live per-speaker diarization (phase 2, MOSS
   candidate), pushing to tldw_server's meetings feature (server sink, follow-on),
-  Windows loopback verification (own task), importing Zoom's own recordings.
+  Windows loopback verification (own task), importing Zoom's own recordings,
+  word-level streaming partials (the MLX streaming adapter is not wired today; see
+  §9).
 
 ## 1. Decisions taken during brainstorming
 
@@ -25,10 +27,14 @@
 
 - `Audio/recording_service.py` — `AudioRecordingService`: PyAudio-primary /
   sounddevice-fallback mic capture, device enumeration, WebRTC VAD with 240 ms
-  pre-roll. Reused for the mic and for the virtual-device fallback.
+  pre-roll. Reused for the mic and for the virtual-device fallback. Note: it
+  swallows device read errors (sets `is_recording = False`, no callback) and
+  swallows exceptions raised by the frame callback; §7 works around both.
 - `Audio/dictation_service_lazy.py` — `LazyLiveDictationService`: silence-gated
-  segmenting, streaming (parakeet-mlx) / deferred (executor) / per-segment
-  regimes, partial + final callbacks. Reused unchanged except for one kwarg.
+  segmenting, per-segment transcription with a hard segment cap
+  (`MAX_NON_STREAMING_SEGMENT_SECONDS`, read via `self.` so an instance override
+  works), partial + final callbacks, `update_privacy_settings()`. Reused
+  unchanged except for one kwarg.
 - `Audio/realtime_mic_tap.py` — `RealtimeMicTap`: the on-frames contract and the
   `recorder_factory` injection pattern the new tap and capture copy.
 - `Local_Ingestion/transcription_service.py` — `TranscriptionService`
@@ -38,9 +44,10 @@
   provider/model resolution honouring privacy local-only mode. Reused for the
   provider readout and the session's provider choice.
 - `Library/library_ingest_jobs.py` — `LibraryIngestJobRegistry.submit(...)`:
-  the post-meeting handoff. UI-thread-only by contract.
-- `Local_Ingestion/audio_processing.py` — the offline audio pipeline with
-  diarization, reached through the ingest job; local files are left in place.
+  the post-meeting handoff. UI-thread-only by contract. `"audio"` is a valid
+  `detected_type`.
+- `Local_Ingestion/local_file_ingestion.py` — maps `ingest_options["diarization"]`
+  to the audio pipeline's `diarize=` kwarg; local files are left in place.
 - `TTS/audio_cpp_supervisor.py` — subprocess supervision pattern (spawn, ready
   line, diagnostics ring, shutdown deadline) copied for the capture helper.
 - `Utils/path_validation.py` — recordings directory validation.
@@ -58,15 +65,18 @@ New modules, all free of Textual imports except the screen:
 Delivers 20 ms PCM16 mono 16 kHz frames of system audio to an `on_frames`
 callback, same contract as `RealtimeMicTap`.
 
-- `probe() -> TapMode` runs before a meeting and returns one of
+- `probe() -> TapMode` runs on screen mount (in a worker) and returns one of
   `native_macos`, `native_parec`, `native_wasapi`, `virtual_device`, `unavailable`,
-  plus a human reason string.
+  plus a human reason string. On macOS the probe also builds the helper if only
+  the source is present (§3.6), reporting "building helper…" meanwhile, so
+  Start never waits on a compile.
 - **macOS 14.2+:** spawns the Swift helper (§3.6) and reads its stdout.
 - **Linux:** spawns `parec --device=<default_sink>.monitor --format=s16le
   --rate=16000 --channels=1 --latency-msec=20`, falling back to `pw-record
   --target <default_sink>.monitor --rate 16000 --channels 1 --format s16 -`.
-  The default sink comes from `pactl get-default-sink`. PortAudio on distro
-  builds has no PulseAudio host API, so monitor sources never appear in the
+  The default sink comes from `pactl get-default-sink` and is validated against
+  `[A-Za-z0-9._-]+` before it becomes an argument. PortAudio on distro builds
+  has no PulseAudio host API, so monitor sources never appear in the
   sounddevice device list; the subprocess route is the only reliable one.
 - **Windows:** opens a sounddevice `InputStream` on the WASAPI device whose name
   ends in `[Loopback]` and matches the default output device, with
@@ -74,6 +84,7 @@ callback, same contract as `RealtimeMicTap`.
   the resolver is a pure function over a device list and is unit-tested now.
 - **Fallback (any OS):** a second `AudioRecordingService(retain_audio=False)`
   on the user-chosen input device (BlackHole, VB-Cable, etc.).
+- Subprocesses are always spawned as argument lists, never `shell=True`.
 - Subprocess modes share one reader thread: reads stdout in 640-byte frames into
   a `queue.Queue(maxsize=50)` (1 s), dropping the oldest on overflow, and
   forwards to `on_frames`. A helper that exits mid-meeting is restarted once
@@ -89,46 +100,62 @@ service needs no knowledge of meetings:
 
 Owns the mic `AudioRecordingService(use_vad=False, retain_audio=False)` and,
 in call mode, a `SystemAudioTap`. **The mic callback is the clock:** every mic
-frame pulls one system frame from the tap queue (zeros if empty; backlog older
-than 200 ms is discarded so the tracks stay within 200 ms of each other). No
-mixer thread, no wall-clock tick. Per mic frame it:
+frame pulls one system frame from the tap queue (zeros if empty). When the tap
+queue holds more than 200 ms, one extra frame is dropped per tick until it is
+back under, so the tracks stay within 200 ms of each other with 20 ms glitches
+rather than 200 ms jumps. No mixer thread, no wall-clock tick. Per mic frame it:
 
-1. writes the mic frame, the system frame and the mix to their `.pcm` files;
+1. writes the mic frame, the system frame and the mix to their WAV files
+   (§4 file layout: placeholder header, patched on close);
 2. stores per-source RMS into the energy ring (100 ms buckets, 10 minutes);
 3. advances `audio_position_s = bytes_written / (16000 * 2)`;
 4. runs WebRTC VAD on the mix with the recorder's 240 ms pre-roll logic, opens a
-   *speech run* on the first speech frame and closes it after
+   *speech run* at the first replayed pre-roll frame and closes it after
    `dictation.silence_threshold_seconds` without speech (the same setting the
    dictation service's silence gate reads, so runs and segments align);
+   records `last_speech_position_s`;
 5. hands speech frames to the dictation callback.
 
+Every step runs inside a try/except that records the first exception in
+`capture.fault` (e.g. disk full) instead of letting the recorder swallow it;
+the owner's watchdog (§3.4) acts on it.
+
 Mix = `clip(int32(mic) + int32(sys), -32768, 32767)` as int16 (numpy).
-Room mode (no system source) writes only `mixed.pcm` and produces no labels.
+Room mode (no system source) writes only `mixed.wav` and produces no labels.
 Pause stops steps 1–5 but keeps devices open and keeps draining the tap queue
 so nothing backlogs.
 
 Meeting-specific surface: `levels() -> (mic_rms, sys_rms)`, `audio_position_s`,
-`pause()`, `resume()`, `take_closed_runs() -> list[SpeechRun]`,
+`last_speech_position_s`, `fault`, `pause()`, `resume()`,
+`closed_runs_after(t) -> list[SpeechRun]`,
 `dominant_source(start_s, end_s) -> "you" | "others" | "both"`.
 
 ### 3.3 `Audio/meeting_session.py` — `MeetingSession`, sinks, diarizer seam
 
-`MeetingSession(capture_factory, dictation_factory, sinks, folder)`:
+`MeetingSession(capture_factory, dictation_factory, sinks, folder)`. The owner
+(§3.4) builds both factories from config plus the screen's device choices, so
+`start(mode)` takes only the mode.
 
 - `start(mode)` builds one `LazyLiveDictationService(recorder_factory=capture,
-  transcription_service_factory=lambda: TranscriptionService(local_stt_dispatcher=None),
-  enable_commands=False, ...)`, forces `privacy_settings["auto_clear_buffer"] = True`
-  on it, and starts it with every callback except `on_command`.
+  transcription_service_factory=<owner's warmed in-process facade>,
+  enable_commands=False, ...)`, calls
+  `update_privacy_settings({"auto_clear_buffer": True})` on it, sets the
+  instance override `MAX_NON_STREAMING_SEGMENT_SECONDS = 10.0` (meetings trade
+  a little per-call context for a third of the latency; no service change
+  needed), and starts it with every callback except `on_command`.
 - `pause()` / `resume()` forward to the capture.
 - `stop() -> MeetingResult` stops the service (tail drain under its 30 s join
-  budget), stops the capture, wraps `.pcm` into `.wav`, writes `meeting.json`,
-  calls `on_stopped` on every sink.
+  budget), stops the capture (which patches the WAV headers), writes
+  `meeting.json`, calls `on_stopped` on every sink.
 - `segments: list[MeetingSegment]`, `subscribe(listener)`, `unsubscribe(...)`,
   `state`.
 
-Segment building: a final consumes the oldest unconsumed closed speech run
-(FIFO). If none is closed (streaming finals, or the service's 30 s hard segment
-cap split a run) the window is `[run_start, capture.audio_position_s]`. Label =
+**Segment windows are contiguous.** For each final:
+`start = previous segment's t_audio_end` (or 0 for the first);
+`end = end of the latest speech run closed after start` if there is one, else
+`capture.last_speech_position_s`. This covers one final spanning several runs,
+a run split by the 10 s segment cap, and transcription latency (a closed run
+ends at the real silence, not at the moment the final arrives). Label =
 `capture.dominant_source(start, end)` in call mode, `None` in room mode.
 Partials get a live label from the last second. Each segment stores
 `t_audio_start/end` (file offsets) and `t_wall_start/end`.
@@ -158,13 +185,29 @@ is registered alongside the local sink when a server is active.
 
 Screens are never cached across tab switches (documented rule in `app.py`,
 root-caused UI freeze 2026-07-11), so the running session cannot live on the
-screen. `app.meeting_session_owner: MeetingSessionOwner` holds the current
-session, exposes `prepare()` (model warm-up), `start/pause/resume/stop`, and
-`async shutdown()` which is called from `_shutdown_app_owned_lifecycles`. The
-owner supplies the local sink's submit callable, which marshals onto the UI
-thread with `app.call_from_thread(registry.submit, ...)`. On quit the owner
-stops capture and finalises files but skips the submit; the next visit to the
-screen offers the recovered folder for ingest.
+screen. `app.meeting_session_owner: MeetingSessionOwner`:
+
+- holds the current session and exposes `is_active`, `prepare()`,
+  `start/pause/resume/stop`;
+- `prepare()` (called from the screen's mount worker) builds and holds the
+  in-process `TranscriptionService(local_stt_dispatcher=None)` and loads the
+  resolved model; the dictation factory hands that same instance to the
+  session, so Start is immediate;
+- runs a 1 s **watchdog** while a session is active: if `capture.fault` is set,
+  or `audio_position_s` has not advanced for 3 s while not paused (the recorder
+  swallows device errors, so a dead mic is only visible as a stopped clock), it
+  stops the session with reason `disk_error` / `mic_lost`;
+- supplies the local sink's submit callable, which marshals onto the UI thread
+  with `app.call_from_thread(registry.submit, ...)`;
+- `async shutdown()` is called from `_shutdown_app_owned_lifecycles`: stops
+  capture and finalises files but skips the submit; the next visit to the
+  screen offers the recovered folder for ingest.
+
+Console dictation and hands-free entry points check `is_active` and refuse with
+"Meeting in progress" (one check each in `UI/Console_Modules/dictation.py` and
+`hands_free.py`). Without it Console would open a second stream on the same
+mic: the in-process facade leaves the executor slot free, so the existing
+"local STT busy" signal never fires.
 
 ### 3.5 `UI/Screens/meetings_screen.py` — `MeetingsScreen`
 
@@ -172,11 +215,11 @@ screen offers the recovered folder for ingest.
 
 - **Rail:** mic device picker; system source picker with status line
   ("Native (macOS tap)", "Native (parec)", "Virtual device: BlackHole",
-  "Unavailable, mic only"); provider readout from `console_voice_input.resolve()`
-  including whether it streams word-level partials or finalises per segment;
-  diarization readout ("Post-meeting speaker labels: on/off — torch/speechbrain
-  missing"); one-line consent reminder; Start → Pause/Stop; timer; two level
-  meters on a 200 ms `set_interval` reading `capture.levels()`.
+  "Unavailable, mic only", "Building helper…"); provider readout from
+  `console_voice_input.resolve()`; diarization readout ("Post-meeting speaker
+  labels: on/off — torch/speechbrain missing"); one-line consent reminder;
+  Start → Pause/Stop; timer; two level meters on a 200 ms `set_interval`
+  reading `capture.levels()`.
 - **Canvas:** `RichLog` of finals, `[hh:mm:ss] You: text` (label column omitted
   in room mode), plus a one-line `Static` beneath it holding the current partial
   or the "transcribing…" marker (RichLog cannot mutate its last line). After
@@ -187,11 +230,13 @@ screen offers the recovered folder for ingest.
   session directly.
 - **Lifecycle:** on mount, attach to the owner's session if one is running
   (replay `session.segments` into the log, subscribe); on unmount, unsubscribe.
-  Mount also runs `prepare()` in a worker and shows the existing "model
-  preparing" state. Device choices persist through `save_state/restore_state`.
-- **Probes on mount, in a worker:** tap probe; diarization availability via
-  `importlib.util.find_spec` for `torch`, `torchaudio`, `speechbrain`, `sklearn`
-  (never import `diarization_service`, whose module-level checks import torch).
+  Mount also runs `prepare()` and the probes in a worker and shows the existing
+  "model preparing" state. Device choices persist through
+  `save_state/restore_state`.
+- **Probes on mount, in a worker:** tap probe (may build the helper);
+  diarization availability via `importlib.util.find_spec` for `torch`,
+  `torchaudio`, `speechbrain`, `sklearn` (never import `diarization_service`,
+  whose module-level checks import torch); recovery scan (§7).
 - **"Open in Library":** switch to the Library route with the jobs view if the
   navigation API accepts a sub-mode (resolved in the plan); fallback is a plain
   switch plus a toast naming the job.
@@ -211,10 +256,11 @@ screen offers the recovered folder for ingest.
   SIGTERM; exit 2 = permission denied, 3 = unsupported OS.
 - Distribution: `Packaging/macos/build_app.py` compiles it into
   `Contents/MacOS/`; `Info.plist.template` gains `NSAudioCaptureUsageDescription`.
-  Dev fallback: compile with `swiftc` on first use into `<data_dir>/bin/`,
-  keyed by a hash of the source. If neither exists, the tap reports
-  `unavailable` and the rail suggests a virtual device. Download-on-first-use
-  with hash checking (Parakeet installer pattern) is a follow-up.
+  Dev fallback: compile with `swiftc` (5–20 s) from the mount-time probe worker
+  into `<data_dir>/bin/`, keyed by a hash of the source. If neither exists, the
+  tap reports `unavailable` and the rail suggests a virtual device.
+  Download-on-first-use with hash checking (Parakeet installer pattern) is a
+  follow-up.
 
 ### 3.7 Changes to existing files
 
@@ -223,6 +269,8 @@ screen offers the recovered folder for ingest.
 - `Audio/recording_service.py`: `retain_audio: bool = True` kwarg; when False,
   `_handle_audio_chunk` skips the buffer append and the queue put (otherwise
   ~230 MB/hour accumulates in the recorder alone).
+- `UI/Console_Modules/dictation.py`, `hands_free.py`: one `is_active` check
+  each (§3.4).
 - `Tests/conftest.py`: extend `_no_real_audio_device` to patch
   `AudioRecordingService._initialize_backend` to return None, so an accidental
   real recorder in a test cannot open the mic; the `real_audio_device` opt-out
@@ -237,10 +285,10 @@ screen offers the recovered folder for ingest.
 
 **Start.** Screen → worker → owner → session. The session creates
 `<recordings_dir>/<YYYY-MM-DD_HHMM>/` (dir validated with `path_validation`),
-opens `mixed.pcm` (+ `you.pcm`, `others.pcm` in call mode), `transcript.jsonl`,
-`meeting.json`, then starts the dictation service; its `audio_service` property
-calls the recorder factory, which returns the capture, which opens the mic and
-the tap.
+opens `mixed.wav` (+ `you.wav`, `others.wav` in call mode) with a 44-byte
+placeholder header, `transcript.jsonl`, `meeting.json`, then starts the
+dictation service; its `audio_service` property calls the recorder factory,
+which returns the capture, which opens the mic and the tap.
 
 **Frames.** See §3.2. Both raw tracks and the mix stream to disk from the first
 frame; nothing is retained in memory except the energy ring and the open speech
@@ -257,18 +305,21 @@ sum wins. Zoom's echo cancellation keeps your voice out of the system track,
 which is what makes this work. Ceiling marked with a `ponytail:` comment
 pointing at the `Diarizer` seam.
 
-**Live output by regime.** parakeet-mlx (Apple Silicon) → streaming transcriber
-→ word-level partials, 3 s context window (bounded). faster-whisper / ONNX
-in-process → per-segment finals at each silence gap, hard cap 30 s per segment,
-"transcribing…" marker per segment via `on_segment_transcribing`. The rail
-states which regime is active. The deferred executor regime is never used by
-meetings (60 s capture ceiling, `STT/dispatch_coordinator.pcm_byte_limit`).
+**Live output.** Every provider finalises per segment in phase 1: a final
+arrives at each silence gap or at the 10 s segment cap, after the in-process
+transcription of that segment. Expected lag under continuous talk is the
+segment length plus the transcription time (a few seconds on CPU), shown by the
+"transcribing…" marker. Word-level partials are not available: the parakeet-mlx
+streaming adapter exposes `add_audio` while the service requires
+`process_audio`, so the streaming regime is never selected today (§9, item 1).
+The deferred executor regime is never used by meetings (60 s capture ceiling,
+`STT/dispatch_coordinator.pcm_byte_limit`).
 
 **Pause.** Capture stops writing/feeding, drains the tap queue, timestamps stay
 honest because segments carry audio offsets. **Resume** continues.
 
-**Stop.** Tail drain → capture stop → wrap `.pcm` → `.wav` (header from byte
-count) → `meeting.json` → sinks' `on_stopped` → local sink submits.
+**Stop.** Tail drain → capture stop (patch WAV headers from bytes written) →
+`meeting.json` → sinks' `on_stopped` → local sink submits.
 
 **File layout**
 
@@ -281,8 +332,12 @@ count) → `meeting.json` → sinks' `on_stopped` → local sink submits.
   meeting.json     # schema 1: started_at, ended_at, mode, mic_device,
                    # system_source, provider, model, duration_s,
                    # segment_count, transcription_complete, failed_segments,
-                   # recovered, ingest_job_id
+                   # stop_reason, recovered, ingest_job_id
 ```
+
+WAV files are written in place: a 44-byte header with zero data length first,
+raw PCM appended, header patched on close. A header still reading zero length
+marks an unfinished file (§7).
 
 JSONL record: `{"seq", "t_audio_start", "t_audio_end", "t_wall_start",
 "t_wall_end", "label", "text"}`, `label` ∈ `you|others|both|null`.
@@ -300,16 +355,18 @@ Storage at PCM16 mono 16 kHz:
 `source_path=<folder>/mixed.wav`, `title="Meeting <YYYY-MM-DD HH:MM>"`,
 `keywords=("meeting",)`, `detected_type="audio"`,
 `ingest_options={"diarization": post_diarize}` (the capability key is
-`diarization`, not `diarize`). The offline pass becomes the canonical Library
-transcript; the live JSONL stays in the folder as the fallback if it fails.
+`diarization`; `local_file_ingestion.py` maps it to `diarize=`). The offline
+pass becomes the canonical Library transcript; the live JSONL stays in the
+folder as the fallback if it fails.
 
 When `post_transcribe = false` the sink renders the live JSONL to
 `transcript.md` (with the audio path in its header) and submits that as a
 document instead; no re-transcription, no diarization.
 
 When `keep_raw_tracks = false` the owner deletes `you.wav` and `others.wav`
-once the registry reports the job done. `mixed.wav` is never deleted; ingest
-leaves local files in place.
+once the registry reports the job done. Best effort: it needs the app alive
+when the job finishes. `mixed.wav` is never deleted; ingest leaves local files
+in place.
 
 ## 6. Configuration — `[meetings]`
 
@@ -339,25 +396,28 @@ dotted-key lookup is known-broken for nested sections).
 **Mid-meeting**
 - Helper/`parec` dies → zero-fill, rail "System source lost", one restart after
   2 s, then stays lost; the meeting continues from the mic.
-- Mic disappears → recorder error callback ends the session cleanly (the mic is
-  the clock); files finalise; handoff still runs.
+- Mic disappears → the recorder only flips `is_recording` and stops calling
+  back, so the owner's watchdog sees a stopped clock and ends the session with
+  `mic_lost`; files finalise; handoff still runs.
+- Disk write error → the capture records it in `fault` (the recorder would
+  otherwise swallow it per frame); the watchdog stops the session with
+  `disk_error`, keeping what is on disk.
 - Segment transcription error → the service drops it; the screen keeps a
   failed-segment count in the footer.
-- Disk write error → session stops with an error, keeps what is on disk.
 
-**Crash safety.** The stdlib `wave` module writes its header only on close, so
-raw PCM goes to `.pcm` and is wrapped on stop. On the next screen mount any
-folder with a leftover `.pcm` is wrapped the same way, `meeting.json` gets
-`ended_at` from file size and `recovered: true`, and the footer offers "Ingest
-recovered meeting".
+**Crash safety.** Headers are patched only on close, so a crash leaves WAVs
+whose header says zero length. On the next screen mount the recovery scan
+patches any such file from its size, sets `ended_at` in `meeting.json` from the
+byte count and `recovered: true`, and the footer offers "Ingest recovered
+meeting".
 
 **Stop.** If the dictation result reports `transcription_complete == False` the
 footer says the last segment was dropped. If the registry refuses the submission
 (`ActiveIngestSubmissionRefused`) the footer says "saved locally, not queued"
 with the folder path.
 
-**Contention.** Console dictation reports busy while a meeting runs (the mic is
-held). Expected; no special handling.
+**Contention.** Console dictation and hands-free refuse to start while
+`is_active` (§3.4).
 
 ## 8. Testing
 
@@ -365,24 +425,28 @@ All hardware-free under the (extended) autouse guard; no test constructs a real
 recorder or tap.
 
 - **Capture:** two fake sources (tone vs silence, then injected room noise).
-  Saturating mix, zero-fill and backlog drop keep skew ≤ 200 ms, bytes per
-  track, speech runs open/close at the silence threshold, labels you/others/both
-  including the adaptive floor. Hypothesis property: random arrival patterns
-  never overflow int16 or exceed the skew bound.
-- **Session:** fake dictation service driven through its callbacks. Segment
-  audio/wall offsets and labels, FIFO run consumption incl. the no-closed-run
-  case, JSONL contents, sink call order, submit kwargs (`diarization` key),
-  Markdown path when `post_transcribe` is off, commands disabled and
-  auto-clear forced on the built service, in-process facade (no dispatcher).
+  Saturating mix, zero-fill and one-frame-per-tick drop keep skew ≤ 200 ms,
+  bytes per track and patched headers, speech runs open at the pre-roll frame
+  and close at the silence threshold, labels you/others/both including the
+  adaptive floor, `fault` set on a failing writer. Hypothesis property: random
+  arrival patterns never overflow int16 or exceed the skew bound.
+- **Session:** fake dictation service driven through its callbacks. Contiguous
+  windows (one final over two runs, a cap-split run, a final with no closed
+  run), audio/wall offsets and labels, JSONL contents, sink call order, submit
+  kwargs (`diarization` key), Markdown path when `post_transcribe` is off,
+  commands disabled, privacy auto-clear and the 10 s cap set on the built
+  service, in-process facade (no dispatcher).
 - **Tap:** a Python stand-in helper emitting PCM to stdout, and a variant that
   dies mid-stream: frame delivery, restart-once, lost state, queue overflow
-  drops oldest. Platform resolvers are pure functions over fake device lists
-  (`[Loopback]` matching, virtual-device names, `pactl` output parsing).
+  drops oldest, sink-name validation rejects shell metacharacters. Platform
+  resolvers are pure functions over fake device lists (`[Loopback]` matching,
+  virtual-device names, `pactl` output parsing).
 - **Recorder flag:** `retain_audio=False` retains nothing and still invokes the
   callback.
-- **Recovery:** leftover `.pcm` → valid WAV header, `meeting.json` updated.
-- **Owner:** shutdown finalises files and skips submit; submit callable marshals
-  through `call_from_thread`.
+- **Recovery:** a zero-length-header WAV gets patched, `meeting.json` updated.
+- **Owner:** watchdog stops on `fault` and on a stalled clock but not while
+  paused; shutdown finalises files and skips submit; submit callable marshals
+  through `call_from_thread`; `is_active` blocks Console dictation.
 - **Screen:** a few `app.run_test()` pilots with the owner faked: start → pause →
   stop transitions, rows with and without labels, partial line updates, footer
   after stop, attach-on-mount replays existing segments.
@@ -395,19 +459,23 @@ recorder or tap.
 
 ## 9. Follow-ups (not in phase 1)
 
-1. **Phase 2 — live speaker labels:** `Diarizer` implementation over MOSS
+1. **Streaming partials:** give `ParakeetMLXStreamingTranscriber` the
+   `process_audio` method the lazy service's streaming regime requires (today
+   it only has `add_audio`, so the regime is dead for every caller, Console
+   included). Then the rail can advertise word-level partials on Apple Silicon.
+2. **Phase 2 — live speaker labels:** `Diarizer` implementation over MOSS
    Transcribe-Diarize (0.9B, batch, 30 s Whisper-feature windows, CUDA-first,
    Apache-2.0) as a sliding-window call, most likely hosted on tldw_server;
    swap the energy labeller for its output. Needs its own design.
-2. **Server sink:** `MeetingSink` over tldw_server's meetings WebSocket ingest
+3. **Server sink:** `MeetingSink` over tldw_server's meetings WebSocket ingest
    (the adapter gap `Meetings_Interop` already reports), creating the session
    via the existing REST wrappers and finalising on stop.
-3. **Windows loopback verification** on a real Windows box.
-4. **Helper download-on-first-use** with hash check for source installs on
+4. **Windows loopback verification** on a real Windows box.
+5. **Helper download-on-first-use** with hash check for source installs on
    non-dev Macs.
-5. **Rolling deferred captures** in the STT executor, if in-process ONNX for
+6. **Rolling deferred captures** in the STT executor, if in-process ONNX for
    an hour proves a problem on low-memory machines.
-6. **Zoom recording import** (M4A/VTT with per-participant attribution) as a
+7. **Zoom recording import** (M4A/VTT with per-participant attribution) as a
    post-hoc alternative.
 
 ## 10. Assumptions to confirm during implementation
@@ -418,3 +486,6 @@ recorder or tap.
   fallback in §3.5 applies.
 - `pactl` is present wherever `parec` is (both ship with pulseaudio-utils /
   pipewire-pulse).
+- The DMG app is not sandboxed, so the process tap needs only the TCC
+  system-audio-recording grant, not the `audio-input` entitlement; confirm at
+  packaging time.
