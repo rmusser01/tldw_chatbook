@@ -8,6 +8,8 @@
 # - All command palette provider classes must be defined in app.py
 #
 # Imports
+import time
+
 import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
 from typing import List
@@ -359,13 +361,22 @@ class TestTabNavigationProvider:
         )
         from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
-        app = _build_test_app()
+        # task-31263: the app boots the real splash screen (7s wall-clock)
+        # in this factory, and a bare pause loop can spin through all its
+        # iterations in less wall time than that under host load -- the
+        # setup then flakes with "did not finish initial navigation".
+        # Disable the splash for this test and bound the waits by time.
+        app = _build_test_app(
+            config_overrides={"splash_screen": {"enabled": False}},
+        )
         app.app_config["_first_run"] = False
+        app.app_config.setdefault("splash_screen", {})["enabled"] = False
         app.app_config.setdefault("library", {}).setdefault("rail_state", {})[
             "lifecycle"
         ] = "starter"
         async with app.run_test(size=(170, 48)) as pilot:
-            for _ in range(200):
+            deadline = time.monotonic() + 30.0
+            while time.monotonic() < deadline:
                 await pilot.pause()
                 if getattr(app, "_initial_screen_pushed", False):
                     break
@@ -386,7 +397,8 @@ class TestTabNavigationProvider:
             )
 
             command.command()
-            for _ in range(200):
+            deadline = time.monotonic() + 30.0
+            while time.monotonic() < deadline:
                 await pilot.pause()
                 if isinstance(app.screen, LibraryScreen) and app.screen.query(
                     "#library-skills-canvas"
