@@ -544,17 +544,18 @@ class AutomationDefinitionForm(ModalScreen):
         options` for a bare-function inline-row editor to reuse; task 4's
         review flagged this method as a third, still-independent copy --
         folded in here, no test pins either difference below). Two small
-        observable differences from the pre-consolidation body: the
-        unrecognized-zone label's wording (generic "stored on this task,
-        not recognized here" -> this method's own former "stored on this
-        automation..."), and an UNDETECTED machine zone (`detect_system_
-        timezone()` returning `None`) now gets an honest "machine zone
-        not detected" label on the fallback entry instead of silently
-        offering the bare default zone -- a strict improvement, not a
-        behavior this form deliberately avoided. Option VALUES/ordering
-        are unchanged.
+        observable difference from the pre-consolidation body: an
+        UNDETECTED machine zone (`detect_system_timezone()` returning
+        `None`) now gets an honest "machine zone not detected" label on
+        the fallback entry instead of silently offering the bare default
+        zone -- a strict improvement, not a behavior this form
+        deliberately avoided. The unrecognized-zone label keeps saying
+        "stored on this automation" via the `noun` argument: the
+        consolidation had briefly put the reminder wording on this
+        surface, which is the vocabulary slip final review F10 caught.
+        Option VALUES/ordering are unchanged.
         """
-        return timezone_options(self._stored_timezone())
+        return timezone_options(self._stored_timezone(), noun="automation")
 
     def _initial_timezone(self) -> str:
         return self._stored_timezone() or system_timezone_name()

@@ -216,6 +216,16 @@ target and only changes through **Edit in full…** or the create form.
 - A row that is locked (a transfer is in flight, or the row's owner is a
   dormant server-release copy waiting to arm) still responds to a click:
   it shows the lock reason inline instead of silently doing nothing.
+- Selecting a different row in the list closes any editor you left open
+  and clears any inline error under it — an edit always commits against
+  the row you opened it on, never against whichever row the pane happens
+  to be showing by the time you press Enter.
+- An automation whose **Pause**, **Resume** or pending move has not
+  reached the server yet refuses an in-place edit and says which change
+  is waiting ("A pause is waiting to sync — edit this automation once it
+  lands."). Only one pending change per automation can be queued for the
+  server at a time, and saving the edit would throw the other one away
+  without telling you. Sync (or reconnect), then edit.
 - `Runs on`'s dropdown is the same transfer flow described under
   "Moving a task between this device and the server", below — picking
   the other owner runs the same refusal check and confirmation dialog,
@@ -678,8 +688,9 @@ The default bound is `handler_timeout_seconds` under `[scheduling]` in
 bound entirely — every handler may then run as long as it likes, and a
 wedged handler will wedge the scheduler, which is why the default is on.
 
-*Verified against the schedules redesign PR-3 fix wave — 2026-09-03
-(docs pass against shipped code/tests, live check pending the redesign
+*Verified against the schedules redesign PR-3 final fix wave —
+2026-09-03 (docs pass against shipped code/tests, live check pending the
+redesign
 program's later PRs per spec §14: reminder Repeat/At/Timezone rows and
 recurring-question Model/Generation/Finding policy/Sources/Notifications
 rows now edit in place per "Editing rows in place" and "Automations tab

@@ -2841,7 +2841,9 @@ class ScheduledTasksDB(BaseDB):
         See `upsert_automation_definitions_from_server`'s docstring for
         the full two-layer design; this is guard 1 (pending-mutation) and
         guard 2 (pushed-this-cycle) combined into the one per-row check
-        its caller needs.
+        its callers need. `adopt_server_definition_identity` is the second
+        caller (final review C1's belt) and passes an empty skip-set:
+        layer 2 is a PULL-side concept.
         """
         if server_id in skip_lifecycle_server_ids:
             return True
@@ -2920,6 +2922,21 @@ class ScheduledTasksDB(BaseDB):
         local row this mutation came from, rather than matching by
         ``(owner_id, server_id)``.
 
+        Carries the SAME ``lifecycle`` pull-guard as that upsert (final
+        review C1's belt): an echo applied here is just as capable of
+        reverting an unpushed local `pause` as a pulled page is, and this
+        path had no guard at all. The window is real -- an online
+        `save_definition` reads the queue, goes to the network, and the
+        user presses Pause before the echo comes back -- and the guard's
+        pending-mutation SELECT runs INSIDE this same write transaction
+        for exactly that reason, the TOCTOU discipline
+        `upsert_automation_results_from_server`'s docstring sets out.
+        Only guard layer 1 applies: this is the PUSH side, so there is no
+        "already pushed this cycle" skip-set to thread. The guard is
+        surgical -- only ``lifecycle`` is ever withheld; ``server_id`` and
+        every other echoed field still write, so the adopt's own job
+        (linking the local row to its new server identity) always lands.
+
         Args:
             local_id: The local definition row that pushed the mutation.
             server_item: The definition row echoed back by the server's
@@ -2943,10 +2960,23 @@ class ScheduledTasksDB(BaseDB):
         fields.pop("transfer_state", None)
         fields["server_id"] = server_id
 
-        serialized = self._serialize_definition_fields(fields)
-        self._validate_sql_identifiers(list(serialized.keys()))
-        updates = ", ".join(f"{key} = ?" for key in serialized)
         with self.transaction() as conn:
+            if "lifecycle" in fields:
+                owner_row = conn.execute(
+                    "SELECT owner_id FROM automation_definitions WHERE id = ?",
+                    (local_id,),
+                ).fetchone()
+                if owner_row is not None and self._definition_lifecycle_guard_active(
+                    conn,
+                    str(owner_row["owner_id"]),
+                    local_id,
+                    str(server_id),
+                    frozenset(),
+                ):
+                    del fields["lifecycle"]
+            serialized = self._serialize_definition_fields(fields)
+            self._validate_sql_identifiers(list(serialized.keys()))
+            updates = ", ".join(f"{key} = ?" for key in serialized)
             cursor = conn.execute(
                 f"UPDATE automation_definitions SET {updates} WHERE id = ?",
                 [*serialized.values(), local_id],

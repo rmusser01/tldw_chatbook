@@ -194,7 +194,10 @@ def cron_to_preset(cron: str) -> tuple[str, str]:
 
 
 def timezone_options(
-    task_zone: str | None, known_timezones: Sequence[str] = ()
+    task_zone: str | None,
+    known_timezones: Sequence[str] = (),
+    *,
+    noun: str = "task",
 ) -> list[tuple[str, str]]:
     """(label, zone) options: system zone first, then curated zones, then
     task-used zones, then ``task_zone`` itself (redesign PR-3, task 3:
@@ -216,6 +219,15 @@ def timezone_options(
             no such inventory (a single-row editor, not the full form) may
             omit this -- the system zone, curated list, and ``task_zone``
             itself are still always offered.
+        noun: What the calling surface calls the row being edited, for
+            the unrecognized-zone label ("stored on this <noun>").
+            Consolidating the third copy of this builder (task 3) put the
+            reminder wording on the automations surface too, where the
+            row is an automation, not a task -- the same task-vs-
+            automation vocabulary slip PR-1's owner-row bug was about
+            (final review F10; `Tests/UI/test_schedules_terminology.py`
+            is the standing guard for that class). Defaults to the
+            reminder wording, so every existing caller is unchanged.
 
     Returns:
         ``(label, zone)`` options, safe to pass directly to a `Select`.
@@ -237,7 +249,7 @@ def timezone_options(
             options.append((zone, zone))
     if task_zone and task_zone not in zones:
         options.append(
-            (f"{task_zone} — stored on this task, not recognized here", task_zone)
+            (f"{task_zone} — stored on this {noun}, not recognized here", task_zone)
         )
     return options
 

@@ -16,14 +16,18 @@ every group already renders with:
    (click/Enter opens a `Select`/`Input`/small mini-editor built from
    `DetailValueRow.begin_edit`; the row's own commit closes it via
    `end_edit`). Question text, custom cron, and full-scope surgery stay
-   in the create/edit modal (`ReminderForm`) behind "Edit in full…", and
-   the modal remains the fallback at narrow terminal widths where the
-   detail pane is hidden. This is the amendment to
+   in the create/edit modal (`ReminderForm`) behind "Edit in full…",
+   which stays reachable at every width. (The workbench's only
+   responsive rule today, `_sync_responsive_workbench`'s
+   `schedules-workbench-compact` class, NARROWS the panes; it never
+   hides one. A width at which the detail pane is hidden altogether is
+   PR-4's responsive floor to define, and the modal is the fallback
+   there when it does.) This is the amendment to
    `099-schedule-editor-shape.md` (see below): that ADR closed the
    pane-vs-modal question in favor of the modal for the *whole* form;
    this decision does not reopen that call. It carves out a narrower one
-   — single fields only, still backed by the modal everywhere the pane
-   itself is unavailable — so the width-cliff argument that made the
+   — single fields only, with the modal still the way to reach every
+   field, at every width — so the width-cliff argument that made the
    modal durable stays intact for every case that argument covers.
 2. **The owner row is the transfer surface.** "Runs on" renders like
    every other row and its dropdown *is* the spec §7 transfer machine:
@@ -83,8 +87,9 @@ rows the modal was never uniquely necessary for in the first place: a
 `Select`/`Input` swapped into a fixed-height row commits or cancels
 (Escape) without ever needing to scroll, discard-guard across a queue
 selection change, or fit at the 80×24 floor — the modal's entire cost
-column in that ADR. Where the pane is unavailable (narrow width), Enter
-on a list row still opens the modal unchanged.
+column in that ADR. Enter on a list row still opens the modal
+unchanged, at every width — including any width at which PR-4's
+responsive floor later decides to hide the detail pane.
 
 ## Consequences
 

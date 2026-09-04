@@ -2299,7 +2299,12 @@ class SchedulesWorkbench(BaseAppScreen):
         self.run_worker(
             _edit_and_refresh,
             exclusive=True,
-            group="schedules-edit-reminder-field",
+            # Per-ROW group (final review M12): one group for the whole
+            # KIND meant committing a second row's editor cancelled the
+            # first commit mid-flight -- possibly after its write landed,
+            # so the success repaint never ran. `exclusive=True` still
+            # holds, now within one row.
+            group=f"schedules-edit-reminder-field-{row.row_key}",
         )  # type: ignore[arg-type]
 
     @on(DefinitionFieldEditRequested)
@@ -2332,7 +2337,10 @@ class SchedulesWorkbench(BaseAppScreen):
         (run-now, transfer begin/cancel) -- `_definitions_stale = True`
         + `_request_automations_refresh()`, which reloads the Automations
         tab's own table+detail immediately and marks the Queue's unified
-        list stale for its own next (lazy, tab-activation-gated) refresh.
+        list stale for its own next (lazy, tab-activation-gated) refresh
+        -- PLUS `_repaint_queue_definition_detail`, because that lazy
+        Queue refresh is not a repaint of the Queue tab's own SECOND
+        `DefinitionDetail` instance (final review F4/I4).
         """
         service = self._scheduling_service
         if service is None:
@@ -2371,12 +2379,58 @@ class SchedulesWorkbench(BaseAppScreen):
             row.clear_error()
             self._definitions_stale = True
             self._request_automations_refresh()
+            await self._repaint_queue_definition_detail(
+                service, local_id, definition
+            )
 
         self.run_worker(
             _edit_and_refresh,
             exclusive=True,
-            group="schedules-edit-definition-field",
+            # Per-ROW group (final review M12) -- see `_edit_reminder_
+            # field`'s own group for why.
+            group=f"schedules-edit-definition-field-{row.row_key}",
         )  # type: ignore[arg-type]
+
+    async def _repaint_queue_definition_detail(
+        self,
+        service: "SchedulingService",
+        local_id: str,
+        definition: dict[str, Any],
+    ) -> None:
+        """Repaint the QUEUE tab's `DefinitionDetail` for ``local_id``.
+
+        `DefinitionDetail` is mounted TWICE -- `#scheduling-automation-
+        detail` (Automations tab) and `#scheduling-queue-definition-
+        detail` (Queue tab) -- and `_request_automations_refresh` only
+        ever repaints the first. The Queue one is painted from
+        `_update_detail_for_index`, which early-returns for the same row
+        on a tick, so nothing repainted it after an in-pane edit: the
+        editor closed, the row restored the OLD value, and stayed that
+        way indefinitely even though the edit had persisted (final review
+        F4/I4). `_toggle_definition_lifecycle` got this right by looping
+        over both widget ids via `apply_lifecycle`; this is the same
+        both-homes discipline for a field edit, which needs the
+        authoritative re-read `apply_lifecycle`'s single known column
+        does not.
+
+        Only paints when the Queue's selected row IS this definition --
+        which is also what makes the widget guaranteed-mounted here. The
+        row id is matched against BOTH ids: `build_unified_rows` keys the
+        row on whatever id the merged listing carried (the SERVER id for
+        a pure server fetch with no local shadow yet), while the edit
+        itself went through `_resolve_local_definition_id`.
+        """
+        if self._selected_row_id not in {
+            f"definition:{local_id}",
+            f"definition:{definition.get('id') or ''}",
+        }:
+            return
+        fresh = await asyncio.to_thread(
+            service.db.get_automation_definition, local_id
+        )
+        if fresh is None:
+            return
+        await self._load_queue_definition_detail(self._selected_row_id, fresh)
 
     @on(DefinitionLifecycleToggleRequested)
     def _on_definition_lifecycle_toggle_requested(

@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import Any
 
+from loguru import logger
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -588,6 +589,13 @@ class TaskDetail(Vertical):
         #: the legacy Retry button's own reason line -- read by
         #: `_runs_on_failure_reason` when the row is activated.
         self._runs_on_transfer_errors: list[str] = []
+        #: Final review I2: the id of the reminder an open row editor was
+        #: opened AGAINST, captured at `begin_edit` time and validated at
+        #: commit time by `_editing_task`. Never reset by a repaint -- a
+        #: commit that crossed a repaint in flight has to still see the
+        #: id it was opened for, so it can be discarded instead of
+        #: writing one row's typed value onto another.
+        self._editing_task_id: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -668,8 +676,15 @@ class TaskDetail(Vertical):
                     "", id="scheduling-task-detail-body-card", markup=False
                 )
                 yield self._body_card
+                # `row_key` (final review M12): the per-row identity the
+                # workbench's edit worker groups its commit under, so two
+                # quick edits on DIFFERENT rows stop cancelling each
+                # other. Set on every editable row, nowhere else.
                 self._runs_on_row = DetailValueRow(
-                    "Runs on", "-", value_id="scheduling-detail-runs-on"
+                    "Runs on",
+                    "-",
+                    value_id="scheduling-detail-runs-on",
+                    row_key="runs_on",
                 )
                 # PR-3 task 5: the Runs-on row's own proactive Cancel/
                 # Retry affordances for an in-flight/failed transfer --
@@ -696,13 +711,19 @@ class TaskDetail(Vertical):
                     id="scheduling-detail-group-details",
                 )
                 self._repeat_row = DetailValueRow(
-                    "Repeat", "-", value_id="scheduling-detail-repeat"
+                    "Repeat",
+                    "-",
+                    value_id="scheduling-detail-repeat",
+                    row_key="cron",
                 )
                 self._at_row = DetailValueRow(
-                    "At", "-", value_id="scheduling-detail-at"
+                    "At", "-", value_id="scheduling-detail-at", row_key="run_at"
                 )
                 self._timezone_row = DetailValueRow(
-                    "Timezone", "-", value_id="scheduling-detail-timezone"
+                    "Timezone",
+                    "-",
+                    value_id="scheduling-detail-timezone",
+                    row_key="timezone",
                 )
                 notifications_row = DetailValueRow(
                     "Notifications",
@@ -1084,17 +1105,71 @@ class TaskDetail(Vertical):
             task.transfer_state or "", "This transfer failed."
         )
 
+    def _editable_rows(self) -> tuple[DetailValueRow, ...]:
+        """Every row this pane can open an editor on (mounted ones only).
+
+        One list, read by the `Activated` router below AND by
+        `_reset_row_editing` -- a row that can open an editor is exactly a
+        row whose editor a repaint has to be able to close again.
+        """
+        return tuple(
+            row
+            for row in (
+                self._repeat_row,
+                self._at_row,
+                self._timezone_row,
+                self._runs_on_row,
+            )
+            if row is not None
+        )
+
+    def _reset_row_editing(self) -> None:
+        """Close every open row editor and clear every row error.
+
+        Final review I2/I3: an open editor and an inline error both belong
+        to the ROW THEY WERE OPENED ON. Left standing across a repaint
+        that swaps in a DIFFERENT reminder, the editor commits its typed
+        value onto the new task and the error accuses a value that is
+        perfectly valid. `set_task` calls this on a row-identity change
+        only -- never on a same-row tick repaint, which this pane does
+        continuously and which would otherwise make typing impossible.
+
+        `_editing_task_id` is deliberately NOT cleared here: it is the
+        commit-time evidence `_editing_task` needs to discard an edit that
+        crossed this repaint in flight.
+        """
+        for row in self._editable_rows():
+            row.end_edit(restore_focus=False)
+            row.clear_error()
+
+    def _editing_task(self) -> ReminderTask | None:
+        """The reminder an open editor was opened against, or ``None``.
+
+        Final review I2's belt. `set_task` closes the editors on a
+        row-identity change, so a commit that still arrives for a row the
+        pane no longer shows means the `Changed`/`Submitted` message and
+        the repaint crossed in flight. Writing it would land the typed
+        value on WHATEVER reminder is painted now -- discard it instead.
+        """
+        task = self._current_task
+        if not isinstance(task, ReminderTask):
+            return None
+        if self._editing_task_id is not None and self._editing_task_id != task.id:
+            logger.debug(
+                "Discarding a reminder row edit opened for {} while the "
+                "detail pane now shows {}",
+                self._editing_task_id,
+                task.id,
+            )
+            return None
+        return task
+
     def on_detail_value_row_activated(self, event: DetailValueRow.Activated) -> None:
         """Open the activated Frequency/Runs-on row's editor, or -- locked
         -- show why editing is refused instead of doing nothing (ruling 2).
         """
         row = event.row
-        if row not in (
-            self._repeat_row,
-            self._at_row,
-            self._timezone_row,
-            self._runs_on_row,
-        ):
+        if row not in self._editable_rows():
             return
         event.stop()
         if self._lifecycle_lock_reason is not None:
@@ -1112,6 +1187,9 @@ class TaskDetail(Vertical):
             row.show_error(self._runs_on_failure_reason(task))
             return
         row.clear_error()
+        # Final review I2: capture the identity this editor is being
+        # opened against, for `_editing_task` to validate at commit time.
+        self._editing_task_id = task.id
         if row is self._runs_on_row:
             # A normal, unlocked owner pick (spec §7 flow) -- an
             # in-flight row never reaches here at all: the top-of-
@@ -1176,9 +1254,9 @@ class TaskDetail(Vertical):
             self._commit_at_edit(event)
 
     def _commit_repeat_edit(self, event: Select.Changed) -> None:
-        task = self._current_task
+        task = self._editing_task()
         row = self._repeat_row
-        if not isinstance(task, ReminderTask) or row is None:
+        if task is None or row is None:
             return
         event.stop()
         new_preset = str(event.value)
@@ -1204,9 +1282,9 @@ class TaskDetail(Vertical):
         self.post_message(ReminderFieldEditRequested(task, {"cron": new_cron}, row))
 
     def _commit_timezone_edit(self, event: Select.Changed) -> None:
-        task = self._current_task
+        task = self._editing_task()
         row = self._timezone_row
-        if not isinstance(task, ReminderTask) or row is None:
+        if task is None or row is None:
             return
         event.stop()
         new_zone = str(event.value)
@@ -1220,9 +1298,9 @@ class TaskDetail(Vertical):
         )
 
     def _commit_at_edit(self, event: Input.Submitted) -> None:
-        task = self._current_task
+        task = self._editing_task()
         row = self._at_row
-        if not isinstance(task, ReminderTask) or row is None:
+        if task is None or row is None:
             return
         event.stop()
         row.end_edit()
@@ -1237,18 +1315,34 @@ class TaskDetail(Vertical):
     def _commit_runs_on_edit(self, event: Select.Changed) -> None:
         """Commit the owner-picker Select (PR-3 task 5, spec §7 flow).
 
-        Same-owner selection (including the mount-time synthetic
-        `Changed` `begin_edit` posts -- Task 3's own guard, reused
-        verbatim) is a no-op: `row.end_edit()` closes it right back to
-        the read-only display, no request posted. Otherwise the target
+        Same-owner selection is a no-op that leaves the dropdown OPEN,
+        and it has to be (final review F8/M8 -- this docstring used to
+        claim `end_edit()` closed it "right back to the read-only
+        display", which is not what the code, its pinning test, or
+        Textual allow). Two facts, both re-probed during the final fix
+        wave against Textual 8.2.8:
+
+        1. `begin_edit` mounting a `Select` with the row's current owner
+           preselected posts a synthetic `Changed` immediately -- the
+           reactive `value` var starts at `NULL`, so `_on_mount`'s
+           `_init_selected_option` assignment is a real change. Probed:
+           this handler fires with the current owner before the user
+           touches anything, and closing on it leaves the dropdown shut
+           the instant it opens.
+        2. A genuine re-pick of the SAME option posts nothing at all:
+           `Select._update_selection` assigns only `if value !=
+           self.value`. So this branch is reachable ONLY from (1).
+
+        Cancelling without picking is Escape, which `DetailValueRow._on_
+        key` already handles. Otherwise the target
         owner decides the transfer direction (a server-shaped value is
         `to_server`, anything else is `to_local`) and the workbench (via
         `ReminderOwnerActionRequested`) runs `transfer_refusal` FIRST --
         refusal renders inline via `row.show_error`.
         """
-        task = self._current_task
+        task = self._editing_task()
         row = self._runs_on_row
-        if not isinstance(task, ReminderTask) or row is None:
+        if task is None or row is None:
             return
         event.stop()
         current_owner = task.owner_id or "local"
@@ -1283,6 +1377,13 @@ class TaskDetail(Vertical):
                 workbench shape `known_timezones` already uses). Every
                 pre-task-5 caller/test omits this and is unaffected.
         """
+        # Final review I2/I3: a repaint that swaps in a DIFFERENT reminder
+        # (a filter keystroke, a chip switch, a row aging out of the
+        # filter -- `_update_detail_for_index` falls back to index 0)
+        # takes the open editor and the inline error with it. A same-row
+        # tick repaint, which is what this pane mostly does, must not.
+        if getattr(task, "id", None) != getattr(self._current_task, "id", None):
+            self._reset_row_editing()
         self._current_task = task
         self._current_incidents = list(incidents or [])
         self._known_timezones = known_timezones

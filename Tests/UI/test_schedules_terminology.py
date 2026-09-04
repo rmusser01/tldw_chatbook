@@ -226,3 +226,39 @@ def test_no_bare_reminder_noun_in_schedules_screen_copy():
     for module in (wb, td, form):
         offenders = _sentence_copy_offenders(module)
         assert not offenders, (module.__name__, offenders)
+
+
+def test_timezone_options_labels_the_stored_zone_with_the_calling_surface_noun():
+    """Final review F10: task 3's consolidation of the third
+    `_timezone_options` copy put the REMINDER wording ("stored on this
+    task") on the automations surface -- reachable from both the
+    definition modal and the definition pane's inline Timezone editor.
+    Same task-vs-automation slip PR-1's owner-row bug was about."""
+    from tldw_chatbook.UI.Screens.scheduling.forms.automation_definition_form import (
+        AutomationDefinitionForm,
+    )
+    from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import (
+        timezone_options,
+    )
+
+    unknown = "Mars/Olympus"
+    task_label = {value: label for label, value in timezone_options(unknown)}[unknown]
+    automation_label = {
+        value: label
+        for label, value in timezone_options(unknown, noun="automation")
+    }[unknown]
+
+    assert task_label == "Mars/Olympus — stored on this task, not recognized here"
+    assert (
+        automation_label
+        == "Mars/Olympus — stored on this automation, not recognized here"
+    )
+
+    # The definition modal's own delegating helper passes the noun too --
+    # not just the pane's inline editor.
+    form = AutomationDefinitionForm.__new__(AutomationDefinitionForm)
+    form._definition_row = {"schedule": {"timezone": unknown}}
+    assert (
+        {value: label for label, value in form._timezone_options()}[unknown]
+        == "Mars/Olympus — stored on this automation, not recognized here"
+    )

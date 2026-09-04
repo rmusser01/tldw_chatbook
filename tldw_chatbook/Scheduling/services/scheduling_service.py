@@ -1533,6 +1533,85 @@ class SchedulingService:
         "archive": "archived",
     }
 
+    #: The `automation_definition` payload actions `save_definition` OWNS
+    #: -- the only ones it may replace in the shared queue slot (final
+    #: review C1). Every other action in that slot belongs to a different
+    #: writer (lifecycle, transfer) and must not be silently overwritten.
+    _EDIT_ACTIONS = frozenset({"create", "update"})
+
+    #: User-facing names for the non-edit actions that can be holding the
+    #: slot, for `_cross_action_mutation_reason`'s refusal copy.
+    _PENDING_ACTION_LABELS = {
+        "pause": "a pause",
+        "resume": "a resume",
+        "archive": "an archive",
+        "transfer_to_server": "a move to the server",
+        "release_from_server": "a move to this device",
+    }
+
+    def _cross_action_mutation_reason(self, row_id: str) -> str | None:
+        """Why editing ``row_id`` must be refused right now, or ``None``.
+
+        `pending_mutations` holds exactly ONE row per `(local_id,
+        primitive, owner_id)`, and lifecycle, edit and transfer mutations
+        all share the `automation_definition` primitive -- so a
+        server-owned row can only ever have one of them queued. An edit
+        committed while a pause is waiting destroys that pause twice over
+        (final review C1, probe-proven both online and offline): offline,
+        `record_pending_mutation`'s `INSERT OR REPLACE` overwrites it;
+        online, the server echo reverts `lifecycle` and the mirror clears
+        the queued mutation outright. Neither leaves a trace.
+
+        So the edit is refused at the entry instead, naming the change
+        that is waiting -- the same shape as `transfer_lock_reason`'s
+        refusal, which both panes already render inline under the row.
+        Same-ACTION replacement (an update over a queued update) is
+        untouched: that coalescing is what `_save_definition_offline`
+        documents and wants.
+
+        Read via `get_pending_mutation_for_local_id` -- the mutation's
+        OWN `owner_id`, never "today's active server", the same lesson
+        `_delete_transfer_mutation` records.
+        """
+        mutation = self.db.get_pending_mutation_for_local_id(
+            row_id, _DEFINITION_PRIMITIVE
+        )
+        if mutation is None:
+            return None
+        action = str((mutation.get("payload") or {}).get("action") or "")
+        if action in self._EDIT_ACTIONS:
+            return None
+        label = self._PENDING_ACTION_LABELS.get(action, "a pending change")
+        return (
+            f"{label[0].upper()}{label[1:]} is waiting to sync — edit this "
+            "automation once it lands."
+        )
+
+    def _clear_stale_edit_mutation(self, row_id: str, owner_id: str) -> None:
+        """Drop the queued EDIT mutation an online save just superseded.
+
+        Scoped to `_EDIT_ACTIONS` rather than clearing whatever sits in
+        the slot: the only mutation this save supersedes is an earlier
+        offline save of its own (`_mirror_server_definition`'s docstring).
+        A lifecycle or transfer mutation in the slot was queued by another
+        writer DURING the online round-trip -- `_cross_action_mutation_
+        reason` refused the edit if one was already there -- so deleting
+        it would silently drop a pause the server has not heard about.
+        Same action-scoped-delete shape, for the same reason, as
+        `_delete_transfer_mutation`.
+        """
+        mutation = self.db.get_pending_mutation_for_local_id(
+            row_id, _DEFINITION_PRIMITIVE
+        )
+        if mutation is None:
+            return
+        action = str((mutation.get("payload") or {}).get("action") or "")
+        if action not in self._EDIT_ACTIONS:
+            return
+        self.db.delete_pending_mutation_for_record(
+            row_id, _DEFINITION_PRIMITIVE, owner_id
+        )
+
     async def set_definition_lifecycle(
         self, row_id: str, action: str
     ) -> SaveDefinitionOutcome:
@@ -1552,11 +1631,16 @@ class SchedulingService:
         the replay to push -- so a lifecycle change made offline survives
         and lands on the next sync, exactly like an offline edit.
 
-        **No UI is wired to this yet, deliberately**: the Automations
-        tab's pause/resume/archive affordances belong to the schedules
-        redesign program, not to PR-5, whose scope is the transfer
-        machine. This method exists so the replay leg below it is
-        reachable and tested rather than dead code.
+        The UI caller is the definition pane's header Pause/Resume
+        affordance (schedules-redesign PR-3 Task 4,
+        `DefinitionDetail._toggle_lifecycle` ->
+        `SchedulesWorkbench._toggle_definition_lifecycle`) -- this
+        method's FIRST, added by that task. It shipped ahead of that
+        caller (PR-5) so the replay leg below it was reachable and tested
+        rather than dead code; the paragraph claiming it still has no UI
+        caller outlived that, and final review F9 recorded the cost --
+        "no UI can reach this" is exactly what made the C1 slot collision
+        with `save_definition` easy to miss once a UI could.
 
         Args:
             row_id: The definition's LOCAL row id.
@@ -2214,6 +2298,24 @@ class SchedulingService:
                     definition_id=definition_id,
                 )
             payload = self._merge_definition_payload(payload, local_row)
+            # final review C1: only a SERVER-owned row queues mutations at
+            # all, so only it can collide in the shared slot. A local row
+            # -- including a `to_server_failed` one, which deliberately
+            # keeps its transfer mutation queued and stays editable
+            # (`transfer_lock_reason`) -- writes straight through below
+            # and never touches the queue.
+            if self._owner_uses_server(owner_id):
+                blocked = await asyncio.to_thread(
+                    self._cross_action_mutation_reason, definition_id
+                )
+                if blocked is not None:
+                    return SaveDefinitionOutcome(
+                        status="error",
+                        errors=[
+                            field_error("_pending", "pending_mutation", blocked)
+                        ],
+                        definition_id=definition_id,
+                    )
 
         if not self._owner_uses_server(owner_id):
             mode = "update" if local_row is not None else "create"
@@ -2425,9 +2527,12 @@ class SchedulingService:
         its new server id -- that upsert reports only insert/update
         counts, not the generated id.
 
-        Either way, any pending `automation_definition` mutation left over
-        from an earlier offline save on this row is cleared once this
-        online save actually lands -- same precedent as
+        Either way, a pending `automation_definition` EDIT mutation left
+        over from an earlier offline save on this row is cleared once this
+        online save actually lands (`_clear_stale_edit_mutation`; final
+        review C1 scoped it to the edit actions, so a lifecycle or
+        transfer mutation that took the shared slot mid-round-trip
+        survives) -- same precedent as
         `_persist_server_reminder_response`'s `delete_pending_mutation_
         for_record` call. Without this, a stale queued mutation survives a
         later successful online save and the next sync replays it: for a
@@ -2456,10 +2561,7 @@ class SchedulingService:
 
         if saved_id is not None:
             await asyncio.to_thread(
-                self.db.delete_pending_mutation_for_record,
-                saved_id,
-                _DEFINITION_PRIMITIVE,
-                owner_id,
+                self._clear_stale_edit_mutation, saved_id, owner_id
             )
         return saved_id
 

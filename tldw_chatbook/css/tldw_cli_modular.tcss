@@ -14115,7 +14115,13 @@ DetailValueRow .detail-value-row-error {
  * line rather than a full 3-row Button box. Bare class selector (not
  * scoped under `DetailValueRow`) since this widget lives outside it. */
 .detail-value-row-owner-actions {
-    height: 1;
+    /* `auto`, not a fixed `1` (final review M5): both buttons are
+     * `.display`-toggled and hidden in the overwhelmingly common
+     * no-transfer-in-flight case, but a fixed height still reserved a
+     * blank line inside the Details group of every reminder and every
+     * definition. `auto` measures 0 when both are hidden, 1 when either
+     * shows. */
+    height: auto;
     align: right middle;
 }
 

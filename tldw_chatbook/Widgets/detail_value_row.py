@@ -187,8 +187,20 @@ class DetailValueRow(Vertical):
             )
 
     def update_value(self, value: str | Text) -> None:
-        """Refresh the painted value in place -- no recompose."""
+        """Refresh the painted value in place -- no recompose.
+
+        A no-op while an editor is open (PR-3 final review I2): the panes
+        that own these rows repaint on a timer, and the value region
+        belongs to the editor for as long as it is mounted. The write
+        would land on the hidden `Static` and only surface as a flash of
+        a value the user did not choose, the moment `end_edit` restores
+        it. A repaint that changes the ROW's identity closes the editor
+        first (`TaskDetail._reset_row_editing` and its `DefinitionDetail`
+        twin), so the next `update_value` after that lands normally.
+        """
         assert self._value_static is not None, "update_value called before mount"
+        if self._editor is not None:
+            return
         self._value_static.update(_literal(value))
 
     def show_error(self, msg: str) -> None:

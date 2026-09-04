@@ -2140,6 +2140,69 @@ def test_adopt_server_definition_identity_unknown_local_id_returns_false(tmp_pat
     )
 
 
+def test_adopt_server_definition_identity_withholds_lifecycle_under_the_guard(tmp_path):
+    """Redesign PR-3 final review C1's belt: the push-echo mirror now
+    carries the same `lifecycle` guard the pull mirror has. A pause queued
+    while an online save was in flight must not be reverted by the echo
+    that save comes back with -- SURGICALLY: every other echoed field,
+    `server_id` included, still writes."""
+    db = _mk_db(tmp_path)
+    local_id = db.create_automation_definition(
+        "server:42", "recurring_question", "Draft"
+    )
+    db.update_automation_definition(
+        local_id,
+        lifecycle="paused",
+        pending_mutation={
+            "primitive": "automation_definition",
+            "owner_id": "server:42",
+            "payload": {"action": "pause", "server_definition_id": "srv-def-9"},
+        },
+    )
+
+    assert (
+        db.adopt_server_definition_identity(
+            local_id,
+            {
+                "id": "srv-def-9",
+                "name": "Server-confirmed name",
+                "lifecycle": "configured",
+            },
+        )
+        is True
+    )
+
+    row = db.get_automation_definition(local_id)
+    assert row["lifecycle"] == "paused"
+    assert row["server_id"] == "srv-def-9"
+    assert row["name"] == "Server-confirmed name"
+
+
+def test_adopt_server_definition_identity_applies_lifecycle_under_an_edit_mutation(
+    tmp_path,
+):
+    """The guard is action-scoped, not "any pending mutation": the replay
+    that CALLS this method always still has its own edit mutation queued
+    (it is deleted right after), so a bare check would freeze `lifecycle`
+    on every push."""
+    db = _mk_db(tmp_path)
+    local_id = db.create_automation_definition(
+        "server:42", "recurring_question", "Draft", lifecycle="paused"
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:42",
+        {"action": "update", "server_definition_id": "srv-def-9"},
+    )
+
+    db.adopt_server_definition_identity(
+        local_id, {"id": "srv-def-9", "lifecycle": "configured"}
+    )
+
+    assert db.get_automation_definition(local_id)["lifecycle"] == "configured"
+
+
 # ----------------------------------------------------------------------
 # create/update_automation_definition pending_mutation +
 # get_automation_definition_by_server_id (schedules-handoff PR-4, task 4)

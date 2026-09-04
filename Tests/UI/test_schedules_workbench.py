@@ -23,6 +23,7 @@ from textual.widgets._collapsible import CollapsibleTitle
 
 from tldw_chatbook.Scheduling.events import (
     DeleteTaskRequested,
+    ReminderFieldEditRequested,
     ReminderOwnerActionRequested,
     SyncCompleted,
     SyncFailed,
@@ -1142,6 +1143,24 @@ async def test_definition_timezone_row_editor_preselects_current_zone():
         await pilot.pause()
         editor = row.query_one(Select)
         assert editor.value == "America/New_York"
+
+
+@pytest.mark.asyncio
+async def test_definition_timezone_editor_says_automation_not_task(monkeypatch):
+    """Final review F10: this pane's inline Timezone editor is one of the
+    two surfaces that got the reminder wording from task 3's option-source
+    consolidation -- it passes `noun="automation"` now."""
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        definition = _editable_definition()
+        definition["schedule"]["timezone"] = "Mars/Olympus"
+        detail.set_definition(definition)
+        await pilot.pause()
+        row = detail._timezone_row
+        await pilot.click(row)
+        await pilot.pause()
+        labels = [str(prompt) for prompt, _value in row.query_one(Select)._options]
+        assert "Mars/Olympus — stored on this automation, not recognized here" in labels
 
 
 @pytest.mark.asyncio
@@ -3503,7 +3522,28 @@ async def test_runs_on_same_owner_selection_is_a_no_op():
     it preselects the row's OWN current owner (same trap Task 3's Repeat/
     Timezone commits already guard against, reused verbatim) must not
     close the editor or post a transfer request -- same as those rows,
-    the editor stays open for a real pick rather than self-closing."""
+    the editor stays open for a real pick rather than self-closing.
+
+    Final review F8/M8 ADJUDICATION. The controller's ruling was "the
+    CODE is wrong -- close the editor on a same-owner pick, and update
+    this test"; re-probed against Textual 8.2.8, that ruling is not
+    implementable and the shipped behavior stands:
+
+    * the synthetic mount `Changed` is real -- `Select.value` is
+      `var(NULL, init=False)`, so `_on_mount`'s `_init_selected_option`
+      assignment is a genuine change and posts `Changed`. Probed: the
+      commit handler fires with `"local"` before any user input, and an
+      `end_edit()` there leaves `editor still open: False` -- the
+      dropdown shuts the instant it opens and the owner picker becomes
+      unusable;
+    * a genuine re-pick of the SAME option posts nothing at all
+      (`Select._update_selection` assigns only `if value != self.value`),
+      so a "close on a same-owner pick" branch has no reachable caller to
+      hang off in the first place.
+
+    The docstring that claimed otherwise is what got fixed instead
+    (`TaskDetail._commit_runs_on_edit`). Escape is the cancel path.
+    """
     async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
         detail = pilot.app.query_one(TaskDetail)
         detail.set_task(
@@ -3512,13 +3552,25 @@ async def test_runs_on_same_owner_selection_is_a_no_op():
         )
         await pilot.pause()
 
-        with patch.object(
+        commits: list[str] = []
+        real_commit = TaskDetail._commit_runs_on_edit
+
+        def _spy(self, event):
+            commits.append(str(event.value))
+            return real_commit(self, event)
+
+        with patch.object(TaskDetail, "_commit_runs_on_edit", _spy), patch.object(
             detail, "post_message", wraps=detail.post_message
         ) as post_spy:
             row = detail._runs_on_row
             await pilot.click(row)
             await pilot.pause()
 
+            # The mount echo is real and DOES reach the commit path with
+            # the row's own current owner -- the whole reason that branch
+            # exists. Pinned, so a later "simplification" that closes on
+            # it fails here rather than in the user's hands.
+            assert commits == ["local"]
             assert row.query(Select)
             assert not any(
                 isinstance(call.args[0], ReminderOwnerActionRequested)
@@ -4574,5 +4626,251 @@ async def test_definition_runs_on_dropdown_and_automations_tab_keybindings_coexi
             # triggers (`_show_automations_inline_reason`'s own documented
             # behavior), racy to assert on here.
             assert service.cancel_refusal(fresh_row) is not None
+    finally:
+        db.close()
+
+
+# --- redesign PR-3, final review fix wave (I2/I3/I4, M5, M12) --------------
+
+
+@pytest.mark.asyncio
+async def test_repaint_with_another_task_closes_the_open_editor():
+    """Final review F2/I2. The reminder pane repaints on every tick and
+    `_update_detail_for_index` falls back to index 0 whenever the selected
+    row leaves the filter -- so an open editor could end up mounted over a
+    DIFFERENT reminder and commit its typed value onto that one.
+
+    Probe output against the branch before this fix:
+    `editor still open after repaint with another task: True` /
+    `edit posted for task id: ['task-B']`.
+    """
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        task_a = _frequency_reminder(id="task-A", title="A")
+        task_b = _frequency_reminder(id="task-B", title="B")
+        detail.set_task(task_a)
+        await pilot.pause()
+
+        row = detail._timezone_row
+        await pilot.click(row)
+        await pilot.pause()
+        assert row.query(Select)
+
+        detail.set_task(task_b)
+        await pilot.pause()
+
+        assert not row.query(Select), "editor survived a repaint with another task"
+
+        # Belt: a commit that crossed the repaint in flight is discarded,
+        # never written onto whichever task is painted now.
+        with patch.object(
+            detail, "post_message", wraps=detail.post_message
+        ) as post_spy:
+            detail._commit_timezone_edit(
+                Select.Changed(Select([("UTC", "UTC")], value="UTC"), "UTC")
+            )
+            assert not any(
+                isinstance(call.args[0], ReminderFieldEditRequested)
+                for call in post_spy.call_args_list
+            )
+
+
+@pytest.mark.asyncio
+async def test_same_row_repaint_preserves_an_open_editor_and_its_typed_text():
+    """The other half of I2: the reminder pane repaints on EVERY tick, so
+    closing the editor on a same-row repaint would make typing
+    impossible. The value region is skipped for the editing row instead
+    (`DetailValueRow.update_value`)."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        task = _frequency_reminder(
+            id="task-A",
+            schedule_kind=ScheduleKind.ONE_TIME,
+            cron=None,
+            timezone=None,
+            run_at=datetime(2099, 9, 9, 9, 0, tzinfo=timezone.utc),
+        )
+        detail.set_task(task)
+        await pilot.pause()
+
+        row = detail._at_row
+        await pilot.click(row)
+        await pilot.pause()
+        editor = row.query_one(Input)
+        editor.value = "2026-09-09 08:30"
+
+        # Five ticks' worth of same-row repaints.
+        for _ in range(5):
+            detail.set_task(task)
+            await pilot.pause()
+
+        assert row.query_one(Input) is editor
+        assert editor.value == "2026-09-09 08:30"
+
+
+@pytest.mark.asyncio
+async def test_repaint_with_another_task_clears_a_stale_row_error():
+    """Final review F3/I3: `show_error` was only ever cleared by
+    reactivating that row or by a successful commit, so B's Frequency
+    group kept accusing a value of A's that B never had. Probe output
+    before the fix: `stale error still displayed on the new task's row:
+    True | Unknown timezone: Mars/Olympus`."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder(id="task-A"))
+        await pilot.pause()
+
+        row = detail._timezone_row
+        row.show_error("Unknown timezone: Mars/Olympus")
+        await pilot.pause()
+        assert row.query_one(".detail-value-row-error", Static).display is True
+
+        detail.set_task(_frequency_reminder(id="task-B"))
+        await pilot.pause()
+
+        error = row.query_one(".detail-value-row-error", Static)
+        assert error.display is False
+        assert "Mars/Olympus" not in str(error.renderable)
+
+
+@pytest.mark.asyncio
+async def test_definition_pane_repaint_with_another_row_closes_editor_and_error():
+    """The definition pane's twin of I2/I3 -- same mechanism, same
+    row-identity trigger."""
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition(id="def-A"))
+        await pilot.pause()
+
+        row = detail._generation_row
+        await pilot.click(row)
+        await pilot.pause()
+        assert row.query(Select)
+        detail._sources_row.show_error("Choose at least one source.")
+
+        detail.set_definition(_editable_definition(id="def-B"))
+        await pilot.pause()
+
+        assert not row.query(Select)
+        assert (
+            detail._sources_row.query_one(
+                ".detail-value-row-error", Static
+            ).display
+            is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_owner_actions_row_reserves_no_line_without_a_transfer():
+    """Final review F5/M5: `.detail-value-row-owner-actions` had a fixed
+    `height: 1` on an always-mounted container whose two buttons are
+    `.display`-toggled, so every reminder and every definition carried one
+    dead line inside its Details group. Probe before the fix:
+    `Region(x=3, y=12, width=75, height=1)`."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder(transfer_state=None))
+        await pilot.pause()
+
+        actions = detail.query_one(".detail-value-row-owner-actions")
+        assert actions.region.height == 0
+
+        detail.set_task(
+            _frequency_reminder(id="task-moving", transfer_state="to_server_pending")
+        )
+        await pilot.pause()
+        assert detail.query_one(".detail-value-row-owner-actions").region.height == 1
+
+
+@pytest.mark.asyncio
+async def test_editable_rows_carry_a_row_key_for_per_row_worker_groups():
+    """Final review F12/M12: both edit workers group per ROW now, so
+    committing a second row's editor cannot cancel the first commit
+    mid-write. The group name is built from `row.row_key`, so every
+    editable row needs a distinct one -- a `None` key would collapse them
+    all back into one group without failing anything visibly."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        keys = [row.row_key for row in pilot.app.query_one(TaskDetail)._editable_rows()]
+    assert keys and None not in keys and len(set(keys)) == len(keys)
+
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        keys = [
+            row.row_key
+            for row in pilot.app.query_one(DefinitionDetail)._editable_rows()
+        ]
+    assert keys and None not in keys and len(set(keys)) == len(keys)
+
+
+@pytest.mark.asyncio
+async def test_queue_definition_pane_repaints_after_a_successful_in_pane_edit(tmp_path):
+    """Final review F4/I4. `DefinitionDetail` is mounted TWICE and the
+    edit success path only refreshed the Automations one; the Queue tab's
+    instance is painted from `_update_detail_for_index`, which
+    early-returns for the same row on a tick. So a user editing from the
+    Queue tab saw the editor close, the OLD value come back, and no error
+    -- indefinitely, even though the edit had persisted."""
+    from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+    from tldw_chatbook.Scheduling.services.scheduling_service import SchedulingService
+    from tldw_chatbook.UI.Screens.scheduling.definition_detail import (
+        _definition_edit_payload,
+    )
+
+    db = ScheduledTasksDB(tmp_path / "scheduled_tasks.db")
+    try:
+        service = SchedulingService(db=db, server_client=None, runtime_source="local")
+        definition_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Daily Q",
+            schedule={"kind": "interval", "every_seconds": 3600},
+            input={"question": "What shipped?"},
+            config={"generation_mode": "optional"},
+        )
+        definition = db.get_automation_definition(definition_id)
+
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            workbench = SchedulesWorkbench(app_instance=pilot.app)
+            await pilot.app.push_screen(workbench)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            queue_detail = pilot.app.screen.query_one(
+                "#scheduling-queue-definition-detail", DefinitionDetail
+            )
+            # The Queue tab has this definition's row selected and painted.
+            workbench._selected_row_id = f"definition:{definition_id}"
+            queue_detail.set_definition(definition)
+            await pilot.pause()
+            row = queue_detail._generation_row
+            assert "Only when something new is found" == str(
+                row.query_one(
+                    "#scheduling-automation-detail-generation", Static
+                ).renderable
+            )
+
+            payload = _definition_edit_payload(
+                definition, config={"generation_mode": "required"}
+            )
+            workbench._edit_definition_field(definition, payload, row)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert (
+                db.get_automation_definition(definition_id)["config"][
+                    "generation_mode"
+                ]
+                == "required"
+            )
+            painted = str(
+                row.query_one(
+                    "#scheduling-automation-detail-generation", Static
+                ).renderable
+            )
+            assert painted == "Always generate a draft", (
+                f"the Queue tab's definition pane still shows {painted!r}"
+            )
     finally:
         db.close()

@@ -3218,6 +3218,232 @@ async def test_set_definition_lifecycle_refused_while_transferring(db):
 
 
 # ----------------------------------------------------------------------
+# Mutation-slot collision: an edit must not destroy a queued lifecycle
+# change (redesign PR-3 final review C1). Both probes from that review,
+# turned into pinned tests -- the class reintroduces easily.
+# ----------------------------------------------------------------------
+
+
+def _paused_server_definition(db):
+    """A synced, server-owned definition with a `pause` queued for sync."""
+    definition_id = db.create_automation_definition(
+        "server:1",
+        "recurring_question",
+        "Daily Q",
+        server_id="srv-def-1",
+        schedule={"kind": "interval", "every_seconds": 3600},
+        input={"question": "What happened today?"},
+        config={},
+    )
+    db.update_automation_definition(
+        definition_id,
+        lifecycle="paused",
+        pending_mutation={
+            "primitive": "automation_definition",
+            "owner_id": "server:1",
+            "payload": {"action": "pause", "server_definition_id": "srv-def-1"},
+        },
+    )
+    return definition_id
+
+
+def _assert_pause_survived(db, definition_id):
+    assert db.get_automation_definition(definition_id)["lifecycle"] == "paused"
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert [m["payload"]["action"] for m in pending] == ["pause"]
+
+
+@pytest.mark.asyncio
+async def test_edit_refused_while_a_pause_is_queued_online(db):
+    """C1 probe 1: server reachable. The echo used to revert `lifecycle`
+    and the mirror then deleted the queued pause -- silently, both ends."""
+    definition_id = _paused_server_definition(db)
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.update_automation_definition.return_value = _server_definition_echo()
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(
+        _definition_payload(name="Edited"), "server:1", definition_id=definition_id
+    )
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["code"] == "pending_mutation"
+    assert "pause" in outcome.errors[0]["message"].lower()
+    _assert_pause_survived(db, definition_id)
+    assert db.get_automation_definition(definition_id)["name"] == "Daily Q"
+    # Refused at the entry -- the network is never reached at all.
+    server_client.preview_automation_definition.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_edit_refused_while_a_pause_is_queued_offline(db):
+    """C1 probe 2: seam unreachable. `record_pending_mutation`'s
+    `INSERT OR REPLACE` used to overwrite the queued pause with the edit."""
+    definition_id = _paused_server_definition(db)
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(
+        _definition_payload(name="Edited"), "server:1", definition_id=definition_id
+    )
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["code"] == "pending_mutation"
+    _assert_pause_survived(db, definition_id)
+
+
+@pytest.mark.asyncio
+async def test_edit_refused_while_a_release_transfer_is_queued(db):
+    """C1 covers the whole non-edit action class, not just lifecycle: a
+    queued `release_from_server` shares the same single slot, and the
+    mirror row carries no `transfer_state` for `transfer_lock_reason` to
+    catch."""
+    definition_id = _paused_server_definition(db)
+    db.record_pending_mutation(
+        definition_id,
+        "automation_definition",
+        "server:1",
+        {"action": "release_from_server", "server_definition_id": "srv-def-1"},
+    )
+    svc = SchedulingService(db=db, server_client=AsyncMock(), runtime_source="server:1")
+
+    outcome = await svc.save_definition(
+        _definition_payload(name="Edited"), "server:1", definition_id=definition_id
+    )
+
+    assert outcome.status == "error"
+    assert "move to this device" in outcome.errors[0]["message"]
+
+
+@pytest.mark.asyncio
+async def test_offline_edit_still_replaces_an_earlier_offline_edit(db):
+    """C1's refusal is CROSS-action only: update-over-update coalescing is
+    what `_save_definition_offline` documents and must keep working."""
+    definition_id = db.create_automation_definition(
+        "server:1",
+        "recurring_question",
+        "Original",
+        server_id="srv-def-1",
+        schedule={"kind": "interval", "every_seconds": 3600},
+        input={"question": "What happened today?"},
+        config={},
+    )
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    first = await svc.save_definition(
+        _definition_payload(name="First"), "server:1", definition_id=definition_id
+    )
+    second = await svc.save_definition(
+        _definition_payload(name="Second"), "server:1", definition_id=definition_id
+    )
+
+    assert (first.status, second.status) == ("queued", "queued")
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1
+    assert pending[0]["payload"]["definition_payload"]["name"] == "Second"
+
+
+@pytest.mark.asyncio
+async def test_local_row_edit_is_never_refused_by_its_retained_transfer_mutation(db):
+    """A `to_server_failed` row deliberately KEEPS its transfer mutation
+    queued and stays editable (`transfer_lock_reason`'s own docstring).
+    C1's guard is scoped to server-owned rows -- the only ones whose edits
+    touch the queue at all -- so this pins that it did not turn that
+    documented affordance into a refusal."""
+    definition_id = _make_definition(db)
+    db.record_pending_mutation(
+        definition_id,
+        "automation_definition",
+        "local",
+        {"action": "transfer_to_server", "transfer_errors": ["nope"]},
+    )
+    db.set_transfer_state(
+        "automation_definition", definition_id, "to_server_failed", expected=(None,)
+    )
+    svc = _transfer_service(db, server_client=_connected_server_client())
+
+    outcome = await svc.save_definition(
+        _definition_payload(name="Edited anyway"),
+        owner_id="local",
+        definition_id=definition_id,
+    )
+
+    assert outcome.status == "saved"
+    assert db.get_automation_definition(definition_id)["name"] == "Edited anyway"
+
+
+@pytest.mark.asyncio
+async def test_online_save_does_not_clear_a_lifecycle_mutation_queued_mid_flight(db):
+    """C1's second leg: a pause queued DURING the online round trip (the
+    entry guard read an empty slot before the network call) must survive
+    both the echo's `lifecycle` and the mirror's queue clear."""
+    definition_id = db.create_automation_definition(
+        "server:1",
+        "recurring_question",
+        "Original",
+        server_id="srv-def-1",
+        schedule={"kind": "interval", "every_seconds": 3600},
+        input={"question": "What happened today?"},
+        config={},
+    )
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+
+    async def _commit_then_user_pauses(*_args, **_kwargs):
+        # The user hits Pause while the PATCH is in flight.
+        db.update_automation_definition(
+            definition_id,
+            lifecycle="paused",
+            pending_mutation={
+                "primitive": "automation_definition",
+                "owner_id": "server:1",
+                "payload": {
+                    "action": "pause",
+                    "server_definition_id": "srv-def-1",
+                },
+            },
+        )
+        return _server_definition_echo(name="Edited", lifecycle="configured")
+
+    server_client.update_automation_definition.side_effect = _commit_then_user_pauses
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(
+        _definition_payload(name="Edited"), "server:1", definition_id=definition_id
+    )
+
+    assert outcome.status == "saved"
+    row = db.get_automation_definition(definition_id)
+    # The edit landed; the pause was neither reverted nor dequeued.
+    assert row["name"] == "Edited"
+    _assert_pause_survived(db, definition_id)
+
+
+# ----------------------------------------------------------------------
 # resolve_definition (schedules-handoff PR-6, task 2)
 # ----------------------------------------------------------------------
 

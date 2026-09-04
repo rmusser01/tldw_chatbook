@@ -62,6 +62,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Checkbox, Input, Select, Static
@@ -530,6 +531,11 @@ class DefinitionDetail(Vertical):
         #: PR-3 task 5 fix round 1 (finding 2): see `task_detail.py`'s
         #: own `_runs_on_transfer_errors`.
         self._runs_on_transfer_errors: list[str] = []
+        #: Final review I2: see `TaskDetail._editing_task_id` -- the
+        #: definition id an open row editor was opened AGAINST, captured
+        #: at `begin_edit` time and validated at commit time by
+        #: `_editing_definition`. Never reset by a repaint.
+        self._editing_definition_id: str | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the empty pane skeleton (populated by `set_definition`).
@@ -574,22 +580,40 @@ class DefinitionDetail(Vertical):
             )
             yield self._question_static
 
+            # `row_key` (final review M12): the per-row identity the
+            # workbench's edit worker groups its commit under, so two
+            # quick edits on DIFFERENT rows stop cancelling each other.
+            # Set on every editable row, nowhere else -- same as
+            # `task_detail.py`'s own Frequency/Runs-on rows.
             self._runs_on_row = DetailValueRow(
-                "Runs on", "-", value_id="scheduling-automation-detail-runs-on"
+                "Runs on",
+                "-",
+                value_id="scheduling-automation-detail-runs-on",
+                row_key="runs_on",
             )
             self._model_row = DetailValueRow(
-                "Model", "-", value_id="scheduling-automation-detail-model"
+                "Model",
+                "-",
+                value_id="scheduling-automation-detail-model",
+                row_key="model",
             )
             self._generation_row = DetailValueRow(
-                "Generation", "-", value_id="scheduling-automation-detail-generation"
+                "Generation",
+                "-",
+                value_id="scheduling-automation-detail-generation",
+                row_key="generation_mode",
             )
             self._finding_policy_row = DetailValueRow(
                 "Finding policy",
                 "-",
                 value_id="scheduling-automation-detail-finding-policy",
+                row_key="finding_policy",
             )
             self._sources_row = DetailValueRow(
-                "Sources", "-", value_id="scheduling-automation-detail-sources"
+                "Sources",
+                "-",
+                value_id="scheduling-automation-detail-sources",
+                row_key="sources",
             )
             # PR-3 task 5: the Runs-on row's own proactive Cancel/Retry
             # affordances -- see `task_detail.py`'s own compose()
@@ -619,13 +643,22 @@ class DefinitionDetail(Vertical):
             )
 
             self._repeat_row = DetailValueRow(
-                "Repeat", "-", value_id="scheduling-automation-detail-repeat"
+                "Repeat",
+                "-",
+                value_id="scheduling-automation-detail-repeat",
+                row_key="cron",
             )
             self._at_row = DetailValueRow(
-                "At", "-", value_id="scheduling-automation-detail-at"
+                "At",
+                "-",
+                value_id="scheduling-automation-detail-at",
+                row_key="run_at",
             )
             self._timezone_row = DetailValueRow(
-                "Timezone", "-", value_id="scheduling-automation-detail-timezone"
+                "Timezone",
+                "-",
+                value_id="scheduling-automation-detail-timezone",
+                row_key="timezone",
             )
             # Spec §5 gives BOTH columns a Frequency `Notifications` row;
             # the plan's Task 4 text quietly dropped it (final review F8).
@@ -633,6 +666,7 @@ class DefinitionDetail(Vertical):
                 "Notifications",
                 "-",
                 value_id="scheduling-automation-detail-notifications",
+                row_key="notification_policy",
             )
             yield DetailGroup(
                 self._repeat_row,
@@ -706,6 +740,12 @@ class DefinitionDetail(Vertical):
                 `known_timezones` already is. Every pre-task-5
                 caller/test omits this and is unaffected.
         """
+        # Final review I2/I3: a repaint that swaps in a DIFFERENT
+        # definition takes the open editor and the inline error with it --
+        # `TaskDetail.set_task`'s twin; see `_reset_row_editing`.
+        previous = self._definition
+        if (definition or {}).get("id") != (previous or {}).get("id"):
+            self._reset_row_editing()
         self._definition = definition
         self._known_timezones = known_timezones
         self._runs_on_options = runs_on_options
@@ -846,22 +886,61 @@ class DefinitionDetail(Vertical):
             definition.get("transfer_state") or "", "This transfer failed."
         )
 
+    def _editable_rows(self) -> tuple[DetailValueRow, ...]:
+        """Every row this pane can open an editor on (mounted ones only)
+        -- `task_detail.TaskDetail._editable_rows`' twin; see it for why
+        the `Activated` router and `_reset_row_editing` share one list."""
+        return tuple(
+            row
+            for row in (
+                self._runs_on_row,
+                self._model_row,
+                self._generation_row,
+                self._finding_policy_row,
+                self._sources_row,
+                self._notifications_row,
+                self._repeat_row,
+                self._at_row,
+                self._timezone_row,
+            )
+            if row is not None
+        )
+
+    def _reset_row_editing(self) -> None:
+        """Close every open row editor and clear every row error --
+        `task_detail.TaskDetail._reset_row_editing`'s twin (final review
+        I2/I3); see it for the full rationale. Called by `set_definition`
+        on a row-identity change only."""
+        for row in self._editable_rows():
+            row.end_edit(restore_focus=False)
+            row.clear_error()
+
+    def _editing_definition(self) -> dict[str, Any] | None:
+        """The definition an open editor was opened against, or ``None``
+        -- `task_detail.TaskDetail._editing_task`'s twin (final review
+        I2's belt); see it for the full rationale."""
+        definition = self._definition
+        if definition is None:
+            return None
+        current_id = str(definition.get("id") or "")
+        if (
+            self._editing_definition_id is not None
+            and self._editing_definition_id != current_id
+        ):
+            logger.debug(
+                "Discarding an automation row edit opened for {} while the "
+                "definition pane now shows {}",
+                self._editing_definition_id,
+                current_id,
+            )
+            return None
+        return definition
+
     def on_detail_value_row_activated(self, event: DetailValueRow.Activated) -> None:
         """Open the activated row's editor, or -- locked -- show why
         editing is refused instead of doing nothing (ruling 2)."""
         row = event.row
-        editable_rows = (
-            self._runs_on_row,
-            self._model_row,
-            self._generation_row,
-            self._finding_policy_row,
-            self._sources_row,
-            self._notifications_row,
-            self._repeat_row,
-            self._at_row,
-            self._timezone_row,
-        )
-        if row not in editable_rows:
+        if row not in self._editable_rows():
             return
         event.stop()
         if self._lifecycle_lock_reason is not None:
@@ -880,6 +959,9 @@ class DefinitionDetail(Vertical):
             row.show_error(self._runs_on_failure_reason(definition))
             return
         row.clear_error()
+        # Final review I2: capture the identity this editor is being
+        # opened against, for `_editing_definition` to validate at commit.
+        self._editing_definition_id = str(definition.get("id") or "")
 
         if row is self._runs_on_row:
             # A normal, unlocked owner pick (spec §7 flow) -- an
@@ -990,7 +1072,9 @@ class DefinitionDetail(Vertical):
             current_tz = str(schedule.get("timezone") or "UTC")
             row.begin_edit(
                 Select(
-                    timezone_options(current_tz, self._known_timezones),
+                    timezone_options(
+                        current_tz, self._known_timezones, noun="automation"
+                    ),
                     allow_blank=False,
                     value=current_tz,
                     id=_TIMEZONE_EDITOR_ID,
@@ -1094,7 +1178,7 @@ class DefinitionDetail(Vertical):
             self._request_runs_on_retry()
 
     def _commit_generation_edit(self, event: Select.Changed) -> None:
-        definition = self._definition
+        definition = self._editing_definition()
         row = self._generation_row
         if definition is None or row is None:
             return
@@ -1118,7 +1202,7 @@ class DefinitionDetail(Vertical):
         self.post_message(DefinitionFieldEditRequested(definition, payload, row))
 
     def _commit_finding_policy_edit(self, event: Select.Changed) -> None:
-        definition = self._definition
+        definition = self._editing_definition()
         row = self._finding_policy_row
         if definition is None or row is None:
             return
@@ -1139,7 +1223,7 @@ class DefinitionDetail(Vertical):
         self.post_message(DefinitionFieldEditRequested(definition, payload, row))
 
     def _commit_notifications_edit(self, event: Select.Changed) -> None:
-        definition = self._definition
+        definition = self._editing_definition()
         row = self._notifications_row
         if definition is None or row is None:
             return
@@ -1157,7 +1241,7 @@ class DefinitionDetail(Vertical):
         self.post_message(DefinitionFieldEditRequested(definition, payload, row))
 
     def _commit_model_edit(self, event: Input.Submitted) -> None:
-        definition = self._definition
+        definition = self._editing_definition()
         row = self._model_row
         if definition is None or row is None:
             return
@@ -1178,7 +1262,7 @@ class DefinitionDetail(Vertical):
         self.post_message(DefinitionFieldEditRequested(definition, payload, row))
 
     def _commit_sources_edit(self, event: Button.Pressed) -> None:
-        definition = self._definition
+        definition = self._editing_definition()
         row = self._sources_row
         if definition is None or row is None:
             return
@@ -1204,7 +1288,7 @@ class DefinitionDetail(Vertical):
         self.post_message(DefinitionFieldEditRequested(definition, payload, row))
 
     def _commit_repeat_edit(self, event: Select.Changed) -> None:
-        definition = self._definition
+        definition = self._editing_definition()
         row = self._repeat_row
         if definition is None or row is None:
             return
@@ -1242,7 +1326,7 @@ class DefinitionDetail(Vertical):
         self.post_message(DefinitionFieldEditRequested(definition, payload, row))
 
     def _commit_timezone_edit(self, event: Select.Changed) -> None:
-        definition = self._definition
+        definition = self._editing_definition()
         row = self._timezone_row
         if definition is None or row is None:
             return
@@ -1262,7 +1346,7 @@ class DefinitionDetail(Vertical):
         self.post_message(DefinitionFieldEditRequested(definition, payload, row))
 
     def _commit_at_edit(self, event: Input.Submitted) -> None:
-        definition = self._definition
+        definition = self._editing_definition()
         row = self._at_row
         if definition is None or row is None:
             return
@@ -1295,7 +1379,7 @@ class DefinitionDetail(Vertical):
         definition-pane counterpart of `task_detail.TaskDetail._commit_
         runs_on_edit`; see that method's docstring for the full
         same-owner-no-op / direction rationale."""
-        definition = self._definition
+        definition = self._editing_definition()
         row = self._runs_on_row
         if definition is None or row is None:
             return
