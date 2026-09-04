@@ -152,6 +152,14 @@ def ready_result(token: VllmOperationToken) -> VllmProbeResult:
     )
 
 
+def bind_local_claim(
+    owner: VllmConnectionOwner, token: VllmOperationToken
+) -> ServerLaunchClaim:
+    claim = ServerLaunchClaim(provider="vllm", authority="chatbook-vllm")
+    assert owner.bind_launch_claim(token, claim)
+    return claim
+
+
 @pytest.mark.asyncio
 async def test_ready_requires_health_and_exact_models_identity(loopback_vllm):
     loopback_vllm.health_status = 200
@@ -295,6 +303,62 @@ def test_owner_settlement_revalidates_a_mutated_result_fail_closed():
 
     assert owner.settle(token, result) is False
     assert owner.snapshot().target is None
+
+
+def test_owned_settlement_rejects_canonical_target_for_different_launch_endpoint():
+    """Catch a safe canonical target being attributed to the wrong process."""
+
+    owner = VllmConnectionOwner()
+    token = owner.begin(local_draft(port=8000), runtime_owner="chatbook")
+    claim = ServerLaunchClaim(provider="vllm", authority="chatbook-vllm")
+    assert owner.bind_launch_claim(token, claim)
+    result = ready_result(token)
+    assert result.target is not None
+    object.__setattr__(
+        result,
+        "target",
+        replace(
+            result.target,
+            api_url="http://127.0.0.1:8001/v1/chat/completions",
+        ),
+    )
+
+    assert owner.settle(token, result) is False
+    snapshot = owner.snapshot()
+    assert snapshot.state is VllmReadinessState.CHECKING
+    assert snapshot.target is None
+
+
+def test_owned_settlement_requires_token_bound_to_the_launch_claim():
+    owner = VllmConnectionOwner()
+    launched = owner.begin(local_draft(), runtime_owner="chatbook")
+    bind_local_claim(owner, launched)
+    unbound_check = owner.begin(local_draft(), runtime_owner="chatbook")
+
+    assert owner.settle(unbound_check, ready_result(unbound_check)) is False
+    assert owner.snapshot().target is None
+
+
+def test_external_settlement_accepts_its_canonical_probed_target_without_claim():
+    owner = VllmConnectionOwner()
+    token = owner.begin(local_draft(), runtime_owner="external")
+    result = VllmProbeResult(
+        token=token,
+        state=VllmReadinessState.READY,
+        target=VllmConnectionTarget(
+            provider_key="vllm",
+            api_url="https://models.example.test/v1/chat/completions",
+            model_id="organization/model",
+            runtime_owner="external",
+            generation=token.generation,
+            credential_source="configured",
+        ),
+        issue=None,
+        activity=(VllmActivityEvent("ready", "under_1s"),),
+    )
+
+    assert owner.settle(token, result)
+    assert owner.snapshot().target == result.target
 
 
 def test_owner_settlement_rejects_wrong_target_type_without_raising():
@@ -504,6 +568,7 @@ def test_owner_snapshot_excludes_launch_privacy_canaries(caplog):
         raw_arguments="--flag COMMAND_CANARY",
     )
     token = owner.begin(draft, runtime_owner="chatbook")
+    bind_local_claim(owner, token)
     assert owner.settle(token, ready_result(token))
 
     visible = repr(owner.snapshot()) + repr(owner.snapshot().activity) + caplog.text
@@ -520,6 +585,7 @@ def test_owner_snapshot_excludes_launch_privacy_canaries(caplog):
 def test_invalidate_advances_generation_and_clears_ready_target():
     owner = VllmConnectionOwner()
     token = owner.begin(local_draft(), runtime_owner="chatbook")
+    bind_local_claim(owner, token)
     assert owner.settle(token, ready_result(token))
 
     generation = owner.invalidate("target_changed")

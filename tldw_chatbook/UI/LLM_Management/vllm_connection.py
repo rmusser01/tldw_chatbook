@@ -290,6 +290,7 @@ class VllmConnectionOwner:
         self._generation = 0
         self._launch_claim: object | None = None
         self._claim_launch_snapshot: VllmLaunchSnapshot | None = None
+        self._claim_token: VllmOperationToken | None = None
         self._snapshot = VllmConnectionSnapshot(
             current_token=None,
             state=VllmReadinessState.NOT_CONFIGURED,
@@ -346,6 +347,7 @@ class VllmConnectionOwner:
                 return False
             self._launch_claim = claim
             self._claim_launch_snapshot = self._snapshot.launch_snapshot
+            self._claim_token = token
             return True
 
     def begin_claim_retry(self, claim: object) -> VllmOperationToken | None:
@@ -376,6 +378,7 @@ class VllmConnectionOwner:
                 issue=None,
                 activity=(VllmActivityEvent("checking", "under_1s"),),
             )
+            self._claim_token = token
             return token
 
     def owns_launch_claim(self, claim: object) -> bool:
@@ -400,6 +403,7 @@ class VllmConnectionOwner:
                 return False
             self._launch_claim = None
             self._claim_launch_snapshot = None
+            self._claim_token = None
             return True
 
     def invalidate(self, reason: str) -> int:
@@ -448,6 +452,24 @@ class VllmConnectionOwner:
                 or validated != result
             ):
                 return False
+            if validated.target is not None and token.runtime_owner == "chatbook":
+                launch_snapshot = self._claim_launch_snapshot
+                if (
+                    self._launch_claim is None
+                    or launch_snapshot is None
+                    or self._claim_token != token
+                    or launch_snapshot.fingerprint != token.fingerprint
+                ):
+                    return False
+                launched_endpoint = resolve_provider_endpoint(
+                    "vllm", launch_snapshot.client_api_url
+                )
+                if (
+                    launched_endpoint.errors
+                    or launched_endpoint.persisted_endpoint
+                    != validated.target.api_url
+                ):
+                    return False
             activity = (self._snapshot.activity + validated.activity)[
                 -_ACTIVITY_LIMIT:
             ]

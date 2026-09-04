@@ -23,6 +23,7 @@ from tldw_chatbook.UI.LLM_Management.vllm_setup import (
 from tldw_chatbook.UI.LLM_Management.vllm_setup_view import VllmSetupView
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
 from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
+    ServerLaunchClaim,
     clear_server_process,
     publish_server_process,
     release_server_claim,
@@ -155,6 +156,12 @@ def _ready_result(token) -> VllmProbeResult:
     )
 
 
+def _bind_local_claim(owner: VllmConnectionOwner, token) -> ServerLaunchClaim:
+    claim = ServerLaunchClaim(provider="vllm", authority="chatbook-vllm")
+    assert owner.bind_launch_claim(token, claim)
+    return claim
+
+
 async def test_mounted_activity_renders_ready_and_expands_bounded_failure():
     app = _VllmHost()
     async with app.run_test(size=(120, 40)):
@@ -168,6 +175,7 @@ async def test_mounted_activity_renders_ready_and_expands_bounded_failure():
         )
         owner = VllmConnectionOwner()
         token = owner.begin(draft, runtime_owner="chatbook")
+        _bind_local_claim(owner, token)
         assert owner.settle(token, _ready_result(token))
         view.apply_state(
             draft=draft,
@@ -233,6 +241,7 @@ async def test_mounted_draft_edit_fences_old_readiness_generation():
             model_value="org/model",
         )
         token = screen._vllm_owner.begin(draft, runtime_owner="chatbook")
+        claim = _bind_local_claim(screen._vllm_owner, token)
         assert screen._vllm_owner.settle(token, _ready_result(token))
         screen._vllm_draft = draft
         screen._apply_vllm_view_state()
@@ -248,6 +257,7 @@ async def test_mounted_draft_edit_fences_old_readiness_generation():
 
         current_draft = screen._vllm_draft
         token = screen._vllm_owner.begin(current_draft, runtime_owner="chatbook")
+        assert screen._vllm_owner.bind_launch_claim(token, claim)
         assert screen._vllm_owner.settle(token, _ready_result(token))
         screen._apply_vllm_view_state()
         view.query_one("#vllm-raw-arguments", TextArea).text = "--enable-prefix-caching"
@@ -263,6 +273,7 @@ async def test_mounted_recomposition_and_detach_invalidate_readiness_generation(
         screen, _, _ = await _mount_vllm_screen(app, pilot)
         draft = screen._vllm_draft
         token = screen._vllm_owner.begin(draft, runtime_owner="chatbook")
+        claim = _bind_local_claim(screen._vllm_owner, token)
         assert screen._vllm_owner.settle(token, _ready_result(token))
 
         await screen.recompose()
@@ -274,6 +285,7 @@ async def test_mounted_recomposition_and_detach_invalidate_readiness_generation(
         assert recomposed.activity[-1].code == "recomposed"
 
         token = screen._vllm_owner.begin(draft, runtime_owner="chatbook")
+        assert screen._vllm_owner.bind_launch_claim(token, claim)
         assert screen._vllm_owner.settle(token, _ready_result(token))
         await app.pop_screen()
         await pilot.pause()
