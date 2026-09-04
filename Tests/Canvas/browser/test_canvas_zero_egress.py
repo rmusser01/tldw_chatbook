@@ -1380,6 +1380,40 @@ def test_renderer_rejects_whole_invalid_transaction_without_partial_effects(
                 ],
             },
         ),
+        (
+            "forged-raster-bridge",
+            {
+                "patches": valid_patches,
+                "bridges": [
+                    {
+                        "request_id": "forged-raster",
+                        "kind": "download",
+                        "value": {
+                            "filename": "pixel.png",
+                            "mime_type": "image/png",
+                            "data": "data:image/png;base64,PGh0bWw+",
+                        },
+                    }
+                ],
+            },
+        ),
+        (
+            "raw-control-filename-bridge",
+            {
+                "patches": valid_patches,
+                "bridges": [
+                    {
+                        "request_id": "raw-control-filename",
+                        "kind": "download",
+                        "value": {
+                            "filename": "\nreport.txt",
+                            "mime_type": "text/plain",
+                            "data": "safe",
+                        },
+                    }
+                ],
+            },
+        ),
     ]
 
     for name, transaction in transactions:

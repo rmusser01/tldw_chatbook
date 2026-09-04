@@ -1030,8 +1030,9 @@ function validateDownloadRequest(value) {
       typeof value.filename !== "string" || typeof value.mime_type !== "string" || typeof value.data !== "string") {
     throw new Error("download schema");
   }
+  if (/[\x00-\x1f\x7f]/.test(value.filename)) throw new Error("download filename");
   const filename = value.filename.trim();
-  if (!filename || new TextEncoder().encode(filename).length > 255 || /[\\/\x00-\x1f\x7f<>:"|?*]/.test(filename) ||
+  if (!filename || new TextEncoder().encode(filename).length > 255 || /[\\/<>:"|?*]/.test(filename) ||
       filename.startsWith(".") || filename.endsWith(".") || filename.endsWith(" ")) throw new Error("download filename");
   if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(filename.split(".", 1)[0])) throw new Error("download filename");
   const allowed = {
@@ -1046,12 +1047,29 @@ function validateDownloadRequest(value) {
     let decoded;
     try { decoded = atob(value.data.slice(prefix.length)); } catch (_) { throw new Error("download encoding"); }
     if (decoded.length > MAX.bridgeBytes) throw new Error("download bytes");
+    if (!downloadRasterSignatureMatches(value.mime_type, decoded)) throw new Error("download signature");
   } else {
     if (value.data.startsWith("data:") || new TextEncoder().encode(value.data).length > MAX.bridgeBytes) throw new Error("download bytes");
     if (value.mime_type === "application/json") {
       try { JSON.parse(value.data); } catch (_) { throw new Error("download json"); }
     }
   }
+}
+
+function downloadRasterSignatureMatches(mimeType, decoded) {
+  const byte = (index) => decoded.charCodeAt(index);
+  if (mimeType === "image/png") {
+    const png = [137, 80, 78, 71, 13, 10, 26, 10];
+    return decoded.length >= png.length && png.every((value, index) => byte(index) === value);
+  }
+  if (mimeType === "image/jpeg") {
+    return decoded.length >= 3 && byte(0) === 255 && byte(1) === 216 && byte(2) === 255;
+  }
+  if (mimeType === "image/gif") {
+    return decoded.startsWith("GIF87a") || decoded.startsWith("GIF89a");
+  }
+  return mimeType === "image/webp" && decoded.length >= 12 &&
+    decoded.startsWith("RIFF") && decoded.slice(8, 12) === "WEBP";
 }
 
 function prepareTransaction(patches, bridges) {

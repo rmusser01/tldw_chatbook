@@ -710,6 +710,9 @@ class NativeConsoleCanvasAuthority:
         target = self._browser_targets.get(scope.browser_session_id)
         if target is None or not self._bridge_target_is_current(scope, target):
             raise RuntimeError("Canvas bridge target is unavailable")
+        projection = self.describe_selection(scope)
+        if projection.scope != scope:
+            raise RuntimeError("Canvas bridge target is unavailable")
         if request.kind == "submit":
             apply_submit = None
             if self._bridge_prepare is not None:
@@ -723,6 +726,8 @@ class NativeConsoleCanvasAuthority:
                 conversation_id=target.conversation_id,
                 canvas_id=target.canvas_id,
                 revision_id=target.revision_id,
+                canvas_title=projection.title,
+                revision_number=projection.sequence,
                 complete_text=complete_text,
                 byte_size=len(complete_text.encode("utf-8")),
             )
@@ -735,6 +740,8 @@ class NativeConsoleCanvasAuthority:
                 conversation_id=target.conversation_id,
                 canvas_id=target.canvas_id,
                 revision_id=target.revision_id,
+                canvas_title=projection.title,
+                revision_number=projection.sequence,
                 complete_text=download.text_preview,
                 filename=download.filename,
                 mime_type=download.mime_type,

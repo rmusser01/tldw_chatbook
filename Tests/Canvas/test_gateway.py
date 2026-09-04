@@ -28,6 +28,7 @@ from tldw_chatbook.Canvas.gateway import (
     CanvasSourceResponse,
 )
 from tldw_chatbook.Canvas.limits import sha256_utf8
+from tldw_chatbook.Canvas.models import CanvasBridgeRequest
 
 
 @dataclass
@@ -87,6 +88,8 @@ class _Authority:
                 conversation_id=scope.conversation_session_id,
                 canvas_id=scope.canvas_id,
                 revision_id=scope.revision_id,
+                canvas_title="Exact canvas",
+                revision_number=7,
                 complete_text=complete_text,
                 byte_size=len((complete_text or "").encode("utf-8")),
             ),
@@ -234,6 +237,49 @@ def _bridge_wire(
     }
 
 
+def test_bridge_contract_representations_never_include_payload_content() -> None:
+    sentinel = "TOP_SECRET_BRIDGE_PAYLOAD"
+    submit = CanvasBridgeRequest(
+        version="canvas-v1",
+        request_id="repr-submit",
+        kind="submit",
+        value=sentinel,
+    )
+    confirmation = BridgeConfirmationRequest(approved=True, request=submit)
+    preparation = BridgePreparationResponse(
+        request_id="repr-submit",
+        kind="submit",
+        conversation_id="conversation-a",
+        canvas_id="canvas-a",
+        revision_id="revision-a",
+        canvas_title="Secret-free title",
+        revision_number=1,
+        complete_text=sentinel,
+        byte_size=len(sentinel),
+    )
+    download_request = CanvasBridgeRequest(
+        version="canvas-v1",
+        request_id="repr-download",
+        kind="download",
+        value={
+            "filename": f"{sentinel}.txt",
+            "mime_type": "text/plain",
+            "data": sentinel,
+        },
+    )
+    download = download_request.download_payload()
+
+    for retained in (
+        submit,
+        confirmation,
+        preparation,
+        download_request,
+        download,
+        (confirmation, preparation, download),
+    ):
+        assert sentinel not in repr(retained)
+
+
 async def _prepare_bridge(
     session: aiohttp.ClientSession,
     launch: CanvasGatewayLaunch,
@@ -296,10 +342,13 @@ async def test_bridge_requires_one_exact_preparation_before_confirmation() -> No
             "conversation_id": "conversation-session-a",
             "canvas_id": "canvas-a",
             "revision_id": "revision-a",
+            "canvas_title": "Exact canvas",
+            "revision_number": 7,
             "complete_text": "bounded",
             "filename": None,
             "mime_type": None,
             "byte_size": 7,
+            "expires_in_seconds": pytest.approx(300.0, abs=1.0),
         }
         second = await _prepare_bridge(
             session,
@@ -415,7 +464,7 @@ async def test_expired_preparation_cannot_confirm_or_retain_its_guard() -> None:
         assert expired_record is not None
         assert "expired payload" not in repr(expired_record)
 
-        now[0] += 31.0
+        now[0] += 301.0
         current = await _prepare_bridge(
             session,
             launch,
@@ -437,6 +486,61 @@ async def test_expired_preparation_cannot_confirm_or_retain_its_guard() -> None:
         )
         assert expired.status == 401
         assert authority.calls.count(("bridge", _scope())) == 0
+    await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_hung_bridge_preparation_uses_prearmed_server_deadline_and_erases_guard() -> None:
+    class HungAuthority(_Authority):
+        def __init__(self) -> None:
+            super().__init__([])
+            self.entered = asyncio.Event()
+            self.cancelled = False
+
+        async def prepare_bridge(self, scope, request):
+            del scope, request
+            self.entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                self.cancelled = True
+
+    authority = HungAuthority()
+    gateway = CanvasGateway(
+        authority=authority,
+        bridge_settlement_ttl_seconds=0.05,
+    )
+    launch = await gateway.open_shell(_scope())
+
+    async with aiohttp.ClientSession(
+        cookie_jar=aiohttp.CookieJar(unsafe=True)
+    ) as session:
+        origin, csrf, _confirm = await _ready_bridge(
+            session, gateway, launch, prepare=False
+        )
+        request = asyncio.create_task(
+            _prepare_bridge(
+                session,
+                launch,
+                origin=origin,
+                csrf=csrf,
+                request=_bridge_wire(request_id="request-hung-prepare"),
+            )
+        )
+        await asyncio.wait_for(authority.entered.wait(), timeout=1)
+        live_session = next(iter(gateway._sessions.values()))
+        pending = live_session.pending_bridge
+        assert pending is not None
+        assert pending.expiry_handle is not None
+
+        response = await asyncio.wait_for(request, timeout=0.5)
+        assert response.status == 409
+        assert (await response.json()) == {"error": "bridge_refused"}
+        assert authority.cancelled is True
+        assert live_session.pending_bridge is None
+        assert pending.preparation is None
+        assert pending.expiry_handle is None
     await gateway.aclose()
 
 

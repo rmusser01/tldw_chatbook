@@ -231,6 +231,20 @@ def decode_data_url(value: str, *, field_name: str) -> DecodedDataUrl:
     return DecodedDataUrl(mime_type=mime_type, data=payload)
 
 
+def raster_signature_matches(mime_type: str, data: bytes) -> bool:
+    """Return whether decoded bytes carry the closed V1 raster signature."""
+
+    if mime_type == "image/png":
+        return data.startswith(b"\x89PNG\r\n\x1a\n")
+    if mime_type == "image/jpeg":
+        return data.startswith(b"\xff\xd8\xff")
+    if mime_type == "image/gif":
+        return data.startswith((b"GIF87a", b"GIF89a"))
+    if mime_type == "image/webp":
+        return len(data) >= 12 and data.startswith(b"RIFF") and data[8:12] == b"WEBP"
+    return False
+
+
 def validate_asset_payloads(
     assets: Sequence[DecodedDataUrl], *, per_asset_limit: int, aggregate_limit: int
 ) -> int:

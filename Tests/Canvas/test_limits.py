@@ -30,6 +30,75 @@ from tldw_chatbook.Canvas.models import (
 )
 
 
+@pytest.mark.parametrize(
+    ("mime_type", "extension", "signature"),
+    [
+        ("image/png", ".png", b"\x89PNG\r\n\x1a\n"),
+        ("image/jpeg", ".jpg", b"\xff\xd8\xff"),
+        ("image/gif", ".gif", b"GIF89a"),
+        ("image/webp", ".webp", b"RIFF\x00\x00\x00\x00WEBP"),
+    ],
+)
+def test_generated_raster_download_requires_declared_binary_signature(
+    mime_type: str,
+    extension: str,
+    signature: bytes,
+) -> None:
+    accepted = CanvasBridgeRequest.from_wire(
+        {
+            "version": "canvas-v1",
+            "request_id": "download-signed-image",
+            "kind": "download",
+            "value": {
+                "filename": f"pixel{extension}",
+                "mime_type": mime_type,
+                "data": "data:"
+                + mime_type
+                + ";base64,"
+                + base64.b64encode(signature).decode("ascii"),
+            },
+        }
+    )
+    assert accepted.download_payload().data == signature
+
+    forged = base64.b64encode(b"<html><script>bad()</script>").decode("ascii")
+    with pytest.raises(ValueError, match="signature"):
+        CanvasBridgeRequest.from_wire(
+            {
+                "version": "canvas-v1",
+                "request_id": "download-forged-image",
+                "kind": "download",
+                "value": {
+                    "filename": f"pixel{extension}",
+                    "mime_type": mime_type,
+                    "data": f"data:{mime_type};base64,{forged}",
+                },
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "filename",
+    ["\nreport.txt", "report\tfinal.txt", "report.txt\r"],
+)
+def test_generated_download_rejects_raw_filename_controls_before_trimming(
+    filename: str,
+) -> None:
+    with pytest.raises(ValueError, match="unsafe characters"):
+        CanvasBridgeRequest.from_wire(
+            {
+                "version": "canvas-v1",
+                "request_id": "download-control-name",
+                "kind": "download",
+                "value": {
+                    "filename": filename,
+                    "mime_type": "text/plain",
+                    "data": "safe",
+                },
+            }
+        )
+
+
 def test_runtime_limits_have_the_documented_canvas_v1_values() -> None:
     limits = CanvasLimits()
 
@@ -396,7 +465,7 @@ def test_generated_download_enforces_decoded_bytes_not_base64_text_size() -> Non
                 "value": {
                     "filename": "pixel.png",
                     "mime_type": "image/png",
-                    "data": "data:image/png;base64,YWJjZA==",
+                    "data": "data:image/png;base64,iVBORw0KGgo=",
                 },
             },
             limits=CanvasLimits(download_payload_bytes=3),

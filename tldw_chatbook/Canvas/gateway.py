@@ -236,7 +236,7 @@ class CanvasGatewayNavigation:
     projection: CanvasGatewayProjection
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class BridgeConfirmationRequest:
     """Closed trusted-shell decision for one validated bridge request."""
 
@@ -255,8 +255,15 @@ class BridgeConfirmationRequest:
             request=CanvasBridgeRequest.from_wire(value["request"]),
         )
 
+    def __repr__(self) -> str:
+        return (
+            "BridgeConfirmationRequest("
+            f"approved={self.approved!r}, request_id={self.request.request_id!r}, "
+            f"kind={self.request.kind!r}, payload=<redacted>)"
+        )
 
-@dataclass(frozen=True, slots=True)
+
+@dataclass(frozen=True, slots=True, repr=False)
 class BridgeConfirmationResponse:
     """Bounded result of revalidation by the Chatbook process."""
 
@@ -268,8 +275,14 @@ class BridgeConfirmationResponse:
         if self.status not in {"confirmed", "cancelled", "refused"}:
             raise ValueError("unsupported bridge confirmation status")
 
+    def __repr__(self) -> str:
+        return (
+            "BridgeConfirmationResponse("
+            f"request_id={self.request_id!r}, status={self.status!r})"
+        )
 
-@dataclass(frozen=True, slots=True)
+
+@dataclass(frozen=True, slots=True, repr=False)
 class BridgePreparationResponse:
     """Complete trusted-confirmation copy plus source-free exact target metadata."""
 
@@ -278,6 +291,8 @@ class BridgePreparationResponse:
     conversation_id: str
     canvas_id: str
     revision_id: str
+    canvas_title: str
+    revision_number: int
     complete_text: str | None = field(default=None, repr=False)
     filename: str | None = None
     mime_type: str | None = None
@@ -291,6 +306,17 @@ class BridgePreparationResponse:
             validate_opaque_identifier(
                 getattr(self, name), field_name=name.replace("_", " ")
             )
+        validate_utf8_text(
+            self.canvas_title, limit=4 * 1024, field_name="Canvas title"
+        )
+        if not self.canvas_title:
+            raise ValueError("Canvas title must not be empty")
+        if (
+            not isinstance(self.revision_number, int)
+            or isinstance(self.revision_number, bool)
+            or self.revision_number < 1
+        ):
+            raise ValueError("invalid Canvas revision number")
         if self.complete_text is not None:
             limit = (
                 CanvasLimits().submit_payload_bytes
@@ -309,6 +335,12 @@ class BridgePreparationResponse:
             or self.byte_size > CanvasLimits().download_payload_bytes
         ):
             raise ValueError("invalid bridge preparation byte size")
+
+    def __repr__(self) -> str:
+        return (
+            "BridgePreparationResponse("
+            f"request_id={self.request_id!r}, kind={self.kind!r}, payload=<redacted>)"
+        )
 
 
 class CanvasGatewayAuthority(Protocol):
@@ -398,6 +430,7 @@ class _BridgePendingRecord:
     preparation: object | None
     expires_at: float
     expiry_handle: asyncio.TimerHandle | None = None
+    cancelled: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 @dataclass(slots=True, repr=False)
@@ -1352,20 +1385,44 @@ class CanvasGateway:
                 payload_digest=_bridge_payload_digest(bridge_request.value),
                 preparation=None,
                 expires_at=min(
-                    session.expires_at, self._clock() + _ACTION_TTL_SECONDS
+                    session.expires_at,
+                    self._clock() + self._bridge_settlement_ttl_seconds,
                 ),
             )
             session.pending_bridge = placeholder
+            try:
+                self._schedule_pending_bridge_expiry(session, placeholder)
+            except Exception:  # noqa: BLE001 - fail closed without retaining guards
+                self._clear_pending_bridge(session, expected=placeholder)
+                return _error_response("bridge_refused", 503)
+        prepare_task = asyncio.create_task(
+            _maybe_await(self._authority.prepare_bridge(session.scope, bridge_request))
+        )
+        cancelled_task = asyncio.create_task(placeholder.cancelled.wait())
         try:
-            prepared = await _maybe_await(
-                self._authority.prepare_bridge(session.scope, bridge_request)
+            remaining = max(0.0, placeholder.expires_at - self._clock())
+            done, _pending = await asyncio.wait(
+                {prepare_task, cancelled_task},
+                timeout=remaining,
+                return_when=asyncio.FIRST_COMPLETED,
             )
+            if prepare_task not in done:
+                prepare_task.cancel()
+                await asyncio.gather(prepare_task, return_exceptions=True)
+                self._clear_pending_bridge(session, expected=placeholder)
+                return _error_response("bridge_refused", 409)
+            prepared = prepare_task.result()
         except asyncio.CancelledError:
+            prepare_task.cancel()
+            await asyncio.gather(prepare_task, return_exceptions=True)
             self._clear_pending_bridge(session, expected=placeholder)
             raise
         except Exception:  # noqa: BLE001 - preparation failures remain source-free
             self._clear_pending_bridge(session, expected=placeholder)
             return _error_response("bridge_refused", 409)
+        finally:
+            cancelled_task.cancel()
+            await asyncio.gather(cancelled_task, return_exceptions=True)
         if (
             not isinstance(prepared, tuple)
             or len(prepared) != 2
@@ -1389,12 +1446,16 @@ class CanvasGateway:
                 self._clear_pending_bridge(session, expected=placeholder)
                 return _error_response("bridge_refused", 409)
             placeholder.preparation = preparation
-            try:
-                self._schedule_pending_bridge_expiry(session, placeholder)
-            except Exception:  # noqa: BLE001 - fail closed without retaining guards
+            expires_in_seconds = max(0.0, placeholder.expires_at - self._clock())
+            if expires_in_seconds <= 0:
                 self._clear_pending_bridge(session, expected=placeholder)
-                return _error_response("bridge_refused", 503)
-        return web.json_response(_bridge_preparation_wire(presentation))
+                return _error_response("bridge_refused", 409)
+        return web.json_response(
+            _bridge_preparation_wire(
+                presentation,
+                expires_in_seconds=expires_in_seconds,
+            )
+        )
 
     async def _bridge(self, request: web.Request) -> web.Response:
         session = self._require_session(request, csrf=True)
@@ -1901,6 +1962,7 @@ class CanvasGateway:
         handle = pending.expiry_handle
         pending.expiry_handle = None
         pending.preparation = None
+        pending.cancelled.set()
         if handle is not None and not handle.cancelled():
             handle.cancel()
 
@@ -2042,17 +2104,24 @@ def _bridge_confirmation_response(result: BridgeConfirmationResponse) -> web.Res
     return web.json_response({"request_id": result.request_id, "status": result.status})
 
 
-def _bridge_preparation_wire(result: BridgePreparationResponse) -> dict[str, object]:
+def _bridge_preparation_wire(
+    result: BridgePreparationResponse,
+    *,
+    expires_in_seconds: float,
+) -> dict[str, object]:
     return {
         "request_id": result.request_id,
         "kind": result.kind,
         "conversation_id": result.conversation_id,
         "canvas_id": result.canvas_id,
         "revision_id": result.revision_id,
+        "canvas_title": result.canvas_title,
+        "revision_number": result.revision_number,
         "complete_text": result.complete_text,
         "filename": result.filename,
         "mime_type": result.mime_type,
         "byte_size": result.byte_size,
+        "expires_in_seconds": expires_in_seconds,
     }
 
 

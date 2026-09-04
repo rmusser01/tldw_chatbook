@@ -1203,6 +1203,8 @@ def test_download_preparation_exposes_safe_metadata_without_retaining_bytes() ->
     assert presentation.mime_type == "application/json"
     assert presentation.byte_size == 13
     assert presentation.complete_text == '{"answer":42}'
+    assert presentation.canvas_title == "Canvas"
+    assert presentation.revision_number == 1
     assert '{"answer":42}' not in repr(prepared)
 
 

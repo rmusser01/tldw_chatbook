@@ -107,7 +107,10 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
           <h2 id="bridge-heading">Confirm Canvas action</h2>
           <p id="bridge-summary">Review the complete request before allowing it.</p>
         </div>
-        <span id="bridge-kind" class="state-badge">Confirmation</span>
+        <div class="bridge-status">
+          <span id="bridge-kind" class="state-badge">Confirmation</span>
+          <span id="bridge-expiry" class="bridge-expiry" aria-live="polite"></span>
+        </div>
       </header>
       <dl id="bridge-metadata" class="bridge-metadata">
         <div><dt>Target</dt><dd id="bridge-target"></dd></div>
@@ -123,8 +126,8 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       <footer class="bridge-actions">
         <button id="bridge-cancel-button" type="button">Cancel</button>
         <button id="bridge-copy-button" type="button">Copy result</button>
-        <button id="bridge-retry-button" type="button" hidden>Retry</button>
-        <button id="bridge-switch-button" type="button" hidden>Switch to chat</button>
+        <button id="bridge-retry-button" type="button" hidden>Retry confirmation</button>
+        <button id="bridge-return-button" type="button" hidden>Close Canvas and return</button>
         <button id="bridge-confirm-button" class="primary-action" type="button">Confirm</button>
       </footer>
     </section>

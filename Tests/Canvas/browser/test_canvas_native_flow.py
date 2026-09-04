@@ -535,13 +535,15 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
             run_id="confirmation-run",
         )
 
-    source = """<!doctype html><html><body>
+    source = """<!doctype html><html><head><title>Bridge tools</title></head><body>
     <button id="submit-text">Submit text</button>
     <button id="submit-json">Submit JSON</button>
+    <button id="submit-max">Submit maximum text</button>
     <button id="download-text">Download text</button>
     <script>
       document.getElementById("submit-text").addEventListener("click", () => canvas.submit("  exact\\ntext  "));
       document.getElementById("submit-json").addEventListener("click", () => canvas.submit({z: 1, a: [true, null]}));
+      document.getElementById("submit-max").addEventListener("click", () => canvas.submit("x".repeat(16 * 1024)));
       document.getElementById("download-text").addEventListener("click", () => canvas.download({filename: " result.txt ", mime_type: "text/plain", data: "full result\\n"}));
     </script></body></html>"""
     authority = NativeConsoleCanvasAuthority(
@@ -570,6 +572,15 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
         )
         page = await browser.new_page(viewport={"width": 1200, "height": 780})
         page.set_default_timeout(7_000)
+        prepare_request_ids: list[str] = []
+        page.on(
+            "request",
+            lambda request: prepare_request_ids.append(
+                request.post_data_json["request"]["request_id"]
+            )
+            if request.url.endswith("/api/bridge/prepare")
+            else None,
+        )
         await page.add_init_script(
             """(() => {
               const revoke = URL.revokeObjectURL.bind(URL);
@@ -580,6 +591,7 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
                 window.__canvasCopiedText = text.value.slice(text.selectionStart, text.selectionEnd);
                 return true;
               };
+              window.close = () => { window.__canvasCloseAttempted = true; };
             })();"""
         )
         await page.goto(launch.browser_url)
@@ -590,8 +602,13 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
         assert await page.evaluate("document.activeElement.id") == "bridge-cancel-button"
         assert await page.locator("#bridge-complete-text").input_value() == "  exact\ntext  "
         assert await page.locator("#bridge-target").text_content() == (
-            f"Conversation {session_id} · Canvas {created.canvas_id} · Revision {created.revision_id}"
+            f"Conversation {session_id} · Canvas “Bridge tools” · Revision 1 · "
+            f"Canvas ID {created.canvas_id} · Revision ID {created.revision_id}"
         )
+        assert await page.locator("#bridge-expiry").text_content() in {
+            "Review expires in 5:00",
+            "Review expires in 4:59",
+        }
         assert await page.locator(".canvas-toolbar").get_attribute("inert") is not None
         await page.get_by_role("button", name="Copy result").click()
         assert await page.evaluate("window.__canvasCopiedText") == "  exact\ntext  "
@@ -601,6 +618,7 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
 
         await frame.get_by_role("button", name="Submit text").click()
         await page.get_by_role("button", name="Send to composer").click()
+        await dialog.wait_for(state="hidden")
         await page.get_by_text("Draft inserted · Review it in Chatbook before sending.", exact=True).wait_for()
         assert drafts == ["  exact\ntext  "]
 
@@ -611,7 +629,41 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
         await page.get_by_text("The Chatbook draft changed. Nothing was inserted.", exact=True).wait_for()
         assert await page.get_by_role("button", name="Copy result").is_visible()
         assert drafts == ["  exact\ntext  "]
-        await page.keyboard.press("Escape")
+        refused_request_id = prepare_request_ids[-1]
+        composer["generation"] = 1
+        await page.get_by_role("button", name="Retry confirmation").click()
+        await page.get_by_role("dialog", name="Send result to chat").wait_for()
+        assert prepare_request_ids[-1] != refused_request_id
+        assert await page.locator("#bridge-complete-text").input_value() == '{"a":[true,null],"z":1}'
+        await page.get_by_role("button", name="Send to composer").click()
+        await dialog.wait_for(state="hidden")
+        await page.get_by_text("Draft inserted · Review it in Chatbook before sending.", exact=True).wait_for()
+        assert drafts == ["  exact\ntext  ", '{"a":[true,null],"z":1}']
+
+        await frame.get_by_role("button", name="Submit maximum text").click()
+        await page.get_by_role("dialog", name="Send result to chat").wait_for()
+        assert len(await page.locator("#bridge-complete-text").input_value()) == 16 * 1024
+        assert await page.locator("#bridge-expiry").text_content() in {
+            "Review expires in 5:00",
+            "Review expires in 4:59",
+        }
+        async with page.expect_response(
+            lambda response: response.url.endswith("/api/bridge")
+        ):
+            await page.keyboard.press("Escape")
+
+        await frame.get_by_role("button", name="Submit JSON").click()
+        await page.get_by_role("dialog", name="Send result to chat").wait_for()
+        composer["generation"] += 1
+        await page.get_by_role("button", name="Send to composer").click()
+        await page.get_by_text("The Chatbook draft changed. Nothing was inserted.", exact=True).wait_for()
+        await page.get_by_role("button", name="Close Canvas and return").click()
+        await page.get_by_text(
+            "This browser could not return to Chatbook automatically. Return to the matching Chatbook conversation; the result was not inserted.",
+            exact=True,
+        ).wait_for()
+        assert await page.evaluate("window.__canvasCloseAttempted === true")
+        assert await page.locator(".canvas-toolbar").get_attribute("inert") is None
 
         await frame.get_by_role("button", name="Download text").click()
         await page.get_by_role("dialog", name="Download generated file").wait_for()
@@ -633,6 +685,98 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
             await page.screenshot(path=output / "canvas-confirmation-desktop.png")
             await page.set_viewport_size({"width": 390, "height": 844})
             await page.screenshot(path=output / "canvas-confirmation-narrow.png")
+        await browser.close()
+    await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_trusted_shell_rejects_forged_bridge_values_before_server_preparation() -> None:
+    authority = _NativeFlowAuthority()
+    authority.publish("revision-1", sequence=1)
+    gateway = CanvasGateway(authority=authority)
+    launch = await gateway.open_shell(_scope("revision-1"))
+
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(
+            headless=True,
+            executable_path=_chromium_executable(playwright.chromium),
+        )
+        page = await browser.new_page(viewport={"width": 1000, "height": 700})
+        prepare_requests: list[str] = []
+        page.on(
+            "request",
+            lambda request: prepare_requests.append(request.url)
+            if request.url.endswith("/api/bridge/prepare")
+            else None,
+        )
+        await page.add_init_script(
+            """(() => {
+              const NativeMessageChannel = MessageChannel;
+              window.MessageChannel = class extends NativeMessageChannel {
+                constructor() {
+                  super();
+                  window.__canvasShellPort = this.port1;
+                  const nativePost = this.port1.postMessage.bind(this.port1);
+                  this.port1.postMessage = (message, transfer) => {
+                    if (message && message.nonce) window.__canvasLoadNonce = message.nonce;
+                    return nativePost(message, transfer);
+                  };
+                }
+              };
+            })();"""
+        )
+        await page.goto(launch.browser_url)
+        await page.wait_for_function("() => Boolean(window.__canvasLoadNonce)")
+
+        for forged in (
+            "outer-extra",
+            "nonfinite",
+            "cycle",
+            "deep",
+            "oversize",
+            "control-name",
+            "fake-raster",
+            "invalid-json-download",
+        ):
+            before = len(prepare_requests)
+            await page.evaluate(
+                """(kind) => {
+                  let value = "safe";
+                  if (kind === "nonfinite") value = {answer: Number.POSITIVE_INFINITY};
+                  if (kind === "cycle") { value = {}; value.self = value; }
+                  if (kind === "deep") {
+                    value = "leaf";
+                    for (let index = 0; index < 17; index += 1) value = [value];
+                  }
+                  if (kind === "oversize") value = "x".repeat(16 * 1024 + 1);
+                  let message = {
+                    type: "canvas:bridge-request",
+                    nonce: window.__canvasLoadNonce,
+                    request_id: `forged-${kind}`,
+                    kind: "submit",
+                    value,
+                  };
+                  if (kind === "outer-extra") message.extra = true;
+                  if (kind === "control-name") {
+                    message.kind = "download";
+                    message.value = {filename: "\\nreport.txt", mime_type: "text/plain", data: "safe"};
+                  }
+                  if (kind === "fake-raster") {
+                    message.kind = "download";
+                    message.value = {filename: "pixel.png", mime_type: "image/png", data: "data:image/png;base64,PGh0bWw+"};
+                  }
+                  if (kind === "invalid-json-download") {
+                    message.kind = "download";
+                    message.value = {filename: "report.json", mime_type: "application/json", data: "not json"};
+                  }
+                  window.__canvasShellPort.onmessage({data: message});
+                }""",
+                forged,
+            )
+            await page.wait_for_timeout(75)
+            assert len(prepare_requests) == before, forged
+            assert await page.get_by_role("dialog").count() == 0, forged
         await browser.close()
     await gateway.aclose()
 

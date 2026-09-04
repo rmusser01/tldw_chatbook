@@ -80,6 +80,20 @@
     "script": "String.prototype.trim = () => { throw new Error('poisoned trim'); }; String.prototype.startsWith = () => false; String.prototype.endsWith = () => false; String.prototype.split = () => ['poisoned']; String.prototype.toLowerCase = () => 'poisoned'; String.prototype.charCodeAt = () => 0; RegExp.prototype.test = () => false; Array.prototype.indexOf = () => -1; canvas.download({filename: 'report.txt', mime_type: 'text/plain', data: 'safe'}); document.getElementById('status').textContent = 'download validation intact';"
   },
   {
+    "name": "download_rejects_forged_raster_signature",
+    "expected": "ready",
+    "expected_text": "forged raster refused",
+    "expected_bridge_kinds": [],
+    "script": "try { canvas.download({filename: 'pixel.png', mime_type: 'image/png', data: 'data:image/png;base64,PGh0bWw+'}); } catch (_) { document.getElementById('status').textContent = 'forged raster refused'; }"
+  },
+  {
+    "name": "download_rejects_raw_filename_control_before_trim",
+    "expected": "ready",
+    "expected_text": "control refused",
+    "expected_bridge_kinds": [],
+    "script": "try { canvas.download({filename: '\\nreport.txt', mime_type: 'text/plain', data: 'safe'}); } catch (_) { document.getElementById('status').textContent = 'control refused'; }"
+  },
+  {
     "name": "bridge_spoofing_and_typed_submit",
     "expected": "ready",
     "expected_text": "typed submit requested",

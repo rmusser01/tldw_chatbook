@@ -16,6 +16,7 @@ from .limits import (
     CanvasLimits,
     DecodedDataUrl,
     decode_data_url,
+    raster_signature_matches,
     validate_asset_payloads,
     validate_count,
     validate_utf8_text,
@@ -28,7 +29,6 @@ from .models import (
     RenderAsset,
     RenderNode,
 )
-
 
 _HTML_NAMESPACE = "http://www.w3.org/1999/xhtml"
 _SVG_NAMESPACE = "http://www.w3.org/2000/svg"
@@ -1229,7 +1229,7 @@ def _compile_asset(value: str, number: int, location: str) -> RenderAsset:
             "Image asset MIME type is not supported by Canvas V1.",
             location,
         )
-    if not _image_signature_matches(decoded.mime_type, decoded.data):
+    if not raster_signature_matches(decoded.mime_type, decoded.data):
         _fail(
             "asset-signature",
             "Image asset bytes do not match the declared MIME type.",
@@ -1238,18 +1238,6 @@ def _compile_asset(value: str, number: int, location: str) -> RenderAsset:
     return RenderAsset(
         asset_id=f"asset-{number}", mime_type=decoded.mime_type, data=decoded.data
     )
-
-
-def _image_signature_matches(mime_type: str, data: bytes) -> bool:
-    if mime_type == "image/png":
-        return data.startswith(b"\x89PNG\r\n\x1a\n")
-    if mime_type == "image/jpeg":
-        return data.startswith(b"\xff\xd8\xff")
-    if mime_type == "image/gif":
-        return data.startswith((b"GIF87a", b"GIF89a"))
-    if mime_type == "image/webp":
-        return len(data) >= 12 and data.startswith(b"RIFF") and data[8:12] == b"WEBP"
-    return False
 
 
 def _compile_stylesheet(css: str, location: str) -> tuple[_CompiledCssRule, ...]:

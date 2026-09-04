@@ -14,6 +14,7 @@ from .limits import (
     CanvasLimits,
     JsonValue,
     decode_data_url,
+    raster_signature_matches,
     sha256_utf8,
     validate_asset_payloads,
     validate_count,
@@ -293,7 +294,7 @@ class CanvasRenderPlan:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class CanvasBridgeRequest:
     """One untrusted browser-to-shell bridge request with a closed V1 schema."""
 
@@ -365,8 +366,14 @@ class CanvasBridgeRequest:
             raise ValueError("Canvas bridge request is not a download request")
         return _decode_download_payload(self.value, limits=CanvasLimits())
 
+    def __repr__(self) -> str:
+        return (
+            "CanvasBridgeRequest("
+            f"request_id={self.request_id!r}, kind={self.kind!r}, payload=<redacted>)"
+        )
 
-@dataclass(frozen=True, slots=True)
+
+@dataclass(frozen=True, slots=True, repr=False)
 class CanvasDownloadPayload:
     """Sanitized passive browser download with decoded bytes kept out of repr."""
 
@@ -374,6 +381,9 @@ class CanvasDownloadPayload:
     mime_type: str
     data: bytes = field(repr=False)
     text_preview: str | None = field(default=None, repr=False)
+
+    def __repr__(self) -> str:
+        return f"CanvasDownloadPayload(mime_type={self.mime_type!r}, payload=<redacted>)"
 
 
 @dataclass(frozen=True, slots=True)
@@ -446,6 +456,8 @@ def _decode_download_payload(value: object, *, limits: CanvasLimits) -> CanvasDo
     assert isinstance(raw_filename, str)
     assert isinstance(mime_type, str)
     assert isinstance(raw_data, str)
+    if _UNSAFE_FILENAME_CHARACTER.search(raw_filename):
+        raise CanvasLimitError("download filename contains unsafe characters")
     filename = raw_filename.strip()
     validate_utf8_text(filename, limit=255, field_name="download filename")
     if not filename:
@@ -470,6 +482,8 @@ def _decode_download_payload(value: object, *, limits: CanvasLimits) -> CanvasDo
         if decoded.mime_type != mime_type:
             raise CanvasLimitError("download image MIME type does not match request MIME type")
         data = decoded.data
+        if not raster_signature_matches(mime_type, data):
+            raise CanvasLimitError("download image bytes do not match declared signature")
         text_preview = None
     else:
         if raw_data.startswith("data:"):

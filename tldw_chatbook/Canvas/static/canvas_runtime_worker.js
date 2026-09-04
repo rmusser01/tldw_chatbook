@@ -805,13 +805,55 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
     record.value = cloned;
     push(state.bridges, record);
   }
+  function base64ValueAt(encoded, index) {
+    const code = apply(safeStringCharCodeAtMethod, encoded, [index]);
+    if (code >= 65 && code <= 90) return code - 65;
+    if (code >= 97 && code <= 122) return code - 71;
+    if (code >= 48 && code <= 57) return code + 4;
+    if (code === 43) return 62;
+    if (code === 47) return 63;
+    return -1;
+  }
+  function base64PrefixBytes(encoded) {
+    const bytes = makeList();
+    for (let index = 0; index < encoded.length && bytes.length < 12; index += 4) {
+      const first = base64ValueAt(encoded, index);
+      const second = base64ValueAt(encoded, index + 1);
+      const third = base64ValueAt(encoded, index + 2);
+      const fourth = base64ValueAt(encoded, index + 3);
+      push(bytes, (first << 2) | (second >> 4));
+      if (third >= 0) push(bytes, ((second & 15) << 4) | (third >> 2));
+      if (fourth >= 0) push(bytes, ((third & 3) << 6) | fourth);
+    }
+    return bytes;
+  }
+  function rasterSignatureMatches(mimeType, encoded) {
+    const bytes = base64PrefixBytes(encoded);
+    if (mimeType === "image/png") {
+      const png = [137, 80, 78, 71, 13, 10, 26, 10];
+      if (bytes.length < png.length) return false;
+      for (let index = 0; index < png.length; index += 1) if (bytes[index] !== png[index]) return false;
+      return true;
+    }
+    if (mimeType === "image/jpeg") return bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
+    if (mimeType === "image/gif") {
+      return bytes.length >= 6 && bytes[0] === 71 && bytes[1] === 73 && bytes[2] === 70 &&
+        bytes[3] === 56 && (bytes[4] === 55 || bytes[4] === 57) && bytes[5] === 97;
+    }
+    return mimeType === "image/webp" && bytes.length >= 12 &&
+      bytes[0] === 82 && bytes[1] === 73 && bytes[2] === 70 && bytes[3] === 70 &&
+      bytes[8] === 87 && bytes[9] === 69 && bytes[10] === 66 && bytes[11] === 80;
+  }
   function validateDownload(value) {
     if (!ownRecord(value, ["filename", "mime_type", "data"]) ||
         typeof value.filename !== "string" || typeof value.mime_type !== "string" || typeof value.data !== "string") {
       throw new TypeError("Canvas download request has an invalid schema");
     }
+    if (regexTest(/[\x00-\x1f\x7f]/, value.filename)) {
+      throw new TypeError("Canvas download filename is unsafe");
+    }
     const filename = stringTrim(value.filename);
-    if (!filename || utf8Length(filename) > 255 || regexTest(/[\\/\x00-\x1f\x7f<>:"|?*]/, filename) ||
+    if (!filename || utf8Length(filename) > 255 || regexTest(/[\\/<>:"|?*]/, filename) ||
         stringStartsWith(filename, ".") || stringEndsWith(filename, ".") || stringEndsWith(filename, " ")) {
       throw new TypeError("Canvas download filename is unsafe");
     }
@@ -843,6 +885,9 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
       const padding = stringEndsWith(encoded, "==") ? 2 : (stringEndsWith(encoded, "=") ? 1 : 0);
       if ((encoded.length / 4) * 3 - padding > MAX.downloadBytes) {
         throw new RangeError("Canvas download exceeds its byte limit");
+      }
+      if (!rasterSignatureMatches(value.mime_type, encoded)) {
+        throw new TypeError("Canvas image download signature does not match its MIME type");
       }
     } else {
       if (stringStartsWith(value.data, "data:") || utf8Length(value.data) > MAX.downloadBytes) {

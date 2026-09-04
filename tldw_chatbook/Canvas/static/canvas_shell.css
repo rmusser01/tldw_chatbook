@@ -187,6 +187,8 @@ h1 { margin: 0 0.25rem 0 0; font-size: 1rem; white-space: nowrap; }
 #bridge-complete-text { min-height: 8rem; border: 1px solid var(--line); border-radius: 0.3rem; padding: 0.75rem; line-height: 1.45; }
 .bridge-recovery { margin: 0; padding: 0.75rem 1rem; background: var(--warning-soft); border-top: 1px solid var(--warning); color: var(--text); }
 .bridge-recovery[hidden] { display: none; }
+.bridge-status { display: grid; justify-items: end; gap: 0.4rem; }
+.bridge-expiry { color: var(--muted); font-size: 0.78rem; white-space: nowrap; }
 .bridge-actions { display: flex; justify-content: flex-end; gap: 0.5rem; padding: 0.75rem 1rem; border-top: 1px solid var(--line); }
 .primary-action { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 700; }
 .primary-action:hover { background: var(--focus); }
