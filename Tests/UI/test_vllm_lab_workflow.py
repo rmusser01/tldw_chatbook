@@ -110,7 +110,7 @@ async def test_initial_vllm_setup_is_guided_and_blocks_start():
         assert "Start on this computer" in buttons
         assert "Connect to existing server" in buttons
         assert app.query_one("#vllm-port", Input).value == "8000"
-        assert app.query_one("#vllm-start-button", Button).disabled
+        assert app.query_one("#vllm-start", Button).disabled
         assert "GGUF" not in copy
         assert "checkpoint" not in copy.lower()
 
@@ -166,7 +166,7 @@ async def test_current_server_is_separate_from_modified_next_restart_without_pat
         assert "Local GPU" in current_copy
         assert "Modified for next restart" in next_copy
         assert changed_copy == "Changed: Model · Port · Advanced arguments"
-        assert not app.query_one("#vllm-restart-button", Button).disabled
+        assert not app.query_one("#vllm-restart", Button).disabled
         safe_projection = f"{current_copy} {next_copy} {changed_copy}"
         assert not any(
             canary in safe_projection
@@ -459,7 +459,7 @@ async def test_preflight_blocker_is_adjacent_and_start_enables_only_for_current_
             state=VllmReadinessState.NEEDS_ATTENTION,
             preflight=None,
         )
-        assert app.query_one("#vllm-start-button", Button).disabled
+        assert app.query_one("#vllm-start", Button).disabled
         assert "Check setup" in str(
             app.query_one("#vllm-start-blocker", Label).renderable
         )
@@ -470,9 +470,9 @@ async def test_lifecycle_projection_enables_stop_only_while_runtime_is_active():
     async with app.run_test(size=(120, 40)):
         view = app.query_one(VllmSetupView)
         view.project_lifecycle(active=True)
-        assert not app.query_one("#vllm-stop-button", Button).disabled
+        assert not app.query_one("#vllm-stop", Button).disabled
         view.project_lifecycle(active=False, status="process exited")
-        assert app.query_one("#vllm-stop-button", Button).disabled
+        assert app.query_one("#vllm-stop", Button).disabled
 
 
 def _ready_result(token) -> VllmProbeResult:
@@ -539,7 +539,7 @@ async def test_mounted_activity_renders_ready_and_expands_bounded_failure():
             connection=owner.snapshot(),
         )
         assert not app.query_one("#vllm-activity-details", Collapsible).collapsed
-        assert not app.query_one("#vllm-retry-button", Button).disabled
+        assert not app.query_one("#vllm-recovery-primary", Button).disabled
         visible = " ".join(str(label.renderable) for label in view.query(Label))
         assert "Expected chat model is unavailable" in visible
         assert not any(
@@ -692,14 +692,14 @@ async def test_live_owned_claim_keeps_stop_enabled_across_edit_and_screen_replac
         screen._vllm_draft = draft
         assert screen._vllm_owner.settle(token, _ready_result(token))
         screen._apply_vllm_view_state()
-        assert not view.query_one("#vllm-stop-button", Button).disabled
+        assert not view.query_one("#vllm-stop", Button).disabled
 
         view.query_one("#vllm-hf-model", Input).value = "org/edited-model"
         await pilot.pause()
         assert screen._vllm_owner.snapshot().state is (
             VllmReadinessState.NOT_CONFIGURED
         )
-        assert not view.query_one("#vllm-stop-button", Button).disabled
+        assert not view.query_one("#vllm-stop", Button).disabled
 
         await app.pop_screen()
         await pilot.pause()
@@ -719,7 +719,7 @@ async def test_live_owned_claim_keeps_stop_enabled_across_edit_and_screen_replac
             raise AssertionError("replacement vLLM setup view did not mount")
         replacement._apply_vllm_view_state()
         assert not replacement_views[0].query_one(
-            "#vllm-stop-button", Button
+            "#vllm-stop", Button
         ).disabled
 
         process.running = False
@@ -760,7 +760,7 @@ async def test_preflight_issue_settles_owner_view_and_recovery(monkeypatch):
         assert "Needs attention" in str(
             view.query_one("#vllm-readiness-state", Label).renderable
         )
-        assert not view.query_one("#vllm-retry-button", Button).disabled
+        assert not view.query_one("#vllm-recovery-primary", Button).disabled
 
         retry = screen._vllm_owner.begin(draft, runtime_owner="chatbook")
         success = VllmPreflightResult(
@@ -880,8 +880,8 @@ async def test_handoff_buttons_enable_only_for_current_verified_target():
     app = _VllmHost()
     async with app.run_test(size=(120, 40)):
         view = app.query_one(VllmSetupView)
-        use = app.query_one("#vllm-use-in-console-button", Button)
-        default = app.query_one("#vllm-make-default-button", Button)
+        use = app.query_one("#vllm-use-console", Button)
+        default = app.query_one("#vllm-make-default", Button)
         assert use.disabled and default.disabled
 
         draft = VllmLaunchDraft(
@@ -910,6 +910,58 @@ async def test_handoff_buttons_enable_only_for_current_verified_target():
             connection=owner.snapshot(),
         )
         assert use.disabled and default.disabled
+
+
+@pytest.mark.parametrize(
+    ("state", "target_id"),
+    [
+        (VllmReadinessState.READY_TO_START, "vllm-start"),
+        (VllmReadinessState.LAUNCHING, "vllm-stop"),
+        (VllmReadinessState.LOADING_MODEL, "vllm-stop"),
+        (VllmReadinessState.READY, "vllm-use-console"),
+        (VllmReadinessState.NEEDS_ATTENTION, "vllm-recovery-primary"),
+    ],
+)
+async def test_explicit_vllm_state_transition_focuses_phase_action(state, target_id):
+    """Lifecycle focus lands on the action that advances or repairs the state."""
+
+    app = _VllmHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        view = app.query_one(VllmSetupView)
+        draft = replace(view.draft, model_value="org/model")
+        owner = VllmConnectionOwner()
+        token = owner.begin(draft, runtime_owner="chatbook")
+        preflight = VllmPreflightResult(
+            generation=token.generation,
+            fingerprint=token.fingerprint,
+            issues=(),
+            cli_path=Path("/safe/vllm"),
+        )
+        runtime_active = state in {
+            VllmReadinessState.LAUNCHING,
+            VllmReadinessState.LOADING_MODEL,
+            VllmReadinessState.READY,
+        }
+        connection = replace(owner.snapshot(), state=state)
+        if state is VllmReadinessState.READY:
+            _bind_local_claim(owner, token)
+            assert owner.settle(token, _ready_result(token))
+            connection = owner.snapshot()
+        elif state is VllmReadinessState.NEEDS_ATTENTION:
+            preflight = replace(
+                preflight,
+                issues=(VllmIssue("model_missing", "model"),),
+            )
+        view.apply_state(
+            draft=draft,
+            state=state,
+            preflight=preflight,
+            connection=connection,
+            runtime_active=runtime_active,
+        )
+        view.focus_state_action(state)
+        await pilot.pause()
+        assert app.focused.id == target_id
 
 
 async def test_vllm_handoff_stages_only_current_target_and_uses_normal_navigation(

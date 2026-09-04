@@ -62,6 +62,7 @@ from ...Widgets.ModelArtifacts import (
     ManagedGGUFRuntimeChoiceModal,
     ModelInstallModal,
 )
+from ..Lab_Modules.lab_rail_layout import LAB_RAIL_INSPECTOR, LAB_RAIL_LEFT
 from ..Lab_Modules.lab_server_status import (
     LAB_SERVER_SOURCES,
     LabServerRow,
@@ -2565,17 +2566,7 @@ class LLMScreen(LabScreen):
         )
         if not focus:
             return
-        focus_id = {
-            VllmReadinessState.LAUNCHING: "#vllm-stop-button",
-            VllmReadinessState.LOADING_MODEL: "#vllm-stop-button",
-            VllmReadinessState.NEEDS_ATTENTION: "#vllm-retry-button",
-            VllmReadinessState.READY: "#vllm-use-in-console-button",
-        }.get(state)
-        if focus_id is not None:
-            try:
-                view.query_one(focus_id, Button).focus()
-            except Exception:
-                pass
+        view.focus_state_action(state)
 
     def _selected_vllm_profile(self) -> VllmLaunchProfileV1:
         return next(
@@ -4283,6 +4274,8 @@ class LLMScreen(LabScreen):
         self._replay_remote_runtime_handoff()
         self._replay_pending_installed_reveal()
         self._apply_vllm_view_state(focus=False)
+        if self.llm_window is not None and self.llm_window.active_view == "vllm":
+            self.call_after_refresh(self._adapt_vllm_rails)
 
     def _hydrate_model_install_progress(self) -> None:
         """Re-apply selected-model context and progress after a recompose.
@@ -4363,6 +4356,28 @@ class LLMScreen(LabScreen):
             row.set_class(
                 getattr(row, "lab_view_key", None) == active_view, "is-active"
             )
+        if active_view == "vllm":
+            self.call_after_refresh(self._adapt_vllm_rails)
+
+    def on_resize(self) -> None:
+        """Re-evaluate vLLM rails after terminal geometry changes."""
+
+        if self.llm_window is not None and self.llm_window.active_view == "vllm":
+            self.call_after_refresh(self._adapt_vllm_rails)
+
+    def _adapt_vllm_rails(self) -> None:
+        """Collapse constrained rails through the frame's persisted action."""
+
+        view = self._vllm_view()
+        if view is None or not view.is_attached:
+            return
+        width = view.size.width
+        if width <= 70 and not self.rail_layout.is_collapsed(LAB_RAIL_INSPECTOR):
+            self.toggle_lab_rail(LAB_RAIL_INSPECTOR)
+            self.call_after_refresh(self._adapt_vllm_rails)
+            return
+        if width <= 55 and not self.rail_layout.is_collapsed(LAB_RAIL_LEFT):
+            self.toggle_lab_rail(LAB_RAIL_LEFT)
 
     @on(Button.Pressed, f".{LAB_RAIL_ROW_CLASS}")
     def _handle_rail_press(self, event: Button.Pressed) -> None:

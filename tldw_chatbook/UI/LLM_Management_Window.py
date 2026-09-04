@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Callable
 # 3rd-Party Imports
 from textual import on
 from textual.app import ComposeResult, compose as compose_widgets
-from textual.binding import Binding
 from textual.containers import Container, VerticalScroll, Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.message import Message
@@ -549,22 +548,6 @@ class LLMManagementWindow(Container):
         )
         for provider in GGUF_PROVIDERS
     }
-
-    # htop-style view cycling (single printable keys; focused text inputs
-    # consume them first, so forms are unaffected). See ADR-031.
-    BINDINGS = [
-        Binding("[", "prev_llm_view", "Previous view", show=False),
-        Binding("]", "next_llm_view", "Next view", show=False),
-        Binding("1", "jump_view(0)", "View 1", show=False),
-        Binding("2", "jump_view(1)", "View 2", show=False),
-        Binding("3", "jump_view(2)", "View 3", show=False),
-        Binding("4", "jump_view(3)", "View 4", show=False),
-        Binding("5", "jump_view(4)", "View 5", show=False),
-        Binding("6", "jump_view(5)", "View 6", show=False),
-        Binding("7", "jump_view(6)", "View 7", show=False),
-        Binding("8", "jump_view(7)", "View 8", show=False),
-        Binding("9", "jump_view(8)", "View 9", show=False),
-    ]
 
     def __init__(
         self,

@@ -6,8 +6,10 @@ from dataclasses import replace
 
 from textual import on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.message import Message
+from textual.widget import Widget
 from textual.widgets import Button, Collapsible, Input, Label, Select, TextArea
 
 from .vllm_connection import VllmConnectionSnapshot
@@ -30,12 +32,33 @@ from .vllm_setup import (
 class VllmSetupView(VerticalScroll):
     """Collect a vLLM draft and render only current preflight evidence."""
 
+    BINDINGS = [
+        Binding("tab", "vllm_focus(1)", show=False, priority=True),
+        Binding("shift+tab", "vllm_focus(-1)", show=False, priority=True),
+    ]
+
+    _WIDTH_CLASSES = ("vllm-wide", "vllm-medium", "vllm-compact")
+    _FOCUS_TARGETS = {
+        VllmReadinessState.READY_TO_START: "vllm-start",
+        VllmReadinessState.LAUNCHING: "vllm-stop",
+        VllmReadinessState.LOADING_MODEL: "vllm-stop",
+        VllmReadinessState.READY: "vllm-use-console",
+        VllmReadinessState.NEEDS_ATTENTION: "vllm-recovery-primary",
+    }
+
     DEFAULT_CSS = """
     VllmSetupView > #vllm-local-setup,
     VllmSetupView > #vllm-existing-setup,
     VllmSetupView > #vllm-current-server,
     VllmSetupView > #vllm-next-restart {
         height: auto;
+    }
+    VllmSetupView > #vllm-next-action,
+    VllmSetupView > .vllm-mode-actions,
+    VllmSetupView > .vllm-profile-actions,
+    VllmSetupView > .vllm-source-actions,
+    VllmSetupView > .vllm-console-actions {
+        height: 3;
     }
     """
 
@@ -131,12 +154,22 @@ class VllmSetupView(VerticalScroll):
         self._rendering = False
 
     def compose(self) -> ComposeResult:
-        yield Label("Set up vLLM", classes="section-title")
+        yield Label("Set up vLLM / OPERATE", classes="section-title")
         yield Label(
             "Check the selected environment and model before Chatbook starts a local server.",
             classes="description",
         )
         yield Label("Setup incomplete", id="vllm-readiness-state")
+        with Horizontal(id="vllm-next-action", classes="vllm-action-bar"):
+            yield Button("Check setup", id="vllm-check-setup")
+            yield Button("Start", id="vllm-start", disabled=True)
+            yield Button("Stop", id="vllm-stop", disabled=True)
+            yield Button(
+                "Retry check", id="vllm-recovery-primary", disabled=True
+            )
+            yield Button("Restart with draft", id="vllm-restart", disabled=True)
+            yield Button("Use in Console", id="vllm-use-console", disabled=True)
+        yield Label("▼ more below — scroll", id="vllm-fold-cue")
         with Horizontal(classes="vllm-mode-actions"):
             yield Button("Start on this computer", id="vllm-start-local-button")
             yield Button(
@@ -216,40 +249,34 @@ class VllmSetupView(VerticalScroll):
             yield Label("Next restart configuration", classes="section-title")
             yield Label("", id="vllm-next-restart-state")
             yield Label("", id="vllm-next-restart-changes")
-        with Horizontal(classes="vllm-action-bar"):
-            yield Button("Check setup", id="vllm-check-setup-button")
-            yield Button("Start", id="vllm-start-button", disabled=True)
-            yield Button("Stop", id="vllm-stop-button", disabled=True)
-            yield Button("Retry check", id="vllm-retry-button", disabled=True)
-            yield Button(
-                "Restart with draft", id="vllm-restart-button", disabled=True
-            )
         yield Label("No activity yet.", id="vllm-activity-summary")
-        with Collapsible(
+        activity = Collapsible(
             title="Activity details", id="vllm-activity-details", collapsed=True
-        ):
+        )
+        activity._title.id = "vllm-activity-toggle"
+        with activity:
             yield Label("No activity yet.", id="vllm-activity-events")
-        with Horizontal(classes="vllm-action-bar"):
-            yield Button(
-                "Use in Console",
-                id="vllm-use-in-console-button",
-                disabled=True,
+        advanced = Collapsible(
+            title="Advanced options", id="vllm-advanced-options", collapsed=True
+        )
+        advanced._title.id = "vllm-advanced-toggle"
+        with advanced:
+            yield Label(
+                "Launch only · not saved in profiles.",
+                id="vllm-raw-arguments-scope",
             )
+            yield TextArea(id="vllm-raw-arguments", classes="additional_args_textarea")
+        with Horizontal(classes="vllm-console-actions"):
             yield Button(
                 "Make default for new chats",
-                id="vllm-make-default-button",
+                id="vllm-make-default",
                 disabled=True,
             )
         yield Label(
             "Session only · restart uses your saved provider endpoint.",
             id="vllm-console-scope-copy",
         )
-        yield Label("Advanced options", classes="section_label")
-        yield Label(
-            "Launch only · not saved in profiles.",
-            id="vllm-raw-arguments-scope",
-        )
-        yield TextArea(id="vllm-raw-arguments", classes="additional_args_textarea")
+
 
     def apply_state(
         self,
@@ -326,7 +353,87 @@ class VllmSetupView(VerticalScroll):
         )
 
     def on_mount(self) -> None:
+        self._apply_width_class()
         self._render_projection()
+
+    def on_resize(self) -> None:
+        """Recompose layout from the allocated vLLM body width."""
+
+        self._apply_width_class()
+
+    def _apply_width_class(self) -> None:
+        """Apply exactly one width class from this mounted body's allocation."""
+
+        width = self.size.width
+        width_class = (
+            "vllm-compact"
+            if width <= 55
+            else "vllm-medium"
+            if width <= 70
+            else "vllm-wide"
+        )
+        for candidate in self._WIDTH_CLASSES:
+            self.set_class(candidate == width_class, candidate)
+        if self.is_mounted:
+            self.call_after_refresh(self._sync_fold_cue)
+
+    def _sync_fold_cue(self) -> None:
+        """Paint a cue when the current compact/medium viewport has more work."""
+
+        cue = self.query_one("#vllm-fold-cue", Label)
+        cue.display = (
+            not self.has_class("vllm-wide")
+            and self.virtual_size.height > self.size.height
+        )
+
+    def _restore_top_scan_if_unfocused(self) -> None:
+        """Keep readiness/action in view unless focus owns a deeper form row."""
+
+        focused = self.app.focused
+        if focused is not None and self in focused.ancestors_with_self:
+            return
+        self.scroll_home(animate=False)
+
+    def _focusable_controls(self) -> tuple[Widget, ...]:
+        """Return the visible, enabled Tab order owned by this provider pane."""
+
+        return tuple(
+            widget
+            for widget in self.query("*").results(Widget)
+            if widget.can_focus
+            and all(ancestor.display for ancestor in widget.ancestors_with_self)
+            and not widget.disabled
+        )
+
+    def action_vllm_focus(self, direction: int) -> None:
+        """Cycle Tab focus within vLLM, excluding every hidden provider pane."""
+
+        controls = self._focusable_controls()
+        if not controls:
+            return
+        focused = self.app.focused
+        try:
+            index = controls.index(focused)
+        except ValueError:
+            index = -1 if direction > 0 else 0
+        target = controls[(index + direction) % len(controls)]
+        target.focus(scroll_visible=True)
+
+    def focus_state_action(self, state: VllmReadinessState) -> None:
+        """Focus the stable action for an explicit lifecycle transition."""
+
+        target_id = self._FOCUS_TARGETS.get(state)
+        if target_id is None:
+            return
+        try:
+            target = self.query_one(f"#{target_id}", Button)
+        except Exception:
+            return
+        if (
+            all(ancestor.display for ancestor in target.ancestors_with_self)
+            and not target.disabled
+        ):
+            target.focus(scroll_visible=True)
 
     @property
     def draft(self) -> VllmLaunchDraft:
@@ -399,12 +506,13 @@ class VllmSetupView(VerticalScroll):
                 and self._preflight.fingerprint == semantic_fingerprint(self._draft)
                 and self._state is VllmReadinessState.READY_TO_START
             )
-            start = self.query_one("#vllm-start-button", Button)
-            stop = self.query_one("#vllm-stop-button", Button)
-            retry = self.query_one("#vllm-retry-button", Button)
-            restart = self.query_one("#vllm-restart-button", Button)
-            use_in_console = self.query_one("#vllm-use-in-console-button", Button)
-            make_default = self.query_one("#vllm-make-default-button", Button)
+            start = self.query_one("#vllm-start", Button)
+            stop = self.query_one("#vllm-stop", Button)
+            retry = self.query_one("#vllm-recovery-primary", Button)
+            restart = self.query_one("#vllm-restart", Button)
+            use_in_console = self.query_one("#vllm-use-console", Button)
+            make_default = self.query_one("#vllm-make-default", Button)
+            check = self.query_one("#vllm-check-setup", Button)
             start.disabled = not (local and is_current_success and not self._runtime_active)
             stop.disabled = not self._runtime_active
             retry.disabled = self._state is not VllmReadinessState.NEEDS_ATTENTION
@@ -451,6 +559,29 @@ class VllmSetupView(VerticalScroll):
             restart.disabled = not (
                 show_current and dirty and local and is_current_success
             )
+            dirty_restart = bool(show_current and dirty)
+            check.display = (
+                not dirty_restart
+                and not self._runtime_active
+                and self._state
+                in {
+                    VllmReadinessState.NOT_CONFIGURED,
+                    VllmReadinessState.CHECKING,
+                    VllmReadinessState.READY_TO_START,
+                }
+            )
+            check.disabled = self._state is VllmReadinessState.CHECKING
+            start.display = bool(is_current_success and not self._runtime_active)
+            stop.display = self._runtime_active
+            retry.display = self._state is VllmReadinessState.NEEDS_ATTENTION
+            restart.display = dirty_restart
+            use_in_console.display = current_target
+            make_default.display = current_target
+            visible_primary_actions = sum(
+                button.display
+                for button in (check, start, stop, retry, restart, use_in_console)
+            )
+            self.set_class(visible_primary_actions > 1, "vllm-two-actions")
             self._render_readiness()
             blocker = self.query_one("#vllm-start-blocker", Label)
             if self._preflight and self._preflight.issues:
@@ -466,6 +597,8 @@ class VllmSetupView(VerticalScroll):
                 blocker.update(
                     "Setup checks passed. Start will launch a Chatbook-owned server."
                 )
+            self.call_after_refresh(self._sync_fold_cue)
+            self.call_after_refresh(self._restore_top_scan_if_unfocused)
         finally:
             self._rendering = False
 
@@ -587,15 +720,15 @@ class VllmSetupView(VerticalScroll):
                 self._change_draft(model_source=VllmModelSource.LOCAL_DIRECTORY)
             case "vllm-browse-local-model-directory-button":
                 self.post_message(self.LocalDirectoryBrowseRequested())
-            case "vllm-check-setup-button":
+            case "vllm-check-setup":
                 self.post_message(self.CheckRequested(self._draft))
-            case "vllm-start-button":
+            case "vllm-start":
                 self.post_message(self.StartRequested(self._draft))
-            case "vllm-stop-button":
+            case "vllm-stop":
                 self.post_message(self.StopRequested())
-            case "vllm-retry-button":
+            case "vllm-recovery-primary":
                 self.post_message(self.RetryRequested())
-            case "vllm-restart-button":
+            case "vllm-restart":
                 snapshot = self._current_launch_snapshot
                 if snapshot is not None:
                     self.post_message(
@@ -604,9 +737,9 @@ class VllmSetupView(VerticalScroll):
                             changed_launch_field_labels(snapshot, self._draft),
                         )
                     )
-            case "vllm-use-in-console-button":
+            case "vllm-use-console":
                 self.post_message(self.UseInConsoleRequested())
-            case "vllm-make-default-button":
+            case "vllm-make-default":
                 self.post_message(self.MakeDefaultRequested())
             case "vllm-profile-create-button":
                 name = self.query_one("#vllm-profile-name", Input).value
