@@ -84,10 +84,13 @@ Documented blind spots (be honest about what a census cannot see):
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import subprocess
 import sys
+import types
+import uuid
 from pathlib import Path
 
 import pytest
@@ -196,30 +199,70 @@ enabled = false
 api_key = "sk-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKL"
 """
 
-_CENSUS_SCRIPT = """
+def install_flag_time_snapshot(app_class: type, sink: list) -> None:
+    """Make ``app_class._ui_ready = True`` copy ``sys.modules`` into ``sink``.
+
+    Copies AT THE INSTANT the flag flips, synchronously inside the
+    assignment, not on the census's next poll tick. The app sets the flag
+    and keeps running its mount path, which arms 0.1s timers
+    (collections-capture wiring, audio service, workspace provisioning)
+    that are deferred past ``_ui_ready`` on purpose; when the loop is
+    starved after the flag on a slow runner the 5ms poll woke AFTER those
+    timers and counted their imports (task-31281: PR #2373 measured 973,
+    973, 977 on the same tree -- the 977 run carried five
+    ``Library.collections_capture_*`` modules that dev's own run did not).
+    A data descriptor on the class intercepts the instance assignment, so
+    the count is exactly what ADR-097 pins: resident at ``_ui_ready``.
+
+    Defined at module level so it has unit tests of its own; the census
+    subprocess embeds its source via ``inspect.getsource``.
+
+    Args:
+        app_class: The class whose ``_ui_ready`` attribute to intercept.
+        sink: Receives the module names once, on the first truthy set.
+    """
+
+    def _get(self):
+        return self.__dict__.get("_ui_ready_flag", False)
+
+    def _set(self, value):
+        self.__dict__["_ui_ready_flag"] = value
+        if value and not sink:
+            sink.extend(sys.modules)
+
+    app_class._ui_ready = property(_get, _set)
+
+
+_CENSUS_SCRIPT = (
+    """
 import asyncio
 import json
 import sys
 
 
+FLAG_TIME_MODULES: list = []
+
+
+"""
+    + inspect.getsource(install_flag_time_snapshot)
+    + """
+
 async def main() -> None:
     import tldw_chatbook.app
 
+    install_flag_time_snapshot(tldw_chatbook.app.TldwCli, FLAG_TIME_MODULES)
     app = tldw_chatbook.app.TldwCli()
     async with app.run_test(size=(120, 40)):
         while not getattr(app, "_ui_ready", False):
             await asyncio.sleep(0.005)
-        # Snapshot BEFORE iterating: background threads (tick syncs, catalog
-        # refresh) keep importing after _ui_ready, and iterating the live
-        # dict raised "dictionary changed size during iteration" -- an
-        # intermittent guardrails failure on PR #2255 and a sibling branch,
-        # 2026-08-31. A point-in-time copy is also the honest census: every
-        # module in it existed at the same instant.
-        modules_now = list(sys.modules)
+        # The copy taken by the setter is also the honest census: every
+        # module in it existed at the same instant, and iterating the live
+        # dict raised "dictionary changed size during iteration" (PR #2255,
+        # 2026-08-31).
         mods = sorted(
             m
-            for m in modules_now
-            if m.startswith("tldw_chatbook") and sys.modules[m] is not None
+            for m in FLAG_TIME_MODULES
+            if m.startswith("tldw_chatbook") and sys.modules.get(m) is not None
         )
         for m in mods:
             print("MOD:" + m, flush=True)
@@ -228,6 +271,7 @@ async def main() -> None:
 
 asyncio.run(main())
 """
+)
 
 
 def _boot_and_census(tmp_path: Path) -> list[str]:
@@ -346,3 +390,66 @@ def test_ui_ready_module_census_stays_at_the_pinned_size(
         f"{on_leg}. Something re-eagered them on the import OR mount leg -- "
         "the closure guards in Tests/Packaging name the intended seams."
     )
+
+
+# -- unit coverage for the flag-time snapshot (task-31281) --------------------
+
+
+def test_flag_time_snapshot_copies_modules_inside_the_assignment_and_only_once():
+    """The copy happens synchronously when the flag flips True, not while
+    it is False, and never again -- a later import or a second assignment
+    cannot grow it (the race the census used to lose on slow runners)."""
+
+    class _Dummy:
+        def __init__(self) -> None:
+            self._ui_ready = False
+
+    sink: list[str] = []
+    install_flag_time_snapshot(_Dummy, sink)
+    app = _Dummy()
+    assert app._ui_ready is False
+    assert sink == [], "constructing with False must not snapshot"
+
+    before = f"tldw_census_probe_before_{uuid.uuid4().hex}"
+    after = f"tldw_census_probe_after_{uuid.uuid4().hex}"
+    sys.modules[before] = types.ModuleType(before)
+    try:
+        app._ui_ready = True
+        assert app._ui_ready is True
+        assert before in sink, "snapshot taken inside the assignment"
+        sys.modules[after] = types.ModuleType(after)
+        app._ui_ready = True
+        assert after not in sink, "a second True never re-snapshots"
+        app._ui_ready = False
+        app._ui_ready = True
+        assert after not in sink, "nor does flipping back and forth"
+    finally:
+        sys.modules.pop(before, None)
+        sys.modules.pop(after, None)
+
+
+def test_flag_time_snapshot_is_per_instance_state_on_the_class():
+    """Two instances keep their own flag; the sink is filled by whichever
+    flips first (the census boots exactly one app, but the descriptor must
+    not leak one instance's readiness into another)."""
+
+    class _Dummy:
+        pass
+
+    sink: list[str] = []
+    install_flag_time_snapshot(_Dummy, sink)
+    first, second = _Dummy(), _Dummy()
+    first._ui_ready = True
+    assert first._ui_ready is True and second._ui_ready is False
+    assert sink, "first instance's flip filled the sink"
+
+
+def test_census_script_embeds_the_unit_tested_helper():
+    """The subprocess runs the SAME function the unit tests cover, not a
+    hand-copied variant that could drift."""
+    assert "def install_flag_time_snapshot(" in _CENSUS_SCRIPT
+    assert (
+        "install_flag_time_snapshot(tldw_chatbook.app.TldwCli, FLAG_TIME_MODULES)"
+        in _CENSUS_SCRIPT
+    )
+    compile(_CENSUS_SCRIPT, "<census>", "exec")
