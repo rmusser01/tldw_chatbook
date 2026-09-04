@@ -191,6 +191,41 @@ That does put three focus stops ahead of the pane's action buttons.
 A watchlist or briefing projection (not a reminder) still shows the older
 Type/Schedule rows unchanged — the grouped layout is reminder-specific.
 
+### Editing rows in place
+
+Click a row (or Tab to it and press Enter) to edit it where it sits,
+instead of opening the create/edit form. The dimmed `▾` next to a row's
+value marks it as editable; a row without one has no single-field write
+target and only changes through **Edit in full…** or the create form.
+
+- **Repeat**, **Timezone**, and `Runs on` open a dropdown pre-selected to
+  the current value; picking a new one commits immediately. **At** opens
+  a text box; press Enter to commit the typed value (the same forgiving
+  local-time parsing the create form uses).
+- **Escape** closes an open editor without saving — a plain cancel, not a
+  commit of whatever is currently showing.
+- A bad **At** value (unparseable text) commits nothing: the row shows
+  the error inline underneath and restores the last-saved value rather
+  than left holding your typo.
+- Only one of **Repeat** or **At** is ever editable at a time — a
+  one-time reminder's Repeat row and a recurring reminder's At row have
+  no sensible single-field target for the other schedule kind, so they
+  stay read-only rows until you switch kind via the full edit form.
+  `Notifications` never opens an editor for a reminder — see the
+  Frequency bullet above.
+- A row that is locked (a transfer is in flight, or the row's owner is a
+  dormant server-release copy waiting to arm) still responds to a click:
+  it shows the lock reason inline instead of silently doing nothing.
+- `Runs on`'s dropdown is the same transfer flow described under
+  "Moving a task between this device and the server", below — picking
+  the other owner runs the same refusal check and confirmation dialog,
+  just from the row itself rather than a button. Once a move is queued or
+  failed, its own **Cancel transfer** / **Retry transfer** buttons appear
+  directly under the row (the dropdown is unavailable while a move is in
+  flight — that is the locked state above). The pane's older Move/Cancel/
+  Retry buttons documented there keep working side by side with all of
+  this.
+
 ## Creating a scheduled task
 
 Press **c**, or click **Create ▾** in the Queue tab's rail header, to
@@ -364,6 +399,12 @@ already running, or, moving a `recurring_question` mirror to this
 device, the same local-health reason the Automations tab already
 surfaces.
 
+The `Runs on` row itself is a second way into the same flow: opening its
+dropdown and picking the other owner runs the same refusal check and
+confirmation dialog described below, with a refusal shown inline under
+the row instead of as a toast. Both surfaces drive the same transfer —
+use whichever is at hand.
+
 Clicking Move opens a confirmation listing anything worth knowing before
 you commit: an imminent or already-passed one-time run time ("server
 behavior this close to run time is unverified"), and, for a reminder,
@@ -512,27 +553,43 @@ skipped, the same events the server records for reconciliation.
 
 ### Automations tab — definition detail pane
 
-Highlighting a definition row opens a read-only detail pane alongside the
-list and its run history — the Automations tab's first per-row detail
-view. It shows the question text in a card at the top, then the same
+Highlighting a definition row opens a detail pane alongside the list and
+its run history — the Automations tab's first per-row detail view. A
+**Pause**/**Resume** button sits above the body, toggling the
+definition's lifecycle (Archive stays a kebab/list action, not this
+button); the pane shows the question text in a card next, then the same
 grouped-row layout as the reminder detail pane:
 
 - **Details** — `Runs on` (owner + transfer badge, same wording as the
-  reminder pane), `Model` (the pinned `provider/model`, or `auto` when
-  the definition pins nothing), `Generation` (always/only-new/never),
-  `Finding policy` (the preset name), and `Sources` (the selected library
-  sources, or "All searchable library" for the default scope). A row the
-  definition does not carry a value for reads **"Not set"** — a
-  definition authored on the server often carries none of these, and the
-  pane never fills the gap in with the create form's defaults.
+  reminder pane; its dropdown is the same transfer flow described under
+  "Moving a task between this device and the server"), `Model` (the
+  pinned `provider/model`, or `auto` when the definition pins nothing),
+  `Generation` (always/only-new/never), `Finding policy` (the preset
+  name), and `Sources` (the selected library sources, or "All searchable
+  library" for the default scope). A row the definition does not carry a
+  value for reads **"Not set"** — a definition authored on the server
+  often carries none of these, and the pane never fills the gap in with
+  the create form's defaults.
 - **Frequency** — the schedule summary (repeat/at/timezone, or the raw
-  cron expression for a custom schedule) and `Notifications`.
+  cron expression for a custom schedule) and `Notifications` (a real
+  On/Off toggle here, unlike a reminder's fixed "Inbox + toast" label).
 - **History** (collapsed by default) — the last run's outcome, total run
   count, unread results count, and a pointer to the Results tab. Those
   counts are this device's own execution record, so a server-owned
   definition reads "Kept on the server — see Run history" instead: only
   the server holds that definition's execution history, and the run
   history pane beside it is already showing it.
+
+Every Details/Frequency row except the schedule-kind mismatch (Repeat on
+a one-time definition, or At on a recurring one — same rule the reminder
+pane follows) edits in place the same way the reminder pane's rows do —
+see "Editing rows in place", above — with one addition: **Sources**
+opens three checkboxes (Media/Notes/Chats) plus an **Apply** button
+rather than a dropdown, since a checkbox has no single commit event of
+its own. Ticking every box and applying writes the explicit three-source
+selection, not "all searchable library" — pick **Edit in full…** if you
+want the scope to keep resolving to whatever sources are readable at
+each run rather than freezing today's three.
 
 The detail pane hides at narrow terminal widths, the same responsive rule
 the Queue tab's own detail pane already uses.
@@ -620,6 +677,30 @@ The default bound is `handler_timeout_seconds` under `[scheduling]` in
 `config.toml` (**300** seconds). Set it to `0` (or negative) to disable the
 bound entirely — every handler may then run as long as it likes, and a
 wedged handler will wedge the scheduler, which is why the default is on.
+
+*Verified against the schedules redesign PR-3 fix wave — 2026-09-03
+(docs pass against shipped code/tests, live check pending the redesign
+program's later PRs per spec §14: reminder Repeat/At/Timezone rows and
+recurring-question Model/Generation/Finding policy/Sources/Notifications
+rows now edit in place per "Editing rows in place" and "Automations tab
+— definition detail pane" above — commit-on-close for a Select, Enter to
+commit an Input, Escape to cancel without saving, a bad **At** value
+restoring the last-saved value with an inline error, and a locked row
+answering activation with its lock reason instead of going silent; the
+`Runs on` row's dropdown drives the same transfer_refusal → confirm
+dialog with warnings → begin_transfer flow the Move/Retry/Cancel buttons
+already used, as a second surface onto the same facade, coexisting with
+those buttons through this PR; and the definition pane's header
+Pause/Resume button is `set_definition_lifecycle`'s first UI caller,
+repainting optimistically and protected from a racing server pull by a
+lifecycle-scoped pull guard. Pinned by `Tests/UI/test_detail_value_row.py`,
+the Frequency/owner-row/lifecycle assertions added to
+`Tests/UI/test_schedules_workbench.py` and
+`Tests/UI/test_schedules_automations_tab.py`, and
+`Tests/Scheduling/test_scheduling_service.py` /
+`Tests/Scheduling/test_scheduled_tasks_db.py` /
+`Tests/Scheduling/test_sync_engine.py` for the edit bridge and pull
+guard.)*
 
 *Verified against the schedules redesign PR-2 final fix wave —
 2026-09-03 (docs pass against shipped code/tests, live check pending the

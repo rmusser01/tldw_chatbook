@@ -67,3 +67,23 @@ better shape that needs a second shape as a safety net.
 - The queue-as-forecast question from the same critique (lead with a
   next-24-hours timeline) is orthogonal to editor shape and remains open in
   the critique snapshot; this ADR neither adopts nor rejects it.
+
+## Amendment (2026-09-03)
+
+The modal remains the durable shape for creation, for multi-field surgery
+("Edit in full…" — question text, custom cron, scope rework), and as the
+narrow-width fallback where the detail pane is hidden; the width-cliff
+argument above still stands for all three, unchanged.
+
+A narrower carve-out ships alongside the redesign program's inspector-pane
+work: single-value rows in the detail pane (Repeat/At/Timezone/
+Notifications, and — recurring-question definitions only — Model/
+Generation/Finding policy/Sources, plus the header pause/resume affordance
+and the owner row's transfer dropdown) now edit in place via
+`DetailValueRow`'s activation/edit-swap API, committing or cancelling
+(Escape) without leaving the row. This does not reopen the three-shape
+comparison this ADR closed — a fixed-height row swap has none of the
+scrolling, discard-guard, or 80×24-floor costs that made the modal the only
+shape that worked everywhere for the *whole* form, so it was never inside
+the width-cliff argument to begin with. See
+`116-schedules-inspector-editing.md` for the full decision and rationale.
