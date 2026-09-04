@@ -38,6 +38,7 @@ class _NativeFlowAuthority:
     events: dict[str, CanvasGatewayEvent] = field(default_factory=dict)
     following: bool = True
     latest_revision: str = "revision-1"
+    temporary: bool = True
 
     def publish(
         self,
@@ -58,7 +59,7 @@ class _NativeFlowAuthority:
                 "sequence": sequence,
                 "source_bytes": 96,
                 "content_sha256": "a" * 64,
-                "temporary": True,
+                "temporary": self.temporary,
                 "origin_message_id": f"message-{sequence}",
                 "origin_turn_id": f"turn-{sequence}",
                 "notice": notice,
@@ -97,7 +98,7 @@ class _NativeFlowAuthority:
             content_sha256="a" * 64,
             origin_message_id=str(metadata.get("origin_message_id", "message-1")),
             origin_turn_id=str(metadata.get("origin_turn_id", "turn-1")),
-            temporary=True,
+            temporary=self.temporary,
             following=self.following,
         )
 
@@ -237,8 +238,10 @@ async def test_native_canvas_shell_follows_updates_and_keeps_pinned_revision() -
             "element => { element.hidden = true; }"
         )
 
+        authority.temporary = False
         await page.get_by_role("button", name="Pin revision").click()
         await page.get_by_text("Pinned", exact=True).wait_for()
+        await expect(page.locator("#temporary-badge")).to_be_hidden()
         authority.publish("revision-2", sequence=2)
         gateway.change_selection(
             browser_session_id="browser-native-flow", scope=_scope("revision-2")

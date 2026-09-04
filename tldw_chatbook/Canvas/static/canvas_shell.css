@@ -99,6 +99,8 @@ h1 { margin: 0 0.25rem 0 0; font-size: 1rem; white-space: nowrap; }
   font-variant-numeric: tabular-nums;
 }
 
+.state-badge[hidden] { display: none; }
+
 .state-follow { color: var(--success); }
 .state-pinned { color: var(--warning); background: var(--warning-soft); }
 .state-temporary { color: var(--warning); }
