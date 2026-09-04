@@ -371,6 +371,11 @@ from ...Chat.console_display_state import (
     console_staged_source_count,
     estimate_console_next_send_tokens,
 )
+from ...Chat.console_environment_state import (
+    EnvironmentSnapshot,
+    project_environment_section,
+    project_tasks_section,
+)
 from ...Chat.console_onboarding_state import (
     ConsoleSetupCardState,
     build_console_detected_server_action,
@@ -7593,6 +7598,31 @@ class ChatScreen(BaseAppScreen):
             readiness,
         )
 
+    def _console_environment_section_state(self) -> ConsoleInspectorSectionState:
+        """Build rows/summary for the Inspect rail's Environment section.
+
+        task-9: mounts the section with a static default projection --
+        ``EnvironmentSnapshot()``'s git tier is ``NOT_APPLICABLE``, so this
+        renders the quiet "No git workspace" row rather than an empty (thus
+        hidden) section. Task 11/12 replace this with the running
+        ``ConsoleEnvironmentController``'s current snapshot; this is
+        correct, visible interim behavior until that wiring lands.
+        """
+        from datetime import datetime as _datetime, timezone as _timezone
+
+        return project_environment_section(
+            EnvironmentSnapshot(), frozenset(), now=_datetime.now(_timezone.utc)
+        )
+
+    def _console_tasks_section_state(self) -> ConsoleInspectorSectionState:
+        """Build rows/summary for the Inspect rail's Tasks section.
+
+        task-9: a static default projection -- ``EnvironmentSnapshot()``'s
+        tasks tier is ``NOT_APPLICABLE``, so this renders no rows and the
+        section stays hidden until Task 11/12 wire a live backlog scan.
+        """
+        return project_tasks_section(EnvironmentSnapshot(), frozenset())
+
     def _console_rail_system_line_state(self) -> tuple[str, bool]:
         """Return the Model rail's ``System: <preview>`` line text + dim flag.
 
@@ -14217,6 +14247,12 @@ class ChatScreen(BaseAppScreen):
                     library_activity_flush_result=self._library_activity.flush_result,
                     library_activity_retry=self._library_activity.retry,
                     inspector_more_open=rail_state.inspector_more_open,
+                    environment_section_state=(
+                        self._console_environment_section_state()
+                    ),
+                    tasks_section_state=self._console_tasks_section_state(),
+                    environment_open=rail_state.environment_open,
+                    tasks_open=rail_state.tasks_open,
                 )
                 right_rail.can_focus = True
                 right_rail.styles.width = "4fr"

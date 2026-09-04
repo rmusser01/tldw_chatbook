@@ -4,7 +4,9 @@ Extracted verbatim out of ``ChatScreen.compose_content`` (wave-1 console
 decomposition, task 4): the subtree that used to live inside
 ``with self._frame_console_region(right_rail):``. Its header is one full-width
 collapse Button (``#console-inspector-rail-collapse``), followed by the staged-
-Context tray, retrieval-Scope row, run inspector, and live-work card.
+Context tray, retrieval-Scope row, run inspector, and live-work card. task-9
+prepended two more scrollable-body sections ahead of the tray: Environment
+(``#console-environment-section``) and Tasks (``#console-tasks-section``).
 
 **Naming**: shell ids use the ``console-inspector-rail-*`` family
 (``console-inspector-rail-collapse``, ``console-inspector-rail-body``) plus
@@ -72,6 +74,7 @@ from ...Chat.console_display_state import (
     ConsoleRetrievalScopeState,
     ConsoleStagedContextState,
 )
+from ...Chat.console_environment_state import ENVIRONMENT_SECTION_ID, TASKS_SECTION_ID
 from ...Chat.console_glyphs import GLYPH_COLLAPSE_RIGHT
 from ...Widgets.glyph_fallback import resolve_glyph
 from ...Chat.console_session_settings import ConsoleSettingsSummaryState
@@ -93,6 +96,10 @@ from ...Widgets.Console import (
     ConsoleSettingsSummary,
     ConsoleStagedContextTray,
     ConsoleStagedSourceOpenRequested,
+)
+from ...Widgets.Console.console_inspector_section import (
+    ConsoleInspectorSection,
+    ConsoleInspectorSectionState,
 )
 from ...Widgets.Console.console_retrieval_scope_row import (
     ROW_ID as CONSOLE_RETRIEVAL_SCOPE_ROW_ID,
@@ -413,6 +420,10 @@ class ConsoleInspectorRail(Vertical):
         library_activity_retry: Callable[[], Awaitable[None]] | None = None,
         ownership_policy: InspectorOwnershipPolicy | None = None,
         inspector_more_open: bool = False,
+        environment_section_state: ConsoleInspectorSectionState | None = None,
+        tasks_section_state: ConsoleInspectorSectionState | None = None,
+        environment_open: bool = True,
+        tasks_open: bool = True,
         **kwargs,
     ) -> None:
         """Create the right rail from pre-computed display data.
@@ -471,6 +482,18 @@ class ConsoleInspectorRail(Vertical):
             ownership_policy: Optional explicit Inspector ownership policy.
                 Production resolves the strict opt-in environment flag at
                 this composition boundary when omitted.
+            inspector_more_open: Whether the run inspector's "More" toggle
+                starts expanded.
+            environment_section_state: Rows/summary for the Environment
+                section (task-9), mounted at the top of the Inspector body.
+                ``None`` renders the empty-state projection (no rows), which
+                hides the section (``styles.display = "none"``).
+            tasks_section_state: Rows/summary for the Tasks section
+                (task-9), mounted directly below Environment. Same
+                empty-hides-the-section behavior as above.
+            environment_open: Initial collapse state for the Environment
+                section.
+            tasks_open: Initial collapse state for the Tasks section.
             kwargs: Forwarded to ``Vertical``.
         """
         super().__init__(
@@ -498,6 +521,14 @@ class ConsoleInspectorRail(Vertical):
             ownership_policy or _resolve_inspector_ownership_policy()
         )
         self._inspector_more_open = inspector_more_open
+        self._environment_section_state = environment_section_state or (
+            ConsoleInspectorSectionState(rows=(), summary="")
+        )
+        self._tasks_section_state = tasks_section_state or (
+            ConsoleInspectorSectionState(rows=(), summary="")
+        )
+        self._environment_open = environment_open
+        self._tasks_open = tasks_open
         self._reported_unknown_fingerprints: set[tuple[str, ...]] = set()
         self._outer_reconcile_scheduled = False
         self._outer_reconcile_dirty = False
@@ -1485,6 +1516,44 @@ class ConsoleInspectorRail(Vertical):
             on_geometry_changed=self._request_outer_geometry_reconcile,
             on_scrolled=self._handle_outer_scrolled,
         ):
+            # task-9: Environment and Tasks sections -- mounted FIRST, ahead
+            # of the staged-context tray, per the redesign spec's rail
+            # ordering. Pure display state supplied by the screen (a
+            # projection of the controller's current snapshot, or the
+            # empty-state projection of a default `EnvironmentSnapshot()`
+            # pre-wiring); this rail never gathers environment data itself.
+            # Each section hides itself (`styles.display = "none"`) when its
+            # projection has no rows -- the fleet pattern this rail already
+            # uses for the live-work header Statics above.
+            environment_section = ConsoleInspectorSection(
+                title="Environment",
+                section_id=ENVIRONMENT_SECTION_ID,
+                rows=self._environment_section_state.rows,
+                summary=self._environment_section_state.summary,
+                collapsible=True,
+                open=self._environment_open,
+                view_all_label="Refresh",
+                id="console-environment-section",
+            )
+            environment_section.styles.display = (
+                "block" if self._environment_section_state.rows else "none"
+            )
+            yield environment_section
+
+            tasks_section = ConsoleInspectorSection(
+                title="Tasks",
+                section_id=TASKS_SECTION_ID,
+                rows=self._tasks_section_state.rows,
+                summary=self._tasks_section_state.summary,
+                collapsible=True,
+                open=self._tasks_open,
+                id="console-tasks-section",
+            )
+            tasks_section.styles.display = (
+                "block" if self._tasks_section_state.rows else "none"
+            )
+            yield tasks_section
+
             # Context (staged sources) section -- moved here from the left
             # rail (task-400). Pinned to the TOP of the Inspector body so it
             # is visible without scrolling and reads above the run
